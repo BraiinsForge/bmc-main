@@ -1,0 +1,11 @@
+[toolchain]
+channel = "1.86.0" # NOTE: Always use full version numbers (`x.y.z` instead of `x.y`)
+profile = "default"
+components = ["rust-src"]
+targets = [
+    "armv7-unknown-linux-musleabihf",
+    "arm-unknown-linux-musleabi",
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+]
