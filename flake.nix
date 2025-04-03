@@ -1,6 +1,6 @@
 {
-  description = "cratezero Flake";
-  nixConfig.bash-prompt-prefix = "(cratezero) ";
+  description = "BMC Flake";
+  nixConfig.bash-prompt-prefix = "(bmc) ";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
