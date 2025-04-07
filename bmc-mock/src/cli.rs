@@ -1,0 +1,51 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+
+use bmc_core::{Configuration, ServerConfig};
+use std::path::{Path, PathBuf};
+
+use clap::Parser;
+
+fn data_dir(subdir: impl AsRef<Path>) -> &'static str {
+    let path = dirs::data_local_dir()
+        .expect("BUG: cannot determine data_local_dir")
+        .join("bmc-mockup")
+        .join(subdir)
+        .display()
+        .to_string();
+    Box::leak(path.into_boxed_str())
+}
+
+#[derive(Parser, Debug, Clone)]
+#[clap(name = "BMC")]
+pub(crate) struct Config {
+    /// Set server address
+    #[clap(long, default_value = "0.0.0.0:6060")]
+    pub address: std::net::SocketAddr,
+    /// Set path to a web content directory
+    #[clap(long, default_value = data_dir("www"))]
+    pub www_path: PathBuf,
+    /// Override path to a web variable content directory
+    #[clap(long)]
+    pub www_var_path: Option<PathBuf>,
+    /// Set path to a writeable directory for mockup config files
+    #[clap(long, default_value = data_dir("mockfs"))]
+    pub mockfs_path: PathBuf,
+}
+
+impl From<Config> for Configuration {
+    fn from(value: Config) -> Self {
+        let server_config = ServerConfig::default()
+            .set_www_root_path(value.www_path.join("bmc"))
+            .set_www_assets_path(value.www_path.join("bmc/assets"))
+            .set_www_var_path(
+                value
+                    .www_var_path
+                    .unwrap_or_else(|| value.www_path.join("var")),
+            );
+
+        Configuration {
+            address: value.address,
+            server_config,
+        }
+    }
+}
