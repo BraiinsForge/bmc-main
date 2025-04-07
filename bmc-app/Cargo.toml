@@ -1,0 +1,14 @@
+[package]
+name = "bmc-app"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins <braiins@braiins.com>"]
+
+
+[dependencies]
+anyhow.workspace = true
+bmc-core = { path = "../bmc-core" }
+bmc-mock = { path = "../bmc-mock" }
+bmc-openwrt = { path = "../bmc-openwrt" }
+tokio.workspace = true
+tracing.workspace = true
