@@ -1,0 +1,12 @@
+[package]
+name = "bmc-openwrt"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins <braiins@braiins.com>"]
+
+
+[dependencies]
+anyhow.workspace = true
+bmc-core = { path = "../bmc-core" }
+tokio.workspace = true
+tracing.workspace = true
