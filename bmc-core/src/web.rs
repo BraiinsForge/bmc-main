@@ -21,6 +21,39 @@ impl<T: BmcManager> WebService<T> {
     pub(crate) fn new(manager: Arc<T>, config: ServerConfig) -> Self {
         Self { manager, config }
     }
+
+    pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
+        let http_router = http_server::HttpServer::new(self.config).build();
+        let grpc_router = grpc::GrpcWeb::new(self.manager).build().into_axum_router();
+
+        // combine grpc and http router into one service
+        let service = Steer::new(
+            vec![http_router, grpc_router],
+            |req: &Request, _services: &[_]| {
+                if req
+                    .headers()
+                    .get(CONTENT_TYPE)
+                    .map(|content_type| content_type.as_bytes())
+                    .filter(|content_type| content_type.starts_with(b"application/grpc"))
+                    .is_some()
+                {
+                    // grpc service
+                    1
+                } else {
+                    // http service
+                    0
+                }
+            },
+        );
+
+        let service = NormalizePathLayer::trim_trailing_slash().layer(service);
+        let service =
+            ServiceExt::<Request>::into_make_service_with_connect_info::<SocketAddr>(service);
+
+        axum::serve(listener, service).await?;
+
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
