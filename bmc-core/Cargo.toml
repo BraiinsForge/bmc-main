@@ -8,11 +8,15 @@ authors = ["Braiins <braiins@braiins.com>"]
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+bmc-grpc = { path = "../bmc-grpc" }
 chrono.workspace = true
 hyper.workspace = true
 mime_guess.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["full"] }
+tonic.workspace = true
+tonic-reflection.workspace = true
+tonic-web.workspace = true
 tower = { workspace = true, features = ["steer"] }
 tower-http = { workspace = true, features = [
     "compression-br",

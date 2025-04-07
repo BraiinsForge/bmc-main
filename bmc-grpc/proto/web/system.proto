@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+import "google/protobuf/empty.proto";
+
+// Structure to handle system details
+message Metadata {
+  // OS version
+  string version = 1;
+}
+
+// Service to provide information about system
+service SystemService {
+  // Get detailed information about the system
+  rpc GetMetadata(google.protobuf.Empty) returns (Metadata);
+}
