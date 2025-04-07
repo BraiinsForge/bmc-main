@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["bmc-app", "bmc-core", "bmc-mock", "bmc-openwrt"]
 
 [profile.release]
 strip = true
@@ -66,6 +66,24 @@ wildcard_enum_match_arm = "warn"
 [workspace.dependencies]
 anyhow = "1.0.97"
 axum = "0.8.3"
-tokio = { version = "1.44.1", features = ["full"] }
+chrono = "0.4.40"
+clap = { version = "4.5.35", features = ["derive", "std"] }
+dirs = "6.0.0"
+fs-err = "3.1.0"
+glob = "0.3.2"
+hex = "0.4.3"
+hyper = "1.6.0"
+mime_guess = "2.0.5"
+prost = "0.13"
+prost-types = "0.13"
+sha2 = "0.10.8"
+tokio = { version = "1.44.2", features = ["full"] }
+tokio-util = "0.7"
+tonic = "0.13.0"
+tonic-build = "0.13.0"
+tonic-reflection = "0.13.0"
+tonic-web = "0.13.0"
+tower = { version = "0.5.2", default-features = false }
+tower-http = "0.6.2"
 tracing = { version = "0.1.41", default-features = false }
 tracing-subscriber = "0.3.19"
