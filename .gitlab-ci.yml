@@ -45,14 +45,6 @@ flake.lock:
   script:
     - verify-flake-lock
 
-#Cargo.toml:
-#  <<: *nix
-#  stage: essentials
-#  needs: []
-#  # language=bash
-#  script:
-#    - nix-shell .nix/tomlq.nix --run "ci/scripts/workspace-deps-checker.sh"
-
 ####################################
 ######## Dependencies Stage ########
 ####################################
@@ -103,8 +95,8 @@ test:
   needs: []
   when: manual
 
-cratezero:
+app:
   <<: *app
   script:
-    - nix build .#cratezero-x86_64-linux
+    - nix build .#app
 

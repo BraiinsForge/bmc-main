@@ -6,18 +6,6 @@ let
       path = ./crates/app;
       packageName = "app";
     };
-    bmc-core = defineCrate {
-      path = ./crates/bmc-core;
-      packageName = "bmc-core";
-    };
-    mock = defineCrate {
-      path = ./crates/mock;
-      packageName = "mock";
-    };
-    openwrt = defineCrate {
-      path = ./crates/openwrt;
-      packageName = "openwrt";
-    };
   };
 
   workspace = pkgs.ii.rust.mkWorkspaceConfig {
@@ -28,14 +16,8 @@ let
     ];
     # packages that will be cross-compiled for target arch
     targetDeps = build_pkgs: with build_pkgs; [
-      openssl.dev
+      # openssl.dev
     ];
-  };
-
-  gitEnv = {
-    # https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake.html#flake-reference-attributes
-    GIT_HASH = self.rev or self.dirtyRev or "dirty";
-    GIT_TIMESTAMP = self.lastModified;
   };
 
   build-profiles = with workspace; {
@@ -44,46 +26,50 @@ let
       minimal_deps = false;
       rustProfile = "fast";
     };
-    native = mkBuildProfile {
-      minimal_deps = false;
-      rustProfile = "release";
-    };
-    x86_64-linux = mkBuildProfile {
-      suffix = "x86_64-linux";
+    armv7-release = mkBuildProfile {
+      suffix = "armv7";
       minimal_deps = true;
       rustProfile = "release";
-      rustCrossTarget = "x86_64-unknown-linux-musl";
-      build_pkgs = pkgs.pkgsCross.musl64.pkgsStatic;
-      env = gitEnv;
+      rustCrossTarget = "armv7-unknown-linux-musleabihf";
+      build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
+    };
+    armv7-debug = mkBuildProfile {
+      suffix = "armv7";
+      minimal_deps = false;
+      rustProfile = "dev";
+      rustCrossTarget = "armv7-unknown-linux-musleabihf";
+      build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
     };
   };
 
-
-  ######################################################################################################################
-
-
-  nativePackages = with build-profiles.native; {
-    app = buildCrate crates.app { };
-    bmc-core = buildCrate crates.bmc-core { };
-    mock = buildCrate crates.mock { };
-    openwrt = buildCrate crates.openwrt { };
+  allCrates = {
+    crate = [
+      { def = "app"; }
+    ];
   };
 
+  # use each profile to build each crate
+  allTuples = lib.cartesianProduct
+    ({
+      # NOTE: Update README.md when changing these sets!
+      arch = [
+        "armv7"
+      ];
+      profile = [
+        "release"
+        "debug"
+      ];
+    } // allCrates);
 
-  crossOutputs = rec {
-    x86_64-linux = with build-profiles.x86_64-linux; {
-      app = buildCrate crates.app { };
-      bmc-core = buildCrate crates.bmc-core { };
-      mock = buildCrate crates.mock { };
-      openwrt = buildCrate crates.openwrt { };
-    };
-  };
+  packages = builtins.listToAttrs (lib.forEach allTuples ({ arch, profile, crate }: {
+    name = "${crate.def}-${arch}-${profile}";
+    value = build-profiles."${arch}-${profile}".buildCrate crates.${crate.def} { };
+  }));
 
-  # Convert `crossOutputs` from `${arch}.${name}` to `"${name}-${arch}"`.
-  crossPackages = lib.concatMapAttrs
-    (arch: packages: pkgs.ii.lib.mapAttrNames (name: "${name}-${arch}") packages)
-    crossOutputs;
-
+  fastPackages = builtins.listToAttrs (lib.forEach (lib.cartesianProduct allCrates) ({ crate }: {
+    name = "${crate.def}";
+    value = build-profiles.fast.buildCrate crates.${crate.def} { };
+  }));
 
   specialPackages = {
     workspace-deps = build-profiles.fast.deps;
@@ -92,6 +78,6 @@ let
 
 in
 {
-  packages = nativePackages // crossPackages // specialPackages;
+  packages = packages // fastPackages // specialPackages;
   devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) build-profiles;
 }
