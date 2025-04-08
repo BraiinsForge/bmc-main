@@ -3,7 +3,7 @@ let lib = pkgs.lib; in
 let
   crates = with pkgs.ii.rust; {
     bmc = defineCrate {
-      path = ./bmc;
+      path = "./bmc";
       packageName = "bmc";
     };
   };
