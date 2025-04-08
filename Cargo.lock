@@ -282,7 +282,6 @@ dependencies = [
  "glob",
  "hex",
  "prost",
- "prost-types",
  "sha2",
  "tonic",
  "tonic-build",
@@ -296,8 +295,6 @@ dependencies = [
  "bmc-core",
  "clap",
  "dirs",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -306,8 +303,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-core",
- "tokio",
- "tracing",
 ]
 
 [[package]]

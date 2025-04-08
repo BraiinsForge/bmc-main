@@ -7,8 +7,6 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
-bmc-core = { path = "../bmc-core" }
+bmc-core.workspace = true
 clap.workspace = true
 dirs.workspace = true
-tokio.workspace = true
-tracing.workspace = true

@@ -8,7 +8,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
-bmc-grpc = { path = "../bmc-grpc" }
+bmc-grpc.workspace = true
 chrono.workspace = true
 hyper.workspace = true
 mime_guess.workspace = true

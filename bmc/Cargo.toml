@@ -7,8 +7,8 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
-bmc-core = { path = "../bmc-core" }
-bmc-mock = { path = "../bmc-mock" }
-bmc-openwrt = { path = "../bmc-openwrt" }
+bmc-core.workspace = true
+bmc-mock.workspace = true
+bmc-openwrt.workspace = true
 tokio.workspace = true
 tracing.workspace = true

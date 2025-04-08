@@ -66,6 +66,10 @@ wildcard_enum_match_arm = "warn"
 [workspace.dependencies]
 anyhow = "1.0.97"
 axum = "0.8.3"
+bmc-core = { path = "bmc-core" }
+bmc-grpc = { path = "bmc-grpc" }
+bmc-mock = { path = "bmc-mock" }
+bmc-openwrt = { path = "bmc-openwrt" }
 chrono = "0.4.40"
 clap = { version = "4.5.35", features = ["derive", "std"] }
 dirs = "6.0.0"
