@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["bmc", "bmc-core", "bmc-grpc", "bmc-mock", "bmc-openwrt"]
+members = [
+    "bmc",
+    "bmc-core",
+    "bmc-grpc",
+    "bmc-mock",
+    "bmc-openwrt",
+]
 
 [profile.release]
 strip = true
