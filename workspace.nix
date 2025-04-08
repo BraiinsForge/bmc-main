@@ -2,9 +2,9 @@
 let lib = pkgs.lib; in
 let
   crates = with pkgs.ii.rust; {
-    app = defineCrate {
-      path = ./crates/app;
-      packageName = "app";
+    bmc = defineCrate {
+      path = ./bmc;
+      packageName = "bmc";
     };
   };
 
@@ -44,7 +44,7 @@ let
 
   allCrates = {
     crate = [
-      { def = "app"; }
+      { def = "bmc"; }
     ];
   };
 

@@ -95,8 +95,7 @@ test:
   needs: []
   when: manual
 
-app:
+bmc:
   <<: *app
   script:
-    - nix build .#app
-
+    - nix build .#bmc

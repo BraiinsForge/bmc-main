@@ -1,5 +1,5 @@
 [package]
-name = "bmc-app"
+name = "bmc"
 version = "0.1.0"
 edition = "2024"
 authors = ["Braiins <braiins@braiins.com>"]
