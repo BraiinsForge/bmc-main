@@ -5,10 +5,13 @@ use bmc_core::App;
 use std::sync::Arc;
 use tracing::error;
 
-#[cfg(not(target_arch = "arm"))]
+#[cfg(all(feature = "mock", feature = "openwrt"))]
+compile_error!("Features `mock` and `openwrt` are mutually exclusive. Please enable only one.");
+
+#[cfg(feature = "mock")]
 use bmc_mock as platform;
 
-#[cfg(target_arch = "arm")]
+#[cfg(feature = "openwrt")]
 use bmc_openwrt as platform;
 
 #[tokio::main]

@@ -51,6 +51,9 @@ let
   # use each profile to build each crate
   allTuples = lib.cartesianProduct
     ({
+      platform = [
+        "openwrt"
+      ];
       # NOTE: Update README.md when changing these sets!
       arch = [
         "armv7"
@@ -61,9 +64,12 @@ let
       ];
     } // allCrates);
 
-  packages = builtins.listToAttrs (lib.forEach allTuples ({ arch, profile, crate }: {
-    name = "${crate.def}-${arch}-${profile}";
-    value = build-profiles."${arch}-${profile}".buildCrate crates.${crate.def} { };
+  packages = builtins.listToAttrs (lib.forEach allTuples ({ platform, arch, profile, crate }: {
+    name = "${crate.def}-${platform}-${arch}-${profile}";
+    value = build-profiles."${arch}-${profile}".buildCrate crates.${crate.def} {
+      noDefaultFeatures = true;
+      features = [ "${crate.def}/${platform}" ];
+    };
   }));
 
   fastPackages = builtins.listToAttrs (lib.forEach (lib.cartesianProduct allCrates) ({ crate }: {
