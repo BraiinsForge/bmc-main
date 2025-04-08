@@ -95,7 +95,12 @@ test:
   needs: []
   when: manual
 
-bmc:
+bmc-mock:
   <<: *app
   script:
     - nix build .#bmc
+
+bmc-openwrt:
+  <<: *app
+  script:
+    - nix build .#bmc-openwrt-armv7-release
