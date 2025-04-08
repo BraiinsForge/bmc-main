@@ -6,7 +6,7 @@ members = ["bmc", "bmc-core", "bmc-grpc", "bmc-mock", "bmc-openwrt"]
 strip = true
 
 [profile.dev]
-opt-level = 0
+opt-level = 3
 strip = true
 
 [profile.lto]
