@@ -9,6 +9,11 @@ stages:
 default:
   interruptible: true
 
+workflow:
+  rules:
+    # workaround GitLab's #33694
+    - if: "$CI_MERGE_REQUEST_ID == null"
+
 .nix: &nix
   tags:
     - nix2
@@ -29,21 +34,11 @@ default:
 ##################################
 ######## Essentials Stage ########
 ##################################
-fmt:
-  <<: *nix
-  stage: essentials
-  needs: []
-  script:
-    - nix fmt --no-write-lock-file -- --no-cache --verbose
-    - print-diff-after-fmt
-
-flake.lock:
-  <<: *nix
-  stage: essentials
-  needs: []
-  # language=bash
-  script:
-    - verify-flake-lock
+include:
+  - project: 'bos/ci-tools'
+    ref: master
+    file:
+      - '.essentials.yml'
 
 ####################################
 ######## Dependencies Stage ########
