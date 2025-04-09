@@ -1,0 +1,18 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+}
+
+.title {
+    composes: heading-03 from 'styles/carbon/typography.scss';
+    margin-inline-start: mini-units(2);
+    margin-block-end: mini-units(2);
+}
+
+.body {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(2);
+
+    container-type: inline-size;
+}

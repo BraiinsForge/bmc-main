@@ -1,0 +1,13 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(2);
+}
+
+.passDialogIntro {
+    composes: body-short-01 from 'styles/carbon/typography.scss';
+    margin-block-end: mini-units(3);
+    max-inline-size: to-rem(600px);
+    text-wrap: pretty;
+}

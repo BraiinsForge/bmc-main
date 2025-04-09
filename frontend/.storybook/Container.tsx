@@ -6,7 +6,7 @@ import { Component, type ReactNode, StrictMode } from 'react';
 
 // Hoc
 import { IntlProvider } from 'react-intl';
-import { HelmetProvider } from 'react-helmet-async';
+import { HelmetProvider } from '@dr.pogodin/react-helmet';
 
 // Styles
 import '@/styles/carbon/carbon.global.scss';
@@ -41,8 +41,10 @@ function setDomAttributes(props: SetDomAttrsData): void {
     d.body.style.height = '100%';
     d.body.style.maxHeight = '100%';
 
-    if (theme) window.document.documentElement.setAttribute('theme', theme as string);
-    if (theme) window.document.documentElement.setAttribute('class', THEME[theme] as string);
+    if (theme) {
+        const value = theme in THEME ? THEME[theme] : THEME.dark;
+        window.document.documentElement.setAttribute('class', value);
+    }
 
     const doc = document.documentElement;
     if (i18n?.bidi) doc.setAttribute('dir', 'rtl');

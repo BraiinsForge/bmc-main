@@ -1,0 +1,76 @@
+@use 'styles/carbon' as *;
+
+//
+// Header
+//
+
+.headerName {
+    composes: horizontal from 'styles/layout.scss';
+    gap: mini-units(3);
+
+    > * {
+        color: $text-primary;
+        fill: $text-primary;
+        font-weight: normal;
+    }
+}
+.headerNameText {
+    white-space: nowrap;
+    overflow: hidden;
+
+    @media (width <= 680px) {
+        display: none;
+    }
+}
+
+.headerAction {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: 0.75em;
+
+    > * {
+        color: $text-secondary;
+    }
+}
+
+@media (width <= 680px) {
+    .headerAction .label {
+        display: none;
+    }
+}
+
+//
+// Sidenav
+//
+
+.sidenav {
+    background-color: $layer-01 !important;
+    border-inline-end: 1px solid $shell-border-color !important;
+}
+
+.sideLink {
+    composes: heading-01 from 'styles/carbon/typography.scss';
+    color: $text-primary;
+    cursor: pointer;
+    user-select: none;
+
+    svg {
+        fill: currentcolor !important;
+    }
+
+    :global(.cds--side-nav__link-text) {
+        color: inherit !important;
+    }
+}
+
+//
+// Content
+//
+
+.main {
+    margin-inline-start: 16rem !important;
+
+    @include breakpoint-down(lg) {
+        height: 100%;
+        margin-inline: 0 !important;
+    }
+}

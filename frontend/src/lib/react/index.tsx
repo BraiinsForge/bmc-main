@@ -1,83 +1,11 @@
-import {
-    Fragment,
-    type Component,
-    type HTMLAttributes,
-    type SyntheticEvent,
-    type UIEvent as ReactUIEvent,
-    type FocusEvent as ReactFocusEvent,
-} from 'react';
-import type { JsonValue, JsonPrimitive } from 'type-fest';
-import { isPlainObject } from 'es-toolkit';
-import cn from 'clsx';
+import type { Component, SyntheticEvent, UIEvent as ReactUIEvent, FocusEvent as ReactFocusEvent } from 'react';
 
-export { HelmetProvider, Helmet } from 'react-helmet-async';
+export { HelmetProvider, Helmet } from '@dr.pogodin/react-helmet';
 
 export * from './hooks';
 export * from './props';
 export * from './render';
-
-type MergeableObject = Record<string, undefined | JsonValue>;
-
-export function query2state<Target extends MergeableObject, Source extends MergeableObject>(
-    target: Target,
-    source: Source,
-    mapper?: (value: JsonValue, path: Array<string | number>) => NonNullable<JsonValue>,
-): {
-    target: Target;
-    source: Source;
-    found: Array<keyof Target>;
-} {
-    type K = keyof Target;
-
-    const newTarget: Target = { ...target };
-    const newSource: Source = { ...source };
-    const found: K[] = [];
-
-    Object.entries(newSource).forEach(([key, value]) => {
-        if (!(key in newTarget)) return;
-        let mapped: NonNullable<JsonValue>;
-
-        // Object
-        if (isPlainObject(value)) {
-            const res: Record<string, JsonValue> = {};
-            Object.entries(value as Record<string, JsonValue>).forEach(([k, v]) => {
-                res[k] = mapper ? mapper(v as JsonPrimitive, [key, k]) : v;
-            });
-
-            mapped = res;
-        }
-
-        // Array
-        else if (Array.isArray(value)) {
-            mapped = value.map((d, i) => {
-                return mapper ? mapper(d, [key, i]) : d;
-            });
-        }
-
-        // Primitive
-        else {
-            mapped = mapper ? mapper(value as JsonPrimitive, [key]) : (value as NonNullable<JsonValue>);
-        }
-
-        newTarget[key as K] = mapped as Target[K];
-        found.push(key as K);
-
-        delete newSource[key];
-    });
-
-    return {
-        target: newTarget,
-        source: newSource,
-        found,
-    };
-}
-
-export function getToggleHandler<Prop extends string>(self: Component<unknown, { [k in Prop]: boolean }>, prop: Prop) {
-    return (open?: boolean | unknown): void => {
-        // @ts-expect-error: Funky biz with react state typing, but we can be pretty sure here…
-        self.setState(s => ({ [prop]: typeof open === 'boolean' ? open : !s[prop] }));
-    };
-}
+export * from './icon';
 
 /**
  * Async version of `setState`.
@@ -142,41 +70,4 @@ export function blurActiveElement(event?: UIEvent | ReactUIEvent) {
 export function noop() {}
 export function pass<T>(v: T) {
     return v as T;
-}
-
-export interface CleanupQueue {
-    add(fn: () => void): void;
-    clear(): void;
-}
-export function getCleanupQueue(initialState?: Array<() => void>): CleanupQueue {
-    const queue = new Set<() => void>(initialState);
-
-    return {
-        add(fn: () => void) {
-            queue.add(fn);
-        },
-        clear() {
-            queue.forEach(cleanFunction => {
-                try {
-                    cleanFunction();
-                } catch (e) {
-                    console.log('🧹 cleanupQueue error', e);
-                }
-            });
-            queue.clear();
-        },
-    };
-}
-
-export interface ForcedChildStyling extends HTMLAttributes<HTMLDivElement> {
-    id: string;
-    childStyle: string;
-}
-export function ForcedChildStyling({ id, childStyle, ...rest }: ForcedChildStyling) {
-    return (
-        <Fragment>
-            <style scoped children={`#${id} > * { ${childStyle} }`} />
-            <div {...rest} id={id} className={cn(rest.className)} />
-        </Fragment>
-    );
 }

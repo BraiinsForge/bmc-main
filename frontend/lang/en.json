@@ -1,0 +1,224 @@
+{
+    "+jJI2H": {
+        "defaultMessage": "BMC 100 - Braiins Mining Clock"
+    },
+    "/TZvjA": {
+        "defaultMessage": "Add Scene"
+    },
+    "1FcZU+": {
+        "defaultMessage": "You can choose between types of clocks - Flip, Digital, Analog"
+    },
+    "1QM9Am": {
+        "defaultMessage": "Show Seconds"
+    },
+    "1bOsc+": {
+        "defaultMessage": "Location is used for Timezone and Weather data."
+    },
+    "1iEPTM": {
+        "defaultMessage": "General"
+    },
+    "2kBrtf": {
+        "defaultMessage": "Passwords must match!"
+    },
+    "39HhOJ": {
+        "defaultMessage": "Additional Options"
+    },
+    "3KXr9U": {
+        "defaultMessage": "Weather Location"
+    },
+    "3cc4Ct": {
+        "defaultMessage": "Light"
+    },
+    "47FYwb": {
+        "defaultMessage": "Cancel"
+    },
+    "4GbFNA": {
+        "defaultMessage": "Confirm New Password"
+    },
+    "4VPIXt": {
+        "defaultMessage": "Alarms"
+    },
+    "4i9q5a": {
+        "defaultMessage": "Combined scene displaying multiple configurable modules that can be adjusted."
+    },
+    "56Ld4u": {
+        "defaultMessage": "Change the password used to access device settings."
+    },
+    "5sg7KC": {
+        "defaultMessage": "Password"
+    },
+    "5smd8Z": {
+        "defaultMessage": "Remove Password"
+    },
+    "64NAin": {
+        "defaultMessage": "Display"
+    },
+    "7nUCu9": {
+        "defaultMessage": "Timezone"
+    },
+    "89U3Xm": {
+        "defaultMessage": "Sound & Light"
+    },
+    "8GOiJs": {
+        "defaultMessage": "Combined Scene"
+    },
+    "BWpuKl": {
+        "defaultMessage": "Update"
+    },
+    "C81/uG": {
+        "defaultMessage": "Logout"
+    },
+    "D3idYv": {
+        "defaultMessage": "Settings"
+    },
+    "Dkkmwm": {
+        "defaultMessage": "Bold"
+    },
+    "Ef1gW+": {
+        "defaultMessage": "Braiins Buy Button"
+    },
+    "Ev6SEF": {
+        "defaultMessage": "New Password"
+    },
+    "F/Yedq": {
+        "defaultMessage": "To remove your password, please enter your current password."
+    },
+    "GretYf": {
+        "defaultMessage": "Current Password"
+    },
+    "K0zjRZ": {
+        "defaultMessage": "Automatically install firmware updates when available."
+    },
+    "KVajWj": {
+        "defaultMessage": "Numbers Font Style"
+    },
+    "Ky5oIQ": {
+        "defaultMessage": "Show Date"
+    },
+    "LPHGzA": {
+        "defaultMessage": "Digital 2"
+    },
+    "Lo38iy": {
+        "defaultMessage": "Device Password"
+    },
+    "Mirphk": {
+        "defaultMessage": "Network Configuration"
+    },
+    "NAidKb": {
+        "defaultMessage": "Notifications"
+    },
+    "OGG16f": {
+        "defaultMessage": "Braiins Pool"
+    },
+    "OUIFSP": {
+        "defaultMessage": "Automatic Updates"
+    },
+    "OvzONl": {
+        "defaultMessage": "Off"
+    },
+    "PGQuJB": {
+        "defaultMessage": "Latest version available:"
+    },
+    "Py189G": {
+        "defaultMessage": "Security"
+    },
+    "QiKKFz": {
+        "defaultMessage": "Change Password"
+    },
+    "TFXGCX": {
+        "defaultMessage": "Clock Style"
+    },
+    "Uc3eGg": {
+        "defaultMessage": "Analog 1"
+    },
+    "Zh+5A6": {
+        "defaultMessage": "On"
+    },
+    "ZsV0n3": {
+        "defaultMessage": "Download & Upgrade BMC"
+    },
+    "alnDAS": {
+        "defaultMessage": "Analog 2"
+    },
+    "cM3xq/": {
+        "defaultMessage": "Your version:"
+    },
+    "cXBJ7U": {
+        "defaultMessage": "Privacy"
+    },
+    "d2tcSn": {
+        "defaultMessage": "Digital 1"
+    },
+    "hf+8ZF": {
+        "defaultMessage": "Est. upgrade time: {duration}"
+    },
+    "iex2YB": {
+        "defaultMessage": "Ticker"
+    },
+    "ij24tj": {
+        "defaultMessage": "Password is already set!"
+    },
+    "isGKnz": {
+        "defaultMessage": "Documentation"
+    },
+    "j7LC+6": {
+        "defaultMessage": "Show Weather"
+    },
+    "j8vTk/": {
+        "defaultMessage": "Enter your current password and a new password to update your credentials."
+    },
+    "kAfcg8": {
+        "defaultMessage": "API Connections"
+    },
+    "l5d2n+": {
+        "defaultMessage": "New Version Available"
+    },
+    "m5IntF": {
+        "defaultMessage": "Connect your Braiins Manager account and get real-time stats for your mining operation."
+    },
+    "mnO9f9": {
+        "defaultMessage": "Braiins Manager"
+    },
+    "neGa+m": {
+        "defaultMessage": "System Settings"
+    },
+    "o+R+1I": {
+        "defaultMessage": "Clocks"
+    },
+    "ovJ26C": {
+        "defaultMessage": "Medium"
+    },
+    "owE/Ll": {
+        "defaultMessage": "Allow anonymous usage data collection to improve the product."
+    },
+    "psbC8e": {
+        "defaultMessage": "Price Alerts"
+    },
+    "r7IaOg": {
+        "defaultMessage": "BTC or Stock price adjusted in 5min intervals. Few types - List, Big Price"
+    },
+    "re9Sas": {
+        "defaultMessage": "Password is not set!"
+    },
+    "recCg9": {
+        "defaultMessage": "Updates"
+    },
+    "sjSEXT": {
+        "defaultMessage": "Side navigation"
+    },
+    "u/a4pg": {
+        "defaultMessage": "Data Collection"
+    },
+    "vR7ekU": {
+        "defaultMessage": "Required field!"
+    },
+    "xQ6aNc": {
+        "defaultMessage": "Create Password"
+    },
+    "zRnAdx": {
+        "defaultMessage": "Display Scenes"
+    },
+    "zfLljR": {
+        "defaultMessage": "Show Timezone"
+    }
+}

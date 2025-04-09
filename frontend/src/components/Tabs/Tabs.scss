@@ -1,0 +1,114 @@
+@use 'styles/interaction';
+@use 'styles/carbon/colors';
+@use 'styles/carbon' as *;
+
+.tabs {
+    composes: horizontal wrap from 'styles/layout.scss';
+    position: relative;
+    width: 100%;
+
+    &::before {
+        background-color: $layer-accent-01;
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 2px;
+        content: '';
+        z-index: 0;
+    }
+
+    &.darkHeader {
+        background-color: $table-header-bg-color;
+    }
+
+    &.noWrap {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+
+        @include interaction.scrollbar;
+    }
+}
+
+.tab {
+    position: relative;
+    z-index: 2;
+
+    color: $text-primary;
+    font-size: to-rem(14px);
+    line-height: to-rem(18px);
+    letter-spacing: to-rem(0.16px);
+
+    border: none;
+    cursor: pointer;
+    appearance: none;
+    background: transparent;
+
+    padding: to-rem(12px) to-rem(24px) to-rem(10px);
+    border-bottom: 2px solid transparent;
+
+    .dense > & {
+        padding-left: to-rem(12px);
+        padding-right: to-rem(12px);
+    }
+
+    > span {
+        opacity: 0.9;
+    }
+
+    &.active {
+        border-bottom: 2px solid $button-primary;
+        > span {
+            opacity: 1;
+        }
+    }
+
+    &:focus {
+        outline: 1px dotted $focus;
+        outline-offset: -2px;
+    }
+}
+.badge {
+    display: inline-block;
+    vertical-align: middle;
+
+    min-width: mini-units(2);
+    height: mini-units(2);
+    border-radius: mini-units(2);
+    padding: 0 mini-units(1);
+
+    line-height: mini-units(2);
+    font-size: to-rem(10px);
+    font-weight: bold;
+
+    margin-inline-start: mini-units(1);
+
+    &.primary {
+        background-color: $braiins-violet-60;
+        color: #fff;
+    }
+    &.secondary {
+        background-color: $layer-01;
+        color: $text-secondary;
+    }
+    &.danger {
+        background-color: colors.$braiins-alert-red;
+        color: #fff;
+    }
+}
+
+.tabContent {
+    composes: horizontal center from 'styles/layout.scss';
+    white-space: nowrap;
+}
+
+.content {
+    padding: mini-units(2) 0 0;
+}
+.noPadding .content {
+    padding-top: 0 !important;
+}
+
+.noWrap {
+    white-space: nowrap;
+}

@@ -1,0 +1,17 @@
+@use 'styles/carbon' as *;
+
+.headerName {
+    composes: horizontal from 'styles/layout.scss';
+    gap: mini-units(3);
+
+    > * {
+        color: $text-primary;
+        fill: $text-primary;
+        font-weight: normal;
+    }
+}
+
+.content {
+    composes: vertical from 'styles/layout.scss';
+    block-size: calc(100vh - 48px);
+}

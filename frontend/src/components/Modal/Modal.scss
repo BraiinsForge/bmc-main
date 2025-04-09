@@ -1,0 +1,47 @@
+@use 'styles/carbon' as *;
+
+.hideCloseButton :global(.cds--modal-close) {
+    display: none !important;
+}
+.cancelContentPadding :global(.cds--modal-content) {
+    padding: 0 !important;
+}
+
+.cancelBodyOverflowShadow :global(.cds--modal-scroll-content) {
+    // Carbon now adds some kind of overflow-shadow mask
+    // to the modal mody, but we don't want that here.
+    mask-image: none !important;
+    outline: none !important;
+}
+
+.root :global {
+    .cds--modal-content {
+        outline: none !important;
+    }
+
+    // Patch for the modal footer buttons.
+    // The goal is to make them darker in dark theme for the text to be more readable.
+    .cds--modal-footer.cds--btn-set {
+        .cds--btn {
+            align-items: center;
+            box-shadow: none;
+        }
+
+        .cds--btn[disabled] {
+            border-color: $layer-accent-01 !important;
+            background: $layer-accent-01 !important;
+            color: $text-secondary !important;
+
+            // Patch for the "InlineLoading" component in the footer button.
+            // The goal is to remove the background circle & to force color inheritance on the description text.
+            .cds--loading__background {
+                fill: none !important;
+                stroke: none !important;
+            }
+
+            .cds--inline-loading__text {
+                color: inherit !important;
+            }
+        }
+    }
+}

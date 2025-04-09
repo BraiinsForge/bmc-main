@@ -127,9 +127,3 @@
 .fixed {
     composes: fixedTop fixedBottom;
 }
-
-.clearfix::after {
-    display: block;
-    clear: both;
-    content: '';
-}

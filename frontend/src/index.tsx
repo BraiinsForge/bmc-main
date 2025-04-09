@@ -1,6 +1,8 @@
 import { StrictMode } from 'react';
+import { IntlProvider } from 'react-intl';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router';
+import { HelmetProvider, Helmet } from '@dr.pogodin/react-helmet';
 
 import router from './routes.tsx';
 
@@ -9,7 +11,12 @@ if (rootEl) {
     const root = createRoot(rootEl);
     root.render(
         <StrictMode>
-            <RouterProvider router={router} />
+            <HelmetProvider>
+                <Helmet defaultTitle="Braiins BMC-100" titleTemplate="%s | Braiins BMC-100" />
+                <IntlProvider locale="en">
+                    <RouterProvider router={router} />
+                </IntlProvider>
+            </HelmetProvider>
         </StrictMode>,
     );
 }

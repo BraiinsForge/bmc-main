@@ -4,6 +4,8 @@
 
 import type { GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv1';
 import { fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv1';
+import type { BoolValueSchema, EmptySchema } from '@bufbuild/protobuf/wkt';
+import { file_google_protobuf_empty, file_google_protobuf_wrappers } from '@bufbuild/protobuf/wkt';
 import type { Message } from '@bufbuild/protobuf';
 
 /**
@@ -12,44 +14,68 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_system: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'ChB3ZWIvc3lzdGVtLnByb3RvEg9icmFpaW5zLmJtYy53ZWIiWgoSU2V0UGFzc3dvcmRSZXF1ZXN0EhgKEGN1cnJlbnRfcGFzc3dvcmQYASABKAkSGQoMbmV3X3Bhc3N3b3JkGAIgASgJSACIAQFCDwoNX25ld19wYXNzd29yZCIVChNTZXRQYXNzd29yZFJlc3BvbnNlMmkKDVN5c3RlbVNlcnZpY2USWAoLU2V0UGFzc3dvcmQSIy5icmFpaW5zLmJtYy53ZWIuU2V0UGFzc3dvcmRSZXF1ZXN0GiQuYnJhaWlucy5ibWMud2ViLlNldFBhc3N3b3JkUmVzcG9uc2ViBnByb3RvMw',
+        'ChB3ZWIvc3lzdGVtLnByb3RvEg9icmFpaW5zLmJtYy53ZWIiKQoVQ3JlYXRlUGFzc3dvcmRSZXF1ZXN0EhAKCHBhc3N3b3JkGAEgASgJIkcKFUNoYW5nZVBhc3N3b3JkUmVxdWVzdBIYChBjdXJyZW50X3Bhc3N3b3JkGAEgASgJEhQKDG5ld19wYXNzd29yZBgCIAEoCSIpChVSZW1vdmVQYXNzd29yZFJlcXVlc3QSEAoIcGFzc3dvcmQYASABKAkyyAIKDVN5c3RlbVNlcnZpY2USQQoLSGFzUGFzc3dvcmQSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaGi5nb29nbGUucHJvdG9idWYuQm9vbFZhbHVlElAKDkNyZWF0ZVBhc3N3b3JkEiYuYnJhaWlucy5ibWMud2ViLkNyZWF0ZVBhc3N3b3JkUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJQCg5DaGFuZ2VQYXNzd29yZBImLmJyYWlpbnMuYm1jLndlYi5DaGFuZ2VQYXNzd29yZFJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUAoOUmVtb3ZlUGFzc3dvcmQSJi5icmFpaW5zLmJtYy53ZWIuUmVtb3ZlUGFzc3dvcmRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5YgZwcm90bzM',
+        [file_google_protobuf_empty, file_google_protobuf_wrappers],
     );
 
 /**
- * Request for set password action.
- *
- * @generated from message braiins.bmc.web.SetPasswordRequest
+ * @generated from message braiins.bmc.web.CreatePasswordRequest
  */
-export type SetPasswordRequest = Message<'braiins.bmc.web.SetPasswordRequest'> & {
+export type CreatePasswordRequest = Message<'braiins.bmc.web.CreatePasswordRequest'> & {
+    /**
+     * @generated from field: string password = 1;
+     */
+    password: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.CreatePasswordRequest.
+ * Use `create(CreatePasswordRequestSchema)` to create a new message.
+ */
+export const CreatePasswordRequestSchema: GenMessage<CreatePasswordRequest> =
+    /*@__PURE__*/
+    messageDesc(file_web_system, 0);
+
+/**
+ * @generated from message braiins.bmc.web.ChangePasswordRequest
+ */
+export type ChangePasswordRequest = Message<'braiins.bmc.web.ChangePasswordRequest'> & {
     /**
      * @generated from field: string current_password = 1;
      */
     currentPassword: string;
 
     /**
-     * @generated from field: optional string new_password = 2;
+     * @generated from field: string new_password = 2;
      */
-    newPassword?: string;
+    newPassword: string;
 };
 
 /**
- * Describes the message braiins.bmc.web.SetPasswordRequest.
- * Use `create(SetPasswordRequestSchema)` to create a new message.
+ * Describes the message braiins.bmc.web.ChangePasswordRequest.
+ * Use `create(ChangePasswordRequestSchema)` to create a new message.
  */
-export const SetPasswordRequestSchema: GenMessage<SetPasswordRequest> = /*@__PURE__*/ messageDesc(file_web_system, 0);
+export const ChangePasswordRequestSchema: GenMessage<ChangePasswordRequest> =
+    /*@__PURE__*/
+    messageDesc(file_web_system, 1);
 
 /**
- * Response for set password action.
- *
- * @generated from message braiins.bmc.web.SetPasswordResponse
+ * @generated from message braiins.bmc.web.RemovePasswordRequest
  */
-export type SetPasswordResponse = Message<'braiins.bmc.web.SetPasswordResponse'> & {};
+export type RemovePasswordRequest = Message<'braiins.bmc.web.RemovePasswordRequest'> & {
+    /**
+     * @generated from field: string password = 1;
+     */
+    password: string;
+};
 
 /**
- * Describes the message braiins.bmc.web.SetPasswordResponse.
- * Use `create(SetPasswordResponseSchema)` to create a new message.
+ * Describes the message braiins.bmc.web.RemovePasswordRequest.
+ * Use `create(RemovePasswordRequestSchema)` to create a new message.
  */
-export const SetPasswordResponseSchema: GenMessage<SetPasswordResponse> = /*@__PURE__*/ messageDesc(file_web_system, 1);
+export const RemovePasswordRequestSchema: GenMessage<RemovePasswordRequest> =
+    /*@__PURE__*/
+    messageDesc(file_web_system, 2);
 
 /**
  * Service to provide information about system
@@ -58,13 +84,35 @@ export const SetPasswordResponseSchema: GenMessage<SetPasswordResponse> = /*@__P
  */
 export const SystemService: GenService<{
     /**
-     * Method to set password
-     *
-     * @generated from rpc braiins.bmc.web.SystemService.SetPassword
+     * @generated from rpc braiins.bmc.web.SystemService.HasPassword
      */
-    setPassword: {
+    hasPassword: {
         methodKind: 'unary';
-        input: typeof SetPasswordRequestSchema;
-        output: typeof SetPasswordResponseSchema;
+        input: typeof EmptySchema;
+        output: typeof BoolValueSchema;
+    };
+    /**
+     * @generated from rpc braiins.bmc.web.SystemService.CreatePassword
+     */
+    createPassword: {
+        methodKind: 'unary';
+        input: typeof CreatePasswordRequestSchema;
+        output: typeof EmptySchema;
+    };
+    /**
+     * @generated from rpc braiins.bmc.web.SystemService.ChangePassword
+     */
+    changePassword: {
+        methodKind: 'unary';
+        input: typeof ChangePasswordRequestSchema;
+        output: typeof EmptySchema;
+    };
+    /**
+     * @generated from rpc braiins.bmc.web.SystemService.RemovePassword
+     */
+    removePassword: {
+        methodKind: 'unary';
+        input: typeof RemovePasswordRequestSchema;
+        output: typeof EmptySchema;
     };
 }> = /*@__PURE__*/ serviceDesc(file_web_system, 0);

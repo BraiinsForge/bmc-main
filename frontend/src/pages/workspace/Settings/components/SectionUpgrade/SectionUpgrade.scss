@@ -1,0 +1,114 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(2);
+}
+
+.placeholder {
+    color: $text-placeholder;
+}
+
+//
+// Updates box
+//
+
+.updateContainer {
+    composes: vertical from 'styles/layout.scss';
+    padding: mini-units(2);
+    gap: mini-units(2);
+
+    background: $layer-01;
+}
+
+.updateForm {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(2);
+    inline-size: to-rem(480px);
+    max-inline-size: 100%;
+
+    table {
+        th,
+        td {
+            height: mini-units(4);
+            vertical-align: middle;
+        }
+
+        th {
+            text-align: start;
+            font-weight: bold;
+        }
+        td {
+            text-align: end;
+        }
+    }
+}
+.updateFormFooter {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(4);
+    margin-block-start: mini-units(2);
+    user-select: none;
+
+    .estimatedDuration {
+        color: $text-secondary;
+        line-height: 1.28;
+    }
+}
+
+.changelog {
+    margin-top: mini-units(6);
+
+    .title {
+        @include type-style('heading-02');
+        margin-bottom: mini-units(1);
+    }
+}
+.description {
+    padding: mini-units(2);
+    margin-bottom: mini-units(2);
+
+    font-size: 1rem;
+    color: $text-secondary;
+    background-color: $layer-accent;
+
+    .version {
+        @include type-style('productive-heading-03');
+    }
+
+    p {
+        font-size: inherit !important;
+        width: 100%;
+        max-width: to-rem(1000px);
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        margin: 1em 0 0.7em;
+
+        line-height: 1.6;
+        font-weight: bold;
+        font-style: normal;
+        font-size: to-rem(14px);
+
+        &:first-child {
+            margin-top: 0;
+        }
+    }
+
+    ul {
+        position: relative;
+        margin: 0.7rem 0 0 0.5rem;
+        max-width: to-rem(450px);
+        padding-inline-start: 1em;
+
+        li {
+            list-style-type: disc;
+            list-style-position: outside;
+            line-height: 1.7;
+        }
+    }
+}

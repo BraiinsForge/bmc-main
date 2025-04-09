@@ -1,0 +1,23 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: inline vertical from 'styles/layout.scss';
+    gap: mini-units(3);
+}
+
+.comboBox {
+    input {
+        padding-inline-end: 5.5rem !important;
+    }
+
+    // Hide the error icon
+    [class*='invalid-icon'] {
+        display: none;
+    }
+
+    // Hide the clear button
+    // (covered by the decorator icon)
+    button[class*='selection'] {
+        display: none;
+    }
+}

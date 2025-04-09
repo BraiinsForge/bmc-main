@@ -38,8 +38,8 @@ test:
 # Build
 #
 
-.PHONY: check
-check: format lint test
+.PHONY: validate
+validate: format lint test
 
 .PHONY: build
 build:
@@ -47,13 +47,14 @@ build:
 
 .PHONY: dev
 dev:
-	yarn run rsbuild dev --open
+	yarn run rsbuild dev
 
 .PHONY: serve
 serve:
 	cd ..; \
 	cargo run --package bmc-mock -- \
 		--address="0.0.0.0:6070" \
+		--system-password="root" \
 		--www-path="$(shell realpath ./dist)" \
 		--mockfs-path="$(shell realpath ./@mockfs)"
 
@@ -68,3 +69,19 @@ storybook-start:
 	  --port=6006 \
 	  --exact-port \
 	  --disable-telemetry
+
+.PHONY: minify-png
+minify-png:
+	@which oxipng > /dev/null || (echo "Error: oxipng is not installed" && exit 1)
+	oxipng --zopfli --fast --alpha --strip=safe --opt=max --recursive --preserve ./src
+
+.PHONY: minify-svg
+minify-svg:
+	yarn run svgo --recursive --folder ./src
+
+.PHONY: minify-images
+minify-images: minify-png minify-svg
+
+.PHONY: intl-extract
+intl-extract:
+	yarn run formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json

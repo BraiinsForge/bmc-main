@@ -1,11 +1,10 @@
 // Global utils
-import { invert } from 'es-toolkit';
 import { abort } from '@/lib/dom';
-import type { iFormErrors } from '@/lib/form';
-import type { PlainProtoMessage as Raw, PartialMessage } from '@/lib/proto';
+import { invert, camelCase } from 'es-toolkit';
+import { type iFormErrors, hasFormErrors } from '@/lib/form';
 
 // 3rd parties
-import { create } from '@bufbuild/protobuf';
+import { create, type Message } from '@bufbuild/protobuf';
 import { ConnectError, Code } from '@connectrpc/connect';
 import * as WktError from './gen/google/rpc/error_details_pb';
 
@@ -40,30 +39,23 @@ export function parseError(error: unknown | Error | ConnectError, defaultMessage
 // we can have multiple errors per field, so we need to account for that
 // in our unified form errors type.
 export type FormErrors<FieldName extends keyof any> = iFormErrors<FieldName, string[]>;
-export function formErrorsAreEmpty<Errors extends FormErrors<any>>(errors: Maybe<Errors>): boolean {
-    if (!errors) return true;
-    if (errors.global?.length) return false;
-    for (const field in Object.values(errors.fields || {})) {
-        if (field?.length) return false;
-    }
-    return true;
-}
-
-export function parseFormErrors<FieldName extends string>(
+export function parseFormErrors<FieldName extends keyof any>(
     error: RpcStatus,
     knownFieldNames: FieldName[],
 ): FormErrors<FieldName> {
     const res = {
         global: [error.message] as string[],
-        fields: {} as Record<FieldName, string[]>,
+        fields: {} as Partial<Record<FieldName, null | string[]>>,
     } satisfies FormErrors<FieldName>;
 
     error.fieldViolations.forEach(x => {
-        const field = x.field as FieldName;
+        // Typescript codegen transforms proto message fields to `camelCase`,
+        // but backend will send them in their original `snake_case` form.
+        const key = camelCase(x.field) as FieldName;
 
-        if (knownFieldNames.includes(field)) {
-            if (Array.isArray(res.fields[field])) res.fields[field].push(x.description);
-            else res.fields[field] = [x.description];
+        if (knownFieldNames.includes(key)) {
+            if (Array.isArray(res.fields[key])) res.fields[key].push(x.description);
+            else res.fields[key] = [x.description];
         } else {
             res.global.push(x.description);
         }
@@ -71,10 +63,18 @@ export function parseFormErrors<FieldName extends string>(
 
     return res;
 }
-
-export function Value<T>(value: T): { value: T } {
-    return { value };
+export function renderFieldErrorsAsList(fieldErrors: Maybe<string[]>): null | string {
+    if (!fieldErrors) return null;
+    if (fieldErrors.length === 1) return fieldErrors[0];
+    return fieldErrors.map(x => `- ${x}`).join('\n');
 }
+
+export type MessageFields<T extends Message> = keyof Omit<T, '$unknown' | '$typeName'>;
+export type FormValues<T extends Message> = { [Key in MessageFields<T>]: T[Key] };
+export type FormState<T extends Message, ExtraValues extends void | Record<string, any> = void> = {
+    values: ExtraValues extends void ? FormValues<T> : FormValues<T & ExtraValues>;
+    errors: ExtraValues extends void ? FormErrors<MessageFields<T>> : FormErrors<MessageFields<T & ExtraValues>>;
+};
 
 // Utilities index
 export * from './rpc';
@@ -84,9 +84,9 @@ export {
     abort,
     create,
     ConnectError,
+    hasFormErrors,
     // Types
-    type Raw,
-    type PartialMessage,
+    type Message,
 };
 
 export type { CallOptions } from '@connectrpc/connect';

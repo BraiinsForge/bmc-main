@@ -91,19 +91,3 @@
     text-rendering: optimizelegibility;
     -webkit-font-smoothing: subpixel-antialiased;
 }
-
-/// BraiinsDisplay
-@font-face {
-    font-family: 'BraiinsDisplay_Grade_1';
-    src:
-        url('@/res/fonts/braiins-display/BraiinsDisplay-Grade1.woff2') format('woff2'),
-        url('@/res/fonts/braiins-display/BraiinsDisplay-Grade1.woff') format('woff'),
-        url('@/res/fonts/braiins-display/BraiinsDisplay-Grade1.ttf') format('truetype'),
-        url('@/res/fonts/braiins-display/BraiinsDisplay-Grade1.svg#BraiinsDisplay-Grade1') format('svg');
-    font-weight: normal;
-    font-style: normal;
-    font-display: swap;
-}
-.braiinsDisplay {
-    font-family: 'BraiinsDisplay_Grade_1', BraiinsSans, sans-serif;
-}

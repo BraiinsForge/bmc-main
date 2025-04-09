@@ -1,0 +1,64 @@
+@use 'styles/carbon' as *;
+
+$left-size: to-rem(558px);
+$left-size-min: to-rem(280px);
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+    container-type: inline-size;
+
+    display: grid;
+    grid-template-areas:
+        'title       widget'
+        'description widget';
+
+    // Justify the rows up
+    grid-template-rows: auto 1fr;
+    grid-template-columns: minmax($left-size-min, 1fr) 1fr;
+    align-items: start;
+
+    background-color: $layer-01;
+    padding: mini-units(2);
+    gap: mini-units(0.5) mini-units(7);
+
+    @container (width <= 880px) {
+        grid-template-areas:
+            'title      '
+            'description'
+            'widget     ';
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        row-gap: mini-units(0.5);
+
+        .widget {
+            margin-block-start: mini-units(2);
+        }
+    }
+}
+
+.title {
+    grid-area: title;
+    position: relative;
+    inline-size: $left-size;
+
+    color: $text-primary;
+    font-size: to-rem(14px);
+    font-weight: 600;
+    line-height: 1.28;
+}
+
+.description {
+    grid-area: description;
+    position: relative;
+    max-inline-size: $left-size;
+
+    color: $text-secondary;
+    font-size: to-rem(14px);
+    font-weight: 400;
+    line-height: 1.28;
+}
+
+.widget {
+    grid-area: widget;
+    position: relative;
+}

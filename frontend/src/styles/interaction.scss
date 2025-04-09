@@ -1,32 +1,6 @@
 @use '@/styles/var/transition';
 @use '@/styles/carbon' as *;
 
-.noSelection {
-    user-select: none;
-}
-
-.animatedAll {
-    transition: all 150ms transition.$transition-timing-ease-in-out;
-}
-.animatedColor {
-    transition-duration: 150ms;
-    transition-property: color, background, border;
-    transition-timing-function: transition.$transition-timing-ease-in-out;
-}
-.animatedOpacity {
-    transition: opacity 150ms transition.$transition-timing-ease-in-out;
-}
-
-.slow {
-    transition-duration: 600ms;
-}
-.medium {
-    transition-duration: 300ms;
-}
-.fast {
-    transition-duration: 150ms;
-}
-
 // https://css-tricks.com/custom-scrollbars-in-webkit/
 @mixin scrollbar() {
     scrollbar-color: $scrollbar-fg $scrollbar-bg;
@@ -57,60 +31,4 @@
 }
 .scrollbar {
     @include scrollbar;
-}
-
-.inputButton {
-    composes: horizontal justified center from 'styles/layout.scss';
-    composes: body-short-01 from 'styles/carbon/typography.scss';
-    position: relative;
-
-    max-width: 100%;
-    padding: 0 1rem;
-    gap: mini-units(1);
-
-    appearance: none;
-    cursor: pointer;
-
-    background-color: $field-01;
-    text-align: start;
-    color: $text-primary;
-    border: {
-        width: 0 0 1px;
-        style: solid;
-        color: $border-strong;
-    }
-
-    &:hover,
-    &:focus {
-        background-color: $background-selected;
-    }
-    &:focus {
-        border: {
-            width: 1px;
-            color: $focus;
-        }
-    }
-
-    > * {
-        max-width: 100%;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-    }
-}
-
-@mixin visuallyHidden {
-    position: absolute;
-    overflow: hidden;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    border: 0;
-    margin: -1px;
-    clip: rect(0, 0, 0, 0);
-    visibility: inherit;
-    white-space: nowrap;
-}
-.visuallyHidden {
-    @include visuallyHidden;
 }

@@ -17,13 +17,6 @@ export function mergeRefs<T>(...refs: Array<Maybe<Ref<T>>>): RefCallback<T> {
     };
 }
 
-export function populateRef<T>(ref: Maybe<Ref<T>>, value: T): void {
-    if (!ref) return;
-
-    if (typeof ref === 'function') ref(value);
-    else if (Object(ref) === ref) ref.current = value;
-}
-
 export type ElementKind = keyof JSX.IntrinsicElements;
 
 type InferElementFromDetailedProps<T extends DetailedHTMLProps<HTMLAttributes<unknown>, unknown>> =

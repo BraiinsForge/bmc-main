@@ -41,7 +41,7 @@ export default {
             toolbar: {
                 title: 'Theme',
                 icon: 'eye',
-                items: Object.entries(THEME).map(([k, v]) => ({ value: k, title: `${k} (${v})` })),
+                items: Object.keys(THEME).map(key => ({ value: key, title: `${key} (${THEME[key]})` })),
             },
         },
     },
@@ -52,7 +52,7 @@ export default {
             return (
                 <Container
                     story={story}
-                    theme={context.globals.theme}
+                    theme={context.globals.theme || THEME.dark}
                     i18n={null /* languagesData[context.globals.language] */}
                 />
             );

@@ -35,17 +35,20 @@ export default defineConfig({
         hmr: true,
         liveReload: true,
         progressBar: true,
-        writeToDisk: false,
+        writeToDisk: true,
     },
 
     html: {
         template: './src/index.html',
-        favicon: './src/res/ii.svg',
+        favicon: './src/res/svg/ii.svg',
     },
 
     output: {
-        legalComments: 'linked',
+        emitAssets: true,
         sourceMap: !isProduction,
+        legalComments: 'linked',
+
+        emitCss: true,
         cssModules: {
             // Math all scss files that do not have `.global` in their name
             auto: resource => {
@@ -67,7 +70,7 @@ export default defineConfig({
             devtool: 'source-map',
             experiments: {
                 css: true,
-                topLevelAwait: false,
+                topLevelAwait: true,
                 futureDefaults: true,
             },
             module: {
@@ -80,9 +83,20 @@ export default defineConfig({
                 ],
             },
         },
+
+        swc: {
+            jsc: {
+                experimental: {
+                    plugins: [['@swc/plugin-formatjs', { ast: true }]],
+                },
+            },
+        },
     },
 
     server: {
+        open: false,
+        compress: true,
+        printUrls: true,
         proxy: {
             '/braiins.bmc': {
                 target: 'http://localhost:6070',
