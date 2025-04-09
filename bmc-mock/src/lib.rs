@@ -1,30 +1,33 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::Result;
+use async_trait::async_trait;
+use bmc_core::entry::Initializer;
 use bmc_core::{BmcManager, Configuration, log};
 use clap::Parser;
 
 mod cli;
 mod mockfs;
 
-pub fn init() -> Result<(impl BmcManager, Configuration)> {
-    log::init();
+pub struct MockInitializer;
 
-    let config = cli::Config::parse();
+#[async_trait]
+impl Initializer for MockInitializer {
+    async fn initialize(self) -> Result<(impl BmcManager, Configuration)> {
+        log::init();
 
-    let mockfs = mockfs::MockFs::new(&config.mockfs_path);
-    mockfs.init()?;
+        let config = cli::Config::parse();
 
-    let config = config.into();
+        let mockfs = mockfs::MockFs::new(&config.mockfs_path);
+        mockfs.init()?;
 
-    Ok((MockManager, config))
+        let config = config.into();
+
+        Ok((MockManager, config))
+    }
 }
 
-pub fn get_manager() -> impl BmcManager {
-    MockManager
-}
-
-struct MockManager;
+pub struct MockManager;
 
 impl BmcManager for MockManager {
     fn version(&self) -> String {

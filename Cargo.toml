@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "bmc",
     "bmc-core",
     "bmc-grpc",
     "bmc-mock",
@@ -71,11 +70,10 @@ wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
 anyhow = "1.0.97"
+async-trait = "0.1.88"
 axum = "0.8.3"
 bmc-core = { path = "bmc-core" }
 bmc-grpc = { path = "bmc-grpc" }
-bmc-mock = { path = "bmc-mock" }
-bmc-openwrt = { path = "bmc-openwrt" }
 chrono = "0.4.40"
 clap = { version = "4.5.35", features = ["derive", "std"] }
 dirs = "6.0.0"
@@ -85,7 +83,6 @@ hex = "0.4.3"
 hyper = "1.6.0"
 mime_guess = "2.0.5"
 prost = "0.13"
-prost-types = "0.13"
 sha2 = "0.10.8"
 tokio = { version = "1.44.2", features = ["full"] }
 tokio-util = "0.7"

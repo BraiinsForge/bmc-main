@@ -242,22 +242,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "bmc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bmc-core",
- "bmc-mock",
- "bmc-openwrt",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "bmc-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "bmc-grpc",
  "chrono",
@@ -292,9 +281,11 @@ name = "bmc-mock"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bmc-core",
  "clap",
  "dirs",
+ "tokio",
 ]
 
 [[package]]
@@ -302,7 +293,9 @@ name = "bmc-openwrt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bmc-core",
+ "tokio",
 ]
 
 [[package]]

@@ -1,25 +1,19 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::Result;
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
-
 use bmc_core::{App, Configuration};
-
-#[cfg(not(target_arch = "arm"))]
-use bmc_mock as platform;
-
-#[cfg(target_arch = "arm")]
-use bmc_openwrt as platform;
+use bmc_mock::MockManager;
+use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
 struct TestApp {
     address: String,
 }
 
 async fn start_app() -> Result<TestApp> {
-    let manager = platform::get_manager();
+    let manager = MockManager {};
 
     let config = Configuration {
-        address: SocketAddr::from_str("127.0.0.1:0").expect("Cannot bind to socket address"),
+        address: SocketAddr::from_str("127.0.0.1:0").expect("BUG: Cannot bind to socket address"),
         ..Default::default()
     };
 

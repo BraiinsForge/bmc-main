@@ -93,7 +93,7 @@ test:
 bmc-mock:
   <<: *app
   script:
-    - nix build .#bmc
+    - nix build .#bmc-mock
 
 bmc-openwrt:
   <<: *app

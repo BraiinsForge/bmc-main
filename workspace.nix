@@ -2,9 +2,13 @@
 let lib = pkgs.lib; in
 let
   crates = with pkgs.ii.rust; {
-    bmc = defineCrate {
-      path = "./bmc";
-      packageName = "bmc";
+    bmc-mock = defineCrate {
+      path = "./bmc-mock";
+      packageName = "bmc-mock";
+    };
+    bmc-openwrt = defineCrate {
+      path = "./bmc-openwrt";
+      packageName = "bmc-openwrt";
     };
   };
 
@@ -42,18 +46,9 @@ let
     };
   };
 
-  allCrates = {
-    crate = [
-      { def = "bmc"; }
-    ];
-  };
-
   # use each profile to build each crate
   allTuples = lib.cartesianProduct
     ({
-      platform = [
-        "openwrt"
-      ];
       # NOTE: Update README.md when changing these sets!
       arch = [
         "armv7"
@@ -62,19 +57,14 @@ let
         "release"
         "debug"
       ];
-    } // allCrates);
+      crate = [
+        { def = "bmc-openwrt"; }
+      ];
+    });
 
-  packages = builtins.listToAttrs (lib.forEach allTuples ({ platform, arch, profile, crate }: {
-    name = "${crate.def}-${platform}-${arch}-${profile}";
-    value = build-profiles."${arch}-${profile}".buildCrate crates.${crate.def} {
-      noDefaultFeatures = true;
-      features = [ "${crate.def}/${platform}" ];
-    };
-  }));
-
-  fastPackages = builtins.listToAttrs (lib.forEach (lib.cartesianProduct allCrates) ({ crate }: {
-    name = "${crate.def}";
-    value = build-profiles.fast.buildCrate crates.${crate.def} { };
+  packages = builtins.listToAttrs (lib.forEach allTuples ({ arch, profile, crate }: {
+    name = "${crate.def}-${arch}-${profile}";
+    value = build-profiles."${arch}-${profile}".buildCrate crates.${crate.def} { };
   }));
 
   specialPackages = {
@@ -84,6 +74,8 @@ let
 
 in
 {
-  packages = packages // fastPackages // specialPackages;
+  packages = packages // specialPackages // {
+    bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
+  };
   devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) build-profiles;
 }

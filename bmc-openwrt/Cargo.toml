@@ -7,4 +7,6 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 bmc-core.workspace = true
+tokio.workspace = true
