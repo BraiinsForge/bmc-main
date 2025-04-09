@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "bmc",
+    "bmc-display",
     "bmc-grpc",
     "bmc-mock",
     "bmc-openwrt",
@@ -84,6 +85,7 @@ hyper = "1.6.0"
 mime_guess = "2.0.5"
 prost = "0.13"
 sha2 = "0.10.8"
+slint = "1.10"
 tokio = { version = "1.44.2", features = ["full"] }
 tokio-util = "0.7"
 tonic = "0.13.0"

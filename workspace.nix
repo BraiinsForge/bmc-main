@@ -22,6 +22,11 @@ let
     targetDeps = build_pkgs: with build_pkgs; [
       # openssl.dev
     ];
+    env = {
+      FONTCONFIG_FILE = pkgs.makeFontsConf {
+        fontDirectories = [ pkgs.corefonts ];
+      };
+    };
   };
 
   build-profiles = with workspace; {

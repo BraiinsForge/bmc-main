@@ -17,6 +17,9 @@
       let
         pkgs = import nixpkgs {
           inherit localSystem;
+          config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [
+            "corefonts"
+          ];
           overlays = [
             fenix.overlays.default
             (nixlib.mkOverlay {

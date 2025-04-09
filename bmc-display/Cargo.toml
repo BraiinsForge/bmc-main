@@ -1,0 +1,14 @@
+[package]
+name = "bmc-display"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+slint = { workspace = true, features = ["compat-1-2", "std"] }
+
+[build-dependencies]
+anyhow.workspace = true
+slint-build = "1.10"
+
+[lints]
+workspace = true
