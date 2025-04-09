@@ -1,0 +1,15 @@
+# Learn more: https://buf.build/docs/configuration/v2/buf-gen-yaml
+version: v2
+
+clean: true
+
+inputs:
+  - directory: ../bmc-grpc/proto
+  - module: buf.build/googleapis/googleapis
+    types:
+      - "google.rpc"
+
+plugins:
+  - local: protoc-gen-es
+    opt: target=ts,import_extension=none
+    out: src/proto/gen

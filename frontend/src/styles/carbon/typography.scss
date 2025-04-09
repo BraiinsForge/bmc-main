@@ -1,0 +1,56 @@
+@use './index' as *;
+
+// https://github.com/carbon-design-system/carbon/blob/main/docs/migration/v11.md#type-tokens
+.caption-01 {
+    // @include type-style(caption-01);
+    font-size: inherit;
+}
+.label-01 {
+    @include type-style(label-01);
+}
+.helper-text-01 {
+    @include type-style(helper-text-01);
+}
+
+.body-short-01 {
+    @include type-style(body-compact-01);
+}
+.body-short-02 {
+    @include type-style(body-compact-02);
+}
+
+.body-long-01 {
+    @include type-style(body-01);
+}
+.body-long-02 {
+    @include type-style(body-02);
+}
+
+.code-01 {
+    @include type-style(code-01);
+}
+.code-02 {
+    @include type-style(code-02);
+}
+
+.heading-01 {
+    @include type-style(heading-01);
+}
+.heading-02 {
+    @include type-style(heading-02);
+}
+.heading-03 {
+    @include type-style(heading-03);
+}
+.heading-04 {
+    @include type-style(heading-04);
+}
+.heading-05 {
+    @include type-style(heading-05);
+}
+.heading-06 {
+    @include type-style(heading-06);
+}
+.heading-07 {
+    @include type-style(heading-07);
+}

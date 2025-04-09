@@ -1,0 +1,226 @@
+// Carbon has to be configured
+@use '@/styles/carbon' as *;
+@use '@/styles/var/shadows';
+
+// …and then we can import all their styles
+@use '@carbon/react';
+
+// Our stuff
+@use '../interaction';
+@use './fonts';
+
+$navbar-background: $braiins-gray-100;
+$navbar-border-color: $braiins-gray-70;
+$navbar-focus-color: $braiins-gray-60;
+$navbar-hover-item-bg-color: $braiins-gray-70;
+
+/* Theme configuration */
+// Default + light
+:root {
+    @include font-family('sans');
+    @include light-theme;
+}
+
+// Explicit
+.br-theme-dark {
+    @include dark-theme;
+}
+.br-theme-light {
+    @include light-theme;
+}
+
+// Auto
+.br-theme-auto {
+    @media (prefers-color-scheme: dark) {
+        @include dark-theme;
+    }
+
+    @media (prefers-color-scheme: light) {
+        @include light-theme;
+    }
+}
+
+// Inverse
+.br-theme-inverse {
+    @media (prefers-color-scheme: dark) {
+        @include light-theme;
+    }
+
+    @media (prefers-color-scheme: light) {
+        @include dark-theme;
+    }
+}
+.br-theme-dark .br-theme-inverse {
+    @include light-theme;
+}
+.br-theme-light .br-theme-inverse {
+    @include dark-theme;
+}
+
+//
+// Patch their styles to fix annoying bugs
+//
+
+.cds--select-input {
+    line-height: 1.5;
+}
+
+// Even though we patch a lot around buttons
+// in our component they still use theirs
+// in some places
+// eg.:
+//  - DataTable / Batch actions toolbar / Cancel
+.cds--btn {
+    align-items: center;
+}
+
+input[type='number'],
+input.cds--date-picker__input {
+    font-family: font-family(sans) !important;
+}
+
+// Header links always have pointer cursor
+// (we don't set href, so they wouldn't)
+header.cds--header {
+    --cds-background: #{$navbar-background};
+    --cds-text-primary: #fff;
+    --cds-text-secondary: #{$braiins-gray-40};
+    --cds-icon-primary: #fff;
+    --cds-icon-secondary: #{$braiins-gray-40};
+    border-bottom: 1px solid $navbar-border-color;
+
+    // Hide the vertical line they show in front of the navigation
+    nav.cds--header__nav::before {
+        display: none !important;
+    }
+
+    a.cds--header__menu-item {
+        cursor: pointer;
+        text-decoration: none;
+
+        &:focus {
+            border-color: $navbar-focus-color;
+        }
+
+        > .cds--text-truncate--end > svg {
+            vertical-align: middle;
+        }
+    }
+
+    // Links in the global navigation are always white
+    > .cds--header__nav a.cds--header__menu-item {
+        color: #fff !important;
+    }
+    // …whereas the global actions are dimmer
+    .cds--header__global {
+        align-items: center;
+        color: $braiins-gray-30;
+    }
+
+    // Applied to header menu button
+    // on mobile (burger)
+    .cds--header__action {
+        width: auto;
+        min-width: 3rem;
+        height: $shell-header-navbar-height;
+        padding: 13px;
+    }
+
+    // Sub-menu's in header
+    .cds--header__submenu .cds--header__menu {
+        background-color: $braiins-gray-80 !important;
+
+        .cds--header__menu-item {
+            color: #fff !important;
+            border: none !important;
+            background: none !important;
+
+            &:hover,
+            &:focus {
+                background: $navbar-hover-item-bg-color !important;
+            }
+        }
+    }
+}
+
+//
+// Progress
+//
+
+.cds--progress--space-equal .cds--progress-label {
+    margin-inline: 0 0.75rem !important;
+}
+.cds--progress-step svg {
+    margin-inline: 0 0.5rem !important;
+}
+.cds--progress-optional {
+    inset-inline: 0 unset !important;
+    margin-inline: 1.5rem 0 !important;
+}
+
+.cds--inline-loading__animation {
+    margin-inline-end: 0.5rem;
+}
+
+//
+// Forms
+//
+
+// Stretch form controls to full-width
+.cds--text-area__wrapper,
+.cds--select,
+.cds--multi-select__wrapper,
+.cds--multi-select,
+.cds--select-input__wrapper,
+.cds--select-input {
+    width: 100%;
+    min-width: 100%;
+}
+
+.cds--text-input-wrapper--readonly .cds--text-input {
+    color: $text-secondary;
+    background-color: $field-01;
+}
+
+.cds--text-input__label-helper-wrapper {
+    margin-inline: 0 1.5rem;
+}
+
+.cds--label:empty {
+    display: none !important;
+}
+
+.cds--multi-select .cds--list-box__menu {
+    min-width: fit-content;
+}
+
+// RTL checkbox
+.cds--checkbox-label {
+    padding-inline: 1.75rem 0;
+
+    &::before {
+        inset-inline-start: 0;
+        margin-inline: 0.1875rem 0.125rem;
+    }
+    &::after {
+        inset-inline-start: 0.4375rem;
+    }
+}
+
+// Menu items in dropdowns
+.cds--list-box__menu-item__option {
+    padding-inline: 0 1.5rem;
+}
+
+// Custom scrollbars in menus
+.cds--list-box__menu {
+    @include interaction.scrollbar;
+}
+
+.cds--overflow-menu--divider {
+    border-top: 1px solid $border-strong;
+}
+
+.cds--modal-container {
+    box-shadow: shadows.$elevation-16dp;
+}

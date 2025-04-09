@@ -1,0 +1,29 @@
+$layout-statusbar-height: 25px;
+$layout-nav-height: 55px;
+
+$layout-menubar-collapsed-width: 85px;
+$layout-menubar-expanded-width: 300px;
+$layout-menubar-expanded-width-mobile: 260px;
+
+// The design is said to be centered around grid with following rules
+//  - max-width: 1170
+//  - 12 columns
+//  - column/gutter width: 70px/30px
+//
+//      ↓ column (70px)
+//    +-----------
+//    |   |  |
+//    +---+--+----
+//          ↑ gucolumn (30px)
+//
+// Narrow content width is then full one without 2 columns on each side (2 * (70 + 30))
+
+$layout-centered-content-width: 1170px;
+$layout-centered-content-width-narrow: 1170px;
+
+// We want to have these to be the same width:
+//  - "exit workspace button"
+//  - "username in statusbar"
+//
+// …and this is the width that we'll use
+$l-topbar-workspace-button-width: 200px;

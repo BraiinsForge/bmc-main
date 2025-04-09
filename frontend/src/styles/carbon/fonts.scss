@@ -1,0 +1,109 @@
+/// IBM Plex
+@font-face {
+    font-display: fallback;
+    font-family: 'IBM Plex Mono';
+    src:
+        url('@/res/fonts/ibmPlex/IBMPlexMono-Regular.woff2') format('woff2'),
+        url('@/res/fonts/ibmPlex/IBMPlexMono-Regular.woff') format('woff'),
+        url('@/res/fonts/ibmPlex/IBMPlexMono-Regular.otf') format('opentype');
+    font-style: normal;
+    font-weight: normal;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: subpixel-antialiased;
+}
+
+/// BraiinsSans
+// semi-bold
+@font-face {
+    font-display: fallback;
+    font-family: BraiinsSans;
+    src:
+        url('@/res/fonts/braiins/BraiinsSans-SemiBold.woff2') format('woff2'),
+        url('@/res/fonts/braiins/BraiinsSans-SemiBold.woff') format('woff'),
+        url('@/res/fonts/braiins/BraiinsSans-SemiBold.otf') format('opentype');
+    font-style: normal;
+    font-weight: 600;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: subpixel-antialiased;
+}
+// semi-bold italic
+@font-face {
+    font-display: fallback;
+    font-family: BraiinsSans;
+    src:
+        url('@/res/fonts/braiins/BraiinsSans-SemiBold-Italic.woff2') format('woff2'),
+        url('@/res/fonts/braiins/BraiinsSans-SemiBold-Italic.woff') format('woff'),
+        url('@/res/fonts/braiins/BraiinsSans-SemiBold-Italic.otf') format('opentype');
+    font-style: italic;
+    font-weight: 600;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: subpixel-antialiased;
+}
+// bold
+@font-face {
+    font-display: fallback;
+    font-family: BraiinsSans;
+    src:
+        url('@/res/fonts/braiins/BraiinsSans-Bold.woff2') format('woff2'),
+        url('@/res/fonts/braiins/BraiinsSans-Bold.woff') format('woff'),
+        url('@/res/fonts/braiins/BraiinsSans-Bold.otf') format('opentype');
+    font-style: normal;
+    font-weight: bold;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: subpixel-antialiased;
+}
+// bold italic
+@font-face {
+    font-display: fallback;
+    font-family: BraiinsSans;
+    src:
+        url('@/res/fonts/braiins/BraiinsSans-Bold-Italic.woff2') format('woff2'),
+        url('@/res/fonts/braiins/BraiinsSans-Bold-Italic.woff') format('woff'),
+        url('@/res/fonts/braiins/BraiinsSans-Bold-Italic.otf') format('opentype');
+    font-style: italic;
+    font-weight: bold;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: subpixel-antialiased;
+}
+// regular
+@font-face {
+    font-display: fallback;
+    font-family: BraiinsSans;
+    src:
+        url('@/res/fonts/braiins/BraiinsSans-Regular.woff2') format('woff2'),
+        url('@/res/fonts/braiins/BraiinsSans-Regular.woff') format('woff'),
+        url('@/res/fonts/braiins/BraiinsSans-Regular.otf') format('opentype');
+    font-style: normal;
+    font-weight: normal;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: subpixel-antialiased;
+}
+// regular italic
+@font-face {
+    font-display: fallback;
+    font-family: BraiinsSans;
+    src:
+        url('@/res/fonts/braiins/BraiinsSans-Regular-Italic.woff2') format('woff2'),
+        url('@/res/fonts/braiins/BraiinsSans-Regular-Italic.woff') format('woff'),
+        url('@/res/fonts/braiins/BraiinsSans-Regular-Italic.otf') format('opentype');
+    font-style: italic;
+    font-weight: normal;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: subpixel-antialiased;
+}
+
+/// BraiinsDisplay
+@font-face {
+    font-family: 'BraiinsDisplay_Grade_1';
+    src:
+        url('@/res/fonts/braiins-display/BraiinsDisplay-Grade1.woff2') format('woff2'),
+        url('@/res/fonts/braiins-display/BraiinsDisplay-Grade1.woff') format('woff'),
+        url('@/res/fonts/braiins-display/BraiinsDisplay-Grade1.ttf') format('truetype'),
+        url('@/res/fonts/braiins-display/BraiinsDisplay-Grade1.svg#BraiinsDisplay-Grade1') format('svg');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+.braiinsDisplay {
+    font-family: 'BraiinsDisplay_Grade_1', BraiinsSans, sans-serif;
+}

@@ -1,0 +1,49 @@
+@use 'styles/carbon' as *;
+
+.root {
+    display: grid;
+    grid-template-areas:
+        'header'
+        'main'
+        'footer';
+    grid-template-rows: auto 1fr auto;
+    grid-template-columns: 100%;
+    height: 100vh;
+}
+
+.header {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(2);
+
+    grid-area: header;
+
+    position: sticky;
+    z-index: 100;
+    top: 0;
+
+    height: 48px;
+    padding: 0 mini-units(2);
+
+    background: $layer-01;
+    color: $text-primary;
+}
+
+.main {
+    grid-area: main;
+    background: $background;
+}
+
+.footer {
+    composes: horizontal center from 'styles/layout.scss';
+    grid-area: footer;
+
+    position: sticky;
+    z-index: 100;
+    bottom: 0;
+
+    height: 48px;
+    padding: 0 mini-units(2);
+
+    background: $layer-01;
+    color: $text-primary;
+}

@@ -1,0 +1,169 @@
+@use 'sass:color';
+@use '@/styles/carbon/colors';
+
+$orange: #ec8a39;
+$white: white;
+$gold: gold;
+$red: colors.$braiins-accent-red;
+$green: colors.$braiins-green-40;
+$blue: #4291ff;
+$purple: #a782bb;
+$pink: #fa00fa;
+$gray: #808080;
+
+pre[class^='language-'],
+.prism-code {
+    direction: ltr !important;
+
+    code {
+        vertical-align: top;
+    }
+
+    .token {
+        &.table.class-name,
+        &.property,
+        &.keyword,
+        &.boolean {
+            color: $orange !important;
+        }
+
+        &.string {
+            color: #8ea765 !important;
+        }
+
+        &.comment {
+            color: $gray !important;
+        }
+
+        &.number {
+            color: $blue !important;
+        }
+
+        &.function {
+            color: $gold !important;
+        }
+
+        &.operator {
+            color: $white;
+        }
+    }
+
+    &.language-bash {
+        .token.builtin,
+        .token.operator,
+        .token.function {
+            color: $orange !important;
+        }
+    }
+
+    &.language-yaml,
+    &.language-toml,
+    &.language-yml {
+        .token-line.deleted {
+            background: color.adjust($red, $alpha: -0.9);
+        }
+        .token-line.inserted {
+            background: color.adjust($green, $alpha: -0.9);
+        }
+        .token.key {
+            color: $orange !important;
+        }
+    }
+
+    &.language-json {
+        .token.property {
+            color: $purple !important;
+        }
+        .token.operator {
+            color: $orange !important;
+        }
+    }
+
+    &.language-url {
+        .token.variable {
+            color: $orange !important;
+        }
+        .token.placeholder,
+        .token.value {
+            color: $gold !important;
+        }
+        .token.operator {
+            color: $white !important;
+        }
+        .token.plain,
+        .token.protocol,
+        .token.punctuation {
+            color: $white !important;
+        }
+    }
+
+    &.language-regexp {
+        .token.container {
+            color: $blue;
+        }
+
+        .token.set {
+            &.start,
+            &.end,
+            &.dash {
+                color: $orange;
+            }
+        }
+
+        .token.group {
+            padding: 0.3em 0;
+            background: color.adjust($gold, $alpha: -0.9);
+            color: $gold;
+        }
+
+        .token.anchor {
+            color: $orange;
+        }
+
+        .token.class {
+            color: $gold;
+        }
+
+        .token.escaped {
+            color: $pink;
+        }
+
+        .token.quantifier {
+            color: $blue;
+        }
+    }
+
+    &.language-log {
+        .token.info {
+            color: colors.$braiins-alert-blue;
+        }
+        .token.warning {
+            color: colors.$braiins-alert-orange;
+        }
+        .token.error {
+            color: colors.$braiins-alert-red;
+        }
+
+        .token.date {
+            color: $purple;
+        }
+    }
+
+    &.language-cron {
+        .token.times {
+            &.star {
+                color: $red;
+            }
+            &.operator {
+                color: $gold !important;
+            }
+            &.value {
+                color: $blue !important;
+            }
+        }
+
+        .token.command {
+            // Bash embed
+        }
+    }
+}

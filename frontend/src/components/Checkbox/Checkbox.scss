@@ -1,0 +1,68 @@
+@use 'styles/carbon' as *;
+
+.root {
+    position: relative;
+    max-width: 100%;
+
+    // CDS sets "dir='auto'" on a label wrapper element.
+    // This breaks us in the RTL mode, so we'll revert.
+    > [dir='auto'] {
+        direction: unset !important;
+    }
+
+    // RTL
+    :global(.cds--checkbox-label) {
+        padding-inline: 1.25rem 0;
+
+        &::before {
+            inset-inline-start: 0;
+            margin-inline: 0.1875rem 0.125rem;
+        }
+        &::after {
+            inset-inline-start: 0.4375rem;
+        }
+    }
+
+    // Hide empty label
+    :global(.cds--checkbox-label-text) {
+        max-width: 100%;
+        &:empty {
+            display: none;
+        }
+    }
+}
+.noop {
+    pointer-events: none !important;
+}
+
+.invalid {
+    &::before,
+    &::after {
+        border-color: $support-error !important;
+    }
+    .desc {
+        color: $support-error !important;
+    }
+}
+
+.wrap {
+    composes: vertical start from 'styles/layout.scss';
+}
+.label {
+    composes: body-short-01 from 'styles/carbon/typography.scss';
+    color: $text-primary;
+
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.labelWrap {
+    white-space: normal;
+}
+
+.desc {
+    composes: body-short-01 from 'styles/carbon/typography.scss';
+    margin-top: to-rem(3px);
+    color: $text-secondary;
+}

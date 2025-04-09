@@ -1,0 +1,80 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+
+    background: var(--notif-bg) !important;
+    color: var(--notif-fg) !important;
+
+    margin-top: -0.25rem;
+    font-size: to-rem(14px);
+    line-height: to-rem(18px);
+    text-align: start;
+
+    &::before {
+        opacity: 0;
+    }
+
+    a:focus {
+        outline: 1px solid currentcolor;
+        outline-offset: 2px;
+    }
+
+    :global {
+        .cds--actionable-notification__close-button {
+            &:focus {
+                outline-color: var(--notif-fg) !important;
+            }
+            svg {
+                fill: $icon-inverse !important;
+            }
+        }
+
+        .cds--link {
+            color: $braiins-violet-50 !important;
+        }
+    }
+}
+
+.stretch {
+    width: 100% !important;
+    min-width: unset !important;
+    max-width: 100% !important;
+}
+
+//
+// Colors
+//
+
+@mixin theme($accent) {
+    border-inline-start: 3px solid $accent;
+
+    // carbon-components-react use `::before`
+    // to create a secondary thinner border
+    &::before {
+        border-color: $accent;
+    }
+
+    :global(.cds--inline-notification__icon) {
+        fill: $accent;
+    }
+
+    :global(.cds--actionable-notification__action-button) {
+        background-color: $braiins-accent-violet;
+        border: 1px solid $braiins-accent-violet;
+        color: var(--text-on-color);
+        padding: mini-units(1) mini-units(2) !important;
+    }
+}
+div.root.info {
+    @include theme($braiins-accent-violet);
+}
+div.root.warning {
+    @include theme($braiins-alert-orange);
+}
+div.root.error {
+    @include theme($braiins-alert-red);
+}
+div.root.success {
+    @include theme($braiins-alert-green);
+}

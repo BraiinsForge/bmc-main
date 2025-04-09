@@ -1,0 +1,18 @@
+@use '@/styles/carbon' as *;
+
+.light {
+    background-color: $field-01 !important;
+}
+.inputAddon {
+    background-color: $field-01 !important;
+    border-bottom: 1px solid $border-strong !important;
+
+    &:hover {
+        background-color: $button-secondary-hover !important;
+    }
+}
+
+// Let's not bother with the arrow symbol…
+.root::before {
+    display: none !important;
+}

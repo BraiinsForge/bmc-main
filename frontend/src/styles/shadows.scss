@@ -1,0 +1,26 @@
+// source: https://github.com/PolymerElements/paper-styles/blob/master/shadow.html
+
+@use './var/shadows';
+
+.shadow-transition {
+    transition: box-shadow 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.elevation-2dp {
+    box-shadow: shadows.$elevation-2dp;
+}
+.elevation-3dp {
+    box-shadow: shadows.$elevation-3dp;
+}
+.elevation-4dp {
+    box-shadow: shadows.$elevation-4dp;
+}
+.elevation-6dp {
+    box-shadow: shadows.$elevation-6dp;
+}
+.elevation-8dp {
+    box-shadow: shadows.$elevation-8dp;
+}
+.elevation-16dp {
+    box-shadow: shadows.$elevation-16dp;
+}

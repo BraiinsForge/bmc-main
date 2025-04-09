@@ -1,0 +1,99 @@
+@use '@/styles/carbon' as *;
+
+.root {
+    position: relative;
+    margin: 0 auto;
+    width: 100px;
+    height: 100px;
+
+    &::before {
+        content: '';
+        display: block;
+        padding-top: 100%;
+    }
+}
+
+// Inspired by https://www.cssscript.com/animated-google-loader-with-svg-and-css/
+.spinner {
+    composes: fit from 'styles/layout.scss';
+    animation: rotate 2s linear infinite;
+    transform-origin: center center;
+    pointer-events: none;
+    margin: auto;
+
+    .bg {
+        stroke: $braiins-gray-70;
+        stroke-width: 3px;
+    }
+    .fg {
+        stroke: $braiins-violet-60;
+        stroke-width: 3px;
+        stroke-dasharray: 1, 200;
+        stroke-dashoffset: 0;
+        stroke-linecap: round;
+        animation: dash 1.5s ease-in-out infinite; /* , color 6s ease-in-out infinite */
+    }
+}
+
+@include onLight {
+    .spinner .bg {
+        stroke: $braiins-gray-40;
+    }
+}
+
+.ii {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 34%;
+    height: 34%;
+    transform: translate(-50%, -50%);
+
+    fill: $icon-primary;
+}
+
+.cover {
+    composes: fit vertical centerCenter from 'styles/layout.scss';
+    z-index: 9;
+
+    &::before {
+        position: absolute;
+        content: '';
+        z-index: 8;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: $layer-01;
+        opacity: 0.75;
+    }
+
+    .root {
+        z-index: 10;
+    }
+}
+
+//
+// Animations
+//
+
+@keyframes rotate {
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes dash {
+    0% {
+        stroke-dasharray: 1, 200;
+        stroke-dashoffset: 0;
+    }
+    50% {
+        stroke-dasharray: 89, 200;
+        stroke-dashoffset: -35;
+    }
+    100% {
+        stroke-dasharray: 89, 200;
+        stroke-dashoffset: -124;
+    }
+}

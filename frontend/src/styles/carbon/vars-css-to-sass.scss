@@ -1,0 +1,97 @@
+//
+// CDS vars to SCSS vars
+//
+// This serves as a single source of truth for the project's variables
+// and makes the compilation fail when non-existing tokens are used
+// (which would not be the case with a plain css variable).
+//
+
+@function v($name) {
+    @return var(--cds-#{$name});
+}
+
+$support-error: v('support-error');
+$support-success: v('support-success');
+$support-warning: v('support-warning');
+$support-info: v('support-info');
+$support-error-inverse: v('support-error-inverse');
+
+$button-primary: v('button-primary');
+$button-primary-hover: v('button-primary-hover');
+$button-primary-active: v('button-primary-active');
+$button-secondary: v('button-secondary');
+$button-secondary-hover: v('button-secondary-hover');
+$button-secondary-active: v('button-secondary-active');
+$button-tertiary: v('button-tertiary');
+
+$danger-button-primary: v('danger-button-primary');
+
+$link-primary: v('link-primary');
+$link-secondary: v('link-secondary');
+$link-inverse: v('link-inverse');
+
+$text-primary: v('text-primary');
+$text-error: v('text-error');
+$text-inverse: v('text-inverse');
+$text-disabled: v('text-disabled');
+$text-on-color: v('text-on-color');
+$text-on-color-disabled: v('text-on-color-disabled');
+$text-secondary: v('text-secondary');
+$text-placeholder: v('text-placeholder');
+$text-helper: v('text-helper');
+
+$field-01: v('field-01');
+$field-02: v('field-02');
+$field-hover: v('field-hover');
+
+$icon-primary: v('icon-primary');
+$icon-secondary: v('icon-secondary');
+$icon-inverse: v('icon-inverse');
+$icon-on-color: v('icon-on-color');
+
+$layer-01: v('layer-01');
+$layer-02: v('layer-02');
+$layer-03: v('layer-03');
+$layer-hover: v('layer-hover');
+$layer-accent: v('layer-accent');
+
+$skeleton-background: v('skeleton-background');
+
+$border-strong: v('border-strong');
+$border-subtle: v('border-subtle');
+$border-inverse: v('border-inverse');
+
+$background: v('background');
+$background-inverse: v('background-inverse');
+$background-selected: v('background-selected');
+$background-selected-hover: v('background-selected-hover');
+
+$layer-accent-01: v('layer-accent-01');
+$layer-accent-hover: v('layer-accent-hover');
+$layer-selected-inverse: v('layer-selected-inverse');
+
+$background-hover: v('background-hover');
+$button-secondary-hover: v('button-secondary-hover');
+
+$overlay: v('overlay');
+$focus: v('focus');
+$highlight: v('highlight');
+$interactive: v('interactive');
+
+// https://github.com/carbon-design-system/carbon/blob/main/docs/migration/v11.md#scssglobalsscss_spacingscss
+$spacing-01: v('spacing-01');
+$spacing-02: v('spacing-02');
+$spacing-03: v('spacing-03');
+$spacing-04: v('spacing-04');
+$spacing-05: v('spacing-05');
+$spacing-06: v('spacing-06');
+$spacing-07: v('spacing-07');
+$spacing-08: v('spacing-08');
+$spacing-09: v('spacing-09');
+$spacing-10: v('spacing-10');
+$spacing-11: v('spacing-11');
+$spacing-12: v('spacing-12');
+$spacing-13: v('spacing-13');
+
+$duration-slow-01: v('duration-slow-01');
+$duration-slow-02: v('duration-slow-02');

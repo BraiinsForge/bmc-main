@@ -1,0 +1,60 @@
+$brand-blue-lightest: #5fa9eb;
+$brand-blue-lightest--hover: #3184cc;
+$brand-blue-light: #1176d1;
+$brand-blue-light--hover: #1165af;
+$brand-blue-dark: #07325b;
+$brand-blue-dark--hover: #072849;
+$brand-blue-dark-menu: #0c314e;
+$brand-blue-darkest: #041d31;
+
+$brand-green-light: #00ffa9;
+$brand-green-light--hover: #06e398;
+$brand-green-dark: #034c36;
+$brand-green-dark--hover: #073826;
+
+$brand-red-light: #c01;
+$brand-red-light--hover: #b3000f;
+$brand-red-dark: #80000b;
+$brand-red-dark--hover: #66000a;
+
+$brand-turqoise: #32e2f7;
+$brand-turqoise--hover: #b2f7ff;
+
+$brand-gold: #ffbc00;
+$brand-gold--hover: #ffd500;
+
+$border-form-control: #a8aeb2;
+$inactive-background-color: #e1e1e1;
+$inactive-border-color: #bfbfbf;
+$inactive-text-color: #828b93;
+$active-border-color: #a3a3a3;
+$active-background-color: #ecf6ff;
+
+$site-bg: #f6f6f6;
+
+$disabled-color: $inactive-background-color;
+$text-color-dark: #2f2f2f;
+$text-color-light: #d1d1d1;
+
+$text-primary-color: #041d31;
+$text-secondary-color: #828b93;
+$text-primary-light-color: #f1f1f1;
+$text-secondary-light-color: #d6d6d6;
+
+$border-active-color: $active-border-color;
+$border-inactive-color: #e2e2e2;
+
+// Status indicators
+$color-success: $support-success;
+$color-info: $support-info;
+$color-warning: $support-warning;
+$color-danger: $support-error;
+
+// Monitoring states
+$color-moni-ok: $color-success;
+$color-moni-low: $color-warning;
+$color-moni-off: $support-error;
+$color-moni-dis: $brand-blue-light;
+
+$list-item-bg-hover: #f1f1f1;
+$list-item-bg-active: #f1f1f1;

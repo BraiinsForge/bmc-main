@@ -1,0 +1,138 @@
+{
+    "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+
+    "files": {
+        "ignore": [
+            "packages/boser/mockfs",
+            "**/package.json",
+            ".pnp.cjs",
+            ".pnp.loader.mjs",
+            ".vscode",
+            ".yarn",
+            ".yarnrc.yml"
+        ]
+    },
+
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "recommended": true,
+
+            "correctness": {
+                "noChildrenProp": "off",
+                "noVoidTypeReturn": "off",
+                "noUnreachableSuper": "off",
+                "noInnerDeclarations": "warn",
+                "noUndeclaredVariables": "off",
+                "useExhaustiveDependencies": "warn"
+            },
+
+            "suspicious": {
+                "noShadowRestrictedNames": "off",
+                "noAssignInExpressions": "off",
+                "noConfusingVoidType": "off",
+                "noEmptyInterface": "off",
+                "noArrayIndexKey": "off",
+                "noExplicitAny": "off"
+            },
+
+            "style": {
+                "noParameterAssign": "warn",
+                "noNonNullAssertion": "warn",
+                "useExponentiationOperator": "warn",
+                "noInferrableTypes": "off",
+                "useFragmentSyntax": "off",
+                "useBlockStatements": "off",
+                "useDefaultParameterLast": "off",
+                "noUselessElse": "off"
+            },
+
+            "a11y": {
+                "noAccessKey": "error",
+                "useValidAnchor": "off",
+                "useAnchorContent": "off",
+                "noSvgWithoutTitle": "off",
+                "useSemanticElements": "off",
+                "noLabelWithoutControl": "off",
+                "useKeyWithClickEvents": "warn"
+            },
+
+            "complexity": {
+                "noForEach": "off",
+                "noUselessFragments": "off",
+                "noUselessSwitchCase": "off",
+                "noUselessLoneBlockStatements": "off",
+                "useSimplifiedLogicExpression": "off"
+            },
+
+            "performance": {
+                "noDelete": "off",
+                "noAccumulatingSpread": "off"
+            },
+
+            "nursery": {
+                "useTrimStartEnd": "warn",
+                "noIrregularWhitespace": "warn"
+            }
+        },
+        "ignore": ["*_pb.ts"]
+    },
+
+    "formatter": {
+        "enabled": true,
+        "useEditorconfig": true,
+        "formatWithErrors": false,
+        "attributePosition": "auto",
+        "ignore": ["**/package.json"],
+        "lineWidth": 120,
+        "indentWidth": 4,
+        "indentStyle": "space"
+    },
+
+    "javascript": {
+        "formatter": {
+            "quoteStyle": "single",
+            "quoteProperties": "asNeeded",
+            "trailingCommas": "all",
+            "semicolons": "always",
+            "arrowParentheses": "asNeeded",
+            "jsxQuoteStyle": "double",
+            "bracketSpacing": true
+        }
+    },
+
+    "organizeImports": {
+        "enabled": false
+    },
+
+    "vcs": {
+        "enabled": true,
+        "clientKind": "git",
+        "useIgnoreFile": true,
+        "defaultBranch": "master"
+    },
+
+    "json": {
+        "formatter": { "enabled": true },
+        "parser": {
+            "allowComments": true,
+            "allowTrailingCommas": true
+        },
+        "linter": { "enabled": false }
+    },
+
+    "css": {
+        "formatter": { "enabled": false },
+        "linter": { "enabled": false }
+    },
+
+    "graphql": {
+        "formatter": {
+            "enabled": true,
+            "bracketSpacing": true
+        },
+        "linter": {
+            "enabled": true
+        }
+    }
+}

@@ -1,0 +1,135 @@
+.horizontal,
+.horizontalReverse,
+.vertical,
+.verticalReverse {
+    display: flex;
+}
+
+.inline {
+    display: inline-flex;
+}
+.horizontal {
+    flex-direction: row;
+}
+.horizontalReverse {
+    flex-direction: row-reverse;
+}
+.vertical {
+    flex-direction: column;
+}
+.verticalReverse {
+    flex-direction: column-reverse;
+}
+.wrap {
+    flex-wrap: wrap;
+}
+.wrapReverse {
+    flex-wrap: wrap-reverse;
+}
+
+// Stretching
+.flex {
+    flex: 1;
+}
+
+// Alignment in cross axis
+.start {
+    align-items: flex-start;
+}
+.center,
+.centerCenter {
+    align-items: center;
+}
+.end {
+    align-items: flex-end;
+}
+
+// Alignment in main axis
+.startJustified {
+    justify-content: flex-start;
+}
+.centerJustified,
+.centerCenter {
+    justify-content: center;
+}
+.endJustified {
+    justify-content: flex-end;
+}
+.aroundJustified {
+    justify-content: space-around;
+}
+.justified {
+    justify-content: space-between;
+}
+
+// Self alignment
+.selfStart {
+    align-self: flex-start;
+}
+.selfCenter {
+    align-self: center;
+}
+.selfEnd {
+    align-self: flex-end;
+}
+.selfStretch {
+    align-self: stretch;
+}
+
+// Other Layout
+.fit {
+    position: absolute;
+    inset: 0;
+}
+.fix {
+    position: fixed;
+    inset: 0;
+}
+.scrollVertical {
+    overflow: hidden scroll;
+    -webkit-overflow-scrolling: touch;
+}
+.scrollHorizontal {
+    overflow: scroll hidden;
+    -webkit-overflow-scrolling: touch;
+}
+.scroll {
+    overflow: scroll;
+}
+
+// fixed position
+.fixedBottom,
+.fixedLeft,
+.fixedRight,
+.fixedTop {
+    position: fixed;
+}
+.fixedTop {
+    top: 0;
+    left: 0;
+    right: 0;
+}
+.fixedRight {
+    top: 0;
+    right: 0;
+    bottom: 0;
+}
+.fixedBottom {
+    right: 0;
+    bottom: 0;
+    left: 0;
+}
+.fixedLeft {
+    top: 0;
+    bottom: 0;
+    left: 0;
+}
+.fixed {
+    composes: fixedTop fixedBottom;
+}
+
+.clearfix::after {
+    display: block;
+    clear: both;
+    content: '';
+}

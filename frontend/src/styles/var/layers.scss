@@ -1,0 +1,17 @@
+/*
+ Central zIndex levels
+ - Use sensible steps (100)
+   -> consumers will have wiggle room to use e.g.: ($val + 1|2|3|…)
+*/
+
+$z-secondMenu: 800; // Secondary menu "in pages"
+$z-above-content: 900;
+$z-loadingProgress: 1000; // Loading progress-line on top of the page
+
+$z-modal: 1200; // Login, signup
+$z-helpOverlay: 1300; // Overlay screen showing keyboard shortcuts
+
+$z-dropdownFullscreen: 1500;
+$z-draglayer: 2000;
+
+$techAlert: 3000; // outdated browser, …

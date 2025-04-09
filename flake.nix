@@ -60,6 +60,10 @@
           toml = true;
           yaml = true;
           copyright = true;
+
+          config.exclude = [
+            "frontend/*"
+          ];
         };
 
         checks = self.packages.${localSystem};

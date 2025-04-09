@@ -1,0 +1,10 @@
+{
+    "plugins": [
+        "@svgr/plugin-svgo",
+        "@svgr/plugin-jsx"
+    ],
+    "jsxRuntime": "automatic",
+    "expandProps": "end",
+    "typescript": true,
+    "prettier": false
+}

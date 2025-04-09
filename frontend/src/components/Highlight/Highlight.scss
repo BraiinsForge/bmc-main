@@ -1,0 +1,32 @@
+@use '@/styles/carbon/colors';
+@use '@/styles/carbon' as *;
+
+.root {
+    position: relative;
+    padding: mini-units(1);
+
+    background-color: colors.$braiins-gray-100;
+    color: #fff;
+}
+
+.code {
+    composes: code-01 from 'styles/carbon/typography.scss';
+}
+
+.copyButtonWrapper:not(#_) {
+    $s: 16px;
+
+    position: absolute;
+    top: $s;
+    right: $s;
+}
+
+@media print {
+    .root {
+        filter: invert(1);
+    }
+
+    .copyButton {
+        display: none !important;
+    }
+}

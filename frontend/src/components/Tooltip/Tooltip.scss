@@ -1,0 +1,139 @@
+@use '@/styles/carbon' as *;
+
+$color-bg: $background-inverse;
+$color-fg: $icon-inverse;
+$color-border: transparent;
+
+.root {
+    background-color: $color-bg;
+    border: 1px solid $color-border;
+    color: $color-fg;
+
+    // From carbon's own styling
+    box-shadow: 0 2px 6px rgb(0 0 0 / 30%);
+    z-index: 9000;
+
+    width: max-content;
+    min-width: 1.5rem;
+
+    height: auto;
+    padding: 0.1875rem 1rem;
+    border-radius: 0.125rem;
+
+    text-align: start;
+    font-weight: 400;
+    font-size: 0.875rem;
+    line-height: 1.2857;
+    letter-spacing: 0.16px;
+
+    &.ghostly {
+        box-shadow: none;
+        background: none;
+        border: none;
+    }
+
+    &.limitedWidth {
+        max-width: 15rem;
+    }
+
+    &.contentHasPadding {
+        padding: 0;
+    }
+
+    // The rest is from https://github.com/mohsinulhaq/react-popper-tooltip/blob/master/src/styles.css
+    &[data-popper-interactive='false'] {
+        pointer-events: none;
+    }
+
+    .arrow {
+        height: 1rem;
+        position: absolute;
+        width: 1rem;
+        pointer-events: none;
+
+        &::before {
+            border-style: solid;
+            content: '';
+            display: block;
+            height: 0;
+            margin: auto;
+            width: 0;
+        }
+        &::after {
+            border-style: solid;
+            content: '';
+            display: block;
+            height: 0;
+            margin: auto;
+            position: absolute;
+            width: 0;
+        }
+    }
+
+    &[data-popper-placement*='bottom'] {
+        .arrow {
+            left: 0;
+            margin-top: -0.4rem;
+            top: 0;
+        }
+        .arrow::before {
+            border-color: transparent transparent $color-border;
+            border-width: 0 0.5rem 0.4rem;
+            position: absolute;
+            top: -1px;
+        }
+        .arrow::after {
+            border-color: transparent transparent $color-bg;
+            border-width: 0 0.5rem 0.4rem;
+        }
+    }
+    &[data-popper-placement*='top'] {
+        .arrow {
+            bottom: 0;
+            left: 0;
+            margin-bottom: -1rem;
+        }
+        .arrow::before {
+            border-color: $color-border transparent transparent transparent;
+            border-width: 0.4rem 0.5rem 0;
+            position: absolute;
+            top: 1px;
+        }
+        .arrow::after {
+            border-color: $color-bg transparent transparent transparent;
+            border-width: 0.4rem 0.5rem 0;
+        }
+    }
+    &[data-popper-placement*='right'] {
+        .arrow {
+            left: 0;
+            margin-left: -0.7rem;
+        }
+        .arrow::before {
+            border-color: transparent $color-border transparent transparent;
+            border-width: 0.5rem 0.4rem 0.5rem 0;
+        }
+        .arrow::after {
+            border-color: transparent $color-bg transparent transparent;
+            border-width: 0.5rem 0.4rem 0.5rem 0;
+            left: 6px;
+            top: 0;
+        }
+    }
+    &[data-popper-placement*='left'] {
+        .arrow {
+            margin-right: -0.7rem;
+            right: 0;
+        }
+        .arrow::before {
+            border-color: transparent transparent transparent $color-border;
+            border-width: 0.5rem 0 0.5rem 0.4em;
+        }
+        .arrow::after {
+            border-color: transparent transparent transparent $color-bg;
+            border-width: 0.5rem 0 0.5rem 0.4em;
+            left: 3px;
+            top: 0;
+        }
+    }
+}

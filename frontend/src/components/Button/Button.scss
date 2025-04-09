@@ -1,0 +1,97 @@
+@use '@/styles/carbon' as *;
+
+.root {
+    display: inline-flex;
+    align-items: center;
+    padding: mini-units(1) mini-units(2) !important;
+    user-select: none;
+
+    &.sm {
+        padding: to-rem(5px) 12px !important;
+    }
+
+    > svg {
+        overflow: visible;
+
+        // icon rendered through the carbon's "renderIcon" prop
+        // has an absolute position and they add an extra padding
+        // to the button element, but we changed that behavior
+        &:global(.cds--btn__icon) {
+            position: static !important;
+            right: unset !important;
+        }
+    }
+}
+
+.root.ghost > svg {
+    fill: currentcolor;
+
+    &:not([disabled]) svg {
+        fill: currentcolor;
+    }
+}
+
+.buttonText {
+    composes: horizontal center from 'styles/layout.scss';
+}
+
+// Carbon uses padding on button + absolute position for icon,
+// but that creates extra space that's unused if there is no icon.
+//
+// My solution to honor our design is to:
+//  - cancel the big right margin
+//  - add left margin to icon
+//     - if there is a text
+//     - if the icon is after the text
+.root > .buttonText + svg {
+    margin-inline: 1rem 0;
+}
+
+.iconOnly {
+    min-width: mini-units(5);
+}
+
+.secondary {
+    .cds--btn__icon,
+    .cds--btn__icon path {
+        fill: currentcolor !important;
+    }
+}
+
+.ghost-dim {
+    color: $text-secondary !important;
+}
+
+.disabled {
+    cursor: not-allowed !important;
+}
+
+.loading {
+    composes: fit centerCenter from 'styles/layout.scss';
+    padding: 0;
+    margin: 0;
+
+    &::after {
+        position: absolute;
+        content: '';
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: $layer-01;
+        opacity: 0.5;
+    }
+
+    :global(.cds--inline-loading__animation) {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        margin: 0 !important;
+    }
+
+    svg {
+        fill: none !important;
+        transform: scale(2);
+    }
+}

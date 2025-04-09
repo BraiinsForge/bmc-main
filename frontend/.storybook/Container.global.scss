@@ -1,0 +1,83 @@
+@use '@/styles/carbon' as *;
+
+html,
+body {
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: 100vh !important;
+}
+
+// Forcefully remove body background if it isn't marked
+// as a "demo" page where we want to preserve
+// the UI styling as much as possible
+body.sb-show-main:not(.demo) {
+    background: none !important;
+}
+
+html {
+    // Checkerboard pattern
+    // https://stackoverflow.com/a/51054396/2179323
+    background-image:
+        /* tint image */
+        linear-gradient(to right, rgb(192 192 192 / 40%), rgb(192 192 192 / 40%)),
+        /* checkered effect */ linear-gradient(to right, #333 50%, #666 50%),
+        linear-gradient(to bottom, #333 50%, #666 50%);
+    background-blend-mode: normal, difference, normal;
+    background-size: 1.5em 1.5em;
+}
+
+.text-left {
+    text-align: left;
+}
+.text-center {
+    text-align: center;
+}
+.text-right {
+    text-align: right;
+}
+.ui-background {
+    background: $background;
+}
+.ui-01 {
+    background: $layer-01;
+}
+.text-01 {
+    color: $text-primary;
+}
+.text-02 {
+    color: $text-secondary;
+}
+.p-01 {
+    @include type-style(body-short-01);
+    margin: 1em 0;
+    &:first-child {
+        margin-top: 0;
+    }
+    &:last-child {
+        margin-bottom: 0;
+    }
+}
+.p-02 {
+    @include type-style(body-short-02);
+    margin: 1em 0;
+    &:first-child {
+        margin-top: 0;
+    }
+    &:last-child {
+        margin-bottom: 0;
+    }
+}
+.ui-box {
+    display: inline-block;
+    padding: mini-units(2);
+
+    background-color: $layer-01;
+    color: $text-primary;
+
+    font-size: 1rem;
+    text-align: center;
+}
+
+.tint {
+    background: rgba(0 0 0 / 60%);
+}

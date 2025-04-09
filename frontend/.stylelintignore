@@ -1,0 +1,4 @@
+**/*.min.css
+.yarn/
+**/result/
+**/coverage/

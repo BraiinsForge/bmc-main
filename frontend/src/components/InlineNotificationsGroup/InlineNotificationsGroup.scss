@@ -1,0 +1,17 @@
+@use 'styles/carbon' as *;
+
+.root {
+    &.stretch {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    > * {
+        margin: 0 0 2px !important;
+        max-width: 100% !important;
+    }
+}
+
+:global .cds--inline-notification__action-button {
+    padding-right: 1rem;
+}

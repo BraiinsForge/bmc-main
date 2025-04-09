@@ -1,0 +1,47 @@
+// Variables can't be used in @custom-media declarations,
+// but might be usefull for usage in other modules
+
+$media-xl-upper: 1500px;
+$media-xl-lower: 1200px;
+
+$media-lg-upper: 1200px;
+$media-lg-lower: 992px;
+
+$media-md-upper: 992px;
+$media-md-lower: 768px;
+
+$media-sm-upper: 768px;
+$media-sm-lower: 480px;
+
+$media-xs-upper: 480px;
+
+// Large Devices, Wide Screens
+$custom-media-xl: 'only screen and (max-width: 1500px)';
+$custom-media-xl-only: 'only screen and (min-width: 1200px)';
+
+// Large Devices, Wide Screens
+$custom-media-lg: 'only screen and (max-width: 1200px)';
+$custom-media-lg-only: 'only screen and (min-width: 992px) and (max-width: 1200px)';
+
+// Medium Devices, Desktops
+$custom-media-md: 'only screen and (max-width: 992px)';
+$custom-media-md-only: 'only screen and (min-width: 768px) and (max-width: 992px)';
+
+// Small Devices, Tablets
+$custom-media-sm: 'only screen and (max-width: 768px)';
+$custom-media-sm-only: 'only screen and (min-width: 480px) and (max-width: 768px)';
+
+// Extra Small Devices, Phones
+$custom-media-xs: 'only screen and (max-width: 480px)';
+
+// Orientation
+$custom-media-landscape: 'only screen and (orientation: landscape)';
+
+/* Examples */
+// @import styles/var/custom-media.scss;
+//
+// // Single
+// @media #{$custom-media-md} {}
+//
+// // Multiple range-specific
+// @media #{$custom-media-md-only} {}
