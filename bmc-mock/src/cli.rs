@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use bmc_core::{Configuration, ServerConfig};
+use bmc::{Configuration, ServerConfig};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;

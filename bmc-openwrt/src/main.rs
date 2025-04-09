@@ -7,5 +7,5 @@ use bmc_openwrt::OpenwrtInitializer;
 async fn main() -> Result<()> {
     let initializer = OpenwrtInitializer {};
 
-    bmc_core::entry::main(initializer).await
+    bmc::entry::main(initializer).await
 }

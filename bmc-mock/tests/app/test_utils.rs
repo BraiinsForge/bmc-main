@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::Result;
-use bmc_core::{App, Configuration};
+use bmc::{App, Configuration};
 use bmc_mock::MockManager;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 

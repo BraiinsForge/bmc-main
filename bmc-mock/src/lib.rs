@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use bmc_core::entry::Initializer;
-use bmc_core::{BmcManager, Configuration, log};
+use bmc::entry::Initializer;
+use bmc::{BmcManager, Configuration, log};
 use clap::Parser;
 
 mod cli;

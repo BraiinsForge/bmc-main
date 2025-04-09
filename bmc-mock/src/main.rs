@@ -7,5 +7,5 @@ use bmc_mock::MockInitializer;
 async fn main() -> Result<()> {
     let initializer = MockInitializer {};
 
-    bmc_core::entry::main(initializer).await
+    bmc::entry::main(initializer).await
 }
