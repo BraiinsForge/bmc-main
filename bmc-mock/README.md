@@ -1,0 +1,32 @@
+## Braiins Clock (BMC) - Mock
+
+Start mock by running:
+
+```shell
+cargo run
+```
+
+On a first run, it creates a directory in `~/.local/share/bmc-mockup` with the following structure:
+
+```
+bmc-mockup
+├─── mockfs
+└─── www
+        ├─── bmc    
+        └─── var
+```
+
+### Command-Line Options
+
+- `--address` — Set the server address. By default, it runs on 127.0.0.1:6060
+- `--www-path` — Set the path to the web content directory. Default value: `~/.local/share/bmc-mockup/www`
+- `--www-var-path` — Override the path to the web variable content directory. Default value:
+  `~/.local/share/bmc-mockup/www/var`
+- `--mockfs-path` — Set the path to a writable directory for mockup config files. Default value:
+  `~/.local/share/bmc-mockup/mockfs`
+
+Example of running a mockup with a custom path to the web content directory:
+
+```shell
+cargo run -- --www-path /home/user/www
+```
