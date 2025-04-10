@@ -16,6 +16,15 @@ bmc-mockup
         └─── var
 ```
 
+### Web assets
+
+Web assets are generated independently using the Nix build system. It is required to perform this build prior to
+executing the BMC service. To generate the assets, run the following command:
+
+```shell
+nix build .#web-assets --out-link ~/.local/share/bmc-mockup/www
+```
+
 ### Command-Line Options
 
 - `--address` — Set the server address. By default, it runs on 127.0.0.1:6060

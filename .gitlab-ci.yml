@@ -99,3 +99,8 @@ bmc-openwrt:
   <<: *app
   script:
     - nix build .#bmc-openwrt-armv7-release
+
+web-assets:
+  <<: *app
+  script:
+    - nix build .#web-assets
