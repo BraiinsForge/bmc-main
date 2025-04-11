@@ -7,6 +7,12 @@ authors = ["Braiins <braiins@braiins.com>"]
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+axum-extra = { workspace = true, features = [
+    "cookie",
+    "form",
+    "multipart",
+    "typed-header",
+] }
 bmc-display.workspace = true
 bmc-grpc.workspace = true
 chrono.workspace = true

@@ -73,6 +73,7 @@ wildcard_enum_match_arm = "warn"
 [workspace.dependencies]
 anyhow = "1.0.98"
 axum = "0.8.3"
+axum-extra = "0.10.1"
 bmc = { path = "bmc" }
 bmc-display = { path = "bmc-display" }
 bmc-grpc = { path = "bmc-grpc" }
@@ -88,11 +89,14 @@ hyper = "1.6.0"
 memmap2 = "0.9.4"
 mime_guess = "2.0.5"
 prost = "0.13"
+rand = { version = "0.9.0", default-features = false }
 serde = "1.0.219"
 serde_json = "1.0.140"
 sha2 = "0.10.8"
 slint = "1.10"
 slint-build = "1.10"
+thiserror = "2.0.12"
+time = { version = "0.3.41", default-features = false }
 tokio = { version = "1.44.2", features = ["full"] }
 tokio-util = "0.7"
 tonic = "0.13.0"
