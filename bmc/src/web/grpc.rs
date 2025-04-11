@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::web::session;
 use bmc_grpc::web;
 use tonic::service::Routes;
 use tonic_reflection::server::Builder;
@@ -10,15 +11,20 @@ use tower::Layer;
 
 use crate::BmcManager;
 
+pub mod authentication_service;
 mod system_service;
 
-pub(crate) struct GrpcWeb<T: BmcManager> {
+pub(crate) struct GrpcWeb<T: BmcManager, S: session::Manager> {
     manager: Arc<T>,
+    session_manager: Arc<S>,
 }
 
-impl<T: BmcManager> GrpcWeb<T> {
-    pub(crate) fn new(manager: Arc<T>) -> Self {
-        Self { manager }
+impl<T: BmcManager, S: session::Manager> GrpcWeb<T, S> {
+    pub(crate) fn new(manager: Arc<T>, session_manager: Arc<S>) -> Self {
+        Self {
+            manager,
+            session_manager,
+        }
     }
 
     pub(crate) fn build(self) -> Routes {
@@ -31,7 +37,13 @@ impl<T: BmcManager> GrpcWeb<T> {
             .build_v1alpha()
             .expect("BUG: Unable to decode reflection descriptor");
 
+        let authentication_service =
+            web::authentication_service_server::AuthenticationServiceServer::new(
+                authentication_service::AuthenticationService::new(self.session_manager.clone()),
+            );
+
         Routes::new(GrpcWebLayer::new().layer(system_service))
             .add_service(GrpcWebLayer::new().layer(reflection_service))
+            .add_service(GrpcWebLayer::new().layer(authentication_service))
     }
 }

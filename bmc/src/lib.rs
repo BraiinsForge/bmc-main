@@ -8,4 +8,4 @@ mod web;
 
 pub use manager::BmcManager;
 pub use startup::{App, Configuration};
-pub use web::ServerConfig;
+pub use web::{ServerConfig, session};

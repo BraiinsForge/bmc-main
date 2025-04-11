@@ -9,28 +9,32 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 use crate::manager::BmcManager;
-use crate::web::{ServerConfig, WebService};
+use crate::web::{ServerConfig, WebService, session};
 
 #[derive(Debug)]
-pub struct App<T, U>
+pub struct App<T, S, U>
 where
     T: BmcManager,
+    S: session::Manager,
     U: DisplayHandle,
 {
     listener: TcpListener,
     manager: Arc<T>,
+    session_manager: Arc<S>,
     config: Configuration,
     display_handle: Arc<U>,
 }
 
-impl<T, U> App<T, U>
+impl<T, S, U> App<T, S, U>
 where
     T: BmcManager,
+    S: session::Manager,
     U: DisplayHandle,
 {
     pub async fn init(
         config: Configuration,
         manager: Arc<T>,
+        session_manager: Arc<S>,
         display_handle: Arc<U>,
     ) -> Result<Self> {
         let listener = TcpListener::bind(config.address).await?;
@@ -38,6 +42,7 @@ where
         Ok(Self {
             listener,
             manager,
+            session_manager,
             config,
             display_handle,
         })
@@ -49,9 +54,13 @@ where
 
         self.display_handle.init()?;
 
-        WebService::new(self.manager.clone(), self.config.server_config)
-            .run(self.listener)
-            .await?;
+        WebService::new(
+            self.manager.clone(),
+            self.session_manager.clone(),
+            self.config.server_config,
+        )
+        .run(self.listener)
+        .await?;
 
         Ok(())
     }

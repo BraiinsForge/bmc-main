@@ -2,6 +2,7 @@
 
 mod grpc;
 mod http_server;
+pub mod session;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
@@ -12,19 +13,26 @@ use tower_http::normalize_path::NormalizePathLayer;
 
 use crate::BmcManager;
 
-pub(crate) struct WebService<T: BmcManager> {
+pub(crate) struct WebService<T: BmcManager, S: session::Manager> {
     manager: Arc<T>,
+    session_manager: Arc<S>,
     config: ServerConfig,
 }
 
-impl<T: BmcManager> WebService<T> {
-    pub(crate) fn new(manager: Arc<T>, config: ServerConfig) -> Self {
-        Self { manager, config }
+impl<T: BmcManager, S: session::Manager> WebService<T, S> {
+    pub(crate) fn new(manager: Arc<T>, session_manager: Arc<S>, config: ServerConfig) -> Self {
+        Self {
+            manager,
+            session_manager,
+            config,
+        }
     }
 
     pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
         let http_router = http_server::HttpServer::new(self.config).build();
-        let grpc_router = grpc::GrpcWeb::new(self.manager).build().into_axum_router();
+        let grpc_router = grpc::GrpcWeb::new(self.manager, self.session_manager)
+            .build()
+            .into_axum_router();
 
         // combine grpc and http router into one service
         let service = Steer::new(

@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::{App, BmcManager, Configuration};
+use crate::{App, BmcManager, Configuration, web::session};
 use anyhow::Result;
 use bmc_display::display_driver::DisplayHandle;
 use std::sync::Arc;
