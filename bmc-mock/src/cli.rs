@@ -30,6 +30,8 @@ pub struct Config {
     /// Set path to a writeable directory for mockup config files
     #[clap(long, default_value = data_dir("mockfs"))]
     pub mockfs_path: PathBuf,
+    #[clap(long, default_value = "")]
+    pub system_password: String,
 }
 
 impl From<Config> for Configuration {

@@ -6,13 +6,18 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
+axum-extra.workspace = true
 bmc.workspace = true
 bmc-display.workspace = true
 bmc-mock-display.workspace = true
 clap.workspace = true
 dirs.workspace = true
+rand = { workspace = true, features = ["thread_rng"] }
+thiserror.workspace = true
+time.workspace = true
 slint = { workspace = true, features = ["compat-1-2", "std"] }
 tokio.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

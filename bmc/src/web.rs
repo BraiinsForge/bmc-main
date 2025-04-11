@@ -30,10 +30,11 @@ impl<T: BmcManager, S: session::Manager> WebService<T, S> {
 
     pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
         let http_router = http_server::HttpServer::new(self.config).build();
-        let grpc_router = grpc::GrpcWeb::new(self.manager, self.session_manager)
+        let grpc_router = grpc::GrpcWeb::new(self.manager, self.session_manager.clone())
             .build()
-            .into_axum_router();
-
+            .into_axum_router()
+            .layer(session::SessionLayer::new(self.session_manager.clone()))
+            .layer(no_password::NoPasswordLayer::new(self.session_manager));
         // combine grpc and http router into one service
         let service = Steer::new(
             vec![http_router, grpc_router],
