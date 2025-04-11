@@ -35,25 +35,19 @@
           inherit self pkgs;
         };
 
-        web-assets = pkgs.stdenvNoCC.mkDerivation {
-          name = "bmc-web-assets";
-          nativeBuildInputs = [ ];
-          phases = [ "buildPhase" "installPhase" ];
-          buildPhase = ''
-            mkdir -p bmc
-            cat <<-EOF > bmc/index.html
-            <!DOCTYPE html>
-            <html>
-            <head><title>Hello</title></head>
-            <body><h1>Hello, world!</h1></body>
-            </html>
-            EOF
-          '';
-          installPhase = ''
-            mkdir -p $out
-            cp -r bmc $out/
-          '';
-        };
+        web-assets = pkgs.runCommand "bmc-web-assets" { } ''
+          mkdir -p $out/{bmc,var/default}
+
+          cat <<-EOF > $out/bmc/index.html
+          <!DOCTYPE html>
+          <html>
+          <head><title>Hello</title></head>
+          <body><h1>Hello, world!</h1></body>
+          </html>
+          EOF
+
+          touch $out/var/default/favicon.png
+        '';
 
       in
       {
