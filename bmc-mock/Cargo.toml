@@ -4,13 +4,12 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Braiins <braiins@braiins.com>"]
 
-
 [dependencies]
 anyhow.workspace = true
 bmc.workspace = true
-bmc-display = { workspace = true, features = ["standalone"] }
+bmc-display.workspace = true
+bmc-mock-display.workspace = true
 clap.workspace = true
 dirs.workspace = true
 slint = { workspace = true, features = ["compat-1-2", "std"] }
 tokio.workspace = true
-tracing.workspace = true

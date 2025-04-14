@@ -785,7 +785,6 @@ dependencies = [
  "flume",
  "slint",
  "slint-build",
- "tracing",
 ]
 
 [[package]]
@@ -808,10 +807,20 @@ dependencies = [
  "anyhow",
  "bmc",
  "bmc-display",
+ "bmc-mock-display",
  "clap",
  "dirs",
  "slint",
  "tokio",
+]
+
+[[package]]
+name = "bmc-mock-display"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-display",
+ "slint",
  "tracing",
 ]
 

@@ -1,16 +1,10 @@
 [package]
-name = "bmc-display"
+name = "bmc-mock-display"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
-flume.workspace = true
+bmc-display.workspace = true
 slint = { workspace = true, features = ["compat-1-2", "std"] }
-
-[build-dependencies]
-anyhow.workspace = true
-slint-build = "1.10"
-
-[lints]
-workspace = true
+tracing.workspace = true

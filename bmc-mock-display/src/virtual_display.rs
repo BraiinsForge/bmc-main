@@ -1,13 +1,13 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::generated::MainWindow;
-use crate::{
+use crate::mock_backlight_driver::MockBacklightDriver;
+use anyhow::{Context, Result};
+use bmc_display::{
     display_driver::DisplayDriver,
+    generated::MainWindow,
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
-    mock_backlight_driver::MockBacklightDriver,
     slint_handle::SlintHandle,
 };
-use anyhow::{Context, Result};
 
 #[derive(Debug)]
 pub struct VirtualDisplay;

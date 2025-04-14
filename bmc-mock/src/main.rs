@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use bmc::log;
-use bmc_display::virtual_display::VirtualDisplay;
 use bmc_mock::{MockManager, cli, mockfs};
+use bmc_mock_display::VirtualDisplay;
 use clap::Parser;
 use slint::ComponentHandle;
 

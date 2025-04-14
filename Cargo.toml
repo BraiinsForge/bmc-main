@@ -5,6 +5,7 @@ members = [
     "bmc-display",
     "bmc-grpc",
     "bmc-mock",
+    "bmc-mock-display",
     "bmc-openwrt",
 ]
 
@@ -75,6 +76,7 @@ axum = "0.8.3"
 bmc = { path = "bmc" }
 bmc-display = { path = "bmc-display" }
 bmc-grpc = { path = "bmc-grpc" }
+bmc-mock-display = { path = "bmc-mock-display" }
 chrono = "0.4.40"
 clap = { version = "4.5.36", features = ["derive", "std"] }
 dirs = "6.0.0"

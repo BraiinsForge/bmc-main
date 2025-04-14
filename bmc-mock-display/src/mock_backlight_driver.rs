@@ -1,12 +1,11 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use bmc_display::display_driver::DisplayBacklightDriver;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU8, Ordering},
 };
 use tracing::{debug, info};
-
-use crate::display_driver::DisplayBacklightDriver;
 
 #[derive(Debug, Clone)]
 pub struct MockBacklightDriver {

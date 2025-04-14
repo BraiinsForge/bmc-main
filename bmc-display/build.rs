@@ -3,13 +3,12 @@
 use anyhow::Context;
 
 fn main() -> anyhow::Result<()> {
-    let config = slint_build::CompilerConfiguration::new();
-
-    #[cfg(not(feature = "standalone"))]
-    config.embed_resources(slint_build::EmbedResourcesKind::EmbedForSoftwareRenderer);
-
-    slint_build::compile_with_config("assets/ui/main.slint", config)
-        .context("BUG: Slint compilation error")?;
+    slint_build::compile_with_config(
+        "assets/ui/main.slint",
+        slint_build::CompilerConfiguration::new()
+            .embed_resources(slint_build::EmbedResourcesKind::EmbedForSoftwareRenderer),
+    )
+    .context("BUG: Slint compilation error")?;
 
     Ok(())
 }
