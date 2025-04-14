@@ -782,7 +782,10 @@ name = "bmc-display"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "flume",
+ "serde",
+ "serde_json",
  "slint",
  "slint-build",
 ]
@@ -2708,6 +2711,7 @@ dependencies = [
  "rustybuzz",
  "scoped-tls-hkt",
  "scopeguard",
+ "serde",
  "slab",
  "strum",
  "sys-locale",

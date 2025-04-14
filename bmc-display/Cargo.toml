@@ -5,12 +5,15 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 flume.workspace = true
-slint = { workspace = true, features = ["compat-1-2", "std"] }
+serde.workspace = true
+serde_json.workspace = true
+slint = { workspace = true, features = ["backend-winit", "compat-1-2", "renderer-software", "serde", "std"] }
 
 [build-dependencies]
 anyhow.workspace = true
-slint-build = "1.10"
+slint-build.workspace = true
 
 [lints]
 workspace = true
