@@ -17,7 +17,7 @@ fn data_dir(subdir: impl AsRef<Path>) -> &'static str {
 
 #[derive(Parser, Debug, Clone)]
 #[clap(name = "BMC")]
-pub(crate) struct Config {
+pub struct Config {
     /// Set server address
     #[clap(long, default_value = "0.0.0.0:6060")]
     pub address: std::net::SocketAddr,

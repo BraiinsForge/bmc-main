@@ -1,11 +1,26 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::Result;
-use bmc_mock::MockInitializer;
+use bmc::log;
+use bmc_display::virtual_display::VirtualDisplay;
+use bmc_mock::{MockManager, cli, mockfs};
+use clap::Parser;
+use slint::ComponentHandle;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let initializer = MockInitializer {};
+    log::init();
 
-    bmc::entry::main(initializer).await
+    let config = cli::Config::parse();
+
+    let mockfs = mockfs::MockFs::new(&config.mockfs_path);
+    mockfs.init()?;
+
+    let config = config.into();
+
+    let (main_window, display_driver) = VirtualDisplay::create()?;
+
+    tokio::task::spawn(bmc::entry::main(MockManager, config, display_driver));
+
+    Ok(main_window.run()?)
 }

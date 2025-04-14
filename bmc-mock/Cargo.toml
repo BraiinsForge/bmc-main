@@ -7,8 +7,10 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 bmc.workspace = true
+bmc-display = { workspace = true, features = ["standalone"] }
 clap.workspace = true
 dirs.workspace = true
+slint = { workspace = true, features = ["compat-1-2", "std"] }
 tokio.workspace = true
+tracing.workspace = true
