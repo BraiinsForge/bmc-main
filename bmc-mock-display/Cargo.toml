@@ -8,3 +8,6 @@ anyhow.workspace = true
 bmc-display.workspace = true
 slint = { workspace = true, features = ["compat-1-2", "std"] }
 tracing.workspace = true
+
+[lints]
+workspace = true

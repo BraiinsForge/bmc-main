@@ -16,6 +16,7 @@ const SLEEP_DURATION: Duration = Duration::from_secs(1);
 const FRAME_BUFFER_PATH: &str = "/dev/fb0";
 const BYTES_PER_PIXEL: usize = 2;
 
+#[expect(missing_debug_implementations)]
 pub struct LinuxFbPlatform {
     window: Rc<MinimalSoftwareWindow>,
     width: usize,
@@ -39,7 +40,7 @@ impl Platform for LinuxFbPlatform {
             .write(true)
             .open(fb_path)
             .map_err(|e| {
-                slint::PlatformError::from(format!("Unable to open linux framebuffer file, {}", e))
+                slint::PlatformError::from(format!("Unable to open linux framebuffer file, {e}"))
             })?;
         let mut fb_mmap = unsafe {
             MmapOptions::new()
@@ -47,8 +48,7 @@ impl Platform for LinuxFbPlatform {
                 .map_mut(&fb_file)
                 .map_err(|e| {
                     slint::PlatformError::from(format!(
-                        "Unable to memory map linux framebuffer, {}",
-                        e
+                        "Unable to memory map linux framebuffer, {e}"
                     ))
                 })?
         };
@@ -126,27 +126,35 @@ impl Bgr565Pixel {
 
 impl TargetPixel for Bgr565Pixel {
     fn blend(&mut self, color: PremultipliedRgbaColor) {
-        let a = (u8::MAX - color.alpha) as u32;
+        let a = u32::from(u8::MAX - color.alpha);
         // convert to 5 bits
         let a = (a + 4) >> 3;
 
         // 00000ggg_ggg00000_bbbbb000_000rrrrr
-        let expanded = (self.0 & (Self::B_MASK | Self::R_MASK)) as u32
-            | (((self.0 & Self::G_MASK) as u32) << 16);
+        let expanded = u32::from(self.0 & (Self::B_MASK | Self::R_MASK))
+            | (u32::from(self.0 & Self::G_MASK) << 16);
 
         // gggggggg_000bbbbb_bbb000rr_rrrrrr00
-        let c =
-            ((color.blue as u32) << 13) | ((color.green as u32) << 24) | ((color.red as u32) << 2);
+        let c = (u32::from(color.blue) << 13)
+            | (u32::from(color.green) << 24)
+            | (u32::from(color.red) << 2);
         // gggggg00_000bbbbb_000000rr_rrr00000
         let c = c & 0b11111100_00011111_00000011_11100000;
 
         let res = expanded * a + c;
 
-        self.0 = ((res >> 21) as u16 & Self::G_MASK)
+        #[expect(clippy::cast_possible_truncation)]
+        let res = ((res >> 21) as u16 & Self::G_MASK)
             | ((res >> 5) as u16 & (Self::B_MASK | Self::R_MASK));
+
+        self.0 = res;
     }
 
     fn from_rgb(r: u8, g: u8, b: u8) -> Self {
-        Self(((b as u16 & 0b11111000) << 8) | ((g as u16 & 0b11111100) << 3) | (r as u16 >> 3))
+        Self(
+            ((u16::from(b) & 0b11111000) << 8)
+                | ((u16::from(g) & 0b11111100) << 3)
+                | (u16::from(r) >> 3),
+        )
     }
 }

@@ -13,3 +13,6 @@ clap.workspace = true
 dirs.workspace = true
 slint = { workspace = true, features = ["compat-1-2", "std"] }
 tokio.workspace = true
+
+[lints]
+workspace = true

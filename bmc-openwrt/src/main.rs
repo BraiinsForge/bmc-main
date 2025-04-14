@@ -11,6 +11,7 @@ use bmc_openwrt::{
     OpenwrtManager, generic_backlight_driver::GenericBacklightDriver,
     linux_framebuffer_platform::LinuxFbPlatform,
 };
+use memmap2 as _;
 use slint::ComponentHandle;
 use tracing::{error, info};
 
@@ -40,7 +41,7 @@ fn get_slint_handle(display_metadata: DisplayMetadata) -> Result<SlintHandle> {
 
     // Spawn a thread to initiaize linux platform
     std::thread::spawn(move || {
-        if let Err(e) = run_slint_platform(display_metadata, ui_handle_sender) {
+        if let Err(e) = run_slint_platform(&display_metadata, &ui_handle_sender) {
             error!("{:#}", e);
         }
     });
@@ -52,8 +53,8 @@ fn get_slint_handle(display_metadata: DisplayMetadata) -> Result<SlintHandle> {
 }
 
 fn run_slint_platform(
-    display_metadata: DisplayMetadata,
-    ui_handle_sender: flume::Sender<SlintHandle>,
+    display_metadata: &DisplayMetadata,
+    ui_handle_sender: &flume::Sender<SlintHandle>,
 ) -> Result<()> {
     info!("Setting up slint platform for linux framebuffer display");
     slint::platform::set_platform(Box::new(

@@ -2,9 +2,11 @@
 
 use anyhow::Result;
 use bmc::log;
+use bmc_display as _;
 use bmc_mock::{MockManager, cli, mockfs};
 use bmc_mock_display::VirtualDisplay;
 use clap::Parser;
+use dirs as _;
 use slint::ComponentHandle;
 
 #[tokio::main]

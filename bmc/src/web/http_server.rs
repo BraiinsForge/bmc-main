@@ -71,9 +71,8 @@ impl HttpServer {
         State(storage): State<Storage>,
         Path(file_path): Path<String>,
     ) -> impl IntoResponse {
-        let file = match storage.get_asset(&file_path).await {
-            Ok(file) => file,
-            Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        let Ok(file) = storage.get_asset(&file_path).await else {
+            return StatusCode::NOT_FOUND.into_response();
         };
 
         let headers = Self::get_file_headers(&file_path, &file).await;
@@ -84,7 +83,7 @@ impl HttpServer {
     }
 
     async fn index_handler(storage: State<Storage>) -> Response {
-        let mut resp = Self::file_handler(storage, Path(INDEX_PATH.to_string()))
+        let mut resp = Self::file_handler(storage, Path(INDEX_PATH.to_owned()))
             .await
             .into_response();
 
@@ -111,10 +110,10 @@ impl HttpServer {
                 .map(|header| headers.append(header::LAST_MODIFIED, header));
 
             // Add ETag header
-            Self::etag(metadata)
+            Self::etag(&metadata)
                 .and_then(|etag| HeaderValue::from_str(&etag).ok())
                 .map(|header| headers.append(header::ETAG, header));
-        };
+        }
 
         // Add Content-Type header
         let mime_type = from_path(filename).first_or_text_plain();
@@ -124,7 +123,7 @@ impl HttpServer {
         }
 
         // Add Content-Disposition header
-        if let Ok(header) = HeaderValue::from_str(&format!("inline; filename=\"{}\"", filename)) {
+        if let Ok(header) = HeaderValue::from_str(&format!("inline; filename=\"{filename}\"")) {
             headers.append(header::CONTENT_DISPOSITION, header);
         }
 
@@ -132,7 +131,7 @@ impl HttpServer {
     }
 
     // NOTE: Taken from https://github.com/actix/actix-web/blob/0ef246a846f478e8d85ad441ab979e13c010d152/actix-files/src/named.rs#L384
-    fn etag(metadata: std::fs::Metadata) -> Option<String> {
+    fn etag(metadata: &std::fs::Metadata) -> Option<String> {
         let modified = metadata.modified().ok();
 
         modified.as_ref().map(|mtime| {
@@ -184,9 +183,9 @@ impl HttpServer {
             .get(CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok())
             .unwrap_or(ZERO)
-            .to_string();
+            .to_owned();
 
-        let formatted_latency = format!("{:.6}", latency);
+        let formatted_latency = format!("{latency:.6}");
 
         info!(
             "{} {} {} {} {} {} - {}",

@@ -11,6 +11,7 @@ use tracing::info;
 use crate::manager::BmcManager;
 use crate::web::{ServerConfig, WebService};
 
+#[derive(Debug)]
 pub struct App<T, U>
 where
     T: BmcManager,
@@ -60,6 +61,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct Configuration {
     pub address: SocketAddr,
     pub server_config: ServerConfig,
@@ -71,7 +73,7 @@ impl Default for Configuration {
     fn default() -> Self {
         Self {
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 9090),
-            server_config: Default::default(),
+            server_config: ServerConfig::default(),
         }
     }
 }

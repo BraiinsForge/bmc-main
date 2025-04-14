@@ -22,9 +22,10 @@ pub struct GenericBacklightDriver {
 }
 
 impl GenericBacklightDriver {
+    #[must_use]
     pub fn new(driver_path: &str) -> Self {
         GenericBacklightDriver {
-            name: "Generic LCD backlight driver".to_string(),
+            name: "Generic LCD backlight driver".to_owned(),
             driver_path: PathBuf::from(driver_path),
             max_brightness: 0,
         }
@@ -34,7 +35,7 @@ impl GenericBacklightDriver {
 impl GenericBacklightDriver {
     fn read_value_from_fs(&self, file_name: &str) -> Result<String, Error> {
         fs::read(self.driver_path.join(file_name))
-            .map(|val| String::from_utf8_lossy(&val).trim().to_string())
+            .map(|val| String::from_utf8_lossy(&val).trim().to_owned())
     }
 }
 

@@ -4,6 +4,10 @@ use anyhow::Result;
 use bmc::{App, Configuration};
 use bmc_display::display_driver::DisplayHandle;
 use bmc_mock::MockManager;
+use bmc_mock_display as _;
+use clap as _;
+use dirs as _;
+use slint as _;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
 struct TestApp {
@@ -34,7 +38,7 @@ async fn start_app() -> Result<TestApp> {
     let app = App::init(config, manager, display).await?;
 
     let port = app.port()?;
-    let address = format!("http://localhost:{}", port);
+    let address = format!("http://localhost:{port}");
 
     tokio::spawn(app.run());
 

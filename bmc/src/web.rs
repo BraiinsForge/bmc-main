@@ -30,19 +30,15 @@ impl<T: BmcManager> WebService<T> {
         let service = Steer::new(
             vec![http_router, grpc_router],
             |req: &Request, _services: &[_]| {
-                if req
-                    .headers()
-                    .get(CONTENT_TYPE)
-                    .map(|content_type| content_type.as_bytes())
-                    .filter(|content_type| content_type.starts_with(b"application/grpc"))
-                    .is_some()
-                {
-                    // grpc service
-                    1
-                } else {
-                    // http service
-                    0
-                }
+                // grpc service -> 1
+                // http service -> 0
+                usize::from(
+                    req.headers()
+                        .get(CONTENT_TYPE)
+                        .map(axum::http::HeaderValue::as_bytes)
+                        .filter(|content_type| content_type.starts_with(b"application/grpc"))
+                        .is_some(),
+                )
             },
         );
 
@@ -56,7 +52,7 @@ impl<T: BmcManager> WebService<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub www_root_path: PathBuf,
     pub www_assets_path: PathBuf,
@@ -66,16 +62,19 @@ pub struct ServerConfig {
 impl ServerConfig {
     pub const WWW_ROOT_PATH: &'static str = "/www/bmc";
 
+    #[must_use]
     pub fn set_www_root_path(mut self, www_root_path: PathBuf) -> Self {
         self.www_root_path = www_root_path;
         self
     }
 
+    #[must_use]
     pub fn set_www_assets_path(mut self, www_assets_path: PathBuf) -> Self {
         self.www_assets_path = www_assets_path;
         self
     }
 
+    #[must_use]
     pub fn set_www_var_path(mut self, www_var_path: PathBuf) -> Self {
         self.www_var_path = www_var_path;
         self
