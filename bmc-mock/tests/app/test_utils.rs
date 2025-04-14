@@ -2,11 +2,21 @@
 
 use anyhow::Result;
 use bmc::{App, Configuration};
+use bmc_display::display_driver::DisplayHandle;
 use bmc_mock::MockManager;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
 struct TestApp {
     address: String,
+}
+#[derive(Debug)]
+struct MockDisplay;
+
+impl DisplayHandle for MockDisplay {
+    fn init(&self) -> anyhow::Result<()> {
+        println!("Display initialized");
+        Ok(())
+    }
 }
 
 async fn start_app() -> Result<TestApp> {
@@ -19,7 +29,9 @@ async fn start_app() -> Result<TestApp> {
 
     let manager = Arc::new(manager);
 
-    let app = App::init(config, manager).await?;
+    let display = Arc::new(MockDisplay);
+
+    let app = App::init(config, manager, display).await?;
 
     let port = app.port()?;
     let address = format!("http://localhost:{}", port);
