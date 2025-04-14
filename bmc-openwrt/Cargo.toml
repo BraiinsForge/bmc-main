@@ -7,6 +7,14 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 bmc.workspace = true
+bmc-display.workspace = true
+flume.workspace = true
+memmap2.workspace = true
+slint = { workspace = true, features = [
+    "compat-1-2",
+    "renderer-software",
+    "std",
+] }
 tokio.workspace = true
+tracing.workspace = true

@@ -1,23 +1,11 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use anyhow::Result;
-use async_trait::async_trait;
-use bmc::entry::Initializer;
-use bmc::{BmcManager, Configuration, log};
+use bmc::BmcManager;
 
-pub struct OpenwrtInitializer;
+pub mod generic_backlight_driver;
+pub mod linux_framebuffer_platform;
 
-#[async_trait]
-impl Initializer for OpenwrtInitializer {
-    async fn initialize(self) -> Result<(impl BmcManager, Configuration)> {
-        log::init();
-
-        let config = Configuration::default();
-        Ok((OpenwrtManager, config))
-    }
-}
-
-struct OpenwrtManager;
+pub struct OpenwrtManager;
 
 impl BmcManager for OpenwrtManager {
     fn version(&self) -> String {
