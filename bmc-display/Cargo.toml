@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow.workspace = true
+flume.workspace = true
 slint = { workspace = true, features = ["compat-1-2", "std"] }
+tracing.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
@@ -12,3 +15,8 @@ slint-build = "1.10"
 
 [lints]
 workspace = true
+
+
+[features]
+default = []
+standalone = []

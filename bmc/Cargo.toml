@@ -7,8 +7,8 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 axum.workspace = true
+bmc-display.workspace = true
 bmc-grpc.workspace = true
 chrono.workspace = true
 hyper.workspace = true
