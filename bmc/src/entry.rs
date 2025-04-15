@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::{App, BmcManager, Configuration, web::session};
+use crate::{App, BmcManager, Configuration};
 use anyhow::Result;
 use bmc_display::display_driver::DisplayHandle;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ pub async fn main(
 
     let display = Arc::new(display);
 
-    let app = App::init(config, manager, display).await?;
+    let app = App::init(config, manager.clone(), manager.session_manager(), display).await?;
 
     _ = app.run().await.map_err(|e| error!("Error: {e}"));
 

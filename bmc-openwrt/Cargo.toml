@@ -16,6 +16,8 @@ slint = { workspace = true, features = [
     "std",
 ] }
 tokio.workspace = true
+thiserror.workspace = true
+axum-extra.workspace = true
 tracing.workspace = true
 
 [lints]

@@ -8,6 +8,10 @@ use bmc_mock_display::VirtualDisplay;
 use clap::Parser;
 use dirs as _;
 use slint::ComponentHandle;
+use thiserror as _;
+use time as _;
+use tokio as _;
+use tracing as _;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,7 +26,11 @@ async fn main() -> Result<()> {
 
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
-    tokio::task::spawn(bmc::entry::main(MockManager, config, display_driver));
+    let manager = MockManager {
+        session_manager: MockSessionManager::new(),
+    };
+
+    tokio::task::spawn(bmc::entry::main(manager, config, display_driver));
 
     Ok(main_window.run()?)
 }

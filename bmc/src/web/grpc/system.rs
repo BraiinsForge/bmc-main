@@ -1,0 +1,70 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+
+use std::sync::Arc;
+
+use bmc_grpc::web::{
+    GetSystemMetadataRequest, Metadata, SetPasswordRequest, SetPasswordResponse,
+    system_service_server::SystemService as GrpcSystemService,
+};
+use tonic::Request;
+use tracing::warn;
+
+use crate::{BmcManager, session::Manager as SessionManager};
+
+#[derive(Clone)]
+pub(crate) struct SystemService<T, S>
+where
+    T: BmcManager,
+    S: SessionManager,
+{
+    bmc_manager: Arc<T>,
+    session_manager: Arc<S>,
+}
+
+impl<T, S> SystemService<T, S>
+where
+    T: BmcManager,
+    S: SessionManager,
+{
+    pub(crate) fn new(bmc_manager: Arc<T>, session_manager: Arc<S>) -> Self {
+        Self {
+            bmc_manager,
+            session_manager,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<T, S> GrpcSystemService for SystemService<T, S>
+where
+    T: BmcManager,
+    S: SessionManager,
+{
+    async fn get_metadata(
+        &self,
+        _request: Request<GetSystemMetadataRequest>,
+    ) -> Result<tonic::Response<Metadata>, tonic::Status> {
+        let version = self.bmc_manager.version();
+        Ok(tonic::Response::new(Metadata { version }))
+    }
+
+    async fn set_password(
+        &self,
+        request: tonic::Request<SetPasswordRequest>,
+    ) -> Result<tonic::Response<SetPasswordResponse>, tonic::Status> {
+        let session = crate::web::auth::check::<S, _>(&request)?.clone();
+
+        let request = request.into_inner();
+
+        self.bmc_manager
+            .set_password(request.password)
+            .await
+            .map_err(|err| tonic::Status::internal(format!("Failed to set password: {err}")))?;
+
+        if let Err(err) = self.session_manager.logout_all_related(session).await {
+            warn!("failed to logout all related sessions: {err}");
+        }
+
+        Ok(tonic::Response::new(SetPasswordResponse {}))
+    }
+}

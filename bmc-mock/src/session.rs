@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 use tracing::debug;
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -63,10 +63,10 @@ impl Session {
 /// key is a session token
 type Sessions = HashMap<String, Session>;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MockSessionManager {
-    sessions: Mutex<Sessions>,
-    password: Mutex<String>,
+    sessions: Arc<Mutex<Sessions>>,
+    password: Arc<Mutex<String>>,
 }
 
 impl MockSessionManager {
@@ -74,11 +74,13 @@ impl MockSessionManager {
     const COOKIE_SESSION_PATH: &'static str = "/";
     const DEFAULT_RANDOM_SESSION_LENGTH: usize = 16;
     const DEFAULT_USER_NAME: &'static str = "root";
+    const DEFAULT_PASSWORD: &'static str = "";
 
-    pub(crate) fn new(password: String) -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
-            password: Mutex::new(password),
-            ..Default::default()
+            password: Arc::new(Mutex::new(Self::DEFAULT_PASSWORD.to_owned())),
+            sessions: Arc::new(Mutex::new(Sessions::new())),
         }
     }
 
@@ -201,11 +203,11 @@ impl session::Manager for MockSessionManager {
         }
     }
 
-    async fn find(&self, cookies: &Vec<Cookie>) -> Result<Handle, Error> {
+    async fn find(&self, cookies: &[Cookie]) -> Result<Handle, Error> {
         cookies
             .iter()
             .find(|cookie| cookie.name() == Self::COOKIE_SESSION)
-            .ok_or_else(|| Error::SessionCookieNotFound)
+            .ok_or(Error::SessionCookieNotFound)
             .map(|cookie| {
                 debug!(
                     "Found session cookie name:{} value:{}",

@@ -1,25 +1,31 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+mod auth;
 mod grpc;
 mod http_server;
-pub mod session;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
 use tokio::net::TcpListener;
 use tower::{Layer, steer::Steer};
+
 use tower_http::normalize_path::NormalizePathLayer;
 
 use crate::BmcManager;
+use crate::session::Manager as SessionManager;
 
-pub(crate) struct WebService<T: BmcManager, S: session::Manager> {
+pub(crate) struct WebService<T: BmcManager, S: SessionManager> {
     manager: Arc<T>,
     session_manager: Arc<S>,
     config: ServerConfig,
 }
 
-impl<T: BmcManager, S: session::Manager> WebService<T, S> {
+impl<T: BmcManager, S: SessionManager> WebService<T, S> {
     pub(crate) fn new(manager: Arc<T>, session_manager: Arc<S>, config: ServerConfig) -> Self {
         Self {
             manager,
@@ -66,6 +72,7 @@ pub struct ServerConfig {
     pub www_root_path: PathBuf,
     pub www_assets_path: PathBuf,
     pub www_var_path: PathBuf,
+    pub grpc_address: std::net::SocketAddr,
 }
 
 impl ServerConfig {
@@ -88,6 +95,11 @@ impl ServerConfig {
         self.www_var_path = www_var_path;
         self
     }
+
+    pub fn set_grpc_address(mut self, address: std::net::SocketAddr) -> Self {
+        self.grpc_address = address;
+        self
+    }
 }
 
 impl Default for ServerConfig {
@@ -96,6 +108,7 @@ impl Default for ServerConfig {
             www_root_path: Self::WWW_ROOT_PATH.into(),
             www_assets_path: PathBuf::from(Self::WWW_ROOT_PATH).join("assets"),
             www_var_path: PathBuf::from(Self::WWW_ROOT_PATH).join("var"),
+            grpc_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 50051),
         }
     }
 }

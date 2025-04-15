@@ -16,11 +16,14 @@ axum-extra = { workspace = true, features = [
 bmc-display.workspace = true
 bmc-grpc.workspace = true
 chrono.workspace = true
+futures.workspace = true
+http.workspace = true
 hyper.workspace = true
 mime_guess.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["full"] }
 tonic.workspace = true
+tonic-middleware.workspace = true
 tonic-reflection.workspace = true
 tonic-web.workspace = true
 tower = { workspace = true, features = ["steer"] }

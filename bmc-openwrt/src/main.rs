@@ -33,7 +33,11 @@ async fn main() -> Result<()> {
 
     let config = Configuration::default();
 
-    bmc::entry::main(OpenwrtManager, config, display_driver).await
+    let manager = OpenwrtManager {
+        session_manager: OpenwrtSessionManager,
+    };
+
+    bmc::entry::main(manager, config, display_driver).await
 }
 
 fn get_slint_handle(display_metadata: DisplayMetadata) -> Result<SlintHandle> {

@@ -3,7 +3,7 @@
 use anyhow::Result;
 use bmc::{App, Configuration};
 use bmc_display::display_driver::DisplayHandle;
-use bmc_mock::MockManager;
+use bmc_mock::{MockManager, MockSessionManager};
 use bmc_mock_display as _;
 use clap as _;
 use dirs as _;
@@ -24,7 +24,10 @@ impl DisplayHandle for MockDisplay {
 }
 
 async fn start_app() -> Result<TestApp> {
-    let manager = MockManager {};
+    let session_manager = MockSessionManager::new();
+    let manager = MockManager {
+        session_manager: session_manager.clone(),
+    };
 
     let config = Configuration {
         address: SocketAddr::from_str("127.0.0.1:0").expect("BUG: Cannot bind to socket address"),
@@ -35,7 +38,7 @@ async fn start_app() -> Result<TestApp> {
 
     let display = Arc::new(MockDisplay);
 
-    let app = App::init(config, manager, display).await?;
+    let app = App::init(config, manager, session_manager, display).await?;
 
     let port = app.port()?;
     let address = format!("http://localhost:{port}");
