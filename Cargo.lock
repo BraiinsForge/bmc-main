@@ -795,6 +795,7 @@ name = "bmc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "axum-extra",
  "bmc-display",
@@ -847,6 +848,7 @@ name = "bmc-mock"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum-extra",
  "bmc",
  "bmc-display",
@@ -876,6 +878,7 @@ name = "bmc-openwrt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum-extra",
  "bmc",
  "bmc-display",

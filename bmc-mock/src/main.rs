@@ -1,12 +1,18 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
+mod cli;
+mod mockfs;
 
 use anyhow::Result;
+use async_trait as _;
+use axum_extra as _;
 use bmc::log;
 use bmc_display as _;
-use bmc_mock::{MockManager, cli, mockfs};
+use bmc_mock::{MockManager, MockSessionManager};
 use bmc_mock_display::VirtualDisplay;
+use clap as _;
 use clap::Parser;
 use dirs as _;
+use rand as _;
 use slint::ComponentHandle;
 use thiserror as _;
 use time as _;

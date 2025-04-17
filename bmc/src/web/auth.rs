@@ -76,7 +76,7 @@ mod tests {
     use header::{ACCEPT_ENCODING, CONTENT_LENGTH, COOKIE};
     use http::{HeaderMap, HeaderValue};
 
-    fn extract_cookies(headers: &HeaderMap<HeaderValue>) -> impl Iterator<Item = Cookie> {
+    fn extract_cookies(headers: &HeaderMap<HeaderValue>) -> impl Iterator<Item = Cookie<'_>> {
         headers
             .get_all(header::COOKIE)
             .iter()
@@ -105,7 +105,7 @@ mod tests {
             );
         });
 
-        let cookies = extract_cookies(&header_map).collect::<Vec<Cookie>>();
+        let cookies = extract_cookies(&header_map).collect::<Vec<Cookie<'_>>>();
 
         let expected_cookies = vec![
             Cookie::new("session_id", "gVZIvHtgCYYfbxXa"),

@@ -1,6 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::{Context, Result, anyhow};
+use async_trait as _;
+use axum_extra as _;
 use bmc::{Configuration, log};
 use bmc_display::{
     display_driver::{DisplayBacklightDriver, DisplayDriver},
@@ -8,11 +10,13 @@ use bmc_display::{
     slint_handle::SlintHandle,
 };
 use bmc_openwrt::{
-    OpenwrtManager, generic_backlight_driver::GenericBacklightDriver,
+    OpenwrtManager, OpenwrtSessionManager, generic_backlight_driver::GenericBacklightDriver,
     linux_framebuffer_platform::LinuxFbPlatform,
 };
 use memmap2 as _;
 use slint::ComponentHandle;
+use thiserror as _;
+use tracing as _;
 use tracing::{error, info};
 
 #[tokio::main]

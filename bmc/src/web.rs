@@ -3,21 +3,21 @@
 mod auth;
 mod grpc;
 mod http_server;
+mod no_password;
+mod session;
+
+use crate::BmcManager;
+use crate::session::Manager as SessionManager;
+use anyhow::Result;
+use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
 };
-
-use anyhow::Result;
-use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
 use tokio::net::TcpListener;
 use tower::{Layer, steer::Steer};
-
 use tower_http::normalize_path::NormalizePathLayer;
-
-use crate::BmcManager;
-use crate::session::Manager as SessionManager;
 
 pub(crate) struct WebService<T: BmcManager, S: SessionManager> {
     manager: Arc<T>,
@@ -96,6 +96,7 @@ impl ServerConfig {
         self
     }
 
+    #[must_use]
     pub fn set_grpc_address(mut self, address: std::net::SocketAddr) -> Self {
         self.grpc_address = address;
         self

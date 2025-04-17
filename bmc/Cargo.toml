@@ -6,6 +6,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 axum.workspace = true
 axum-extra = { workspace = true, features = [
     "cookie",

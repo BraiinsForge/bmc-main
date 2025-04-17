@@ -1,10 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+pub mod generic_backlight_driver;
+pub mod linux_framebuffer_platform;
+
 use anyhow::Result;
 use axum_extra::extract::cookie::Cookie;
-use bmc::entry::Initializer;
-use bmc::{BmcManager, Configuration, log};
-use std::sync::Arc;
+use bmc::BmcManager;
+use tokio as _;
 use tracing::info;
 
 #[derive(thiserror::Error, Debug)]
@@ -24,20 +26,7 @@ pub struct OpenwrtManager {
     pub session_manager: OpenwrtSessionManager,
 }
 
-#[derive(Clone)]
-struct OpenwrtManager {
-    session_manager: Arc<OpenwrtSessionManager>,
-}
-pub mod generic_backlight_driver;
-pub mod linux_framebuffer_platform;
-
-use bmc::BmcManager;
-use tokio as _;
-
-#[derive(Debug)]
-pub struct OpenwrtManager;
-
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct OpenwrtSessionManager;
 
 #[derive(Default, Clone, Debug)]
@@ -47,6 +36,7 @@ pub struct Handle {
 }
 
 impl Handle {
+    #[must_use]
     pub fn new(token: String, valid: bool) -> Self {
         Self { token, valid }
     }
@@ -69,7 +59,7 @@ impl bmc::session::Manager for OpenwrtSessionManager {
 
     const SESSION_TIMEOUT: u32 = 3600;
 
-    async fn login(&self, username: String, password: String) -> Result<Cookie, Error> {
+    async fn login(&self, username: String, password: String) -> Result<Cookie<'_>, Error> {
         info!(
             "Login with username: {} and password: {}",
             username, password
@@ -77,22 +67,22 @@ impl bmc::session::Manager for OpenwrtSessionManager {
         unimplemented!()
     }
 
-    async fn logout(&self, handle: Handle) -> Result<Cookie, Error> {
+    async fn logout(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
         info!("Logout with handle: {}", handle.token);
         unimplemented!()
     }
 
-    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie, Error> {
+    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
         info!("Logout all related with handle: {}", handle.token);
         unimplemented!()
     }
 
-    async fn extend(&self, handle: Handle) -> Result<Cookie, Error> {
+    async fn extend(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
         info!("Extend with handle: {}", handle.token);
         unimplemented!()
     }
 
-    async fn find(&self, cookies: &[Cookie]) -> Result<Handle, Error> {
+    async fn find(&self, cookies: &[Cookie<'_>]) -> Result<Handle, Error> {
         info!("Find with cookies: {:?}", cookies);
         unimplemented!()
     }
@@ -109,10 +99,6 @@ impl BmcManager for OpenwrtManager {
 
     fn version(&self) -> String {
         "Hello from Openwrt".to_owned()
-    }
-
-    async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error> {
-        Ok(())
     }
 
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error> {

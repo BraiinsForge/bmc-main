@@ -9,6 +9,7 @@ use time::OffsetDateTime;
 use tracing::debug;
 
 use std::collections::HashMap;
+use std::fmt::{self, Debug};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(thiserror::Error, Debug)]
@@ -69,6 +70,16 @@ pub struct MockSessionManager {
     password: Arc<Mutex<String>>,
 }
 
+impl Debug for MockSessionManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MockSessionManager {{ sessions: {:?}, password: {:?} }}",
+            self.sessions, self.password
+        )
+    }
+}
+
 impl MockSessionManager {
     const COOKIE_SESSION: &'static str = "session_id";
     const COOKIE_SESSION_PATH: &'static str = "/";
@@ -92,20 +103,21 @@ impl MockSessionManager {
         Self::get_now() + i64::from(timeout)
     }
 
-    fn sessions_lock(&self) -> MutexGuard<Sessions> {
+    fn sessions_lock(&self) -> MutexGuard<'_, Sessions> {
         self.sessions
             .lock()
             .expect("BUG: cannot lock session buffer")
     }
 }
 
+#[async_trait::async_trait]
 impl session::Manager for MockSessionManager {
     type Error = Error;
     type Session = Handle;
 
     const SESSION_TIMEOUT: u32 = 3600;
 
-    async fn login(&self, username: String, password: String) -> Result<Cookie, Error> {
+    async fn login(&self, username: String, password: String) -> Result<Cookie<'_>, Error> {
         let password_is_equal = {
             let guard = self.password.lock().expect("BUG: cannot lock password");
             guard.eq(&password)
@@ -140,7 +152,7 @@ impl session::Manager for MockSessionManager {
         Ok(cookie)
     }
 
-    async fn logout(&self, handle: Handle) -> Result<Cookie, Error> {
+    async fn logout(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
         debug!("Logout session {:?}", handle);
 
         let mut sessions = self.sessions_lock();
@@ -154,7 +166,7 @@ impl session::Manager for MockSessionManager {
         Ok(cookie)
     }
 
-    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie, Error> {
+    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
         let mut sessions = self.sessions_lock();
 
         let target_username = {
@@ -180,11 +192,8 @@ impl session::Manager for MockSessionManager {
         Ok(cookie)
     }
 
-    async fn extend(&self, handle: Handle) -> Result<Cookie, Error> {
-        if !handle.is_valid() {
-            debug!("Invalid session {:?} can not be extended", handle);
-            Err(Error::SessionCookieInvalid)
-        } else {
+    async fn extend(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
+        if handle.is_valid() {
             debug!("Extend session {:?}", handle);
 
             let mut sessions = self.sessions_lock();
@@ -200,10 +209,13 @@ impl session::Manager for MockSessionManager {
             cookie.set_max_age(time::Duration::seconds(Self::SESSION_TIMEOUT.into()));
 
             Ok(cookie)
+        } else {
+            debug!("Invalid session {:?} can not be extended", handle);
+            Err(Error::SessionCookieInvalid)
         }
     }
 
-    async fn find(&self, cookies: &[Cookie]) -> Result<Handle, Error> {
+    async fn find(&self, cookies: &[Cookie<'_>]) -> Result<Handle, Error> {
         cookies
             .iter()
             .find(|cookie| cookie.name() == Self::COOKIE_SESSION)

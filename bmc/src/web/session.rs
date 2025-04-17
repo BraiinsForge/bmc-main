@@ -77,6 +77,7 @@ where
     }
 }
 
+#[tonic::async_trait]
 impl<T, S, ReqBody, ResBody> Service<Request<ReqBody>> for Session<T, S>
 where
     T: session::Manager + Send + Sync + 'static,
@@ -149,7 +150,7 @@ mod tests {
             );
         });
 
-        let cookies = extract_cookies(&header_map).collect::<Vec<Cookie>>();
+        let cookies = extract_cookies(&header_map).collect::<Vec<Cookie<'_>>>();
 
         let expected_cookies = vec![
             Cookie::new("session_id", "gVZIvHtgCYYfbxXa"),

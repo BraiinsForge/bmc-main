@@ -6,6 +6,8 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
+axum-extra.workspace = true
 bmc.workspace = true
 bmc-display.workspace = true
 flume.workspace = true
@@ -15,9 +17,8 @@ slint = { workspace = true, features = [
     "renderer-software",
     "std",
 ] }
-tokio.workspace = true
 thiserror.workspace = true
-axum-extra.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 
 [lints]
