@@ -9,9 +9,11 @@ stages:
 ##################################
 ######## Essentials Stage ########
 ##################################
+variables:
+  CI_TOOLS_REV: 7f720811d45114a2acef98c0b17b8037ecc57f72 # This is not accessible inside "include"
 include:
   - project: 'nix/ci-tools'
-    ref: master
+    ref: 7f720811d45114a2acef98c0b17b8037ecc57f72
     file:
       - '.essentials.yml'
 
