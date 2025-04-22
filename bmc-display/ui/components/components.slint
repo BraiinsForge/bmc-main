@@ -1,0 +1,40 @@
+
+export component Time inherits Rectangle {
+    in property <string> time-sec;
+    in property <string> city;
+
+    VerticalLayout {
+        Text {
+            text: city;
+            font-size: 20px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        Text {
+            text: time-sec;
+            font-size: 20px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component Position inherits Rectangle {
+    in property <int> row-index;
+    in property <int> col-index;
+
+    HorizontalLayout {
+        Text {
+            text: "Row: " + row-index;
+            font-size: 20px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        Text {
+            text: "Col: " + col-index;
+            font-size: 20px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}

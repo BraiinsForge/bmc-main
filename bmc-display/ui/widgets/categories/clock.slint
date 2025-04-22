@@ -1,0 +1,138 @@
+import { Position, Time } from "../../components/components.slint";
+import { Palette } from "../../style/styles.slint";
+import { Backend } from "../../backend.slint";
+
+export component WidgetClockSmall inherits Rectangle {
+    in property <string> city-1;
+    in property <int> position-row;
+    in property <int> position-col;
+    property <string> time-sec-1;
+
+    timer := Timer {
+        interval: 500ms;
+        running: true;
+        triggered => {
+            root.time-sec-1 = Backend.get-time(city-1);
+        }
+    }
+
+    background: Palette.blue-60;
+    border-color: black;
+    border-width: 5px;
+    border-radius: 20px;
+
+    VerticalLayout {
+        Position {
+            row-index: root.position-row;
+            col-index: root.position-col;
+        }
+        Text {
+            text: "Small";
+            font-size: 20px;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            Time {
+                city: city-1;
+                time-sec: time-sec-1;
+            }
+        }
+    }
+}
+
+export component WidgetClockMedium inherits Rectangle {
+    in property <string> city-1;
+    in property <string> city-2;
+    in property <int> position-row;
+    in property <int> position-col;
+    property <string> time-sec-1;
+    property <string> time-sec-2;
+
+    timer := Timer {
+        interval: 500ms;
+        running: true;
+        triggered => {
+            root.time-sec-1 = Backend.get-time(city-1);
+            root.time-sec-2 = Backend.get-time(city-2);
+        }
+    }
+
+    background: Palette.red-50;
+    border-color: black;
+    border-width: 5px;
+    border-radius: 20px;
+
+    VerticalLayout {
+        Position {
+            row-index: root.position-row;
+            col-index: root.position-col;
+        }
+        Text {
+            text: "Medium";
+            font-size: 20px;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            Time {
+                city: city-1;
+                time-sec: time-sec-1;
+            }
+            Time {
+                city: city-2;
+                time-sec: time-sec-2;
+            }
+        }
+    }
+}
+
+export component WidgetClockLarge inherits Rectangle {
+    in property <string> city-1;
+    in property <string> city-2;
+    in property <string> city-3;
+    in property <int> position-row;
+    in property <int> position-col;
+    property <string> time-sec-1;
+    property <string> time-sec-2;
+    property <string> time-sec-3;
+
+    timer := Timer {
+        interval: 500ms;
+        running: true;
+        triggered => {
+            root.time-sec-1 = Backend.get-time(city-1);
+            root.time-sec-2 = Backend.get-time(city-2);
+            root.time-sec-3 = Backend.get-time(city-3);
+        }
+    }
+
+    background: Palette.green-50;
+    border-color: black;
+    border-width: 5px;
+    border-radius: 20px;
+
+    VerticalLayout {
+        Position {
+            row-index: root.position-row;
+            col-index: root.position-col;
+        }
+        Text {
+            text: "Large";
+            font-size: 20px;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            Time {
+                city: city-1;
+                time-sec: time-sec-1;
+            }
+            Time {
+                city: city-2;
+                time-sec: time-sec-2;
+            }
+            Time {
+                city: city-3;
+                time-sec: time-sec-3;
+            }
+        }
+    }
+}

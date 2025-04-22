@@ -1,0 +1,72 @@
+
+@rust-attr(derive(serde::Serialize, serde::Deserialize))
+export enum WidgetSize {
+    Small,
+    Medium,
+    Large,
+}
+
+@rust-attr(derive(serde::Serialize, serde::Deserialize))
+export struct ClockSmall {
+    city-1: string,
+    //
+    row: int,
+    col: int,
+}
+
+@rust-attr(derive(serde::Serialize, serde::Deserialize))
+export struct ClockMedium {
+    city-1: string,
+    city-2: string,
+    //
+    row: int,
+    col: int,
+}
+
+@rust-attr(derive(serde::Serialize, serde::Deserialize))
+export struct ClockLarge {
+    city-1: string,
+    city-2: string,
+    city-3: string,
+    //
+    row: int,
+    col: int,
+}
+
+export component WidgetContainer inherits Rectangle {
+    property <length> widget-width: 300px;
+    property <length> widget-height: 200px;
+
+    in property <WidgetSize> size;
+    in property <int> position-row;
+    in property <int> position-col;
+
+    x: self.position-col * widget-width;
+    y: self.position-row * widget-height;
+    width: self.get-col-span() * widget-width;
+    height: self.get-row-span() * widget-height;
+
+    @children
+
+    pure function get-row-span() -> int {
+        if self.size == WidgetSize.Small {
+            return 1;
+        }
+        else if self.size == WidgetSize.Medium {
+            return 1;
+        }
+        // Large Size
+        return 2;
+    }
+
+    pure function get-col-span() -> int {
+        if self.size == WidgetSize.Small {
+            return 1;
+        }
+        else if self.size == WidgetSize.Medium {
+            return 2;
+        }
+        // Large Size
+        return 2;
+    }
+}

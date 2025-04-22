@@ -1,0 +1,26 @@
+import { Palette } from "style/styles.slint";
+import { ClockSmall, ClockMedium, ClockLarge } from "widgets/widget.slint";
+import { WidgetBuilder } from "controls/widget-builder.slint";
+import { Backend } from "backend.slint";
+
+export { ClockSmall, ClockMedium, ClockLarge }
+export { Backend }
+
+export component MainWindow inherits Window {
+    default-font-family: "Braiins Sans";
+    background: Palette.black;
+    width: 1200px;
+    height: 400px;
+
+    in property <[ClockSmall]> clock-small;
+    in property <[ClockMedium]> clock-medium;
+    in property <[ClockLarge]> clock-large;
+
+    WidgetBuilder {
+        width: parent.width;
+        height: parent.height;
+        clock-small: clock-small;
+        clock-medium: clock-medium;
+        clock-large: clock-large;
+    }
+}
