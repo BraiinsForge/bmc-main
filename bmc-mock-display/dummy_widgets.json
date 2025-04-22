@@ -1,0 +1,33 @@
+[
+  {
+    "ClockSmall": {
+      "col": 0,
+      "row": 0,
+      "city_1": "NYC"
+    }
+  },
+  {
+    "ClockSmall": {
+      "col": 1,
+      "row": 0,
+      "city_1": "PRG"
+    }
+  },
+  {
+    "ClockMedium": {
+      "col": 0,
+      "row": 1,
+      "city_1": "HKG",
+      "city_2": "LON"
+    }
+  },
+  {
+    "ClockLarge": {
+      "col": 2,
+      "row": 0,
+      "city_1": "NYC",
+      "city_2": "PRG",
+      "city_3": "TOK"
+    }
+  }
+]
