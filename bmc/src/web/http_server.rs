@@ -61,7 +61,7 @@ impl HttpServer {
 
         Router::new()
             .route("/", get(Self::index_handler))
-            .route("/{file}", get(Self::file_handler))
+            .route("/{*file_path}", get(Self::file_handler))
             .with_state(www_storage)
             .merge(var_router)
             .merge(assets_router)
