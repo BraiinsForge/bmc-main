@@ -76,7 +76,7 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
-    pub const WWW_ROOT_PATH: &'static str = "/www/bmc";
+    pub const WWW_ROOT_PATH: &'static str = "/www";
 
     #[must_use]
     pub fn set_www_root_path(mut self, www_root_path: PathBuf) -> Self {

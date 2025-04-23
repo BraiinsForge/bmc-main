@@ -36,9 +36,9 @@
         };
 
         web-assets = pkgs.runCommand "bmc-web-assets" { } ''
-          mkdir -p $out/{bmc,var/default}
+          mkdir -p $out/var/default
 
-          cat <<-EOF > $out/bmc/index.html
+          cat <<-EOF > $out/index.html
           <!DOCTYPE html>
           <html>
           <head><title>Hello</title></head>
