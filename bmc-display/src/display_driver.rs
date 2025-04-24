@@ -1,7 +1,10 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::data::WidgetType;
 use std::{
     fmt::Debug,
+    fs::File,
+    path::Path,
     sync::{Arc, Mutex},
 };
 
@@ -57,8 +60,20 @@ impl DisplayDriver {
 
 impl DisplayHandle for DisplayDriver {
     fn init(&self) -> anyhow::Result<()> {
-        // TODO: this is to prevent clippy to fail. Slint handle isn't used at this moment
-        let _ = self.slint_handle;
+        let json_data = Path::new("dummy_widgets.json");
+        let widgets: Vec<WidgetType> = File::open(json_data)
+            .map_err(|e| {
+                println!("Cannot open file {json_data:?}: {e}");
+            })
+            .and_then(|file| {
+                serde_json::from_reader(file).map_err(|e| {
+                    println!("Cannot read dummy widget data: {e}");
+                })
+            })
+            .unwrap_or_default();
+
+        let _ = self.slint_handle.init_ui();
+        let _ = self.slint_handle.populate_widgets(widgets);
 
         self.backlight_driver
             .lock()

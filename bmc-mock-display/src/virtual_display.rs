@@ -15,7 +15,7 @@ pub struct VirtualDisplay;
 impl VirtualDisplay {
     pub fn create() -> Result<(MainWindow, DisplayDriver)> {
         let brightness = UsizeMetadata::new(18, 0, 20);
-        let resolution = ResolutionMetadata::new(480, 320);
+        let resolution = ResolutionMetadata::new(1200, 400);
         let display_metadata = DisplayMetadata::new(brightness, resolution);
 
         let (slint_handle, main_window) = SlintHandle::create(
