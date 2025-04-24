@@ -35,7 +35,7 @@ workflow:
 ######## Essentials Stage ########
 ##################################
 include:
-  - project: 'bos/ci-tools'
+  - project: 'nix/ci-tools'
     ref: master
     file:
       - '.essentials.yml'
