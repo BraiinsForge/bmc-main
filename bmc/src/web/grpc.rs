@@ -1,15 +1,20 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use super::auth::AuthInterceptor;
 use crate::BmcManager;
 use crate::web::SessionManager;
+use crate::web::session::{extract_cookies, extract_token};
+use axum_extra::extract::cookie::Cookie;
 use bmc_grpc::web;
+use http::header;
 use std::sync::Arc;
 use tonic::service::Routes;
+use tonic::{Status, body::Body, codegen::http::Request};
 use tonic_middleware::InterceptorFor;
+use tonic_middleware::RequestInterceptor;
 use tonic_reflection::server::Builder;
 use tonic_web::GrpcWebLayer;
 use tower::Layer;
+use tracing::debug;
 
 pub mod authentication;
 mod system;
@@ -68,7 +73,7 @@ pub(crate) struct GrpcWeb<T: BmcManager, S: SessionManager> {
     session_manager: Arc<S>,
 }
 
-impl<T: BmcManager + Clone, S: SessionManager + Clone> GrpcWeb<T, S> {
+impl<T: BmcManager, S: SessionManager> GrpcWeb<T, S> {
     pub(crate) fn new(manager: Arc<T>, session_manager: Arc<S>) -> Self {
         Self {
             manager,

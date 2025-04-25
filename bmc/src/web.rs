@@ -1,6 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-mod auth;
 mod grpc;
 mod http_server;
 mod no_password;

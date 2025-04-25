@@ -2,7 +2,6 @@
 
 use crate::session::Manager as SessionManager;
 use bmc_grpc::web::{self, LoginRequest, LoginResponse};
-use hyper::http::header;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 

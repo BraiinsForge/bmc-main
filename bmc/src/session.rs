@@ -8,9 +8,9 @@ pub trait Handle: Default + Clone + Unpin + Send + Sync + 'static + std::fmt::De
 }
 
 #[async_trait::async_trait]
-pub trait Manager: Default + Sync + Send + 'static + Clone {
+pub trait Manager: Default + Sync + Send + 'static {
     type Error: std::error::Error + Send + Sync;
-    type Session: Handle + Clone;
+    type Session: Handle;
 
     // session timeout in seconds
     const SESSION_TIMEOUT: u32;

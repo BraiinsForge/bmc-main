@@ -9,7 +9,11 @@ use bmc_grpc::web::{
 use tonic::Request;
 use tracing::warn;
 
-use crate::{BmcManager, session::Manager as SessionManager};
+use crate::{
+    BmcManager,
+    session::{Handle as _, Manager as SessionManager},
+    web::session::extract_session,
+};
 
 #[derive(Clone)]
 pub(crate) struct SystemService<T, S>
@@ -52,13 +56,19 @@ where
         &self,
         request: tonic::Request<SetPasswordRequest>,
     ) -> Result<tonic::Response<SetPasswordResponse>, tonic::Status> {
-        let session = self
-            .session_manager
-            .session(request.extensions())
-            .await
-            .map_err(|err| tonic::Status::internal(format!("Failed to get session: {err}")))?;
-
+        let session = extract_session::<S, _>(&request)?.clone();
         let request = request.into_inner();
+
+        // Validate current password
+        let _ = self
+            .session_manager
+            .login(session.username(), request.current_password)
+            .await
+            .map_err(|err| {
+                tonic::Status::invalid_argument(format!(
+                    "Cannot reset password due to invalid current password: {err}"
+                ))
+            })?;
 
         self.bmc_manager
             .set_password(request.password)
