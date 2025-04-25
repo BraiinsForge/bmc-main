@@ -14,6 +14,54 @@ use tower::Layer;
 pub mod authentication;
 mod system;
 
+struct AuthInterceptor<S: SessionManager> {
+    pub session_manager: std::sync::Arc<S>,
+}
+
+impl<S: SessionManager> Clone for AuthInterceptor<S> {
+    fn clone(&self) -> Self {
+        Self {
+            session_manager: self.session_manager.clone(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
+    async fn intercept(&self, mut req: Request<Body>) -> Result<Request<Body>, Status> {
+        debug!("Intercepting request: {:?}", req);
+        let token = extract_token(&req);
+        let session_manager = self.session_manager.clone();
+        let mut authenticated = false;
+
+        let cookies = if let Some(token) = token.as_ref() {
+            // NOTE: this is not an elegant integration of gRPC and existing session manager.
+            // Session manager provides cookie interface, not a token interface. More of that
+            // the name of cookie is defined by specific boser implementation, not a library.
+            // this part has to be changed in future
+            vec![Cookie::new("session_id", token)]
+        } else {
+            extract_cookies(req.headers()).collect::<Vec<Cookie<'_>>>()
+        };
+
+        // find the session by its ID from token/cookies
+        if let Ok(session) = session_manager.find(&cookies).await {
+            // extend the session
+            let cookie = session_manager.extend(session.clone()).await;
+            if cookie.is_ok() {
+                req.extensions_mut().insert(session);
+                authenticated = true;
+            }
+        }
+
+        if !authenticated {
+            // make sure, there is no authentication header anymore
+            req.headers_mut().remove(header::AUTHORIZATION.as_str());
+        }
+        Ok(req)
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct GrpcWeb<T: BmcManager, S: SessionManager> {
     manager: Arc<T>,

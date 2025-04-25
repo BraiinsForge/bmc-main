@@ -52,7 +52,11 @@ where
         &self,
         request: tonic::Request<SetPasswordRequest>,
     ) -> Result<tonic::Response<SetPasswordResponse>, tonic::Status> {
-        let session = crate::web::auth::check::<S, _>(&request)?.clone();
+        let session = self
+            .session_manager
+            .session(request.extensions())
+            .await
+            .map_err(|err| tonic::Status::internal(format!("Failed to get session: {err}")))?;
 
         let request = request.into_inner();
 

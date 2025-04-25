@@ -1,8 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::session::{Handle, Manager as SessionManager};
+use crate::session::Manager as SessionManager;
 use axum_extra::extract::cookie::Cookie;
-use http::{Extensions, header};
+use http::header;
 use tonic::{Status, body::Body, codegen::http::Request};
 use tonic_middleware::RequestInterceptor;
 use tracing::debug;
@@ -48,26 +48,14 @@ impl<S: SessionManager + Clone> RequestInterceptor for AuthInterceptor<S> {
             req.headers_mut().remove(header::AUTHORIZATION.as_str());
         }
         // The actual check
-        let _ = get_session::<S>(req.extensions()).ok_or_else(|| {
-            tonic::Status::unauthenticated("Missing or invalid authentication token")
-        })?;
+        let _ = session_manager
+            .session(req.extensions())
+            .await
+            .map_err(|err| {
+                tonic::Status::unauthenticated(format!("Failed to get session: {err}"))
+            })?;
         Ok(req)
     }
-}
-
-fn get_session<S: SessionManager>(extensions: &Extensions) -> Option<&S::Session> {
-    extensions.get::<S::Session>().and_then(|session| {
-        debug!("Session: {:?}", session);
-        debug!("Session is valid: {}", session.is_valid());
-        session.is_valid().then_some(session)
-    })
-}
-
-pub fn check<S: SessionManager, R>(
-    request: &tonic::Request<R>,
-) -> Result<&S::Session, tonic::Status> {
-    get_session::<S>(request.extensions())
-        .ok_or_else(|| tonic::Status::unauthenticated("Missing or invalid authentication token"))
 }
 
 #[cfg(test)]
