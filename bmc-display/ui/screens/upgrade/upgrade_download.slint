@@ -1,0 +1,51 @@
+import { Images } from "../../style/images.slint";
+import { Palette } from "../../style/palette.slint";
+import { Theme } from "../../style/theme.slint";
+import { UpgradeDownloadAdapter } from "../../controls/adapters.slint";
+
+import { ProgressIndicator } from "std-widgets.slint";
+
+export component UpgradeDownload inherits Rectangle {
+    in property <string> icon_text_content;
+    VerticalLayout {
+        spacing: 15px;
+        alignment: center;
+        HorizontalLayout {
+            padding-top: 40px;
+            padding-bottom: 15px;
+            alignment: center;
+            Rectangle {
+                width: 80px;
+                height: 80px;
+                Image {
+                    visible: true;
+                    source: Images.tools;
+                }
+            }
+        }
+
+        Text {
+            text: UpgradeDownloadAdapter.progress_text;
+            color: Palette.white;
+            font-size: 18px;
+            font-weight: Theme.font.weight.regular;
+            horizontal-alignment: center;
+            padding-left: 20px;
+        }
+
+        ProgressIndicator {
+            width: parent.width * 0.8;
+            height: 7px;
+            x: parent.width * 0.1;
+            progress: UpgradeDownloadAdapter.progress * 100%;
+        }
+
+        Text {
+            text: UpgradeDownloadAdapter.downloaded_mb_text;
+            color: Palette.gray-50;
+            font-size: 18px;
+            font-weight: Theme.font.weight.regular;
+            horizontal-alignment: center;
+        }
+    }
+}
