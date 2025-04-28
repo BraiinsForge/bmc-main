@@ -71,7 +71,7 @@ where
             })?;
 
         self.bmc_manager
-            .set_password(request.password)
+            .set_password(request.new_password)
             .await
             .map_err(|err| tonic::Status::internal(format!("Failed to set password: {err}")))?;
 

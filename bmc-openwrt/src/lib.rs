@@ -31,14 +31,19 @@ pub struct OpenwrtSessionManager;
 
 #[derive(Default, Clone, Debug)]
 pub struct Handle {
+    username: String,
     token: String,
     valid: bool,
 }
 
 impl Handle {
     #[must_use]
-    pub fn new(token: String, valid: bool) -> Self {
-        Self { token, valid }
+    pub fn new(username: String, token: String, valid: bool) -> Self {
+        Self {
+            username,
+            token,
+            valid,
+        }
     }
 }
 
@@ -47,8 +52,12 @@ impl bmc::session::Handle for Handle {
         self.valid
     }
 
-    fn get_id(&self) -> String {
+    fn id(&self) -> String {
         self.token.clone()
+    }
+
+    fn username(&self) -> String {
+        self.username.clone()
     }
 }
 

@@ -26,13 +26,18 @@ pub enum Error {
 
 #[derive(Default, Clone, Debug)]
 pub struct Handle {
+    username: String,
     token: String,
     valid: bool,
 }
 
 impl Handle {
-    pub fn new(token: String, valid: bool) -> Self {
-        Self { token, valid }
+    pub fn new(username: String, token: String, valid: bool) -> Self {
+        Self {
+            username,
+            token,
+            valid,
+        }
     }
 }
 
@@ -41,8 +46,12 @@ impl session::Handle for Handle {
         self.valid
     }
 
-    fn get_id(&self) -> String {
+    fn id(&self) -> String {
         self.token.clone()
+    }
+
+    fn username(&self) -> String {
+        self.username.clone()
     }
 }
 
@@ -231,6 +240,7 @@ impl session::Manager for MockSessionManager {
                     .get(cookie.value())
                     .map(|session| {
                         Handle::new(
+                            session.username.clone(),
                             cookie.value().into(),
                             session.expiration_time > Self::get_now(),
                         )

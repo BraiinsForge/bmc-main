@@ -12,7 +12,8 @@ message GetSystemMetadataRequest {}
 
 // Request for set password action.
 message SetPasswordRequest {
-  optional string password = 1;
+  string current_password = 1;
+  optional string new_password = 2;
 }
 
 // Response for set password action.
