@@ -1,9 +1,13 @@
 import { Palette } from "style/palette.slint";
 import { Theme } from "style/theme.slint";
+import { ScreenAdapter, UpgradeDownloadAdapter } from "controls/adapters.slint";
+import { UIScreen } from "controls/common.slint";
+import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed } from "screens/screens.slint";
 import { ClockSmall, ClockMedium, ClockLarge } from "widgets/widget.slint";
 import { WidgetBuilder } from "controls/widget-builder.slint";
 import { Backend } from "backend.slint";
 
+export { ScreenAdapter, UpgradeDownloadAdapter, UIScreen }
 export { ClockSmall, ClockMedium, ClockLarge }
 export { Backend }
 
@@ -12,6 +16,8 @@ export component MainWindow inherits Window {
     background: Palette.black;
     width: 1200px;
     height: 400px;
+
+    in property <UIScreen> screen-id <=> ScreenAdapter.screen-id;
 
     in property <[ClockSmall]> clock-small;
     in property <[ClockMedium]> clock-medium;
@@ -23,5 +29,19 @@ export component MainWindow inherits Window {
         clock-small: clock-small;
         clock-medium: clock-medium;
         clock-large: clock-large;
+    }
+
+    // Overlay screens
+    UpgradeProgress {
+        visible: root.screen_id == UIScreen.UpgradeProgress;
+    }
+    UpgradeDownload {
+        visible: root.screen_id == UIScreen.UpgradeDownload;
+    }
+    UpgradeSuccess {
+        visible: root.screen_id == UIScreen.UpgradeSuccess;
+    }
+    UpgradeFailed {
+        visible: root.screen_id == UIScreen.UpgradeFailed;
     }
 }
