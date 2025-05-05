@@ -1,5 +1,33 @@
 export global Images {
+    // Clocks
+    in property <image> clock-dial-round: @image-url("../assets/images/clock/clocks-dial-round.svg");
+    in property <image> hand-hour: @image-url("../assets/images/clock/hand-hour.svg");
+    in property <image> hand-minute: @image-url("../assets/images/clock/hand-minute.svg");
+    in property <image> hand-second: @image-url("../assets/images/clock/hand-second.svg");
+    in property <image> center-circle-white: @image-url("../assets/images/clock/center-circle-white.svg");
+    in property <image> center-circle-black: @image-url("../assets/images/clock/center-circle-black.svg");
+    in property <image> center-circle-orange: @image-url("../assets/images/clock/center-circle-orange.svg");
+    in property <image> center-circle-stroke: @image-url("../assets/images/clock/center-circle-stroke.svg");
+    // Errors
     in property <image> tools: @image-url("../assets/images/tools.svg");
     in property <image> error_circle: @image-url("../assets/images/error_circle.svg");
     in property <image> main_checkmark: @image-url("../assets/images/main_checkmark.svg");
+    // hour hand
+    out property <length> hour-hand-width: hand-hour.width * 1px;
+    out property <length> hour-hand-height: hand-hour.height * 1px;
+    // minute hand
+    out property <length> minute-hand-width: hand-minute.width * 1px;
+    out property <length> minute-hand-height: hand-minute.height * 1px;
+    // second hand
+    out property <length> second-hand-width: hand-second.width * 1px;
+    out property <length> second-hand-height: hand-second.height * 1px;
+    // circles
+    out property <length> circle-white-width: center-circle-white.width * 1px;
+    out property <length> circle-white-height: center-circle-white.height * 1px;
+    out property <length> circle-black-width: center-circle-black.width * 1px;
+    out property <length> circle-black-height: center-circle-black.height * 1px;
+    out property <length> circle-orange-width: center-circle-orange.width * 1px;
+    out property <length> circle-orange-height: center-circle-orange.height * 1px;
+    out property <length> circle-stroke-width: center-circle-stroke.width * 1px;
+    out property <length> circle-stroke-height: center-circle-stroke.height * 1px;
 }
