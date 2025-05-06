@@ -18,6 +18,8 @@ async fn main() -> Result<()> {
 
     let data_provider = MockDataProvider;
 
+    let _timer = display_driver.start_clock_timer(&main_window);
+
     let display_handler = DisplayHandler::new(display_driver, data_provider);
 
     display_handler.init()?;

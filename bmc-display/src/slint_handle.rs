@@ -1,38 +1,33 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::{Screen, WidgetType};
-use crate::generated::{
-    Backend, ClockLarge, ClockMedium, ClockSmall, MainWindow, UpgradeDownloadAdapter,
-};
+use crate::data::{Screen, Widget};
+use crate::generated::{MainWindow, UpgradeDownloadAdapter, WidgetSlint};
 use anyhow::anyhow;
-use chrono::{Duration, Utc};
 use core::fmt;
-use slint::{ComponentHandle, Global, ModelRc, VecModel, Weak};
+use slint::{ComponentHandle, Global, ModelRc, SharedString, VecModel, Weak};
 use std::sync::{Arc, Mutex};
 
 fn into_populate_widgets_closure(
-    widgets: Vec<WidgetType>,
+    widgets: Vec<Widget>,
 ) -> Box<dyn FnOnce(MainWindow) + Send + 'static> {
     Box::new(move |main_window: MainWindow| {
-        let mut clock_small_vec: Vec<ClockSmall> = vec![];
-        let mut clock_medium_vec: Vec<ClockMedium> = vec![];
-        let mut clock_large_vec: Vec<ClockLarge> = vec![];
+        let mut widget_slint: Vec<WidgetSlint> = vec![];
         for widget in widgets {
-            match widget {
-                WidgetType::ClockSmall(clock_small) => {
-                    clock_small_vec.push(clock_small);
-                }
-                WidgetType::ClockMedium(clock_medium) => {
-                    clock_medium_vec.push(clock_medium);
-                }
-                WidgetType::ClockLarge(clock_large) => {
-                    clock_large_vec.push(clock_large);
-                }
-            }
+            widget_slint.push(WidgetSlint {
+                col: widget.col,
+                row: widget.row,
+                widget_data: ModelRc::new(VecModel::from(
+                    widget
+                        .widget_data
+                        .iter()
+                        .map(std::convert::Into::into)
+                        .collect::<Vec<SharedString>>(),
+                )),
+                widget_size: widget.widget_size,
+                widget_type: widget.widget_type,
+            });
         }
-        main_window.set_clock_small(ModelRc::new(VecModel::from(clock_small_vec)));
-        main_window.set_clock_medium(ModelRc::new(VecModel::from(clock_medium_vec)));
-        main_window.set_clock_large(ModelRc::new(VecModel::from(clock_large_vec)));
+        main_window.set_widgets(ModelRc::new(VecModel::from(widget_slint)));
     })
 }
 
@@ -67,26 +62,8 @@ impl SlintHandle {
             .map_err(|e| anyhow!("Cannot upgrade ui_handle: {:?}", e))
     }
 
-    pub fn populate_widgets(&self, widgets: Vec<WidgetType>) -> anyhow::Result<()> {
+    pub fn populate_widgets(&self, widgets: Vec<Widget>) -> anyhow::Result<()> {
         self.update_in_event_loop(into_populate_widgets_closure(widgets))
-    }
-
-    pub fn init_ui(&self) -> anyhow::Result<()> {
-        self.update_in_event_loop(move |main_window| {
-            // Dummy implementation of timezone backend logic
-            main_window.global::<Backend<'_>>().on_get_time(|city| {
-                let offset: i64 = match city.as_str() {
-                    "NYC" => -4,
-                    "LON" => 1,
-                    "PRG" => 2,
-                    "HKG" => 8,
-                    "TOK" => 9,
-                    _ => 0,
-                };
-                let now = Utc::now();
-                slint::format!("{}", (now + Duration::hours(offset)).format("%H:%M:%S"))
-            });
-        })
     }
 
     pub fn update_download_firmware_progress(

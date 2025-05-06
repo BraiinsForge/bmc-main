@@ -1,6 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::{Screen, WidgetType};
+use crate::{
+    data::{Screen, Widget},
+    generated::{DateTimeAdapter, MainWindow},
+};
+use chrono::{Datelike, Timelike};
+use slint::{ComponentHandle, Global, Timer};
+use std::time::Duration;
 use std::{
     fmt::Debug,
     fs::File,
@@ -60,6 +66,30 @@ impl<T: DisplayBacklightDriver> DisplayDriver<T> {
             slint_handle,
         }
     }
+
+    #[must_use]
+    pub fn start_clock_timer(&self, window: &MainWindow) -> Timer {
+        let timer = Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(250), {
+            let window_weak = window.as_weak();
+            move || {
+                let _ = window_weak.upgrade_in_event_loop(move |main_window| {
+                    let datetime_adapter = DateTimeAdapter::get(&main_window);
+                    let now = chrono::Local::now();
+                    datetime_adapter.set_hour24(i32::try_from(now.hour()).unwrap_or_default());
+                    datetime_adapter.set_hour12(i32::try_from(now.hour12().1).unwrap_or_default());
+                    datetime_adapter.set_is_pm(now.hour12().0);
+                    datetime_adapter.set_minute(i32::try_from(now.minute()).unwrap_or_default());
+                    datetime_adapter.set_second(i32::try_from(now.second()).unwrap_or_default());
+                    datetime_adapter.set_day(i32::try_from(now.day()).unwrap_or_default());
+                    datetime_adapter.set_month(i32::try_from(now.month()).unwrap_or_default());
+                    datetime_adapter.set_year(now.year());
+                    datetime_adapter.set_weekday(slint::format!("{}", now.weekday()));
+                });
+            }
+        });
+        timer
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -84,19 +114,18 @@ impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandler<T, U> {
 #[async_trait::async_trait]
 impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandle for DisplayHandler<T, U> {
     fn init(&self) -> anyhow::Result<()> {
-        let json_data = Path::new("dummy_widgets.json");
-        let widgets: Vec<WidgetType> = File::open(json_data)
+        let json_data = Path::new("widgets.json");
+        let widgets: Vec<Widget> = File::open(json_data)
             .map_err(|e| {
                 println!("Cannot open file {json_data:?}: {e}");
             })
             .and_then(|file| {
                 serde_json::from_reader(file).map_err(|e| {
-                    println!("Cannot read dummy widget data: {e}");
+                    println!("Cannot read widget data: {e}");
                 })
             })
             .unwrap_or_default();
 
-        let _ = self.slint_handle.init_ui();
         let _ = self.slint_handle.populate_widgets(widgets);
 
         self.backlight_driver
