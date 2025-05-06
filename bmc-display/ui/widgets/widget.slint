@@ -1,52 +1,49 @@
+@rust-attr(derive(serde::Serialize, serde::Deserialize))
+export enum WidgetType {
+    ClockAnalogRound,
+}
 
 @rust-attr(derive(serde::Serialize, serde::Deserialize))
 export enum WidgetSize {
     Small,
     Medium,
     Large,
+    FullScreen,
 }
 
-@rust-attr(derive(serde::Serialize, serde::Deserialize))
-export struct ClockSmall {
-    city-1: string,
-    //
-    row: int,
-    col: int,
-}
-
-@rust-attr(derive(serde::Serialize, serde::Deserialize))
-export struct ClockMedium {
-    city-1: string,
-    city-2: string,
-    //
-    row: int,
-    col: int,
-}
-
-@rust-attr(derive(serde::Serialize, serde::Deserialize))
-export struct ClockLarge {
-    city-1: string,
-    city-2: string,
-    city-3: string,
-    //
+export struct WidgetSlint {
+    widget-type: WidgetType,
+    widget-size: WidgetSize,
+    widget-data: [string],
     row: int,
     col: int,
 }
 
 export component WidgetContainer inherits Rectangle {
-    property <length> widget-width: 300px;
-    property <length> widget-height: 200px;
+    property <length> widget-base-width: 320px;
+    property <length> widget-base-height: 240px;
+    property <length> top-bar: 40px;
 
     in property <WidgetSize> size;
     in property <int> position-row;
     in property <int> position-col;
 
-    x: self.position-col * widget-width;
-    y: self.position-row * widget-height;
-    width: self.get-col-span() * widget-width;
-    height: self.get-row-span() * widget-height;
+    x: self.position-col * widget-base-width;
+    y: self.position-row * widget-base-height;
+    width: self.get-col-span() * widget-base-width;
+    height: self.get-row-span() * widget-base-height;
 
-    @children
+    background: black;
+
+    VerticalLayout {
+        alignment: center;
+
+        HorizontalLayout {
+            alignment: center;
+
+            @children
+        }
+    }
 
     pure function get-row-span() -> int {
         if self.size == WidgetSize.Small {
@@ -55,7 +52,10 @@ export component WidgetContainer inherits Rectangle {
         else if self.size == WidgetSize.Medium {
             return 1;
         }
-        // Large Size
+        else if self.size == WidgetSize.Large {
+            return 2;
+        }
+        // Full screen
         return 2;
     }
 
@@ -66,7 +66,10 @@ export component WidgetContainer inherits Rectangle {
         else if self.size == WidgetSize.Medium {
             return 2;
         }
-        // Large Size
-        return 2;
+        else if self.size == WidgetSize.Large {
+            return 2;
+        }
+        // Full screen
+        return 4;
     }
 }

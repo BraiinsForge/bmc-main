@@ -1,34 +1,31 @@
 import { Palette } from "style/palette.slint";
-import { Theme } from "style/theme.slint";
 import { ScreenAdapter, UpgradeDownloadAdapter } from "controls/adapters.slint";
 import { UIScreen } from "controls/common.slint";
 import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed } from "screens/screens.slint";
-import { ClockSmall, ClockMedium, ClockLarge } from "widgets/widget.slint";
+import { WidgetSize, WidgetType, WidgetSlint } from "widgets/widget.slint";
 import { WidgetBuilder } from "controls/widget-builder.slint";
 import { Backend } from "backend.slint";
+import { DateTimeAdapter } from "controls/adapters.slint";
 
 export { ScreenAdapter, UpgradeDownloadAdapter, UIScreen }
-export { ClockSmall, ClockMedium, ClockLarge }
+export { WidgetSize, WidgetType, WidgetSlint }
 export { Backend }
+export { DateTimeAdapter }
 
 export component MainWindow inherits Window {
     default-font-family: "Braiins Sans";
     background: Palette.black;
-    width: 1200px;
-    height: 400px;
+    width: 1280px;
+    height: 480px;
 
     in property <UIScreen> screen-id <=> ScreenAdapter.screen-id;
 
-    in property <[ClockSmall]> clock-small;
-    in property <[ClockMedium]> clock-medium;
-    in property <[ClockLarge]> clock-large;
+    in property <[WidgetSlint]> widgets;
 
     WidgetBuilder {
         width: parent.width;
         height: parent.height;
-        clock-small: clock-small;
-        clock-medium: clock-medium;
-        clock-large: clock-large;
+        widgets: widgets;
     }
 
     // Overlay screens

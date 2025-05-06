@@ -1,33 +1,38 @@
 [
   {
-    "ClockSmall": {
-      "col": 0,
-      "row": 0,
-      "city_1": "NYC"
-    }
+    "row": 0,
+    "col": 0,
+    "widget_size": "Small",
+    "widget_type": "ClockAnalogRound",
+    "widget_data": [
+      "PRG"
+    ]
   },
   {
-    "ClockSmall": {
-      "col": 1,
-      "row": 0,
-      "city_1": "PRG"
-    }
+    "row": 0,
+    "col": 1,
+    "widget_size": "Small",
+    "widget_type": "ClockAnalogRound",
+    "widget_data": [
+      "PRG"
+    ]
   },
   {
-    "ClockMedium": {
-      "col": 0,
-      "row": 1,
-      "city_1": "HKG",
-      "city_2": "LON"
-    }
+    "row": 1,
+    "col": 0,
+    "widget_size": "Medium",
+    "widget_type": "ClockAnalogRound",
+    "widget_data": [
+      "PRG"
+    ]
   },
   {
-    "ClockLarge": {
-      "col": 2,
-      "row": 0,
-      "city_1": "NYC",
-      "city_2": "PRG",
-      "city_3": "TOK"
-    }
+    "row": 0,
+    "col": 2,
+    "widget_size": "Large",
+    "widget_type": "ClockAnalogRound",
+    "widget_data": [
+      "PRG"
+    ]
   }
 ]

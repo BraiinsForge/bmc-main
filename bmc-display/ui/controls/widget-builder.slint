@@ -1,52 +1,18 @@
-import { WidgetContainer, WidgetSize } from "../widgets/widget.slint";
-import { WidgetClockSmall, WidgetClockMedium, WidgetClockLarge } from "../widgets/categories/clock.slint";
-
-import { ClockSmall, ClockMedium, ClockLarge } from "../widgets/widget.slint";
+import { WidgetContainer, WidgetSlint, WidgetType } from "../widgets/widget.slint";
+import { WidgetClockAnalogRound } from "../widgets/categories/clock.slint";
 
 export component WidgetBuilder {
-    in property <[ClockSmall]> clock-small;
-    in property <[ClockMedium]> clock-medium;
-    in property <[ClockLarge]> clock-large;
+    in property <[WidgetSlint]> widgets;
 
-    for widget[index] in clock-small : cs-id := WidgetContainer {
-        size: WidgetSize.Small;
+    for widget[index] in widgets: WidgetContainer {
+        size: widget.widget-size;
         position-row: widget.row;
         position-col: widget.col;
-        WidgetClockSmall {
-            visible: true;
-            //
-            city-1: widget.city-1;
-            position-row: parent.position-row;
-            position-col: parent.position-col;
+        visible: true;
+        //
+        if widget.widget-type == WidgetType.ClockAnalogRound: WidgetClockAnalogRound {
+            widget-size: widget.widget-size;
         }
-    }
-
-    for widget[index] in clock-medium : cm-id := WidgetContainer {
-        size: WidgetSize.Medium;
-        position-row: widget.row;
-        position-col: widget.col;
-        WidgetClockMedium {
-            visible: true;
-            //
-            city-1: widget.city-1;
-            city-2: widget.city-2;
-            position-row: parent.position-row;
-            position-col: parent.position-col;
-        }
-    }
-
-    for widget[index] in clock-large : cl-id := WidgetContainer {
-        size: WidgetSize.Large;
-        position-row: widget.row;
-        position-col: widget.col;
-        WidgetClockLarge {
-            visible: true;
-            //
-            city-1: widget.city-1;
-            city-2: widget.city-2;
-            city-3: widget.city-3;
-            position-row: parent.position-row;
-            position-col: parent.position-col;
-        }
+        // Conditions for other Widgets ...
     }
 }

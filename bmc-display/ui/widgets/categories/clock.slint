@@ -1,138 +1,104 @@
-import { Position, Time } from "../../components/components.slint";
 import { Palette } from "../../style/palette.slint";
+import { Theme } from "../../style/theme.slint";
+import { Images } from "../../style/images.slint";
 import { Backend } from "../../backend.slint";
+import { WidgetSize } from "../widget.slint";
+import { DateTimeAdapter } from "../../controls/adapters.slint";
 
-export component WidgetClockSmall inherits Rectangle {
-    in property <string> city-1;
-    in property <int> position-row;
-    in property <int> position-col;
-    property <string> time-sec-1;
+export component WidgetClockAnalogRound inherits Rectangle {
+    property <length> base-width: 390px;
+    property <length> base-height: 390px;
+    in property <WidgetSize> widget-size;
 
-    timer := Timer {
-        interval: 500ms;
-        running: true;
-        triggered => {
-            root.time-sec-1 = Backend.get-time(city-1);
-        }
+    property <percent> relative-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
+
+    width: base-width * relative-size;
+    height: base-height * relative-size;
+
+    dial := Image {
+        width: parent.width;
+        height: parent.height;
+        source: Images.clock-dial-round;
     }
-
-    background: Palette.blue-60;
-    border-color: black;
-    border-width: 5px;
-    border-radius: 20px;
-
-    VerticalLayout {
-        Position {
-            row-index: root.position-row;
-            col-index: root.position-col;
-        }
-        Text {
-            text: "Small";
-            font-size: 20px;
+    date-window := Rectangle {
+        visible: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? false : true;
+        width: 60px;
+        height: 60px;
+        x: parent.width / 2 - self.width / 2;
+        y: 250px;
+        border-radius: self.width / 2;
+        border-width: 1px;
+        border-color: Palette.gray-90;
+        date := Text {
+            text: DateTimeAdapter.day;
+            font-size: 24px;
+            font-weight: Theme.font.weight.regular;
+            color: Palette.gray-40;
+            vertical-alignment: center;
             horizontal-alignment: center;
         }
-        HorizontalLayout {
-            Time {
-                city: city-1;
-                time-sec: time-sec-1;
-            }
-        }
     }
-}
-
-export component WidgetClockMedium inherits Rectangle {
-    in property <string> city-1;
-    in property <string> city-2;
-    in property <int> position-row;
-    in property <int> position-col;
-    property <string> time-sec-1;
-    property <string> time-sec-2;
-
-    timer := Timer {
-        interval: 500ms;
-        running: true;
-        triggered => {
-            root.time-sec-1 = Backend.get-time(city-1);
-            root.time-sec-2 = Backend.get-time(city-2);
-        }
+    hour := Image {
+        width: Images.hour-hand-width * relative-size;
+        height: Images.hour-hand-height * relative-size;
+        y: 74px * relative-size;
+        rotation-angle: hour-angle();
+        rotation-origin-y: 121px * relative-size;
+        source: Images.hand-hour;
     }
-
-    background: Palette.red-50;
-    border-color: black;
-    border-width: 5px;
-    border-radius: 20px;
-
-    VerticalLayout {
-        Position {
-            row-index: root.position-row;
-            col-index: root.position-col;
-        }
-        Text {
-            text: "Medium";
-            font-size: 20px;
-            horizontal-alignment: center;
-        }
-        HorizontalLayout {
-            Time {
-                city: city-1;
-                time-sec: time-sec-1;
-            }
-            Time {
-                city: city-2;
-                time-sec: time-sec-2;
-            }
-        }
+    minute := Image {
+        width: Images.minute-hand-width * relative-size;
+        height: Images.minute-hand-height * relative-size;
+        y: 0px;
+        rotation-angle: minute-angle();
+        rotation-origin-y: 195px * relative-size;
+        source: Images.hand-minute;
     }
-}
-
-export component WidgetClockLarge inherits Rectangle {
-    in property <string> city-1;
-    in property <string> city-2;
-    in property <string> city-3;
-    in property <int> position-row;
-    in property <int> position-col;
-    property <string> time-sec-1;
-    property <string> time-sec-2;
-    property <string> time-sec-3;
-
-    timer := Timer {
-        interval: 500ms;
-        running: true;
-        triggered => {
-            root.time-sec-1 = Backend.get-time(city-1);
-            root.time-sec-2 = Backend.get-time(city-2);
-            root.time-sec-3 = Backend.get-time(city-3);
-        }
+    Image {
+        width: Images.circle-white-width * relative-size;
+        height: Images.circle-white-height * relative-size;
+        x: 168px * relative-size;
+        y: 168px * relative-size;
+        source: Images.center-circle-white;
+    }
+    second := Image {
+        width: Images.second-hand-width * relative-size;
+        height: Images.second-hand-height * relative-size;
+        y: 5px * relative-size;
+        rotation-angle: second-angle();
+        rotation-origin-y: 190px * relative-size;
+        source: Images.hand-second;
+    }
+    Image {
+        width: Images.circle-orange-width * relative-size;
+        height: Images.circle-orange-height * relative-size;
+        x: 187px * relative-size;
+        y: 187px * relative-size;
+        source: Images.center-circle-orange;
+    }
+    Image {
+        width: Images.circle-black-width * relative-size;
+        height: Images.circle-black-height * relative-size;
+        x: 191px * relative-size;
+        y: 191px * relative-size;
+        source: Images.center-circle-black;
+    }
+    Image {
+        width: Images.circle-stroke-width * relative-size;
+        height: Images.circle-stroke-height * relative-size;
+        x: 190px * relative-size;
+        y: 190px * relative-size;
+        source: Images.center-circle-stroke;
     }
 
-    background: Palette.green-50;
-    border-color: black;
-    border-width: 5px;
-    border-radius: 20px;
+    function second-angle() -> angle {
+        return DateTimeAdapter.second * 6deg;
+    }
+    function minute-angle() -> angle {
+        return DateTimeAdapter.minute * 6deg;
+    }
 
-    VerticalLayout {
-        Position {
-            row-index: root.position-row;
-            col-index: root.position-col;
-        }
-        Text {
-            text: "Large";
-            font-size: 20px;
-            horizontal-alignment: center;
-        }
-        HorizontalLayout {
-            Time {
-                city: city-1;
-                time-sec: time-sec-1;
-            }
-            Time {
-                city: city-2;
-                time-sec: time-sec-2;
-            }
-            Time {
-                city: city-3;
-                time-sec: time-sec-3;
-            }
-        }
+    function hour-angle() -> angle {
+        return (DateTimeAdapter.hour12 * 30deg) + (DateTimeAdapter.minute * 30deg / 60);
     }
 }
