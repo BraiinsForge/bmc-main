@@ -5,10 +5,11 @@ mod http_server;
 mod no_password;
 mod session;
 
-use crate::BmcManager;
 use crate::session::Manager as SessionManager;
+use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
+use bmc_upgrade::firmware::FirmwareIndex;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
@@ -18,28 +19,40 @@ use tokio::net::TcpListener;
 use tower::{Layer, steer::Steer};
 use tower_http::normalize_path::NormalizePathLayer;
 
-pub(crate) struct WebService<T: BmcManager, S: SessionManager> {
+pub(crate) struct WebService<T: BmcManager, S: SessionManager, U: FirmwareIndex> {
     manager: Arc<T>,
     session_manager: Arc<S>,
     config: ServerConfig,
+    system_upgrade_service: SystemUpgradeService<U, T>,
 }
 
-impl<T: BmcManager, S: SessionManager> WebService<T, S> {
-    pub(crate) fn new(manager: Arc<T>, session_manager: Arc<S>, config: ServerConfig) -> Self {
+impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
+    pub(crate) fn new(
+        manager: Arc<T>,
+        session_manager: Arc<S>,
+        config: ServerConfig,
+        system_upgrade_service: SystemUpgradeService<U, T>,
+    ) -> Self {
         Self {
             manager,
             session_manager,
             config,
+            system_upgrade_service,
         }
     }
 
     pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
         let http_router = http_server::HttpServer::new(self.config).build();
-        let grpc_router = grpc::GrpcWeb::new(self.manager, self.session_manager.clone())
-            .build()
-            .into_axum_router()
-            .layer(session::SessionLayer::new(self.session_manager.clone()))
-            .layer(no_password::NoPasswordLayer::new(self.session_manager));
+        let grpc_router = grpc::GrpcWeb::new(
+            self.manager,
+            self.session_manager.clone(),
+            self.system_upgrade_service,
+        )
+        .build()
+        .into_axum_router()
+        .layer(session::SessionLayer::new(self.session_manager.clone()))
+        .layer(no_password::NoPasswordLayer::new(self.session_manager));
+
         // combine grpc and http router into one service
         let service = Steer::new(
             vec![http_router, grpc_router],

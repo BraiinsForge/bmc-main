@@ -78,6 +78,7 @@ where
             self.manager.clone(),
             self.session_manager.clone(),
             self.config.server_config,
+            self.system_upgrade_service,
         )
         .run(self.listener)
         .await?;

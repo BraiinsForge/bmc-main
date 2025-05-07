@@ -5,8 +5,11 @@ use crate::web::SessionManager;
 use crate::web::session::{extract_cookies, extract_token};
 use axum_extra::extract::cookie::Cookie;
 use bmc_grpc::web;
+use bmc_upgrade::firmware::FirmwareIndex;
 use http::header;
+use std::fmt::Display;
 use std::sync::Arc;
+use strum::EnumMessage;
 use tonic::service::Routes;
 use tonic::{Status, body::Body, codegen::http::Request};
 use tonic_middleware::InterceptorFor;
@@ -19,6 +22,8 @@ use tracing::debug;
 pub mod authentication;
 mod metadata;
 mod system;
+use super::SystemUpgradeService;
+mod upgrade_service;
 
 struct AuthInterceptor<S: SessionManager> {
     pub session_manager: std::sync::Arc<S>,
@@ -72,16 +77,22 @@ impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
 }
 
 #[derive(Clone)]
-pub(crate) struct GrpcWeb<T: BmcManager, S: SessionManager> {
+pub(crate) struct GrpcWeb<T: BmcManager, S: SessionManager, U: FirmwareIndex> {
     manager: Arc<T>,
     session_manager: Arc<S>,
+    system_upgrade_service: SystemUpgradeService<U, T>,
 }
 
-impl<T: BmcManager, S: SessionManager> GrpcWeb<T, S> {
-    pub(crate) fn new(manager: Arc<T>, session_manager: Arc<S>) -> Self {
+impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
+    pub(crate) fn new(
+        manager: Arc<T>,
+        session_manager: Arc<S>,
+        system_upgrade_service: SystemUpgradeService<U, T>,
+    ) -> Self {
         Self {
             manager,
             session_manager,
+            system_upgrade_service,
         }
     }
 
@@ -89,6 +100,10 @@ impl<T: BmcManager, S: SessionManager> GrpcWeb<T, S> {
         let auth_interceptor = AuthInterceptor {
             session_manager: self.session_manager.clone(),
         };
+
+        let upgrade_service = web::upgrade_service_server::UpgradeServiceServer::new(
+            upgrade_service::UpgradeService::new(self.system_upgrade_service),
+        );
 
         let reflection_service = Builder::configure()
             .register_encoded_file_descriptor_set(web::FILE_DESCRIPTOR_SET)
@@ -117,5 +132,27 @@ impl<T: BmcManager, S: SessionManager> GrpcWeb<T, S> {
                 system_service,
                 auth_interceptor.clone(),
             )))
+            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                upgrade_service,
+                auth_interceptor.clone(),
+            )))
+    }
+}
+
+#[derive(EnumMessage)]
+pub(crate) enum GrpcError {
+    #[strum(serialize = "bad request")]
+    BadRequest,
+}
+
+impl Display for GrpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Write first serialization, if available (should be always true).
+        // In an unlikely case of no serialization, report the platform as unknown.
+        write!(
+            f,
+            "{}",
+            self.get_serializations().first().unwrap_or(&"unknown")
+        )
     }
 }

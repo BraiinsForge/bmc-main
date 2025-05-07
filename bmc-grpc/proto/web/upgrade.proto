@@ -2,8 +2,6 @@ syntax = "proto3";
 
 package braiins.bmc.web;
 
-import "google/protobuf/empty.proto";
-
 message UpgradeMetadata {
   string hash = 1;
   string version = 2;
@@ -16,44 +14,11 @@ message ReleaseInfo {
   string description = 2;
 }
 
-message UpgradeDetail {
-  UpgradeMetadata latest_release = 1;
-  repeated ReleaseInfo previous_releases = 2;
-}
-
-message UpgradeError {
-  UpgradeErrorCode code = 1;
-
-  oneof details {
-    DownloadedImageHashMismatchData hash_mismatch = 2;
-  }
-}
-
-enum UpgradeErrorCode {
-  UPGRADE_ERROR_CODE_UNSPECIFIED = 0;
-  UPGRADE_ERROR_CODE_NO_IMAGE_WITH_HASH = 1;
-  UPGRADE_ERROR_CODE_DOWNLOADED_IMAGE_HASH_MISMATCH = 2;
-  UPGRADE_ERROR_CODE_NOT_ENOUGH_SPACE = 3;
-  UPGRADE_ERROR_CODE_FAILED_TO_CHECK_DISK_SPACE = 4;
-  UPGRADE_ERROR_CODE_UPGRADE_IN_PROGRESS = 5;
-  UPGRADE_ERROR_CODE_FAILED_TO_DOWNLOAD = 6;
-  UPGRADE_ERROR_CODE_UNABLE_TO_CHECK_FOR_UPGRADE = 7;
-  UPGRADE_ERROR_CODE_VERIFY_FAILED = 8;
-  UPGRADE_ERROR_CODE_UPGRADE_FAILED = 9;
-}
-
-message DownloadedImageHashMismatchData {
-  string expected = 1;
-  string actual = 2;
-}
-
 message CheckForUpgradeRequest {}
 
 message CheckForUpgradeResponse {
-  oneof result {
-    UpgradeDetail upgrade_detail = 1;
-    UpgradeError error = 2;
-  }
+  UpgradeMetadata latest_release = 1;
+  repeated ReleaseInfo previous_releases = 2;
 }
 
 message DownloadFirmwareRequest {
@@ -71,9 +36,8 @@ message DownloadFinished {
 
 message DownloadFirmwareResponse {
   oneof state {
-    DownloadProgress download_progress = 2;
-    DownloadFinished download_finished = 3;
-    UpgradeError error = 6;
+    DownloadProgress download_progress = 1;
+    DownloadFinished download_finished = 2;
   }
 }
 
@@ -81,12 +45,7 @@ message UpgradeRequest {
   string hash = 1;
 }
 
-message UpgradeResponse {
-  oneof result {
-    UpgradeError error = 1;
-    google.protobuf.Empty success = 2;
-  }
-}
+message UpgradeResponse {}
 
 service UpgradeService {
   rpc CheckForUpgrade(CheckForUpgradeRequest) returns (CheckForUpgradeResponse);

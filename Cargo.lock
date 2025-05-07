@@ -837,6 +837,7 @@ dependencies = [
  "mime_guess",
  "minerctl-defs",
  "reqwest",
+ "strum",
  "sysinfo",
  "thiserror 2.0.12",
  "tokio",
@@ -845,6 +846,7 @@ dependencies = [
  "tonic",
  "tonic-middleware",
  "tonic-reflection",
+ "tonic-types",
  "tonic-web",
  "tower 0.5.2",
  "tower-http",
@@ -934,7 +936,7 @@ dependencies = [
 name = "bmc-platform"
 version = "0.1.0"
 dependencies = [
- "minerctl-defs",
+ "index-bmc",
  "strum",
 ]
 
@@ -3353,7 +3355,7 @@ dependencies = [
 [[package]]
 name = "idxgen-data"
 version = "0.0.0"
-source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=00eb96ef3efc35440b0df0661e69fde185ae0576#00eb96ef3efc35440b0df0661e69fde185ae0576"
+source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=b325c4bbdc6170d1be03dcef334b7eec064ec259#b325c4bbdc6170d1be03dcef334b7eec064ec259"
 dependencies = [
  "chrono",
  "indexmap",
@@ -3426,7 +3428,7 @@ dependencies = [
 [[package]]
 name = "index-bmc"
 version = "0.0.0"
-source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=00eb96ef3efc35440b0df0661e69fde185ae0576#00eb96ef3efc35440b0df0661e69fde185ae0576"
+source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=b325c4bbdc6170d1be03dcef334b7eec064ec259#b325c4bbdc6170d1be03dcef334b7eec064ec259"
 dependencies = [
  "chrono",
  "idxgen-data",
@@ -3434,6 +3436,7 @@ dependencies = [
  "itertools 0.14.0",
  "minerctl-defs",
  "reqwest",
+ "strum",
  "thiserror 2.0.12",
  "url",
 ]
@@ -3441,7 +3444,7 @@ dependencies = [
 [[package]]
 name = "index-common"
 version = "0.0.0"
-source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=00eb96ef3efc35440b0df0661e69fde185ae0576#00eb96ef3efc35440b0df0661e69fde185ae0576"
+source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=b325c4bbdc6170d1be03dcef334b7eec064ec259#b325c4bbdc6170d1be03dcef334b7eec064ec259"
 dependencies = [
  "fs-err",
  "idxgen-data",
@@ -3932,7 +3935,7 @@ dependencies = [
 [[package]]
 name = "minerctl-defs"
 version = "0.0.0"
-source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=00eb96ef3efc35440b0df0661e69fde185ae0576#00eb96ef3efc35440b0df0661e69fde185ae0576"
+source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=b325c4bbdc6170d1be03dcef334b7eec064ec259#b325c4bbdc6170d1be03dcef334b7eec064ec259"
 dependencies = [
  "chrono",
  "enum-assoc",
@@ -6540,9 +6543,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-reflection"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88fa815be858816dad226a49439ee90b7bcf81ab55bee72fdb217f1e6778c3ca"
+checksum = "f9687bd5bfeafebdded2356950f278bba8226f0b32109537c4253406e09aafe1"
 dependencies = [
  "prost 0.13.5",
  "prost-types 0.13.5",
@@ -6552,10 +6555,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "tonic-web"
-version = "0.13.0"
+name = "tonic-types"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8e4a5564e49598cbdefefb5b982c243b11009bdaf36ad59487c2253cb73379"
+checksum = "07439468da24d5f211d3f3bd7b63665d8f45072804457e838a87414a478e2db8"
+dependencies = [
+ "prost 0.13.5",
+ "prost-types 0.13.5",
+ "tonic",
+]
+
+[[package]]
+name = "tonic-web"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "774cad0f35370f81b6c59e3a1f5d0c3188bdb4a2a1b8b7f0921c860bfbd3aec6"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -6572,7 +6586,7 @@ dependencies = [
 [[package]]
 name = "tooling-std"
 version = "0.0.0"
-source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=00eb96ef3efc35440b0df0661e69fde185ae0576#00eb96ef3efc35440b0df0661e69fde185ae0576"
+source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=b325c4bbdc6170d1be03dcef334b7eec064ec259#b325c4bbdc6170d1be03dcef334b7eec064ec259"
 dependencies = [
  "anyhow",
  "async-once-cell",
@@ -6583,6 +6597,7 @@ dependencies = [
  "chrono",
  "dialoguer",
  "fdlimit",
+ "fs-err",
  "futures",
  "governor",
  "hex",
@@ -6604,7 +6619,7 @@ dependencies = [
 [[package]]
 name = "tooling-std-macros"
 version = "0.0.0"
-source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=00eb96ef3efc35440b0df0661e69fde185ae0576#00eb96ef3efc35440b0df0661e69fde185ae0576"
+source = "git+ssh://git@gitlab.ii.zone/tooling/tooling.git?rev=b325c4bbdc6170d1be03dcef334b7eec064ec259#b325c4bbdc6170d1be03dcef334b7eec064ec259"
 dependencies = [
  "proc-macro2",
  "quote",
