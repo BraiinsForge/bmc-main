@@ -109,6 +109,7 @@ sha2 = "0.10.9"
 slint = "1.10"
 slint-build = "1.10"
 strum = { version = "0.27", default-features = false }
+sysinfo = "0.35.0"
 thiserror = "2.0.12"
 time = { version = "0.3.41", default-features = false }
 tokio = { version = "1.44.2", features = ["full"] }

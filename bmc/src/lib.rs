@@ -6,6 +6,7 @@ pub mod log;
 pub mod manager;
 pub mod session;
 mod startup;
+mod storage_checker;
 mod web;
 
 pub use manager::BmcManager;
