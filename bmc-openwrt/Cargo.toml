@@ -10,6 +10,7 @@ async-trait.workspace = true
 axum-extra.workspace = true
 bmc.workspace = true
 bmc-display.workspace = true
+bmc-platform.workspace = true
 flume.workspace = true
 memmap2.workspace = true
 slint = { workspace = true, features = [

@@ -920,6 +920,7 @@ dependencies = [
  "axum-extra",
  "bmc",
  "bmc-display",
+ "bmc-platform",
  "flume",
  "memmap2",
  "slint",
