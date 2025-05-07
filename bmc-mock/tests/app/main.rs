@@ -8,3 +8,5 @@ use time as _;
 use tracing as _;
 
 mod test_utils;
+
+use reqwest as _;

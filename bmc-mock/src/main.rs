@@ -19,6 +19,7 @@ use thiserror as _;
 use time as _;
 use tokio as _;
 use tracing as _;
+use uuid as _;
 
 #[tokio::main]
 async fn main() -> Result<()> {

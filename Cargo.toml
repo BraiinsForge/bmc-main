@@ -128,3 +128,4 @@ tower = { version = "0.5.2", default-features = false }
 tower-http = "0.6.2"
 tracing = { version = "0.1.41", default-features = false }
 tracing-subscriber = "0.3.19"
+uuid = "1.10.0"

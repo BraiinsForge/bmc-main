@@ -18,5 +18,6 @@ use bmc_display as _;
 use bmc_mock_display as _;
 use reqwest as _;
 use slint as _;
+use uuid as _;
 
 pub use mockfs::MockFs;
