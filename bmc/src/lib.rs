@@ -7,6 +7,7 @@ pub mod manager;
 pub mod session;
 mod startup;
 mod storage_checker;
+mod system_upgrade;
 mod web;
 
 pub use manager::BmcManager;
