@@ -1,0 +1,12 @@
+[package]
+name = "bmc-platform"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins <braiins@braiins.com>"]
+
+[dependencies]
+index-bmc.workspace = true
+strum = { workspace = true, features = ["derive"], default-features = true }
+
+[lints]
+workspace = true

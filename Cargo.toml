@@ -7,6 +7,7 @@ members = [
     "bmc-mock",
     "bmc-mock-display",
     "bmc-openwrt",
+    "bmc-platform",
 ]
 
 [profile.release]
@@ -101,6 +102,7 @@ serde_json = "1.0.140"
 sha2 = "0.10.8"
 slint = "1.10"
 slint-build = "1.10"
+strum = { version = "0.27", default-features = false }
 thiserror = "2.0.12"
 time = { version = "0.3.41", default-features = false }
 tokio = { version = "1.44.2", features = ["full"] }
