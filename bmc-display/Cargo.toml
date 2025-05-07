@@ -5,11 +5,20 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 chrono.workspace = true
 flume.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-slint = { workspace = true, features = ["backend-winit", "compat-1-2", "renderer-software", "serde", "std"] }
+slint = { workspace = true, features = [
+    "backend-winit",
+    "compat-1-2",
+    "renderer-software",
+    "serde",
+    "std",
+] }
+tokio.workspace = true
+tracing.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true

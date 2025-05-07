@@ -1,13 +1,14 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::WidgetType;
+use crate::data::{Screen, WidgetType};
+use crate::generated::{
+    Backend, ClockLarge, ClockMedium, ClockSmall, MainWindow, UpgradeDownloadAdapter,
+};
 use anyhow::anyhow;
 use chrono::{Duration, Utc};
 use core::fmt;
-use slint::{ComponentHandle, ModelRc, VecModel, Weak};
+use slint::{ComponentHandle, Global, ModelRc, VecModel, Weak};
 use std::sync::{Arc, Mutex};
-
-use crate::generated::{Backend, ClockLarge, ClockMedium, ClockSmall, MainWindow};
 
 fn into_populate_widgets_closure(
     widgets: Vec<WidgetType>,
@@ -87,6 +88,23 @@ impl SlintHandle {
             });
         })
     }
+
+    pub fn update_download_firmware_progress(
+        &self,
+        downloaded_mb: f32,
+        total_mb: f32,
+    ) -> anyhow::Result<()> {
+        self.update_in_event_loop(into_update_download_progress_closure(
+            downloaded_mb,
+            total_mb,
+        ))
+    }
+
+    pub fn set_screen(&self, screen: Screen) -> anyhow::Result<()> {
+        self.update_in_event_loop(Box::new(move |main_window: MainWindow| {
+            main_window.set_screen_id(screen.into());
+        }))
+    }
 }
 
 impl fmt::Debug for SlintHandle {
@@ -95,4 +113,33 @@ impl fmt::Debug for SlintHandle {
             .field("ui_handle", &"Weak<MainWindow>")
             .finish()
     }
+}
+
+fn into_update_download_progress_closure(
+    downloaded_mb: f32,
+    total_mb: f32,
+) -> Box<dyn FnOnce(MainWindow) + Send + 'static> {
+    let mut progress = 0.0;
+    if total_mb > 0.0 {
+        progress = downloaded_mb / total_mb;
+    }
+
+    Box::new(move |main_window: MainWindow| {
+        let upgrade_download_adapter = UpgradeDownloadAdapter::get(&main_window);
+
+        upgrade_download_adapter.set_progress(progress);
+        upgrade_download_adapter.set_downloaded_mb_text(slint::SharedString::from(format!(
+            "{} MB of {} MB",
+            round_to_one_decimal(downloaded_mb),
+            round_to_one_decimal(total_mb)
+        )));
+        upgrade_download_adapter.set_progress_text(slint::SharedString::from(format!(
+            "Downloading firmware {}%...",
+            (progress * 100.0).round(),
+        )));
+    })
+}
+
+fn round_to_one_decimal(value: f32) -> f32 {
+    (value * 10.0).round() / 10.0
 }

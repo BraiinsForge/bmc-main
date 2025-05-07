@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::WidgetType;
+use crate::data::{Screen, WidgetType};
 use std::{
     fmt::Debug,
     fs::File,
@@ -126,6 +126,41 @@ impl EventHandler {
     fn init<T: DataProvider>(data_provider: T, slint_handle: SlintHandle) -> Sender<DisplayEvent> {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
 
+        tokio::spawn(async move {
+            while let Some(event) = receiver.recv().await {
+                match event {
+                    DisplayEvent::DownloadStarted => {
+                        Self::handle_upgrade_progress(data_provider.clone(), slint_handle.clone());
+                    }
+                    DisplayEvent::UpgradeStarted => {
+                        Self::set_screen(Screen::Upgrade, &slint_handle);
+                    }
+                    DisplayEvent::UpgradeFailed => {
+                        Self::set_screen(Screen::UpgradeFailed, &slint_handle);
+                    }
+                    DisplayEvent::UpgradeFinishedSuccessfully => {
+                        Self::set_screen(Screen::UpgradeSuccess, &slint_handle);
+                    }
+                }
+            }
+        });
+
         sender
+    }
+
+    fn handle_upgrade_progress<T: DataProvider>(data_provider: T, slint_handle: SlintHandle) {
+        Self::set_screen(Screen::DownloadFirmware, &slint_handle);
+        tokio::spawn(async move {
+            let mut screen_data = data_provider.get_download_firmware_screen_data();
+
+            while let Some(data) = screen_data.progress_receiver.recv().await {
+                _ = slint_handle
+                    .update_download_firmware_progress(data.downloaded_mb, data.total_mb);
+            }
+        });
+    }
+
+    fn set_screen(screen: Screen, slint_handle: &SlintHandle) {
+        _ = slint_handle.set_screen(screen);
     }
 }
