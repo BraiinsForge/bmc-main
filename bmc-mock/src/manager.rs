@@ -4,7 +4,7 @@ use bmc_platform::BmcPlatform;
 use std::{path::Path, time::Duration};
 use tracing::info;
 
-use crate::mockfs::MockFs;
+use crate::{MockSessionManager, mockfs::MockFs};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -20,8 +20,11 @@ pub struct Manager {
 
 impl Manager {
     #[must_use]
-    pub fn new(mockfs: MockFs) -> Self {
-        Self { mockfs }
+    pub fn new(mockfs: MockFs, session_manager: MockSessionManager) -> Self {
+        Self {
+            mockfs,
+            session_manager,
+        }
     }
 }
 

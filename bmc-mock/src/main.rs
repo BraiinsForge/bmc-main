@@ -1,18 +1,19 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
-mod cli;
-mod mockfs;
-
 use anyhow::Result;
 use async_trait as _;
 use axum_extra as _;
 use bmc::log;
 use bmc_display as _;
-use bmc_mock::{MockManager, MockSessionManager};
+use bmc_mock::MockSessionManager;
+use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
 use bmc_mock_display::VirtualDisplay;
+use bmc_platform as _;
+use bmc_upgrade::firmware::FirmwareResolver;
 use clap as _;
 use clap::Parser;
 use dirs as _;
 use rand as _;
+use reqwest as _;
 use slint::ComponentHandle;
 use thiserror as _;
 use time as _;
@@ -33,11 +34,16 @@ async fn main() -> Result<()> {
 
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
-    let manager = MockManager {
-        session_manager: MockSessionManager::new(system_password),
-    };
+    let firmware_resolver = FirmwareResolver::new(MockIndex);
 
-    tokio::task::spawn(bmc::entry::main(manager, config, display_driver));
+    let manager = Manager::new(mockfs, MockSessionManager::new(system_password));
+
+    tokio::task::spawn(bmc::entry::main(
+        manager,
+        config,
+        display_driver,
+        firmware_resolver,
+    ));
 
     Ok(main_window.run()?)
 }

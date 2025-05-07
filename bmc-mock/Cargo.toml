@@ -12,14 +12,17 @@ bmc.workspace = true
 bmc-display.workspace = true
 bmc-mock-display.workspace = true
 bmc-platform.workspace = true
+bmc-upgrade.workspace = true
 clap.workspace = true
 dirs.workspace = true
 rand = { workspace = true, features = ["thread_rng"] }
+reqwest.workspace = true
 slint = { workspace = true, features = ["compat-1-2", "std"] }
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [lints]
 workspace = true
