@@ -41,16 +41,13 @@ pub trait DisplayHandle: Sync + Send + Debug {
 }
 
 #[derive(Debug)]
-pub struct DisplayDriver {
-    backlight_driver: Arc<Mutex<dyn DisplayBacklightDriver>>,
+pub struct DisplayDriver<T: DisplayBacklightDriver> {
+    backlight_driver: Arc<Mutex<T>>,
     slint_handle: SlintHandle,
 }
 
-impl DisplayDriver {
-    pub fn new<T: DisplayBacklightDriver + 'static>(
-        backlight_driver: T,
-        slint_handle: SlintHandle,
-    ) -> Self {
+impl<T: DisplayBacklightDriver> DisplayDriver<T> {
+    pub fn new(backlight_driver: T, slint_handle: SlintHandle) -> Self {
         Self {
             backlight_driver: Arc::new(Mutex::new(backlight_driver)),
             slint_handle,

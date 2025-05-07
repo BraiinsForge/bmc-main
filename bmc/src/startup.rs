@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::Result;
-use bmc_display::display_driver::DisplayHandle;
+use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -16,7 +16,7 @@ use crate::web::{ServerConfig, WebService};
 pub struct App<T, U>
 where
     T: BmcManager,
-    U: DisplayHandle,
+    U: DisplayBacklightDriver,
 {
     listener: TcpListener,
     manager: Arc<T>,
@@ -28,7 +28,7 @@ where
 impl<T, U> App<T, U>
 where
     T: BmcManager,
-    U: DisplayHandle,
+    U: DisplayBacklightDriver,
 {
     pub async fn init(
         config: Configuration,

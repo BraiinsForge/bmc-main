@@ -2,14 +2,14 @@
 
 use crate::{App, BmcManager, Configuration};
 use anyhow::Result;
-use bmc_display::display_driver::DisplayHandle;
+use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use std::sync::Arc;
 use tracing::error;
 
-pub async fn main(
+pub async fn main<T: DisplayBacklightDriver>(
     manager: impl BmcManager,
     config: Configuration,
-    display: impl DisplayHandle,
+    display: DisplayDriver<T>,
 ) -> Result<()> {
     let manager = Arc::new(manager);
 

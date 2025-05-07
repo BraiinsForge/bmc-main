@@ -13,7 +13,7 @@ use bmc_display::{
 pub struct VirtualDisplay;
 
 impl VirtualDisplay {
-    pub fn create() -> Result<(MainWindow, DisplayDriver)> {
+    pub fn create() -> Result<(MainWindow, DisplayDriver<MockBacklightDriver>)> {
         let brightness = UsizeMetadata::new(18, 0, 20);
         let resolution = ResolutionMetadata::new(1200, 400);
         let display_metadata = DisplayMetadata::new(brightness, resolution);
