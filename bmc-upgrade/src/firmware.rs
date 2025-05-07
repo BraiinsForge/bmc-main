@@ -1,0 +1,157 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+
+use reqwest::Client;
+use std::fmt::Debug;
+use thiserror::Error;
+use tokio::sync::mpsc::UnboundedReceiver;
+
+use crate::downloader::Downloader;
+
+#[async_trait::async_trait]
+pub trait FirmwareIndex: Send + Sync + Debug + 'static {
+    async fn get_available_releases(
+        &self,
+        client: &Client,
+        platform: bmc_platform::BmcPlatform,
+        version: String,
+    ) -> Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError>;
+}
+
+#[derive(Debug)]
+pub enum DownloadEvent {
+    BytesWritten(usize),
+    Finished { checksum: String },
+}
+
+#[derive(Debug)]
+pub struct FirmwareResolver<T: FirmwareIndex> {
+    index: T,
+}
+
+impl<T> FirmwareResolver<T>
+where
+    T: FirmwareIndex,
+{
+    pub fn new(index: T) -> Self {
+        Self { index }
+    }
+
+    pub fn download_firmware<U: Downloader>(
+        &self,
+        client: &Client,
+        url: &str,
+        mut downloader: U,
+    ) -> UnboundedReceiver<anyhow::Result<DownloadEvent>> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let url = url.to_owned();
+        let client = client.clone();
+        _ = tokio::spawn(async move {
+            let Ok(mut response) = client.get(url).send().await else {
+                _ = tx.send(Err(anyhow::anyhow!("Failed to get firmware")));
+                return;
+            };
+
+            while let Ok(Some(chunk)) = response.chunk().await {
+                let chunk_length = chunk.len();
+                if downloader.write_chunk(chunk).await.is_err() {
+                    _ = tx.send(Err(anyhow::anyhow!("Failed to download firmware")));
+                    return;
+                }
+
+                _ = tx.send(Ok(DownloadEvent::BytesWritten(chunk_length)));
+            }
+            match downloader.finish().await {
+                Ok(checksum) => _ = tx.send(Ok(DownloadEvent::Finished { checksum })),
+                Err(_) => _ = tx.send(Err(anyhow::anyhow!("Failed to download firmware"))),
+            }
+        });
+
+        rx
+    }
+
+    pub async fn check_for_upgrade(
+        &self,
+        client: &Client,
+        platform: bmc_platform::BmcPlatform,
+        version: String,
+    ) -> Result<Option<UpgradeDetail>, FirmwareDownloadError> {
+        let Some(release_info) = self
+            .index
+            .get_available_releases(client, platform, version)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let Some(latest_release) = release_info.first().cloned() else {
+            return Ok(None);
+        };
+
+        let previous_releases: Vec<ReleaseInfo> = release_info
+            .into_iter()
+            .skip(1)
+            .map(|release| ReleaseInfo {
+                description: release.description,
+                version: release.version,
+            })
+            .collect();
+
+        Ok(Some(UpgradeDetail {
+            latest_release,
+            previous_releases,
+        }))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct UpgradeMetadata {
+    pub hash: String,
+    pub version: String,
+    pub release_date: String,
+    pub description: String,
+    pub url: String,
+    pub file_size: usize,
+}
+
+impl UpgradeMetadata {
+    #[must_use]
+    pub fn new(
+        hash: String,
+        version: String,
+        release_date: String,
+        description: String,
+        url: String,
+        file_size: usize,
+    ) -> Self {
+        Self {
+            hash,
+            version,
+            release_date,
+            description,
+            url,
+            file_size,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct UpgradeDetail {
+    pub latest_release: UpgradeMetadata,
+    pub previous_releases: Vec<ReleaseInfo>,
+}
+
+#[derive(Debug)]
+pub struct ReleaseInfo {
+    pub version: String,
+    pub description: String,
+}
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum FirmwareDownloadError {
+    #[error("failed to download index")]
+    IndexDownloadFailed,
+    #[error("failed to get available releases")]
+    FetchUpgradeDetails,
+    #[error("invalid version")]
+    InvalidVersion,
+}

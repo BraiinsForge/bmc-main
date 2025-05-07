@@ -7,8 +7,10 @@ authors = ["Braiins <braiins@braiins.com>"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+bmc-platform.workspace = true
 bytes.workspace = true
 data-encoding.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 ring.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
