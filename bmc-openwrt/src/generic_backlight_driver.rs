@@ -14,7 +14,7 @@ pub const MAX_BRIGHTNESS: &str = "max_brightness";
 const CMD_ON: &str = "0";
 const CMD_OFF: &str = "4";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericBacklightDriver {
     name: String,
     driver_path: PathBuf,

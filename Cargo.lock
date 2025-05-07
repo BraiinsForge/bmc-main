@@ -924,6 +924,7 @@ dependencies = [
  "bmc",
  "bmc-display",
  "bmc-platform",
+ "bmc-upgrade",
  "flume",
  "memmap2",
  "slint",

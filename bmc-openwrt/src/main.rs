@@ -10,9 +10,12 @@ use bmc_display::{
     slint_handle::SlintHandle,
 };
 use bmc_openwrt::{
-    OpenwrtManager, OpenwrtSessionManager, generic_backlight_driver::GenericBacklightDriver,
+    generic_backlight_driver::GenericBacklightDriver,
     linux_framebuffer_platform::LinuxFbPlatform,
+    manager::{Manager, OpenwrtSessionManager},
 };
+use bmc_platform as _;
+use bmc_upgrade::firmware::FirmwareResolver;
 use memmap2 as _;
 use slint::ComponentHandle;
 use thiserror as _;
@@ -37,11 +40,12 @@ async fn main() -> Result<()> {
 
     let config = Configuration::default();
 
-    let manager = OpenwrtManager {
-        session_manager: OpenwrtSessionManager,
-    };
+    let bmc_index = bmc::firmware::BmcIndex;
+    let firmware_resolver = FirmwareResolver::new(bmc_index);
 
-    bmc::entry::main(manager, config, display_driver).await
+    let manager = Manager::new(OpenwrtSessionManager);
+
+    bmc::entry::main(manager, config, display_driver, firmware_resolver).await
 }
 
 fn get_slint_handle(display_metadata: DisplayMetadata) -> Result<SlintHandle> {
