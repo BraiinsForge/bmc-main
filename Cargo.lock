@@ -891,6 +891,7 @@ dependencies = [
  "bmc",
  "bmc-display",
  "bmc-mock-display",
+ "bmc-platform",
  "clap",
  "dirs",
  "rand 0.9.0",
