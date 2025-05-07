@@ -8,9 +8,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::slint_handle::SlintHandle;
+use tokio::sync::mpsc::Sender;
 
-pub trait DisplayBacklightDriver: Sync + Send + Debug {
+const EVENT_BUFFER_SIZE: usize = 1024;
+
+use crate::{data_provider::DataProvider, slint_handle::SlintHandle};
+
+pub trait DisplayBacklightDriver: Sync + Send + Clone + Debug + 'static {
     fn init(&mut self) -> anyhow::Result<()>;
 
     fn change_state(&self, enabled: bool) -> anyhow::Result<()>;
@@ -36,8 +40,11 @@ pub trait DisplayBacklightDriver: Sync + Send + Debug {
     fn set_brightness(&self, value: u8) -> anyhow::Result<()>;
 }
 
-pub trait DisplayHandle: Sync + Send + Debug {
+#[async_trait::async_trait]
+pub trait DisplayHandle: Sync + Send + Clone + Debug {
     fn init(&self) -> anyhow::Result<()>;
+
+    async fn emit_event(&self, event: DisplayEvent);
 }
 
 #[derive(Debug)]
@@ -55,7 +62,27 @@ impl<T: DisplayBacklightDriver> DisplayDriver<T> {
     }
 }
 
-impl DisplayHandle for DisplayDriver {
+#[derive(Debug, Clone)]
+pub struct DisplayHandler<T: DisplayBacklightDriver, U: DataProvider> {
+    backlight_driver: Arc<Mutex<T>>,
+    slint_handle: SlintHandle,
+    event_sender: Sender<DisplayEvent>,
+    _data_provider: U,
+}
+
+impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandler<T, U> {
+    pub fn new(display_driver: DisplayDriver<T>, data_provider: U) -> Self {
+        Self {
+            backlight_driver: display_driver.backlight_driver.clone(),
+            slint_handle: display_driver.slint_handle.clone(),
+            event_sender: EventHandler::init(data_provider.clone(), display_driver.slint_handle),
+            _data_provider: data_provider,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandle for DisplayHandler<T, U> {
     fn init(&self) -> anyhow::Result<()> {
         let json_data = Path::new("dummy_widgets.json");
         let widgets: Vec<WidgetType> = File::open(json_data)
@@ -75,6 +102,30 @@ impl DisplayHandle for DisplayDriver {
         self.backlight_driver
             .lock()
             .expect("BUG: cannot lock display")
-            .turn_on()
+            .turn_on()?;
+
+        Ok(())
+    }
+
+    async fn emit_event(&self, event: DisplayEvent) {
+        _ = self.event_sender.send(event).await;
+    }
+}
+
+#[derive(Debug)]
+pub enum DisplayEvent {
+    DownloadStarted,
+    UpgradeStarted,
+    UpgradeFailed,
+    UpgradeFinishedSuccessfully,
+}
+
+struct EventHandler;
+
+impl EventHandler {
+    fn init<T: DataProvider>(data_provider: T, slint_handle: SlintHandle) -> Sender<DisplayEvent> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
+
+        sender
     }
 }
