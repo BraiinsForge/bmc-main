@@ -52,6 +52,7 @@ impl From<Config> for Configuration {
         Configuration {
             address: value.address,
             server_config,
+            upgrade_image_path: value.mockfs_path.join("tmp/firmware.tar"),
         }
     }
 }

@@ -73,15 +73,19 @@ where
 pub struct Configuration {
     pub address: SocketAddr,
     pub server_config: ServerConfig,
+    pub upgrade_image_path: PathBuf,
 }
 
-impl Configuration {}
+impl Configuration {
+    const UPGRADE_IMAGE_PATH: &'static str = "/tmp/firmware.tar";
+}
 
 impl Default for Configuration {
     fn default() -> Self {
         Self {
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 9090),
             server_config: ServerConfig::default(),
+            upgrade_image_path: PathBuf::from(Self::UPGRADE_IMAGE_PATH),
         }
     }
 }
