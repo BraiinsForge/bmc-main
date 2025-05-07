@@ -2,10 +2,14 @@
 
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::display::DisplayController;
+use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
+use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -13,37 +17,53 @@ use crate::manager::BmcManager;
 use crate::web::{ServerConfig, WebService};
 
 #[derive(Debug)]
-pub struct App<T, U>
+pub struct App<T, U, V>
 where
     T: BmcManager,
     U: DisplayBacklightDriver,
+    V: FirmwareIndex,
 {
     listener: TcpListener,
     manager: Arc<T>,
     session_manager: Arc<T::SessionManager>,
     config: Configuration,
-    display_handle: Arc<U>,
+    display_controller: DisplayController<U>,
+    system_upgrade_service: SystemUpgradeService<V, T>,
 }
 
-impl<T, U> App<T, U>
+impl<T, U, V> App<T, U, V>
 where
     T: BmcManager,
     U: DisplayBacklightDriver,
+    V: FirmwareIndex,
 {
     pub async fn init(
         config: Configuration,
         manager: Arc<T>,
         session_manager: T::SessionManager,
-        display_handle: Arc<U>,
+        display_driver: DisplayDriver<U>,
+        firmware_resolver: FirmwareResolver<V>,
     ) -> Result<Self> {
         let listener = TcpListener::bind(config.address).await?;
+
+        let state_service = StateService::new();
+
+        let system_upgrade_service = SystemUpgradeService::new(
+            firmware_resolver,
+            &config.upgrade_image_path,
+            manager.clone(),
+            state_service.clone(),
+        );
+
+        let display_controller = DisplayController::new(display_driver, state_service);
 
         Ok(Self {
             listener,
             manager,
             session_manager: session_manager.into(),
             config,
-            display_handle,
+            display_controller,
+            system_upgrade_service,
         })
     }
 
@@ -51,7 +71,8 @@ where
         let address = self.listener.local_addr()?;
         info!("Starting server on http://{}", address);
 
-        self.display_handle.init()?;
+        self.display_controller.init()?;
+        self.system_upgrade_service.init().await;
 
         WebService::new(
             self.manager.clone(),
