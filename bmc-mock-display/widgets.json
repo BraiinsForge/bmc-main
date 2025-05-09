@@ -5,25 +5,25 @@
     "widget_size": "Small",
     "widget_type": "ClockAnalogRound",
     "widget_data": [
-      "PRG"
+      "Prague"
     ]
   },
   {
     "row": 0,
     "col": 1,
     "widget_size": "Small",
-    "widget_type": "ClockAnalogRound",
+    "widget_type": "ClockAnalogRect",
     "widget_data": [
-      "PRG"
+      "Prague"
     ]
   },
   {
     "row": 1,
     "col": 0,
     "widget_size": "Medium",
-    "widget_type": "ClockAnalogRound",
+    "widget_type": "ClockAnalogRect",
     "widget_data": [
-      "PRG"
+      "Prague"
     ]
   },
   {
@@ -32,7 +32,7 @@
     "widget_size": "Large",
     "widget_type": "ClockAnalogRound",
     "widget_data": [
-      "PRG"
+      "Prague"
     ]
   }
 ]
