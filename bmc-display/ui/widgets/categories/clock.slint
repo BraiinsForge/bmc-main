@@ -102,3 +102,177 @@ export component WidgetClockAnalogRound inherits Rectangle {
         return (DateTimeAdapter.hour12 * 30deg) + (DateTimeAdapter.minute * 30deg / 60);
     }
 }
+export component WidgetClockAnalogRect inherits Rectangle {
+    property <length> base-width: 320px;
+    property <length> base-height: 240px;
+    in property <WidgetSize> widget-size;
+    property <percent> relative-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
+    property <percent> relative-width: (widget-size == WidgetSize.FullScreen) ? 100% : (widget-size == WidgetSize.Small) ? 25% : 50%;
+    property <percent> relative-height: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
+
+    property <length> hour-font-size: (widget-size == WidgetSize.FullScreen) ? 64px
+        : (widget-size == WidgetSize.Large) ? 40px
+        : (widget-size == WidgetSize.Medium) ? 24px
+        : 24px;
+    property <int> hour-font-weight: (widget-size == WidgetSize.FullScreen) ? Theme.font.weight.bold : Theme.font.weight.semi-bold;
+
+    width: base-width * (widget-size == WidgetSize.Small ? 1 : (widget-size == WidgetSize.Medium || widget-size == WidgetSize.Large) ? 2 : 4);
+    height: base-height * ((widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 1 : 2);
+
+    property <[int]> clock-angles: [0, 15, 28, 40, 48, 54, 59, 63, 66, 69, 71, 73, 76, 80, 85, 90, 95, 100, 104, 107, 109, 111, 114, 117, 121, 126, 132, 140, 152, 165];
+    property <[int]> hour-hand-difference-angles: [54, 17, 19, 19, 17];
+
+    dial := Image {
+        width: parent.width;
+        height: parent.height;
+        source: Images.clock-dial-rect;
+    }
+    twelve := Text {
+        text: "12";
+        font-size: hour-font-size;
+        font-weight: hour-font-weight;
+        color: Palette.white;
+        y: twelve-vertical-offset(widget-size);
+    }
+    three := Text {
+        text: "3";
+        font-size: hour-font-size;
+        font-weight: hour-font-weight;
+        color: Palette.white;
+        x: three-horizontal-offset(widget-size, root.width, self.width);
+    }
+    six := Text {
+        text: "6";
+        font-size: hour-font-size;
+        font-weight: hour-font-weight;
+        color: Palette.white;
+        y: six-vertical-offset(widget-size, root.height, self.height);
+    }
+    nine := Text {
+        text: "9";
+        font-size: hour-font-size;
+        font-weight: hour-font-weight;
+        color: Palette.white;
+        x: nine-horizontal-offset(widget-size);
+    }
+    date := Text {
+        visible: widget-size == WidgetSize.FullScreen;
+        text: DateTimeAdapter.weekday + " " + DateTimeAdapter.day;
+        font-size: 40px;
+        font-weight: Theme.font.weight.regular;
+        color: Palette.gray-40;
+        vertical-alignment: center;
+        x: 870px;
+    }
+    hour := Image {
+        width: Images.hour-hand-rect-width * relative-size;
+        height: Images.hour-hand-rect-height * relative-size;
+        y: 105px * relative-size;
+        rotation-angle: hour-angle(widget-size);
+        rotation-origin-y: 135px * relative-size;
+        source: Images.hand-hour-rect;
+    }
+    minute := Image {
+        width: Images.minute-hand-rect-width * relative-size;
+        height: Images.minute-hand-rect-height * relative-size;
+        y: 2px;
+        rotation-angle: minute-angle(widget-size);
+        rotation-origin-y: 238px * relative-size;
+        source: Images.hand-minute-rect;
+    }
+    Image {
+        width: Images.circle-white-width * relative-size;
+        height: Images.circle-white-height * relative-size;
+        x: parent.width / 2 - (relative-size) * Images.circle-white-width / 2;
+        y: parent.height / 2 - (relative-size) * Images.circle-white-height / 2;
+        source: Images.center-circle-white;
+    }
+    second := Image {
+        width: Images.second-hand-rect-width * relative-size;
+        height: Images.second-hand-rect-height * relative-size;
+        y: 4px * relative-size;
+        rotation-angle: second-angle(widget-size);
+        rotation-origin-y: 236px * relative-size;
+        source: Images.hand-second-rect;
+    }
+    Image {
+        width: Images.circle-orange-width * relative-size;
+        height: Images.circle-orange-height * relative-size;
+        x: parent.width / 2 - (relative-size) * Images.circle-orange-width / 2;
+        y: parent.height / 2 - (relative-size) * Images.circle-orange-height / 2;
+        source: Images.center-circle-orange;
+    }
+    Image {
+        width: Images.circle-black-width * relative-size;
+        height: Images.circle-black-height * relative-size;
+        x: parent.width / 2 - (relative-size) * Images.circle-black-width / 2;
+        y: parent.height / 2 - (relative-size) * Images.circle-black-height / 2;
+        source: Images.center-circle-black;
+    }
+    Image {
+        width: Images.circle-stroke-width * relative-size;
+        height: Images.circle-stroke-height * relative-size;
+        x: parent.width / 2 - (relative-size) * Images.circle-stroke-width / 2;
+        y: parent.height / 2 - (relative-size) * Images.circle-stroke-height / 2;
+        source: Images.center-circle-stroke;
+    }
+
+    function second-angle(w-size: WidgetSize) -> angle {
+        if (w-size == WidgetSize.Small || w-size == WidgetSize.Large) {
+            return DateTimeAdapter.second * 6deg;
+        }
+        // Medium || Full Screen
+        return (clock-angles[mod(DateTimeAdapter.second, 30)] + (floor(DateTimeAdapter.second / 30) * 180)) * 1deg;
+    }
+    function minute-angle(w-size: WidgetSize) -> angle {
+        if (w-size == WidgetSize.Small || w-size == WidgetSize.Large) {
+            return DateTimeAdapter.minute * 6deg;
+        }
+        // Medium || Full Screen
+        return (clock-angles[mod(DateTimeAdapter.minute, 30)] + (floor(DateTimeAdapter.minute / 30) * 180)) * 1deg;
+    }
+
+    function hour-angle(w-size: WidgetSize) -> angle {
+        if (w-size == WidgetSize.Small || w-size == WidgetSize.Large) {
+            return (DateTimeAdapter.hour12 * 30deg) + (DateTimeAdapter.minute * 30deg / 60);
+        }
+        // Medium || Full Screen
+        return (
+            clock-angles[5 * DateTimeAdapter.hour12]
+            + (floor(DateTimeAdapter.hour12 / 6) * 180)
+            + (hour-hand-difference-angles[mod(DateTimeAdapter.hour12, 5)] * (DateTimeAdapter.minute / 60))
+            ) * 1deg;
+    }
+
+    function twelve-vertical-offset(w-size: WidgetSize) -> length {
+        return (w-size == WidgetSize.FullScreen) ? 84px
+            : (w-size == WidgetSize.Large) ? 80px
+            : (w-size == WidgetSize.Medium) ? 35px
+            // Small
+            : 40px;
+    }
+
+    function three-horizontal-offset(w-size: WidgetSize, r-w: length, s-w: length) -> length {
+        return (w-size == WidgetSize.FullScreen) ? r-w - s-w - 130px
+            : (w-size == WidgetSize.Large) ? r-w - s-w - 90px
+            : (w-size == WidgetSize.Medium) ? r-w - s-w - 50px
+            // Small
+            : r-w - s-w - 50px;
+    }
+
+    function six-vertical-offset(w-size: WidgetSize, r-h: length, s-h: length) -> length {
+        return (w-size == WidgetSize.FullScreen) ? r-h - s-h - 84px
+            : (w-size == WidgetSize.Large) ? r-h - s-h - 80px
+            : (w-size == WidgetSize.Medium) ? r-h - s-h - 35px
+            // Small
+            : r-h - s-h - 40px;
+    }
+
+    function nine-horizontal-offset(w-size: WidgetSize) -> length {
+        return (w-size == WidgetSize.FullScreen) ? 130px
+            : (w-size == WidgetSize.Large) ? 90px
+            : (w-size == WidgetSize.Medium) ? 50px
+            // Small
+            : 50px;
+    }
+}
