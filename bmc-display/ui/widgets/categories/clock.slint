@@ -9,6 +9,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
     property <length> base-width: 390px;
     property <length> base-height: 390px;
     in property <WidgetSize> widget-size;
+    in property <[string]> timezone;
 
     property <percent> relative-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
 
@@ -19,6 +20,15 @@ export component WidgetClockAnalogRound inherits Rectangle {
         width: parent.width;
         height: parent.height;
         source: Images.clock-dial-round;
+    }
+    timezone := Text {
+        text: root.timezone[0];
+        y: (widget-size == WidgetSize.FullScreen) ? 104px
+            : (widget-size == WidgetSize.Large) ? 112px
+            : 53px;
+        font-weight: Theme.font.weight.regular;
+        font-size: (widget-size == WidgetSize.FullScreen || widget-size == WidgetSize.Large) ? 24px : 16px;
+        color: Palette.gray-40;
     }
     date-window := Rectangle {
         visible: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? false : true;
@@ -102,10 +112,13 @@ export component WidgetClockAnalogRound inherits Rectangle {
         return (DateTimeAdapter.hour12 * 30deg) + (DateTimeAdapter.minute * 30deg / 60);
     }
 }
+
 export component WidgetClockAnalogRect inherits Rectangle {
     property <length> base-width: 320px;
     property <length> base-height: 240px;
     in property <WidgetSize> widget-size;
+    in property <[string]> timezone;
+
     property <percent> relative-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
     property <percent> relative-width: (widget-size == WidgetSize.FullScreen) ? 100% : (widget-size == WidgetSize.Small) ? 25% : 50%;
     property <percent> relative-height: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
@@ -163,6 +176,16 @@ export component WidgetClockAnalogRect inherits Rectangle {
         color: Palette.gray-40;
         vertical-alignment: center;
         x: 870px;
+    }
+    timezone := Text {
+        text: root.timezone[0];
+        y: (widget-size == WidgetSize.FullScreen) ? 280px
+            : (widget-size == WidgetSize.Large) ? 300px
+            : (widget-size == WidgetSize.Medium) ? 145px
+            : 143px;
+        font-weight: Theme.font.weight.regular;
+        font-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 16px : 24px;
+        color: Palette.gray-40;
     }
     hour := Image {
         width: Images.hour-hand-rect-width * relative-size;
