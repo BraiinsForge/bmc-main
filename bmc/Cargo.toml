@@ -20,7 +20,13 @@ chrono.workspace = true
 futures.workspace = true
 http.workspace = true
 hyper.workspace = true
+index-bmc.workspace = true
+index-common.workspace = true
 mime_guess.workspace = true
+minerctl-defs.workspace = true
+reqwest.workspace = true
+sysinfo = { workspace = true, features = ["linux-tmpfs"] }
+thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["full"] }
 tonic.workspace = true
