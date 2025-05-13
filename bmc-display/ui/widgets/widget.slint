@@ -22,29 +22,21 @@ export struct WidgetSlint {
 
 export component WidgetContainer inherits Rectangle {
     property <length> widget-base-width: 320px;
-    property <length> widget-base-height: 240px;
-    property <length> top-bar: 40px;
+    property <length> widget-base-height: 220px;
+    property <length> top-bar-height: 40px;
 
     in property <WidgetSize> size;
     in property <int> position-row;
     in property <int> position-col;
 
     x: self.position-col * widget-base-width;
-    y: self.position-row * widget-base-height;
+    y: self.position-row * widget-base-height + top-bar-height;
     width: self.get-col-span() * widget-base-width;
     height: self.get-row-span() * widget-base-height;
 
     background: black;
 
-    VerticalLayout {
-        alignment: center;
-
-        HorizontalLayout {
-            alignment: center;
-
-            @children
-        }
-    }
+    @children
 
     pure function get-row-span() -> int {
         if self.size == WidgetSize.Small {
