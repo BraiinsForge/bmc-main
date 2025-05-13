@@ -1,5 +1,5 @@
 import { WidgetContainer, WidgetSlint, WidgetType } from "../widgets/widget.slint";
-import { WidgetClockAnalogRound, WidgetClockAnalogRect } from "../widgets/categories/clock.slint";
+import { WidgetClockAnalogRound, WidgetClockAnalogRect, WidgetClockDigital } from "../widgets/categories/clock.slint";
 
 export component WidgetBuilder {
     in property <[WidgetSlint]> widgets;
@@ -15,6 +15,10 @@ export component WidgetBuilder {
             timezone: widget.widget-data;
         }
         if widget.widget-type == WidgetType.ClockAnalogRect: WidgetClockAnalogRect {
+            widget-size: widget.widget-size;
+            timezone: widget.widget-data;
+        }
+        if widget.widget-type == WidgetType.ClockDigital: WidgetClockDigital {
             widget-size: widget.widget-size;
             timezone: widget.widget-data;
         }
