@@ -939,6 +939,7 @@ dependencies = [
  "bmc-platform",
  "bmc-upgrade",
  "flume",
+ "iana-time-zone",
  "memmap2",
  "slint",
  "thiserror 2.0.12",

@@ -1,9 +1,11 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use std::str::FromStr;
+
 use anyhow::{Context, Result, anyhow};
 use async_trait as _;
 use axum_extra as _;
-use bmc::{Configuration, log};
+use bmc::{Configuration, log, time::Timezone};
 use bmc_display::{
     display_driver::{DisplayBacklightDriver, DisplayDriver},
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
@@ -43,7 +45,12 @@ async fn main() -> Result<()> {
     let bmc_index = bmc::firmware::BmcIndex;
     let firmware_resolver = FirmwareResolver::new(bmc_index);
 
-    let manager = Manager::new(OpenwrtSessionManager);
+    let current_timezone = iana_time_zone::get_timezone()
+        .ok()
+        .and_then(|timezome| Timezone::from_str(&timezome).ok())
+        .unwrap_or_default();
+
+    let manager = Manager::new(OpenwrtSessionManager, current_timezone);
 
     bmc::entry::main(manager, config, display_driver, firmware_resolver).await
 }

@@ -2,25 +2,34 @@
 
 use anyhow::anyhow;
 use axum_extra::extract::cookie::Cookie;
-use bmc::BmcManager;
+use bmc::{BmcManager, time::Timezone};
 use bmc_platform::BmcPlatform;
 use std::path::Path;
 use tokio::{fs, process::Command};
 use tracing::info;
 
+use crate::unix::call_command;
+
 #[derive(Debug)]
 pub struct Manager {
     pub session_manager: OpenwrtSessionManager,
+    timezone_sender: tokio::sync::watch::Sender<Timezone>,
 }
 
 impl Manager {
     const SYSUPGRADE_BIN: &'static str = "/sbin/sysupgrade";
     const SYSUPGRADE_ARG_NO_SAVE: &'static str = "-n";
     const UPGRADE_RESULT_FILE_PATH: &str = "/etc/upgrade_result";
+    const UCI_SYSTEM_ZONENAME: &str = "system.@system[0].zonename";
+    const UCI_SYSTEM_TIMEZONE: &str = "system.@system[0].timezone";
 
     #[must_use]
-    pub fn new(session_manager: OpenwrtSessionManager) -> Self {
-        Self { session_manager }
+    pub fn new(session_manager: OpenwrtSessionManager, timezone: Timezone) -> Self {
+        let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
+        Self {
+            session_manager,
+            timezone_sender,
+        }
     }
 }
 
@@ -79,6 +88,35 @@ impl BmcManager for Manager {
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error> {
         info!("Setting password to {:?}", password);
         Ok(())
+    }
+
+    fn timezone(&self) -> Timezone {
+        self.timezone_sender.borrow().clone()
+    }
+
+    async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()> {
+        let zonename_cmd = format!("{}={}", Self::UCI_SYSTEM_ZONENAME, timezone.iana);
+        call_command("uci", &["set", &zonename_cmd]).await?;
+
+        let timezone_cmd = format!("{}={}", Self::UCI_SYSTEM_TIMEZONE, timezone.posix);
+        call_command("uci", &["set", &timezone_cmd]).await?;
+
+        call_command("uci", &["commit", "system"]).await?;
+        call_command("/etc/init.d/system", &["restart"]).await?;
+
+        self.timezone_sender.send_if_modified(|current| {
+            if *current != timezone {
+                *current = timezone;
+                return true;
+            }
+            false
+        });
+
+        Ok(())
+    }
+
+    fn watch_timezone_updates(&self) -> tokio::sync::watch::Receiver<Timezone> {
+        self.timezone_sender.subscribe()
     }
 }
 
