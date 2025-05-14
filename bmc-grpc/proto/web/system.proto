@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package braiins.bmc.web;
 
+import "google/protobuf/empty.proto";
+
 // Request for set password action.
 message SetPasswordRequest {
   string current_password = 1;
@@ -11,8 +13,42 @@ message SetPasswordRequest {
 // Response for set password action.
 message SetPasswordResponse {}
 
+// Response containing the current timezone
+message GetTimezoneResponse {
+  // Current timezone
+  Timezone timezone = 1;
+}
+
+// Request to set the timezone
+message SetTimezoneRequest {
+  // Timezone to set
+  string id = 1;
+}
+
+// Response containing the list of available timezones
+message GetTimezoneListResponse {
+  // List of available timezones
+  repeated Timezone timezones = 1;
+}
+
+// Structure representing a timezone
+message Timezone {
+  // Timezone ID
+  string id = 1;
+  // Timezone name
+  string label = 2;
+  // Timezone offset displayed as +HH:MM
+  string offset = 3;
+}
+
 // Service to provide information about system
 service SystemService {
   // Method to set password
   rpc SetPassword(SetPasswordRequest) returns (SetPasswordResponse);
+  // Get the current timezone
+  rpc GetTimezone(google.protobuf.Empty) returns (GetTimezoneResponse);
+  // Set the timezone
+  rpc SetTimezone(SetTimezoneRequest) returns (google.protobuf.Empty);
+  // Get the list of available timezones
+  rpc GetTimezoneList(google.protobuf.Empty) returns (GetTimezoneListResponse);
 }
