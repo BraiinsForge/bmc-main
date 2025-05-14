@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use bmc::time::Timezone;
 use bmc_platform::BmcPlatform;
 use std::{path::Path, time::Duration};
 use tracing::info;
@@ -16,14 +17,17 @@ pub enum Error {
 pub struct Manager {
     mockfs: MockFs,
     pub session_manager: MockSessionManager,
+    timezone_sender: tokio::sync::watch::Sender<Timezone>,
 }
 
 impl Manager {
     #[must_use]
     pub fn new(mockfs: MockFs, session_manager: MockSessionManager) -> Self {
+        let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
         Self {
             mockfs,
             session_manager,
+            timezone_sender,
         }
     }
 }
@@ -60,6 +64,27 @@ impl bmc::BmcManager for Manager {
 
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error> {
         info!("Setting password to {:?}", password);
+
         Ok(())
+    }
+
+    fn timezone(&self) -> Timezone {
+        self.timezone_sender.borrow().clone()
+    }
+
+    async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()> {
+        self.timezone_sender.send_if_modified(|current| {
+            if *current != timezone {
+                *current = timezone;
+                return true;
+            }
+            false
+        });
+
+        Ok(())
+    }
+
+    fn watch_timezone_updates(&self) -> tokio::sync::watch::Receiver<Timezone> {
+        self.timezone_sender.subscribe()
     }
 }
