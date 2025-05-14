@@ -18,7 +18,8 @@ bmc-display.workspace = true
 bmc-grpc.workspace = true
 bmc-platform.workspace = true
 bmc-upgrade.workspace = true
-chrono.workspace = true
+chrono = { workspace = true }
+chrono-tz.workspace = true
 futures.workspace = true
 http.workspace = true
 hyper.workspace = true
@@ -28,6 +29,7 @@ mime_guess.workspace = true
 minerctl-defs.workspace = true
 reqwest.workspace = true
 strum.workspace = true
+strum_macros.workspace = true
 sysinfo = { workspace = true, features = ["linux-tmpfs"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
