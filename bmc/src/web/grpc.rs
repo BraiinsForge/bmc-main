@@ -60,9 +60,12 @@ impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
         }
 
         if !authenticated {
-            // make sure, there is no authentication header anymore
-            req.headers_mut().remove(header::AUTHORIZATION.as_str());
+            return Err(tonic::Status::unauthenticated("Failed to get session"));
         }
+
+        // make sure, there is no authentication header anymore
+        req.headers_mut().remove(header::AUTHORIZATION.as_str());
+
         Ok(req)
     }
 }
