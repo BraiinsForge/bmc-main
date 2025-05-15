@@ -131,6 +131,12 @@ impl session::Manager for MockSessionManager {
             guard.eq(&password)
         };
 
+        let username = if username.is_empty() {
+            Self::DEFAULT_USER_NAME.to_owned()
+        } else {
+            username
+        };
+
         if !username.eq(Self::DEFAULT_USER_NAME) || !password_is_equal {
             return Err(Error::BadCredentials);
         }
