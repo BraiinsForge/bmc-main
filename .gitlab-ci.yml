@@ -10,14 +10,20 @@ stages:
 ######## Essentials Stage ########
 ##################################
 variables:
-  CI_TOOLS_REV: 59c75c901a65e6f5136457b8f9e842d34e9d3abd # This is not accessible inside "include"
+  CI_TOOLS_REV: c5e3f70adc34fdeba3a5fcef7106db474be443a8 # This is not accessible inside "include"
 include:
-  - project: 'nix/ci-tools'
-    ref: 59c75c901a65e6f5136457b8f9e842d34e9d3abd
+  - project: "nix/ci-tools"
+    ref: c5e3f70adc34fdeba3a5fcef7106db474be443a8
     file:
-      - '.essentials.yml'
-      - '.dependencies.yml'
-      - '.check.yml'
+      - ".essentials.yml"
+      - ".dependencies.yml"
+      - ".check.yml"
+
+verify-tooling-crates:
+  extends: .nix
+  stage: essentials
+  script:
+    - nix develop .#fast --command ./scripts/verify_crate_hash.sh tooling
 
 ############################
 ######## Apps Stage ########

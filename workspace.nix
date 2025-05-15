@@ -17,6 +17,7 @@ let
     # packages that can be executed during compilation
     nativeDeps = pkgs: with pkgs; [
       protobuf
+      diffutils
     ];
     # packages that will be cross-compiled for target arch
     targetDeps = build_pkgs: with build_pkgs; [
