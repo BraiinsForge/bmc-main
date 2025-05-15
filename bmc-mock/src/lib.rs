@@ -15,6 +15,8 @@ mod cli;
 mod mockfs;
 mod session;
 
+pub use mockfs::MockFs;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
