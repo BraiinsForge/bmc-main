@@ -17,6 +17,7 @@ use tower::Layer;
 use tracing::debug;
 
 pub mod authentication;
+mod metadata;
 mod system;
 
 struct AuthInterceptor<S: SessionManager> {
@@ -99,14 +100,19 @@ impl<T: BmcManager, S: SessionManager> GrpcWeb<T, S> {
                 authentication::AuthenticationService::new(self.session_manager.clone()),
             );
 
+        let metadata_service = web::metadata_service_server::MetadataServiceServer::new(
+            metadata::MetadataService::new(self.manager.clone()),
+        );
+
         let system_service = web::system_service_server::SystemServiceServer::new(
-            system::SystemService::new(self.manager.clone(), self.session_manager.clone()),
+            system::SystemService::new(self.manager, self.session_manager),
         );
 
         // GrpcWebLayer is badly named, it's not a "layer", it's re-wrapper for other Services
         // All services requiring authentication have to be wrapped in GrpcWebLayer and use "InterceptorFor"
         Routes::new(GrpcWebLayer::new().layer(reflection_service))
             .add_service(GrpcWebLayer::new().layer(authentication_service))
+            .add_service(GrpcWebLayer::new().layer(metadata_service))
             .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
                 system_service,
                 auth_interceptor.clone(),

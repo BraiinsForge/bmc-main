@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+// Structure to handle system details
+message Metadata {
+  // OS version
+  string version = 1;
+}
+
+message GetMetadataRequest {}
+
+// Service to provide information about system
+service MetadataService {
+  // Get detailed information about the system
+  rpc GetMetadata(GetMetadataRequest) returns (Metadata);
+}

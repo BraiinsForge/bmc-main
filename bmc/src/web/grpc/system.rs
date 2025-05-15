@@ -3,10 +3,9 @@
 use std::sync::Arc;
 
 use bmc_grpc::web::{
-    GetSystemMetadataRequest, Metadata, SetPasswordRequest, SetPasswordResponse,
+    SetPasswordRequest, SetPasswordResponse,
     system_service_server::SystemService as GrpcSystemService,
 };
-use tonic::Request;
 use tracing::warn;
 
 use crate::{
@@ -44,14 +43,6 @@ where
     T: BmcManager,
     S: SessionManager,
 {
-    async fn get_metadata(
-        &self,
-        _request: Request<GetSystemMetadataRequest>,
-    ) -> Result<tonic::Response<Metadata>, tonic::Status> {
-        let version = self.bmc_manager.version();
-        Ok(tonic::Response::new(Metadata { version }))
-    }
-
     async fn set_password(
         &self,
         request: tonic::Request<SetPasswordRequest>,
