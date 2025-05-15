@@ -24,6 +24,7 @@ async fn main() -> Result<()> {
     log::init();
 
     let config = cli::Config::parse();
+    let system_password = config.system_password.clone();
 
     let mockfs = mockfs::MockFs::new(&config.mockfs_path);
     mockfs.init()?;
@@ -33,7 +34,7 @@ async fn main() -> Result<()> {
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
     let manager = MockManager {
-        session_manager: MockSessionManager::new(),
+        session_manager: MockSessionManager::new(system_password),
     };
 
     tokio::task::spawn(bmc::entry::main(manager, config, display_driver));

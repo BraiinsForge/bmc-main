@@ -94,12 +94,11 @@ impl MockSessionManager {
     const COOKIE_SESSION_PATH: &'static str = "/";
     const DEFAULT_RANDOM_SESSION_LENGTH: usize = 16;
     const DEFAULT_USER_NAME: &'static str = "root";
-    const DEFAULT_PASSWORD: &'static str = "";
 
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(password: Option<String>) -> Self {
         Self {
-            password: Arc::new(Mutex::new(Self::DEFAULT_PASSWORD.to_owned())),
+            password: Arc::new(Mutex::new(password.unwrap_or_default())),
             sessions: Arc::new(Mutex::new(Sessions::new())),
         }
     }

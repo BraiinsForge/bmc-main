@@ -24,7 +24,7 @@ impl DisplayHandle for MockDisplay {
 }
 
 async fn start_app() -> Result<TestApp> {
-    let session_manager = MockSessionManager::new();
+    let session_manager = MockSessionManager::new(None);
     let manager = MockManager {
         session_manager: session_manager.clone(),
     };
