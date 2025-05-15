@@ -1,0 +1,42 @@
+[package]
+name = "tooling-std"
+version = "0.0.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-once-cell.workspace = true
+async-trait.workspace = true
+bincode.workspace = true
+bstr.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+dialoguer.workspace = true
+fdlimit.workspace = true
+fs-err.workspace = true
+futures.workspace = true
+governor.workspace = true
+hex.workspace = true
+nonzero_ext.workspace = true
+parking_lot.workspace = true
+pin-project.workspace = true
+prost-types.workspace = true
+rand.workspace = true
+serde.workspace = true
+sha2.workspace = true
+sync_wrapper.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tooling-std-macros.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+assert_matches.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

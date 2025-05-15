@@ -1,0 +1,21 @@
+[package]
+name = "minerctl-defs"
+version = "0.0.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+enum-assoc.workspace = true
+regex.workspace = true
+schemars.workspace = true
+serde.workspace = true
+strum.workspace = true
+tap.workspace = true
+thiserror.workspace = true
+tooling-std.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
