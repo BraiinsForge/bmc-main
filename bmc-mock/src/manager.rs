@@ -2,6 +2,7 @@
 
 use bmc::time::Timezone;
 use bmc_platform::BmcPlatform;
+use std::sync::{Arc, Mutex};
 use std::{path::Path, time::Duration};
 use tracing::info;
 
@@ -18,16 +19,22 @@ pub struct Manager {
     mockfs: MockFs,
     pub session_manager: MockSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
+    password: Arc<Mutex<Option<String>>>,
 }
 
 impl Manager {
     #[must_use]
-    pub fn new(mockfs: MockFs, session_manager: MockSessionManager) -> Self {
+    pub fn new(
+        mockfs: MockFs,
+        session_manager: MockSessionManager,
+        password: Arc<Mutex<Option<String>>>,
+    ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
         Self {
             mockfs,
             session_manager,
             timezone_sender,
+            password,
         }
     }
 }
@@ -64,6 +71,9 @@ impl bmc::BmcManager for Manager {
 
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error> {
         info!("Setting password to {:?}", password);
+
+        let mut guard = self.password.lock().expect("BUG: cannot lock password");
+        *guard = password;
 
         Ok(())
     }

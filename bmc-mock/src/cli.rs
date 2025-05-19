@@ -33,7 +33,7 @@ pub struct Config {
     /// Set path to a writeable directory for mockup config files
     #[clap(long, default_value = data_dir("mockfs"))]
     pub mockfs_path: PathBuf,
-    #[clap(long, default_value = "")]
+    #[clap(long)]
     pub system_password: Option<String>,
 }
 

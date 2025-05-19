@@ -13,6 +13,7 @@ use bmc_upgrade::firmware::FirmwareResolver;
 use clap as _;
 use dirs as _;
 use slint as _;
+use std::sync::Mutex;
 use std::{env, net::SocketAddr, str::FromStr, sync::Arc};
 use tracing as _;
 use uuid::Uuid;
@@ -22,13 +23,14 @@ struct TestApp {
 }
 
 async fn start_app() -> Result<TestApp> {
-    let session_manager = MockSessionManager::new(None);
+    let password = Arc::new(Mutex::new(None));
+    let session_manager = MockSessionManager::new(password.clone());
 
     let random_dir_prefix = Uuid::new_v4().to_string();
     let mockfs_path = env::temp_dir().join(random_dir_prefix);
 
     let mockfs = MockFs::new(mockfs_path);
-    let manager = Manager::new(mockfs, session_manager);
+    let manager = Manager::new(mockfs, session_manager, password);
     let session_manager = manager.session_manager();
 
     let config = Configuration {

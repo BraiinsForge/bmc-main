@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 // Copyright (C) 2025  Braiins Systems s.r.o.
 use anyhow::Result;
 use async_trait as _;
@@ -37,7 +38,8 @@ async fn main() -> Result<()> {
 
     let firmware_resolver = FirmwareResolver::new(MockIndex);
 
-    let manager = Manager::new(mockfs, MockSessionManager::new(system_password));
+    let password = Arc::new(Mutex::new(system_password));
+    let manager = Manager::new(mockfs, MockSessionManager::new(password.clone()), password);
 
     tokio::task::spawn(bmc::entry::main(
         manager,

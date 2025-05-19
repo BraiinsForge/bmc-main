@@ -76,7 +76,7 @@ type Sessions = HashMap<String, Session>;
 #[derive(Default, Clone)]
 pub struct MockSessionManager {
     sessions: Arc<Mutex<Sessions>>,
-    password: Arc<Mutex<String>>,
+    password: Arc<Mutex<Option<String>>>,
 }
 
 impl Debug for MockSessionManager {
@@ -98,10 +98,10 @@ impl MockSessionManager {
     const IMPLICIT_USERNAME: &'static str = "root";
 
     #[must_use]
-    pub fn new(password: Option<String>) -> Self {
+    pub fn new(password: Arc<Mutex<Option<String>>>) -> Self {
         Self {
-            password: Arc::new(Mutex::new(password.unwrap_or_default())),
             sessions: Arc::new(Mutex::new(Sessions::new())),
+            password,
         }
     }
 
@@ -128,12 +128,12 @@ impl session::Manager for MockSessionManager {
     const SESSION_TIMEOUT: u32 = 3600;
 
     async fn login(&self, password: &str) -> Result<Cookie<'static>, Error> {
-        let password_is_equal = {
+        let password_is_correct = {
             let guard = self.password.lock().expect("BUG: cannot lock password");
-            guard.eq(&password)
+            guard.as_ref().is_none_or(|p| *p == password)
         };
 
-        if !password_is_equal {
+        if !password_is_correct {
             return Err(Error::BadCredentials);
         }
 
