@@ -2,35 +2,8 @@
   {
     "row": 0,
     "col": 0,
-    "widget_size": "Small",
-    "widget_type": "ClockAnalogRound",
-    "widget_data": [
-      "Prague"
-    ]
-  },
-  {
-    "row": 0,
-    "col": 1,
-    "widget_size": "Small",
-    "widget_type": "ClockAnalogRect",
-    "widget_data": [
-      "Prague"
-    ]
-  },
-  {
-    "row": 1,
-    "col": 0,
-    "widget_size": "Medium",
-    "widget_type": "ClockAnalogRect",
-    "widget_data": [
-      "Prague"
-    ]
-  },
-  {
-    "row": 0,
-    "col": 2,
-    "widget_size": "Large",
-    "widget_type": "ClockAnalogRound",
+    "widget_size": "FullScreen",
+    "widget_type": "ClockDigital",
     "widget_data": [
       "Prague"
     ]
