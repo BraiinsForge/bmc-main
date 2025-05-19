@@ -10,7 +10,7 @@ async-trait.workspace = true
 bmc-platform.workspace = true
 bytes.workspace = true
 data-encoding.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 ring.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
