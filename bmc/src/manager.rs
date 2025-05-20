@@ -3,6 +3,9 @@
 use std::{fmt::Debug, path::Path};
 
 use bmc_platform::BmcPlatform;
+use tokio::sync::watch;
+
+use crate::time::Timezone;
 
 #[async_trait::async_trait]
 pub trait BmcManager: Sync + Send + 'static + Debug {
@@ -21,4 +24,14 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     fn session_manager(&self) -> Self::SessionManager;
 
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error>;
+
+    fn timezone(&self) -> Timezone;
+
+    fn timezone_list(&self) -> impl Iterator<Item = Timezone> {
+        Timezone::timezone_list()
+    }
+
+    async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()>;
+
+    fn watch_timezone_updates(&self) -> watch::Receiver<Timezone>;
 }
