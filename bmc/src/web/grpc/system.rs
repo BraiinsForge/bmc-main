@@ -43,7 +43,7 @@ where
         &self,
         request: tonic::Request<SetPasswordRequest>,
     ) -> Result<tonic::Response<SetPasswordResponse>, tonic::Status> {
-        let session = extract_session::<S, _>(&request)?.clone();
+        let session = extract_session::<S>(request.extensions())?.clone();
         let request = request.into_inner();
 
         // Validate current password

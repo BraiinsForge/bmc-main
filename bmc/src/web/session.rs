@@ -100,12 +100,31 @@ where
 
         Box::pin(async move {
             let cookies = extract_cookies(req.headers());
+            let mut response_set_cookie = None;
 
             if let Ok(session) = session_manager.find(&cookies).await {
-                req.extensions_mut().insert(session);
+                if let Ok(cookie) = session_manager.extend(session).await {
+                    // NOTE: extend does not return updated session, only cookie.
+                    // Previous session would have incorrect expiration time.
+                    let session = session_manager
+                        .find(&[cookie.clone()])
+                        .await
+                        .expect("BUG: session must be available, because it was extended");
+
+                    if let Ok(parsed_cookie) = cookie.to_string().parse::<HeaderValue>() {
+                        req.extensions_mut().insert(session);
+                        response_set_cookie = Some(parsed_cookie);
+                    }
+                }
             }
 
-            service.call(req).await
+            let mut resp = service.call(req).await?;
+
+            if let Some(cookie) = response_set_cookie {
+                resp.headers_mut().append(header::SET_COOKIE, cookie);
+            }
+
+            Ok(resp)
         })
     }
 }
@@ -123,11 +142,10 @@ pub(crate) fn extract_cookies(headers: &HeaderMap<HeaderValue>) -> Vec<Cookie<'_
 }
 
 /// Retrieves authentication session and fails if it is not present
-pub fn extract_session<S: session::Manager, R>(
-    request: &tonic::Request<R>,
+pub fn extract_session<S: session::Manager>(
+    extensions: &http::Extensions,
 ) -> Result<&S::Session, tonic::Status> {
-    request
-        .extensions()
+    extensions
         .get::<S::Session>()
         .ok_or_else(|| tonic::Status::unauthenticated("Missing or invalid session"))
 }

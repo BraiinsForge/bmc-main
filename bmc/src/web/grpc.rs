@@ -2,7 +2,7 @@
 
 use crate::BmcManager;
 use crate::web::SessionManager;
-use crate::web::session::extract_cookies;
+use crate::web::session::extract_session;
 use bmc_grpc::web;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::fmt::Display;
@@ -24,7 +24,7 @@ use super::SystemUpgradeService;
 mod upgrade_service;
 
 struct AuthInterceptor<S: SessionManager> {
-    pub session_manager: std::sync::Arc<S>,
+    pub session_manager: Arc<S>,
 }
 
 impl<S: SessionManager> Clone for AuthInterceptor<S> {
@@ -37,26 +37,10 @@ impl<S: SessionManager> Clone for AuthInterceptor<S> {
 
 #[async_trait::async_trait]
 impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
-    async fn intercept(&self, mut req: Request<Body>) -> Result<Request<Body>, Status> {
+    async fn intercept(&self, req: Request<Body>) -> Result<Request<Body>, Status> {
         debug!("Intercepting request: {:?}", req);
-        let session_manager = self.session_manager.clone();
-        let mut authenticated = false;
 
-        let cookies = extract_cookies(req.headers());
-
-        // find the session by its ID from cookies
-        if let Ok(session) = session_manager.find(&cookies).await {
-            // extend the session
-            let cookie = session_manager.extend(session.clone()).await;
-            if cookie.is_ok() {
-                req.extensions_mut().insert(session);
-                authenticated = true;
-            }
-        }
-
-        if !authenticated {
-            return Err(tonic::Status::unauthenticated("Failed to get session"));
-        }
+        let _ = extract_session::<S>(req.extensions())?;
 
         Ok(req)
     }

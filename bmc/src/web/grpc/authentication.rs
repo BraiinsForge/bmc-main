@@ -28,7 +28,9 @@ where
     S: SessionManager,
 {
     async fn is_authenticated(&self, request: Request<()>) -> Result<Response<bool>, Status> {
-        Ok(Response::new(extract_session::<S, _>(&request).is_ok()))
+        Ok(Response::new(
+            extract_session::<S>(request.extensions()).is_ok(),
+        ))
     }
 
     async fn login(

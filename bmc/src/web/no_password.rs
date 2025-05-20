@@ -101,25 +101,17 @@ where
 
         Box::pin(async move {
             let cookies = extract_cookies(req.headers());
-            let mut response_set_cookie = None;
 
             if session_manager.find(&cookies).await.is_err() {
                 if let Ok(cookie) = session_manager.login(DEFAULT_PASSWORD).await {
                     if let Ok(parsed_cookie) = cookie.to_string().parse::<HeaderValue>() {
-                        response_set_cookie = Some(parsed_cookie.clone());
-
                         req.headers_mut()
                             .append(http::header::COOKIE, parsed_cookie);
                     }
                 }
             }
 
-            let mut resp = service.call(req).await?;
-
-            if let Some(cookie) = response_set_cookie {
-                resp.headers_mut().append(http::header::SET_COOKIE, cookie);
-            }
-            Ok(resp)
+            service.call(req).await
         })
     }
 }
