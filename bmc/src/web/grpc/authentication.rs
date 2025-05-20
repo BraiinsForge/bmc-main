@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::session::Manager as SessionManager;
+use crate::web::session::extract_session;
 use bmc_grpc::web::{self, LoginRequest, LoginResponse};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -26,6 +27,10 @@ impl<S> web::authentication_service_server::AuthenticationService for Authentica
 where
     S: SessionManager,
 {
+    async fn is_authenticated(&self, request: Request<()>) -> Result<Response<bool>, Status> {
+        Ok(Response::new(extract_session::<S, _>(&request).is_ok()))
+    }
+
     async fn login(
         &self,
         request: Request<LoginRequest>,

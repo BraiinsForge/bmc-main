@@ -2,6 +2,9 @@ syntax = "proto3";
 
 package braiins.bmc.web;
 
+import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
+
 // Request message to login
 message LoginRequest {
   string password = 1;
@@ -17,6 +20,8 @@ message LoginResponse {
 }
 
 service AuthenticationService {
+  // Method to check if the client is currently authenticated
+  rpc IsAuthenticated(google.protobuf.Empty) returns (google.protobuf.BoolValue);
   // Method to login and retrieve authentication token
   rpc Login(LoginRequest) returns (LoginResponse);
 }
