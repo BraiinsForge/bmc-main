@@ -7,7 +7,10 @@ use bmc_display::display_driver::{
 use data::DisplayDataProvider;
 use tokio::{sync::watch::Receiver, task};
 
-use crate::system_upgrade::{StateService, SystemUpgradeState};
+use crate::{
+    system_upgrade::{StateService, SystemUpgradeState},
+    time::Timezone,
+};
 
 pub(crate) mod data;
 
@@ -16,13 +19,18 @@ pub(crate) struct DisplayController<T: DisplayBacklightDriver> {
     _data_provider: DisplayDataProvider,
     display_handler: DisplayHandler<T, DisplayDataProvider>,
     system_upgrade_receiver: Receiver<Option<SystemUpgradeState>>,
+    timezone_watch: tokio::sync::watch::Receiver<Timezone>,
 }
 
 impl<T> DisplayController<T>
 where
     T: DisplayBacklightDriver,
 {
-    pub(crate) fn new(display_driver: DisplayDriver<T>, state_service: StateService) -> Self {
+    pub(crate) fn new(
+        display_driver: DisplayDriver<T>,
+        state_service: StateService,
+        timezone_watch: tokio::sync::watch::Receiver<Timezone>,
+    ) -> Self {
         let system_upgrade_receiver = state_service.subscribe();
         let data_provider = DisplayDataProvider::new(state_service);
         let display_handler = DisplayHandler::new(display_driver, data_provider.clone());
@@ -31,6 +39,7 @@ where
             _data_provider: data_provider,
             display_handler,
             system_upgrade_receiver,
+            timezone_watch,
         }
     }
 
@@ -43,7 +52,7 @@ where
         task::spawn(async move {
             loop {
                 if receiver.changed().await.is_ok() {
-                    let state = (*receiver.borrow_and_update()).clone();
+                    let state = (*receiver.borrow()).clone();
                     if let Some(upgrade_status) = state {
                         match upgrade_status {
                             SystemUpgradeState::DownloadStarted => {
@@ -69,6 +78,19 @@ where
                             }
                         }
                     }
+                }
+            }
+        });
+
+        let display_handle: DisplayHandler<T, DisplayDataProvider> = self.display_handler.clone();
+        let mut timezone_watch = self.timezone_watch.clone();
+
+        task::spawn(async move {
+            loop {
+                if timezone_watch.changed().await.is_ok() {
+                    display_handle
+                        .emit_event(DisplayEvent::TimezoneChanged)
+                        .await;
                 }
             }
         });

@@ -13,6 +13,7 @@ use std::{
     path::Path,
     sync::{Arc, Mutex},
 };
+use tracing::info;
 
 use tokio::sync::mpsc::Sender;
 
@@ -147,6 +148,7 @@ pub enum DisplayEvent {
     UpgradeStarted,
     UpgradeFailed,
     UpgradeFinishedSuccessfully,
+    TimezoneChanged,
 }
 
 struct EventHandler;
@@ -169,6 +171,9 @@ impl EventHandler {
                     }
                     DisplayEvent::UpgradeFinishedSuccessfully => {
                         Self::set_screen(Screen::UpgradeSuccess, &slint_handle);
+                    }
+                    DisplayEvent::TimezoneChanged => {
+                        info!("Timezone was changed");
                     }
                 }
             }

@@ -55,7 +55,11 @@ where
             state_service.clone(),
         );
 
-        let display_controller = DisplayController::new(display_driver, state_service);
+        let display_controller = DisplayController::new(
+            display_driver,
+            state_service,
+            manager.watch_timezone_updates(),
+        );
 
         Ok(Self {
             listener,
