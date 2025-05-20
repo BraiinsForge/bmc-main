@@ -1,7 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::session;
-use axum_extra::extract::cookie::Cookie;
 use futures::Future;
 use http::{HeaderValue, Request, Response};
 use tower::{Layer, Service};
@@ -10,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use super::session::{extract_cookies, extract_token};
+use super::session::extract_cookies;
 
 const DEFAULT_PASSWORD: &str = "";
 
@@ -101,27 +100,18 @@ where
         let session_manager = self.session_manager.clone();
 
         Box::pin(async move {
-            let token = extract_token(&req);
-            let cookies = if let Some(token) = token.as_ref() {
-                // NOTE: this is not an elegant integration of gRPC and existing session manager.
-                // Session manager provides cookie interface, not a token interface. More of that
-                // the name of cookie is defined by specific boser implementation, not a library.
-                // this part has to be changed in future
-                vec![Cookie::new("session_id", token)]
-            } else {
-                extract_cookies(req.headers()).collect::<Vec<Cookie<'_>>>()
-            };
+            let cookies = extract_cookies(req.headers());
             let mut response_set_cookie = None;
 
             if session_manager.find(&cookies).await.is_err() {
-                _ = session_manager.login(DEFAULT_PASSWORD).await.map(|cookie| {
+                if let Ok(cookie) = session_manager.login(DEFAULT_PASSWORD).await {
                     if let Ok(parsed_cookie) = cookie.to_string().parse::<HeaderValue>() {
                         response_set_cookie = Some(parsed_cookie.clone());
 
                         req.headers_mut()
                             .append(http::header::COOKIE, parsed_cookie);
                     }
-                });
+                }
             }
 
             let mut resp = service.call(req).await?;

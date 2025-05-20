@@ -2,11 +2,9 @@
 
 use crate::BmcManager;
 use crate::web::SessionManager;
-use crate::web::session::{extract_cookies, extract_token};
-use axum_extra::extract::cookie::Cookie;
+use crate::web::session::extract_cookies;
 use bmc_grpc::web;
 use bmc_upgrade::firmware::FirmwareIndex;
-use http::header;
 use std::fmt::Display;
 use std::sync::Arc;
 use strum::EnumMessage;
@@ -41,21 +39,12 @@ impl<S: SessionManager> Clone for AuthInterceptor<S> {
 impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
     async fn intercept(&self, mut req: Request<Body>) -> Result<Request<Body>, Status> {
         debug!("Intercepting request: {:?}", req);
-        let token = extract_token(&req);
         let session_manager = self.session_manager.clone();
         let mut authenticated = false;
 
-        let cookies = if let Some(token) = token.as_ref() {
-            // NOTE: this is not an elegant integration of gRPC and existing session manager.
-            // Session manager provides cookie interface, not a token interface. More of that
-            // the name of cookie is defined by specific boser implementation, not a library.
-            // this part has to be changed in future
-            vec![Cookie::new("session_id", token)]
-        } else {
-            extract_cookies(req.headers()).collect::<Vec<Cookie<'_>>>()
-        };
+        let cookies = extract_cookies(req.headers());
 
-        // find the session by its ID from token/cookies
+        // find the session by its ID from cookies
         if let Ok(session) = session_manager.find(&cookies).await {
             // extend the session
             let cookie = session_manager.extend(session.clone()).await;
@@ -68,9 +57,6 @@ impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
         if !authenticated {
             return Err(tonic::Status::unauthenticated("Failed to get session"));
         }
-
-        // make sure, there is no authentication header anymore
-        req.headers_mut().remove(header::AUTHORIZATION.as_str());
 
         Ok(req)
     }

@@ -99,34 +99,18 @@ where
         let session_manager = self.session_manager.clone();
 
         Box::pin(async move {
-            let token = extract_token(&req);
-            let cookies = if let Some(token) = token.as_ref() {
-                // NOTE: this is not an elegant integration of gRPC and existing session manager.
-                // Session manager provides cookie interface, not a token interface. More of that
-                // the name of cookie is defined by specific boser implementation, not a library.
-                // this part has to be changed in future
-                vec![Cookie::new("session_id", token)]
-            } else {
-                extract_cookies(req.headers()).collect::<Vec<Cookie<'_>>>()
-            };
-            session_manager
-                .find(&cookies)
-                .await
-                .ok()
-                .and_then(|session| req.extensions_mut().insert(session));
+            let cookies = extract_cookies(req.headers());
+
+            if let Ok(session) = session_manager.find(&cookies).await {
+                req.extensions_mut().insert(session);
+            }
 
             service.call(req).await
         })
     }
 }
 
-fn strip_bearer(token: &str) -> String {
-    token.split_whitespace().last().unwrap_or(token).to_owned()
-}
-
-pub(crate) fn extract_cookies(
-    headers: &HeaderMap<HeaderValue>,
-) -> impl Iterator<Item = Cookie<'_>> {
+pub(crate) fn extract_cookies(headers: &HeaderMap<HeaderValue>) -> Vec<Cookie<'_>> {
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -135,15 +119,7 @@ pub(crate) fn extract_cookies(
             Cookie::split_parse_encoded(s)
         })
         .filter_map(Result::ok)
-}
-
-pub(crate) fn extract_token<T>(request: &Request<T>) -> Option<String> {
-    request
-        .headers()
-        .get(header::AUTHORIZATION.as_str())
-        .and_then(|token_header| token_header.to_str().ok())
-        .map(String::from)
-        .map(|s| strip_bearer(&s))
+        .collect()
 }
 
 /// Retrieves authentication session and fails if it is not present
@@ -158,27 +134,9 @@ pub fn extract_session<S: session::Manager, R>(
 
 #[cfg(test)]
 mod tests {
-    use axum::body::Body;
     use header::{ACCEPT_ENCODING, CONTENT_LENGTH, COOKIE};
 
     use super::*;
-    #[test]
-    fn test_extract_token() {
-        let req = Request::builder()
-            .header(header::AUTHORIZATION, "Bearer gVZIvHtgCYYfbxXa")
-            .body(Body::empty())
-            .expect("BUG: failed to build request");
-        assert_eq!(extract_token(&req), Some("gVZIvHtgCYYfbxXa".to_owned()));
-    }
-
-    #[test]
-    fn test_extract_token_no_bearer() {
-        let req = Request::builder()
-            .header(header::AUTHORIZATION, "gVZIvHtgCYYfbxXa")
-            .body(Body::empty())
-            .expect("BUG: failed to build request");
-        assert_eq!(extract_token(&req), Some("gVZIvHtgCYYfbxXa".to_owned()));
-    }
 
     #[test]
     fn test_extract_cookies() {
@@ -198,7 +156,7 @@ mod tests {
             );
         }
 
-        let cookies = extract_cookies(&header_map).collect::<Vec<Cookie<'_>>>();
+        let cookies = extract_cookies(&header_map);
 
         let expected_cookies = vec![
             Cookie::new("session_id", "gVZIvHtgCYYfbxXa"),
