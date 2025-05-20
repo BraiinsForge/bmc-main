@@ -29,19 +29,14 @@ where
     async fn login(
         &self,
         request: Request<LoginRequest>,
-    ) -> Result<Response<LoginResponse>, tonic::Status> {
-        let username = request.get_ref().username.clone();
-        let password = request.get_ref().password.clone();
+    ) -> Result<Response<LoginResponse>, Status> {
+        let request = request.into_inner();
         self.session_manager
-            .login(username, password)
+            .login(&request.password)
             .await
             .map(|cookie| {
                 #[cfg(debug_assertions)]
-                tracing::debug!(
-                    "Session {} has been started for user {}",
-                    cookie.value(),
-                    request.get_ref().username
-                );
+                tracing::debug!("Session {} has been started", cookie.value());
 
                 Response::new(LoginResponse {
                     token: cookie.value().to_owned(),

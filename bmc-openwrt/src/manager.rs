@@ -97,6 +97,10 @@ pub enum Error {
 #[derive(Default, Clone, Debug)]
 pub struct OpenwrtSessionManager;
 
+impl OpenwrtSessionManager {
+    const IMPLICIT_USERNAME: &'static str = "root";
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct Handle {
     username: String,
@@ -136,10 +140,11 @@ impl bmc::session::Manager for OpenwrtSessionManager {
 
     const SESSION_TIMEOUT: u32 = 3600;
 
-    async fn login(&self, username: String, password: String) -> Result<Cookie<'_>, Error> {
+    async fn login(&self, password: &str) -> Result<Cookie<'_>, Error> {
         info!(
             "Login with username: {} and password: {}",
-            username, password
+            Self::IMPLICIT_USERNAME,
+            password
         );
         unimplemented!()
     }

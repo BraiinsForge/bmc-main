@@ -8,11 +8,7 @@ use bmc_grpc::web::{
 };
 use tracing::warn;
 
-use crate::{
-    BmcManager,
-    session::{Handle as _, Manager as SessionManager},
-    web::session::extract_session,
-};
+use crate::{BmcManager, session::Manager as SessionManager, web::session::extract_session};
 
 #[derive(Clone)]
 pub(crate) struct SystemService<T, S>
@@ -53,7 +49,7 @@ where
         // Validate current password
         let _ = self
             .session_manager
-            .login(session.username(), request.current_password)
+            .login(&request.current_password)
             .await
             .map_err(|err| {
                 tonic::Status::invalid_argument(format!(

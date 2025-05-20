@@ -12,7 +12,6 @@ use std::task::{Context, Poll};
 
 use super::session::{extract_cookies, extract_token};
 
-const DEFAULT_USER_NAME: &str = "root";
 const DEFAULT_PASSWORD: &str = "";
 
 #[derive(Debug)]
@@ -115,17 +114,14 @@ where
             let mut response_set_cookie = None;
 
             if session_manager.find(&cookies).await.is_err() {
-                _ = session_manager
-                    .login(DEFAULT_USER_NAME.to_owned(), DEFAULT_PASSWORD.to_owned())
-                    .await
-                    .map(|cookie| {
-                        if let Ok(parsed_cookie) = cookie.to_string().parse::<HeaderValue>() {
-                            response_set_cookie = Some(parsed_cookie.clone());
+                _ = session_manager.login(DEFAULT_PASSWORD).await.map(|cookie| {
+                    if let Ok(parsed_cookie) = cookie.to_string().parse::<HeaderValue>() {
+                        response_set_cookie = Some(parsed_cookie.clone());
 
-                            req.headers_mut()
-                                .append(http::header::COOKIE, parsed_cookie);
-                        }
-                    });
+                        req.headers_mut()
+                            .append(http::header::COOKIE, parsed_cookie);
+                    }
+                });
             }
 
             let mut resp = service.call(req).await?;

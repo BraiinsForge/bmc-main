@@ -93,7 +93,7 @@ impl MockSessionManager {
     const COOKIE_SESSION: &'static str = "session_id";
     const COOKIE_SESSION_PATH: &'static str = "/";
     const DEFAULT_RANDOM_SESSION_LENGTH: usize = 16;
-    const DEFAULT_USER_NAME: &'static str = "root";
+    const IMPLICIT_USERNAME: &'static str = "root";
 
     #[must_use]
     pub fn new(password: Option<String>) -> Self {
@@ -125,19 +125,13 @@ impl session::Manager for MockSessionManager {
 
     const SESSION_TIMEOUT: u32 = 3600;
 
-    async fn login(&self, username: String, password: String) -> Result<Cookie<'_>, Error> {
+    async fn login(&self, password: &str) -> Result<Cookie<'_>, Error> {
         let password_is_equal = {
             let guard = self.password.lock().expect("BUG: cannot lock password");
             guard.eq(&password)
         };
 
-        let username = if username.is_empty() {
-            Self::DEFAULT_USER_NAME.to_owned()
-        } else {
-            username
-        };
-
-        if !username.eq(Self::DEFAULT_USER_NAME) || !password_is_equal {
+        if !password_is_equal {
             return Err(Error::BadCredentials);
         }
 
@@ -149,14 +143,19 @@ impl session::Manager for MockSessionManager {
 
         debug!(
             "New random session {} created for user {}@{}",
-            random_session, username, password
+            random_session,
+            Self::IMPLICIT_USERNAME,
+            password
         );
 
         let mut sessions = self.sessions_lock();
 
         sessions.insert(
             random_session.clone(),
-            Session::new(username, Self::get_expiration_time(Self::SESSION_TIMEOUT)),
+            Session::new(
+                Self::IMPLICIT_USERNAME.to_owned(),
+                Self::get_expiration_time(Self::SESSION_TIMEOUT),
+            ),
         );
 
         let mut cookie = Cookie::new(Self::COOKIE_SESSION, random_session);
