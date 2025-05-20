@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::session::Manager as SessionManager;
-use crate::web::session::extract_session;
+use crate::web::session::{extract_cookies, extract_session};
 use bmc_grpc::web::{self, LoginRequest, LoginResponse};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -37,19 +37,22 @@ where
         &self,
         request: Request<LoginRequest>,
     ) -> Result<Response<LoginResponse>, Status> {
-        let request = request.into_inner();
-        self.session_manager
+        let cookies = extract_cookies(request.extensions());
+        let request = request.get_ref();
+        let cookie = self
+            .session_manager
             .login(&request.password)
             .await
-            .map(|cookie| {
-                #[cfg(debug_assertions)]
-                tracing::debug!("Session {} has been started", cookie.value());
+            .map_err(|e| Status::unauthenticated(e.to_string()))?;
 
-                Response::new(LoginResponse {
-                    token: cookie.value().to_owned(),
-                    timeout_s: S::SESSION_TIMEOUT,
-                })
-            })
-            .map_err(|e| Status::unauthenticated(e.to_string()))
+        #[cfg(debug_assertions)]
+        tracing::debug!("Session {} has been started", cookie.value());
+
+        cookies.add(cookie.clone());
+
+        Ok(Response::new(LoginResponse {
+            token: cookie.value().to_owned(),
+            timeout_s: S::SESSION_TIMEOUT,
+        }))
     }
 }

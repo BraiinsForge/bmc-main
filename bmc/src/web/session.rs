@@ -2,9 +2,8 @@
 
 use crate::session::{self};
 
-use axum_extra::extract::cookie::Cookie;
 use futures::Future;
-use http::{HeaderMap, HeaderValue, Request, Response, header};
+use http::{Request, Response};
 use tower::{Layer, Service};
 
 use std::pin::Pin;
@@ -99,10 +98,9 @@ where
         let session_manager = self.session_manager.clone();
 
         Box::pin(async move {
-            let cookies = extract_cookies(req.headers());
-            let mut response_set_cookie = None;
+            let cookies = extract_cookies(req.extensions());
 
-            if let Ok(session) = session_manager.find(&cookies).await {
+            if let Ok(session) = session_manager.find(&cookies.list()).await {
                 if let Ok(cookie) = session_manager.extend(session).await {
                     // NOTE: extend does not return updated session, only cookie.
                     // Previous session would have incorrect expiration time.
@@ -111,34 +109,20 @@ where
                         .await
                         .expect("BUG: session must be available, because it was extended");
 
-                    if let Ok(parsed_cookie) = cookie.to_string().parse::<HeaderValue>() {
-                        req.extensions_mut().insert(session);
-                        response_set_cookie = Some(parsed_cookie);
-                    }
+                    cookies.add(cookie);
+                    req.extensions_mut().insert(session);
                 }
             }
 
-            let mut resp = service.call(req).await?;
-
-            if let Some(cookie) = response_set_cookie {
-                resp.headers_mut().append(header::SET_COOKIE, cookie);
-            }
-
-            Ok(resp)
+            service.call(req).await
         })
     }
 }
 
-pub(crate) fn extract_cookies(headers: &HeaderMap<HeaderValue>) -> Vec<Cookie<'_>> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .flat_map(|hdr| {
-            let s = String::from_utf8_lossy(hdr.as_bytes());
-            Cookie::split_parse_encoded(s)
-        })
-        .filter_map(Result::ok)
-        .collect()
+pub(crate) fn extract_cookies(extensions: &http::Extensions) -> &tower_cookies::Cookies {
+    extensions
+        .get::<tower_cookies::Cookies>()
+        .expect("BUG: Missing cookies jar, check layers")
 }
 
 /// Retrieves authentication session and fails if it is not present
@@ -148,40 +132,4 @@ pub fn extract_session<S: session::Manager>(
     extensions
         .get::<S::Session>()
         .ok_or_else(|| tonic::Status::unauthenticated("Missing or invalid session"))
-}
-
-#[cfg(test)]
-mod tests {
-    use header::{ACCEPT_ENCODING, CONTENT_LENGTH, COOKIE};
-
-    use super::*;
-
-    #[test]
-    fn test_extract_cookies() {
-        let mut header_map = HeaderMap::new();
-
-        let headers = vec![
-            (COOKIE, "session_id=gVZIvHtgCYYfbxXa"),
-            (CONTENT_LENGTH, "320"),
-            (ACCEPT_ENCODING, "gzip"),
-            (COOKIE, "test=kjfdsQFKSowowFFW; test2=fdsdfQgWHd"),
-        ];
-
-        for (key, value) in headers {
-            header_map.append(
-                key,
-                value.parse().expect("BUG: failed to parse header value"),
-            );
-        }
-
-        let cookies = extract_cookies(&header_map);
-
-        let expected_cookies = vec![
-            Cookie::new("session_id", "gVZIvHtgCYYfbxXa"),
-            Cookie::new("test", "kjfdsQFKSowowFFW"),
-            Cookie::new("test2", "fdsdfQgWHd"),
-        ];
-
-        assert_eq!(cookies, expected_cookies);
-    }
 }

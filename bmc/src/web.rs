@@ -51,7 +51,8 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
         .build()
         .into_axum_router()
         .layer(session::SessionLayer::new(self.session_manager.clone()))
-        .layer(no_password::NoPasswordLayer::new(self.session_manager));
+        .layer(no_password::NoPasswordLayer::new(self.session_manager))
+        .layer(tower_cookies::CookieManagerLayer::new());
 
         // combine grpc and http router into one service
         let service = Steer::new(

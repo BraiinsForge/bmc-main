@@ -156,6 +156,7 @@ tonic-web = "0.13.1"
 tooling-std = { path = "tooling/tooling-std" }
 tooling-std-macros = { path = "tooling/tooling-std/macros" }
 tower = { version = "0.5.2", default-features = false }
+tower-cookies = "0.11.0"
 tower-http = "0.6.2"
 tracing = { version = "0.1.41", default-features = false }
 tracing-subscriber = "0.3.19"

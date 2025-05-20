@@ -140,7 +140,7 @@ impl bmc::session::Manager for OpenwrtSessionManager {
 
     const SESSION_TIMEOUT: u32 = 3600;
 
-    async fn login(&self, password: &str) -> Result<Cookie<'_>, Error> {
+    async fn login(&self, password: &str) -> Result<Cookie<'static>, Error> {
         info!(
             "Login with username: {} and password: {}",
             Self::IMPLICIT_USERNAME,
@@ -149,17 +149,17 @@ impl bmc::session::Manager for OpenwrtSessionManager {
         unimplemented!()
     }
 
-    async fn logout(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
+    async fn logout(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
         info!("Logout with handle: {}", handle.token);
         unimplemented!()
     }
 
-    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
+    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
         info!("Logout all related with handle: {}", handle.token);
         unimplemented!()
     }
 
-    async fn extend(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
+    async fn extend(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
         info!("Extend with handle: {}", handle.token);
         unimplemented!()
     }

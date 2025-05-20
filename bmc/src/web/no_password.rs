@@ -2,7 +2,7 @@
 
 use crate::session;
 use futures::Future;
-use http::{HeaderValue, Request, Response};
+use http::{Request, Response};
 use tower::{Layer, Service};
 
 use std::pin::Pin;
@@ -95,19 +95,16 @@ where
         self.service.poll_ready(cx)
     }
 
-    fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let mut service = self.service.clone();
         let session_manager = self.session_manager.clone();
 
         Box::pin(async move {
-            let cookies = extract_cookies(req.headers());
+            let cookies = extract_cookies(req.extensions());
 
-            if session_manager.find(&cookies).await.is_err() {
+            if session_manager.find(&cookies.list()).await.is_err() {
                 if let Ok(cookie) = session_manager.login(DEFAULT_PASSWORD).await {
-                    if let Ok(parsed_cookie) = cookie.to_string().parse::<HeaderValue>() {
-                        req.headers_mut()
-                            .append(http::header::COOKIE, parsed_cookie);
-                    }
+                    cookies.add(cookie);
                 }
             }
 

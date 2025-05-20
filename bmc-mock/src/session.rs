@@ -125,7 +125,7 @@ impl session::Manager for MockSessionManager {
 
     const SESSION_TIMEOUT: u32 = 3600;
 
-    async fn login(&self, password: &str) -> Result<Cookie<'_>, Error> {
+    async fn login(&self, password: &str) -> Result<Cookie<'static>, Error> {
         let password_is_equal = {
             let guard = self.password.lock().expect("BUG: cannot lock password");
             guard.eq(&password)
@@ -165,7 +165,7 @@ impl session::Manager for MockSessionManager {
         Ok(cookie)
     }
 
-    async fn logout(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
+    async fn logout(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
         debug!("Logout session {:?}", handle);
 
         let mut sessions = self.sessions_lock();
@@ -179,7 +179,7 @@ impl session::Manager for MockSessionManager {
         Ok(cookie)
     }
 
-    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
+    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
         let mut sessions = self.sessions_lock();
 
         let target_username = {
@@ -205,7 +205,7 @@ impl session::Manager for MockSessionManager {
         Ok(cookie)
     }
 
-    async fn extend(&self, handle: Handle) -> Result<Cookie<'_>, Error> {
+    async fn extend(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
         if handle.is_valid() {
             debug!("Extend session {:?}", handle);
 
