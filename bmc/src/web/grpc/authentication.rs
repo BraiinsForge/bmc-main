@@ -55,4 +55,19 @@ where
             timeout_s: S::SESSION_TIMEOUT,
         }))
     }
+
+    async fn logout(&self, request: Request<()>) -> Result<Response<()>, Status> {
+        let cookies = extract_cookies(request.extensions());
+        let session = extract_session::<S>(request.extensions())?;
+
+        let cookie = self
+            .session_manager
+            .logout(session.clone())
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        cookies.remove(cookie);
+
+        Ok(Response::new(()))
+    }
 }

@@ -24,4 +24,6 @@ service AuthenticationService {
   rpc IsAuthenticated(google.protobuf.Empty) returns (google.protobuf.BoolValue);
   // Method to login and retrieve authentication token
   rpc Login(LoginRequest) returns (LoginResponse);
+  // Method to logout
+  rpc Logout(google.protobuf.Empty) returns (google.protobuf.Empty);
 }
