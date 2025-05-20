@@ -19,10 +19,7 @@ pub trait Manager: Default + Sync + Send + 'static {
     async fn login(&self, password: &str) -> Result<Cookie<'static>, Self::Error>;
     async fn logout(&self, session: Self::Session) -> Result<Cookie<'static>, Self::Error>;
     /// Logout all related sessions of the user except current session
-    async fn logout_all_related(
-        &self,
-        session: Self::Session,
-    ) -> Result<Cookie<'static>, Self::Error>;
+    async fn logout_all_related(&self, session: Self::Session) -> Result<(), Self::Error>;
     async fn extend(&self, session: Self::Session) -> Result<Cookie<'static>, Self::Error>;
     async fn find(&self, cookies: &[Cookie<'_>]) -> Result<Self::Session, Self::Error>;
 }

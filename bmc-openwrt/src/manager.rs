@@ -154,7 +154,7 @@ impl bmc::session::Manager for OpenwrtSessionManager {
         unimplemented!()
     }
 
-    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
+    async fn logout_all_related(&self, handle: Handle) -> Result<(), Error> {
         info!("Logout all related with handle: {}", handle.token);
         unimplemented!()
     }

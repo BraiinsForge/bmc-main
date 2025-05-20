@@ -8,7 +8,6 @@ use rand::{Rng, distr::Alphanumeric};
 use time::OffsetDateTime;
 use tracing::debug;
 
-use axum_extra::extract::cookie;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -184,7 +183,7 @@ impl session::Manager for MockSessionManager {
         Ok(cookie)
     }
 
-    async fn logout_all_related(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
+    async fn logout_all_related(&self, handle: Handle) -> Result<(), Error> {
         let mut sessions = self.sessions_lock();
 
         let target_username = {
@@ -203,11 +202,7 @@ impl session::Manager for MockSessionManager {
             session.username != target_username
         });
 
-        let mut cookie = Cookie::new(Self::COOKIE_SESSION, "");
-        cookie.set_path(Self::COOKIE_SESSION_PATH);
-        cookie.set_max_age(time::Duration::default());
-
-        Ok(cookie)
+        Ok(())
     }
 
     async fn extend(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
