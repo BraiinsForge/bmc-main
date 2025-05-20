@@ -2,12 +2,13 @@
 
 // TODO: clean expired tokens from sessions
 
-use axum_extra::extract::cookie::Cookie;
+use axum_extra::extract::cookie::{Cookie, SameSite};
 use bmc::session::{self, Handle as _};
 use rand::{Rng, distr::Alphanumeric};
 use time::OffsetDateTime;
 use tracing::debug;
 
+use axum_extra::extract::cookie;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -92,6 +93,8 @@ impl Debug for MockSessionManager {
 impl MockSessionManager {
     const COOKIE_SESSION: &'static str = "session_id";
     const COOKIE_SESSION_PATH: &'static str = "/";
+    const COOKIE_HTTP_ONLY: bool = true;
+    const COOKIE_SAME_SITE: SameSite = SameSite::Strict;
     const DEFAULT_RANDOM_SESSION_LENGTH: usize = 16;
     const IMPLICIT_USERNAME: &'static str = "root";
 
@@ -161,6 +164,8 @@ impl session::Manager for MockSessionManager {
         let mut cookie = Cookie::new(Self::COOKIE_SESSION, random_session);
         cookie.set_path(Self::COOKIE_SESSION_PATH);
         cookie.set_max_age(time::Duration::seconds(Self::SESSION_TIMEOUT.into()));
+        cookie.set_http_only(Self::COOKIE_HTTP_ONLY);
+        cookie.set_same_site(Self::COOKIE_SAME_SITE);
 
         Ok(cookie)
     }
@@ -220,6 +225,8 @@ impl session::Manager for MockSessionManager {
             let mut cookie = Cookie::new(Self::COOKIE_SESSION, handle.token);
             cookie.set_path(Self::COOKIE_SESSION_PATH);
             cookie.set_max_age(time::Duration::seconds(Self::SESSION_TIMEOUT.into()));
+            cookie.set_http_only(Self::COOKIE_HTTP_ONLY);
+            cookie.set_same_site(Self::COOKIE_SAME_SITE);
 
             Ok(cookie)
         } else {
