@@ -3,13 +3,12 @@ import * as pb from '@/proto';
 import { store } from '@/store';
 
 import { Form, type iFormErrors } from '@/lib/form';
-import { TextInput, PasswordInput } from '@carbon/react';
+import { PasswordInput } from '@carbon/react';
 import { Button, InlineNotificationsGroup } from '@/components';
 
 import css from './Login.scss';
 
 interface Data {
-    username: string;
     password: string;
 }
 
@@ -18,7 +17,7 @@ interface State {
     errors: iFormErrors<keyof Data>;
 }
 const getInitialState = (): State => ({
-    data: { username: '', password: '' },
+    data: { password: '' },
     errors: {},
 });
 
@@ -61,15 +60,6 @@ export class Login extends Component<any, State> {
                     <header className={css.header} children={title} />
                     <Form className={css.form}>
                         <InlineNotificationsGroup items={errors.global} theme="inverse" kind="error" stretch />
-                        <TextInput
-                            id="login-username"
-                            autoComplete="username"
-                            labelText="Username"
-                            value={data.username}
-                            invalid={!!errors.fields?.username}
-                            invalidText={errors.fields?.username}
-                            onChange={e => this.#set('username', e.target.value)}
-                        />
                         <PasswordInput
                             id="login-password"
                             labelText="Password"
