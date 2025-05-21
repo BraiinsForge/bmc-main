@@ -15,6 +15,7 @@ bmc-upgrade.workspace = true
 flume.workspace = true
 iana-time-zone.workspace = true
 memmap2.workspace = true
+pw_hash.workspace = true
 slint = { workspace = true, features = [
     "compat-1-2",
     "renderer-software",
