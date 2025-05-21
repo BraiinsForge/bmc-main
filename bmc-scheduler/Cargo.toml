@@ -1,0 +1,25 @@
+[package]
+name = "bmc-scheduler"
+version = "0.1.0"
+edition = "2024"
+description = "A system event and notification scheduler for embedded Linux systems"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+croner.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tokio-cron-scheduler = { workspace = true, features = ["english"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+chrono-tz.workspace = true
+tracing.workspace = true
+
+[[example]]
+name = "simple_job"
+path = "examples/simple_job.rs"

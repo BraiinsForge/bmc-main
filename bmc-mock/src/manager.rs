@@ -3,7 +3,7 @@
 use anyhow::anyhow;
 use bmc::manager::NetworkProtocolConfig;
 use bmc_platform::BmcPlatform;
-use bmc_shared::time::Timezone;
+use bmc_shared_time::time::Timezone;
 use std::{
     net::IpAddr,
     path::Path,
@@ -50,8 +50,8 @@ impl Manager {
             password,
             hostname,
             mac_address,
-            ip_address,
             network_config: Arc::new(Mutex::new(NetworkProtocolConfig::Dhcp)),
+            ip_address,
         }
     }
 }

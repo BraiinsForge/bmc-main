@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow};
-use bmc::{Configuration, log};
+use bmc::{BmcManager, Configuration, log};
 use bmc_display::{
     display_controller::DisplayController,
     display_driver::{DisplayBacklightDriver, DisplayDriver},
@@ -13,7 +13,7 @@ use bmc_openwrt::{
     generic_backlight_driver::GenericBacklightDriver, linux_drm_platform::LinuxDrmPlatform,
     manager::Manager, session::OpenwrtSessionManager,
 };
-use bmc_shared::time::Timezone;
+use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;
 use slint::platform::software_renderer::RenderingRotation;
 use tracing::{error, info};
@@ -45,6 +45,15 @@ async fn main() -> Result<()> {
         .unwrap_or_default();
 
     let manager = Manager::new(OpenwrtSessionManager, current_timezone);
+
+    let job_scheduler = bmc_scheduler::JobScheduler::new(
+        bmc_scheduler::JobSchedulerLocked::new().await?,
+        manager.watch_timezone_updates(),
+    );
+    job_scheduler
+        .init()
+        .await
+        .map_err(|_| anyhow::anyhow!("Failed to initialize job scheduler"))?;
 
     bmc::entry::main(manager, config, display_driver, firmware_resolver).await;
 

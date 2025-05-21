@@ -9,7 +9,7 @@ use bmc::{
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
 };
 use bmc_platform::BmcPlatform;
-use bmc_shared::time::Timezone;
+use bmc_shared_time::time::Timezone;
 use std::io;
 use std::{
     net::{IpAddr, Ipv4Addr},

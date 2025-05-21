@@ -12,6 +12,7 @@ bmc.workspace = true
 bmc-mock-display.workspace = true
 bmc-platform.workspace = true
 bmc-shared.workspace = true
+bmc-scheduler.workspace = true
 bmc-upgrade.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -22,6 +23,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [lints]
 workspace = true

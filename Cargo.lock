@@ -700,6 +700,7 @@ dependencies = [
  "bmc-display",
  "bmc-grpc",
  "bmc-platform",
+ "bmc-scheduler",
  "bmc-shared",
  "bmc-upgrade",
  "chrono",
@@ -773,6 +774,7 @@ dependencies = [
  "bmc",
  "bmc-mock-display",
  "bmc-platform",
+ "bmc-scheduler",
  "bmc-shared",
  "bmc-upgrade",
  "chrono",
@@ -784,6 +786,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -807,6 +810,7 @@ dependencies = [
  "bmc",
  "bmc-display",
  "bmc-platform",
+ "bmc-scheduler",
  "bmc-shared",
  "bmc-upgrade",
  "drm",
@@ -831,6 +835,21 @@ version = "0.1.0"
 dependencies = [
  "index-bmc",
  "strum",
+]
+
+[[package]]
+name = "bmc-scheduler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "chrono-tz",
+ "croner",
+ "serde",
+ "tokio",
+ "tokio-cron-scheduler",
+ "tracing",
 ]
 
 [[package]]
@@ -1437,6 +1456,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
+name = "croner"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c344b0690c1ad1c7176fe18eb173e0c927008fdaaa256e40dfd43ddd149c0843"
+dependencies = [
+ "chrono",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1730,6 +1758,15 @@ name = "endi"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3d8a32ae18130a3c84dd492d4215c3d913c3b07c6b63c2eb3eb7ff1101ab7bf"
+
+[[package]]
+name = "english-to-cron"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e26fb7377cbec9a94f60428e6e6afbe10c699a14639b4d3d4b67b25c0bbe0806"
+dependencies = [
+ "regex",
+]
 
 [[package]]
 name = "enum-assoc"
@@ -6354,6 +6391,22 @@ dependencies = [
  "socket2",
  "tokio-macros",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "tokio-cron-scheduler"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c71ce8f810abc9fabebccc30302a952f9e89c6cf246fafaf170fef164063141"
+dependencies = [
+ "chrono",
+ "croner",
+ "english-to-cron",
+ "num-derive",
+ "num-traits",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

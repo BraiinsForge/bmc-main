@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::Result;
-use bmc::log;
+use bmc::{BmcManager, log};
 use bmc_mock::MockSessionManager;
 use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
 use bmc_mock_display::VirtualDisplay;
@@ -36,6 +36,15 @@ async fn main() -> Result<()> {
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
     let firmware_resolver = FirmwareResolver::new(MockIndex);
+    
+    let job_scheduler = bmc_scheduler::JobScheduler::new(
+        bmc_scheduler::JobSchedulerLocked::new().await?,
+        manager.watch_timezone_updates(),
+    );
+    job_scheduler
+        .init()
+        .await
+        .map_err(|_| anyhow::anyhow!("Failed to initialize job scheduler"))?;
 
     tokio::task::spawn(bmc::entry::main(
         manager,
