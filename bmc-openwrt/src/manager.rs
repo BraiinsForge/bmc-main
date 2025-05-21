@@ -85,6 +85,11 @@ impl BmcManager for Manager {
         self.session_manager.clone()
     }
 
+    async fn check_password(&self, password: Option<&str>) -> Result<bool, Self::Error> {
+        info!("Checking password: {:?}", password);
+        unimplemented!()
+    }
+
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error> {
         info!("Setting password to {:?}", password);
         Ok(())

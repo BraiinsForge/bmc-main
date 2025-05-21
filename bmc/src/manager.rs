@@ -23,6 +23,14 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     fn session_manager(&self) -> Self::SessionManager;
 
+    async fn has_password(&self) -> Result<bool, Self::Error> {
+        self.check_password(None)
+            .await
+            .map(|has_no_password| !has_no_password)
+    }
+
+    async fn check_password(&self, password: Option<&str>) -> Result<bool, Self::Error>;
+
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error>;
 
     fn timezone(&self) -> Timezone;

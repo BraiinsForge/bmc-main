@@ -1,15 +1,15 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use bmc_grpc::web::{
+    ChangePasswordRequest, CreatePasswordRequest, GetTimezoneListResponse, GetTimezoneResponse,
+    RemovePasswordRequest, SetTimezoneRequest,
+    system_service_server::SystemService as GrpcSystemService,
+};
 use std::str::FromStr;
 use std::sync::Arc;
-
-use bmc_grpc::web::{
-    GetTimezoneListResponse, GetTimezoneResponse, SetPasswordRequest, SetPasswordResponse,
-    SetTimezoneRequest, system_service_server::SystemService as GrpcSystemService,
-};
-use tonic::{Code, Request};
+use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
-use tracing::warn;
+use tracing::{error, warn};
 
 use super::GrpcError;
 use crate::{
@@ -45,34 +45,119 @@ where
     T: BmcManager,
     S: SessionManager,
 {
-    async fn set_password(
+    async fn has_password(&self, _request: Request<()>) -> Result<Response<bool>, Status> {
+        let has_password = self.manager.has_password().await.map_err(|err| {
+            error!(?err, "Failed to check password presence");
+            Status::internal("Failed to check password presence")
+        })?;
+
+        Ok(Response::new(has_password))
+    }
+
+    async fn create_password(
         &self,
-        request: tonic::Request<SetPasswordRequest>,
-    ) -> Result<tonic::Response<SetPasswordResponse>, tonic::Status> {
+        request: Request<CreatePasswordRequest>,
+    ) -> Result<Response<()>, Status> {
         let session = extract_session::<S>(request.extensions())?.clone();
         let request = request.into_inner();
 
-        // Validate current password
-        let _ = self
-            .session_manager
-            .login(&request.current_password)
-            .await
-            .map_err(|err| {
-                tonic::Status::invalid_argument(format!(
-                    "Cannot reset password due to invalid current password: {err}"
-                ))
-            })?;
+        let has_password = self.manager.has_password().await.map_err(|err| {
+            error!(?err, "Failed to check password presence");
+            Status::internal("Failed to check password presence")
+        })?;
 
-        self.manager
-            .set_password(request.new_password)
-            .await
-            .map_err(|err| tonic::Status::internal(format!("Failed to set password: {err}")))?;
-
-        if let Err(err) = self.session_manager.logout_all_related(session).await {
-            warn!("failed to logout all related sessions: {err}");
+        if has_password {
+            return Err(Status::failed_precondition(
+                "System already has password. You can change it using `change_password` call",
+            ));
         }
 
-        Ok(tonic::Response::new(SetPasswordResponse {}))
+        self.manager
+            .set_password(Some(request.password))
+            .await
+            .map_err(|err| {
+                error!(?err, "Failed to set password");
+                Status::internal("Failed to set password")
+            })?;
+
+        if let Err(err) = self.session_manager.logout_all_related(session).await {
+            warn!("Failed to logout all related sessions: {err}");
+        }
+
+        Ok(Response::new(()))
+    }
+
+    async fn change_password(
+        &self,
+        request: Request<ChangePasswordRequest>,
+    ) -> Result<Response<()>, Status> {
+        let session = extract_session::<S>(request.extensions())?.clone();
+        let request = request.into_inner();
+
+        let is_current_password_correct = self
+            .manager
+            .check_password(Some(&request.current_password))
+            .await
+            .map_err(|err| {
+                error!(?err, "Failed to check current password");
+                Status::internal("Failed to check current password")
+            })?;
+
+        if !is_current_password_correct {
+            return Err(Status::with_error_details(
+                Code::InvalidArgument,
+                GrpcError::BadRequest.to_string(),
+                ErrorDetails::with_bad_request_violation(
+                    "current_password",
+                    "Incorrect current password",
+                ),
+            ));
+        }
+
+        self.manager
+            .set_password(Some(request.new_password))
+            .await
+            .map_err(|err| {
+                error!(?err, "Failed to set password");
+                Status::internal("Failed to set password")
+            })?;
+
+        if let Err(err) = self.session_manager.logout_all_related(session).await {
+            warn!("Failed to logout all related sessions: {err}");
+        }
+
+        Ok(Response::new(()))
+    }
+
+    async fn remove_password(
+        &self,
+        request: Request<RemovePasswordRequest>,
+    ) -> Result<Response<()>, Status> {
+        let request = request.into_inner();
+
+        let is_current_password_correct = self
+            .manager
+            .check_password(Some(&request.password))
+            .await
+            .map_err(|err| {
+                error!(?err, "Failed to check current password");
+                Status::internal("Failed to check current password")
+            })?;
+
+        if !is_current_password_correct {
+            return Err(Status::with_error_details(
+                Code::InvalidArgument,
+                GrpcError::BadRequest.to_string(),
+                ErrorDetails::with_bad_request_violation("password", "Incorrect current password"),
+            ));
+        }
+
+        self.manager.set_password(None).await.map_err(|err| {
+            error!(?err, "Failed to set password");
+            Status::internal("Failed to set password")
+        })?;
+
+        Ok(Response::new(()))
     }
 
     async fn get_timezone(

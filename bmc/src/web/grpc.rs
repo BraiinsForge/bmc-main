@@ -111,7 +111,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
 
 #[derive(EnumMessage)]
 pub(crate) enum GrpcError {
-    #[strum(serialize = "bad request")]
+    #[strum(serialize = "Some of the fields are invalid")]
     BadRequest,
 }
 

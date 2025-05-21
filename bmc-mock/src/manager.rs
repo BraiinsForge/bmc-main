@@ -69,6 +69,18 @@ impl bmc::BmcManager for Manager {
         self.session_manager.clone()
     }
 
+    async fn check_password(&self, password: Option<&str>) -> Result<bool, Self::Error> {
+        let current_password = self.password.lock().expect("BUG: cannot lock password");
+
+        let matches = match (password, current_password.as_deref()) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some(password), Some(current_password)) => password == current_password,
+        };
+
+        Ok(matches)
+    }
+
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error> {
         info!("Setting password to {:?}", password);
 

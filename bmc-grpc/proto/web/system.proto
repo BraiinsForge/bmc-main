@@ -3,15 +3,20 @@ syntax = "proto3";
 package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
 
-// Request for set password action.
-message SetPasswordRequest {
-  string current_password = 1;
-  optional string new_password = 2;
+message CreatePasswordRequest {
+  string password = 1;
 }
 
-// Response for set password action.
-message SetPasswordResponse {}
+message ChangePasswordRequest {
+  string current_password = 1;
+  string new_password = 2;
+}
+
+message RemovePasswordRequest {
+  string password = 1;
+}
 
 // Response containing the current timezone
 message GetTimezoneResponse {
@@ -43,8 +48,10 @@ message Timezone {
 
 // Service to provide information about system
 service SystemService {
-  // Method to set password
-  rpc SetPassword(SetPasswordRequest) returns (SetPasswordResponse);
+  rpc HasPassword(google.protobuf.Empty) returns (google.protobuf.BoolValue);
+  rpc CreatePassword(CreatePasswordRequest) returns (google.protobuf.Empty);
+  rpc ChangePassword(ChangePasswordRequest) returns (google.protobuf.Empty);
+  rpc RemovePassword(RemovePasswordRequest) returns (google.protobuf.Empty);
   // Get the current timezone
   rpc GetTimezone(google.protobuf.Empty) returns (GetTimezoneResponse);
   // Set the timezone
