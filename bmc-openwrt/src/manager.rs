@@ -1,9 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
+use crate::{ROOT_USERNAME, pwd};
 use anyhow::anyhow;
 use axum_extra::extract::cookie::Cookie;
 use bmc::{BmcManager, time::Timezone};
 use bmc_platform::BmcPlatform;
+use std::io;
 use std::path::Path;
 use tokio::{fs, process::Command};
 use tracing::info;
@@ -86,12 +89,23 @@ impl BmcManager for Manager {
     }
 
     async fn check_password(&self, password: Option<&str>) -> Result<bool, Self::Error> {
-        info!("Checking password: {:?}", password);
-        unimplemented!()
+        let shadow_file = ShadowFile::from_file(SHADOW_PATH)?;
+        let matches = shadow_file.check_credentials(ROOT_USERNAME, password);
+
+        Ok(matches)
     }
 
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error> {
-        info!("Setting password to {:?}", password);
+        info!("Changing `{ROOT_USERNAME}` password");
+
+        let mut shadow_file = ShadowFile::from_file(SHADOW_PATH)?;
+        shadow_file.set_password(ROOT_USERNAME, password, PasswordHashType::Md5)?;
+
+        let temp_shadow_file_path = format!("{SHADOW_PATH}.tmp");
+
+        fs::write(&temp_shadow_file_path, shadow_file.to_string()).await?;
+        fs::rename(&temp_shadow_file_path, SHADOW_PATH).await?;
+
         Ok(())
     }
 
@@ -135,14 +149,14 @@ pub enum Error {
     SessionCookieInvalid,
     #[error("Bad credentials")]
     BadCredentials,
+    #[error(transparent)]
+    ShadowFile(#[from] pwd::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
 }
 
 #[derive(Default, Clone, Debug)]
 pub struct OpenwrtSessionManager;
-
-impl OpenwrtSessionManager {
-    const IMPLICIT_USERNAME: &'static str = "root";
-}
 
 #[derive(Default, Clone, Debug)]
 pub struct Handle {
@@ -186,8 +200,7 @@ impl bmc::session::Manager for OpenwrtSessionManager {
     async fn login(&self, password: &str) -> Result<Cookie<'static>, Error> {
         info!(
             "Login with username: {} and password: {}",
-            Self::IMPLICIT_USERNAME,
-            password
+            ROOT_USERNAME, password
         );
         unimplemented!()
     }
