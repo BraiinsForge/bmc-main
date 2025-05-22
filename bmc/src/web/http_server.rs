@@ -61,10 +61,25 @@ impl HttpServer {
 
         Router::new()
             .route("/", get(Self::index_handler))
-            .route("/{*file_path}", get(Self::file_handler))
+            .route("/{*file_path}", get(Self::file_handler_with_index_fallback))
             .with_state(www_storage)
             .merge(var_router)
             .merge(assets_router)
+    }
+
+    async fn file_handler_with_index_fallback(
+        State(storage): State<Storage>,
+        Path(file_path): Path<String>,
+    ) -> impl IntoResponse {
+        let response = Self::file_handler(State(storage.clone()), Path(file_path))
+            .await
+            .into_response();
+
+        if response.status() == StatusCode::NOT_FOUND {
+            Self::index_handler(State(storage)).await.into_response()
+        } else {
+            response
+        }
     }
 
     async fn file_handler(
