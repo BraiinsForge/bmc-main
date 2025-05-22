@@ -231,27 +231,27 @@ impl session::Manager for MockSessionManager {
     }
 
     async fn find(&self, cookies: &[Cookie<'_>]) -> Result<Handle, Error> {
-        cookies
+        let cookie = cookies
             .iter()
             .find(|cookie| cookie.name() == Self::COOKIE_SESSION)
-            .ok_or(Error::SessionCookieNotFound)
-            .map(|cookie| {
-                debug!(
-                    "Found session cookie name:{} value:{}",
-                    cookie.name(),
-                    cookie.value()
-                );
+            .ok_or(Error::SessionCookieNotFound)?;
 
-                self.sessions_lock()
-                    .get(cookie.value())
-                    .map(|session| {
-                        Handle::new(
-                            session.username.clone(),
-                            cookie.value().into(),
-                            session.expiration_time > Self::get_now(),
-                        )
-                    })
-                    .unwrap_or_default()
+        debug!(
+            "Found session cookie name:{} value:{}",
+            cookie.name(),
+            cookie.value()
+        );
+
+        self.sessions_lock()
+            .get(cookie.value())
+            .map(|session| {
+                Handle::new(
+                    session.username.clone(),
+                    cookie.value().into(),
+                    session.expiration_time > Self::get_now(),
+                )
             })
+            .filter(Handle::is_valid)
+            .ok_or(Error::SessionNotFound)
     }
 }
