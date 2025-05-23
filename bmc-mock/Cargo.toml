@@ -13,6 +13,7 @@ bmc-display.workspace = true
 bmc-mock-display.workspace = true
 bmc-platform.workspace = true
 bmc-upgrade.workspace = true
+chrono.workspace = true
 clap.workspace = true
 dirs.workspace = true
 rand = { workspace = true, features = ["thread_rng"] }

@@ -10,6 +10,7 @@ use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
 use bmc_mock_display::VirtualDisplay;
 use bmc_platform as _;
 use bmc_upgrade::firmware::FirmwareResolver;
+use chrono as _;
 use clap as _;
 use clap::Parser;
 use dirs as _;
