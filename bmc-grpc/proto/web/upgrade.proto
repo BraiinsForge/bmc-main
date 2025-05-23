@@ -2,10 +2,12 @@ syntax = "proto3";
 
 package braiins.bmc.web;
 
+import "google/protobuf/timestamp.proto";
+
 message UpgradeMetadata {
   string hash = 1;
   string version = 2;
-  string release_date = 3;
+  google.protobuf.Timestamp release_date = 3;
   string description = 4;
 }
 

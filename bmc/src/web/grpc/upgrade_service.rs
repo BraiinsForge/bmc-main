@@ -6,7 +6,9 @@ use bmc_grpc::web::{
     upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail, UpgradeMetadata};
+use chrono::NaiveTime;
 use futures::stream::{BoxStream, StreamExt};
+use prost_types::Timestamp;
 use tonic::{Code, Request, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 
@@ -104,10 +106,15 @@ fn map_available_releases(upgrade_detail: Option<UpgradeDetail>) -> CheckForUpgr
 }
 
 fn map_upgrade_metadata(value: UpgradeMetadata) -> bmc_grpc::web::UpgradeMetadata {
+    let release_date = value.release_date.and_time(NaiveTime::MIN).and_utc();
+
     bmc_grpc::web::UpgradeMetadata {
         hash: value.hash,
         version: value.version,
-        release_date: value.release_date,
+        release_date: Some(Timestamp {
+            seconds: release_date.timestamp(),
+            nanos: 0,
+        }),
         description: value.description,
     }
 }
