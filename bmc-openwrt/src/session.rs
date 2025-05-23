@@ -30,11 +30,6 @@ impl session::Handle for Handle {
     fn id(&self) -> String {
         self.session_id.clone()
     }
-
-    fn username(&self) -> String {
-        // TODO: remove
-        ROOT_USERNAME.to_owned()
-    }
 }
 
 /// Structure defined in https://openwrt.org/docs/guide-developer/ubus/session

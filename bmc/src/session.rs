@@ -5,7 +5,6 @@ use axum_extra::extract::cookie::Cookie;
 pub trait Handle: Default + Clone + Unpin + Send + Sync + 'static + std::fmt::Debug {
     fn is_valid(&self) -> bool;
     fn id(&self) -> String;
-    fn username(&self) -> String;
 }
 
 #[async_trait::async_trait]
