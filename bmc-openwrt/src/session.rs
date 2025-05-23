@@ -1,8 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::ROOT_USERNAME;
-use axum_extra::extract::cookie::Cookie;
-use bmc::session;
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use bmc::session::{self, Handle as _};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -71,6 +71,8 @@ pub struct OpenwrtSessionManager;
 impl OpenwrtSessionManager {
     const COOKIE_SESSION: &'static str = "session_id";
     const COOKIE_SESSION_PATH: &'static str = "/";
+    const COOKIE_HTTP_ONLY: bool = true;
+    const COOKIE_SAME_SITE: SameSite = SameSite::Strict;
 
     // dumy token for LuCI access via ubus session
     const LUCI_DUMMY_TOKEN: &'static str = "0000";
@@ -224,6 +226,8 @@ impl session::Manager for OpenwrtSessionManager {
         let mut cookie = Cookie::new(Self::COOKIE_SESSION, ubus_session.ubus_rpc_session);
         cookie.set_path(Self::COOKIE_SESSION_PATH);
         cookie.set_max_age(time::Duration::seconds(Self::SESSION_TIMEOUT.into()));
+        cookie.set_http_only(Self::COOKIE_HTTP_ONLY);
+        cookie.set_same_site(Self::COOKIE_SAME_SITE);
 
         Ok(cookie)
     }
@@ -239,6 +243,8 @@ impl session::Manager for OpenwrtSessionManager {
         let mut cookie = Cookie::new(Self::COOKIE_SESSION, handle.session_id);
         cookie.set_path(Self::COOKIE_SESSION_PATH);
         cookie.set_max_age(time::Duration::seconds(ubus_session.timeout));
+        cookie.set_http_only(Self::COOKIE_HTTP_ONLY);
+        cookie.set_same_site(Self::COOKIE_SAME_SITE);
 
         Ok(cookie)
     }
@@ -313,11 +319,16 @@ impl session::Manager for OpenwrtSessionManager {
             cookie.value()
         );
 
-        Ok(Self::ubus_find(cookie.value())
+        Self::ubus_find(cookie.value())
             .await
-            .map(|ubus_session| {
-                Handle::new(ubus_session.ubus_rpc_session, ubus_session.expires > 0)
+            .and_then(|ubus_session| {
+                let handle = Handle::new(ubus_session.ubus_rpc_session, ubus_session.expires > 0);
+
+                if handle.is_valid() {
+                    Ok(handle)
+                } else {
+                    Err(Error::SessionNotFound)
+                }
             })
-            .unwrap_or_default())
     }
 }
