@@ -85,9 +85,8 @@ declare global {
     type Null<T> = null | T;
 
     type MaybeArray<T> = T | Array<T>;
-    type MaybeGetter<R, Args extends unknown[] | void = void> =
-        | R
-        | (Args extends unknown[] ? (...args: Args) => R : () => R);
+    type Getter<R, Args extends unknown[] | void = void> = Args extends unknown[] ? (...args: Args) => R : () => R;
+    type MaybeGetter<R, Args extends unknown[] | void = void> = R | Getter<R, Args>;
     type MaybePromise<T> = T | Promise<T>;
 
     type Fn<R = void> = () => R;

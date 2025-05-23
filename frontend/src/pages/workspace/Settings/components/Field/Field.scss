@@ -1,4 +1,5 @@
 @use 'styles/carbon' as *;
+@use 'styles/var/shadows';
 
 $left-size: to-rem(558px);
 $left-size-min: to-rem(280px);
@@ -21,14 +22,24 @@ $left-size-min: to-rem(280px);
     padding: mini-units(2);
     gap: mini-units(0.5) mini-units(7);
 
+    &.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    // When the description is empty, we want to stretch the title to center it vertically.
+    // This requires:
+    //  - description be present even when empty
+    //  - separate "grid-template-areas" because spaning is ignore with named areas
+    &:has(.description:empty) {
+        grid-template-areas: 'title widget';
+        grid-template-rows: 1fr;
+    }
+
     @container (width <= 880px) {
-        grid-template-areas:
-            'title      '
-            'description'
-            'widget     ';
-        grid-template-columns: 1fr;
-        grid-template-rows: auto;
-        row-gap: mini-units(0.5);
+        display: flex;
+        flex-direction: column;
+        gap: mini-units(0.5);
 
         .widget {
             margin-block-start: mini-units(2);
@@ -37,9 +48,11 @@ $left-size-min: to-rem(280px);
 }
 
 .title {
+    composes: selfStretch horizontal center from 'styles/layout.scss';
+
     grid-area: title;
     position: relative;
-    inline-size: $left-size;
+    max-inline-size: $left-size;
 
     color: $text-primary;
     font-size: to-rem(14px);
@@ -56,9 +69,23 @@ $left-size-min: to-rem(280px);
     font-size: to-rem(14px);
     font-weight: 400;
     line-height: 1.28;
+
+    &:empty {
+        display: none;
+    }
 }
 
 .widget {
     grid-area: widget;
     position: relative;
+
+    :global {
+        [class*='cds--dropdown'],
+        [class*='cds--combo-box'] {
+            max-inline-size: to-rem(400px);
+            [role='listbox'] {
+                box-shadow: shadows.$elevation-8dp;
+            }
+        }
+    }
 }

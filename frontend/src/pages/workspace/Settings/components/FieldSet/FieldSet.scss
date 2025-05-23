@@ -12,7 +12,7 @@
 
 .body {
     composes: vertical from 'styles/layout.scss';
-    gap: mini-units(2);
+    gap: to-rem(1px);
 
     container-type: inline-size;
 }

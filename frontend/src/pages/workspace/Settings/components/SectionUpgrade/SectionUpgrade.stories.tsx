@@ -1,5 +1,6 @@
 import type { Meta } from '@storybook/react';
 import { action } from '@storybook/addon-actions';
+import * as gen from '@/mocks';
 import { SectionUpgrade as Component, type SectionUpgradeProps } from './SectionUpgrade';
 
 export default {
@@ -18,7 +19,7 @@ export default {
                 $typeName: 'braiins.bmc.web.UpgradeMetadata',
                 version: '24.09.4',
                 hash: 'db777c17acb949bcba3a69ba12875857',
-                releaseDate: '2024-08-27',
+                releaseDate: gen.protoTimestamp.days(-5),
                 description:
                     'Introducing Braiins OS version 24.08! This update brings initial support for Antminer S19 XP Hydro and Antminer T21 Zynq/Xilinx control board, along with several enhancements. We have also improved the user experience to ensure smoother performance.\n\n## Antminer S21 & S19\n\n- Support of all BOS features now available for Antminer S19 XP Hydro\n- Support of all BOS features now available for Antminer T21 Zynq/Xilinx control board',
             },

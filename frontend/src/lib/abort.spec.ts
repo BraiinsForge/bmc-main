@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-import { Component } from 'react';
+import { Component, createElement } from 'react';
 import { cleanup, render } from '@testing-library/react/pure';
 
 import { abort, Aborter } from './abort';
@@ -118,7 +118,7 @@ describe('lib/abort', () => {
                     render = () => null;
                 }
 
-                const { unmount } = render(<Foo />);
+                const { unmount } = render(createElement(Foo));
                 unmount();
 
                 expect(onAbort).toHaveBeenCalledTimes(1);

@@ -384,38 +384,45 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@bufbuild/protobuf@npm:2.4.0, @bufbuild/protobuf@npm:^2.0.0, @bufbuild/protobuf@npm:^2.4.0":
+"@bufbuild/protobuf@npm:2.5.0, @bufbuild/protobuf@npm:^2.5.0":
+  version: 2.5.0
+  resolution: "@bufbuild/protobuf@npm:2.5.0"
+  checksum: 10c0/34d974f7c56183f012fe24e9e47cb3d451116b8267a7ee4c0ab0e783c44d2acd2ce97f1c519858d7df63b5a39c2faaf6baf28198c07d22da14217800b4f80893
+  languageName: node
+  linkType: hard
+
+"@bufbuild/protobuf@npm:^2.0.0":
   version: 2.4.0
   resolution: "@bufbuild/protobuf@npm:2.4.0"
   checksum: 10c0/023835fc96062f6610d4420591f497aafa375be9831dbef3176d798e5e76aafca6c52d256d8b997939f82782d9c3e89b3711f0f3d7a379f92c859edfd79109dc
   languageName: node
   linkType: hard
 
-"@bufbuild/protoc-gen-es@npm:2.4.0":
-  version: 2.4.0
-  resolution: "@bufbuild/protoc-gen-es@npm:2.4.0"
+"@bufbuild/protoc-gen-es@npm:2.5.0":
+  version: 2.5.0
+  resolution: "@bufbuild/protoc-gen-es@npm:2.5.0"
   dependencies:
-    "@bufbuild/protobuf": "npm:^2.4.0"
-    "@bufbuild/protoplugin": "npm:2.4.0"
+    "@bufbuild/protobuf": "npm:^2.5.0"
+    "@bufbuild/protoplugin": "npm:2.5.0"
   peerDependencies:
-    "@bufbuild/protobuf": 2.4.0
+    "@bufbuild/protobuf": 2.5.0
   peerDependenciesMeta:
     "@bufbuild/protobuf":
       optional: true
   bin:
     protoc-gen-es: bin/protoc-gen-es
-  checksum: 10c0/4412203516014168978daa87e72c430f753b8df6697138f0a7f370894ac5c95f34e7cd1af33afb41ec8a2b4ad95b099375f99ec22d65ada4cbc8112a98633be4
+  checksum: 10c0/08bbceaa8883a64b4fbfffcce3c922dc2e052b811d8d48e2a103c7552e91b696a8cdfa198fd78d01cf589d04c33d6f10663e26d1ac4c4b0e8d26bff45c45a5fb
   languageName: node
   linkType: hard
 
-"@bufbuild/protoplugin@npm:2.4.0":
-  version: 2.4.0
-  resolution: "@bufbuild/protoplugin@npm:2.4.0"
+"@bufbuild/protoplugin@npm:2.5.0":
+  version: 2.5.0
+  resolution: "@bufbuild/protoplugin@npm:2.5.0"
   dependencies:
-    "@bufbuild/protobuf": "npm:2.4.0"
+    "@bufbuild/protobuf": "npm:2.5.0"
     "@typescript/vfs": "npm:^1.5.2"
     typescript: "npm:5.4.5"
-  checksum: 10c0/6b05c30fd66ffb612f9fe6f24a93728bf4a1d4145f6d84298706f8a108c1041a78c91bad731d29afb10de9431dadcbabe99f996cc2be27cd4b24324c9cdccabd
+  checksum: 10c0/51412b572167c9f4ac5ba4e3baef34fe42056d26afd670fd192e6fc0d2a2f657a038daf14af680e749e652c9a7c75462e5824da5f04aec09496557bbf8b8c982
   languageName: node
   linkType: hard
 
@@ -2481,10 +2488,24 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/invariant@npm:^2.2.37":
+  version: 2.2.37
+  resolution: "@types/invariant@npm:2.2.37"
+  checksum: 10c0/f57ed8445036ebda8bc93804f088c2a13050bbeef4e4bc6ed531a70e2869250dbe59413f2a9ed7d8f3efa960f191e8dfca9d25414d63cbf604d348428f8c5b75
+  languageName: node
+  linkType: hard
+
 "@types/js-cookie@npm:3.0.6":
   version: 3.0.6
   resolution: "@types/js-cookie@npm:3.0.6"
   checksum: 10c0/173afaf5ea9d86c22395b9d2a00b6adb0006dcfef165d6dcb0395cdc32f5a5dcf9c3c60f97194119963a15849b8f85121e1ae730b03e40bc0c29b84396ba22f9
+  languageName: node
+  linkType: hard
+
+"@types/knuth-shuffle@npm:1.0.2":
+  version: 1.0.2
+  resolution: "@types/knuth-shuffle@npm:1.0.2"
+  checksum: 10c0/177ec2bef2a57a6c2935638cf27265ff1ba54da15545402c639fed28d821e8a79bffd5fb9b493a9d50554959c0e319325c6b83067d040bff21f5fc05557bdc72
   languageName: node
   linkType: hard
 
@@ -2955,8 +2976,8 @@ __metadata:
   dependencies:
     "@biomejs/biome": "npm:1.9.4"
     "@bufbuild/buf": "npm:1.54.0"
-    "@bufbuild/protobuf": "npm:2.4.0"
-    "@bufbuild/protoc-gen-es": "npm:2.4.0"
+    "@bufbuild/protobuf": "npm:2.5.0"
+    "@bufbuild/protoc-gen-es": "npm:2.5.0"
     "@carbon/icons-react": "npm:11.60.0"
     "@carbon/react": "npm:1.83.0"
     "@connectrpc/connect": "npm:2.0.2"
@@ -2981,7 +3002,9 @@ __metadata:
     "@testing-library/jest-dom": "npm:6.6.3"
     "@testing-library/react": "npm:16.3.0"
     "@types/d3-format": "npm:3.0.4"
+    "@types/invariant": "npm:^2.2.37"
     "@types/js-cookie": "npm:3.0.6"
+    "@types/knuth-shuffle": "npm:1.0.2"
     "@types/markdown-it": "npm:14.1.2"
     "@types/prismjs": "npm:1.26.5"
     "@types/react": "npm:19.1.5"
@@ -2998,11 +3021,15 @@ __metadata:
     date-fns: "npm:4.1.0"
     dompurify: "npm:3.2.6"
     es-toolkit: "npm:1.38.0"
+    fast-check: "npm:4.1.1"
+    invariant: "npm:2.2.4"
     iter-ops: "npm:3.5.0"
     js-cookie: "npm:3.0.5"
     jsdom: "npm:26.1.0"
+    knuth-shuffle: "npm:1.0.8"
+    lorem-ipsum: "npm:2.0.8"
     markdown-it: "npm:14.1.0"
-    motion: "npm:12.12.1"
+    motion: "npm:12.12.2"
     postcss: "npm:8.5.3"
     postcss-html: "npm:1.8.0"
     postcss-loader: "npm:8.1.1"
@@ -3019,7 +3046,7 @@ __metadata:
     react-is: "npm:19.1.0"
     react-popper-tooltip: "npm:4.4.2"
     react-refresh: "npm:0.17.0"
-    react-router: "npm:7.6.0"
+    react-router: "npm:7.6.1"
     regenerator-runtime: "npm:0.14.1"
     sass-embedded: "npm:1.89.0"
     sass-loader: "npm:16.0.5"
@@ -3032,6 +3059,7 @@ __metadata:
     ts-key-enum: "npm:2.0.13"
     type-fest: "npm:4.41.0"
     typescript: "npm:5.8.3"
+    vite-tsconfig-paths: "npm:5.1.4"
     vitest: "npm:3.1.4"
   languageName: unknown
   linkType: soft
@@ -3422,6 +3450,13 @@ __metadata:
   version: 7.2.0
   resolution: "commander@npm:7.2.0"
   checksum: 10c0/8d690ff13b0356df7e0ebbe6c59b4712f754f4b724d4f473d3cc5b3fdcf978e3a5dc3078717858a2ceb50b0f84d0660a7f22a96cdc50fb877d0c9bb31593d23a
+  languageName: node
+  linkType: hard
+
+"commander@npm:^9.3.0":
+  version: 9.5.0
+  resolution: "commander@npm:9.5.0"
+  checksum: 10c0/5f7784fbda2aaec39e89eb46f06a999e00224b3763dc65976e05929ec486e174fe9aac2655f03ba6a5e83875bd173be5283dc19309b7c65954701c02025b3c1d
   languageName: node
   linkType: hard
 
@@ -4135,6 +4170,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"fast-check@npm:4.1.1":
+  version: 4.1.1
+  resolution: "fast-check@npm:4.1.1"
+  dependencies:
+    pure-rand: "npm:^7.0.0"
+  checksum: 10c0/7bee9cc031d3b746dd7967314d8d33e094c77ed70d343747209575ef76deb63e6458b9a70cb86a94dc84baad26a7a99a74c231a19090d3173fbc070d8dbab8f0
+  languageName: node
+  linkType: hard
+
 "fast-deep-equal@npm:^3.1.3":
   version: 3.1.3
   resolution: "fast-deep-equal@npm:3.1.3"
@@ -4321,9 +4365,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"framer-motion@npm:^12.12.1":
-  version: 12.12.1
-  resolution: "framer-motion@npm:12.12.1"
+"framer-motion@npm:^12.12.2":
+  version: 12.12.2
+  resolution: "framer-motion@npm:12.12.2"
   dependencies:
     motion-dom: "npm:^12.12.1"
     motion-utils: "npm:^12.12.1"
@@ -4339,7 +4383,7 @@ __metadata:
       optional: true
     react-dom:
       optional: true
-  checksum: 10c0/a782ffa3613f35d23b550123e5409504dadd1f708af40d6014969a8c78dae31046ab9c35a44cbb768e20cec837675d1e240e06e01818b250386af6d0ff570593
+  checksum: 10c0/6bee365effe3b8242c020fbd95130943c45a6750525e49250fbc11af9571f7038f89729a62153cc8cb47059e4f44f90ab55299c7846a8fd2675cc1c954cd9df3
   languageName: node
   linkType: hard
 
@@ -4515,6 +4559,13 @@ __metadata:
   version: 0.1.4
   resolution: "globjoin@npm:0.1.4"
   checksum: 10c0/236e991b48f1a9869fe2aa7bb5141fb1f32973940567a3c012f8ccb58c3c85ab78ce594d374fa819410fff3b48cfd24584d7ef726939f8a3c3772890e62ea16b
+  languageName: node
+  linkType: hard
+
+"globrex@npm:^0.1.2":
+  version: 0.1.2
+  resolution: "globrex@npm:0.1.2"
+  checksum: 10c0/a54c029520cf58bda1d8884f72bd49b4cd74e977883268d931fd83bcbd1a9eb96d57c7dbd4ad80148fb9247467ebfb9b215630b2ed7563b2a8de02e1ff7f89d1
   languageName: node
   linkType: hard
 
@@ -4772,7 +4823,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"invariant@npm:^2.2.3":
+"invariant@npm:2.2.4, invariant@npm:^2.2.3":
   version: 2.2.4
   resolution: "invariant@npm:2.2.4"
   dependencies:
@@ -5150,6 +5201,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"knuth-shuffle@npm:1.0.8":
+  version: 1.0.8
+  resolution: "knuth-shuffle@npm:1.0.8"
+  checksum: 10c0/db803a75928f17e2fe16c53e8cc1a599847bbd49dc1c306ad2fb8b6775184477a72a85002f966cbd0f3645adba10beedb4cca3abbabf3fa65b7b92147731b98b
+  languageName: node
+  linkType: hard
+
 "lines-and-columns@npm:^1.1.6":
   version: 1.2.4
   resolution: "lines-and-columns@npm:1.2.4"
@@ -5233,6 +5291,17 @@ __metadata:
   bin:
     loose-envify: cli.js
   checksum: 10c0/655d110220983c1a4b9c0c679a2e8016d4b67f6e9c7b5435ff5979ecdb20d0813f4dec0a08674fcbdd4846a3f07edbb50a36811fd37930b94aaa0d9daceb017e
+  languageName: node
+  linkType: hard
+
+"lorem-ipsum@npm:2.0.8":
+  version: 2.0.8
+  resolution: "lorem-ipsum@npm:2.0.8"
+  dependencies:
+    commander: "npm:^9.3.0"
+  bin:
+    lorem-ipsum: dist/bin/lorem-ipsum.bin.js
+  checksum: 10c0/bf1bc1a5a4ee118fbc9c28b5dd16043124e6163c3282ea453fa43626703e26a57b14c6d097954f5f57e283991c567f25de5a9313f4ee203afdbba389d71b412d
   languageName: node
   linkType: hard
 
@@ -5564,11 +5633,11 @@ __metadata:
   languageName: node
   linkType: hard
 
-"motion@npm:12.12.1":
-  version: 12.12.1
-  resolution: "motion@npm:12.12.1"
+"motion@npm:12.12.2":
+  version: 12.12.2
+  resolution: "motion@npm:12.12.2"
   dependencies:
-    framer-motion: "npm:^12.12.1"
+    framer-motion: "npm:^12.12.2"
     tslib: "npm:^2.4.0"
   peerDependencies:
     "@emotion/is-prop-valid": "*"
@@ -5581,7 +5650,7 @@ __metadata:
       optional: true
     react-dom:
       optional: true
-  checksum: 10c0/1083c6138486c71d946379bb0d7559e11ab27f6c4ed2aed1d874c0b00fc762d5064bcf98079a313fcb8fc923c2457213d35fa7ca7e2a2bd53e71bef57cb94948
+  checksum: 10c0/dd43a580635ef7ed255e289e61d988fa5b1534294a648e01c7e7429f332c8236926dbf5626b245bc27c451bc58367a1141887f9c6b1ae698feb701f9fcfa5dfc
   languageName: node
   linkType: hard
 
@@ -6208,6 +6277,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"pure-rand@npm:^7.0.0":
+  version: 7.0.1
+  resolution: "pure-rand@npm:7.0.1"
+  checksum: 10c0/9cade41030f5ec95f5d55a11a71404cd6f46b69becaad892097cd7f58e2c6248cd0a933349ca7d21336ab629f1da42ffe899699b671bc4651600eaf6e57f837e
+  languageName: node
+  linkType: hard
+
 "qs@npm:^6.12.3":
   version: 6.14.0
   resolution: "qs@npm:6.14.0"
@@ -6333,9 +6409,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-router@npm:7.6.0":
-  version: 7.6.0
-  resolution: "react-router@npm:7.6.0"
+"react-router@npm:7.6.1":
+  version: 7.6.1
+  resolution: "react-router@npm:7.6.1"
   dependencies:
     cookie: "npm:^1.0.1"
     set-cookie-parser: "npm:^2.6.0"
@@ -6345,7 +6421,7 @@ __metadata:
   peerDependenciesMeta:
     react-dom:
       optional: true
-  checksum: 10c0/abc4d37c01804a3137b1cfd12cf7e55bff092a67c835404ab9da1411ec9e170fe72773b9846d2db084cc0272179237e59d88dbf46cef9db031892feebcb48640
+  checksum: 10c0/9968dcccc6695671cb216a74a756d717f47d5b8613869be72764966c2dc252ce12aa91a5f74838776b78d65a2297d7d5455c26a3ed78a380897905383b30c7d8
   languageName: node
   linkType: hard
 
@@ -7706,6 +7782,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"tsconfck@npm:^3.0.3":
+  version: 3.1.6
+  resolution: "tsconfck@npm:3.1.6"
+  peerDependencies:
+    typescript: ^5.0.0
+  peerDependenciesMeta:
+    typescript:
+      optional: true
+  bin:
+    tsconfck: bin/tsconfck.js
+  checksum: 10c0/269c3c513540be44844117bb9b9258fe6f8aeab026d32aeebf458d5299125f330711429dbb556dbf125a0bc25f4a81e6c24ac96de2740badd295c3fb400f66c4
+  languageName: node
+  linkType: hard
+
 "tsconfig-paths@npm:^4.2.0":
   version: 4.2.0
   resolution: "tsconfig-paths@npm:4.2.0"
@@ -7892,6 +7982,22 @@ __metadata:
   bin:
     vite-node: vite-node.mjs
   checksum: 10c0/2fc71ddadd308b19b0d0dc09f5b9a108ea9bb640ec5fbd6179267994da8fd6c9d6a4c92098af7de73a0fa817055b518b28972452a2f19a1be754e79947e289d2
+  languageName: node
+  linkType: hard
+
+"vite-tsconfig-paths@npm:5.1.4":
+  version: 5.1.4
+  resolution: "vite-tsconfig-paths@npm:5.1.4"
+  dependencies:
+    debug: "npm:^4.1.1"
+    globrex: "npm:^0.1.2"
+    tsconfck: "npm:^3.0.3"
+  peerDependencies:
+    vite: "*"
+  peerDependenciesMeta:
+    vite:
+      optional: true
+  checksum: 10c0/6228f23155ea25d92b1e1702284cf8dc52ad3c683c5ca691edd5a4c82d2913e7326d00708cef1cbfde9bb226261df0e0a12e03ef1d43b6a92d8f02b483ef37e3
   languageName: node
   linkType: hard
 

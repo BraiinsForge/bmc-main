@@ -8,7 +8,7 @@ import { pipeAsync, map, wait } from 'iter-ops';
 // RPC libs
 import type { DescMethod, DescMethodStreaming, Message } from '@bufbuild/protobuf';
 import type { Interceptor, UnaryResponse, StreamResponse } from '@connectrpc/connect';
-import type { GenService, GenServiceMethods, GenMessage } from '@bufbuild/protobuf/codegenv1';
+import type { GenService, GenServiceMethods, GenMessage } from '@bufbuild/protobuf/codegenv2';
 
 type GetRuntimeShape<T extends GenMessage<any>> = T extends GenMessage<infer M> ? M : never;
 type PlainMessage<T extends Message> = Omit<T, '$typeName' | '$unknown'>;

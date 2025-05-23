@@ -1,0 +1,12 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: flex vertical from 'styles/layout.scss';
+    position: relative;
+}
+
+.invalid .error {
+    display: block;
+    color: $text-error;
+    max-block-size: 12.5rem;
+}

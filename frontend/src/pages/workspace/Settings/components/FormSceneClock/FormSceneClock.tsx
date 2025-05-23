@@ -1,6 +1,6 @@
 import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
-import { Form, type iField } from '@/lib/form';
+import { Form, type iField, getID } from '@/lib/form';
 
 // Components
 import { Checkbox } from '@/components';
@@ -31,7 +31,7 @@ interface LocationItem {
     label: string;
 }
 
-const $id = (...suffix: string[]) => ['bmc-clock-scene', ...suffix].join('-');
+const $id = getID('settings', 'clock', 'scene');
 
 export interface FormSceneClockProps {
     clockStyle: iField<ClockStyle>;
@@ -189,7 +189,7 @@ function BoundCheckbox(props: BoundCheckboxProps) {
     const { idSuffix, value, labelText, error, onChange, disabled } = props;
     return (
         <Checkbox
-            id={$id(idSuffix)}
+            id={$id.get(idSuffix)}
             checked={!!value}
             label={labelText}
             disabled={disabled}
@@ -212,7 +212,7 @@ function BoundComboBox(props: BoundComboBoxProps) {
 
     return (
         <ComboBox<LocationItem>
-            id={$id(idSuffix)}
+            id={$id.get(idSuffix)}
             className={css.comboBox}
             onChange={x => onChange(x.selectedItem?.value ?? '')}
             itemToString={x => x?.label ?? 'N/A'}
@@ -239,7 +239,7 @@ interface BoundRadioGroupProps extends iField<string> {
 }
 function BoundRadioGroup(props: BoundRadioGroupProps) {
     const { idSuffix, labelText, helperText, decorator, value, items, onChange, disabled, error } = props;
-    const id = $id(idSuffix);
+    const id = $id.get(idSuffix);
 
     return (
         <RadioButtonGroup

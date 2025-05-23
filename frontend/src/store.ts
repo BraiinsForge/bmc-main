@@ -55,9 +55,9 @@ class Store {
         this.fetchSessionInfo();
     };
 
-    private fetchSessionInfoAbort = pb.abort.get();
+    #fetchSessionInfoAbort = pb.abort.get();
     fetchSessionInfo = async (): Promise<void> => {
-        const { signal } = this.fetchSessionInfoAbort.replace();
+        const { signal } = this.#fetchSessionInfoAbort.replace();
         const res: SessionInfo = { isAuthenticated: false, hasPassword: null };
 
         try {

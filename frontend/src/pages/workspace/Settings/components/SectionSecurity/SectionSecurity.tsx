@@ -1,5 +1,5 @@
 import { Component, Fragment } from 'react';
-import type { iField } from '@/lib/form';
+import { type iField, getID } from '@/lib/form';
 import { useIntl, type IntlShape } from 'react-intl';
 
 import * as pb from '@/proto';
@@ -17,9 +17,11 @@ import css from './SectionSecurity.scss';
 export interface SectionSecurityProps {
     hasPassword: null | boolean;
 
-    onPasswordChange(d: pb.ChangePasswordRequest): Promise<void>;
-    onPasswordRemove(d: pb.RemovePasswordRequest): Promise<void>;
-    onPasswordCreate(d: pb.CreatePasswordRequest): Promise<void>;
+    actions: null | {
+        onPasswordChange(d: pb.ChangePasswordRequest): Promise<void>;
+        onPasswordRemove(d: pb.RemovePasswordRequest): Promise<void>;
+        onPasswordCreate(d: pb.CreatePasswordRequest): Promise<void>;
+    };
 
     dataCollection: iField<boolean>;
 }
@@ -59,7 +61,7 @@ const getInitialState = (): State => ({
     },
 });
 
-const $id = (...suffix: string[]) => ['bmc-settings-security', ...suffix].join('-');
+const $id = getID('settings', 'security');
 
 class View extends Component<Props, State> {
     readonly state = getInitialState();
@@ -91,7 +93,7 @@ class View extends Component<Props, State> {
         };
     };
     #passChangeSubmit = async (): Promise<void> => {
-        const { onPasswordChange } = this.props;
+        const { actions } = this.props;
         const d = this.state.passChange.values;
         const txt = this.#txt;
         const errors: Required<State['passChange']['errors']> = {
@@ -115,7 +117,7 @@ class View extends Component<Props, State> {
         }
 
         try {
-            await onPasswordChange(pb.create(pb.ChangePasswordRequestSchema, d));
+            await actions?.onPasswordChange(pb.create(pb.ChangePasswordRequestSchema, d));
             this.#passDialogCancel();
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -146,7 +148,7 @@ class View extends Component<Props, State> {
         };
     };
     #passRemoveSubmit = async (): Promise<void> => {
-        const { onPasswordRemove } = this.props;
+        const { actions } = this.props;
         const d = this.state.passRemove.values;
         const txt = this.#txt;
         const errors: Required<State['passRemove']['errors']> = {
@@ -162,7 +164,7 @@ class View extends Component<Props, State> {
         }
 
         try {
-            await onPasswordRemove(pb.create(pb.RemovePasswordRequestSchema, d));
+            await actions?.onPasswordRemove(pb.create(pb.RemovePasswordRequestSchema, d));
             this.#passDialogCancel();
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -190,7 +192,7 @@ class View extends Component<Props, State> {
         };
     };
     #passCreateSubmit = async (): Promise<void> => {
-        const { onPasswordCreate } = this.props;
+        const { actions } = this.props;
         const d = this.state.passCreate.values;
         const txt = this.#txt;
         const errors: Required<State['passCreate']['errors']> = {
@@ -208,7 +210,7 @@ class View extends Component<Props, State> {
         }
 
         try {
-            await onPasswordCreate(pb.create(pb.CreatePasswordRequestSchema, d));
+            await actions?.onPasswordCreate(pb.create(pb.CreatePasswordRequestSchema, d));
             this.#passDialogCancel();
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -330,7 +332,7 @@ class View extends Component<Props, State> {
 
         return (
             <Modal
-                id={$id('password-change-dialog')}
+                id={$id.get('password-change-dialog')}
                 size="md"
                 open={openDialog != null}
                 danger={isDanger}
@@ -360,6 +362,7 @@ class View extends Component<Props, State> {
         const {
             intl: { formatMessage },
             hasPassword,
+            actions,
 
             // Privacy
             dataCollection,
@@ -373,6 +376,7 @@ class View extends Component<Props, State> {
                         description={formatMessage({
                             defaultMessage: 'Change the password used to access device settings.',
                         })}
+                        disabled={!actions}
                     >
                         {hasPassword ? (
                             <ButtonGroup spaced>
@@ -404,9 +408,10 @@ class View extends Component<Props, State> {
                         description={formatMessage({
                             defaultMessage: 'Allow anonymous usage data collection to improve the product.',
                         })}
+                        disabled={dataCollection.disabled}
                     >
                         <Toggle
-                            id={$id('data-collection')}
+                            id={$id.get('data-collection')}
                             size="md"
                             toggled={!!dataCollection.value}
                             onToggle={dataCollection.onChange}

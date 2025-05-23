@@ -7,9 +7,11 @@ export default {
     component: Component,
     args: {
         hasPassword: true,
-        onPasswordChange: async d => action('onPasswordChange')(d),
-        onPasswordRemove: async d => action('onPasswordRemove')(d),
-        onPasswordCreate: async d => action('onPasswordCreate')(d),
+        actions: {
+            onPasswordChange: async d => action('onPasswordChange')(d),
+            onPasswordRemove: async d => action('onPasswordRemove')(d),
+            onPasswordCreate: async d => action('onPasswordCreate')(d),
+        },
         dataCollection: {
             value: true,
             disabled: false,

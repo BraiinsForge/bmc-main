@@ -1,0 +1,19 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(2);
+}
+
+.locationInputWrapper {
+    composes: horizontal start from 'styles/layout.scss';
+    gap: mini-units(2);
+
+    > :first-child {
+        max-inline-size: to-rem(250px);
+    }
+
+    button {
+        block-size: to-rem(40px);
+    }
+}

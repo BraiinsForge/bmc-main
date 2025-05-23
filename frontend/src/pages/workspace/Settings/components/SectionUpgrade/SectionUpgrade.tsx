@@ -3,7 +3,7 @@ import Markdown from 'markdown-it';
 import { useIntl, type IntlShape } from 'react-intl';
 
 import type * as pb from '@/proto';
-import { Form, type iField } from '@/lib/form';
+import { Form, type iField, getID } from '@/lib/form';
 
 import { Field } from '../Field';
 import { FieldSet } from '../FieldSet';
@@ -32,7 +32,7 @@ const getInitialState = (): State => ({
     isChangelogExpanded: false,
 });
 
-const $id = (...suffix: string[]) => ['bmc-settings-updates', ...suffix].join('-');
+const $id = getID('settings', 'updates');
 const NA = <span className={css.placeholder} children="N/A" />;
 
 class View extends Component<Props, State> {
@@ -119,9 +119,10 @@ class View extends Component<Props, State> {
                         description={formatMessage({
                             defaultMessage: 'Automatically install firmware updates when available.',
                         })}
+                        disabled={automaticUpgrades.disabled}
                     >
                         <Toggle
-                            id={$id('data-collection')}
+                            id={$id.get('data-collection')}
                             size="md"
                             toggled={!!automaticUpgrades.value}
                             onToggle={automaticUpgrades.onChange}
@@ -131,50 +132,59 @@ class View extends Component<Props, State> {
                         />
                     </Field>
 
-                    <div className={css.updateContainer}>
-                        <Form className={css.updateForm}>
-                            <table>
-                                <tbody>
-                                    <tr>
-                                        <th scope="row" children={formatMessage({ defaultMessage: 'Your version:' })} />
-                                        <td children={versionCurrent ?? NA} />
-                                    </tr>
-                                    <tr>
-                                        <th
-                                            scope="row"
-                                            children={formatMessage({ defaultMessage: 'Latest version available:' })}
-                                        />
-                                        <td children={upgradeInfo?.latestRelease?.version ?? versionCurrent ?? NA} />
-                                    </tr>
-                                </tbody>
-                            </table>
+                    {upgradeInfo == null ? null : (
+                        <div className={css.updateContainer}>
+                            <Form className={css.updateForm}>
+                                <table>
+                                    <tbody>
+                                        <tr>
+                                            <th
+                                                scope="row"
+                                                children={formatMessage({ defaultMessage: 'Your version:' })}
+                                            />
+                                            <td children={versionCurrent ?? NA} />
+                                        </tr>
+                                        <tr>
+                                            <th
+                                                scope="row"
+                                                children={formatMessage({
+                                                    defaultMessage: 'Latest version available:',
+                                                })}
+                                            />
+                                            <td
+                                                children={upgradeInfo?.latestRelease?.version ?? versionCurrent ?? NA}
+                                            />
+                                        </tr>
+                                    </tbody>
+                                </table>
 
-                            {upgradeInfo?.latestRelease ? (
-                                <InlineNotification
-                                    title={formatMessage({ defaultMessage: 'New Version Available' })}
-                                    kind="info"
-                                    theme="auto"
-                                    stretch
-                                    hideCloseButton
-                                    style={{ marginTop: '0.5rem' }}
-                                />
-                            ) : null}
-                            <footer className={css.updateFormFooter}>
-                                <Button
-                                    kind="primary"
-                                    icon={IconUpgrade}
-                                    children={formatMessage({ defaultMessage: 'Download & Upgrade BMC' })}
-                                />
-                                <div
-                                    role="presentation"
-                                    className={css.estimatedDuration}
-                                    children={formatMessage({ defaultMessage: 'Est. upgrade time: 1 minute' })}
-                                />
-                            </footer>
-                        </Form>
+                                {upgradeInfo?.latestRelease ? (
+                                    <InlineNotification
+                                        title={formatMessage({ defaultMessage: 'New Version Available' })}
+                                        kind="info"
+                                        theme="auto"
+                                        stretch
+                                        hideCloseButton
+                                        style={{ marginTop: '0.5rem' }}
+                                    />
+                                ) : null}
+                                <footer className={css.updateFormFooter}>
+                                    <Button
+                                        kind="primary"
+                                        icon={IconUpgrade}
+                                        children={formatMessage({ defaultMessage: 'Download & Upgrade BMC' })}
+                                    />
+                                    <div
+                                        role="presentation"
+                                        className={css.estimatedDuration}
+                                        children={formatMessage({ defaultMessage: 'Est. upgrade time: 1 minute' })}
+                                    />
+                                </footer>
+                            </Form>
 
-                        {this.#renderChangelog()}
-                    </div>
+                            {this.#renderChangelog()}
+                        </div>
+                    )}
                 </FieldSet>
             </section>
         );

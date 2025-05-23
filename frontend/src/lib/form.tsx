@@ -53,3 +53,18 @@ export interface iFormErrors<FieldName extends keyof any = string, FieldErrorTyp
 export function hasFormErrors<T extends iFormErrors<string, any>>(errors: Maybe<T>): boolean {
     return errors?.global?.some(Boolean) || Object.values(errors?.fields || {}).some(Boolean);
 }
+
+class GetID {
+    #preffix: string[];
+
+    constructor(...preffix: string[]) {
+        this.#preffix = preffix;
+    }
+    at = (...prefix: string[]): GetID => {
+        return new GetID(...this.#preffix, ...prefix);
+    };
+    get = (...suffix: string[]): string => {
+        return [...this.#preffix, ...suffix].join('-');
+    };
+}
+export const getID = new GetID('bmc').at;

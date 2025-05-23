@@ -1,0 +1,22 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(2);
+}
+
+.placeholder {
+    color: $text-placeholder;
+}
+
+.timezoneComboBox :global(button.cds--list-box__selection) {
+    display: none !important;
+}
+
+.timezoneElement {
+    composes: inline horizontal center from 'styles/layout.scss';
+    gap: mini-units(1);
+}
+.mono {
+    composes: code-01 from 'styles/carbon/typography.scss';
+}
