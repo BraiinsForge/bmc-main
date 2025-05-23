@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package braiins.bmc.web;
 
+import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
 message UpgradeMetadata {
@@ -15,8 +16,6 @@ message ReleaseInfo {
   string version = 1;
   string description = 2;
 }
-
-message CheckForUpgradeRequest {}
 
 message CheckForUpgradeResponse {
   UpgradeMetadata latest_release = 1;
@@ -47,10 +46,8 @@ message UpgradeRequest {
   string hash = 1;
 }
 
-message UpgradeResponse {}
-
 service UpgradeService {
-  rpc CheckForUpgrade(CheckForUpgradeRequest) returns (CheckForUpgradeResponse);
+  rpc CheckForUpgrade(google.protobuf.Empty) returns (CheckForUpgradeResponse);
   rpc DownloadFirmware(DownloadFirmwareRequest) returns (stream DownloadFirmwareResponse);
-  rpc Upgrade(UpgradeRequest) returns (UpgradeResponse);
+  rpc Upgrade(UpgradeRequest) returns (google.protobuf.Empty);
 }

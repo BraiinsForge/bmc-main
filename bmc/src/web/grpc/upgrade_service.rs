@@ -1,8 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_grpc::web::{
-    CheckForUpgradeRequest, CheckForUpgradeResponse, DownloadFinished, DownloadFirmwareRequest,
-    DownloadFirmwareResponse, UpgradeRequest, UpgradeResponse, download_firmware_response,
+    CheckForUpgradeResponse, DownloadFinished, DownloadFirmwareRequest, DownloadFirmwareResponse,
+    UpgradeRequest, download_firmware_response,
     upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail, UpgradeMetadata};
@@ -51,7 +51,7 @@ where
 
     async fn check_for_upgrade(
         &self,
-        _request: Request<CheckForUpgradeRequest>,
+        _request: Request<()>,
     ) -> Result<tonic::Response<CheckForUpgradeResponse>, tonic::Status> {
         let available_releases = self
             .system_upgrade_service
@@ -80,7 +80,7 @@ where
     async fn upgrade(
         &self,
         request: Request<UpgradeRequest>,
-    ) -> Result<tonic::Response<UpgradeResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<()>, tonic::Status> {
         let request = request.into_inner();
 
         self.system_upgrade_service
@@ -88,7 +88,7 @@ where
             .await
             .map_err(Into::<tonic::Status>::into)?;
 
-        Ok(tonic::Response::new(UpgradeResponse {}))
+        Ok(tonic::Response::new(()))
     }
 }
 
