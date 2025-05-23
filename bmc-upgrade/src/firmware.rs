@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use chrono::NaiveDate;
 use reqwest::Client;
 use std::fmt::Debug;
 use thiserror::Error;
@@ -107,7 +108,7 @@ where
 pub struct UpgradeMetadata {
     pub hash: String,
     pub version: String,
-    pub release_date: String,
+    pub release_date: NaiveDate,
     pub description: String,
     pub url: String,
     pub file_size: usize,
@@ -118,7 +119,7 @@ impl UpgradeMetadata {
     pub fn new(
         hash: String,
         version: String,
-        release_date: String,
+        release_date: NaiveDate,
         description: String,
         url: String,
         file_size: usize,

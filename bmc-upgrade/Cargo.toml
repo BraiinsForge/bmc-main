@@ -9,6 +9,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 bmc-platform.workspace = true
 bytes.workspace = true
+chrono.workspace = true
 data-encoding.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 ring.workspace = true

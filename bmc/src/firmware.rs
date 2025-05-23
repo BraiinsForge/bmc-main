@@ -73,7 +73,7 @@ impl FirmwareIndex for BmcIndex {
                     return Some(UpgradeMetadata::new(
                         asset.checksum().unwrap_or_default().to_string(),
                         release.bmc_version.to_string(),
-                        release.release_date.to_string(),
+                        release.release_date,
                         release.description.clone(),
                         asset.url().to_string(),
                         asset.size().unwrap_or_default(),
