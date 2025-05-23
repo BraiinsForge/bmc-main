@@ -19,8 +19,11 @@ use bmc_platform as _;
 use bmc_upgrade::firmware::FirmwareResolver;
 use memmap2 as _;
 use pw_hash as _;
+use serde as _;
+use serde_json as _;
 use slint::ComponentHandle;
 use thiserror as _;
+use time as _;
 use tracing as _;
 use tracing::{error, info};
 

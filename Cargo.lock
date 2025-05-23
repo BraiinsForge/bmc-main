@@ -952,8 +952,11 @@ dependencies = [
  "iana-time-zone",
  "memmap2",
  "pw_hash",
+ "serde",
+ "serde_json",
  "slint",
  "thiserror 2.0.12",
+ "time",
  "tokio",
  "tracing",
 ]

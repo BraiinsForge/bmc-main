@@ -16,12 +16,15 @@ flume.workspace = true
 iana-time-zone.workspace = true
 memmap2.workspace = true
 pw_hash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 slint = { workspace = true, features = [
     "compat-1-2",
     "renderer-software",
     "std",
 ] }
 thiserror.workspace = true
+time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
