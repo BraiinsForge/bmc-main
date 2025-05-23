@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use tokio::process::Command;
 use tracing::{debug, warn};
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Handle {
     session_id: String,
     valid: bool,

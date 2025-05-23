@@ -24,7 +24,7 @@ pub enum Error {
     BadCredentials,
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Handle {
     token: String,
     valid: bool,
@@ -46,7 +46,7 @@ impl session::Handle for Handle {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Session {
     username: String,
     expiration_time: i64,
