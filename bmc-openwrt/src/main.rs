@@ -12,9 +12,8 @@ use bmc_display::{
     slint_handle::SlintHandle,
 };
 use bmc_openwrt::{
-    generic_backlight_driver::GenericBacklightDriver,
-    linux_framebuffer_platform::LinuxFbPlatform,
-    manager::{Manager, OpenwrtSessionManager},
+    generic_backlight_driver::GenericBacklightDriver, linux_framebuffer_platform::LinuxFbPlatform,
+    manager::Manager, session::OpenwrtSessionManager,
 };
 use bmc_platform as _;
 use bmc_upgrade::firmware::FirmwareResolver;

@@ -1,17 +1,16 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
+use crate::session::OpenwrtSessionManager;
+use crate::unix::call_command;
 use crate::{ROOT_USERNAME, pwd};
 use anyhow::anyhow;
-use axum_extra::extract::cookie::Cookie;
 use bmc::{BmcManager, time::Timezone};
 use bmc_platform::BmcPlatform;
 use std::io;
 use std::path::Path;
 use tokio::{fs, process::Command};
 use tracing::info;
-
-use crate::unix::call_command;
 
 #[derive(Debug)]
 pub struct Manager {
@@ -22,9 +21,9 @@ pub struct Manager {
 impl Manager {
     const SYSUPGRADE_BIN: &'static str = "/sbin/sysupgrade";
     const SYSUPGRADE_ARG_NO_SAVE: &'static str = "-n";
-    const UPGRADE_RESULT_FILE_PATH: &str = "/etc/upgrade_result";
-    const UCI_SYSTEM_ZONENAME: &str = "system.@system[0].zonename";
-    const UCI_SYSTEM_TIMEZONE: &str = "system.@system[0].timezone";
+    const UPGRADE_RESULT_FILE_PATH: &'static str = "/etc/upgrade_result";
+    const UCI_SYSTEM_ZONENAME: &'static str = "system.@system[0].zonename";
+    const UCI_SYSTEM_TIMEZONE: &'static str = "system.@system[0].timezone";
 
     #[must_use]
     pub fn new(session_manager: OpenwrtSessionManager, timezone: Timezone) -> Self {
@@ -141,87 +140,8 @@ impl BmcManager for Manager {
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("Session not found")]
-    SessionNotFound,
-    #[error("Session cookie not found")]
-    SessionCookieNotFound,
-    #[error("Session cookie is invalid")]
-    SessionCookieInvalid,
-    #[error("Bad credentials")]
-    BadCredentials,
     #[error(transparent)]
     ShadowFile(#[from] pwd::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
-}
-
-#[derive(Default, Clone, Debug)]
-pub struct OpenwrtSessionManager;
-
-#[derive(Default, Clone, Debug)]
-pub struct Handle {
-    username: String,
-    token: String,
-    valid: bool,
-}
-
-impl Handle {
-    #[must_use]
-    pub fn new(username: String, token: String, valid: bool) -> Self {
-        Self {
-            username,
-            token,
-            valid,
-        }
-    }
-}
-
-impl bmc::session::Handle for Handle {
-    fn is_valid(&self) -> bool {
-        self.valid
-    }
-
-    fn id(&self) -> String {
-        self.token.clone()
-    }
-
-    fn username(&self) -> String {
-        self.username.clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl bmc::session::Manager for OpenwrtSessionManager {
-    type Error = Error;
-    type Session = Handle;
-
-    const SESSION_TIMEOUT: u32 = 3600;
-
-    async fn login(&self, password: &str) -> Result<Cookie<'static>, Error> {
-        info!(
-            "Login with username: {} and password: {}",
-            ROOT_USERNAME, password
-        );
-        unimplemented!()
-    }
-
-    async fn logout(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
-        info!("Logout with handle: {}", handle.token);
-        unimplemented!()
-    }
-
-    async fn logout_all_related(&self, handle: Handle) -> Result<(), Error> {
-        info!("Logout all related with handle: {}", handle.token);
-        unimplemented!()
-    }
-
-    async fn extend(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
-        info!("Extend with handle: {}", handle.token);
-        unimplemented!()
-    }
-
-    async fn find(&self, cookies: &[Cookie<'_>]) -> Result<Handle, Error> {
-        info!("Find with cookies: {:?}", cookies);
-        unimplemented!()
-    }
 }
