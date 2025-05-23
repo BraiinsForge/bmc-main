@@ -1,25 +1,34 @@
 import { useState, useEffect } from 'react';
 import * as pb from './proto';
 
-export type AuthState = null | boolean;
 export type Listener<R> = (store: Store) => R;
 export type SubscribeResult = {
     unsubscribe(): void;
 };
 
+interface SessionInfo {
+    isAuthenticated: null | boolean;
+    hasPassword: null | boolean;
+}
 interface State {
-    isAuthenticated: AuthState;
+    sessionInfo: SessionInfo;
 }
 
 class Store {
     #state: Readonly<State> = {
-        isAuthenticated: null,
+        sessionInfo: {
+            isAuthenticated: null,
+            hasPassword: null,
+        },
     };
-    #setState<Key extends keyof State>(key: Key, value: State[Key]): void {
+    #setState<Key extends keyof State>(key: Key, value: State[Key] | ((currentState: State[Key]) => State[Key])): void {
         // @ts-expect-error: Only a type-guard
         // to prevent direct writes internally
-        this.#state[key] = value;
+        this.#state[key] = typeof value === 'function' ? value(this.#state[key]) : value;
         this.#notifyAllListeners();
+    }
+    get state(): Readonly<State> {
+        return Object.freeze({ ...this.#state });
     }
 
     #listeners = new Set<Listener<any>>();
@@ -33,16 +42,9 @@ class Store {
         for (const listener of this.#listeners) listener(this);
     }
 
-    set isAuthenticated(value: boolean) {
-        this.#setState('isAuthenticated', value);
-    }
-    get isAuthenticated(): AuthState {
-        return this.#state.isAuthenticated;
-    }
-
     login = async (password: string, signal: AbortSignal): Promise<void> => {
         await pb.rpc.auth.login({ password }, { signal });
-        this.isAuthenticated = true;
+        await this.fetchSessionInfo();
     };
     logout = async (): Promise<void | pb.RpcStatus> => {
         try {
@@ -50,23 +52,43 @@ class Store {
         } catch {
             // Nothing to do here
         }
-
-        this.isAuthenticated = false;
+        this.fetchSessionInfo();
     };
-    checkAuth = async (signal?: AbortSignal): Promise<boolean> => {
+
+    private fetchSessionInfoAbort = pb.abort.get();
+    fetchSessionInfo = async (): Promise<void> => {
+        const { signal } = this.fetchSessionInfoAbort.replace();
+        const res: SessionInfo = { isAuthenticated: false, hasPassword: null };
+
         try {
-            const res = await pb.rpc.auth.isAuthenticated({}, { signal });
-            this.isAuthenticated = res.value;
-            return res.value;
+            const x = await pb.rpc.auth.isAuthenticated({}, { signal });
+            res.isAuthenticated = x.value;
         } catch ($) {
-            this.isAuthenticated = false;
+            res.isAuthenticated = false;
             const error = pb.parseError($);
             console.groupCollapsed(`%cAuth check failed (${error.rpc_reason_name})`, 'color: pink');
             console.log(error);
             console.groupEnd();
         }
 
-        return this.isAuthenticated;
+        if (res.isAuthenticated) {
+            try {
+                const x = await pb.rpc.sys.hasPassword({}, { signal });
+                res.hasPassword = x.value;
+            } catch ($) {
+                if (pb.abort.is($)) return;
+
+                const error = pb.parseError($);
+                console.groupCollapsed(
+                    `%cFailed to check if user has password (${error.rpc_reason_name})`,
+                    'color: pink',
+                );
+                console.log(error);
+                console.groupEnd();
+            }
+        }
+
+        this.#setState('sessionInfo', res);
     };
 }
 
@@ -85,7 +107,7 @@ export function useStore<Res>(getter: (store: Store) => Res) {
 
 // Fetching the user info as soon as possible
 // makes us aware of their auth status
-await store.checkAuth();
+await store.fetchSessionInfo();
 
 Object.assign(globalThis, { store });
 if (process.env.NODE_ENV === 'development') console.log(store);

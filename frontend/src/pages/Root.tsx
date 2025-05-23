@@ -3,7 +3,7 @@ import { debounce } from 'es-toolkit';
 import { Outlet, useNavigate, type NavigateFunction, useLocation } from 'react-router';
 
 import { URLS } from '@/constants';
-import { useStore, type AuthState } from '@/store';
+import { useStore } from '@/store';
 
 import '@/styles/carbon/carbon.global.scss';
 
@@ -11,7 +11,7 @@ interface Props {
     pathname: string;
     navigate: NavigateFunction;
     isRootPath: boolean;
-    isAuthenticated: AuthState;
+    isAuthenticated: null | boolean;
 }
 
 class View extends Component<Props> {
@@ -51,6 +51,6 @@ export default function () {
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const isRootPath: boolean = pathname === '/';
-    const isAuthenticated = useStore(x => x.isAuthenticated);
+    const isAuthenticated = useStore(x => x.state.sessionInfo.isAuthenticated);
     return <View navigate={navigate} pathname={pathname} isAuthenticated={isAuthenticated} isRootPath={isRootPath} />;
 }

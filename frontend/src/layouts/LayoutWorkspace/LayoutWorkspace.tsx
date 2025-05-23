@@ -3,8 +3,8 @@ import { useIntl, type IntlShape } from 'react-intl';
 import { useLocation, useNavigate } from 'react-router';
 import { Key } from 'ts-key-enum';
 
-import { store } from '@/store';
 import { URLS } from '@/constants';
+import { store, useStore } from '@/store';
 import { Braiins, Bitcoin } from '@/res/svg';
 
 import {
@@ -40,6 +40,7 @@ export interface LayoutWorkspaceProps {
 }
 interface Props extends LayoutWorkspaceProps {
     intl: IntlShape;
+    hasPassword: null | boolean;
 }
 
 interface State {}
@@ -106,7 +107,7 @@ class Base extends Component<Props, State> {
 
     #renderContent = (x: { isSideNavExpanded: boolean; onClickSideNavExpand(): void }): ReactNode => {
         const { isSideNavExpanded, onClickSideNavExpand } = x;
-        const { children } = this.props;
+        const { children, hasPassword } = this.props;
 
         return (
             <Fragment>
@@ -132,7 +133,9 @@ class Base extends Component<Props, State> {
                             onClick={() => window.open(URLS.external.academy, '_blank')}
                             withInlineLabel
                         />
-                        <HeaderActionButton label={this.#txt.logout} icon={IconLogout} onClick={store.logout} />
+                        {hasPassword && (
+                            <HeaderActionButton label={this.#txt.logout} icon={IconLogout} onClick={store.logout} />
+                        )}
                     </HeaderGlobalBar>
                 </Header>
 
@@ -157,7 +160,8 @@ class Base extends Component<Props, State> {
 
 export function LayoutWorkspace(props: LayoutWorkspaceProps) {
     const intl = useIntl();
-    return <Base {...props} intl={intl} />;
+    const hasPassword: null | boolean = useStore(x => x.state.sessionInfo.hasPassword);
+    return <Base {...props} intl={intl} hasPassword={hasPassword} />;
 }
 
 interface HeaderActionButtonProps {

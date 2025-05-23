@@ -6,6 +6,7 @@ import { useIntl, type IntlShape } from 'react-intl';
 import { useLocation, type Location } from 'react-router';
 
 import { assertUnreachable } from '@/lib/ts';
+import { store, useStore } from '@/store';
 import * as pb from '@/proto';
 
 import { SectionSecurity, SectionUpgrade } from './components';
@@ -15,6 +16,7 @@ import css from './Settings.scss';
 interface Props {
     intl: IntlShape;
     location: Location;
+    hasPassword: null | boolean;
 }
 
 // The value is used in location hash, so be mindfull of that.
@@ -28,19 +30,13 @@ enum Tab {
 interface State {
     activeTab: Tab;
     globalErrors: Maybe<string[]>;
-
     allowDataCollection: boolean;
-    hasPassword: null | boolean;
-
     upgradeInfo: null | pb.CheckForUpgradeResponse;
 }
 const getInitialState = (): State => ({
     activeTab: Tab.general,
     globalErrors: null,
-
     allowDataCollection: true,
-    hasPassword: null,
-
     upgradeInfo: null,
 });
 
@@ -62,21 +58,7 @@ class View extends Component<Props, State> {
     };
 
     #fetchData = async (): Promise<void> => {
-        await Promise.all([this.#fetchPasswordInfo(), this.#fetchUpgradeInfo()]);
-    };
-
-    private fetchPasswordInfoAbort = pb.abort.get();
-    #fetchPasswordInfo = async (): Promise<void> => {
-        try {
-            const { signal } = this.fetchPasswordInfoAbort.replace();
-            const res = await pb.rpc.sys.hasPassword({}, { signal });
-            this.setState({ hasPassword: res.value });
-        } catch ($) {
-            if (pb.abort.is($)) return;
-            const err = pb.parseError($);
-            const errors = pb.parseFormErrors(err, []);
-            this.setState({ globalErrors: errors.global });
-        }
+        await this.#fetchUpgradeInfo();
     };
 
     private fetchUpgradeInfoAbort = pb.abort.get();
@@ -135,49 +117,48 @@ class View extends Component<Props, State> {
     //
 
     #secOnPasswordChange = async (data: pb.ChangePasswordRequest): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-        const { hasPassword } = this.state;
+        const { intl, hasPassword } = this.props;
 
         // Abort if we got called wrongly
         if (hasPassword !== true) {
             return this.setState({
-                globalErrors: [formatMessage({ defaultMessage: 'Password is not set!' })],
+                globalErrors: [intl.formatMessage({ defaultMessage: 'Password is not set!' })],
             });
         }
 
         await pb.rpc.sys.changePassword(data);
-        await this.#fetchPasswordInfo();
+        await store.fetchSessionInfo();
     };
     #secOnPasswordRemove = async (data: pb.RemovePasswordRequest): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-        const { hasPassword } = this.state;
+        const { intl, hasPassword } = this.props;
 
         // Abort if we got called wrongly
         if (hasPassword !== true) {
             return this.setState({
-                globalErrors: [formatMessage({ defaultMessage: 'Password is not set!' })],
+                globalErrors: [intl.formatMessage({ defaultMessage: 'Password is not set!' })],
             });
         }
 
         await pb.rpc.sys.removePassword(data);
-        await this.#fetchPasswordInfo();
+        await store.fetchSessionInfo();
     };
     #secOnPasswordCreate = async (data: pb.CreatePasswordRequest): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-        const { hasPassword } = this.state;
+        const { intl, hasPassword } = this.props;
 
         // Abort if we got called wrongly
         if (hasPassword !== false) {
             return this.setState({
-                globalErrors: [formatMessage({ defaultMessage: 'Password is already set!' })],
+                globalErrors: [intl.formatMessage({ defaultMessage: 'Password is already set!' })],
             });
         }
 
         await pb.rpc.sys.createPassword(data);
-        await this.#fetchPasswordInfo();
+        await store.fetchSessionInfo();
     };
     #secRender = (): ReactNode => {
-        const { hasPassword, allowDataCollection } = this.state;
+        const { hasPassword } = this.props;
+        const { allowDataCollection } = this.state;
+
         return (
             <SectionSecurity
                 hasPassword={hasPassword}
@@ -246,7 +227,13 @@ class View extends Component<Props, State> {
                 <h1 className={css.title} children={title} />
 
                 <Tabs tabs={this.#tabs} activeTab={activeTab} onChange={this.#tabChange} className={css.tabs} />
-                <InlineNotificationsGroup kind="error" items={globalErrors} stretch theme="inverse" />
+                <InlineNotificationsGroup
+                    kind="error"
+                    items={globalErrors}
+                    stretch
+                    theme="inverse"
+                    style={{ marginBottom: '1rem' }}
+                />
                 <div className={css.content} children={content} />
             </div>
         );
@@ -256,5 +243,6 @@ class View extends Component<Props, State> {
 export default function () {
     const intl = useIntl();
     const location = useLocation();
-    return <View intl={intl} location={location} />;
+    const hasPassword = useStore(x => x.state.sessionInfo.hasPassword);
+    return <View intl={intl} location={location} hasPassword={hasPassword} />;
 }
