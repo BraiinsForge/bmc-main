@@ -10,10 +10,10 @@ stages:
 ######## Essentials Stage ########
 ##################################
 variables:
-  CI_TOOLS_REV: c5e3f70adc34fdeba3a5fcef7106db474be443a8 # This is not accessible inside "include"
+  CI_TOOLS_REV: 8850521aa3670e67c5265127e11222de6cf4ec94 # This is not accessible inside "include"
 include:
   - project: "nix/ci-tools"
-    ref: c5e3f70adc34fdeba3a5fcef7106db474be443a8
+    ref: 8850521aa3670e67c5265127e11222de6cf4ec94
     file:
       - ".essentials.yml"
       - ".dependencies.yml"
