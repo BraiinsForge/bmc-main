@@ -3,14 +3,11 @@ Braiins clock
 ## Build frontend
 
 ```
-cd ./frontend
-nix-shell
-yarn install
-make build
+nix build -L .#frontend
 ```
 
 ## Run mock with built frontend assets
 
 ```
-cargo run --bin bmc-mock -- --address=0.0.0.0:6070 --www-path=./frontend/dist
+cargo run --bin bmc-mock -- --address=0.0.0.0:6070 --www-path=./result
 ```

@@ -28,27 +28,16 @@
                 sha256 = "sha256-X/4ZBHO3iW0fOenQ3foEvscgAPJYl2abspaBThDOukI=";
               };
             })
+            # Overlay yarn & nodejs
+            (final: prev: {
+              nodejs = prev.nodejs_22;
+              yarn = prev.yarn.override { nodejs = prev.nodejs_22; };
+            })
           ];
         };
 
-        workspace = import ./workspace.nix {
-          inherit self pkgs;
-        };
-
-        web-assets = pkgs.runCommand "bmc-web-assets" { } ''
-          mkdir -p $out/var/default
-
-          cat <<-EOF > $out/index.html
-          <!DOCTYPE html>
-          <html>
-          <head><title>Hello</title></head>
-          <body><h1>Hello, world!</h1></body>
-          </html>
-          EOF
-
-          touch $out/var/default/favicon.png
-        '';
-
+        workspace = import ./workspace.nix { inherit self pkgs; };
+        frontend = import ./frontend { inherit self pkgs; };
       in
       {
         formatter = nixlib.braiinsfmt.${localSystem} {
@@ -61,14 +50,16 @@
           yaml = true;
           copyright = true;
 
+          # Frontend specifies it's own formatting rules
           config.exclude = [
             "frontend/*"
           ];
         };
 
         checks = self.packages.${localSystem};
-
-        packages = workspace.packages // { inherit web-assets; };
+        packages = workspace.packages // {
+          frontend = frontend.build;
+        };
 
         devShells = workspace.devShells // {
           default = pkgs.mkShell { packages = [ pkgs.ii.rustToolchain ]; };

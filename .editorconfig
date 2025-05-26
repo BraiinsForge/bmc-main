@@ -6,3 +6,9 @@ end_of_line = lf
 indent_size = 4
 indent_style = space
 insert_final_newline = true
+
+[*.{html,svg}]
+max_line_length = off
+
+[*.{nix,proto,yml,yaml}]
+indent_size = 2
