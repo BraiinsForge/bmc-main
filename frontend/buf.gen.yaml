@@ -4,7 +4,7 @@ version: v2
 clean: true
 
 inputs:
-  - directory: ../bmc-grpc/proto
+  - directory: ../bmc-grpc/proto/web
   - module: buf.build/googleapis/googleapis
     types:
       - "google.rpc"
