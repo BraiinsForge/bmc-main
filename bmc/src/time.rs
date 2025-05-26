@@ -146,7 +146,7 @@ impl Default for Offset {
 impl fmt::Display for Offset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let hours = self.inner.num_hours();
-        let minutes = self.inner.num_minutes();
+        let minutes = self.inner.num_minutes().rem_euclid(60);
         write!(f, "{hours:+03}:{minutes:02}")
     }
 }
