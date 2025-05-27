@@ -3,7 +3,7 @@
 use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
 use crate::session::OpenwrtSessionManager;
 use crate::unix::call_command;
-use crate::{ROOT_USERNAME, pwd};
+use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::anyhow;
 use bmc::{BmcManager, time::Timezone};
 use bmc_platform::BmcPlatform;
@@ -138,11 +138,24 @@ impl BmcManager for Manager {
     }
 
     async fn is_factory_default(&self) -> bool {
-        todo!()
+        call_command(
+            "sh",
+            &[
+                "-c",
+                ". /lib/functions/bos-defaults.sh && is_factory_default",
+            ],
+        )
+        .await
+        .is_ok()
     }
 
-    async fn factory_reset(&self, _hard: bool) -> Result<(), Self::Error> {
-        todo!()
+    async fn factory_reset(&self, hard: bool) -> Result<(), Self::Error> {
+        let mut args = vec!["factory_reset"];
+        if hard {
+            args.push("--hard");
+        }
+        call_command("bos", &args).await?;
+        Ok(())
     }
 }
 
@@ -152,4 +165,6 @@ pub enum Error {
     ShadowFile(#[from] pwd::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[error(transparent)]
+    Unix(#[from] unix::Error),
 }
