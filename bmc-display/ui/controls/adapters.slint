@@ -10,6 +10,12 @@ export global ScreenAdapter {
     in property <UIScreen> screen-id: UIScreen.Void;
 }
 
+export global NotificationAdapter {
+    in property <string> label: "LABEL";
+    in property <string> message: "MESSAGE";
+    in property <string> timestamp: "TIMESTAMP";
+}
+
 export global DateTimeAdapter {
     in property <bool> is_24_format;
     in property <int> hour24;

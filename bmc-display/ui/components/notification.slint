@@ -1,0 +1,67 @@
+import { Theme } from "../style/theme.slint";
+import { Palette } from "../style/palette.slint";
+import { NotificationAdapter } from "../controls/adapters.slint";
+
+export component Notification {
+    in property <image> icon;
+    in property <string> label <=> NotificationAdapter.label;
+    in property <string> message <=> NotificationAdapter.message;
+    in property <string> timestamp <=> NotificationAdapter.timestamp;
+    in property <length> heigth_override;
+    in property <brush> stripe_color;
+    in property <length> padding_top_override;
+
+    HorizontalLayout {
+        Rectangle {
+            height: root.heigth_override;
+            // 64 px default / 48 px "Init setup needed"
+            background: Palette.gray-80;
+            Rectangle {
+                x: 0px;
+                width: 3px;
+                height: root.heigth_override;
+                background: stripe_color;
+            }
+
+            Rectangle {
+                x: 17px;
+                y: 15px;
+                width: 17.5px;
+                height: 17.5px;
+                Image {
+                    visible: true;
+                    source: root.icon;
+                }
+            }
+
+            VerticalLayout {
+                padding-top: root.padding_top_override;
+                padding-left: 52px;
+                padding-right: 52px;
+                HorizontalLayout {
+                    Text {
+                        horizontal-alignment: left;
+                        text: root.label;
+                        color: Palette.gray-20;
+                        font-size: 32px;
+                        font-weight: Theme.font.weight.bold;
+                    }
+                    Text {
+                        horizontal-alignment: right;
+                        text: root.timestamp;
+                        color: Palette.gray-20;
+                        font-size: 32px;
+                        font-weight: Theme.font.weight.regular;
+                    }
+                }
+
+                Text {
+                    text: root.message;
+                    color: Palette.gray-20;
+                    font-weight: Theme.font.weight.regular;
+                    font-size: 32px;
+                }
+            }
+        }
+    }
+}

@@ -1,13 +1,15 @@
 import { Palette } from "style/palette.slint";
-import { ScreenAdapter, UpgradeDownloadAdapter } from "controls/adapters.slint";
+import { ScreenAdapter, UpgradeDownloadAdapter, NotificationAdapter } from "controls/adapters.slint";
 import { UIScreen } from "controls/common.slint";
 import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed } from "screens/screens.slint";
 import { WidgetSize, WidgetType, WidgetSlint } from "widgets/widget.slint";
 import { WidgetBuilder } from "controls/widget-builder.slint";
 import { Backend } from "backend.slint";
 import { DateTimeAdapter } from "controls/adapters.slint";
+import { Notification } from "components/notification.slint";
+import { Images } from "style/images.slint";
 
-export { ScreenAdapter, UpgradeDownloadAdapter, UIScreen }
+export { ScreenAdapter, UpgradeDownloadAdapter, UIScreen, NotificationAdapter }
 export { WidgetSize, WidgetType, WidgetSlint }
 export { Backend }
 export { DateTimeAdapter }
@@ -37,6 +39,16 @@ export component MainWindow inherits Window {
             vertical-alignment: center;
             x: parent.width - self.width - 10px;
         }
+    }
+
+    Notification {
+        x: 0px;
+        y: 40px;
+        width: parent.width;
+        icon: Images.notification_info;
+        heigth_override: 100px;
+        stripe_color: Palette.gray-80;
+        padding_top_override: 12px;
     }
 
     WidgetBuilder {
