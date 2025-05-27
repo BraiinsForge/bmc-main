@@ -35,6 +35,9 @@ pub struct Config {
     pub mockfs_path: PathBuf,
     #[clap(long)]
     pub system_password: Option<String>,
+    /// Run miner with a factory-default flag
+    #[clap(long)]
+    pub factory_default: bool,
 }
 
 impl From<Config> for Configuration {

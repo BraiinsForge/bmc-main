@@ -111,10 +111,13 @@ impl bmc::BmcManager for Manager {
     }
 
     async fn is_factory_default(&self) -> bool {
-        todo!()
+        let result = self.mockfs.factory_default().exists();
+        info!("Checking if factory default... {result}");
+        result
     }
 
-    async fn factory_reset(&self, _hard: bool) -> Result<(), Self::Error> {
-        todo!()
+    async fn factory_reset(&self, hard: bool) -> Result<(), Self::Error> {
+        info!(hard, "Performing factory reset...");
+        Ok(())
     }
 }

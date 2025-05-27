@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     let system_password = config.system_password.clone();
 
     let mockfs = mockfs::MockFs::new(&config.mockfs_path);
-    mockfs.init()?;
+    mockfs.init(config.factory_default)?;
 
     let config = config.into();
 
