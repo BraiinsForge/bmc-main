@@ -136,6 +136,14 @@ impl BmcManager for Manager {
     fn watch_timezone_updates(&self) -> tokio::sync::watch::Receiver<Timezone> {
         self.timezone_sender.subscribe()
     }
+
+    async fn is_factory_default(&self) -> bool {
+        todo!()
+    }
+
+    async fn factory_reset(&self, _hard: bool) -> Result<(), Self::Error> {
+        todo!()
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

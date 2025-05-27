@@ -42,4 +42,10 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()>;
 
     fn watch_timezone_updates(&self) -> watch::Receiver<Timezone>;
+
+    // Checks if the system is in factory default state
+    async fn is_factory_default(&self) -> bool;
+
+    /// Execute factory reset and reboot
+    async fn factory_reset(&self, hard: bool) -> Result<(), Self::Error>;
 }
