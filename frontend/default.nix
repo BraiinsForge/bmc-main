@@ -3,8 +3,6 @@
  let
    src = import ./nix/patched-src.nix { inherit pkgs; };
    yarnFiles = import ./nix/yarn-files.nix { inherit pkgs; };
-   # FIXME: How do we expose those back to the root "nix.flake" with bound local variables?
-   # checks = import ./nix/checks.nix { inherit pkgs src yarnFiles; };
 in {
     build = pkgs.stdenv.mkDerivation {
       name = "bmc-frontend";
@@ -23,4 +21,6 @@ in {
         cp -r ./dist/. -t $out
       '';
     };
+
+    checks = import ./nix/checks.nix { inherit pkgs src yarnFiles; };
 }

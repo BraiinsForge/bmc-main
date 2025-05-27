@@ -56,7 +56,7 @@
           ];
         };
 
-        checks = self.packages.${localSystem};
+        checks = self.packages.${localSystem} // frontend.checks;
         packages = workspace.packages // {
           frontend = frontend.build;
         };

@@ -7,7 +7,7 @@ let
     , postScript ? ""
     ,
     }: pkgs.stdenv.mkDerivation {
-      name = "ii-fe-check-${name}";
+      name = "bmc-fe-check-${name}";
       inherit src;
       buildInputs = [ pkgs.yarn ];
       buildPhase = ''
@@ -23,28 +23,12 @@ let
     };
 in
 {
-  # Linters
-  js = run {
-    name = "js";
-    script = "make lint-js";
+  lint = run {
+    name = "fe-lint";
+    script = "make lint";
   };
-  yarn = run {
-    name = "yarn";
-    script = "make lint-yarn";
-  };
-  styles = run {
-    name = "styles";
-    script = "make lint-styles";
-  };
-
-  # Tests
-  test-static = run {
-    name = "test-static";
-    script = "make ci-test-static";
-  };
-  test-unit = run {
-    name = "test-unit";
-    script = "make ci-test-unit";
-    postScript = "cp -r coverage $out/";
+  test = run {
+    name = "fe-test";
+    script = "make test";
   };
 }
