@@ -58,4 +58,5 @@ service SystemService {
   rpc SetTimezone(SetTimezoneRequest) returns (google.protobuf.Empty);
   // Get the list of available timezones
   rpc GetTimezoneList(google.protobuf.Empty) returns (GetTimezoneListResponse);
+  rpc FactoryReset(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

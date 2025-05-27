@@ -201,6 +201,16 @@ where
 
         Ok(tonic::Response::new(()))
     }
+
+    async fn factory_reset(&self, _request: Request<()>) -> Result<Response<()>, Status> {
+        // NOTE: this API for now supports only soft-reset
+        self.manager.factory_reset(false).await.map_err(|err| {
+            warn!(?err, "Failed to apply factory settings");
+            Status::internal("Failed to apply factory settings")
+        })?;
+
+        Ok(Response::new(()))
+    }
 }
 
 fn into_grpc_timezone(timezone: &Timezone) -> bmc_grpc::web::Timezone {
