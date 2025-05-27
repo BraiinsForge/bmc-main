@@ -1,7 +1,7 @@
 import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 
-import type * as pb from '@/proto';
+import * as pb from '@/proto';
 import { Form, type iField, getID } from '@/lib/form';
 
 import { Field } from '../Field';
@@ -113,10 +113,6 @@ class View extends Component<Props> {
         if (x.selectedItem) onChange(x.selectedItem);
     };
 
-    #timezoneRender = (tz: Maybe<pb.Timezone>): string => {
-        if (!tz) return 'N/A';
-        return `UTC${tz.offset} (${tz.label})`;
-    };
     #timezoneRenderElement = (tz: pb.Timezone): ReactElement => {
         return (
             <span className={css.timezoneElement}>
@@ -202,7 +198,7 @@ class View extends Component<Props> {
                             direction="bottom"
                             items={Array.from(timezone.items)}
                             onChange={this.#timezoneChange}
-                            itemToString={this.#timezoneRender}
+                            itemToString={pb.renderTimezone}
                             itemToElement={this.#timezoneRenderElement}
                             selectedItem={timezone.value}
                             invalid={!!timezone.error}

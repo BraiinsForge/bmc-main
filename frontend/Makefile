@@ -66,7 +66,7 @@ serve:
 storybook-start:
 	yarn run storybook dev \
 	  --no-open \
-	  --port=6006 \
+	  --port=6005 \
 	  --exact-port \
 	  --disable-telemetry
 

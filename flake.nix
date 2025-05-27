@@ -59,6 +59,7 @@
         checks = self.packages.${localSystem} // frontend.checks;
         packages = workspace.packages // {
           frontend = frontend.build;
+          yarnFiles = frontend.yarnFiles;
         };
 
         devShells = workspace.devShells // {

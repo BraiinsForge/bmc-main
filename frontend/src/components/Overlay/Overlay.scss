@@ -1,0 +1,69 @@
+@use 'styles/carbon/colors';
+@use 'styles/carbon' as *;
+
+$duration: 500ms;
+$timing: ease-in-out;
+
+.root {
+    position: relative;
+    width: 100%;
+    height: 100%;
+
+    opacity: 0;
+    visibility: hidden;
+    backdrop-filter: blur(0);
+    background-color: $overlay;
+
+    transition:
+        opacity $duration $timing,
+        backdrop-filter $duration $timing,
+        visibility 0ms linear $duration;
+
+    &.inPortal {
+        position: fixed;
+        z-index: 999999999;
+        inset: 0;
+    }
+}
+
+.isVisible {
+    opacity: 1;
+    visibility: inherit;
+    backdrop-filter: blur(4px);
+
+    transition:
+        opacity $duration $timing,
+        backdrop-filter $duration $timing,
+        visibility 0ms linear;
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+
+    .contentInner {
+        transform: translate3d(0, 0, 0);
+    }
+}
+
+.contentOuter {
+    composes: fit horizontal centerCenter from 'styles/layout.scss';
+
+    width: 100%;
+    height: 100%;
+
+    padding: mini-units(4);
+
+    @media (width <= 600px) {
+        padding: mini-units(2);
+    }
+}
+.contentInner {
+    composes: inline horizontal start from 'styles/layout.scss';
+    position: relative;
+    user-select: none;
+    z-index: 1;
+
+    transform: translate3d(0, -24px, 0);
+    transform-origin: top center;
+    transition: transform $duration $timing;
+}

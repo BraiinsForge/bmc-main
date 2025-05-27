@@ -1,0 +1,15 @@
+frontend/.yarn/**            linguist-vendored
+frontend/.yarn/releases/*    binary
+frontend/.yarn/plugins/**/*  binary
+frontend/.pnp.*              binary linguist-generated
+
+# Generated files (typescript)
+frontend/**/*.d.ts       linguist-generated gitlab-generated
+frontend/**/*_pb.ts      linguist-generated gitlab-generated
+
+# Language overrides
+frontend/*.ejs linguist-language=html
+frontend/*.cjs linguist-language=javascript
+frontend/*.mjs linguist-language=javascript
+frontend/*.tsx linguist-language=typescript
+frontend/*.mts linguist-language=typescript

@@ -1,0 +1,119 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+
+    position: fixed;
+    z-index: 9999;
+
+    max-width: 100%;
+    $offset: mini-units(2);
+    inset-block-start: $offset;
+    inset-inline-end: $offset;
+
+    :global {
+        .cds--toast-notification {
+            margin: 0 !important;
+        }
+
+        .cds--toast-notification__details {
+            flex: 1;
+        }
+
+        // We're removing the title & subtitle requirement,
+        // so it needs to be hidden when it's empty
+        .cds--toast-notification__title:empty,
+        .cds--toast-notification__subtitle:empty {
+            display: none !important;
+        }
+
+        // The empty subtitle is used as spacer by default
+        // so we'll space-out the caption by it's margin
+        .cds--toast-notification__caption {
+            margin-top: to-rem(12px) !important;
+            padding-top: 0 !important;
+        }
+    }
+}
+
+//
+// Item
+//
+
+.item {
+    composes: shadow-transition elevation-6dp from 'styles/shadows.scss';
+    composes: body-short-01 from 'styles/carbon/typography.scss';
+
+    position: absolute;
+    top: 0;
+
+    cursor: default;
+    user-select: none;
+
+    inset-inline-end: 0;
+
+    :global {
+        .cds--toast-notification {
+            min-height: to-rem(68px);
+            width: max-content;
+            max-width: 80vw;
+
+            .cds--toast-notification__details {
+                white-space: pre-line;
+
+                &:not(:has(.cds--toast-notification__title)) {
+                    padding-top: mini-units(2);
+                }
+            }
+        }
+    }
+}
+
+.counter {
+    $fontSize: to-rem(16px);
+
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+
+    font-size: $fontSize;
+
+    border-radius: $fontSize * 3;
+    padding: $fontSize * 0.5 $fontSize;
+    // I wasn't able to set font-size to anything below 12px,
+    // so the solution that worked is scale…
+    transform: scale(0.6);
+
+    background-color: $support-info;
+    color: #000;
+    font-weight: bold;
+}
+.error .counter {
+    background-color: $support-error;
+}
+
+.info .counter,
+.info-square .counter {
+    background-color: $support-info;
+    color: $text-primary;
+}
+
+.success .counter {
+    background-color: $support-success;
+}
+
+.warning .counter,
+.warning-alt .counter {
+    background-color: $support-warning;
+}
+
+//
+// Footer
+//
+
+.clearAllButton {
+    composes: inline selfEnd from 'styles/layout.scss';
+    composes: shadow-transition elevation-6dp from 'styles/shadows.scss';
+    margin-left: auto;
+}

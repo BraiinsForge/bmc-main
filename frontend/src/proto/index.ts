@@ -7,6 +7,7 @@ import { type iFormErrors, hasFormErrors } from '@/lib/form';
 import { create, type Message } from '@bufbuild/protobuf';
 import { ConnectError, Code } from '@connectrpc/connect';
 import * as WktError from './gen/google/rpc/error_details_pb';
+import type { Timezone } from './pb';
 
 export type RpcStatus = {
     rpc_reason_code: Code;
@@ -68,6 +69,14 @@ export function renderFieldErrorsAsList(fieldErrors: Maybe<string[]>): null | st
     if (fieldErrors.length === 1) return fieldErrors[0];
     return fieldErrors.map(x => `- ${x}`).join('\n');
 }
+export function collectAllErrors(error: unknown | Error | ConnectError): null | string[] {
+    const $ = parseFormErrors(parseError(error), []);
+    return $.global ?? null;
+}
+export function collectAllErrorsAsFormattedList(error: unknown | Error | ConnectError): null | string {
+    const $ = collectAllErrors(error);
+    return renderFieldErrorsAsList($);
+}
 
 export type MessageFields<T extends Message> = keyof Omit<T, '$unknown' | '$typeName'>;
 export type FormValues<T extends Message> = { [Key in MessageFields<T>]: T[Key] };
@@ -76,9 +85,14 @@ export type FormState<T extends Message, ExtraValues extends void | Record<strin
     errors: ExtraValues extends void ? FormErrors<MessageFields<T>> : FormErrors<MessageFields<T & ExtraValues>>;
 };
 
+export function renderTimezone(tz: Maybe<Timezone>): string {
+    if (!tz) return 'N/A';
+    return `UTC${tz.offset} (${tz.label})`;
+}
+
 // Utilities index
+export * from './pb';
 export * from './rpc';
-export * from '@bufbuild/protobuf/wkt';
 
 export {
     abort,
@@ -88,5 +102,3 @@ export {
     // Types
     type Message,
 };
-
-export type { CallOptions } from '@connectrpc/connect';

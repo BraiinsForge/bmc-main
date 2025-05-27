@@ -1,0 +1,9 @@
+@use 'styles/carbon' as *;
+
+.header {
+    composes: horizontal justified from 'styles/layout.scss';
+}
+
+.title {
+    composes: heading-06 from 'styles/carbon/typography.scss';
+}

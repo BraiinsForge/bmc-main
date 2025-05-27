@@ -48,6 +48,8 @@ message UpgradeRequest {
 
 service UpgradeService {
   rpc CheckForUpgrade(google.protobuf.Empty) returns (CheckForUpgradeResponse);
+  // Call with a release hash to donload data and provide user feedback about the progress
   rpc DownloadFirmware(DownloadFirmwareRequest) returns (stream DownloadFirmwareResponse);
+  // Called when release has been downloaded
   rpc Upgrade(UpgradeRequest) returns (google.protobuf.Empty);
 }

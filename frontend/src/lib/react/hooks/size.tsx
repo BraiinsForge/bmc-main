@@ -8,7 +8,7 @@ export function useSize(target: Ref): undefined | DOMRect {
 
     useLayoutEffect(() => {
         setSize(target.current?.getBoundingClientRect());
-    }, [target]);
+    }, [target.current]);
 
     // Where the magic happens
     useResizeObserver(target, entry => setSize(entry.contentRect));

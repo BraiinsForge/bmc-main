@@ -23,4 +23,6 @@ in {
     };
 
     checks = import ./nix/checks.nix { inherit pkgs src yarnFiles; };
+
+    inherit yarnFiles;
 }

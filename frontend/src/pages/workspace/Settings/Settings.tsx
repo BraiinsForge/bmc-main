@@ -1,11 +1,16 @@
 import { Component } from 'react';
-
 import { debounce } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
 import { type Location, useLocation } from 'react-router';
 
+// Lib
+import { getTimestamp } from '@/lib/time';
 import { assertUnreachable } from '@/lib/ts';
+import { unloadGuard, Ping, type PingCallback } from '@/lib/dom';
+
+// App
+import AppContext, { type AppContextType } from '@/context';
 import { store, useStore } from '@/store';
 import * as pb from '@/proto';
 
@@ -18,6 +23,7 @@ import {
     Temperature,
     TimeFormat,
     WeekDay,
+    type UpgradeFromFeedStatus,
 } from './components';
 import { InlineNotificationsGroup, Tabs, type TabsProps } from '@/components';
 import css from './Settings.scss';
@@ -78,6 +84,9 @@ interface State {
     genTimezone: LeafState<pb.Timezone>;
 
     secAllowDataCollection: LeafState<boolean>;
+
+    upgradeFromFeedStatus: UpgradeFromFeedStatus;
+    upgradeFromFeedErrors: Maybe<string[]>;
 }
 const getInitialState = (): State => ({
     activeTab: Tab.general,
@@ -89,10 +98,43 @@ const getInitialState = (): State => ({
 
     genTimezone: getEmptyLeafState(),
     secAllowDataCollection: getEmptyLeafState(),
+
+    upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
+    upgradeFromFeedErrors: [],
 });
 
 class View extends Component<Props, State> {
-    readonly state = getInitialState();
+    static contextType = AppContext;
+    declare context: AppContextType;
+
+    #ping: Ping;
+    #handlePong: PingCallback = (isOnline, wasOnline) => {
+        if (
+            // Checking that we actually were offline before coming back
+            // avoids potential race-condition with catching pongs
+            // of server that did not go down yet.
+            //
+            // The strict comparison is required because
+            // the initial value of `wasOffline` is `null`.
+            wasOnline === false &&
+            isOnline === true
+        ) {
+            this.#ping.stop();
+            unloadGuard.disable();
+            window.location.reload();
+        }
+    };
+
+    constructor(props: Props) {
+        super(props);
+        this.state = getInitialState();
+        this.#ping = new Ping({
+            url: window.location.origin,
+            method: 'xhr',
+            onPong: this.#handlePong,
+            interval: 500,
+        });
+    }
 
     componentDidMount = () => this.#mount();
     componentWillUnmount = () => pb.abort.all(this);
@@ -110,21 +152,7 @@ class View extends Component<Props, State> {
 
     #noop = () => {};
     #fetchData = async (): Promise<void> => {
-        await Promise.allSettled([this.#fetchUpgradeInfo(), this.#fetchSystemInfo()]);
-    };
-
-    private fetchUpgradeInfoAbort = pb.abort.get();
-    #fetchUpgradeInfo = async (): Promise<void> => {
-        try {
-            const { signal } = this.fetchUpgradeInfoAbort.replace();
-            const upgradeInfo = await pb.rpc.upgrade.checkForUpgrade({}, { signal });
-            this.setState(s => ({ data: { ...s.data, upgradeInfo } }));
-        } catch ($) {
-            if (pb.abort.is($)) return;
-            const err = pb.parseError($);
-            const errors = pb.parseFormErrors(err, []);
-            this.setState({ globalErrors: errors.global });
-        }
+        await Promise.allSettled([this.#upgradesFeedCheck(), this.#fetchSystemInfo()]);
     };
 
     private fetchSystemInfoAbort = pb.abort.get();
@@ -141,9 +169,7 @@ class View extends Component<Props, State> {
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            const err = pb.parseError($);
-            const errors = pb.parseFormErrors(err, []);
-            this.setState({ globalErrors: errors.global });
+            this.setState({ globalErrors: pb.collectAllErrors($) });
         }
     };
 
@@ -190,13 +216,26 @@ class View extends Component<Props, State> {
 
     private generalSetTimezoneAbort = pb.abort.get();
     #generalSetTimezone = async (value: pb.Timezone): Promise<void> => {
+        const { genTimezone } = this.state;
+
+        // No sense in moving ahead if we don't yet know
+        // the current timezone or if it's already set.
+        if (genTimezone.value == null || value.id === genTimezone.value?.id) return;
+
+        const { formatMessage } = this.props.intl;
+        const { notify } = this.context;
+
         try {
             const { signal } = this.generalSetTimezoneAbort.replace();
             await setState(this, s => ({ genTimezone: getEmptyLeafState(s.genTimezone.value, 'saving') }));
             await pb.rpc.sys.setTimezone({ id: value.id }, { signal });
+            notify(
+                'success',
+                formatMessage({ defaultMessage: 'Timezone changed to {value}' }, { value: pb.renderTimezone(value) }),
+            );
         } catch ($) {
             if (pb.abort.is($)) return;
-            const errors = pb.parseFormErrors(pb.parseError($), []).global;
+            const errors = pb.collectAllErrors($);
             this.setState(s => ({ genTimezone: { ...s.genTimezone, errors } }));
         } finally {
             await this.#fetchSystemInfo();
@@ -395,9 +434,172 @@ class View extends Component<Props, State> {
     // Upgrades
     //
 
+    private upgradesFeedCheckAbort = pb.abort.get();
+    #upgradesFeedCheck = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { notify } = this.context;
+        await setState(this, { upgradeFromFeedStatus: { kind: 'checking-upgrade', upgradeInfo: null } });
+
+        try {
+            const { signal } = this.upgradesFeedCheckAbort.replace();
+            const upgradeInfo = await pb.rpc.upgrade.checkForUpgrade({}, { signal });
+
+            // Upgrade available
+            if (upgradeInfo.latestRelease) {
+                this.setState(s => ({
+                    data: { ...s.data, upgradeInfo },
+                    upgradeFromFeedStatus: {
+                        kind: 'upgrade-available',
+                        upgradeInfo,
+                    },
+                }));
+            }
+
+            // Up to date
+            else {
+                this.setState(s => ({
+                    data: { ...s.data, upgradeInfo },
+                    upgradeFromFeedStatus: { kind: 'up-to-date', upgradeInfo: null },
+                }));
+            }
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            const errors = pb.collectAllErrors($);
+            const message = formatMessage({ defaultMessage: 'Failed to check for upgrade!' });
+            notify('error', message);
+
+            this.setState(s => ({
+                data: { ...s.data, upgradeInfo: null },
+                upgradeFromFeedErrors: errors,
+                upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
+            }));
+        }
+    };
+
+    private upgradesFeedDownloadAbort = pb.abort.get();
+    #upgradesFeedDownload = async (hash: string): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { upgradeInfo } = this.state.data;
+        const { notify } = this.context;
+
+        const setBackWithError = (error: string[]) => {
+            unloadGuard.disable();
+            this.setState(
+                {
+                    upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
+                    upgradeFromFeedErrors: error,
+                },
+                this.#upgradesFeedCheck,
+            );
+        };
+        if (!upgradeInfo) return setBackWithError([formatMessage({ defaultMessage: 'Upgrade info not available!' })]);
+        unloadGuard.enable();
+
+        try {
+            const { signal } = this.upgradesFeedDownloadAbort.replace();
+
+            const stream = pb.rpc.upgrade.downloadFirmware({ hash }, { signal });
+            for await (const msg of stream) {
+                const data = msg.state;
+                if (!data.case) {
+                    return setBackWithError([formatMessage({ defaultMessage: 'Invalid system upgrade response!' })]);
+                }
+
+                switch (data.case) {
+                    case 'downloadProgress':
+                        this.setState({
+                            upgradeFromFeedStatus: {
+                                kind: 'downloading',
+                                upgradeInfo,
+                                downloadProgress: data.value,
+                            },
+                        });
+                        break;
+
+                    case 'downloadFinished':
+                        unloadGuard.disable();
+                        await setState(this, {
+                            upgradeFromFeedStatus: {
+                                kind: 'installing',
+                                upgradeInfo,
+                                startTime: getTimestamp(),
+                            },
+                        });
+                        this.#upgradesFeedConfirm(data.value.hash);
+                        break;
+
+                    default:
+                        assertUnreachable(data, 'upgrade download progress');
+                }
+            }
+        } catch ($) {
+            unloadGuard.disable();
+            if (pb.abort.is($)) return;
+            const error = pb.collectAllErrorsAsFormattedList($);
+            const message = formatMessage({ defaultMessage: 'Unexpected error: {error}' }, { error });
+            notify('error', message);
+        }
+    };
+
+    private abortFeedUpgrade = pb.abort.get();
+    #upgradesFeedConfirm = async (hash: string): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { upgradeInfo } = this.state.data;
+
+        const setBackWithError = (error: string[]) => {
+            this.setState(
+                s => ({
+                    data: { ...s.data, upgradeInfo: null },
+                    upgradeFromFeedErrors: error,
+                    upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
+                }),
+                this.#upgradesFeedCheck,
+            );
+        };
+        if (!upgradeInfo) return setBackWithError([formatMessage({ defaultMessage: 'Upgrade info not available!' })]);
+
+        // When the installation starts, the process leads to either
+        //  - an error
+        //  - a success with a server restart
+        //
+        // This means that this one needs to be removed either on the error
+        // or when reloading the page after the server restart
+        unloadGuard.enable();
+
+        try {
+            await setState(this, {
+                upgradeFromFeedStatus: {
+                    kind: 'installing',
+                    upgradeInfo,
+                    startTime: getTimestamp(),
+                },
+            });
+
+            const { signal } = this.abortFeedUpgrade.replace();
+            await pb.rpc.upgrade.upgrade({ hash }, { signal });
+
+            await setState(this, {
+                upgradeFromFeedErrors: null,
+                upgradeFromFeedStatus: {
+                    kind: 'restarting',
+                    upgradeInfo: null,
+                    startTime: Math.floor(Date.now() / 1e3),
+                },
+            });
+            this.#ping.start();
+        } catch ($) {
+            unloadGuard.disable();
+            if (pb.abort.is($)) return;
+            setBackWithError(
+                pb.collectAllErrors($) ?? [formatMessage({ defaultMessage: 'Failed to upgrade the system!' })],
+            );
+        }
+    };
+
     #updatesToggle = (enabled: boolean): void => console.log(enabled);
     #updatesRender = (): ReactNode => {
-        const { upgradeInfo } = this.state.data;
+        const { upgradeFromFeedStatus, upgradeFromFeedErrors } = this.state;
         return (
             <SectionUpgrade
                 automaticUpgrades={{
@@ -406,7 +608,10 @@ class View extends Component<Props, State> {
                     disabled: true,
                 }}
                 versionCurrent="24.04.1"
-                upgradeInfo={upgradeInfo}
+                status={upgradeFromFeedStatus}
+                errors={upgradeFromFeedErrors}
+                onCheckUpdates={this.#upgradesFeedCheck}
+                onDownload={this.#upgradesFeedDownload}
             />
         );
     };

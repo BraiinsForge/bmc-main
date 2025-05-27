@@ -8,6 +8,10 @@
 .placeholder {
     color: $text-placeholder;
 }
+.estimatedDuration {
+    color: $text-secondary;
+    line-height: 1.28;
+}
 
 //
 // Updates box
@@ -21,13 +25,20 @@
     background: $layer-01;
 }
 
-.updateForm {
-    composes: vertical from 'styles/layout.scss';
-    gap: mini-units(2);
-    inline-size: to-rem(480px);
-    max-inline-size: 100%;
+.facts {
+    position: relative;
+    width: to-rem(520px);
+    max-width: 100%;
+
+    :global(.cds--inline-loading) {
+        display: inline-flex;
+        flex-grow: 0;
+        width: auto;
+    }
 
     table {
+        width: 100%;
+
         th,
         td {
             height: mini-units(4);
@@ -43,15 +54,41 @@
         }
     }
 }
-.updateFormFooter {
-    composes: horizontal center from 'styles/layout.scss';
-    gap: mini-units(4);
-    margin-block-start: mini-units(2);
-    user-select: none;
 
-    .estimatedDuration {
+.statusMessage {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(1);
+    width: 100%;
+    margin-top: mini-units(1);
+
+    &:empty {
+        display: none;
+    }
+}
+
+.control {
+    margin-top: mini-units(4);
+    &:empty {
+        display: none;
+    }
+}
+
+.progressbar {
+    .icon {
+        position: absolute;
+        right: 0;
+    }
+    [dir='rtl'] & .icon {
+        right: auto;
+        left: 0;
+    }
+
+    .footer {
+        margin-top: mini-units(1);
         color: $text-secondary;
-        line-height: 1.28;
+    }
+    &.invalid .footer {
+        color: $text-error;
     }
 }
 
@@ -110,5 +147,66 @@
             list-style-position: outside;
             line-height: 1.7;
         }
+    }
+}
+
+.downloadConfirmBar {
+    composes: horizontal center startJustified from 'styles/layout.scss';
+    gap: mini-units(2);
+
+    @media (width <= 700px) {
+        flex-direction: column;
+        justify-content: start;
+        align-items: flex-start;
+    }
+}
+
+.overlayContent {
+    composes: inline vertical startJustified from 'styles/layout.scss';
+    composes: scrollbar from 'styles/interaction.scss';
+    gap: mini-units(3);
+
+    max-width: 60vw;
+    max-height: 85vh;
+    overflow-y: auto;
+
+    background-color: $background;
+    padding: mini-units(3);
+
+    @media (width <= 700px) {
+        max-width: 90vw;
+    }
+
+    .icon {
+        $size: to-rem(32px);
+        width: $size;
+        height: $size;
+
+        &.green {
+            fill: $braiins-alert-green;
+        }
+        &.red {
+            fill: $braiins-alert-red;
+        }
+    }
+
+    .title {
+        @include type-style('heading-03');
+        display: flex;
+        flex-flow: row;
+        align-items: center;
+        gap: mini-units(2);
+    }
+}
+
+.overlayRestart {
+    composes: overlayContent;
+
+    .title .icon {
+        color: $support-success;
+    }
+
+    [role='timer'] {
+        font-weight: bold;
     }
 }

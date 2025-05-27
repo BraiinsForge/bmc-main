@@ -19,8 +19,12 @@ node_modules
 .vscode/*
 !.vscode/extensions.json
 .idea
+.venv
 
 # Generated
 **/*.scss.d.ts
 *storybook.log
 dist
+
+# Firware runtime artifacts
+@mockfs/tmp/*
