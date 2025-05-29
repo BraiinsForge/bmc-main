@@ -1,10 +1,14 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use bmc::time::Timezone;
+use anyhow::anyhow;
+use bmc::{manager::NetworkProtocolConfig, time::Timezone};
 use bmc_platform::BmcPlatform;
-use std::sync::{Arc, Mutex};
-use std::{net::IpAddr, path::Path, time::Duration};
-use std::{path::Path, time::Duration};
+use std::{
+    net::IpAddr,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tracing::info;
 
 use crate::{MockSessionManager, mockfs::MockFs};
@@ -24,6 +28,7 @@ pub struct Manager {
     mac_address: String,
     ip_address: IpAddr,
     hostname: String,
+    network_config: Arc<Mutex<NetworkProtocolConfig>>,
 }
 
 impl Manager {
@@ -45,6 +50,7 @@ impl Manager {
             hostname,
             mac_address,
             ip_address,
+            network_config: Arc::new(Mutex::new(NetworkProtocolConfig::Dhcp)),
         }
     }
 }
@@ -141,5 +147,19 @@ impl bmc::BmcManager for Manager {
 
     fn ip_address(&self) -> Option<IpAddr> {
         Some(self.ip_address)
+    }
+
+    async fn network_config(&self) -> Option<NetworkProtocolConfig> {
+        self.network_config.lock().ok().map(|config| config.clone())
+    }
+
+    async fn set_network_config(&self, config: NetworkProtocolConfig) -> anyhow::Result<()> {
+        let mut network_config = self
+            .network_config
+            .lock()
+            .map_err(|_| anyhow!("Failed to acquire lock for network config"))?;
+
+        *network_config = config;
+        Ok(())
     }
 }
