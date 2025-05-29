@@ -3,6 +3,7 @@
 use bmc::time::Timezone;
 use bmc_platform::BmcPlatform;
 use std::sync::{Arc, Mutex};
+use std::{net::IpAddr, path::Path, time::Duration};
 use std::{path::Path, time::Duration};
 use tracing::info;
 
@@ -20,6 +21,9 @@ pub struct Manager {
     pub session_manager: MockSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     password: Arc<Mutex<Option<String>>>,
+    mac_address: String,
+    ip_address: IpAddr,
+    hostname: String,
 }
 
 impl Manager {
@@ -28,6 +32,9 @@ impl Manager {
         mockfs: MockFs,
         session_manager: MockSessionManager,
         password: Arc<Mutex<Option<String>>>,
+        hostname: String,
+        mac_address: String,
+        ip_address: IpAddr,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
         Self {
@@ -35,6 +42,9 @@ impl Manager {
             session_manager,
             timezone_sender,
             password,
+            hostname,
+            mac_address,
+            ip_address,
         }
     }
 }
@@ -119,5 +129,17 @@ impl bmc::BmcManager for Manager {
     async fn factory_reset(&self, hard: bool) -> Result<(), Self::Error> {
         info!(hard, "Performing factory reset...");
         Ok(())
+    }
+
+    async fn hostname(&self) -> Option<String> {
+        Some(self.hostname.clone())
+    }
+
+    fn mac_address(&self) -> Option<String> {
+        Some(self.mac_address.to_ascii_lowercase().clone())
+    }
+
+    fn ip_address(&self) -> Option<IpAddr> {
+        Some(self.ip_address)
     }
 }

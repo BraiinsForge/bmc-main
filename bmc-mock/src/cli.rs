@@ -1,7 +1,10 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc::{Configuration, ServerConfig};
-use std::path::{Path, PathBuf};
+use std::{
+    net::IpAddr,
+    path::{Path, PathBuf},
+};
 
 use clap::Parser;
 
@@ -38,6 +41,15 @@ pub struct Config {
     /// Run miner with a factory-default flag
     #[clap(long)]
     pub factory_default: bool,
+    /// MAC address string for mockup test
+    #[clap(long, default_value = "00:0A:35:FF:FF:FF")]
+    pub mac_address: String,
+    /// IP address string for mockup test
+    #[clap(long, default_value = "192.168.0.1")]
+    pub ip_address: IpAddr,
+    /// Hostname string for mockup test
+    #[clap(long, default_value = "bmc-d00627")]
+    pub hostname: String,
 }
 
 impl From<Config> for Configuration {

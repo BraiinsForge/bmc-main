@@ -33,14 +33,22 @@ async fn main() -> Result<()> {
     let mockfs = mockfs::MockFs::new(&config.mockfs_path);
     mockfs.init(config.factory_default)?;
 
+    let password = Arc::new(Mutex::new(system_password));
+
+    let manager = Manager::new(
+        mockfs,
+        MockSessionManager::new(password.clone()),
+        password,
+        config.hostname.clone(),
+        config.mac_address.clone(),
+        config.ip_address,
+    );
+
     let config = config.into();
 
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
     let firmware_resolver = FirmwareResolver::new(MockIndex);
-
-    let password = Arc::new(Mutex::new(system_password));
-    let manager = Manager::new(mockfs, MockSessionManager::new(password.clone()), password);
 
     tokio::task::spawn(bmc::entry::main(
         manager,
