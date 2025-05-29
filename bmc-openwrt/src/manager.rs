@@ -8,9 +8,14 @@ use anyhow::anyhow;
 use bmc::{BmcManager, time::Timezone};
 use bmc_platform::BmcPlatform;
 use std::io;
-use std::path::Path;
+use std::{net::IpAddr, path::Path};
 use tokio::{fs, process::Command};
 use tracing::info;
+
+use crate::{
+    network::NetworkInterface,
+    unix::{call_command, call_command_to_string, get_hostname, get_ip_address},
+};
 
 #[derive(Debug)]
 pub struct Manager {
@@ -21,9 +26,12 @@ pub struct Manager {
 impl Manager {
     const SYSUPGRADE_BIN: &'static str = "/sbin/sysupgrade";
     const SYSUPGRADE_ARG_NO_SAVE: &'static str = "-n";
-    const UPGRADE_RESULT_FILE_PATH: &'static str = "/etc/upgrade_result";
-    const UCI_SYSTEM_ZONENAME: &'static str = "system.@system[0].zonename";
-    const UCI_SYSTEM_TIMEZONE: &'static str = "system.@system[0].timezone";
+    const UPGRADE_RESULT_FILE_PATH: &str = "/etc/upgrade_result";
+    const DEFAULT_INTERFACE: &str = "eth0";
+    const DEFAULT_AP_INTERFACE_NAME: &'static str = "ethap0";
+    const UCI_SYSTEM_ZONENAME: &str = "system.@system[0].zonename";
+    const UCI_SYSTEM_TIMEZONE: &str = "system.@system[0].timezone";
+    const UCI_SYSTEM_HOSTNAME: &str = "system.@system[0].hostname";
 
     #[must_use]
     pub fn new(session_manager: OpenwrtSessionManager, timezone: Timezone) -> Self {
@@ -32,6 +40,22 @@ impl Manager {
             session_manager,
             timezone_sender,
         }
+    }
+
+    fn get_mac_address() -> Option<String> {
+        NetworkInterface::get_by_name(Self::DEFAULT_INTERFACE)
+            .and_then(|network| network.mac_address().map(|mac| mac.to_string()))
+    }
+
+    fn get_network_ip_by_name(name: &str) -> Option<IpAddr> {
+        NetworkInterface::get_by_name(name).and_then(|network| network.ipv4_address())
+    }
+
+    fn get_active_ip() -> Option<IpAddr> {
+        [Self::DEFAULT_INTERFACE, Self::DEFAULT_AP_INTERFACE_NAME]
+            .iter()
+            .find_map(|iface| Self::get_network_ip_by_name(iface))
+            .or_else(get_ip_address)
     }
 }
 
@@ -157,6 +181,28 @@ impl BmcManager for Manager {
         call_command("bos", &args).await?;
         Ok(())
     }
+
+    async fn hostname(&self) -> Option<String> {
+        match uci_get_opt(Self::UCI_SYSTEM_HOSTNAME).await {
+            None => get_hostname().await,
+            hostname => hostname,
+        }
+    }
+
+    fn ip_address(&self) -> Option<IpAddr> {
+        Self::get_active_ip()
+    }
+
+    fn mac_address(&self) -> Option<String> {
+        Self::get_mac_address()
+    }
+}
+
+async fn uci_get_opt(opt: &str) -> Option<String> {
+    call_command_to_string("uci", &["get", opt])
+        .await
+        .ok()
+        .map(|value| value.trim().to_owned())
 }
 
 #[derive(thiserror::Error, Debug)]

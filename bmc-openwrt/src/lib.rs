@@ -3,6 +3,7 @@
 pub mod generic_backlight_driver;
 pub mod linux_framebuffer_platform;
 pub mod manager;
+mod network;
 mod pwd;
 pub mod session;
 mod sys;

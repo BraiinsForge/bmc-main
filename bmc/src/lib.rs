@@ -11,6 +11,7 @@ mod storage_checker;
 mod system_upgrade;
 pub mod time;
 pub mod timezone_variant;
+pub mod utils;
 mod web;
 
 pub use manager::BmcManager;

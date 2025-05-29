@@ -104,6 +104,7 @@ flume = { version = "0.11.1", default-features = false }
 fs-err = { version = "3.1.0", features = ["tokio"] }
 futures = "0.3.31"
 futures-util = "0.3.31"
+get_if_addrs = "0.5.3"
 glob = "0.3.2"
 governor = "0.8.1"
 hex = "0.4.3"
@@ -124,6 +125,7 @@ minerctl-defs = { path = "tooling/minerctl/minerctl-defs" }
 nonzero_ext = "0.3.0"
 parking_lot = "0.12.3"
 pin-project = "1.1.10"
+pnet = "0.35.0"
 proc-macro2 = "1.0.94"
 prost = "0.13"
 prost-types = "0.13"
