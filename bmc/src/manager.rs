@@ -1,8 +1,13 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::{fmt::Debug, path::Path};
+use std::{
+    fmt::Debug,
+    net::{IpAddr, Ipv4Addr},
+    path::Path,
+};
 
 use bmc_platform::BmcPlatform;
+use strum::Display;
 use tokio::sync::watch;
 
 use crate::time::Timezone;
@@ -54,4 +59,43 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     fn mac_address(&self) -> Option<String>;
 
     fn ip_address(&self) -> Option<IpAddr>;
+
+    async fn network_config(&self) -> Option<NetworkProtocolConfig>;
+
+    async fn set_network_config(&self, config: NetworkProtocolConfig) -> anyhow::Result<()>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NetworkProtocolConfig {
+    Dhcp,
+    Static(NetworkProtocolConfigStatic),
+}
+
+impl Default for NetworkProtocolConfig {
+    fn default() -> Self {
+        Self::Dhcp
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NetworkProtocolConfigStatic {
+    pub address: Ipv4Addr,
+    pub netmask: Ipv4Addr,
+    pub gateway: Ipv4Addr,
+    pub dns_servers: Vec<Ipv4Addr>,
+}
+
+#[derive(Debug, Display, Eq, PartialEq)]
+pub enum NetworkProtocol {
+    Dhcp,
+    Static,
+}
+
+impl From<NetworkProtocolConfig> for NetworkProtocol {
+    fn from(network_config: NetworkProtocolConfig) -> Self {
+        match network_config {
+            NetworkProtocolConfig::Dhcp => NetworkProtocol::Dhcp,
+            NetworkProtocolConfig::Static(_) => NetworkProtocol::Static,
+        }
+    }
 }
