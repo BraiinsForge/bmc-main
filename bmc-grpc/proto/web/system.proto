@@ -46,6 +46,26 @@ message Timezone {
   string offset = 3;
 }
 
+message NetworkInfoResponse {
+  string mac_address = 1;
+  string ip_address = 2;
+  string hostname = 3;
+}
+
+message NetworkConfig {
+  oneof protocol {
+    google.protobuf.Empty dhcp = 1;
+    NetworkConfigStatic static = 2;
+  }
+}
+
+message NetworkConfigStatic {
+  string address = 1;
+  string netmask = 2;
+  string gateway = 3;
+  repeated string dns_servers = 4;
+}
+
 // Service to provide information about system
 service SystemService {
   rpc HasPassword(google.protobuf.Empty) returns (google.protobuf.BoolValue);
@@ -59,4 +79,7 @@ service SystemService {
   // Get the list of available timezones
   rpc GetTimezoneList(google.protobuf.Empty) returns (GetTimezoneListResponse);
   rpc FactoryReset(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc GetNetworkInfo(google.protobuf.Empty) returns (NetworkInfoResponse);
+  rpc GetNetworkConfig(google.protobuf.Empty) returns (NetworkConfig);
+  rpc SetNetworkConfig(NetworkConfig) returns (google.protobuf.Empty);
 }
