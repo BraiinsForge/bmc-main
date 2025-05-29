@@ -48,4 +48,10 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     /// Execute factory reset and reboot
     async fn factory_reset(&self, hard: bool) -> Result<(), Self::Error>;
+
+    async fn hostname(&self) -> Option<String>;
+
+    fn mac_address(&self) -> Option<String>;
+
+    fn ip_address(&self) -> Option<IpAddr>;
 }
