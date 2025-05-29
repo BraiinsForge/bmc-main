@@ -13,10 +13,15 @@ use bmc_upgrade::firmware::FirmwareResolver;
 use clap as _;
 use dirs as _;
 use slint as _;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Mutex;
 use std::{env, net::SocketAddr, str::FromStr, sync::Arc};
 use tracing as _;
 use uuid::Uuid;
+
+const HOSTNAME: &str = "bmc-d00627";
+const MAC_ADDRESS: &str = "00:0A:35:FF:FF:FF";
+const IP_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1));
 
 struct TestApp {
     address: String,
@@ -30,7 +35,14 @@ async fn start_app() -> Result<TestApp> {
     let mockfs_path = env::temp_dir().join(random_dir_prefix);
 
     let mockfs = MockFs::new(mockfs_path);
-    let manager = Manager::new(mockfs, session_manager, password);
+    let manager = Manager::new(
+        mockfs,
+        session_manager,
+        password,
+        HOSTNAME.to_owned(),
+        MAC_ADDRESS.to_owned(),
+        IP_ADDRESS,
+    );
     let session_manager = manager.session_manager();
 
     let config = Configuration {
