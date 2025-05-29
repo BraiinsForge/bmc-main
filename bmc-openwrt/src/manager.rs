@@ -2,19 +2,27 @@
 
 use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
 use crate::session::OpenwrtSessionManager;
-use crate::unix::call_command;
 use crate::{ROOT_USERNAME, pwd, unix};
-use anyhow::anyhow;
-use bmc::{BmcManager, time::Timezone};
+use anyhow::{anyhow, bail};
+use bmc::{
+    BmcManager,
+    manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
+    time::Timezone,
+};
 use bmc_platform::BmcPlatform;
 use std::io;
-use std::{net::IpAddr, path::Path};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    path::Path,
+};
 use tokio::{fs, process::Command};
 use tracing::info;
 
 use crate::{
     network::NetworkInterface,
-    unix::{call_command, call_command_to_string, get_hostname, get_ip_address},
+    unix::{
+        call_command, call_command_stdin, call_command_to_string, get_hostname, get_ip_address,
+    },
 };
 
 #[derive(Debug)]
@@ -32,6 +40,14 @@ impl Manager {
     const UCI_SYSTEM_ZONENAME: &str = "system.@system[0].zonename";
     const UCI_SYSTEM_TIMEZONE: &str = "system.@system[0].timezone";
     const UCI_SYSTEM_HOSTNAME: &str = "system.@system[0].hostname";
+    const UCI_NET_LAN: &str = "network.lan";
+    const UCI_NET_LAN_PROTO_DHCP_VARIANT: &str = "dhcp";
+    const UCI_NET_LAN_PROTO_STATIC_VARIANT: &str = "static";
+    const UCI_NET_LAN_PROTO: &str = "network.lan.proto";
+    const UCI_NET_LAN_IPADDR: &str = "network.lan.ipaddr";
+    const UCI_NET_LAN_NETMASK: &str = "network.lan.netmask";
+    const UCI_NET_LAN_GATEWAY: &str = "network.lan.gateway";
+    const UCI_NET_LAN_DNS: &str = "network.lan.dns";
 
     #[must_use]
     pub fn new(session_manager: OpenwrtSessionManager, timezone: Timezone) -> Self {
@@ -39,6 +55,30 @@ impl Manager {
         Self {
             session_manager,
             timezone_sender,
+        }
+    }
+
+    async fn restart_system_service(&self) -> anyhow::Result<()> {
+        call_command("uci", &["commit", "system"]).await?;
+        call_command("/etc/init.d/system", &["restart"]).await?;
+        Ok(())
+    }
+
+    async fn get_network_protocol(&self) -> Option<NetworkProtocol> {
+        let output = Command::new("uci")
+            .arg("get")
+            .arg(Self::UCI_NET_LAN_PROTO)
+            .output()
+            .await
+            .ok()?;
+        if output.status.success() {
+            match String::from_utf8(output.stdout).as_deref().map(str::trim) {
+                Ok(Self::UCI_NET_LAN_PROTO_DHCP_VARIANT) => Some(NetworkProtocol::Dhcp),
+                Ok(Self::UCI_NET_LAN_PROTO_STATIC_VARIANT) => Some(NetworkProtocol::Static),
+                _ => None,
+            }
+        } else {
+            None
         }
     }
 
@@ -140,11 +180,10 @@ impl BmcManager for Manager {
         let zonename_cmd = format!("{}={}", Self::UCI_SYSTEM_ZONENAME, timezone.iana);
         call_command("uci", &["set", &zonename_cmd]).await?;
 
-        let timezone_cmd = format!("{}={}", Self::UCI_SYSTEM_TIMEZONE, timezone.posix);
+        let timezone_cmd: String = format!("{}={}", Self::UCI_SYSTEM_TIMEZONE, timezone.posix);
         call_command("uci", &["set", &timezone_cmd]).await?;
 
-        call_command("uci", &["commit", "system"]).await?;
-        call_command("/etc/init.d/system", &["restart"]).await?;
+        self.restart_system_service().await?;
 
         self.timezone_sender.send_if_modified(|current| {
             if *current != timezone {
@@ -195,6 +234,80 @@ impl BmcManager for Manager {
 
     fn mac_address(&self) -> Option<String> {
         Self::get_mac_address()
+    }
+
+    async fn network_config(&self) -> Option<NetworkProtocolConfig> {
+        let protocol = match self.get_network_protocol().await? {
+            NetworkProtocol::Dhcp => NetworkProtocolConfig::Dhcp,
+            NetworkProtocol::Static => NetworkProtocolConfig::Static(NetworkProtocolConfigStatic {
+                address: uci_get_opt(Self::UCI_NET_LAN_IPADDR).await?.parse().ok()?,
+                netmask: uci_get_opt(Self::UCI_NET_LAN_NETMASK).await?.parse().ok()?,
+                gateway: uci_get_opt(Self::UCI_NET_LAN_GATEWAY).await?.parse().ok()?,
+                dns_servers: uci_get_opt(Self::UCI_NET_LAN_DNS)
+                    .await
+                    .unwrap_or_else(String::new)
+                    .split_whitespace()
+                    .map(str::parse)
+                    .map(Result::ok)
+                    .collect::<Option<Vec<_>>>()?,
+            }),
+        };
+
+        Some(protocol)
+    }
+
+    async fn set_network_config(&self, config: NetworkProtocolConfig) -> anyhow::Result<()> {
+        let mut stdin = vec![];
+
+        match config {
+            NetworkProtocolConfig::Dhcp => {
+                stdin.extend_from_slice(&[
+                    format!(
+                        "set {}='{}'",
+                        Self::UCI_NET_LAN_PROTO,
+                        Self::UCI_NET_LAN_PROTO_DHCP_VARIANT
+                    ),
+                    format!("delete {}", Self::UCI_NET_LAN_IPADDR),
+                    format!("delete {}", Self::UCI_NET_LAN_NETMASK),
+                    format!("delete {}", Self::UCI_NET_LAN_GATEWAY),
+                    format!("delete {}", Self::UCI_NET_LAN_DNS),
+                ]);
+            }
+            NetworkProtocolConfig::Static(config) => {
+                stdin.extend_from_slice(&[
+                    format!(
+                        "set {}='{}'",
+                        Self::UCI_NET_LAN_PROTO,
+                        Self::UCI_NET_LAN_PROTO_STATIC_VARIANT
+                    ),
+                    format!("set {}='{}'", Self::UCI_NET_LAN_IPADDR, config.address),
+                    format!("set {}='{}'", Self::UCI_NET_LAN_NETMASK, config.netmask),
+                    format!("set {}='{}'", Self::UCI_NET_LAN_GATEWAY, config.gateway),
+                    format!(
+                        "set {}='{}'",
+                        Self::UCI_NET_LAN_DNS,
+                        config
+                            .dns_servers
+                            .iter()
+                            .map(Ipv4Addr::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ),
+                ]);
+            }
+        }
+
+        stdin.push(format!("commit {}", Self::UCI_NET_LAN));
+
+        let output = call_command_stdin("uci", &["-q", "batch"], &stdin.join("\n")).await?;
+        if !output.status.success() || !output.stderr.is_empty() {
+            let msg = String::from_utf8_lossy(&output.stderr).to_string();
+            bail!(msg);
+        }
+
+        call_command("/etc/init.d/network", &["restart"]).await?;
+
+        Ok(())
     }
 }
 

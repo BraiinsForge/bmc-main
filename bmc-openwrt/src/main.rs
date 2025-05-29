@@ -17,7 +17,9 @@ use bmc_openwrt::{
 };
 use bmc_platform as _;
 use bmc_upgrade::firmware::FirmwareResolver;
+use get_if_addrs as _;
 use memmap2 as _;
+use pnet as _;
 use pw_hash as _;
 use serde as _;
 use serde_json as _;
