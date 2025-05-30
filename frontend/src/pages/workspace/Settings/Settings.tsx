@@ -242,6 +242,21 @@ class View extends Component<Props, State> {
             this.setState(s => ({ genTimezone: getEmptyLeafState(s.genTimezone.value) }));
         }
     };
+    #generalFactoryReset = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { notify } = this.context;
+
+        try {
+            await pb.rpc.sys.factoryReset({});
+            notify('success', formatMessage({ defaultMessage: 'Factory reset complete!' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            notify(
+                'error',
+                pb.collectAllErrorsAsFormattedList($) ?? formatMessage({ defaultMessage: 'Unknown error!' }),
+            );
+        }
+    };
     #generalRender = (): ReactNode => {
         const { data, genTimezone } = this.state;
 
@@ -284,7 +299,7 @@ class View extends Component<Props, State> {
                     disabled: true,
                     onChange: this.#noop,
                 }}
-                onFactoryReset={undefined}
+                onFactoryReset={this.#generalFactoryReset}
             />
         );
     };

@@ -2,6 +2,7 @@ import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 
 import * as pb from '@/proto';
+import AppContext, { type AppContextType } from '@/context';
 import { Form, type iField, getID } from '@/lib/form';
 
 import { Field } from '../Field';
@@ -57,7 +58,7 @@ export interface SectionGeneralProps {
     temperature: iField<Temperature>;
     numberFormat: iField<keyof typeof NumberFormat>;
 
-    onFactoryReset?(): void;
+    onFactoryReset(): void;
 }
 interface Props extends SectionGeneralProps {
     intl: IntlShape;
@@ -66,6 +67,9 @@ interface Props extends SectionGeneralProps {
 const $id = getID('settings', 'general');
 
 class View extends Component<Props> {
+    static contextType = AppContext;
+    declare context: AppContextType;
+
     #dateFormatOptions = Object.keys(DateFormat) as (keyof typeof DateFormat)[];
     #dateFormatRender = (k: keyof typeof DateFormat): string => DateFormat[k];
     #dateFormatChange: DropdownProps<keyof typeof DateFormat>['onChange'] = x => {
@@ -139,6 +143,21 @@ class View extends Component<Props> {
         },
     ];
 
+    #reset = async (): Promise<void> => {
+        const { intl, onFactoryReset } = this.props;
+        const { confirm } = this.context;
+
+        const response: boolean = await confirm({
+            danger: true,
+            title: intl.formatMessage({ defaultMessage: 'Factory reset' }),
+            message: intl.formatMessage({
+                defaultMessage: 'Do you really want to reset the device to factory settings?',
+            }),
+            confirmLabel: intl.formatMessage({ defaultMessage: 'Reset' }),
+        });
+        if (response) onFactoryReset();
+    };
+
     render() {
         const {
             intl,
@@ -152,8 +171,6 @@ class View extends Component<Props> {
 
             temperature,
             numberFormat,
-
-            onFactoryReset,
         } = this.props;
 
         return (
@@ -293,12 +310,11 @@ class View extends Component<Props> {
                             defaultMessage:
                                 'Warning: This will delete all your custom configurations and display scenes.',
                         })}
-                        disabled={!onFactoryReset}
                     >
                         <Button
                             kind="secondary"
                             children={intl.formatMessage({ defaultMessage: 'Reset to Defaults' })}
-                            onClick={onFactoryReset}
+                            onClick={this.#reset}
                         />
                     </Field>
                 </FieldSet>
