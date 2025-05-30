@@ -700,6 +700,7 @@ dependencies = [
  "bmc-display",
  "bmc-grpc",
  "bmc-platform",
+ "bmc-shared",
  "bmc-upgrade",
  "chrono",
  "chrono-tz",
@@ -772,6 +773,7 @@ dependencies = [
  "bmc",
  "bmc-mock-display",
  "bmc-platform",
+ "bmc-shared",
  "bmc-upgrade",
  "chrono",
  "clap",
@@ -805,6 +807,7 @@ dependencies = [
  "bmc",
  "bmc-display",
  "bmc-platform",
+ "bmc-shared",
  "bmc-upgrade",
  "drm",
  "flume",
@@ -828,6 +831,17 @@ version = "0.1.0"
 dependencies = [
  "index-bmc",
  "strum",
+]
+
+[[package]]
+name = "bmc-shared"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "strum",
+ "strum_macros",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

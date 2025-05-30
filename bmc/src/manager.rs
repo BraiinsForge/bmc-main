@@ -10,7 +10,7 @@ use bmc_platform::BmcPlatform;
 use strum::Display;
 use tokio::sync::watch;
 
-use crate::time::Timezone;
+use bmc_shared::time::Timezone;
 
 #[async_trait::async_trait]
 pub trait BmcManager: Sync + Send + 'static + Debug {

@@ -7,9 +7,9 @@ use anyhow::{anyhow, bail};
 use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
-    time::Timezone,
 };
 use bmc_platform::BmcPlatform;
+use bmc_shared::time::Timezone;
 use std::io;
 use std::{
     net::{IpAddr, Ipv4Addr},

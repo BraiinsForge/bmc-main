@@ -1,8 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::anyhow;
-use bmc::{manager::NetworkProtocolConfig, time::Timezone};
+use bmc::manager::NetworkProtocolConfig;
 use bmc_platform::BmcPlatform;
+use bmc_shared::time::Timezone;
 use std::{
     net::IpAddr,
     path::Path,

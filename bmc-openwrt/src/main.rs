@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow};
-use bmc::{Configuration, log, time::Timezone};
+use bmc::{Configuration, log};
 use bmc_display::{
     display_controller::DisplayController,
     display_driver::{DisplayBacklightDriver, DisplayDriver},
@@ -13,6 +13,7 @@ use bmc_openwrt::{
     generic_backlight_driver::GenericBacklightDriver, linux_drm_platform::LinuxDrmPlatform,
     manager::Manager, session::OpenwrtSessionManager,
 };
+use bmc_shared::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;
 use slint::platform::software_renderer::RenderingRotation;
 use tracing::{error, info};

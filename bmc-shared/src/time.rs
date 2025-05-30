@@ -59,12 +59,12 @@ pub enum TimezoneError {
 
 impl Timezone {
     /// Returns list of supported timezones for OpenWrt
-    pub(crate) fn timezone_list() -> impl Iterator<Item = Self> {
+    pub fn timezone_list() -> impl Iterator<Item = Self> {
         IntoIterator::into_iter(TIMEZONE_VARIANTS)
     }
 
     /// Returns current timezone offset from UTC
-    pub(crate) fn current_timezone_offset(&self) -> Result<Offset, TimezoneError> {
+    pub fn current_timezone_offset(&self) -> Result<Offset, TimezoneError> {
         TryInto::<chrono_tz::Tz>::try_into(self)
             .map_err(|_| TimezoneError::Offset)
             .map(|tz| {
@@ -72,6 +72,16 @@ impl Timezone {
                 let offset = tz.offset_from_utc_datetime(&now);
                 let offset_duration = offset.base_utc_offset() + offset.dst_offset();
                 Offset::new(offset_duration)
+            })
+    }
+
+    /// Returns current timezone offset from UTC
+    pub fn current_timezone_tz_offset(&self) -> Result<chrono_tz::TzOffset, TimezoneError> {
+        TryInto::<chrono_tz::Tz>::try_into(self)
+            .map_err(|_| TimezoneError::Offset)
+            .map(|tz| {
+                let now = chrono::Utc::now().naive_utc();
+                tz.offset_from_utc_datetime(&now)
             })
     }
 
