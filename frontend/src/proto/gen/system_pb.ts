@@ -4,7 +4,7 @@
 
 import type { GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv2';
 import { fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
-import type { BoolValueSchema, EmptySchema } from '@bufbuild/protobuf/wkt';
+import type { BoolValueSchema, Empty, EmptySchema } from '@bufbuild/protobuf/wkt';
 import { file_google_protobuf_empty, file_google_protobuf_wrappers } from '@bufbuild/protobuf/wkt';
 import type { Message } from '@bufbuild/protobuf';
 
@@ -14,7 +14,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_system: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'CgxzeXN0ZW0ucHJvdG8SD2JyYWlpbnMuYm1jLndlYiIpChVDcmVhdGVQYXNzd29yZFJlcXVlc3QSEAoIcGFzc3dvcmQYASABKAkiRwoVQ2hhbmdlUGFzc3dvcmRSZXF1ZXN0EhgKEGN1cnJlbnRfcGFzc3dvcmQYASABKAkSFAoMbmV3X3Bhc3N3b3JkGAIgASgJIikKFVJlbW92ZVBhc3N3b3JkUmVxdWVzdBIQCghwYXNzd29yZBgBIAEoCSJCChNHZXRUaW1lem9uZVJlc3BvbnNlEisKCHRpbWV6b25lGAEgASgLMhkuYnJhaWlucy5ibWMud2ViLlRpbWV6b25lIiAKElNldFRpbWV6b25lUmVxdWVzdBIKCgJpZBgBIAEoCSJHChdHZXRUaW1lem9uZUxpc3RSZXNwb25zZRIsCgl0aW1lem9uZXMYASADKAsyGS5icmFpaW5zLmJtYy53ZWIuVGltZXpvbmUiNQoIVGltZXpvbmUSCgoCaWQYASABKAkSDQoFbGFiZWwYAiABKAkSDgoGb2Zmc2V0GAMgASgJMvYECg1TeXN0ZW1TZXJ2aWNlEkEKC0hhc1Bhc3N3b3JkEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GhouZ29vZ2xlLnByb3RvYnVmLkJvb2xWYWx1ZRJQCg5DcmVhdGVQYXNzd29yZBImLmJyYWlpbnMuYm1jLndlYi5DcmVhdGVQYXNzd29yZFJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUAoOQ2hhbmdlUGFzc3dvcmQSJi5icmFpaW5zLmJtYy53ZWIuQ2hhbmdlUGFzc3dvcmRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElAKDlJlbW92ZVBhc3N3b3JkEiYuYnJhaWlucy5ibWMud2ViLlJlbW92ZVBhc3N3b3JkUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJLCgtHZXRUaW1lem9uZRIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRokLmJyYWlpbnMuYm1jLndlYi5HZXRUaW1lem9uZVJlc3BvbnNlEkoKC1NldFRpbWV6b25lEiMuYnJhaWlucy5ibWMud2ViLlNldFRpbWV6b25lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJTCg9HZXRUaW1lem9uZUxpc3QSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaKC5icmFpaW5zLmJtYy53ZWIuR2V0VGltZXpvbmVMaXN0UmVzcG9uc2USPgoMRmFjdG9yeVJlc2V0EhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5YgZwcm90bzM',
+        'CgxzeXN0ZW0ucHJvdG8SD2JyYWlpbnMuYm1jLndlYiIpChVDcmVhdGVQYXNzd29yZFJlcXVlc3QSEAoIcGFzc3dvcmQYASABKAkiRwoVQ2hhbmdlUGFzc3dvcmRSZXF1ZXN0EhgKEGN1cnJlbnRfcGFzc3dvcmQYASABKAkSFAoMbmV3X3Bhc3N3b3JkGAIgASgJIikKFVJlbW92ZVBhc3N3b3JkUmVxdWVzdBIQCghwYXNzd29yZBgBIAEoCSJCChNHZXRUaW1lem9uZVJlc3BvbnNlEisKCHRpbWV6b25lGAEgASgLMhkuYnJhaWlucy5ibWMud2ViLlRpbWV6b25lIiAKElNldFRpbWV6b25lUmVxdWVzdBIKCgJpZBgBIAEoCSJHChdHZXRUaW1lem9uZUxpc3RSZXNwb25zZRIsCgl0aW1lem9uZXMYASADKAsyGS5icmFpaW5zLmJtYy53ZWIuVGltZXpvbmUiNQoIVGltZXpvbmUSCgoCaWQYASABKAkSDQoFbGFiZWwYAiABKAkSDgoGb2Zmc2V0GAMgASgJIlAKE05ldHdvcmtJbmZvUmVzcG9uc2USEwoLbWFjX2FkZHJlc3MYASABKAkSEgoKaXBfYWRkcmVzcxgCIAEoCRIQCghob3N0bmFtZRgDIAEoCSJ7Cg1OZXR3b3JrQ29uZmlnEiYKBGRoY3AYASABKAsyFi5nb29nbGUucHJvdG9idWYuRW1wdHlIABI2CgZzdGF0aWMYAiABKAsyJC5icmFpaW5zLmJtYy53ZWIuTmV0d29ya0NvbmZpZ1N0YXRpY0gAQgoKCHByb3RvY29sIl0KE05ldHdvcmtDb25maWdTdGF0aWMSDwoHYWRkcmVzcxgBIAEoCRIPCgduZXRtYXNrGAIgASgJEg8KB2dhdGV3YXkYAyABKAkSEwoLZG5zX3NlcnZlcnMYBCADKAky3gYKDVN5c3RlbVNlcnZpY2USQQoLSGFzUGFzc3dvcmQSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaGi5nb29nbGUucHJvdG9idWYuQm9vbFZhbHVlElAKDkNyZWF0ZVBhc3N3b3JkEiYuYnJhaWlucy5ibWMud2ViLkNyZWF0ZVBhc3N3b3JkUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJQCg5DaGFuZ2VQYXNzd29yZBImLmJyYWlpbnMuYm1jLndlYi5DaGFuZ2VQYXNzd29yZFJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUAoOUmVtb3ZlUGFzc3dvcmQSJi5icmFpaW5zLmJtYy53ZWIuUmVtb3ZlUGFzc3dvcmRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EksKC0dldFRpbWV6b25lEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiQuYnJhaWlucy5ibWMud2ViLkdldFRpbWV6b25lUmVzcG9uc2USSgoLU2V0VGltZXpvbmUSIy5icmFpaW5zLmJtYy53ZWIuU2V0VGltZXpvbmVSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElMKD0dldFRpbWV6b25lTGlzdBIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRooLmJyYWlpbnMuYm1jLndlYi5HZXRUaW1lem9uZUxpc3RSZXNwb25zZRI+CgxGYWN0b3J5UmVzZXQSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSTgoOR2V0TmV0d29ya0luZm8SFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJC5icmFpaW5zLmJtYy53ZWIuTmV0d29ya0luZm9SZXNwb25zZRJKChBHZXROZXR3b3JrQ29uZmlnEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5Gh4uYnJhaWlucy5ibWMud2ViLk5ldHdvcmtDb25maWcSSgoQU2V0TmV0d29ya0NvbmZpZxIeLmJyYWlpbnMuYm1jLndlYi5OZXR3b3JrQ29uZmlnGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5YgZwcm90bzM',
         [file_google_protobuf_empty, file_google_protobuf_wrappers],
     );
 
@@ -168,6 +168,94 @@ export type Timezone = Message<'braiins.bmc.web.Timezone'> & {
 export const TimezoneSchema: GenMessage<Timezone> = /*@__PURE__*/ messageDesc(file_system, 6);
 
 /**
+ * @generated from message braiins.bmc.web.NetworkInfoResponse
+ */
+export type NetworkInfoResponse = Message<'braiins.bmc.web.NetworkInfoResponse'> & {
+    /**
+     * @generated from field: string mac_address = 1;
+     */
+    macAddress: string;
+
+    /**
+     * @generated from field: string ip_address = 2;
+     */
+    ipAddress: string;
+
+    /**
+     * @generated from field: string hostname = 3;
+     */
+    hostname: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.NetworkInfoResponse.
+ * Use `create(NetworkInfoResponseSchema)` to create a new message.
+ */
+export const NetworkInfoResponseSchema: GenMessage<NetworkInfoResponse> = /*@__PURE__*/ messageDesc(file_system, 7);
+
+/**
+ * @generated from message braiins.bmc.web.NetworkConfig
+ */
+export type NetworkConfig = Message<'braiins.bmc.web.NetworkConfig'> & {
+    /**
+     * @generated from oneof braiins.bmc.web.NetworkConfig.protocol
+     */
+    protocol:
+        | {
+              /**
+               * @generated from field: google.protobuf.Empty dhcp = 1;
+               */
+              value: Empty;
+              case: 'dhcp';
+          }
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.NetworkConfigStatic static = 2;
+               */
+              value: NetworkConfigStatic;
+              case: 'static';
+          }
+        | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message braiins.bmc.web.NetworkConfig.
+ * Use `create(NetworkConfigSchema)` to create a new message.
+ */
+export const NetworkConfigSchema: GenMessage<NetworkConfig> = /*@__PURE__*/ messageDesc(file_system, 8);
+
+/**
+ * @generated from message braiins.bmc.web.NetworkConfigStatic
+ */
+export type NetworkConfigStatic = Message<'braiins.bmc.web.NetworkConfigStatic'> & {
+    /**
+     * @generated from field: string address = 1;
+     */
+    address: string;
+
+    /**
+     * @generated from field: string netmask = 2;
+     */
+    netmask: string;
+
+    /**
+     * @generated from field: string gateway = 3;
+     */
+    gateway: string;
+
+    /**
+     * @generated from field: repeated string dns_servers = 4;
+     */
+    dnsServers: string[];
+};
+
+/**
+ * Describes the message braiins.bmc.web.NetworkConfigStatic.
+ * Use `create(NetworkConfigStaticSchema)` to create a new message.
+ */
+export const NetworkConfigStaticSchema: GenMessage<NetworkConfigStatic> = /*@__PURE__*/ messageDesc(file_system, 9);
+
+/**
  * Service to provide information about system
  *
  * @generated from service braiins.bmc.web.SystemService
@@ -241,6 +329,30 @@ export const SystemService: GenService<{
     factoryReset: {
         methodKind: 'unary';
         input: typeof EmptySchema;
+        output: typeof EmptySchema;
+    };
+    /**
+     * @generated from rpc braiins.bmc.web.SystemService.GetNetworkInfo
+     */
+    getNetworkInfo: {
+        methodKind: 'unary';
+        input: typeof EmptySchema;
+        output: typeof NetworkInfoResponseSchema;
+    };
+    /**
+     * @generated from rpc braiins.bmc.web.SystemService.GetNetworkConfig
+     */
+    getNetworkConfig: {
+        methodKind: 'unary';
+        input: typeof EmptySchema;
+        output: typeof NetworkConfigSchema;
+    };
+    /**
+     * @generated from rpc braiins.bmc.web.SystemService.SetNetworkConfig
+     */
+    setNetworkConfig: {
+        methodKind: 'unary';
+        input: typeof NetworkConfigSchema;
         output: typeof EmptySchema;
     };
 }> = /*@__PURE__*/ serviceDesc(file_system, 0);

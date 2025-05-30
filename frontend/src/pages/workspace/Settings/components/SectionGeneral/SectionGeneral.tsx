@@ -5,10 +5,7 @@ import * as pb from '@/proto';
 import AppContext, { type AppContextType } from '@/context';
 import { Form, type iField, getID } from '@/lib/form';
 
-import { Field } from '../Field';
-import { FieldSet } from '../FieldSet';
-
-import { Button, ButtonSwitch, FormField } from '@/components';
+import { Field, FieldSet, CarbonFormField, Button, ButtonSwitch } from '@/components';
 import { Toggle, Dropdown, type DropdownProps, ComboBox, type ComboBoxProps } from '@carbon/react';
 import { TemperatureCelsius, TemperatureFahrenheit } from '@carbon/react/icons';
 
@@ -195,7 +192,7 @@ class View extends Component<Props> {
                         title={intl.formatMessage({ defaultMessage: 'Show Seconds in Status Bar' })}
                         disabled={secondsInStatusbar.disabled}
                     >
-                        <FormField error={secondsInStatusbar.error}>
+                        <CarbonFormField error={secondsInStatusbar.error}>
                             <Toggle
                                 id={$id.get('secondsInStatusbar')}
                                 size="md"
@@ -204,7 +201,7 @@ class View extends Component<Props> {
                                 onToggle={secondsInStatusbar.onChange}
                                 disabled={secondsInStatusbar.disabled}
                             />
-                        </FormField>
+                        </CarbonFormField>
                     </Field>
 
                     <Field title={intl.formatMessage({ defaultMessage: 'Timezone' })} disabled={timezone.disabled}>

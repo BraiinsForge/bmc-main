@@ -2,10 +2,7 @@ import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { Form, type iField, getID } from '@/lib/form';
 
-import { Field } from '../Field';
-import { FieldSet } from '../FieldSet';
-
-import { FormField, Button } from '@/components';
+import { CarbonFormField, Field, FieldSet, Button } from '@/components';
 import { Toggle, Slider, TextInput } from '@carbon/react';
 import { Location } from '@carbon/react/icons';
 
@@ -101,7 +98,7 @@ class View extends Component<Props> {
                         })}
                         disabled={nightEnabled.disabled}
                     >
-                        <FormField error={nightEnabled.error}>
+                        <CarbonFormField error={nightEnabled.error}>
                             <Toggle
                                 id={$id.get('night', 'enabled')}
                                 size="md"
@@ -110,7 +107,7 @@ class View extends Component<Props> {
                                 onToggle={nightEnabled.onChange}
                                 disabled={nightEnabled.disabled}
                             />
-                        </FormField>
+                        </CarbonFormField>
                     </Field>
 
                     <Field
@@ -120,7 +117,7 @@ class View extends Component<Props> {
                         })}
                         disabled={nightUseLocation.disabled}
                     >
-                        <FormField error={nightUseLocation.error}>
+                        <CarbonFormField error={nightUseLocation.error}>
                             <Toggle
                                 id={$id.get('night', 'use', 'location')}
                                 size="md"
@@ -129,7 +126,7 @@ class View extends Component<Props> {
                                 onToggle={nightUseLocation.onChange}
                                 disabled={nightUseLocation.disabled}
                             />
-                        </FormField>
+                        </CarbonFormField>
                     </Field>
 
                     <Field
@@ -166,7 +163,7 @@ class View extends Component<Props> {
                         })}
                         disabled={nightNotify.disabled}
                     >
-                        <FormField error={nightNotify.error}>
+                        <CarbonFormField error={nightNotify.error}>
                             <Toggle
                                 id={$id.get('night', 'enabled')}
                                 size="md"
@@ -175,7 +172,7 @@ class View extends Component<Props> {
                                 onToggle={nightNotify.onChange}
                                 disabled={nightNotify.disabled}
                             />
-                        </FormField>
+                        </CarbonFormField>
                     </Field>
                 </FieldSet>
             </Form>

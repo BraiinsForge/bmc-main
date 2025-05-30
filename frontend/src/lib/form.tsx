@@ -10,7 +10,7 @@ export type iForm<SubmitData = void> = {
     error?: null | string;
 };
 
-export type iField<T, ErrorType = string | ReactElement, ExtraProps extends Dict = Dict> = ExtraProps & {
+export type iField<T, ErrorType = string | ReactElement, ExtraProps extends Rec = Rec> = ExtraProps & {
     value: null | T;
     error?: null | ErrorType;
     onChange(value: T): void;
@@ -46,7 +46,7 @@ export function Form(props: FormProps) {
     return <form onSubmit={blockEvent} autoComplete="off" lang="g!auld" {...rest} ref={$ref} />;
 }
 
-export interface iFormErrors<FieldName extends keyof any = string, FieldErrorType = string> {
+export interface iFormErrors<FieldName extends Key = string, FieldErrorType = string> {
     global?: string[];
     fields?: Partial<Record<FieldName, null | FieldErrorType>>;
 }

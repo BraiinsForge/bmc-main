@@ -3,7 +3,7 @@ export * from './ButtonGroup';
 export * from './ButtonSwitch';
 export * from './Checkbox';
 export * from './CopyButton';
-export * from './FormField';
+export * from './CarbonFormField';
 export * from './InlineNotification';
 export * from './InlineNotificationsGroup';
 export * from './Loading';
@@ -14,5 +14,8 @@ export * from './Progressbar';
 export * from './Tabs';
 export * from './Tick';
 export * from './Tooltip';
+
 export * from './constants';
 export * from './format';
+export * from './icons';
+export * from './settings';

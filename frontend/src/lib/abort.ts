@@ -75,10 +75,10 @@ export class Aborter implements AbortController {
 }
 
 type Abortable = { abort: Fn } | Aborter | AbortController;
-type HasAbortables = Record<keyof any, Abortable> | Component;
+type HasAbortables = Record<Key, Abortable> | Component;
 
 export const abort = {
-    is(error: Maybe<Error & Dict> | unknown): boolean {
+    is(error: Maybe<Error & Rec> | unknown): boolean {
         const e = error as any;
         if (!e) return false;
 
@@ -95,7 +95,7 @@ export const abort = {
     },
     all(obj: HasAbortables): void {
         Object.keys(obj).forEach((key: string | number) => {
-            const value = (obj as Dict)[key];
+            const value = (obj as Rec)[key];
 
             // Skip if value is not something
             // remotely resembling an abort controller
@@ -109,7 +109,7 @@ export const abort = {
             // and delete the deref ourselves if requested
             if ('abort' in value && typeof value.abort === 'function') {
                 value.abort();
-                delete (obj as Dict)[key];
+                delete (obj as Rec)[key];
             }
         });
     },

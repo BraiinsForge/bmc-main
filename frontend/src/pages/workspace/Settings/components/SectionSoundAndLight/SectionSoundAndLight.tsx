@@ -2,10 +2,7 @@ import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { Form, type iField, getID } from '@/lib/form';
 
-import { Field } from '../Field';
-import { FieldSet } from '../FieldSet';
-
-import { FormField } from '@/components';
+import { Field, FieldSet, CarbonFormField } from '@/components';
 import { Toggle, Slider } from '@carbon/react';
 
 // Styles
@@ -113,7 +110,7 @@ class View extends Component<Props> {
                         })}
                         disabled={ledNotifyEnabled.disabled}
                     >
-                        <FormField error={ledNotifyEnabled.error}>
+                        <CarbonFormField error={ledNotifyEnabled.error}>
                             <Toggle
                                 id={$id.get('led', 'notify', 'enabled')}
                                 size="md"
@@ -122,7 +119,7 @@ class View extends Component<Props> {
                                 onToggle={ledNotifyEnabled.onChange}
                                 disabled={ledNotifyEnabled.disabled}
                             />
-                        </FormField>
+                        </CarbonFormField>
                     </Field>
                 </FieldSet>
             </Form>

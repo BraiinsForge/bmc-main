@@ -54,7 +54,7 @@ export function arrayOf<T = number>(length: LengthRange, value?: MaybeGetter<T, 
     });
 }
 
-export function recordOf<K extends keyof any = StrNum, V = unknown>(keys: K[], value: (key: K) => V): Record<K, V> {
+export function recordOf<K extends Key = StrNum, V = unknown>(keys: K[], value: (key: K) => V): Record<K, V> {
     const res = {} as Record<K, V>;
     keys.forEach(k => (res[k] = value(k)));
     return res;
@@ -65,7 +65,7 @@ export function randomSlice<T>(pool: ReadonlyArray<T>, count: LengthRange): T[] 
     return knuthShuffle(pool.slice(0)).slice(0, Math.min(pool.length, getLength(count)));
 }
 
-export const color = (): ValuesOf<typeof COLORS> => randomItem(Object.values(COLORS));
+export const color = (): string => randomItem(Object.values(COLORS));
 export function randColor(alpha: number = 1): string {
     const cols = [number(0, 250, false), number(0, 250, false), number(0, 250, false), alpha];
     return `rgba(${cols.join(' ,')})`;

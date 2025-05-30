@@ -3,7 +3,7 @@ import { useIntl } from 'react-intl';
 import { type CarbonIconType, useSizeSelector } from '@/lib/react';
 
 // Components
-import * as Icons from '../icons';
+import * as Icons from '@/components/icons';
 import { Button } from '@/components';
 import { Add as IconAdd } from '@carbon/react/icons';
 

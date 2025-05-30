@@ -1,16 +1,16 @@
 import type { HTMLAttributes } from 'react';
 
 import cn from 'clsx';
-import css from './FormField.scss';
+import css from './CarbonFormField.scss';
 
 type Text = string | ReactElement;
-export interface FormFieldProps extends HTMLAttributes<HTMLDivElement> {
+export interface CarbonFormFieldProps extends HTMLAttributes<HTMLDivElement> {
     labelText?: null | Text;
     helperText?: null | Text;
     error?: null | Text;
 }
 
-export function FormField(props: FormFieldProps) {
+export function CarbonFormField(props: CarbonFormFieldProps) {
     const { labelText, helperText, error, children, className, ...rest } = props;
 
     let below: ReactNode = null;

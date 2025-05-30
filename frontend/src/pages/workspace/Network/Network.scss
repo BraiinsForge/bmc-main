@@ -1,0 +1,15 @@
+@use 'styles/carbon' as *;
+
+.title {
+    composes: heading-06 from 'styles/carbon/typography.scss';
+    margin-block-end: mini-units(2);
+    margin-inline-start: mini-units(2);
+}
+
+.tabs {
+    margin-block-end: mini-units(2);
+}
+
+.content {
+    position: relative;
+}

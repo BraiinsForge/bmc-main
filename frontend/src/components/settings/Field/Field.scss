@@ -5,7 +5,6 @@ $left-size: to-rem(558px);
 $left-size-min: to-rem(280px);
 
 .root {
-    composes: vertical from 'styles/layout.scss';
     container-type: inline-size;
 
     display: grid;
@@ -42,6 +41,7 @@ $left-size-min: to-rem(280px);
         gap: mini-units(0.5);
 
         .widget {
+            inline-size: 100%;
             margin-block-start: mini-units(2);
         }
     }
@@ -76,16 +76,13 @@ $left-size-min: to-rem(280px);
 }
 
 .widget {
-    grid-area: widget;
     position: relative;
+    grid-area: widget;
 
-    :global {
-        [class*='cds--dropdown'],
-        [class*='cds--combo-box'] {
-            max-inline-size: to-rem(400px);
-            [role='listbox'] {
-                box-shadow: shadows.$elevation-8dp;
-            }
+    > * {
+        max-inline-size: to-rem(400px);
+        [role='listbox'] {
+            box-shadow: shadows.$elevation-8dp;
         }
     }
 }

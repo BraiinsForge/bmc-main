@@ -1,7 +1,7 @@
 import css from './FieldSet.scss';
 
 export interface FieldSetProps {
-    title: ReactNode;
+    title: null | ReactNode;
     children: ReactNode;
 }
 
@@ -10,7 +10,7 @@ export function FieldSet(props: FieldSetProps) {
 
     return (
         <fieldset className={css.root}>
-            <h1 className={css.title} children={title} />
+            {title != null ? <h1 className={css.title} children={title} /> : null}
             <div className={css.body} children={children} />
         </fieldset>
     );

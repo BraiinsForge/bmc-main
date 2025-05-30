@@ -4,23 +4,23 @@ import { Helmet } from '@dr.pogodin/react-helmet';
 import * as pb from '@/proto';
 import { store } from '@/store';
 
-import { Form, type iFormErrors } from '@/lib/form';
+import { Form } from '@/lib/form';
 import { PasswordInput } from '@carbon/react';
 import { Button, InlineNotificationsGroup } from '@/components';
 
 import css from './Login.scss';
 
-interface Data {
+type Data = {
     password: string;
-}
+};
 
 interface State {
     data: Data;
-    errors: iFormErrors<keyof Data>;
+    errors: null | pb.FormErrors<Data>;
 }
 const getInitialState = (): State => ({
     data: { password: '' },
-    errors: {},
+    errors: null,
 });
 
 export default class LoginPage extends Component<any, State> {
@@ -42,16 +42,14 @@ export default class LoginPage extends Component<any, State> {
             await store.login(data.password, signal);
         } catch ($) {
             if (pb.abort.is($)) return;
-            this.setState({
-                errors: pb.parseFormErrors(pb.parseError($), Object.keys(getInitialState().data)),
-            });
+            this.setState({ errors: pb.parseFormErrors<Data>($, ['password']) });
             this.#ref.current?.querySelector('input')?.select();
         }
     };
     #set = <Key extends keyof Data>(key: Key, value: Data[Key]): void => {
         this.setState(s => ({
             data: { ...s.data, [key]: value },
-            errors: {},
+            errors: null,
         }));
     };
 
@@ -65,14 +63,14 @@ export default class LoginPage extends Component<any, State> {
                 <dialog open className={css.modal}>
                     <header className={css.header} children={title} />
                     <Form className={css.form}>
-                        <InlineNotificationsGroup items={errors.global} theme="inverse" kind="error" stretch />
+                        <InlineNotificationsGroup items={errors?.global} theme="inverse" kind="error" stretch />
                         <PasswordInput
                             id="login-password"
                             labelText="Password"
                             autoComplete="current-password"
                             value={data.password}
-                            invalid={!!errors.fields?.password}
-                            invalidText={errors.fields?.password}
+                            invalid={!!errors?.fields?.password}
+                            invalidText={pb.renderFieldErrorsAsList(errors?.fields?.password)}
                             onChange={e => this.#set('password', e.target.value)}
                         />
                         <footer className={css.footer}>

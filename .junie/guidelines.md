@@ -10,3 +10,12 @@
   - state and props are always defined as interfaces
   - props are named the same as the component plus `Props` suffix
   - if there is a state, it's type declaration is followed by `getInitialState` function
+
+### Tests
+
+- always create separate file named after the module that it tests with .spec suffix added
+  - examples:
+    - module.ts → module.spec.ts
+    - module.tsx → module.spec.tsx
+- always import test functions like "describe", "test", "expec" from "vitest"
+- do not use "it", use "test"

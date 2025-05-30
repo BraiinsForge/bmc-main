@@ -72,6 +72,11 @@ class Base extends Component<Props, State> {
                     label={formatMessage({ defaultMessage: 'System Settings' })}
                 />
                 <SideLink
+                    icon={IconNetwork}
+                    url={URLS.pages.network}
+                    label={formatMessage({ defaultMessage: 'Network Configuration' })}
+                />
+                <SideLink
                     icon={IconAlarm}
                     url={URLS.pages.alarms}
                     label={formatMessage({ defaultMessage: 'Alarms' })}
@@ -85,11 +90,6 @@ class Base extends Component<Props, State> {
                     icon={IconNotification}
                     url={URLS.pages.notifications}
                     label={formatMessage({ defaultMessage: 'Notifications' })}
-                />
-                <SideLink
-                    icon={IconNetwork}
-                    url={URLS.pages.network}
-                    label={formatMessage({ defaultMessage: 'Network Configuration' })}
                 />
                 <SideLink
                     icon={IconApi}

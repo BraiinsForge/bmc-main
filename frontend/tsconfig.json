@@ -19,7 +19,7 @@
 
         /* modules */
         "module": "ESNext",
-        "target": "ESNext",
+        "target": "ES2023",
         "esModuleInterop": true,
         "isolatedModules": false,
         "preserveSymlinks": false,

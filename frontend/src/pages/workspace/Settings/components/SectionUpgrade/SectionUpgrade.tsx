@@ -10,9 +10,9 @@ import * as pb from '@/proto';
 import { type iField, getID } from '@/lib/form';
 
 // Components
-import { Field } from '../Field';
-import { FieldSet } from '../FieldSet';
 import {
+    Field,
+    FieldSet,
     Button,
     InlineNotification,
     InlineNotificationsGroup,

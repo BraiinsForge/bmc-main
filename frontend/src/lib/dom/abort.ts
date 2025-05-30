@@ -78,12 +78,12 @@ type Abortable = { abort: Fn };
 type HasAbortables = Record<string, Abortable | Aborter | unknown>;
 
 export const abort = {
-    is(error: Maybe<Error & Dict> | unknown): boolean {
+    is(error: Maybe<Error & Rec> | unknown): boolean {
         const e = error as unknown;
         if (!e) return false;
 
         // variant returned by "fetch"
-        if (e && (e as Dict).name === 'AbortError') return true;
+        if (e && (e as Rec).name === 'AbortError') return true;
 
         // variant returned from "grpcweb-transport"
         if (e instanceof ConnectError && e.code === Code.Canceled) return true;
@@ -95,7 +95,7 @@ export const abort = {
     },
     all(obj: HasAbortables | Component): void {
         Object.keys(obj).forEach(key => {
-            const value = (obj as Dict)[key];
+            const value = (obj as Rec)[key];
 
             // Skip if value is not something
             // remotely resembling an abort controller
@@ -112,7 +112,7 @@ export const abort = {
             // and delete the deref ourselves if requested
             if ('abort' in value && typeof value.abort === 'function') {
                 value.abort();
-                delete (obj as Dict)[key];
+                delete (obj as Rec)[key];
             }
         });
     },

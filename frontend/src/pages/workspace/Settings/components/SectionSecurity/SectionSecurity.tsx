@@ -4,11 +4,8 @@ import { useIntl, type IntlShape } from 'react-intl';
 
 import * as pb from '@/proto';
 
-import { Field } from '../Field';
-import { FieldSet } from '../FieldSet';
 import { FormPasswordChange } from '../FormPasswordChange';
-
-import { Modal, Button, ButtonGroup, InlineNotificationsGroup } from '@/components';
+import { Modal, Button, ButtonGroup, InlineNotificationsGroup, Field, FieldSet } from '@/components';
 import { Toggle } from '@carbon/react';
 
 // Styles
@@ -49,15 +46,15 @@ const getInitialState = (): State => ({
 
     passRemove: {
         values: { password: '' },
-        errors: {},
+        errors: null,
     },
     passCreate: {
         values: { password: '', newPasswordConfirm: '' },
-        errors: {},
+        errors: null,
     },
     passChange: {
         values: { currentPassword: '', newPassword: '', newPasswordConfirm: '' },
-        errors: {},
+        errors: null,
     },
 });
 
@@ -83,7 +80,7 @@ class View extends Component<Props, State> {
         return (value: string): void => {
             this.setState(s => ({
                 passChange: {
-                    errors: {},
+                    errors: null,
                     values: {
                         ...s.passChange.values,
                         [key]: value,
@@ -121,11 +118,7 @@ class View extends Component<Props, State> {
             this.#passDialogCancel();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const err = pb.parseError($);
-            const errors = pb.parseFormErrors<pb.MessageFields<pb.ChangePasswordRequest>>(err, [
-                'currentPassword',
-                'newPassword',
-            ]);
+            const errors = pb.parseFormErrors<pb.ChangePasswordRequest>($, ['currentPassword', 'newPassword']);
             this.setState(s => ({ passChange: { ...s.passChange, errors } }));
         }
     };
@@ -138,7 +131,7 @@ class View extends Component<Props, State> {
         return (value: string): void => {
             this.setState(s => ({
                 passRemove: {
-                    errors: {},
+                    errors: null,
                     values: {
                         ...s.passRemove.values,
                         [key]: value,
@@ -168,8 +161,7 @@ class View extends Component<Props, State> {
             this.#passDialogCancel();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const err = pb.parseError($);
-            const errors = pb.parseFormErrors<pb.MessageFields<pb.RemovePasswordRequest>>(err, ['password']);
+            const errors = pb.parseFormErrors<pb.RemovePasswordRequest>($, ['password']);
             this.setState(s => ({ passRemove: { ...s.passRemove, errors } }));
         }
     };
@@ -182,7 +174,7 @@ class View extends Component<Props, State> {
         return (value: string): void => {
             this.setState(s => ({
                 passCreate: {
-                    errors: {},
+                    errors: null,
                     values: {
                         ...s.passCreate.values,
                         [key]: value,
@@ -214,8 +206,7 @@ class View extends Component<Props, State> {
             this.#passDialogCancel();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const err = pb.parseError($);
-            const errors = pb.parseFormErrors<pb.MessageFields<pb.CreatePasswordRequest>>(err, ['password']);
+            const errors = pb.parseFormErrors<pb.CreatePasswordRequest>($, ['password']);
             this.setState(s => ({ passCreate: { ...s.passCreate, errors } }));
         }
     };
@@ -245,7 +236,7 @@ class View extends Component<Props, State> {
             case PasswordDialogKind.change:
                 submitFn = this.#passChangeSubmit;
                 submitText = formatMessage({ defaultMessage: 'Change Password' });
-                globalErrors = passChange.errors.global;
+                globalErrors = passChange.errors?.global;
                 hasErrors = pb.hasFormErrors(passChange.errors);
                 content = (
                     <Fragment>
@@ -260,17 +251,17 @@ class View extends Component<Props, State> {
                         <FormPasswordChange
                             passCurrent={{
                                 value: passChange.values.currentPassword,
-                                error: pb.renderFieldErrorsAsList(passChange.errors.fields?.currentPassword),
+                                error: pb.renderFieldErrorsAsList(passChange.errors?.fields?.currentPassword),
                                 onChange: this.#passChangeUpdate('currentPassword'),
                             }}
                             passNew={{
                                 value: passChange.values.newPassword,
-                                error: pb.renderFieldErrorsAsList(passChange.errors.fields?.newPassword),
+                                error: pb.renderFieldErrorsAsList(passChange.errors?.fields?.newPassword),
                                 onChange: this.#passChangeUpdate('newPassword'),
                             }}
                             passConfirm={{
                                 value: passChange.values.newPasswordConfirm,
-                                error: pb.renderFieldErrorsAsList(passChange.errors.fields?.newPasswordConfirm),
+                                error: pb.renderFieldErrorsAsList(passChange.errors?.fields?.newPasswordConfirm),
                                 onChange: this.#passChangeUpdate('newPasswordConfirm'),
                             }}
                         />
@@ -281,19 +272,19 @@ class View extends Component<Props, State> {
             case PasswordDialogKind.create:
                 submitFn = this.#passCreateSubmit;
                 submitText = formatMessage({ defaultMessage: 'Create Password' });
-                globalErrors = passCreate.errors.global;
+                globalErrors = passCreate.errors?.global;
                 hasErrors = pb.hasFormErrors(passCreate.errors);
                 content = (
                     <FormPasswordChange
                         passCurrent={null}
                         passNew={{
                             value: passCreate.values.password,
-                            error: pb.renderFieldErrorsAsList(passCreate.errors.fields?.password),
+                            error: pb.renderFieldErrorsAsList(passCreate.errors?.fields?.password),
                             onChange: this.#passCreateUpdate('password'),
                         }}
                         passConfirm={{
                             value: passCreate.values.newPasswordConfirm,
-                            error: pb.renderFieldErrorsAsList(passCreate.errors.fields?.newPasswordConfirm),
+                            error: pb.renderFieldErrorsAsList(passCreate.errors?.fields?.newPasswordConfirm),
                             onChange: this.#passCreateUpdate('newPasswordConfirm'),
                         }}
                     />
@@ -305,7 +296,7 @@ class View extends Component<Props, State> {
                 isDanger = true;
                 submitFn = this.#passRemoveSubmit;
                 submitText = formatMessage({ defaultMessage: 'Remove Password' });
-                globalErrors = passRemove.errors.global;
+                globalErrors = passRemove.errors?.global;
                 hasErrors = pb.hasFormErrors(passRemove.errors);
                 content = (
                     <Fragment>
@@ -319,7 +310,7 @@ class View extends Component<Props, State> {
                         <FormPasswordChange
                             passCurrent={{
                                 value: passRemove.values.password,
-                                error: pb.renderFieldErrorsAsList(passRemove.errors.fields?.password),
+                                error: pb.renderFieldErrorsAsList(passRemove.errors?.fields?.password),
                                 onChange: this.#passRemoveUpdate('password'),
                             }}
                             passNew={null}

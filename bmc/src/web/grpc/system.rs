@@ -168,8 +168,8 @@ where
     async fn get_timezone(
         &self,
         _request: Request<()>,
-    ) -> Result<Response<GetTimezoneResponse>, Status> {
-        Ok(Response::new(GetTimezoneResponse {
+    ) -> Result<tonic::Response<GetTimezoneResponse>, tonic::Status> {
+        Ok(tonic::Response::new(GetTimezoneResponse {
             timezone: Some(into_grpc_timezone(&self.manager.timezone())),
         }))
     }
@@ -218,13 +218,13 @@ where
 
     async fn get_network_info(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<NetworkInfoResponse>, Status> {
+        _request: tonic::Request<()>,
+    ) -> Result<tonic::Response<NetworkInfoResponse>, tonic::Status> {
         let hostname = self
             .manager
             .hostname()
             .await
-            .ok_or(Status::internal("Failed to get hostname"))?;
+            .ok_or(tonic::Status::internal("Failed to get hostname"))?;
 
         let ip_address = self
             .manager

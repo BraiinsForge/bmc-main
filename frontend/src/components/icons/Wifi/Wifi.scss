@@ -1,0 +1,29 @@
+@use 'styles/carbon' as *;
+@use 'styles/var/transition';
+
+$off-slit-opacity: 0.4;
+
+.svg * {
+    transition: all 400ms transition.$transition-timing-ease-in-out;
+}
+
+.offline {
+    opacity: $off-slit-opacity;
+}
+
+.low {
+    path:nth-child(2),
+    path:nth-child(1) {
+        opacity: $off-slit-opacity;
+    }
+}
+
+.fair {
+    path:nth-child(1) {
+        opacity: $off-slit-opacity;
+    }
+}
+
+.full {
+    position: static;
+}
