@@ -19,7 +19,7 @@ impl JobStorage for OpenwrtJobStorage {
         todo!()
     }
 
-    async fn load(&self) -> Result<Vec<JobDetails>, anyhow::Error> {
+    async fn list_jobs(&self) -> Result<Vec<JobDetails>, anyhow::Error> {
         todo!()
     }
 

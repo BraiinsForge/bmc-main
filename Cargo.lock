@@ -704,7 +704,6 @@ dependencies = [
  "bmc-shared",
  "bmc-upgrade",
  "chrono",
- "chrono-tz",
  "futures",
  "http 1.3.1",
  "hyper 1.6.0",
@@ -715,7 +714,6 @@ dependencies = [
  "prost-types",
  "reqwest",
  "strum",
- "strum_macros",
  "sysinfo",
  "thiserror 2.0.12",
  "tokio",
@@ -843,6 +841,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bmc-shared",
  "chrono",
  "chrono-tz",
  "croner",

@@ -14,7 +14,7 @@ pub trait JobStorage: Serialize + Deserialize<'static> + Send + Sync + 'static {
     async fn get_job(&self, job_id: &JobId) -> Result<Option<JobDetails>>;
 
     /// Load all jobs
-    async fn load(&self) -> Result<Vec<JobDetails>>;
+    async fn list_jobs(&self) -> Result<Vec<JobDetails>>;
 
     /// Delete a job by ID
     async fn delete_job(&self, job_id: &JobId) -> Result<()>;

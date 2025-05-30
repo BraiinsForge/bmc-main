@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
     let firmware_resolver = FirmwareResolver::new(MockIndex);
-    
+
     let job_scheduler = bmc_scheduler::JobScheduler::new(
         bmc_scheduler::JobSchedulerLocked::new().await?,
         manager.watch_timezone_updates(),
