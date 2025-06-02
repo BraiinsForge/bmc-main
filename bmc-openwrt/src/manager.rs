@@ -309,6 +309,10 @@ impl BmcManager for Manager {
 
         Ok(())
     }
+
+    async fn captive_portal_redirect_host(&self) -> Option<String> {
+        self.ip_address().map(|ip| ip.to_string())
+    }
 }
 
 async fn uci_get_opt(opt: &str) -> Option<String> {

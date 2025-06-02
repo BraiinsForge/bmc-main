@@ -166,4 +166,9 @@ impl bmc::BmcManager for Manager {
         *network_config = config;
         Ok(())
     }
+
+    async fn captive_portal_redirect_host(&self) -> Option<String> {
+        let port = self.port;
+        Some(format!("localhost:{port}"))
+    }
 }

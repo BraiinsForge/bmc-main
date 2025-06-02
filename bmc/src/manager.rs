@@ -63,6 +63,8 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     async fn network_config(&self) -> Option<NetworkProtocolConfig>;
 
     async fn set_network_config(&self, config: NetworkProtocolConfig) -> anyhow::Result<()>;
+
+    async fn captive_portal_redirect_host(&self) -> Option<String>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
