@@ -28,7 +28,7 @@ use tracing::info;
 
 use crate::BmcManager;
 
-use super::ServerConfig;
+use super::{ServerConfig, captive_portal::CaptivePortalLayer};
 
 const INDEX_PATH: &str = "index.html";
 const ZERO: &str = "0";
@@ -47,6 +47,10 @@ impl<T: BmcManager> HttpServer<T> {
         Router::new()
             .merge(self.static_file_router())
             .layer(CompressionLayer::new())
+            .layer(CaptivePortalLayer::new(
+                self.config.captive_portal_redirect_path.clone(),
+                self.manager.clone(),
+            ))
             .layer(middleware::from_fn(Self::log_request))
     }
 

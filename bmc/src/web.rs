@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+mod captive_portal;
 mod grpc;
 mod http_server;
 mod no_password;
