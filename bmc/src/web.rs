@@ -97,6 +97,7 @@ pub struct ServerConfig {
     pub www_assets_path: PathBuf,
     pub www_var_path: PathBuf,
     pub grpc_address: std::net::SocketAddr,
+    pub captive_portal_redirect_path: String,
 }
 
 impl ServerConfig {
@@ -125,6 +126,12 @@ impl ServerConfig {
         self.grpc_address = address;
         self
     }
+
+    #[must_use]
+    pub fn set_captive_portal_redirect_path(mut self, redirect_path: String) -> Self {
+        self.captive_portal_redirect_path = redirect_path;
+        self
+    }
 }
 
 impl Default for ServerConfig {
@@ -134,6 +141,7 @@ impl Default for ServerConfig {
             www_assets_path: PathBuf::from(Self::WWW_ROOT_PATH).join("assets"),
             www_var_path: PathBuf::from(Self::WWW_ROOT_PATH).join("var"),
             grpc_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 50051),
+            captive_portal_redirect_path: String::from("/initial_setup"),
         }
     }
 }
