@@ -30,7 +30,6 @@ use crate::BmcManager;
 
 use super::{ServerConfig, captive_portal::CaptivePortalLayer};
 
-const INDEX_PATH: &str = "index.html";
 const ZERO: &str = "0";
 
 pub(crate) struct HttpServer<T: BmcManager> {
@@ -39,6 +38,10 @@ pub(crate) struct HttpServer<T: BmcManager> {
 }
 
 impl<T: BmcManager> HttpServer<T> {
+    const INDEX_PATH: &str = "index.html";
+    const INITIAL_SETUP_INDEX_FILENAME: &str = "index-init.html";
+    const INITIAL_SETUP_URL_ENDPOINT: &str = "/initial_setup";
+
     pub(crate) fn new(config: ServerConfig, manager: Arc<T>) -> Self {
         Self { config, manager }
     }
@@ -67,16 +70,22 @@ impl<T: BmcManager> HttpServer<T> {
             .route("/assets/{*file_path}", get(Self::file_handler))
             .with_state(assets_storage);
 
+        let index_state = IndexState::new(www_storage, self.manager.clone());
+
         Router::new()
             .route("/", get(Self::index_handler))
+            .route(
+                Self::WIFI_SETUP_URL_ENDPOINT,
+                get(Self::wifi_setup_index_handler),
+            )
             .route("/{*file_path}", get(Self::file_handler_with_index_fallback))
-            .with_state(www_storage)
+            .with_state(index_state)
             .merge(var_router)
             .merge(assets_router)
     }
 
     async fn file_handler_with_index_fallback(
-        State(storage): State<Storage>,
+        State(IndexState { storage, manager }): State<IndexState<T>>,
         Path(file_path): Path<String>,
     ) -> impl IntoResponse {
         let response = Self::file_handler(State(storage.clone()), Path(file_path))
@@ -84,7 +93,9 @@ impl<T: BmcManager> HttpServer<T> {
             .into_response();
 
         if response.status() == StatusCode::NOT_FOUND {
-            Self::index_handler(State(storage)).await.into_response()
+            Self::index_handler(State(IndexState { storage, manager }))
+                .await
+                .into_response()
         } else {
             response
         }
@@ -105,8 +116,8 @@ impl<T: BmcManager> HttpServer<T> {
         (headers, body).into_response()
     }
 
-    async fn index_handler(storage: State<Storage>) -> Response {
-        let mut resp = Self::file_handler(storage, Path(INDEX_PATH.to_owned()))
+    async fn index_handler(State(IndexState { storage, .. }): State<IndexState<T>>) -> Response {
+        let mut resp = Self::file_handler(State(storage), Path(Self::INDEX_PATH.to_owned()))
             .await
             .into_response();
 
@@ -117,6 +128,25 @@ impl<T: BmcManager> HttpServer<T> {
         }
 
         resp
+    }
+
+    async fn wifi_setup_index_handler(
+        State(IndexState { storage, manager }): State<IndexState<T>>,
+    ) -> Response {
+        if !manager.is_factory_default().await {
+            return (
+                StatusCode::PERMANENT_REDIRECT,
+                [(http::header::LOCATION.as_str(), "/")],
+            )
+                .into_response();
+        }
+
+        Self::file_handler(
+            State(storage),
+            Path(Self::INITIAL_SETUP_INDEX_FILENAME.to_owned()),
+        )
+        .await
+        .into_response()
     }
 
     async fn get_file_headers(filename: &str, file: &File) -> HeaderMap {
@@ -232,5 +262,25 @@ impl Storage {
     async fn get_asset(&self, file_name: &str) -> std::io::Result<File> {
         let path = self.mount_path.join(file_name);
         File::open(path).await
+    }
+}
+
+struct IndexState<T: BmcManager> {
+    storage: Storage,
+    manager: Arc<T>,
+}
+
+impl<T: BmcManager> IndexState<T> {
+    fn new(storage: Storage, manager: Arc<T>) -> Self {
+        Self { storage, manager }
+    }
+}
+
+impl<T: BmcManager> Clone for IndexState<T> {
+    fn clone(&self) -> Self {
+        Self {
+            storage: self.storage.clone(),
+            manager: self.manager.clone(),
+        }
     }
 }
