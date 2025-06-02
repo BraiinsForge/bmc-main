@@ -3,6 +3,7 @@
 use std::{
     net::SocketAddr,
     path::PathBuf,
+    sync::Arc,
     time::{Instant, UNIX_EPOCH},
 };
 
@@ -25,18 +26,21 @@ use tokio_util::io::ReaderStream;
 use tower_http::compression::CompressionLayer;
 use tracing::info;
 
+use crate::BmcManager;
+
 use super::ServerConfig;
 
 const INDEX_PATH: &str = "index.html";
 const ZERO: &str = "0";
 
-pub(crate) struct HttpServer {
+pub(crate) struct HttpServer<T: BmcManager> {
     config: ServerConfig,
+    manager: Arc<T>,
 }
 
-impl HttpServer {
-    pub(crate) fn new(config: ServerConfig) -> Self {
-        Self { config }
+impl<T: BmcManager> HttpServer<T> {
+    pub(crate) fn new(config: ServerConfig, manager: Arc<T>) -> Self {
+        Self { config, manager }
     }
 
     pub(crate) fn build(&self) -> Router {

@@ -51,7 +51,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
     }
 
     pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
-        let http_router = http_server::HttpServer::new(self.config).build();
+        let http_router = http_server::HttpServer::new(self.config, self.manager.clone()).build();
         let grpc_router = grpc::GrpcWeb::new(
             self.manager,
             self.session_manager.clone(),
