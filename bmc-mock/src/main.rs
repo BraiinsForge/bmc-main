@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
         config.hostname.clone(),
         config.mac_address.clone(),
         config.ip_address,
+        config.address.port(),
     );
 
     let config = config.into();

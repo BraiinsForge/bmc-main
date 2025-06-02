@@ -30,6 +30,7 @@ pub struct Manager {
     ip_address: IpAddr,
     hostname: String,
     network_config: Arc<Mutex<NetworkProtocolConfig>>,
+    port: u16,
 }
 
 impl Manager {
@@ -41,6 +42,7 @@ impl Manager {
         hostname: String,
         mac_address: String,
         ip_address: IpAddr,
+        port: u16,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
         Self {
@@ -52,6 +54,7 @@ impl Manager {
             mac_address,
             network_config: Arc::new(Mutex::new(NetworkProtocolConfig::Dhcp)),
             ip_address,
+            port,
         }
     }
 }
