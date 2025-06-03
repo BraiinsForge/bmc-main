@@ -700,7 +700,6 @@ dependencies = [
  "bmc-display",
  "bmc-grpc",
  "bmc-platform",
- "bmc-scheduler",
  "bmc-shared",
  "bmc-upgrade",
  "chrono",
@@ -840,12 +839,10 @@ name = "bmc-scheduler"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bmc-shared",
  "chrono",
  "chrono-tz",
  "croner",
- "serde",
  "tokio",
  "tokio-cron-scheduler",
  "tracing",
@@ -6394,11 +6391,12 @@ dependencies = [
 
 [[package]]
 name = "tokio-cron-scheduler"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c71ce8f810abc9fabebccc30302a952f9e89c6cf246fafaf170fef164063141"
+version = "0.15.0"
+source = "sparse+http://registry.ii.zone/api/v1/crates/"
+checksum = "a88b342ed6cd589a546a442d31968585232cee9d1be64d1f695360450c0e3e32"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "croner",
  "english-to-cron",
  "num-derive",
