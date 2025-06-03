@@ -6,7 +6,6 @@ pub mod manager;
 mod network;
 mod pwd;
 pub mod session;
-pub mod scheduler;
 mod sys;
 mod unix;
 

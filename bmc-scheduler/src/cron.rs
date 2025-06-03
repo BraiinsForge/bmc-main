@@ -14,7 +14,8 @@ pub struct CronBuilder {
 }
 
 impl CronBuilder {
-    #[must_use] pub fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             seconds: None,
             minutes: None,
@@ -25,32 +26,38 @@ impl CronBuilder {
         }
     }
 
-    #[must_use] pub fn seconds(mut self, seconds: &str) -> Self {
+    #[must_use]
+    pub fn seconds(mut self, seconds: &str) -> Self {
         self.seconds = Some(seconds.to_owned());
         self
     }
 
-    #[must_use] pub fn minutes(mut self, minutes: &str) -> Self {
+    #[must_use]
+    pub fn minutes(mut self, minutes: &str) -> Self {
         self.minutes = Some(minutes.to_owned());
         self
     }
 
-    #[must_use] pub fn hours(mut self, hours: &str) -> Self {
+    #[must_use]
+    pub fn hours(mut self, hours: &str) -> Self {
         self.hours = Some(hours.to_owned());
         self
     }
 
-    #[must_use] pub fn days(mut self, days: &str) -> Self {
+    #[must_use]
+    pub fn days(mut self, days: &str) -> Self {
         self.days = Some(days.to_owned());
         self
     }
 
-    #[must_use] pub fn months(mut self, months: &str) -> Self {
+    #[must_use]
+    pub fn months(mut self, months: &str) -> Self {
         self.months = Some(months.to_owned());
         self
     }
 
-    #[must_use] pub fn days_of_week(mut self, days_of_week: &str) -> Self {
+    #[must_use]
+    pub fn days_of_week(mut self, days_of_week: &str) -> Self {
         self.days_of_week = Some(days_of_week.to_owned());
         self
     }
@@ -66,7 +73,8 @@ impl CronBuilder {
 
         Cron::new(&format!(
             "{seconds} {minutes} {hours} {days} {months} {days_of_week}",
-        )).with_seconds_required()
+        ))
+        .with_seconds_required()
         .parse()
         .map_err(|e| anyhow::anyhow!("Failed to parse cron pattern: {e}"))
     }
@@ -97,16 +105,41 @@ impl CronBuilder {
             .build()
     }
 
-    #[must_use] pub fn from_cron(cron: &Cron) -> Self {
+    #[must_use]
+    pub fn from_cron(cron: &Cron) -> Self {
         let pattern = cron.pattern.as_str();
         let parts = pattern.split_whitespace().collect::<Vec<&str>>();
         Self {
-            seconds: if parts[0] == "*" { None } else { Some(parts[0].to_owned()) },
-            minutes: if parts[1] == "*" { None } else { Some(parts[1].to_owned()) },
-            hours: if parts[2] == "*" { None } else { Some(parts[2].to_owned()) },
-            days: if parts[3] == "*" { None } else { Some(parts[3].to_owned()) },
-            months: if parts[4] == "*" { None } else { Some(parts[4].to_owned()) },
-            days_of_week: if parts[5] == "*" { None } else { Some(parts[5].to_owned()) },
+            seconds: if parts[0] == "*" {
+                None
+            } else {
+                Some(parts[0].to_owned())
+            },
+            minutes: if parts[1] == "*" {
+                None
+            } else {
+                Some(parts[1].to_owned())
+            },
+            hours: if parts[2] == "*" {
+                None
+            } else {
+                Some(parts[2].to_owned())
+            },
+            days: if parts[3] == "*" {
+                None
+            } else {
+                Some(parts[3].to_owned())
+            },
+            months: if parts[4] == "*" {
+                None
+            } else {
+                Some(parts[4].to_owned())
+            },
+            days_of_week: if parts[5] == "*" {
+                None
+            } else {
+                Some(parts[5].to_owned())
+            },
         }
     }
 }

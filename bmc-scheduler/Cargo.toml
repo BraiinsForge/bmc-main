@@ -6,12 +6,10 @@ description = "A system event and notification scheduler for embedded Linux syst
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 bmc-shared.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 croner.workspace = true
-serde.workspace = true
 tokio.workspace = true
 tokio-cron-scheduler = { workspace = true, features = ["english"] }
 tracing.workspace = true

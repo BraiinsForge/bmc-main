@@ -8,8 +8,8 @@ members = [
     "bmc-mock-display",
     "bmc-openwrt",
     "bmc-platform",
-    "bmc-shared",
     "bmc-scheduler",
+    "bmc-shared",
     "bmc-upgrade",
 ]
 
@@ -90,8 +90,8 @@ bmc-display = { path = "bmc-display" }
 bmc-grpc = { path = "bmc-grpc" }
 bmc-mock-display = { path = "bmc-mock-display" }
 bmc-platform = { path = "bmc-platform" }
-bmc-shared = { path = "bmc-shared" }
 bmc-scheduler = { path = "bmc-scheduler" }
+bmc-shared = { path = "bmc-shared" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bstr = "1.11.3"
 bytes = { version = "1.6.0", default-features = false }

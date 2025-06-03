@@ -33,11 +33,11 @@ async fn main() -> Result<(), JobSchedulerError> {
         .unwrap();
     let timezone = chrono_tz::Europe::Prague;
     let job_id = job_scheduler
-        .submit_job_simple(cron, timezone, "display".to_string(), job_callback)
+        .submit_job_simple(cron, timezone, "display".to_owned(), job_callback)
         .await?;
 
     let job_details = job_scheduler.get_job(&job_id).await?;
-    println!("Job details: {:?}", job_details);
+    println!("Job details: {job_details:?}");
 
     Ok(())
 }

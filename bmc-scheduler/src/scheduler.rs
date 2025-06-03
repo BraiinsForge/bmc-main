@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_shared::time::Timezone;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
+use chrono::{DateTime, NaiveDateTime, TimeZone};
 use chrono_tz::Tz;
 use croner::Cron;
 use std::{collections::BTreeMap, pin::Pin, sync::Arc, time::Duration};
@@ -74,56 +74,33 @@ impl JobScheduler {
                         .unwrap_or_else(|_| vec![]);
                     info!("Updating jobs {}", jobs.len());
                     let date: DateTime<Tz> = DateTime::from_naive_utc_and_offset(
-                        NaiveDateTime::new(NaiveDate::default(), NaiveTime::default()),
+                        NaiveDateTime::from_timestamp(0, 0),
                         offset,
                     );
                     let date_timezone = date.timezone();
-                    let scheduler = scheduler_clone.clone().lock_owned().await;
-                    for mut job_details in jobs {
-                        let job_id = job_details.job_id;
-                        info!("job_id before update: {:?}", job_id);
-                        if let Err(e) = scheduler.remove(&job_id).await {
-                            error!("Error removing job: {:?}", e);
-                            continue;
-                        }
+                    for mut job in jobs {
+                        info!("guid: {:?}", job.job.guid());
 
-                        let Ok(mut job_data) = job_details.job.job_data() else {
-                            error!("Error getting job data: {:?}", job_details.job_id);
+                        let Ok(mut job_data) = job.job.job_data() else {
+                            error!("Error getting job data: {:?}", job.job_id);
                             continue;
                         };
 
                         info!("job_data before update: {:?}", job_data);
-                        job_data.set_timezone(date_timezone);
+                        job_data.timezone = date_timezone;
                         info!("job_data after update: {:?}", job_data);
 
-                        if let Err(e) = job_details.job.set_job_data(job_data) {
+                        if let Err(e) = job.job.set_job_data(job_data) {
                             error!("Error setting job data: {:?}", e);
                             continue;
                         }
-
-                        let Ok(job_id) = scheduler.add(job_details.job.clone()).await else {
-                            error!("Error adding job: {:?}", job_details.job_id);
-                            continue;
-                        };
-                        storage_clone
-                            .clone()
-                            .write()
-                            .await
-                            .insert(job_id, job_details);
-                        info!("job_id after update: {:?}", job_id);
                     }
                 }
             }
         });
     }
 
-    pub async fn submit_job_simple<T, Z>(
-        &self,
-        schedule: Cron,
-        timezone: Z,
-        source: String,
-        callback: T,
-    ) -> Result<JobId, JobSchedulerError>
+    pub async fn submit_job_simple<T, Z>(&self, schedule: Cron, timezone: Z, source: String, callback: T) -> Result<JobId, JobSchedulerError>
     where
         T: 'static,
         T: FnMut(JobId, JobSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send>>
@@ -131,7 +108,7 @@ impl JobScheduler {
             + Sync,
         Z: TimeZone + ToString,
     {
-        if !schedule.pattern.with_seconds_required && !schedule.pattern.with_seconds_optional {
+        if !schedule.pattern.with_seconds_required || !schedule.pattern.with_seconds_optional {
             error!("Seconds are required in Cron schedule");
             return Err(JobSchedulerError::ParseSchedule);
         }
@@ -148,12 +125,7 @@ impl JobScheduler {
         Ok(job_id)
     }
 
-    pub async fn submit_job_oneshot<T, Z>(
-        &self,
-        after: Duration,
-        source: String,
-        callback: T,
-    ) -> Result<JobId, JobSchedulerError>
+    pub async fn submit_job_oneshot<T, Z>(&self, after: Duration, source: String, callback: T) -> Result<JobId, JobSchedulerError>
     where
         T: 'static,
         T: FnMut(JobId, JobSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send>>

@@ -16,7 +16,6 @@ use bmc_shared::time::Timezone;
 pub trait BmcManager: Sync + Send + 'static + Debug {
     type SessionManager: crate::session::Manager;
     type Error: std::error::Error + Send + Sync;
-    type JobScheduler: bmc_scheduler::JobSchedulerService;
 
     fn version(&self) -> String;
 

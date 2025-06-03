@@ -42,7 +42,7 @@ async fn test_timezone_change_and_reschedule() -> Result<(), JobSchedulerError> 
         .submit_job_simple(
             cron_schedule,
             Eastern,
-            "test_job".to_string(),
+            "test_job".to_owned(),
             simple_job_callback,
         )
         .await?;
@@ -56,7 +56,7 @@ async fn test_timezone_change_and_reschedule() -> Result<(), JobSchedulerError> 
     assert!(initial_job.schedule.is_some());
     let initial_next_tick = initial_job.next_tick;
 
-    println!("Initial job next tick: {:?}", initial_next_tick);
+    println!("Initial job next tick: {initial_next_tick:?}");
 
     // Change timezone to Europe/Prague
     let new_timezone = Timezone {
@@ -64,10 +64,7 @@ async fn test_timezone_change_and_reschedule() -> Result<(), JobSchedulerError> 
         posix: "CET-1CEST,M3.5.0,M10.5.0/3",
     };
     let time_till_next_job_before_update = scheduler.time_till_next_job().await?;
-    println!(
-        "Time till next job before update: {:?}",
-        time_till_next_job_before_update
-    );
+    println!("Time till next job before update: {time_till_next_job_before_update:?}");
 
     timezone_sender.send(new_timezone).unwrap();
 
@@ -83,13 +80,13 @@ async fn test_timezone_change_and_reschedule() -> Result<(), JobSchedulerError> 
 
     // Validate that the rescheduled time is reflected
     let updated_next_tick = updated_job.next_tick;
-    println!("Updated job next tick: {:?}", updated_next_tick);
+    println!("Updated job next tick: {updated_next_tick:?}");
 
     // The next tick should be different after timezone change (unless coincidentally same UTC time)
     // Since we're changing from US/Eastern to Europe/Prague, the timing will be different
     assert!(updated_next_tick.is_some());
     let time_till_next_job = scheduler.time_till_next_job().await?;
-    println!("Time till next job: {:?}", time_till_next_job);
+    println!("Time till next job: {time_till_next_job:?}");
     assert!(time_till_next_job_before_update.is_some());
     assert!(time_till_next_job.is_some());
     assert!(time_till_next_job_before_update.unwrap() > time_till_next_job.unwrap());

@@ -18,7 +18,6 @@ bmc-display.workspace = true
 bmc-grpc.workspace = true
 bmc-platform.workspace = true
 bmc-shared.workspace = true
-bmc-scheduler.workspace = true
 bmc-upgrade.workspace = true
 chrono = { workspace = true }
 futures.workspace = true
