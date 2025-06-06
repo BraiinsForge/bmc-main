@@ -171,4 +171,9 @@ impl bmc::BmcManager for Manager {
         let port = self.port;
         Some(format!("localhost:{port}"))
     }
+
+    async fn reboot(&self) -> anyhow::Result<()> {
+        info!("Performing reboot...");
+        Ok(())
+    }
 }

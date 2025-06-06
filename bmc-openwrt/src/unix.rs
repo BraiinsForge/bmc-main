@@ -13,6 +13,7 @@ use tracing::debug;
 use crate::sys;
 
 const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
+const REBOOT_COMMAND: &str = "reboot";
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -76,4 +77,8 @@ pub fn get_ip_address() -> Option<IpAddr> {
         all_interfaces, default_interface_opt, ip_address_opt
     );
     ip_address_opt
+}
+
+pub async fn system_reboot() -> Result<(), Error> {
+    call_command(REBOOT_COMMAND, &[]).await
 }

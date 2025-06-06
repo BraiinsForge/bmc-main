@@ -2,6 +2,7 @@
 
 use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
 use crate::session::OpenwrtSessionManager;
+use crate::unix::system_reboot;
 use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
 use bmc::{
@@ -312,6 +313,10 @@ impl BmcManager for Manager {
 
     async fn captive_portal_redirect_host(&self) -> Option<String> {
         self.ip_address().map(|ip| ip.to_string())
+    }
+
+    async fn reboot(&self) -> anyhow::Result<()> {
+        system_reboot().await.map_err(|e| anyhow!(e))
     }
 }
 
