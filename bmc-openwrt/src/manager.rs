@@ -5,6 +5,7 @@ use crate::session::OpenwrtSessionManager;
 use crate::unix::system_reboot;
 use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
+use bmc::manager::{InitialSetupError, WifiNetworkConfig};
 use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
@@ -313,6 +314,17 @@ impl BmcManager for Manager {
 
     async fn captive_portal_redirect_host(&self) -> Option<String> {
         self.ip_address().map(|ip| ip.to_string())
+    }
+
+    async fn wifi_initial_setup(
+        &self,
+        _config: WifiNetworkConfig,
+    ) -> Result<(), InitialSetupError> {
+        todo!();
+    }
+
+    async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
+        todo!();
     }
 
     async fn reboot(&self) -> anyhow::Result<()> {

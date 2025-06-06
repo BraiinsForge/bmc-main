@@ -1,8 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::anyhow;
-use bmc::manager::NetworkProtocolConfig;
-use bmc_platform::BmcPlatform;
+use bmc::manager::{EncryptionType, InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig};
 use bmc_shared_time::time::Timezone;
 use std::{
     net::IpAddr,
@@ -31,6 +30,7 @@ pub struct Manager {
     hostname: String,
     network_config: Arc<Mutex<NetworkProtocolConfig>>,
     port: u16,
+    connected_wifi: Arc<tokio::sync::Mutex<Option<WifiNetworkConfig>>>,
 }
 
 impl Manager {
@@ -55,6 +55,7 @@ impl Manager {
             network_config: Arc::new(Mutex::new(NetworkProtocolConfig::Dhcp)),
             ip_address,
             port,
+            connected_wifi: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 }
@@ -170,6 +171,26 @@ impl bmc::BmcManager for Manager {
     async fn captive_portal_redirect_host(&self) -> Option<String> {
         let port = self.port;
         Some(format!("localhost:{port}"))
+    }
+
+    async fn wifi_initial_setup(&self, config: WifiNetworkConfig) -> Result<(), InitialSetupError> {
+        if !self.is_factory_default().await {
+            return Err(InitialSetupError::NotSupported);
+        }
+
+        info!("Setting up WiFi");
+        let mut wifi = self.connected_wifi.lock().map_err(|_| {
+            InitialSetupError::UnexpectedFailure("Failed to acquire lock for wifi".to_owned())
+        })?;
+
+        *wifi = Some(config);
+        Ok(())
+    }
+
+    async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
+        info!("Reverting WiFi setup...");
+        *self.connected_wifi.lock().await = None;
+        Ok(())
     }
 
     async fn reboot(&self) -> anyhow::Result<()> {

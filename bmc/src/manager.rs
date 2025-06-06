@@ -7,7 +7,8 @@ use std::{
 };
 
 use bmc_platform::BmcPlatform;
-use strum::Display;
+use strum::{Display, EnumString};
+use thiserror::Error;
 use tokio::sync::watch;
 
 use bmc_shared_time::time::Timezone;
@@ -66,6 +67,10 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     async fn captive_portal_redirect_host(&self) -> Option<String>;
 
+    async fn wifi_initial_setup(&self, config: WifiNetworkConfig) -> Result<(), InitialSetupError>;
+
+    async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError>;
+
     async fn reboot(&self) -> anyhow::Result<()>;
 }
 
@@ -102,4 +107,33 @@ impl From<NetworkProtocolConfig> for NetworkProtocol {
             NetworkProtocolConfig::Static(_) => NetworkProtocol::Static,
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum InitialSetupError {
+    #[error("Initial setup is not supported")]
+    NotSupported,
+    #[error("Unexpected error during initial setup. {0}")]
+    UnexpectedFailure(String),
+    #[error("Connection to wifi was not successful. {0}")]
+    WifiConnectionFailure(String),
+}
+
+#[derive(Debug)]
+pub struct WifiNetworkConfig {
+    pub ssid: String,
+    pub password: Option<String>,
+    pub encryption: EncryptionType,
+}
+
+#[derive(Debug, EnumString, PartialEq, Eq, PartialOrd, Ord, Default, Clone, Copy, Display)]
+pub enum EncryptionType {
+    #[default]
+    None,
+    Wep,
+    WepShared,
+    Wpa,
+    Wpa1_2,
+    Wpa2,
+    Wpa2_3,
 }
