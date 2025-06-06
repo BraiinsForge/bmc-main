@@ -4,6 +4,7 @@ mod config;
 mod display_tasks;
 pub mod entry;
 pub mod firmware;
+mod initial_setup;
 pub mod log;
 pub mod manager;
 pub mod session;
