@@ -5,7 +5,7 @@ use crate::session::OpenwrtSessionManager;
 use crate::unix::system_reboot;
 use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
-use bmc::manager::{InitialSetupError, WifiNetworkConfig};
+use bmc::manager::{InitialSetupError, WifiNetworkConfig, WifiScanItem};
 use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
@@ -324,6 +324,10 @@ impl BmcManager for Manager {
     }
 
     async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
+        todo!();
+    }
+
+    async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
         todo!();
     }
 

@@ -71,6 +71,8 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError>;
 
+    async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>>;
+
     async fn reboot(&self) -> anyhow::Result<()>;
 }
 
@@ -136,4 +138,48 @@ pub enum EncryptionType {
     Wpa1_2,
     Wpa2,
     Wpa2_3,
+}
+
+#[derive(Debug, Clone)]
+pub struct WifiScanItem {
+    pub ssid: String,
+    pub signal_level: i32,
+    pub encryption_type: EncryptionType,
+}
+
+impl WifiScanItem {
+    #[must_use]
+    pub fn new(ssid: String, signal_level: i32, encryption_type: EncryptionType) -> Self {
+        Self {
+            ssid,
+            signal_level,
+            encryption_type,
+        }
+    }
+
+    #[must_use]
+    pub fn signal_strength(&self) -> SignalStrength {
+        SignalStrength::new(self.signal_level)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Default, Display, PartialOrd, Ord)]
+pub enum SignalStrength {
+    #[default]
+    Offline,
+    Low,
+    Fair,
+    Excellent,
+}
+
+impl SignalStrength {
+    #[must_use]
+    pub fn new(signal: i32) -> Self {
+        match signal {
+            0 => SignalStrength::Offline,
+            x if x >= -60 => SignalStrength::Excellent,
+            x if x >= -75 => SignalStrength::Fair,
+            _ => SignalStrength::Low,
+        }
+    }
 }

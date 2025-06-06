@@ -1,8 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::anyhow;
-use bmc::manager::{EncryptionType, InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig};
+use bmc::manager::{
+    EncryptionType, InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig, WifiScanItem,
+};
+use bmc_platform::BmcPlatform;
 use bmc_shared_time::time::Timezone;
+use rand::Rng;
 use std::{
     net::IpAddr,
     path::Path,
@@ -178,12 +182,16 @@ impl bmc::BmcManager for Manager {
             return Err(InitialSetupError::NotSupported);
         }
 
+        // Simulate connecting to WiFi
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
         info!("Setting up WiFi");
         let mut wifi = self.connected_wifi.lock().map_err(|_| {
             InitialSetupError::UnexpectedFailure("Failed to acquire lock for wifi".to_owned())
         })?;
 
         *wifi = Some(config);
+
         Ok(())
     }
 
@@ -191,6 +199,46 @@ impl bmc::BmcManager for Manager {
         info!("Reverting WiFi setup...");
         *self.connected_wifi.lock().await = None;
         Ok(())
+    }
+
+    async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
+        info!("Scanning WiFi...");
+
+        let mut rng = rand::thread_rng();
+        let mut signal_strength = || rng.gen_range(-90..=-50);
+
+        let mut wifi_list = vec![
+            WifiScanItem {
+                ssid: "braiins".to_owned(),
+                encryption_type: EncryptionType::Wpa2,
+                signal_level: signal_strength(),
+            },
+            WifiScanItem {
+                ssid: "dummy-wep".to_owned(),
+                encryption_type: EncryptionType::Wep,
+                signal_level: signal_strength(),
+            },
+            WifiScanItem {
+                ssid: "dummy-wpa".to_owned(),
+                encryption_type: EncryptionType::Wpa,
+                signal_level: signal_strength(),
+            },
+            WifiScanItem {
+                ssid: "dummy-none".to_owned(),
+                encryption_type: EncryptionType::None,
+                signal_level: signal_strength(),
+            },
+        ];
+
+        wifi_list.sort_by(|a, b| {
+            b.signal_level
+                .cmp(&a.signal_level)
+                .then_with(|| a.ssid.cmp(&b.ssid))
+        });
+
+        // return random number of elements
+        let count = rng.gen_range(0..=3);
+        Ok(wifi_list.split_off(count))
     }
 
     async fn reboot(&self) -> anyhow::Result<()> {
