@@ -1,0 +1,68 @@
+@use 'styles/carbon' as *;
+@use 'styles/var/transition';
+
+.root {
+    composes: horizontal center justified from 'styles/layout.scss';
+
+    height: to-rem(40px);
+    padding-inline: mini-units(2);
+
+    color: var(--color);
+    background-color: var(--background-color);
+    border-bottom: 1px solid $border-strong;
+    user-select: none;
+    cursor: pointer;
+
+    transition: background 150ms transition.$transition-timing-ease-in-out;
+
+    &.interactive {
+        &:hover,
+        &:focus {
+            color: var(--color-hover);
+            background-color: var(--background-color-hover);
+        }
+    }
+}
+
+.variant-inline {
+    --background-color: #{$field-01};
+    --background-color-hover: #{$field-hover};
+    --color: #{$text-primary};
+    --color-hover: #{$text-primary};
+}
+.variant-dropdown {
+    --background-color: #{$layer-01};
+    --background-color-hover: #{$layer-hover};
+    --color: #{$text-primary};
+    --color-hover: #{$text-primary};
+}
+
+.ssid {
+    font-size: to-rem(14px);
+    font-weight: 400;
+    line-height: 1.28;
+}
+
+.icons {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(1);
+    margin-inline-start: mini-units(2);
+}
+
+.skeleton {
+    position: relative;
+    width: 100%;
+    height: to-rem(40px);
+
+    .ssid {
+        width: 31%;
+        height: 16px;
+    }
+
+    .root {
+        position: absolute;
+        z-index: 10;
+        inset: 0;
+        cursor: default;
+    }
+}

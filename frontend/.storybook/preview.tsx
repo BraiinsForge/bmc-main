@@ -1,5 +1,5 @@
 import type { Preview } from '@storybook/react';
-import { MINIMAL_VIEWPORTS } from '@storybook/addon-viewport';
+import { MINIMAL_VIEWPORTS } from 'storybook/viewport';
 
 import Container from './Container';
 import THEME from '../src/styles/theme';

@@ -1,8 +1,4 @@
 export * from './FormPasswordChange';
-export * from './FormSceneClock';
-export * from './FormSceneSelect';
-export * from './images';
-
 export * from './SectionDisplay';
 export * from './SectionGeneral';
 export * from './SectionSecurity';

@@ -6,6 +6,8 @@ export const URLS = {
     },
 
     pages: {
+        initSetup: '/init_setup',
+
         display: '/display',
         settings: '/settings',
         alarms: '/alarms',

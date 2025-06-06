@@ -1,1 +1,1 @@
-export * from './timezones.ts';
+export * from './timezones';

@@ -205,7 +205,7 @@ class View extends Component<Props, State> {
     }
 }
 
-export default function () {
+export default function Root() {
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const isRootPath: boolean = pathname === '/';

@@ -1,0 +1,23 @@
+@use 'styles/carbon' as *;
+
+.root {
+    position: absolute;
+    width: 100vw;
+    height: 100vh;
+
+    composes: vertical center from 'styles/layout.scss';
+    padding-block-start: mini-units(8);
+    gap: mini-units(2);
+
+    background-color: $text-inverse;
+}
+
+.inner {
+    composes: vertical from 'styles/layout.scss';
+    inline-size: to-rem(512px);
+    gap: mini-units(2);
+}
+.innerSetup {
+    composes: inner;
+    inline-size: to-rem(703px);
+}

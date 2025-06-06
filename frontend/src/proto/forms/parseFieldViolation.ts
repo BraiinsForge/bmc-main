@@ -25,7 +25,7 @@ export function parseFieldPath(path: string): string[] {
     );
 }
 
-export function parseFieldViolations<Input extends Rec, KnownKey extends Key>(
+export function parseFieldViolations<Input extends Rec, KnownKey extends PropertyKey>(
     input: ReadonlyArray<FieldViolation>,
     knownKeys?: KnownKey[],
 ): { parsed: FieldBasedErrors<Input>; unmatched: string[] } {

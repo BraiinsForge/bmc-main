@@ -1,0 +1,13 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: flex selfStretch vertical centerCenter from 'styles/layout.scss';
+    margin-block: mini-units(8) mini-units(5);
+}
+
+.title {
+    composes: heading-03 from 'styles/carbon/typography.scss';
+    margin-block-start: mini-units(4);
+    text-align: center;
+    text-wrap: balance;
+}

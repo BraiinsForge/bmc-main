@@ -1,0 +1,59 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+
+    position: relative;
+    inline-size: to-rem(512px);
+    max-block-size: 100%;
+    block-size: auto;
+
+    background-color: $layer-01;
+}
+
+.header {
+    composes: horizontal center from 'styles/layout.scss';
+    position: relative;
+    z-index: 1;
+
+    flex-shrink: 0;
+    block-size: to-rem(58px);
+
+    border-bottom: 2px solid $border-subtle;
+    padding-inline: mini-units(2);
+}
+
+.main {
+    display: flex;
+    flex-flow: column nowrap;
+    flex: 1 1 auto;
+
+
+    position: relative;
+    z-index: 2;
+
+    composes: scrollbar from 'styles/interaction.scss';
+    max-height: 75vh;
+
+    padding: mini-units(2) mini-units(2) mini-units(5);
+}
+
+.footer {
+    composes: horizontal endJustified from 'styles/layout.scss';
+    width: 100%;
+    flex-shrink: 0;
+
+    position: sticky;
+    bottom: 0;
+
+    > * {
+        min-inline-size: 50%;
+        max-inline-size: 50%;
+
+        block-size: to-rem(64px);
+        min-block-size: unset;
+        max-block-size: unset;
+
+        padding-block: mini-units(2) mini-units(4) !important;
+    }
+}

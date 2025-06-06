@@ -6,8 +6,10 @@ import Root from './pages/Root';
 import ContainerAuth from './pages/auth/Container';
 import ContainerWorkspace from './pages/workspace/Container';
 
-import PageLogin from './pages/auth/Login';
+import PageInitSetup from './pages/init/InitSetup';
+import PageNotFound from './pages/404';
 
+import PageLogin from './pages/auth/Login';
 import PageSettings from './pages/workspace/Settings';
 import PageDisplay from './pages/workspace/Display';
 import PageAlarms from './pages/workspace/Alarms';
@@ -18,6 +20,11 @@ import PageApi from './pages/workspace/Api';
 import PageBuyButton from './pages/workspace/BuyButton';
 
 export default createBrowserRouter([
+    // Initial setup (right after wifi is configured)
+    // Has to be a root level route because the Root page wrapper
+    // redirects to login if valid session is not found.
+    { path: URLS.pages.initSetup, Component: PageInitSetup },
+
     {
         path: '/',
         Component: Root,
@@ -25,7 +32,10 @@ export default createBrowserRouter([
             // Auth
             {
                 Component: ContainerAuth,
-                children: [{ path: URLS.auth.login, Component: PageLogin }],
+                children: [
+                    // Login
+                    { path: URLS.auth.login, Component: PageLogin },
+                ],
             },
 
             // Workspace
@@ -44,4 +54,7 @@ export default createBrowserRouter([
             },
         ],
     } satisfies RouteObject,
+
+    // 404
+    { path: '*', Component: PageNotFound },
 ]);

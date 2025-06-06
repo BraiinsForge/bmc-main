@@ -26,7 +26,7 @@ export function pingImage(imageURL: string): Promise<boolean> {
             return () => {
                 try {
                     img.parentElement?.removeChild(img);
-                } catch (e) {
+                } catch (_) {
                     // Noop
                 }
                 resolve(result);

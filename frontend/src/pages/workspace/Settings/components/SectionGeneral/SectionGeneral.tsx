@@ -61,7 +61,7 @@ interface Props extends SectionGeneralProps {
     intl: IntlShape;
 }
 
-const $id = getID('settings', 'general');
+const $ = getID('settings', 'general').get;
 
 class View extends Component<Props> {
     static contextType = AppContext;
@@ -157,7 +157,7 @@ class View extends Component<Props> {
 
     render() {
         const {
-            intl,
+            intl: { formatMessage },
 
             // Fields
             timeFormat,
@@ -172,13 +172,17 @@ class View extends Component<Props> {
 
         return (
             <Form className={css.root}>
-                <FieldSet title={intl.formatMessage({ defaultMessage: 'Time & Date' })}>
-                    <Field title={intl.formatMessage({ defaultMessage: 'Time Format' })} disabled={timeFormat.disabled}>
+                <FieldSet title={formatMessage({ defaultMessage: 'Time & Date' })}>
+                    <Field
+                        variant="dark"
+                        title={formatMessage({ defaultMessage: 'Time Format' })}
+                        disabled={timeFormat.disabled}
+                    >
                         <ButtonSwitch<TimeFormat>
                             selectedOption={timeFormat.value}
                             options={[
-                                { id: TimeFormat.twelve, text: intl.formatMessage({ defaultMessage: '12-hour' }) },
-                                { id: TimeFormat.twentyFour, text: intl.formatMessage({ defaultMessage: '24-hour' }) },
+                                { id: TimeFormat.twelve, text: formatMessage({ defaultMessage: '12-hour' }) },
+                                { id: TimeFormat.twentyFour, text: formatMessage({ defaultMessage: '24-hour' }) },
                             ]}
                             size="md"
                             disabled={timeFormat.disabled}
@@ -189,12 +193,12 @@ class View extends Component<Props> {
                     </Field>
 
                     <Field
-                        title={intl.formatMessage({ defaultMessage: 'Show Seconds in Status Bar' })}
+                        title={formatMessage({ defaultMessage: 'Show Seconds in Status Bar' })}
                         disabled={secondsInStatusbar.disabled}
                     >
                         <CarbonFormField error={secondsInStatusbar.error}>
                             <Toggle
-                                id={$id.get('secondsInStatusbar')}
+                                id={$('secondsInStatusbar')}
                                 size="md"
                                 aria-invalid={!!secondsInStatusbar.error}
                                 toggled={!!secondsInStatusbar.value}
@@ -204,9 +208,13 @@ class View extends Component<Props> {
                         </CarbonFormField>
                     </Field>
 
-                    <Field title={intl.formatMessage({ defaultMessage: 'Timezone' })} disabled={timezone.disabled}>
+                    <Field
+                        variant="dark"
+                        title={formatMessage({ defaultMessage: 'Timezone' })}
+                        disabled={timezone.disabled}
+                    >
                         <ComboBox<pb.Timezone>
-                            id={$id.get('timezone')}
+                            id={$('timezone')}
                             titleText=""
                             disabled={timezone.disabled}
                             direction="bottom"
@@ -221,9 +229,13 @@ class View extends Component<Props> {
                         />
                     </Field>
 
-                    <Field title={intl.formatMessage({ defaultMessage: 'Date Format' })} disabled={dateFormat.disabled}>
+                    <Field
+                        variant="dark"
+                        title={formatMessage({ defaultMessage: 'Date Format' })}
+                        disabled={dateFormat.disabled}
+                    >
                         <Dropdown<keyof typeof DateFormat>
-                            id={$id.get('date-format')}
+                            id={$('date-format')}
                             size="md"
                             label=""
                             titleText=""
@@ -240,11 +252,11 @@ class View extends Component<Props> {
                     </Field>
 
                     <Field
-                        title={intl.formatMessage({ defaultMessage: 'First Day of the Week' })}
+                        title={formatMessage({ defaultMessage: 'First Day of the Week' })}
                         disabled={firstWeekDay.disabled}
                     >
                         <Dropdown<WeekDay>
-                            id={$id.get('first-week-day')}
+                            id={$('first-week-day')}
                             size="md"
                             label=""
                             titleText=""
@@ -261,13 +273,14 @@ class View extends Component<Props> {
                     </Field>
                 </FieldSet>
 
-                <FieldSet title={intl.formatMessage({ defaultMessage: 'Regional Settings' })}>
+                <FieldSet title={formatMessage({ defaultMessage: 'Regional Settings' })}>
                     <Field
-                        title={intl.formatMessage({ defaultMessage: 'Temperature' })}
+                        variant="dark"
+                        title={formatMessage({ defaultMessage: 'Temperature' })}
                         disabled={temperature.disabled}
                     >
                         <ButtonSwitch<Temperature>
-                            id={$id.get('temperature')}
+                            id={$('temperature')}
                             size="md"
                             selectedOption={temperature.value}
                             options={this.#temperatureOptions}
@@ -279,7 +292,8 @@ class View extends Component<Props> {
                     </Field>
 
                     <Field
-                        title={intl.formatMessage({ defaultMessage: 'Number Format' })}
+                        variant="dark"
+                        title={formatMessage({ defaultMessage: 'Number Format' })}
                         disabled={numberFormat.disabled}
                     >
                         <Dropdown<keyof typeof NumberFormat>
@@ -287,7 +301,7 @@ class View extends Component<Props> {
                             label=""
                             titleText=""
                             hideLabel
-                            id={$id.get('number-format')}
+                            id={$('number-format')}
                             items={this.#numberFormatOptions}
                             selectedItem={numberFormat.value ?? undefined}
                             onChange={this.#numberFormatChange}
@@ -300,17 +314,17 @@ class View extends Component<Props> {
                     </Field>
                 </FieldSet>
 
-                <FieldSet title={intl.formatMessage({ defaultMessage: 'Factory Reset' })}>
+                <FieldSet title={formatMessage({ defaultMessage: 'Factory Reset' })}>
                     <Field
-                        title={intl.formatMessage({ defaultMessage: 'Reset to Factory Defaults' })}
-                        description={intl.formatMessage({
+                        title={formatMessage({ defaultMessage: 'Reset to Factory Defaults' })}
+                        description={formatMessage({
                             defaultMessage:
                                 'Warning: This will delete all your custom configurations and display scenes.',
                         })}
                     >
                         <Button
                             kind="secondary"
-                            children={intl.formatMessage({ defaultMessage: 'Reset to Defaults' })}
+                            children={formatMessage({ defaultMessage: 'Reset to Defaults' })}
                             onClick={this.#reset}
                         />
                     </Field>

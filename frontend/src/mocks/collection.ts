@@ -54,7 +54,7 @@ export function arrayOf<T = number>(length: LengthRange, value?: MaybeGetter<T, 
     });
 }
 
-export function recordOf<K extends Key = StrNum, V = unknown>(keys: K[], value: (key: K) => V): Record<K, V> {
+export function recordOf<K extends PropertyKey = StrNum, V = unknown>(keys: K[], value: (key: K) => V): Record<K, V> {
     const res = {} as Record<K, V>;
     keys.forEach(k => (res[k] = value(k)));
     return res;

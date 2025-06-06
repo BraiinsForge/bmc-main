@@ -4,10 +4,9 @@ declare global {
     // While these don't add any aditional type safety,
     // their name serves a semantic documentation purpose
     type Timestamp = number;
-    type Float<Low = number, High = number> = number;
-    type Integer<Low = number, High = number> = number;
+    type Float<_Low = number, _High = number> = number;
+    type Integer<_Low = number, _High = number> = number;
     type StrNum = string | number;
-    type Key = keyof any;
 
     type IPv4 = `${number}.${number}.${number}.${number}`;
     type IPv6 = `${string}:${string}:${string}:${string}:${string}:${string}:${string}:${string}`;
@@ -34,8 +33,8 @@ declare global {
      *     [WorkerMonitoringState.DIS]: 'power',
      * }
      */
-    type ProtoEnumRecord<Enum extends Key, Value> = Omit<Record<Enum, Value>, 0>;
-    type ProtoEnumMap<Enum extends Key, Value> = Omit<Map<Enum, Value>, 0>;
+    type ProtoEnumRecord<Enum extends PropertyKey, Value> = Omit<Record<Enum, Value>, 0>;
+    type ProtoEnumMap<Enum extends PropertyKey, Value> = Omit<Map<Enum, Value>, 0>;
     /**
      * Create a new union type from the oneof proto union, removing the `undefined` case.
      * Usefull for usage in a component state that doesn't allow the `undefined` case.
@@ -75,5 +74,5 @@ declare global {
     type CSSProperties = React.CSSProperties;
 }
 
-// biome-ignore lint/complexity/noUselessEmptyExport: <explanation>
+// biome-ignore lint/complexity/noUselessEmptyExport: Needed for typescript not to trip on the module type
 export {};

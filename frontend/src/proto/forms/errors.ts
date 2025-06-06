@@ -1,5 +1,4 @@
 import { ConnectError, Code } from '@connectrpc/connect';
-import router from '@/routes';
 import { URLS } from '@/constants';
 
 import { hasFormErrors } from '@/lib/form';
@@ -25,7 +24,7 @@ export function parseError(error: BareException, defaultMessagePreffix?: string)
     if (defaultMessagePreffix) res.message = `${defaultMessagePreffix}: ${res.message}`;
 
     const isAuthError: boolean = [Code.PermissionDenied, Code.Unauthenticated].includes(connectError.code);
-    if (isAuthError) window.setTimeout(() => router.navigate(URLS.auth.login));
+    if (isAuthError) import('@/routes').then(({ default: router }) => router.navigate(URLS.auth.login));
 
     return res;
 }

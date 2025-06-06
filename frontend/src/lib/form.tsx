@@ -1,4 +1,4 @@
-import type { ComponentType, FormHTMLAttributes, Ref } from 'react';
+import { type ComponentType, type DependencyList, type FormHTMLAttributes, type Ref, useMemo } from 'react';
 import { blockEvent } from '@/lib/react';
 
 export type iForm<SubmitData = void> = {
@@ -46,7 +46,7 @@ export function Form(props: FormProps) {
     return <form onSubmit={blockEvent} autoComplete="off" lang="g!auld" {...rest} ref={$ref} />;
 }
 
-export interface iFormErrors<FieldName extends Key = string, FieldErrorType = string> {
+export interface iFormErrors<FieldName extends PropertyKey = string, FieldErrorType = string> {
     global?: string[];
     fields?: Partial<Record<FieldName, null | FieldErrorType>>;
 }
@@ -54,17 +54,69 @@ export function hasFormErrors<T extends iFormErrors<string, any>>(errors: Maybe<
     return errors?.global?.some(Boolean) || Object.values(errors?.fields || {}).some(Boolean);
 }
 
-class GetID {
-    #preffix: string[];
+/**
+ * Convert a collection (either interface or record)
+ * of iField types to a shallow record of the value types.
+ *
+ * @example
+ * interface FormProps {
+ *     name: iField<string>;
+ *     age: iField<number>;
+ * }
+ *
+ * type FormPropsToValues = FormPropsToValuesRec<FormProps>;
+ * // { name: string; age: number }
+ */
+export type FormPropsToValuesRec<FormProps> = {
+    [K in keyof FormProps]?: FormProps[K] extends iField<infer T> ? T : never;
+};
+/**
+ * Convert a collection (either interface or record) of iField types
+ * to a shape usable for local state of a component that communicates
+ * with APIs and fills in the original form props.
+ *
+ * @example
+ * interface FormProps {
+ *     name: iField<string>;
+ *     age: iField<number>;
+ * }
+ *
+ * type FormState = FormPropsToLocalState<FormProps>;
+ * // {
+ * //   values: {
+ * //       name: string;
+ * //       age: number;
+ * //   };
+ * //   errors: {
+ * //       global: string[];
+ * //       fields: {
+ * //           name: string[];
+ * //           age: string[];
+ * //       };
+ * //   };
+ * // };
+ */
+export type FormPropsToLocalState<FormProps> = {
+    values: FormPropsToValuesRec<FormProps>;
+    errors: null | iFormErrors<keyof FormPropsToValuesRec<FormProps>, string[]>;
+};
 
-    constructor(...preffix: string[]) {
+type IdPath = Array<string | number>;
+class GetID {
+    #preffix: IdPath;
+
+    constructor(...preffix: IdPath) {
         this.#preffix = preffix;
     }
-    at = (...prefix: string[]): GetID => {
+    at = (...prefix: IdPath): GetID => {
         return new GetID(...this.#preffix, ...prefix);
     };
-    get = (...suffix: string[]): string => {
+    get = (...suffix: IdPath): string => {
         return [...this.#preffix, ...suffix].join('-');
     };
 }
 export const getID = new GetID('bmc').at;
+export function useID(...prefix: IdPath) {
+    // biome-ignore lint/correctness/useExhaustiveDependencies: It is OK, but the check is kind of dumb
+    return useMemo(() => getID(...prefix).get, prefix as DependencyList);
+}

@@ -1,0 +1,67 @@
+@use 'styles/carbon' as *;
+
+.layout {
+    inline-size: to-rem(703px) !important;
+}
+
+.title {
+    composes: heading-03 from 'styles/carbon/typography.scss';
+    margin-block: mini-units(3) mini-units(1);
+    user-select: none;
+}
+.note {
+    font-size: to-rem(16px);
+    font-weight: 400;
+    line-height: 1.37;
+    color: $text-secondary;
+    user-select: none;
+}
+
+.progress {
+    position: relative;
+    z-index: 10;
+
+    margin-top: calc(mini-units(-2) - 1px) !important;
+    user-select: none;
+
+    .disabledTab {
+        pointer-events: none;
+    }
+}
+
+//
+// Generic utils
+//
+
+.mono {
+    composes: code-01 from 'styles/carbon/typography.scss';
+}
+
+.withIcon {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(1);
+    line-height: 1;
+}
+
+//
+// Form
+//
+
+.form {
+    composes: selfStretch vertical from 'styles/layout.scss';
+    gap: mini-units(2);
+
+    composes: scrollbar from 'styles/interaction.scss';
+    overflow: auto;
+
+    margin-block-start: mini-units(5);
+    container-type: inline-size;
+}
+
+.timezoneComboBox :global(button.cds--list-box__selection) {
+    display: none !important;
+}
+.timezoneElement {
+    composes: inline horizontal center from 'styles/layout.scss';
+    gap: mini-units(1);
+}

@@ -75,7 +75,7 @@ export class Aborter implements AbortController {
 }
 
 type Abortable = { abort: Fn } | Aborter | AbortController;
-type HasAbortables = Record<Key, Abortable> | Component;
+type HasAbortables = Record<PropertyKey, Abortable> | Component;
 
 export const abort = {
     is(error: Maybe<Error & Rec> | unknown): boolean {

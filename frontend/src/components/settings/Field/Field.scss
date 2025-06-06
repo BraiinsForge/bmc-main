@@ -17,7 +17,7 @@ $left-size-min: to-rem(280px);
     grid-template-columns: minmax($left-size-min, 1fr) 1fr;
     align-items: start;
 
-    background-color: $layer-01;
+    background-color: var(--field-bg-color);
     padding: mini-units(2);
     gap: mini-units(0.5) mini-units(7);
 
@@ -35,7 +35,14 @@ $left-size-min: to-rem(280px);
         grid-template-rows: 1fr;
     }
 
-    @container (width <= 880px) {
+    &.variant-dark {
+        --field-bg-color: #{$layer-01};
+    }
+    &.variant-light {
+        --field-bg-color: #{$layer-02};
+    }
+
+    @container (width <= 600px) {
         display: flex;
         flex-direction: column;
         gap: mini-units(0.5);

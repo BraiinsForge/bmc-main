@@ -1,0 +1,128 @@
+@use 'styles/carbon' as *;
+@use 'styles/var/shadows';
+
+.title {
+    composes: heading-03 from 'styles/carbon/typography.scss';
+    margin-block: mini-units(3) mini-units(1);
+    user-select: none;
+}
+.note {
+    font-size: to-rem(16px);
+    font-weight: 400;
+    line-height: 1.37;
+    color: $text-secondary;
+    user-select: none;
+}
+
+.progress {
+    position: relative;
+    z-index: 10;
+
+    margin-block-start: calc(mini-units(-2) - 2px);
+    user-select: none;
+
+    .disabledTab {
+        pointer-events: none;
+    }
+}
+
+.links {
+    composes: selfStretch horizontal center justified from 'styles/layout.scss';
+    user-select: none;
+}
+.link {
+    color: $link-primary;
+    cursor: pointer;
+    user-select: none;
+}
+
+//
+// Selection screen
+//
+
+.netList {
+    composes: selfStretch from 'styles/layout.scss';
+    composes: scrollbar from 'styles/interaction.scss';
+    overflow: auto;
+
+    max-block-size: to-rem(200px);
+    margin-block: mini-units(2);
+}
+
+//
+// Manual form
+//
+
+.manualForm {
+    composes: selfStretch vertical from 'styles/layout.scss';
+    gap: mini-units(1);
+    margin-block: mini-units(2);
+}
+
+//
+// Password entry
+//
+
+.netDropdownWrapper {
+    width: 100%;
+
+    :global {
+        $cds-icon-offset: mini-units(8);
+
+        // Container of both the dropdown triggering button and the refresh button we add.
+        // When the field is invalid, it has a red outline that is offset to stay inside.
+        // This however means that our refresh button covers it on the right side.
+        .cds--dropdown {
+            outline-offset: 0 !important;
+        }
+
+        // The dropdown triggering button
+        button[role='combobox'] {
+            // Same reason as above, but just for the button when it's focused.
+            outline-offset: 0 !important;
+
+            // Make explicit space for the refresh button
+            padding: 0 !important;
+
+            // The arrow icon has to be shifted left
+            // not to be covered by the refresh button
+            .cds--list-box__menu-icon {
+                position: absolute;
+                right: $cds-icon-offset;
+            }
+
+            // Label in the button
+            .cds--list-box__label {
+                width: 100%;
+            }
+        }
+
+        ul[role='listbox'] {
+            box-shadow: shadows.$elevation-8dp;
+        }
+
+        // Drop the upstream padding for the list items
+        li[role='option'] {
+            padding: 0 !important;
+        }
+
+        // Stretch the menu items to a sensible width
+        // for the visuals to work + drop padding...
+        .cds--list-box__menu-item__option {
+            min-width: to-rem(220px);
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
+        // When invalid, the error icon is fighting for space
+        // with the arrow icon, so we'll just remove it.
+        .cds--list-box__invalid-icon {
+            display: none;
+        }
+
+        // Offset the "selected" checkmark icon
+        .cds--list-box__menu-item__selected-icon {
+            inset-inline-end: $cds-icon-offset + 0.5rem;
+        }
+    }
+}

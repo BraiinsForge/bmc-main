@@ -2,8 +2,48 @@
 
 .header {
     composes: horizontal justified from 'styles/layout.scss';
+    margin-block-end: mini-units(3);
+
+    container-type: inline-size;
+    width: 100%;
 }
 
+.headerLeft {
+    position: relative;
+}
 .title {
     composes: heading-06 from 'styles/carbon/typography.scss';
+}
+.subtitle {
+    margin-top: mini-units(2);
+    color: $text-secondary;
+}
+
+.headerControls {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(2);
+}
+.screenCycleButtonContent {
+    composes: inline horizontal center from 'styles/layout.scss';
+    gap: mini-units(1);
+
+    white-space: nowrap;
+}
+.screenCycleContent {
+    composes: vertical from 'styles/layout.scss';
+    min-inline-size: to-rem(288px);
+    padding: mini-units(2);
+
+    background-color: $layer-01;
+    color: $text-primary;
+
+    .title {
+        @include type-style(heading-02);
+        line-height: 1.3;
+        margin-bottom: mini-units(2);
+    }
+}
+.screenCycleForm {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(2);
 }

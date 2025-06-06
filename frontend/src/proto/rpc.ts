@@ -1,9 +1,11 @@
 import { getClient } from './transport';
 
-import { AuthenticationService, MetadataService, SystemService, UpgradeService } from './pb';
+import { AuthenticationService, InitialSetupService, MetadataService, SystemService, UpgradeService } from './pb';
 
 // Utils
 export const rpc = {
+    init: getClient(InitialSetupService),
+
     auth: getClient(AuthenticationService),
     meta: getClient(MetadataService),
     sys: getClient(SystemService),
@@ -13,6 +15,7 @@ export const rpc = {
 // Export services
 export const services = {
     AuthenticationService,
+    InitialSetupService,
     MetadataService,
     SystemService,
     UpgradeService,

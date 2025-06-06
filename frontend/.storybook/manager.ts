@@ -1,5 +1,5 @@
-import { addons } from '@storybook/manager-api';
-import { create } from '@storybook/theming/create';
+import { addons } from 'storybook/manager-api';
+import { create } from 'storybook/theming/create';
 
 /** @see https://storybook.js.org/docs/7.0/react/configure/features-and-behavior */
 addons.setConfig({
@@ -19,6 +19,6 @@ addons.setConfig({
 
     sidebar: {
         showRoots: true,
-        collapsedRoots: [],
+        collapsedRoots: ['components'],
     },
 });

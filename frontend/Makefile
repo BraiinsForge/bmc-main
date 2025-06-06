@@ -22,12 +22,12 @@ configure:
 format:
 	yarn run biome migrate --write
 	yarn run biome format --write .
-	yarn run prettier './**/*.scss' --write
+	yarn run prettier './**/*.scss' --log-level="warn" --write
 
 .PHONY: lint
 lint:
 	yarn run biome check --max-diagnostics=100 .
-	yarn run stylelint '**/*.scss' --color --quiet --formatter verbose --allow-empty-input --config stylelint.config.cjs
+	yarn run stylelint '**/*.scss' --color --quiet --formatter --allow-empty-input --config stylelint.config.cjs
 
 .PHONY: test
 test:
@@ -49,14 +49,20 @@ build:
 dev:
 	yarn run rsbuild dev
 
-.PHONY: serve
+.PHONY: serve serve-factory
+
+serve: EXTRA_ARGS ?= ;
 serve:
+	echo $(FACTORY_DEFAULT)
 	cd ..; \
 	cargo run --package bmc-mock -- \
 		--address="0.0.0.0:6070" \
 		--system-password="root" \
 		--www-path="$(shell realpath ./dist)" \
-		--mockfs-path="$(shell realpath ./@mockfs)"
+		--mockfs-path="$(shell realpath ./@mockfs)" $(EXTRA_ARGS)
+
+serve-factory:
+	EXTRA_ARGS='--factory-default' $(MAKE) serve
 
 #
 # Develop
@@ -85,3 +91,10 @@ minify-images: minify-png minify-svg
 .PHONY: intl-extract
 intl-extract:
 	yarn run formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json
+
+.PHONY: nix-yarn-files
+nix-yarn-files:
+	# "build" the yarn files derivation to check
+	# if the hard-coded hash is correct
+	nix build -L '.#yarnFiles'
+	rm -rf ./result

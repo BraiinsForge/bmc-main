@@ -224,3 +224,6 @@ header.cds--header {
 .cds--modal-container {
     box-shadow: shadows.$elevation-16dp;
 }
+.cds--modal-content {
+    @include interaction.scrollbar;
+}

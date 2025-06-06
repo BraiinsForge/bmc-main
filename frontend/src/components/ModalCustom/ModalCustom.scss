@@ -1,0 +1,65 @@
+@use 'styles/carbon' as *;
+@use 'styles/interaction';
+
+.hideModalCloseButton {
+    :global(.cds--modal-close) {
+        display: none;
+    }
+}
+
+.body {
+    padding: 1rem;
+
+    &.cancelBodyOverflowShadow {
+        // Carbon now adds some kind of overflow-shadow mask
+        // to the modal mody, but we don't want that here.
+        mask-image: none !important;
+        outline: none !important;
+    }
+}
+
+$btn-height: 4rem;
+
+.footer {
+    composes: horizontal endJustified from 'styles/layout.scss';
+
+    // They are setting this fixed, but that fucks us over
+    // with regard to bigger custom footers (eg.: toolbox pools modal).
+    //
+    // Moving it to min-size helps preserving the intention
+    // as much as possible and unlocking us too.
+    block-size: unset !important;
+    min-block-size: 4rem;
+
+    :global(.cds--btn) {
+        box-shadow: none !important;
+        padding-inline: mini-units(2) !important;
+        padding-block: mini-units(3) !important;
+
+        height: $btn-height !important;
+        align-items: center !important;
+    }
+    :global(.cds--btn--icon-only) {
+        flex-shrink: 0;
+        width: $btn-height;
+    }
+
+    // Patch for the modal footer buttons.
+    // The goal is to make them darker in dark theme for the text to be more readable.
+    button[disabled] {
+        border-color: $layer-accent-01 !important;
+        background: $layer-accent-01 !important;
+        color: $text-secondary !important;
+
+        // Patch for the "InlineLoading" component in the footer button.
+        // The goal is to remove the background circle & to force color inheritance on the description text.
+        :global(.cds--loading__background) {
+            fill: none !important;
+            stroke: none !important;
+        }
+
+        :global(.cds--inline-loading__text) {
+            color: inherit !important;
+        }
+    }
+}

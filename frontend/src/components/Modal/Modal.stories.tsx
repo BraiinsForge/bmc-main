@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import type { Meta } from '@storybook/react';
-import { action } from '@storybook/addon-actions';
+import { action } from 'storybook/actions';
 
 import { Modal as Component, type ModalProps as Props } from './Modal';
 import { Button } from '@/components';

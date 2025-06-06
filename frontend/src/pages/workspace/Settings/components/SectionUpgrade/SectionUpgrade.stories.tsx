@@ -1,5 +1,5 @@
 import type { Meta } from '@storybook/react';
-import { action } from '@storybook/addon-actions';
+import { action } from 'storybook/actions';
 import * as gen from '@/mocks';
 import type * as pb from '@/proto';
 import { SectionUpgrade as Component, type SectionUpgradeProps } from './SectionUpgrade';

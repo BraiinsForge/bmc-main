@@ -1,7 +1,7 @@
 import { Fragment, Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 
-import { Braiins } from '@/res/svg';
+import { Braiins } from '@/components';
 import { Content, Header, HeaderName, SkipToContent } from '@carbon/react';
 
 import css from './LayoutPlain.scss';

@@ -46,7 +46,7 @@ export function Form(props: FormProps) {
     return <form onSubmit={blockEvent} autoComplete="off" lang="g!auld" {...rest} ref={$ref} />;
 }
 
-export interface iFormErrors<FieldName extends Key = string, FieldErrorType = string> {
+export interface iFormErrors<FieldName extends PropertyKey = string, FieldErrorType = string> {
     global?: string[];
     fields?: Partial<Record<FieldName, null | FieldErrorType>>;
 }

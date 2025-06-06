@@ -1,5 +1,5 @@
 import type { Meta } from '@storybook/react';
-import { action } from '@storybook/addon-actions';
+import { action } from 'storybook/actions';
 import { Debug } from '@carbon/react/icons';
 import { range } from 'es-toolkit';
 

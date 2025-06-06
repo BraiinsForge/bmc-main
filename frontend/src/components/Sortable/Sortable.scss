@@ -1,0 +1,6 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+    gap: 4px;
+}

@@ -1,0 +1,59 @@
+@use 'styles/carbon' as *;
+
+.layout {
+    composes: flex selfCenter vertical centerCenter from 'styles/layout.scss';
+    width: to-rem(440px);
+    max-width: 100%;
+    padding-left: mini-units(2);
+    padding-right: mini-units(2);
+}
+
+.animation {
+    position: relative;
+    width: to-rem(600px);
+    height: to-rem(600px);
+
+    top: 0;
+    margin-top: to-rem(-200px);
+    margin-bottom: to-rem(-150px);
+
+    :global(.fill) {
+        fill: $text-primary;
+    }
+}
+
+.h1 {
+    composes: heading-05 from 'styles/carbon/typography.scss';
+    position: relative;
+    width: 100%;
+    z-index: 1;
+
+    text-align: center;
+    white-space: pre-line;
+}
+.h2 {
+    composes: h1;
+    position: relative;
+    z-index: 1;
+
+    text-align: center;
+    white-space: pre-line;
+    font-size: to-rem(48px);
+    line-height: to-rem(62px);
+    text-transform: uppercase;
+
+    margin-top: mini-units(5);
+}
+
+.button {
+    margin: mini-units(3) auto !important;
+}
+
+@media (height <= calc(to-rem(600px))) {
+    .animation {
+        margin-top: to-rem(-200px);
+    }
+    .button {
+        margin-bottom: mini-units(2) !important;
+    }
+}

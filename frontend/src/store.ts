@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import * as pb from './proto';
+import * as pb from '@/proto';
 
 export type Listener<R> = (store: Store) => R;
 export type SubscribeResult = {

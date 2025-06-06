@@ -7,6 +7,13 @@ import { pluginTypedCSSModules } from '@rsbuild/plugin-typed-css-modules';
 const isProduction = process.env.NODE_ENV === 'production';
 
 export default defineConfig({
+    source: {
+        entry: {
+            index: { html: true, import: './src/index-app.tsx' },
+            'index-connect': { html: true, import: './src/index-init.tsx' },
+        },
+    },
+
     mode: isProduction ? 'production' : 'development',
 
     resolve: {
@@ -40,7 +47,7 @@ export default defineConfig({
 
     html: {
         template: './src/index.html',
-        favicon: './src/res/svg/ii.svg',
+        favicon: './src/components/images/icons/ii.svg',
     },
 
     output: {
@@ -58,13 +65,12 @@ export default defineConfig({
             namedExport: false,
             exportGlobals: false,
             exportLocalsConvention: 'asIs',
+            localIdentName: isProduction ? '[local]-[hash:base64:6]' : '[name]__[local]-[hash:base64:6]',
         },
     },
 
     tools: {
-        lightningcssLoader: {
-            errorRecovery: true,
-        },
+        lightningcssLoader: { errorRecovery: true },
 
         rspack: {
             devtool: 'source-map',
@@ -87,7 +93,10 @@ export default defineConfig({
         swc: {
             jsc: {
                 experimental: {
-                    plugins: [['@swc/plugin-formatjs', { ast: true }]],
+                    plugins: [
+                        ['@swc/plugin-formatjs', { ast: true }],
+                        ['@swc/plugin-emotion', {}],
+                    ],
                 },
             },
         },
@@ -98,6 +107,7 @@ export default defineConfig({
         compress: true,
         printUrls: true,
         proxy: {
+            // gRPC-web api endpoints
             '/braiins.bmc': {
                 target: 'http://localhost:6070',
                 changeOrigin: true,

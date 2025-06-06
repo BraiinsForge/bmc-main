@@ -1,15 +1,16 @@
 {
-    "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+    "$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
 
     "files": {
-        "ignore": [
-            "packages/boser/mockfs",
-            "**/package.json",
-            ".pnp.cjs",
-            ".pnp.loader.mjs",
-            ".vscode",
-            ".yarn",
-            ".yarnrc.yml"
+        "includes": [
+            "**",
+            "!**/packages/boser/mockfs",
+            "!**/package.json",
+            "!**/.pnp.cjs",
+            "!**/.pnp.loader.mjs",
+            "!**/.vscode",
+            "!**/.yarn",
+            "!**/.yarnrc.yml"
         ]
     },
 
@@ -20,62 +21,71 @@
 
             "correctness": {
                 "noChildrenProp": "off",
-                "noVoidTypeReturn": "off",
-                "noUnreachableSuper": "off",
                 "noInnerDeclarations": "warn",
                 "noUndeclaredVariables": "off",
+                "noUnreachableSuper": "off",
+                "noUnusedVariables": { "level": "info", "options": { "ignoreRestSiblings": true } },
+                "noVoidTypeReturn": "off",
                 "useExhaustiveDependencies": "warn"
             },
 
             "suspicious": {
-                "noShadowRestrictedNames": "off",
+                "noArrayIndexKey": "off",
                 "noAssignInExpressions": "off",
                 "noConfusingVoidType": "off",
                 "noEmptyInterface": "off",
-                "noArrayIndexKey": "off",
-                "noExplicitAny": "off"
+                "noExplicitAny": "off",
+                "noIrregularWhitespace": "warn",
+                "noShadowRestrictedNames": "off"
             },
 
             "style": {
-                "noParameterAssign": "warn",
-                "noNonNullAssertion": "warn",
-                "useExponentiationOperator": "warn",
                 "noInferrableTypes": "off",
-                "useFragmentSyntax": "off",
+                "noNonNullAssertion": "warn",
+                "noParameterAssign": "warn",
+                "noUnusedTemplateLiteral": "error",
+                "noUselessElse": "off",
+                "useAsConstAssertion": "error",
                 "useBlockStatements": "off",
                 "useDefaultParameterLast": "off",
-                "noUselessElse": "off"
+                "useEnumInitializers": "error",
+                "useExponentiationOperator": "warn",
+                "useFragmentSyntax": "off",
+                "useNumberNamespace": "error",
+                "useSelfClosingElements": "error",
+                "useSingleVarDeclarator": "error",
+                "useTrimStartEnd": "warn"
             },
 
             "a11y": {
                 "noAccessKey": "error",
-                "useValidAnchor": "off",
-                "useAnchorContent": "off",
-                "noSvgWithoutTitle": "off",
-                "useSemanticElements": "off",
                 "noLabelWithoutControl": "off",
-                "useKeyWithClickEvents": "warn"
+                "noStaticElementInteractions": "off",
+                "noSvgWithoutTitle": "off",
+                "useAnchorContent": "off",
+                "useKeyWithClickEvents": "warn",
+                "useSemanticElements": "off",
+                "useValidAnchor": "off"
             },
 
             "complexity": {
                 "noForEach": "off",
                 "noUselessFragments": "off",
-                "noUselessSwitchCase": "off",
                 "noUselessLoneBlockStatements": "off",
+                "noUselessSwitchCase": "off",
                 "useSimplifiedLogicExpression": "off"
             },
 
             "performance": {
-                "noDelete": "off",
-                "noAccumulatingSpread": "off"
+                "noAccumulatingSpread": "off",
+                "noDelete": "off"
             },
 
             "nursery": {
-                "useTrimStartEnd": "warn",
-                "noIrregularWhitespace": "warn"
+                "useUniqueElementIds": "off"
             }
         },
-        "ignore": ["*_pb.ts"]
+        "includes": ["**", "!**/*_pb.ts"]
     },
 
     "formatter": {
@@ -83,7 +93,7 @@
         "useEditorconfig": true,
         "formatWithErrors": false,
         "attributePosition": "auto",
-        "ignore": ["**/package.json"],
+        "includes": ["**", "!**/package.json"],
         "lineWidth": 120,
         "indentWidth": 4,
         "indentStyle": "space"
@@ -101,8 +111,12 @@
         }
     },
 
-    "organizeImports": {
-        "enabled": false
+    "assist": {
+        "enabled": true,
+        "actions": {
+            "recommended": true,
+            "source": { "organizeImports": "off" }
+        }
     },
 
     "vcs": {

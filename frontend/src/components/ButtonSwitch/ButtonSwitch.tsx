@@ -92,7 +92,7 @@ export function ButtonSwitch<K = string, V extends StrNum = StrNum>(props: Butto
         let $icon: ReactNode = null;
         if (btn.icon) $icon = createElement(btn.icon, { size: 20 });
 
-        let handleClick: undefined | Fn = undefined;
+        let handleClick: undefined | Fn;
         const isActionable: boolean = !(disabled || readonly || btn.disabled || btn.readonly);
         if (isActionable) {
             handleClick = () => {

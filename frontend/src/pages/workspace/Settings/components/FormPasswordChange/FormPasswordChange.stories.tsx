@@ -1,12 +1,11 @@
 import type { Meta } from '@storybook/react';
-import { action } from '@storybook/addon-actions';
+import { action } from 'storybook/actions';
 import { FormPasswordChange as Component, type FormPasswordChangeProps } from './FormPasswordChange';
 
 type Args = Record<'passCurrent' | 'passNew' | 'passConfirm', string>;
 
 export default {
     title: 'settings/components/FormPasswordChange',
-    component: Component,
     args: {
         // Fields
         passCurrent: 'cbdb467d-157a-4167-adb6-520f52cae37c',

@@ -15,6 +15,9 @@ $r: 4px;
         margin-left: $gutter;
     }
 
+    &.spaced {
+        gap: $gutter;
+    }
     &.vertical {
         flex-direction: column;
 
@@ -36,12 +39,4 @@ $r: 4px;
     width: inherit !important;
     box-shadow: none !important;
     max-width: unset !important;
-}
-
-.spaced > :global(.cds--btn) + :global(.cds--btn) {
-    margin-left: $gutter;
-}
-.vertical.spaced > :global(.cds--btn) + :global(.cds--btn) {
-    margin-left: 0;
-    margin-top: $gutter;
 }

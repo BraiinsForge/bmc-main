@@ -5,7 +5,7 @@ import { Key } from 'ts-key-enum';
 
 import { URLS } from '@/constants';
 import { store, useStore } from '@/store';
-import { Braiins, Bitcoin } from '@/res/svg';
+import { Braiins, Bitcoin } from '@/components';
 
 import {
     Content,
