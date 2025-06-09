@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+import "google/protobuf/empty.proto";
+
+message SetWifiRequest {
+  string ssid = 1;
+  optional string password = 2;
+  EncryptionType encryption_type = 3;
+}
+
+enum EncryptionType {
+  ENCRYPTION_TYPE_UNSPECIFIED = 0;
+  ENCRYPTION_TYPE_NONE = 1;
+  ENCRYPTION_TYPE_WEP = 2;
+  ENCRYPTION_TYPE_WEP_SHARED = 3;
+  ENCRYPTION_TYPE_WPA = 4;
+  ENCRYPTION_TYPE_WPA1_2 = 5;
+  ENCRYPTION_TYPE_WPA2 = 6;
+  ENCRYPTION_TYPE_WPA2_3 = 7;
+}
+
+service InitialSetupService {
+  rpc SetWifi(SetWifiRequest) returns (google.protobuf.Empty);
+}
