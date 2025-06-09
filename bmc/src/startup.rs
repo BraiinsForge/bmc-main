@@ -4,9 +4,11 @@ use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::config::DisplayConfigHandle;
 use crate::display_tasks::DisplayTasks;
+use crate::initial_setup::InitialSetup;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
 use bmc_display::display_controller::DisplayController;
@@ -33,6 +35,7 @@ where
     system_upgrade_service: SystemUpgradeService<V, T>,
     display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
     display_controller: DisplayController,
+    initial_setup: InitialSetup<T>,
 }
 
 impl<T, V> App<T, V>
@@ -65,6 +68,8 @@ where
         let display_controller = display_driver.display_controller.clone();
         display_controller.populate_widgets(display_config_handle.scenes());
 
+        let initial_setup = InitialSetup::new(manager.clone(), Arc::new(AtomicBool::new(false)));
+
         let display_tasks = DisplayTasks::new(
             display_controller.clone(),
             state_service.subscribe(),
@@ -80,6 +85,7 @@ where
             system_upgrade_service,
             display_config_handle: Arc::new(RwLock::new(display_config_handle)),
             display_controller,
+            initial_setup,
         })
     }
 
@@ -97,6 +103,7 @@ where
             self.system_upgrade_service,
             self.display_config_handle.clone(),
             self.display_controller,
+            self.initial_setup,
         )
         .run(self.listener)
         .await?;

@@ -2,6 +2,7 @@
 
 use crate::BmcManager;
 use crate::config::DisplayConfigHandle;
+use crate::initial_setup::InitialSetup;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
 use bmc_display::display_controller::DisplayController;
@@ -25,6 +26,7 @@ mod metadata;
 mod system;
 use super::SystemUpgradeService;
 mod configuration_service;
+mod initial_setup;
 mod upgrade_service;
 
 struct AuthInterceptor<S: SessionManager> {
@@ -57,6 +59,7 @@ pub(crate) struct GrpcWeb<T: BmcManager, S: SessionManager, U: FirmwareIndex> {
     system_upgrade_service: SystemUpgradeService<U, T>,
     display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
     display_controller: DisplayController,
+    initial_setup: InitialSetup<T>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
@@ -66,6 +69,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
         system_upgrade_service: SystemUpgradeService<U, T>,
         display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
         display_controller: DisplayController,
+        initial_setup: InitialSetup<T>,
     ) -> Self {
         Self {
             manager,
@@ -73,6 +77,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
             system_upgrade_service,
             display_config_handle,
             display_controller,
+            initial_setup,
         }
     }
 
@@ -98,6 +103,11 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
         let metadata_service = web::metadata_service_server::MetadataServiceServer::new(
             metadata::MetadataService::new(self.manager.clone()),
         );
+
+        let initial_setup_service =
+            web::initial_setup_service_server::InitialSetupServiceServer::new(
+                initial_setup::InitialSetupService::new(self.manager.clone(), self.initial_setup),
+            );
 
         let system_service = web::system_service_server::SystemServiceServer::new(
             system::SystemService::new(self.manager, self.session_manager),
@@ -128,6 +138,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
                 upgrade_service,
                 auth_interceptor.clone(),
             )))
+            .add_service(GrpcWebLayer::new().layer(initial_setup_service))
     }
 }
 

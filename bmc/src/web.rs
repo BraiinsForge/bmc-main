@@ -7,6 +7,7 @@ mod no_password;
 mod session;
 
 use crate::config::DisplayConfigHandle;
+use crate::initial_setup::InitialSetup;
 use crate::session::Manager as SessionManager;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
@@ -30,6 +31,7 @@ pub(crate) struct WebService<T: BmcManager, S: SessionManager, U: FirmwareIndex>
     system_upgrade_service: SystemUpgradeService<U, T>,
     display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
     display_controller: DisplayController,
+    initial_setup: InitialSetup<T>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
@@ -40,6 +42,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
         system_upgrade_service: SystemUpgradeService<U, T>,
         display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
         display_controller: DisplayController,
+        initial_setup: InitialSetup<T>,
     ) -> Self {
         Self {
             manager,
@@ -48,6 +51,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
             system_upgrade_service,
             display_config_handle,
             display_controller,
+            initial_setup,
         }
     }
 
@@ -59,6 +63,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
             self.system_upgrade_service,
             self.display_config_handle,
             self.display_controller,
+            self.initial_setup,
         )
         .build()
         .into_axum_router()
