@@ -14,6 +14,7 @@ pub(crate) struct DisplayTasks {
     display_controller: DisplayController,
     system_upgrade_receiver: watch::Receiver<Option<SystemUpgradeState>>,
     timezone_receiver: watch::Receiver<Timezone>,
+    initial_setup_receiver: Receiver<Option<InitSetupState>>,
 }
 
 impl DisplayTasks {
@@ -21,11 +22,13 @@ impl DisplayTasks {
         display_controller: DisplayController,
         system_upgrade_receiver: watch::Receiver<Option<SystemUpgradeState>>,
         timezone_receiver: watch::Receiver<Timezone>,
+        initial_setup_receiver: Receiver<Option<InitSetupState>>,
     ) -> Self {
         Self {
             display_controller,
             system_upgrade_receiver,
             timezone_receiver,
+            initial_setup_receiver,
         }
     }
 
@@ -34,6 +37,7 @@ impl DisplayTasks {
             display_controller,
             system_upgrade_receiver,
             timezone_receiver,
+            initial_setup_receiver,
         } = self;
 
         tokio::spawn(Self::run_system_upgrade_listener(
@@ -44,6 +48,11 @@ impl DisplayTasks {
         tokio::spawn(Self::run_timezone_listener(timezone_receiver));
 
         tokio::spawn(Self::run_date_time_update(display_controller.clone()));
+
+        tokio::spawn(Self::run_initial_setup_listener(
+            display_controller,
+            initial_setup_receiver,
+        ))
     }
 
     async fn run_system_upgrade_listener(
@@ -94,6 +103,23 @@ impl DisplayTasks {
         loop {
             interval.tick().await;
             display_controller.update_datetime();
+        }
+    }
+
+    async fn run_initial_setup_listener(
+        display_controller: DisplayController,
+        mut receiver: watch::Receiver<Option<InitSetupState>>,
+    ) {
+        while let Ok(()) = receiver.changed().await {
+            let state = (*receiver.borrow_and_update()).clone();
+            if let Some(initial_setup_state) = state {
+                match initial_setup_state {
+                    InitSetupState::ConnectingToWifi { .. } => todo!(),
+                    InitSetupState::WifiConnectionSuccess => todo!(),
+                    InitSetupState::WifiConnectionFailed => todo!(),
+                    InitSetupState::UnexpectedError => todo!(),
+                }
+            }
         }
     }
 }

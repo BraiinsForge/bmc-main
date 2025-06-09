@@ -74,6 +74,7 @@ where
             display_controller.clone(),
             state_service.subscribe(),
             manager.watch_timezone_updates(),
+            initial_setup.subscribe(),
         );
 
         Ok(Self {
