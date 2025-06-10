@@ -5,7 +5,7 @@ use crate::session::OpenwrtSessionManager;
 use crate::unix::system_reboot;
 use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
-use bmc::manager::{InitialSetupError, WifiNetworkConfig, WifiScanItem};
+use bmc::manager::{BmcState, InitialSetupError, WifiNetworkConfig, WifiScanItem};
 use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
@@ -50,6 +50,7 @@ impl Manager {
     const UCI_NET_LAN_NETMASK: &str = "network.lan.netmask";
     const UCI_NET_LAN_GATEWAY: &str = "network.lan.gateway";
     const UCI_NET_LAN_DNS: &str = "network.lan.dns";
+    const DEVICE_SETUP_PENDING_FILE_PATH: &str = "/etc/setup-pending";
 
     #[must_use]
     pub fn new(session_manager: OpenwrtSessionManager, timezone: Timezone) -> Self {
@@ -320,6 +321,7 @@ impl BmcManager for Manager {
         &self,
         _config: WifiNetworkConfig,
     ) -> Result<(), InitialSetupError> {
+        //TODO: call self.update_device_state().await to move from FactoryDefault to SetupPending state
         todo!();
     }
 
@@ -333,6 +335,43 @@ impl BmcManager for Manager {
 
     async fn reboot(&self) -> anyhow::Result<()> {
         system_reboot().await.map_err(|e| anyhow!(e))
+    }
+
+    async fn device_state(&self) -> BmcState {
+        // check factory default flag
+        if self.is_factory_default().await {
+            BmcState::FactoryDefault
+        }
+        // check flag if setup is pending
+        else if fs::try_exists(Self::DEVICE_SETUP_PENDING_FILE_PATH)
+            .await
+            .is_ok()
+        {
+            BmcState::SetupPending
+        } else {
+            BmcState::Operational
+        }
+    }
+
+    async fn update_device_state(&self) -> anyhow::Result<()> {
+        match self.device_state().await {
+            BmcState::FactoryDefault => {
+                // Remove factory default flag
+                call_command(
+                    "sh",
+                    &[
+                        "-c",
+                        ". /lib/functions/bos-defaults.sh && unset_factory_default",
+                    ],
+                )
+                .await
+                .map_err(|e| anyhow!("Failed to remove initial setup flag, error: {}", e))
+            }
+            BmcState::SetupPending => fs::remove_file(Self::DEVICE_SETUP_PENDING_FILE_PATH)
+                .await
+                .map_err(|e| anyhow!("Failed to remove setup pending flag, error: {}", e)),
+            BmcState::Operational => Ok(()),
+        }
     }
 }
 

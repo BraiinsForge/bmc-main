@@ -44,7 +44,7 @@ pub struct Config {
     pub mockfs_reset: bool,
     #[clap(long)]
     pub system_password: Option<String>,
-    /// Run miner with a factory-default flag
+    /// Run bmc with a factory-default flag
     #[clap(long)]
     pub factory_default: bool,
     /// MAC address string for mockup test
@@ -59,6 +59,9 @@ pub struct Config {
     /// BMC display config file
     #[clap(long, default_value = "etc/bmc_display.json")]
     pub display_config_path: PathBuf,
+    /// Run bmc with a setup-pending flag
+    #[clap(long)]
+    pub setup_pending: bool,
 }
 
 impl From<Config> for Configuration {

@@ -12,8 +12,9 @@ pub struct MockFs {
 }
 
 impl MockFs {
-    const UPGRADE_RESULT_FILE: &'static str = "etc/upgrade_result";
-    const FACTORY_DEFAULT_FILE: &'static str = "etc/factory-default";
+    const UPGRADE_RESULT_FILE: &str = "etc/upgrade_result";
+    const FACTORY_DEFAULT_FILE: &str = "etc/factory-default";
+    const DEVICE_SETUP_PENDING_FILE: &str = "etc/setup-pending";
 
     pub fn new(template_dir: impl AsRef<Path>, runtime_dir: impl AsRef<Path>) -> Self {
         Self {
@@ -22,15 +23,19 @@ impl MockFs {
         }
     }
 
-    pub fn init(&self, reset: bool, factory_default: bool) -> io::Result<()> {
+    pub fn init(&self, reset: bool, factory_default: bool, setup_pending: bool) -> io::Result<()> {
         let src: &Path = self.mockfs_root.as_ref();
 
         let dirs = vec!["etc", "tmp"];
         for dir in dirs {
             fs::create_dir_all(src.join(dir))?;
         }
-        self.add_or_remove_factory_default_flag(factory_default)?;
+
         copy_recursive(&self.template_dir, &self.mockfs_root, reset)?;
+
+        self.add_or_remove_factory_default_flag(factory_default)?;
+        self.add_or_remove_setup_pending_flag(setup_pending)?;
+
         Ok(())
     }
 
@@ -44,6 +49,11 @@ impl MockFs {
         self.build_mockfs_path(Self::FACTORY_DEFAULT_FILE)
     }
 
+    #[must_use]
+    pub fn pending_setup(&self) -> PathBuf {
+        self.build_mockfs_path(Self::DEVICE_SETUP_PENDING_FILE)
+    }
+
     fn build_mockfs_path<P: AsRef<Path>>(&self, path: P) -> PathBuf {
         let stripped = match path
             .as_ref()
@@ -55,8 +65,19 @@ impl MockFs {
         self.mockfs_root.join(stripped)
     }
 
-    fn add_or_remove_factory_default_flag(&self, add: bool) -> io::Result<()> {
+    pub fn add_or_remove_factory_default_flag(&self, add: bool) -> io::Result<()> {
         let path = self.factory_default();
+        if add {
+            fs::File::create(path)?;
+        } else {
+            _ = fs::remove_file(path);
+        }
+
+        Ok(())
+    }
+
+    pub fn add_or_remove_setup_pending_flag(&self, add: bool) -> io::Result<()> {
+        let path = self.pending_setup();
         if add {
             fs::File::create(path)?;
         } else {

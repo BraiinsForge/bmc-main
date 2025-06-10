@@ -133,7 +133,7 @@ impl<T: BmcManager> HttpServer<T> {
     async fn wifi_setup_index_handler(
         State(IndexState { storage, manager }): State<IndexState<T>>,
     ) -> Response {
-        if !manager.is_factory_default().await {
+        if manager.device_state().await != BmcState::FactoryDefault {
             return (
                 StatusCode::PERMANENT_REDIRECT,
                 [(http::header::LOCATION.as_str(), "/")],

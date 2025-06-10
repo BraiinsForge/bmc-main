@@ -74,6 +74,20 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>>;
 
     async fn reboot(&self) -> anyhow::Result<()>;
+
+    async fn device_state(&self) -> BmcState;
+
+    async fn update_device_state(&self) -> anyhow::Result<()>;
+}
+
+#[derive(Debug, Display, PartialEq)]
+pub enum BmcState {
+    #[strum(serialize = "factory default")]
+    FactoryDefault,
+    #[strum(serialize = "device setup")]
+    SetupPending,
+    #[strum(serialize = "operational")]
+    Operational,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

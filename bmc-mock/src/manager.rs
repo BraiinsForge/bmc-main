@@ -2,7 +2,8 @@
 
 use anyhow::anyhow;
 use bmc::manager::{
-    EncryptionType, InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig, WifiScanItem,
+    BmcState, EncryptionType, InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig,
+    WifiScanItem,
 };
 use bmc_platform::BmcPlatform;
 use bmc_shared_time::time::Timezone;
@@ -178,7 +179,7 @@ impl bmc::BmcManager for Manager {
     }
 
     async fn wifi_initial_setup(&self, config: WifiNetworkConfig) -> Result<(), InitialSetupError> {
-        if !self.is_factory_default().await {
+        if self.device_state().await != BmcState::FactoryDefault {
             return Err(InitialSetupError::NotSupported);
         }
 
@@ -186,9 +187,11 @@ impl bmc::BmcManager for Manager {
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         info!("Setting up WiFi");
-        let mut wifi = self.connected_wifi.lock().map_err(|_| {
-            InitialSetupError::UnexpectedFailure("Failed to acquire lock for wifi".to_owned())
-        })?;
+        let mut wifi = self.connected_wifi.lock().await;
+
+        self.update_device_state()
+            .await
+            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
 
         *wifi = Some(config);
 
@@ -243,6 +246,31 @@ impl bmc::BmcManager for Manager {
 
     async fn reboot(&self) -> anyhow::Result<()> {
         info!("Performing reboot...");
+        Ok(())
+    }
+
+    async fn device_state(&self) -> BmcState {
+        if self.mockfs.factory_default().exists() {
+            BmcState::FactoryDefault
+        } else if self.mockfs.pending_setup().exists() {
+            BmcState::SetupPending
+        } else {
+            BmcState::Operational
+        }
+    }
+
+    async fn update_device_state(&self) -> anyhow::Result<()> {
+        match self.device_state().await {
+            BmcState::FactoryDefault => {
+                self.mockfs.add_or_remove_factory_default_flag(false)?;
+                self.mockfs.add_or_remove_setup_pending_flag(true)?;
+            }
+            BmcState::SetupPending => {
+                self.mockfs.add_or_remove_setup_pending_flag(false)?;
+            }
+            BmcState::Operational => (),
+        }
+
         Ok(())
     }
 }
