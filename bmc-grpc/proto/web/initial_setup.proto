@@ -3,6 +3,7 @@ syntax = "proto3";
 package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
 
 message SetWifiRequest {
   string ssid = 1;
@@ -41,4 +42,5 @@ message WifiNetwork {
 service InitialSetupService {
   rpc SetWifi(SetWifiRequest) returns (google.protobuf.Empty);
   rpc ScanWifi(google.protobuf.Empty) returns (ScanWifiResponse);
+
 }

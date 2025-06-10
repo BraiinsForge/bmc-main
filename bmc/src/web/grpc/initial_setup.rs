@@ -14,7 +14,7 @@ use super::GrpcError;
 use crate::{
     BmcManager,
     initial_setup::{InitialSetup, SetupError},
-    manager::{EncryptionType, SignalStrength, WifiNetworkConfig},
+    manager::{BmcState, EncryptionType, SignalStrength, WifiNetworkConfig},
 };
 
 #[derive(Clone)]
@@ -37,11 +37,11 @@ where
         }
     }
 
-    async fn check_precondition(&self) -> Result<(), Status> {
-        if !self.manager.is_factory_default().await {
-            return Err(Status::failed_precondition(
-                "Function is only available when the device is in its factory default state.",
-            ));
+    async fn check_precondition(&self, state: BmcState) -> Result<(), Status> {
+        if self.manager.device_state().await != state {
+            return Err(Status::failed_precondition(format!(
+                "Function is only available when the device is in '{state}' state.",
+            )));
         }
         Ok(())
     }
@@ -53,7 +53,7 @@ where
     T: BmcManager,
 {
     async fn set_wifi(&self, request: Request<SetWifiRequest>) -> Result<Response<()>, Status> {
-        self.check_precondition().await?;
+        self.check_precondition(BmcState::FactoryDefault).await?;
 
         let request = request.into_inner();
 
@@ -70,7 +70,7 @@ where
     }
 
     async fn scan_wifi(&self, _request: Request<()>) -> Result<Response<ScanWifiResponse>, Status> {
-        self.check_precondition().await?;
+        self.check_precondition(BmcState::FactoryDefault).await?;
 
         let available_wifi = self.manager.wifi_scan().await.map_err(|e| {
             warn!("Failed to scan WiFi networks: {}", e);
@@ -88,6 +88,15 @@ where
                 })
                 .collect(),
         }))
+    }
+
+    async fn pending_setup(&self, _request: Request<()>) -> Result<Response<bool>, Status> {
+        let pending_setup = match self.manager.device_state().await {
+            BmcState::FactoryDefault | crate::manager::BmcState::Operational => false,
+            BmcState::SetupPending => true,
+        };
+
+        Ok(Response::new(pending_setup))
     }
 }
 
