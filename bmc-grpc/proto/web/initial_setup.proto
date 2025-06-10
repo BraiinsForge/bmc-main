@@ -21,6 +21,24 @@ enum EncryptionType {
   ENCRYPTION_TYPE_WPA2_3 = 7;
 }
 
+message ScanWifiResponse {
+  repeated WifiNetwork networks = 1;
+}
+
+enum SignalStrength {
+  SIGNAL_STRENGTH_UNSPECIFIED = 0;
+  SIGNAL_STRENGTH_WEAK = 1;
+  SIGNAL_STRENGTH_MODERATE = 2;
+  SIGNAL_STRENGTH_STRONG = 3;
+}
+
+message WifiNetwork {
+  string ssid = 1;
+  EncryptionType encryption_type = 2;
+  SignalStrength signal_strength = 3;
+}
+
 service InitialSetupService {
   rpc SetWifi(SetWifiRequest) returns (google.protobuf.Empty);
+  rpc ScanWifi(google.protobuf.Empty) returns (ScanWifiResponse);
 }
