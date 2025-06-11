@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+// Structure representing a timezone
+message Timezone {
+  // Timezone ID
+  string id = 1;
+  // Timezone name
+  string label = 2;
+  // Timezone offset displayed as +HH:MM
+  string offset = 3;
+}

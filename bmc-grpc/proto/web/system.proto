@@ -4,6 +4,7 @@ package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/wrappers.proto";
+import "web/shared.proto";
 
 message CreatePasswordRequest {
   string password = 1;
@@ -21,7 +22,7 @@ message RemovePasswordRequest {
 // Response containing the current timezone
 message GetTimezoneResponse {
   // Current timezone
-  Timezone timezone = 1;
+  braiins.bmc.web.Timezone timezone = 1;
 }
 
 // Request to set the timezone
@@ -33,17 +34,7 @@ message SetTimezoneRequest {
 // Response containing the list of available timezones
 message GetTimezoneListResponse {
   // List of available timezones
-  repeated Timezone timezones = 1;
-}
-
-// Structure representing a timezone
-message Timezone {
-  // Timezone ID
-  string id = 1;
-  // Timezone name
-  string label = 2;
-  // Timezone offset displayed as +HH:MM
-  string offset = 3;
+  repeated braiins.bmc.web.Timezone timezones = 1;
 }
 
 message NetworkInfoResponse {

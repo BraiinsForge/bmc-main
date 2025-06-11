@@ -3,7 +3,7 @@ version: v2
 
 # https://buf.build/docs/configuration/v2/buf-yaml/#modules
 modules:
-  - path: bmc-grpc/proto/web
+  - path: bmc-grpc/proto
 
 # https://buf.build/docs/lint/rules/
 lint:
