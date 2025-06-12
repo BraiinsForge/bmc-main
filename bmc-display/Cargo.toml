@@ -3,6 +3,11 @@ name = "bmc-display"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Change `embed_resources` strategy to `EmbedFiles` instead of `EmbedForSoftwareRenderer`.
+# This helps to avoid indexing issues in RustRover, because generated code is much smaller.
+slint-embed-files = []
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
