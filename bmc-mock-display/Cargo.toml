@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 bmc-display.workspace = true
-slint = { workspace = true, features = ["compat-1-2", "std"] }
+slint = { workspace = true, features = ["backend-winit", "renderer-winit-software"] }
 tokio.workspace = true
 tracing.workspace = true
 

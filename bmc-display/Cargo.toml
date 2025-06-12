@@ -15,13 +15,7 @@ chrono.workspace = true
 flume.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-slint = { workspace = true, features = [
-    "backend-winit",
-    "compat-1-2",
-    "renderer-software",
-    "serde",
-    "std",
-] }
+slint.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

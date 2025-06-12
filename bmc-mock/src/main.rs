@@ -4,6 +4,7 @@ use anyhow::Result;
 use async_trait as _;
 use axum_extra as _;
 use bmc::log;
+#[cfg(test)]
 use bmc_display as _;
 use bmc_mock::MockSessionManager;
 use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
@@ -16,7 +17,6 @@ use clap::Parser;
 use dirs as _;
 use rand as _;
 use reqwest as _;
-use slint as _;
 use thiserror as _;
 use time as _;
 use tokio::task::block_in_place;

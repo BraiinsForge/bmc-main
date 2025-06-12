@@ -20,11 +20,7 @@ pnet.workspace = true
 pw_hash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-slint = { workspace = true, features = [
-    "compat-1-2",
-    "renderer-software",
-    "std",
-] }
+slint = { workspace = true, features = ["renderer-software"] }
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true

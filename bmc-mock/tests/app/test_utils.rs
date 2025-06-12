@@ -12,7 +12,6 @@ use bmc_platform as _;
 use bmc_upgrade::firmware::FirmwareResolver;
 use clap as _;
 use dirs as _;
-use slint as _;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Mutex;
 use std::{env, net::SocketAddr, str::FromStr, sync::Arc};
