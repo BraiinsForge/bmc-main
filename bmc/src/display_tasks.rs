@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::initial_setup::InitSetupState;
 use crate::system_upgrade::SystemUpgradeState;
 use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
@@ -14,7 +15,7 @@ pub(crate) struct DisplayTasks {
     display_controller: DisplayController,
     system_upgrade_receiver: watch::Receiver<Option<SystemUpgradeState>>,
     timezone_receiver: watch::Receiver<Timezone>,
-    initial_setup_receiver: Receiver<Option<InitSetupState>>,
+    initial_setup_receiver: watch::Receiver<Option<InitSetupState>>,
 }
 
 impl DisplayTasks {
@@ -22,7 +23,7 @@ impl DisplayTasks {
         display_controller: DisplayController,
         system_upgrade_receiver: watch::Receiver<Option<SystemUpgradeState>>,
         timezone_receiver: watch::Receiver<Timezone>,
-        initial_setup_receiver: Receiver<Option<InitSetupState>>,
+        initial_setup_receiver: watch::Receiver<Option<InitSetupState>>,
     ) -> Self {
         Self {
             display_controller,
@@ -52,7 +53,7 @@ impl DisplayTasks {
         tokio::spawn(Self::run_initial_setup_listener(
             display_controller,
             initial_setup_receiver,
-        ))
+        ));
     }
 
     async fn run_system_upgrade_listener(
@@ -107,7 +108,7 @@ impl DisplayTasks {
     }
 
     async fn run_initial_setup_listener(
-        display_controller: DisplayController,
+        _display_controller: DisplayController,
         mut receiver: watch::Receiver<Option<InitSetupState>>,
     ) {
         while let Ok(()) = receiver.changed().await {
@@ -118,6 +119,7 @@ impl DisplayTasks {
                     InitSetupState::WifiConnectionSuccess => todo!(),
                     InitSetupState::WifiConnectionFailed => todo!(),
                     InitSetupState::UnexpectedError => todo!(),
+                    InitSetupState::DeviceSetupSuccess => todo!(),
                 }
             }
         }

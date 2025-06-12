@@ -145,7 +145,12 @@ impl<T: BmcManager> InitialSetup<T> {
             config.date_format.format_string()
         );
 
-        self.manager.update_device_state().await
+        self.manager.update_device_state().await?;
+
+        self.state_service
+            .notify(InitSetupState::DeviceSetupSuccess);
+
+        Ok(())
     }
 }
 
@@ -171,6 +176,7 @@ pub enum InitSetupState {
     WifiConnectionSuccess,
     WifiConnectionFailed,
     UnexpectedError,
+    DeviceSetupSuccess,
 }
 
 #[derive(Debug)]
