@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::display::DisplayController;
+use crate::display::DisplayTasks;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
@@ -27,7 +27,7 @@ where
     manager: Arc<T>,
     session_manager: Arc<T::SessionManager>,
     config: Configuration,
-    display_controller: DisplayController<U>,
+    display_tasks: DisplayTasks<U>,
     system_upgrade_service: SystemUpgradeService<V, T>,
 }
 
@@ -55,18 +55,18 @@ where
             state_service.clone(),
         );
 
-        let display_controller = DisplayController::new(
+        let display_tasks = DisplayTasks::init(
             display_driver,
             state_service,
             manager.watch_timezone_updates(),
-        );
+        )?;
 
         Ok(Self {
             listener,
             manager,
             session_manager: session_manager.into(),
             config,
-            display_controller,
+            display_tasks,
             system_upgrade_service,
         })
     }
@@ -75,7 +75,7 @@ where
         let address = self.listener.local_addr()?;
         info!("Starting server on http://{}", address);
 
-        self.display_controller.init()?;
+        self.display_tasks.spawn();
         self.system_upgrade_service.init().await;
 
         WebService::new(

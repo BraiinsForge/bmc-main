@@ -15,37 +15,36 @@ use crate::{
 pub(crate) mod data;
 
 #[derive(Debug)]
-pub(crate) struct DisplayController<T: DisplayBacklightDriver> {
+pub(crate) struct DisplayTasks<T: DisplayBacklightDriver> {
     _data_provider: DisplayDataProvider,
     display_handler: DisplayHandler<T, DisplayDataProvider>,
     system_upgrade_receiver: Receiver<Option<SystemUpgradeState>>,
-    timezone_watch: tokio::sync::watch::Receiver<Timezone>,
+    timezone_watch: Receiver<Timezone>,
 }
 
-impl<T> DisplayController<T>
+impl<T> DisplayTasks<T>
 where
     T: DisplayBacklightDriver,
 {
-    pub(crate) fn new(
+    pub(crate) fn init(
         display_driver: DisplayDriver<T>,
         state_service: StateService,
-        timezone_watch: tokio::sync::watch::Receiver<Timezone>,
-    ) -> Self {
+        timezone_watch: Receiver<Timezone>,
+    ) -> Result<Self> {
         let system_upgrade_receiver = state_service.subscribe();
         let data_provider = DisplayDataProvider::new(state_service);
         let display_handler = DisplayHandler::new(display_driver, data_provider.clone());
+        display_handler.init()?;
 
-        Self {
+        Ok(Self {
             _data_provider: data_provider,
             display_handler,
             system_upgrade_receiver,
             timezone_watch,
-        }
+        })
     }
 
-    pub(crate) fn init(&self) -> Result<()> {
-        self.display_handler.init()?;
-
+    pub(crate) fn spawn(&self) {
         let mut receiver = self.system_upgrade_receiver.clone();
         let display_handle = self.display_handler.clone();
 
@@ -94,7 +93,5 @@ where
                 }
             }
         });
-
-        Ok(())
     }
 }
