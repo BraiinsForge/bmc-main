@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::BmcManager;
+use crate::{BmcManager, manager::BmcState};
 use axum::body::Body;
 use http::header::LOCATION;
 use hyper::{Request, Response};
@@ -13,6 +13,8 @@ use std::{
 };
 use tower::{Layer, Service};
 
+use super::http_server::HttpServer;
+
 const SUFFIX_COM: &str = ".com";
 const SUFFIX_NET: &str = ".net";
 const SUFFIX_INFO: &str = ".info";
@@ -23,7 +25,6 @@ pub struct CaptivePortalLayer<T>
 where
     T: BmcManager,
 {
-    redirect_path: String,
     manager: Arc<T>,
 }
 
@@ -31,11 +32,8 @@ impl<T> CaptivePortalLayer<T>
 where
     T: BmcManager,
 {
-    pub fn new(redirect_path: String, manager: Arc<T>) -> Self {
-        Self {
-            redirect_path,
-            manager,
-        }
+    pub fn new(manager: Arc<T>) -> Self {
+        Self { manager }
     }
 }
 
@@ -45,7 +43,6 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            redirect_path: self.redirect_path.clone(),
             manager: self.manager.clone(),
         }
     }
@@ -60,7 +57,6 @@ where
     fn layer(&self, inner: S) -> Self::Service {
         CaptivePortalMiddleware {
             inner,
-            redirect_path: self.redirect_path.clone(),
             manager: self.manager.clone(),
         }
     }
@@ -71,15 +67,55 @@ where
     T: BmcManager,
 {
     inner: S,
-    redirect_path: String,
     manager: Arc<T>,
+}
+
+impl<S, T: BmcManager> CaptivePortalMiddleware<S, T> {
+    // NOTE: Original list of urls to return redirect is here: https://captivebehavior.wballiance.com/
+    // It is not needed to check individual url, it can be decided based on the top level domain
+    fn should_redirect(req: &Request<Body>, state: &BmcState) -> bool {
+        if *state == BmcState::Operational {
+            return false;
+        }
+
+        // This is covering a case when user displays the main page in browser. Initial setup needs to be displayed instead of the login page
+        let uri_path = req.uri().path();
+
+        match (state, uri_path) {
+            (_, HttpServer::<T>::ROOT_URL_ENDPOINT)
+            | (&BmcState::FactoryDefault, HttpServer::<T>::DEVICE_SETUP_URL_ENDPOINT)
+            | (&BmcState::SetupPending, HttpServer::<T>::WIFI_SETUP_URL_ENDPOINT) => {
+                return true;
+            }
+            _ => (),
+        }
+
+        if let Some(host) = req.headers().get("Host") {
+            if let Ok(host_str) = host.to_str() {
+                return host_str.ends_with(SUFFIX_COM)
+                    || host_str.ends_with(SUFFIX_NET)
+                    || host_str.ends_with(SUFFIX_INFO)
+                    || host_str.ends_with(SUFFIX_US)
+                    || host_str.ends_with(SUFFIX_NETWORK);
+            }
+        }
+
+        false
+    }
+
+    fn redirect_path(state: &BmcState) -> &str {
+        match *state {
+            BmcState::FactoryDefault => HttpServer::<T>::WIFI_SETUP_URL_ENDPOINT,
+            BmcState::SetupPending => HttpServer::<T>::DEVICE_SETUP_URL_ENDPOINT,
+            BmcState::Operational => HttpServer::<T>::ROOT_URL_ENDPOINT,
+        }
+    }
 }
 
 impl<T: BmcManager, S: Clone> Clone for CaptivePortalMiddleware<S, T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            redirect_path: self.redirect_path.clone(),
             manager: self.manager.clone(),
         }
     }
@@ -104,12 +140,15 @@ where
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let mut inner = self.inner.clone();
-        let redirect_path = self.redirect_path.clone();
         let manager = self.manager.clone();
 
         Box::pin(async move {
-            // If device is in factory default state and host ends with a given suffix, then return 302 redirect
-            if manager.is_factory_default().await && should_redirect(&req) {
+            // If device is in factory default or device setup state and host ends with a given suffix, then return 302 redirect
+            let state = manager.device_state().await;
+
+            if Self::should_redirect(&req, &state) {
+                let redirect_path = Self::redirect_path(&state);
+
                 let host = manager
                     .captive_portal_redirect_host()
                     .await
@@ -131,31 +170,4 @@ where
             Ok(response)
         })
     }
-}
-// NOTE: Original list of urls to return redirect is here: https://captivebehavior.wballiance.com/
-// It is not needed to check individual url, it can be decided based on the top level domain
-fn should_redirect(req: &Request<Body>) -> bool {
-    // This is covering a case when user displays the main page in browser. Initial setup needs to be displayed instead of the login page
-    let uri_path = req.uri().path();
-
-    //TODO: decide with Pepa which urls to redirect
-    if uri_path == "/"
-        || uri_path == "/login"
-        || uri_path.starts_with("/system")
-        || uri_path.starts_with("/settings")
-    {
-        return true;
-    }
-
-    if let Some(host) = req.headers().get("Host") {
-        if let Ok(host_str) = host.to_str() {
-            return host_str.ends_with(SUFFIX_COM)
-                || host_str.ends_with(SUFFIX_NET)
-                || host_str.ends_with(SUFFIX_INFO)
-                || host_str.ends_with(SUFFIX_US)
-                || host_str.ends_with(SUFFIX_NETWORK);
-        }
-    }
-
-    false
 }

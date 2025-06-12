@@ -26,7 +26,7 @@ use tokio_util::io::ReaderStream;
 use tower_http::compression::CompressionLayer;
 use tracing::info;
 
-use crate::BmcManager;
+use crate::{BmcManager, manager::BmcState};
 
 use super::{ServerConfig, captive_portal::CaptivePortalLayer};
 
@@ -39,8 +39,10 @@ pub(crate) struct HttpServer<T: BmcManager> {
 
 impl<T: BmcManager> HttpServer<T> {
     const INDEX_PATH: &str = "index.html";
-    const INITIAL_SETUP_INDEX_FILENAME: &str = "index-init.html";
-    const INITIAL_SETUP_URL_ENDPOINT: &str = "/initial_setup";
+    const INITIAL_SETUP_INDEX_FILENAME: &str = "index-connect.html";
+    pub(crate) const WIFI_SETUP_URL_ENDPOINT: &str = "/init_connect";
+    pub(crate) const DEVICE_SETUP_URL_ENDPOINT: &str = "/init_setup";
+    pub(crate) const ROOT_URL_ENDPOINT: &str = "/";
 
     pub(crate) fn new(config: ServerConfig, manager: Arc<T>) -> Self {
         Self { config, manager }
@@ -50,10 +52,7 @@ impl<T: BmcManager> HttpServer<T> {
         Router::new()
             .merge(self.static_file_router())
             .layer(CompressionLayer::new())
-            .layer(CaptivePortalLayer::new(
-                self.config.captive_portal_redirect_path.clone(),
-                self.manager.clone(),
-            ))
+            .layer(CaptivePortalLayer::new(self.manager.clone()))
             .layer(middleware::from_fn(Self::log_request))
     }
 
@@ -73,10 +72,14 @@ impl<T: BmcManager> HttpServer<T> {
         let index_state = IndexState::new(www_storage, self.manager.clone());
 
         Router::new()
-            .route("/", get(Self::index_handler))
+            .route(Self::ROOT_URL_ENDPOINT, get(Self::index_handler))
             .route(
                 Self::WIFI_SETUP_URL_ENDPOINT,
                 get(Self::wifi_setup_index_handler),
+            )
+            .route(
+                Self::DEVICE_SETUP_URL_ENDPOINT,
+                get(Self::device_setup_handler),
             )
             .route("/{*file_path}", get(Self::file_handler_with_index_fallback))
             .with_state(index_state)
@@ -147,6 +150,22 @@ impl<T: BmcManager> HttpServer<T> {
         )
         .await
         .into_response()
+    }
+
+    async fn device_setup_handler(
+        State(IndexState { storage, manager }): State<IndexState<T>>,
+    ) -> Response {
+        if manager.device_state().await != BmcState::SetupPending {
+            return (
+                StatusCode::PERMANENT_REDIRECT,
+                [(http::header::LOCATION.as_str(), Self::ROOT_URL_ENDPOINT)],
+            )
+                .into_response();
+        }
+
+        Self::file_handler(State(storage), Path(Self::INDEX_PATH.to_owned()))
+            .await
+            .into_response()
     }
 
     async fn get_file_headers(filename: &str, file: &File) -> HeaderMap {
