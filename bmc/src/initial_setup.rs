@@ -8,13 +8,15 @@ use std::{
     time::Duration,
 };
 
+use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
 use thiserror::Error;
 use tokio::sync::watch::{self, Receiver};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     BmcManager,
     manager::{InitialSetupError, WifiNetworkConfig},
+    utils::NumberFormat,
 };
 
 const REBOOT_SLEEP_DURATION: Duration = Duration::from_secs(30);
@@ -125,6 +127,26 @@ impl<T: BmcManager> InitialSetup<T> {
     pub(crate) fn subscribe(&self) -> Receiver<Option<InitSetupState>> {
         self.state_service.subscribe()
     }
+
+    pub(crate) async fn setup_device(&self, config: DeviceSetupConfig) -> anyhow::Result<()> {
+        self.manager.set_timezone(config.timezone).await?;
+
+        if config.system_password.is_some() {
+            self.manager.set_password(config.system_password).await?;
+        }
+
+        // TODO: save number_format, date_format, data_collection to config
+
+        info!(
+            "data collection: {}, time system: {}, number format: {}, date format: {}",
+            config.data_collection,
+            config.time_system,
+            config.number_format.format_number(1234567.89),
+            config.date_format.format_string()
+        );
+
+        self.manager.update_device_state().await
+    }
 }
 
 #[derive(Error, Debug)]
@@ -149,4 +171,14 @@ pub enum InitSetupState {
     WifiConnectionSuccess,
     WifiConnectionFailed,
     UnexpectedError,
+}
+
+#[derive(Debug)]
+pub(crate) struct DeviceSetupConfig {
+    pub(crate) timezone: Timezone,
+    pub(crate) system_password: Option<String>,
+    pub(crate) time_system: TimeSystem,
+    pub(crate) date_format: DateFormat,
+    pub(crate) number_format: NumberFormat,
+    pub(crate) data_collection: bool,
 }

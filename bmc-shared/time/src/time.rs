@@ -160,3 +160,93 @@ impl fmt::Display for Offset {
         write!(f, "{hours:+03}:{minutes:02}")
     }
 }
+
+#[derive(Debug)]
+pub enum DateFormat {
+    DdMmYyyyDot,
+    DdMmYyyySlash,
+    DMYyyySlash,
+    MDYyyySlash,
+    DdMmYyyyDash,
+    YyyyMDSlash,
+    YyyyMmDdDot,
+    YyyyMmDdDash,
+}
+
+impl DateFormat {
+    #[must_use]
+    pub fn format_string(&self) -> &str {
+        match self {
+            DateFormat::DdMmYyyyDot => "%d.%m.%Y",   // 15.03.2025
+            DateFormat::DdMmYyyySlash => "%d/%m/%Y", // 15/08/2025
+            DateFormat::DMYyyySlash => "%-d/%-m/%Y", // 15/8/2025
+            DateFormat::MDYyyySlash => "%-m/%-d/%Y", // 8/15/2025
+            DateFormat::DdMmYyyyDash => "%d-%m-%Y",  // 15-08-2025
+            DateFormat::YyyyMDSlash => "%Y/%-m/%-d", // 2025/8/15
+            DateFormat::YyyyMmDdDot => "%Y.%m.%d",   // 2025.08.15
+            DateFormat::YyyyMmDdDash => "%Y-%m-%d",  // 2025-08-15
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn test_dd_mm_yyyy_dot() {
+        let date = NaiveDate::from_ymd_opt(2025, 3, 15).unwrap();
+        let fmt = DateFormat::DdMmYyyyDot;
+        assert_eq!(date.format(fmt.format_string()).to_string(), "15.03.2025");
+    }
+
+    #[test]
+    fn test_dd_mm_yyyy_slash() {
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let fmt = DateFormat::DdMmYyyySlash;
+        assert_eq!(date.format(fmt.format_string()).to_string(), "15/08/2025");
+    }
+
+    #[test]
+    fn test_d_m_yyyy_slash() {
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let fmt = DateFormat::DMYyyySlash;
+        assert_eq!(date.format(fmt.format_string()).to_string(), "15/8/2025");
+    }
+
+    #[test]
+    fn test_m_d_yyyy_slash() {
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let fmt = DateFormat::MDYyyySlash;
+        assert_eq!(date.format(fmt.format_string()).to_string(), "8/15/2025");
+    }
+
+    #[test]
+    fn test_dd_mm_yyyy_dash() {
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let fmt = DateFormat::DdMmYyyyDash;
+        assert_eq!(date.format(fmt.format_string()).to_string(), "15-08-2025");
+    }
+
+    #[test]
+    fn test_yyyy_m_d_slash() {
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let fmt = DateFormat::YyyyMDSlash;
+        assert_eq!(date.format(fmt.format_string()).to_string(), "2025/8/15");
+    }
+
+    #[test]
+    fn test_yyyy_mm_dd_dot() {
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let fmt = DateFormat::YyyyMmDdDot;
+        assert_eq!(date.format(fmt.format_string()).to_string(), "2025.08.15");
+    }
+
+    #[test]
+    fn test_yyyy_mm_dd_dash() {
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let fmt = DateFormat::YyyyMmDdDash;
+        assert_eq!(date.format(fmt.format_string()).to_string(), "2025-08-15");
+    }
+}
