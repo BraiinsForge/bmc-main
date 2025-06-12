@@ -19,7 +19,7 @@ use tokio::sync::mpsc::Sender;
 
 const EVENT_BUFFER_SIZE: usize = 1024;
 
-use crate::{data_provider::DataProvider, slint_handle::SlintHandle};
+use crate::{data_provider::DataProvider, display_controller::DisplayController};
 
 pub trait DisplayBacklightDriver: Sync + Send + Clone + Debug + 'static {
     fn init(&mut self) -> anyhow::Result<()>;
@@ -57,14 +57,14 @@ pub trait DisplayHandle: Sync + Send + Clone + Debug {
 #[derive(Debug)]
 pub struct DisplayDriver<T: DisplayBacklightDriver> {
     backlight_driver: Arc<Mutex<T>>,
-    slint_handle: SlintHandle,
+    display_controller: DisplayController,
 }
 
 impl<T: DisplayBacklightDriver> DisplayDriver<T> {
-    pub fn new(backlight_driver: T, slint_handle: SlintHandle) -> Self {
+    pub fn new(backlight_driver: T, display_controller: DisplayController) -> Self {
         Self {
             backlight_driver: Arc::new(Mutex::new(backlight_driver)),
-            slint_handle,
+            display_controller,
         }
     }
 
@@ -96,7 +96,7 @@ impl<T: DisplayBacklightDriver> DisplayDriver<T> {
 #[derive(Debug, Clone)]
 pub struct DisplayHandler<T: DisplayBacklightDriver, U: DataProvider> {
     backlight_driver: Arc<Mutex<T>>,
-    slint_handle: SlintHandle,
+    display_controller: DisplayController,
     event_sender: Sender<DisplayEvent>,
     _data_provider: U,
 }
@@ -105,8 +105,11 @@ impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandler<T, U> {
     pub fn new(display_driver: DisplayDriver<T>, data_provider: U) -> Self {
         Self {
             backlight_driver: display_driver.backlight_driver.clone(),
-            slint_handle: display_driver.slint_handle.clone(),
-            event_sender: EventHandler::init(data_provider.clone(), display_driver.slint_handle),
+            display_controller: display_driver.display_controller.clone(),
+            event_sender: EventHandler::init(
+                data_provider.clone(),
+                display_driver.display_controller,
+            ),
             _data_provider: data_provider,
         }
     }
@@ -127,7 +130,7 @@ impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandle for DisplayHandle
             })
             .unwrap_or_default();
 
-        let _ = self.slint_handle.populate_widgets(widgets);
+        let _ = self.display_controller.populate_widgets(widgets);
 
         self.backlight_driver
             .lock()
@@ -154,23 +157,29 @@ pub enum DisplayEvent {
 struct EventHandler;
 
 impl EventHandler {
-    fn init<T: DataProvider>(data_provider: T, slint_handle: SlintHandle) -> Sender<DisplayEvent> {
+    fn init<T: DataProvider>(
+        data_provider: T,
+        display_controller: DisplayController,
+    ) -> Sender<DisplayEvent> {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
 
         tokio::spawn(async move {
             while let Some(event) = receiver.recv().await {
                 match event {
                     DisplayEvent::DownloadStarted => {
-                        Self::handle_upgrade_progress(data_provider.clone(), slint_handle.clone());
+                        Self::handle_upgrade_progress(
+                            data_provider.clone(),
+                            display_controller.clone(),
+                        );
                     }
                     DisplayEvent::UpgradeStarted => {
-                        Self::set_screen(Screen::Upgrade, &slint_handle);
+                        Self::set_screen(Screen::Upgrade, &display_controller);
                     }
                     DisplayEvent::UpgradeFailed => {
-                        Self::set_screen(Screen::UpgradeFailed, &slint_handle);
+                        Self::set_screen(Screen::UpgradeFailed, &display_controller);
                     }
                     DisplayEvent::UpgradeFinishedSuccessfully => {
-                        Self::set_screen(Screen::UpgradeSuccess, &slint_handle);
+                        Self::set_screen(Screen::UpgradeSuccess, &display_controller);
                     }
                     DisplayEvent::TimezoneChanged => {
                         info!("Timezone was changed");
@@ -182,19 +191,22 @@ impl EventHandler {
         sender
     }
 
-    fn handle_upgrade_progress<T: DataProvider>(data_provider: T, slint_handle: SlintHandle) {
-        Self::set_screen(Screen::DownloadFirmware, &slint_handle);
+    fn handle_upgrade_progress<T: DataProvider>(
+        data_provider: T,
+        display_controller: DisplayController,
+    ) {
+        Self::set_screen(Screen::DownloadFirmware, &display_controller);
         tokio::spawn(async move {
             let mut screen_data = data_provider.get_download_firmware_screen_data();
 
             while let Some(data) = screen_data.progress_receiver.recv().await {
-                _ = slint_handle
+                _ = display_controller
                     .update_download_firmware_progress(data.downloaded_mb, data.total_mb);
             }
         });
     }
 
-    fn set_screen(screen: Screen, slint_handle: &SlintHandle) {
-        _ = slint_handle.set_screen(screen);
+    fn set_screen(screen: Screen, display_controller: &DisplayController) {
+        _ = display_controller.set_screen(screen);
     }
 }

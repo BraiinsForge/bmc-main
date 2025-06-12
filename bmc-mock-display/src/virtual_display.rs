@@ -3,10 +3,10 @@
 use crate::mock_backlight_driver::MockBacklightDriver;
 use anyhow::{Context, Result};
 use bmc_display::{
+    display_controller::DisplayController,
     display_driver::DisplayDriver,
     generated::MainWindow,
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
-    slint_handle::SlintHandle,
 };
 
 #[derive(Debug)]
@@ -18,7 +18,7 @@ impl VirtualDisplay {
         let resolution = ResolutionMetadata::new(1200, 400);
         let display_metadata = DisplayMetadata::new(brightness, resolution);
 
-        let (slint_handle, main_window) = SlintHandle::create(
+        let (display_controller, main_window) = DisplayController::create(
             display_metadata.resolution.width,
             display_metadata.resolution.height,
         )
@@ -30,7 +30,7 @@ impl VirtualDisplay {
             u8::try_from(display_metadata.brightness.max)?,
         );
 
-        let display_driver = DisplayDriver::new(backlight_driver, slint_handle);
+        let display_driver = DisplayDriver::new(backlight_driver, display_controller);
 
         Ok((main_window, display_driver))
     }

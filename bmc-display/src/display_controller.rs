@@ -32,11 +32,11 @@ fn into_populate_widgets_closure(
 }
 
 #[derive(Clone)]
-pub struct SlintHandle {
+pub struct DisplayController {
     ui_handle: Arc<Mutex<Weak<MainWindow>>>,
 }
 
-impl SlintHandle {
+impl DisplayController {
     pub fn create(width: u32, height: u32) -> anyhow::Result<(Self, MainWindow)> {
         let main_window = MainWindow::new()?;
         main_window
@@ -84,7 +84,7 @@ impl SlintHandle {
     }
 }
 
-impl fmt::Debug for SlintHandle {
+impl fmt::Debug for DisplayController {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SlintHandle")
             .field("ui_handle", &"Weak<MainWindow>")

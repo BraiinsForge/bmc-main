@@ -7,9 +7,9 @@ use async_trait as _;
 use axum_extra as _;
 use bmc::{Configuration, log, time::Timezone};
 use bmc_display::{
+    display_controller::DisplayController,
     display_driver::{DisplayBacklightDriver, DisplayDriver},
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
-    slint_handle::SlintHandle,
 };
 use bmc_openwrt::{
     generic_backlight_driver::GenericBacklightDriver, linux_framebuffer_platform::LinuxFbPlatform,
@@ -41,9 +41,9 @@ async fn main() -> Result<()> {
     let resolution = ResolutionMetadata::new(480, 320);
     let display_metadata = DisplayMetadata::new(brightness, resolution);
 
-    let slint_handle = get_slint_handle(display_metadata)?;
+    let display_controller = get_display_controller(display_metadata)?;
 
-    let display_driver = DisplayDriver::new(backlight_driver, slint_handle);
+    let display_driver = DisplayDriver::new(backlight_driver, display_controller);
 
     let config = Configuration::default();
 
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
     bmc::entry::main(manager, config, display_driver, firmware_resolver).await
 }
 
-fn get_slint_handle(display_metadata: DisplayMetadata) -> Result<SlintHandle> {
+fn get_display_controller(display_metadata: DisplayMetadata) -> Result<DisplayController> {
     let (ui_handle_sender, ui_handle_receiver) = flume::unbounded();
 
     // Spawn a thread to initiaize linux platform
@@ -78,7 +78,7 @@ fn get_slint_handle(display_metadata: DisplayMetadata) -> Result<SlintHandle> {
 
 fn run_slint_platform(
     display_metadata: &DisplayMetadata,
-    ui_handle_sender: &flume::Sender<SlintHandle>,
+    ui_handle_sender: &flume::Sender<DisplayController>,
 ) -> Result<()> {
     info!("Setting up slint platform for linux framebuffer display");
     slint::platform::set_platform(Box::new(
@@ -91,7 +91,7 @@ fn run_slint_platform(
     .map_err(|e| anyhow!("Cannot set platform: {e:#?}"))?;
 
     // Initialize the UI
-    let (slint_handle, main_window) = SlintHandle::create(
+    let (display_controller, main_window) = DisplayController::create(
         display_metadata.resolution.width,
         display_metadata.resolution.height,
     )
@@ -99,7 +99,7 @@ fn run_slint_platform(
 
     // Send the UI handle to the main thread to create the display controller
     ui_handle_sender
-        .send(slint_handle)
+        .send(display_controller)
         .context("Cannot send ui_handle")?;
 
     // Run the event loop

@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait as _;
 use bmc::BmcManager;
 use bmc::{App, Configuration};
-use bmc_display::{display_driver::DisplayDriver, slint_handle::SlintHandle};
+use bmc_display::{display_controller::DisplayController, display_driver::DisplayDriver};
 use bmc_mock::MockSessionManager;
 use bmc_mock::{manager::Manager, mock_index::MockIndex, mockfs::MockFs};
 use bmc_mock_display::mock_backlight_driver::MockBacklightDriver;
@@ -53,8 +53,8 @@ async fn start_app() -> Result<TestApp> {
     let manager = Arc::new(manager);
 
     let backlight_driver = MockBacklightDriver::new(true, 10, 20);
-    let (slint_handle, _) = SlintHandle::create(0, 0)?;
-    let display_driver = DisplayDriver::new(backlight_driver, slint_handle);
+    let (display_controller, _) = DisplayController::create(0, 0)?;
+    let display_driver = DisplayDriver::new(backlight_driver, display_controller);
     let firmware_resolver = FirmwareResolver::new(MockIndex);
 
     let app = App::init(
