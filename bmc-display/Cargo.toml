@@ -17,6 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 slint.workspace = true
 tokio.workspace = true
+tokio-stream = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 
 [build-dependencies]

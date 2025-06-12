@@ -744,6 +744,7 @@ dependencies = [
  "slint",
  "slint-build",
  "tokio",
+ "tokio-stream",
  "tracing",
 ]
 
@@ -6372,6 +6373,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
