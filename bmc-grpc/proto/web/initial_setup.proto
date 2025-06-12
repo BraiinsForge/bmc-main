@@ -4,6 +4,7 @@ package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/wrappers.proto";
+import "web/shared.proto";
 
 message SetWifiRequest {
   string ssid = 1;
@@ -39,8 +40,27 @@ message WifiNetwork {
   SignalStrength signal_strength = 3;
 }
 
+message SettingsRequest {
+  braiins.bmc.web.TimeFormat time_format = 1;
+  string timezone_id = 2;
+  braiins.bmc.web.DateFormat date_format = 3;
+  braiins.bmc.web.NumberFormat number_format = 4;
+  optional string password = 5;
+  bool data_collection = 6;
+}
+
+message SettingsDataResponse {
+  braiins.bmc.web.TimeFormat time_format = 1;
+  repeated braiins.bmc.web.Timezone timezones = 2;
+  string timezone_id = 3;
+  braiins.bmc.web.DateFormat date_format = 4;
+  braiins.bmc.web.NumberFormat number_format = 5;
+  google.protobuf.BoolValue data_collection = 6;
+}
+
 service InitialSetupService {
   rpc SetWifi(SetWifiRequest) returns (google.protobuf.Empty);
   rpc ScanWifi(google.protobuf.Empty) returns (ScanWifiResponse);
-
+  rpc GetSettingsData(google.protobuf.Empty) returns (SettingsDataResponse);
+  rpc SetupDevice(SettingsRequest) returns (google.protobuf.Empty);
 }

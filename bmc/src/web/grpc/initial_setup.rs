@@ -1,19 +1,21 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_grpc::web::{
-    EncryptionType as GrpcEncryptionType, ScanWifiResponse, SetWifiRequest,
-    SignalStrength as GrpcSignalStrength, WifiNetwork,
+    DateFormat, EncryptionType as GrpcEncryptionType, NumberFormat, ScanWifiResponse,
+    SetWifiRequest, SettingsDataResponse, SettingsRequest, SignalStrength as GrpcSignalStrength,
+    TimeFormat, WifiNetwork,
     initial_setup_service_server::InitialSetupService as GrpcInitialSetupService,
 };
-use std::sync::Arc;
+use bmc_shared_time::time::{TimeSystem, Timezone};
+use std::{str::FromStr, sync::Arc};
 use tonic::{Code, Request, Response, Status};
-use tonic_types::{ErrorDetails, StatusExt};
+use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
 use tracing::warn;
 
-use super::GrpcError;
+use super::{GrpcError, system::into_grpc_timezone};
 use crate::{
     BmcManager,
-    initial_setup::{InitialSetup, SetupError},
+    initial_setup::{DeviceSetupConfig, InitialSetup, SetupError},
     manager::{BmcState, EncryptionType, SignalStrength, WifiNetworkConfig},
 };
 
@@ -90,13 +92,44 @@ where
         }))
     }
 
-    async fn pending_setup(&self, _request: Request<()>) -> Result<Response<bool>, Status> {
-        let pending_setup = match self.manager.device_state().await {
-            BmcState::FactoryDefault | crate::manager::BmcState::Operational => false,
-            BmcState::SetupPending => true,
-        };
+    async fn get_settings_data(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<SettingsDataResponse>, Status> {
+        self.check_precondition(BmcState::SetupPending).await?;
 
-        Ok(Response::new(pending_setup))
+        let timezones = self
+            .manager
+            .timezone_list()
+            .map(|tz| into_grpc_timezone(&tz))
+            .collect();
+
+        Ok(Response::new(SettingsDataResponse {
+            timezones,
+            timezone_id: Timezone::default().iana.to_owned(),
+            data_collection: Some(true),
+            time_format: TimeFormat::TimeFormat24Hour.into(),
+            date_format: DateFormat::DdMmYyyyDot.into(),
+            number_format: NumberFormat::SpaceGroupCommaDecimal.into(),
+        }))
+    }
+
+    async fn setup_device(
+        &self,
+        request: Request<SettingsRequest>,
+    ) -> Result<Response<()>, Status> {
+        self.check_precondition(BmcState::SetupPending).await?;
+
+        let request = request.into_inner();
+
+        let config = request.try_into()?;
+
+        self.initial_setup.setup_device(config).await.map_err(|e| {
+            warn!("Error while setting device, {}", e);
+            Status::internal("Error while saving device settings")
+        })?;
+
+        Ok(Response::new(()))
     }
 }
 
@@ -148,5 +181,105 @@ fn into_grpc_signal_strength(value: SignalStrength) -> GrpcSignalStrength {
         SignalStrength::Low => GrpcSignalStrength::Weak,
         SignalStrength::Fair => GrpcSignalStrength::Moderate,
         SignalStrength::Excellent => GrpcSignalStrength::Strong,
+    }
+}
+
+impl TryFrom<SettingsRequest> for DeviceSetupConfig {
+    type Error = Status;
+
+    fn try_from(value: SettingsRequest) -> Result<Self, Self::Error> {
+        let mut field_violations = vec![];
+
+        let timezone = Timezone::from_str(&value.timezone_id).inspect_err(|_| {
+            field_violations.push(FieldViolation::new("timezone", "invalid timezone variant"));
+        });
+
+        let time_system = try_from_time_format(value.time_format())
+            .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
+
+        let date_format = try_from_date_time(value.date_format())
+            .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
+
+        let number_format = value
+            .number_format()
+            .try_into()
+            .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
+
+        let err = Status::with_error_details(
+            Code::InvalidArgument,
+            GrpcError::BadRequest.to_string(),
+            ErrorDetails::with_bad_request(field_violations),
+        );
+
+        let timezone = timezone.map_err(|_| err.clone())?;
+        let time_system = time_system.map_err(|_| err.clone())?;
+        let date_format = date_format.map_err(|_| err.clone())?;
+        let number_format = number_format.map_err(|_| err)?;
+
+        Ok(DeviceSetupConfig {
+            timezone,
+            system_password: value.password,
+            time_system,
+            number_format,
+            date_format,
+            data_collection: value.data_collection,
+        })
+    }
+}
+
+fn try_from_time_format(
+    value: TimeFormat,
+) -> Result<bmc_shared_time::time::TimeSystem, FieldViolation> {
+    match value {
+        TimeFormat::Unspecified => Err(FieldViolation::new(
+            "time_format",
+            "time_format cannot be unspecified",
+        )),
+        TimeFormat::TimeFormat12Hour => Ok(TimeSystem::Hour12),
+        TimeFormat::TimeFormat24Hour => Ok(TimeSystem::Hour24),
+    }
+}
+
+fn try_from_date_time(
+    value: DateFormat,
+) -> Result<bmc_shared_time::time::DateFormat, FieldViolation> {
+    match value {
+        DateFormat::Unspecified => Err(FieldViolation::new(
+            "date_format",
+            "date_format cannot be unspecified",
+        )),
+        DateFormat::DdMmYyyyDot => Ok(bmc_shared_time::time::DateFormat::DdMmYyyyDot),
+        DateFormat::DdMmYyyySlash => Ok(bmc_shared_time::time::DateFormat::DdMmYyyySlash),
+        DateFormat::DMYyyySlash => Ok(bmc_shared_time::time::DateFormat::DMYyyySlash),
+        DateFormat::MDYyyySlash => Ok(bmc_shared_time::time::DateFormat::MDYyyySlash),
+        DateFormat::DdMmYyyyDash => Ok(bmc_shared_time::time::DateFormat::DdMmYyyyDash),
+        DateFormat::YyyyMDSlash => Ok(bmc_shared_time::time::DateFormat::YyyyMDSlash),
+        DateFormat::YyyyMmDdDot => Ok(bmc_shared_time::time::DateFormat::YyyyMmDdDot),
+        DateFormat::YyyyMmDdDash => Ok(bmc_shared_time::time::DateFormat::YyyyMmDdDash),
+    }
+}
+
+impl TryFrom<NumberFormat> for crate::utils::NumberFormat {
+    type Error = FieldViolation;
+
+    fn try_from(value: NumberFormat) -> Result<Self, Self::Error> {
+        match value {
+            NumberFormat::Unspecified => Err(FieldViolation::new(
+                "number_format",
+                "number_format cannot be unspecified",
+            )),
+            NumberFormat::SpaceGroupCommaDecimal => {
+                Ok(crate::utils::NumberFormat::SpaceGroupCommaDecimal)
+            }
+            NumberFormat::CommaGroupDotDecimal => {
+                Ok(crate::utils::NumberFormat::CommaGroupDotDecimal)
+            }
+            NumberFormat::DotGroupCommaDecimal => {
+                Ok(crate::utils::NumberFormat::DotGroupCommaDecimal)
+            }
+            NumberFormat::SpaceGroupDotDecimal => {
+                Ok(crate::utils::NumberFormat::SpaceGroupDotDecimal)
+            }
+        }
     }
 }

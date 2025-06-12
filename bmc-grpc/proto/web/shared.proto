@@ -11,3 +11,33 @@ message Timezone {
   // Timezone offset displayed as +HH:MM
   string offset = 3;
 }
+
+enum NumberFormat {
+  NUMBER_FORMAT_UNSPECIFIED = 0;
+  // 1 234 567,89  (space for thousands, comma for decimal)
+  NUMBER_FORMAT_SPACE_GROUP_COMMA_DECIMAL = 1;
+  // 1,234,567.89  (comma for thousands, dot for decimal)
+  NUMBER_FORMAT_COMMA_GROUP_DOT_DECIMAL = 2;
+  // 1.234.567,89  (dot for thousands, comma for decimal)
+  NUMBER_FORMAT_DOT_GROUP_COMMA_DECIMAL = 3;
+  // 1 234 567.89  (space for thousands, dot for decimal)
+  NUMBER_FORMAT_SPACE_GROUP_DOT_DECIMAL = 4;
+}
+
+enum TimeFormat {
+  TIME_FORMAT_UNSPECIFIED = 0;
+  TIME_FORMAT_12_HOUR = 1;
+  TIME_FORMAT_24_HOUR = 2;
+}
+
+enum DateFormat {
+  DATE_FORMAT_UNSPECIFIED = 0;
+  DATE_FORMAT_DD_MM_YYYY_DOT = 1;
+  DATE_FORMAT_DD_MM_YYYY_SLASH = 2;
+  DATE_FORMAT_D_M_YYYY_SLASH = 3;
+  DATE_FORMAT_M_D_YYYY_SLASH = 4;
+  DATE_FORMAT_DD_MM_YYYY_DASH = 5;
+  DATE_FORMAT_YYYY_M_D_SLASH = 6;
+  DATE_FORMAT_YYYY_MM_DD_DOT = 7;
+  DATE_FORMAT_YYYY_MM_DD_DASH = 8;
+}

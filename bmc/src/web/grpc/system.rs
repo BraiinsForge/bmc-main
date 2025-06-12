@@ -273,7 +273,7 @@ where
     }
 }
 
-fn into_grpc_timezone(timezone: &Timezone) -> bmc_grpc::web::Timezone {
+pub(crate) fn into_grpc_timezone(timezone: &Timezone) -> bmc_grpc::web::Timezone {
     bmc_grpc::web::Timezone {
         id: timezone.normalize_iana(),
         label: timezone.iana.to_owned(),
