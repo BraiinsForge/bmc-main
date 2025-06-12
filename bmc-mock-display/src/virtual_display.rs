@@ -3,9 +3,8 @@
 use crate::mock_backlight_driver::MockBacklightDriver;
 use anyhow::{Context, Result};
 use bmc_display::{
-    display_controller::DisplayController,
+    display_controller::{DisplayController, WindowHandle},
     display_driver::DisplayDriver,
-    generated::MainWindow,
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
 };
 
@@ -13,7 +12,7 @@ use bmc_display::{
 pub struct VirtualDisplay;
 
 impl VirtualDisplay {
-    pub fn create() -> Result<(MainWindow, DisplayDriver<MockBacklightDriver>)> {
+    pub fn create() -> Result<(WindowHandle, DisplayDriver<MockBacklightDriver>)> {
         let brightness = UsizeMetadata::new(18, 0, 20);
         let resolution = ResolutionMetadata::new(1200, 400);
         let display_metadata = DisplayMetadata::new(brightness, resolution);

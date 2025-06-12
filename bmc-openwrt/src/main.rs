@@ -23,7 +23,6 @@ use pnet as _;
 use pw_hash as _;
 use serde as _;
 use serde_json as _;
-use slint::ComponentHandle;
 use thiserror as _;
 use time as _;
 use tracing as _;

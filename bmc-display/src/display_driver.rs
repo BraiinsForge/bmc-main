@@ -130,7 +130,7 @@ impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandle for DisplayHandle
             })
             .unwrap_or_default();
 
-        let _ = self.display_controller.populate_widgets(widgets);
+        self.display_controller.populate_widgets(widgets);
 
         self.backlight_driver
             .lock()
@@ -200,13 +200,13 @@ impl EventHandler {
             let mut screen_data = data_provider.get_download_firmware_screen_data();
 
             while let Some(data) = screen_data.progress_receiver.recv().await {
-                _ = display_controller
+                display_controller
                     .update_download_firmware_progress(data.downloaded_mb, data.total_mb);
             }
         });
     }
 
     fn set_screen(screen: Screen, display_controller: &DisplayController) {
-        _ = display_controller.set_screen(screen);
+        display_controller.set_screen(screen);
     }
 }

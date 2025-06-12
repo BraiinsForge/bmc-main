@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 #[allow(warnings)]
-pub mod generated {
+mod generated {
     slint::include_modules!();
 }
 pub mod data;

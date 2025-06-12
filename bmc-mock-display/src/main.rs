@@ -8,17 +8,17 @@ use bmc_mock_display::{
     VirtualDisplay, mock_backlight_driver::MockBacklightDriver,
     mock_data_provider::MockDataProvider,
 };
-use slint::ComponentHandle;
+use slint as _;
 use tokio as _;
 use tracing as _;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let (main_window, display_driver) = VirtualDisplay::create()?;
+    let (window_handle, display_driver) = VirtualDisplay::create()?;
 
     let data_provider = MockDataProvider;
 
-    let _timer = display_driver.start_clock_timer(&main_window);
+    let _timer = display_driver.start_clock_timer(window_handle.slint_main_window());
 
     let display_handler = DisplayHandler::new(display_driver, data_provider);
 
@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
 
     run_scene(scene);
 
-    main_window.run()?;
+    window_handle.run()?;
     Ok(())
 }
 

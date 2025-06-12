@@ -16,10 +16,10 @@ use clap::Parser;
 use dirs as _;
 use rand as _;
 use reqwest as _;
-use slint::ComponentHandle;
+use slint as _;
 use thiserror as _;
 use time as _;
-use tokio as _;
+use tokio::task::block_in_place;
 use tracing as _;
 use uuid as _;
 
@@ -57,5 +57,5 @@ async fn main() -> Result<()> {
         firmware_resolver,
     ));
 
-    Ok(main_window.run()?)
+    block_in_place(move || main_window.run())
 }
