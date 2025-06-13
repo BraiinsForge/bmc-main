@@ -44,7 +44,9 @@ async fn main() -> Result<()> {
 
     let manager = Manager::new(OpenwrtSessionManager, current_timezone);
 
-    bmc::entry::main(manager, config, display_driver, firmware_resolver).await
+    bmc::entry::main(manager, config, display_driver, firmware_resolver).await;
+
+    Ok(())
 }
 
 fn get_display_controller(display_metadata: DisplayMetadata) -> Result<DisplayController> {
