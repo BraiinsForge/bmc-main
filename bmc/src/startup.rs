@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::display::DisplayTasks;
+use crate::display_tasks::DisplayTasks;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};

@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-mod display;
+mod display_tasks;
 pub mod entry;
 pub mod firmware;
 pub mod log;
