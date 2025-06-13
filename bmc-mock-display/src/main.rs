@@ -5,22 +5,18 @@
 use slint as _;
 
 use anyhow::Result;
+use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
-use bmc_display::display_driver::{DisplayHandle, DisplayHandler};
-use bmc_mock_display::{VirtualDisplay, mock_data_provider::MockDataProvider};
+use bmc_mock_display::VirtualDisplay;
 use std::time::Duration;
-use tokio::time::interval;
+use tokio::time::{interval, sleep};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let (window_handle, display_driver) = VirtualDisplay::create()?;
     spawn_date_time_task(display_driver.display_controller.clone());
 
-    let data_provider = MockDataProvider;
-
-    let display_handler = DisplayHandler::new(display_driver, data_provider);
-
-    let scene = Scene::new(display_handler);
+    let scene = Scene::new(display_driver.display_controller);
 
     run_scene(scene);
 
@@ -30,7 +26,7 @@ async fn main() -> Result<()> {
 
 fn run_scene(_scene: Scene) {
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(1)).await;
 
         // NOTE: Uncomment to run specific sequence of display scenes
         // scene.run_upgrade_failure_scene().await;
@@ -49,50 +45,48 @@ fn spawn_date_time_task(display_controller: DisplayController) {
 
 #[derive(Debug)]
 pub struct Scene {
-    display_handler: DisplayHandler,
+    display_controller: DisplayController,
 }
 
 impl Scene {
-    const TEN_SEC_DURATION: Duration = Duration::from_secs(10);
     const FIVE_SEC_DURATION: Duration = Duration::from_secs(5);
     #[must_use]
-    pub fn new(display_handler: DisplayHandler) -> Self {
-        Self { display_handler }
+    pub fn new(display_controller: DisplayController) -> Self {
+        Self { display_controller }
     }
 
     pub async fn run_successful_upgrade_scene(&self) {
-        self.display_handler
-            .emit_event(bmc_display::display_driver::DisplayEvent::DownloadStarted)
-            .await;
-
-        tokio::time::sleep(Self::TEN_SEC_DURATION).await;
-
-        self.display_handler
-            .emit_event(bmc_display::display_driver::DisplayEvent::UpgradeStarted)
-            .await;
-
-        tokio::time::sleep(Self::FIVE_SEC_DURATION).await;
-
-        self.display_handler
-            .emit_event(bmc_display::display_driver::DisplayEvent::UpgradeFinishedSuccessfully)
-            .await;
+        self.display_controller.set_screen(Screen::DownloadFirmware);
+        self.simulate_download_progress().await;
+        self.display_controller.set_screen(Screen::Upgrade);
+        sleep(Self::FIVE_SEC_DURATION).await;
+        self.display_controller.set_screen(Screen::UpgradeSuccess);
     }
 
     pub async fn run_upgrade_failure_scene(&self) {
-        self.display_handler
-            .emit_event(bmc_display::display_driver::DisplayEvent::DownloadStarted)
-            .await;
+        self.display_controller.set_screen(Screen::DownloadFirmware);
+        self.simulate_download_progress().await;
+        self.display_controller.set_screen(Screen::Upgrade);
+        sleep(Self::FIVE_SEC_DURATION).await;
+        self.display_controller.set_screen(Screen::UpgradeFailed);
+    }
 
-        tokio::time::sleep(Self::TEN_SEC_DURATION).await;
+    async fn simulate_download_progress(&self) {
+        const FILE_SIZE: f32 = 41.2;
+        const NUMBER_OF_UPDATES: i32 = 30;
 
-        self.display_handler
-            .emit_event(bmc_display::display_driver::DisplayEvent::UpgradeStarted)
-            .await;
+        let total = FILE_SIZE;
+        #[expect(clippy::cast_precision_loss)]
+        let step = total / NUMBER_OF_UPDATES as f32;
 
-        tokio::time::sleep(Self::FIVE_SEC_DURATION).await;
+        for i in 1..=NUMBER_OF_UPDATES {
+            #[expect(clippy::cast_precision_loss)]
+            let downloaded = step * i as f32;
 
-        self.display_handler
-            .emit_event(bmc_display::display_driver::DisplayEvent::UpgradeFailed)
-            .await;
+            self.display_controller
+                .update_download_firmware_progress(downloaded, total);
+
+            sleep(Duration::from_millis(300)).await;
+        }
     }
 }
