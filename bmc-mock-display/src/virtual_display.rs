@@ -29,7 +29,7 @@ impl VirtualDisplay {
             u8::try_from(display_metadata.brightness.max)?,
         );
 
-        let display_driver = DisplayDriver::new(backlight_driver, display_controller);
+        let display_driver = DisplayDriver::init(backlight_driver, display_controller)?;
 
         Ok((main_window, display_driver))
     }

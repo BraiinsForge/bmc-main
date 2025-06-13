@@ -17,27 +17,25 @@ use crate::manager::BmcManager;
 use crate::web::{ServerConfig, WebService};
 
 #[derive(Debug)]
-pub struct App<T, U, V>
+pub struct App<T, V>
 where
     T: BmcManager,
-    U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
     listener: TcpListener,
     manager: Arc<T>,
     session_manager: Arc<T::SessionManager>,
     config: Configuration,
-    display_tasks: DisplayTasks<U>,
+    display_tasks: DisplayTasks,
     system_upgrade_service: SystemUpgradeService<V, T>,
 }
 
-impl<T, U, V> App<T, U, V>
+impl<T, V> App<T, V>
 where
     T: BmcManager,
-    U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
-    pub async fn init(
+    pub async fn init<U: DisplayBacklightDriver>(
         config: Configuration,
         manager: Arc<T>,
         session_manager: T::SessionManager,
@@ -55,11 +53,11 @@ where
             state_service.clone(),
         );
 
-        let display_tasks = DisplayTasks::init(
+        let display_tasks = DisplayTasks::new(
             display_driver,
             state_service,
             manager.watch_timezone_updates(),
-        )?;
+        );
 
         Ok(Self {
             listener,

@@ -1,6 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use anyhow::Result;
 use bmc_display::display_driver::{
     DisplayBacklightDriver, DisplayDriver, DisplayEvent, DisplayHandle, DisplayHandler,
 };
@@ -15,33 +14,29 @@ use crate::{
 pub(crate) mod data;
 
 #[derive(Debug)]
-pub(crate) struct DisplayTasks<T: DisplayBacklightDriver> {
+pub(crate) struct DisplayTasks {
     _data_provider: DisplayDataProvider,
-    display_handler: DisplayHandler<T, DisplayDataProvider>,
+    display_handler: DisplayHandler,
     system_upgrade_receiver: Receiver<Option<SystemUpgradeState>>,
     timezone_watch: Receiver<Timezone>,
 }
 
-impl<T> DisplayTasks<T>
-where
-    T: DisplayBacklightDriver,
-{
-    pub(crate) fn init(
+impl DisplayTasks {
+    pub(crate) fn new<T: DisplayBacklightDriver>(
         display_driver: DisplayDriver<T>,
         state_service: StateService,
         timezone_watch: Receiver<Timezone>,
-    ) -> Result<Self> {
+    ) -> Self {
         let system_upgrade_receiver = state_service.subscribe();
         let data_provider = DisplayDataProvider::new(state_service);
         let display_handler = DisplayHandler::new(display_driver, data_provider.clone());
-        display_handler.init()?;
 
-        Ok(Self {
+        Self {
             _data_provider: data_provider,
             display_handler,
             system_upgrade_receiver,
             timezone_watch,
-        })
+        }
     }
 
     pub(crate) fn spawn(&self) {
@@ -81,7 +76,7 @@ where
             }
         });
 
-        let display_handle: DisplayHandler<T, DisplayDataProvider> = self.display_handler.clone();
+        let display_handle = self.display_handler.clone();
         let mut timezone_watch = self.timezone_watch.clone();
 
         task::spawn(async move {

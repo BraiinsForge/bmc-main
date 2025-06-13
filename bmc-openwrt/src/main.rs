@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
 
     let display_controller = get_display_controller(display_metadata)?;
 
-    let display_driver = DisplayDriver::new(backlight_driver, display_controller);
+    let display_driver = DisplayDriver::init(backlight_driver, display_controller)?;
 
     let config = Configuration::default();
 

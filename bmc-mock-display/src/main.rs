@@ -7,10 +7,7 @@ use slint as _;
 use anyhow::Result;
 use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::{DisplayHandle, DisplayHandler};
-use bmc_mock_display::{
-    VirtualDisplay, mock_backlight_driver::MockBacklightDriver,
-    mock_data_provider::MockDataProvider,
-};
+use bmc_mock_display::{VirtualDisplay, mock_data_provider::MockDataProvider};
 use std::time::Duration;
 use tokio::time::interval;
 
@@ -22,8 +19,6 @@ async fn main() -> Result<()> {
     let data_provider = MockDataProvider;
 
     let display_handler = DisplayHandler::new(display_driver, data_provider);
-
-    display_handler.init()?;
 
     let scene = Scene::new(display_handler);
 
@@ -54,14 +49,14 @@ fn spawn_date_time_task(display_controller: DisplayController) {
 
 #[derive(Debug)]
 pub struct Scene {
-    display_handler: DisplayHandler<MockBacklightDriver, MockDataProvider>,
+    display_handler: DisplayHandler,
 }
 
 impl Scene {
     const TEN_SEC_DURATION: Duration = Duration::from_secs(10);
     const FIVE_SEC_DURATION: Duration = Duration::from_secs(5);
     #[must_use]
-    pub fn new(display_handler: DisplayHandler<MockBacklightDriver, MockDataProvider>) -> Self {
+    pub fn new(display_handler: DisplayHandler) -> Self {
         Self { display_handler }
     }
 

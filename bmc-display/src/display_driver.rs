@@ -43,8 +43,6 @@ pub trait DisplayBacklightDriver: Sync + Send + Clone + Debug + 'static {
 
 #[async_trait::async_trait]
 pub trait DisplayHandle: Sync + Send + Clone + Debug {
-    fn init(&self) -> anyhow::Result<()>;
-
     async fn emit_event(&self, event: DisplayEvent);
 }
 
@@ -55,39 +53,10 @@ pub struct DisplayDriver<T: DisplayBacklightDriver> {
 }
 
 impl<T: DisplayBacklightDriver> DisplayDriver<T> {
-    pub fn new(backlight_driver: T, display_controller: DisplayController) -> Self {
-        Self {
-            backlight_driver: Arc::new(Mutex::new(backlight_driver)),
-            display_controller,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DisplayHandler<T: DisplayBacklightDriver, U: DataProvider> {
-    backlight_driver: Arc<Mutex<T>>,
-    display_controller: DisplayController,
-    event_sender: Sender<DisplayEvent>,
-    _data_provider: U,
-}
-
-impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandler<T, U> {
-    pub fn new(display_driver: DisplayDriver<T>, data_provider: U) -> Self {
-        Self {
-            backlight_driver: display_driver.backlight_driver.clone(),
-            display_controller: display_driver.display_controller.clone(),
-            event_sender: EventHandler::init(
-                data_provider.clone(),
-                display_driver.display_controller,
-            ),
-            _data_provider: data_provider,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandle for DisplayHandler<T, U> {
-    fn init(&self) -> anyhow::Result<()> {
+    pub fn init(
+        backlight_driver: T,
+        display_controller: DisplayController,
+    ) -> anyhow::Result<Self> {
         let json_data = Path::new("widgets.json");
         let widgets: Vec<Widget> = File::open(json_data)
             .map_err(|e| {
@@ -100,16 +69,34 @@ impl<T: DisplayBacklightDriver, U: DataProvider> DisplayHandle for DisplayHandle
             })
             .unwrap_or_default();
 
-        self.display_controller.populate_widgets(widgets);
+        display_controller.populate_widgets(widgets);
+        backlight_driver.turn_on()?;
 
-        self.backlight_driver
-            .lock()
-            .expect("BUG: cannot lock display")
-            .turn_on()?;
-
-        Ok(())
+        Ok(Self {
+            backlight_driver: Arc::new(Mutex::new(backlight_driver)),
+            display_controller,
+        })
     }
+}
 
+#[derive(Debug, Clone)]
+pub struct DisplayHandler {
+    event_sender: Sender<DisplayEvent>,
+}
+
+impl DisplayHandler {
+    pub fn new<T: DisplayBacklightDriver, U: DataProvider>(
+        display_driver: DisplayDriver<T>,
+        data_provider: U,
+    ) -> Self {
+        Self {
+            event_sender: EventHandler::init(data_provider, display_driver.display_controller),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl DisplayHandle for DisplayHandler {
     async fn emit_event(&self, event: DisplayEvent) {
         _ = self.event_sender.send(event).await;
     }
