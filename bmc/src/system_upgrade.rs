@@ -9,16 +9,13 @@ use bmc_upgrade::{
 use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, sync::LazyLock};
 use thiserror::Error;
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch::{self, Receiver};
-use tokio::sync::{Mutex, mpsc::UnboundedSender};
-use tokio::time::MissedTickBehavior;
-use tokio::{task, time};
-use tokio_util::sync::CancellationToken;
+use tokio::task;
 use tracing::warn;
 
 use crate::{BmcManager, storage_checker::StorageChecker};
@@ -151,6 +148,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         Ok(Some(release_info))
     }
 
+    #[expect(clippy::too_many_lines)]
     pub fn download_firmware(&self, hash: String) -> UnboundedReceiver<DownloadState> {
         let (progress_sender, progress_receiver) = tokio::sync::mpsc::unbounded_channel();
         let path = self.upgrade_image_path.clone();
@@ -204,31 +202,39 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 file_downloader,
             );
 
-            let downloaded_bytes = Arc::new(AtomicUsize::new(0));
-
             #[expect(clippy::cast_precision_loss)]
             let total_mb = firmware_info.file_size as f32 / 1_000_000.0;
-
+            let mut downloaded_bytes = 0;
             let mut firmware_checksum = String::new();
-            let cancellation_token = CancellationToken::new();
+            let mut progress_updated_at = Instant::now();
 
-            let handle = tokio::spawn(Self::send_download_progress(
-                downloaded_bytes.clone(),
-                total_mb,
-                state_service.clone(),
-                progress_sender.clone(),
-                cancellation_token.clone(),
-            ));
-
-            state_service.notify(SystemUpgradeState::DownloadStarted);
+            state_service.notify(SystemUpgradeState::DownloadStarted { total_mb });
             while let Some(data) = rx.recv().await {
                 match data {
-                    Ok(event) => match event {
-                        DownloadEvent::BytesWritten(bytes) => {
-                            downloaded_bytes.fetch_add(bytes, Ordering::AcqRel);
+                    Ok(DownloadEvent::BytesWritten(bytes)) => {
+                        downloaded_bytes += bytes;
+
+                        if progress_updated_at.elapsed() < UPDATE_PROGRESS_INTERVAL {
+                            continue;
                         }
-                        DownloadEvent::Finished { checksum } => firmware_checksum = checksum,
-                    },
+                        progress_updated_at = Instant::now();
+
+                        #[expect(clippy::cast_precision_loss)]
+                        let downloaded_mb = downloaded_bytes as f32 / 1_000_000.0;
+
+                        state_service.notify(SystemUpgradeState::DownloadProgress {
+                            downloaded_mb,
+                            total_mb,
+                        });
+
+                        _ = progress_sender.send(DownloadState::Progress {
+                            downloaded_mb,
+                            total_mb,
+                        });
+                    }
+                    Ok(DownloadEvent::Finished { checksum }) => {
+                        firmware_checksum = checksum;
+                    }
                     Err(err) => {
                         warn!("Error while downloading upgrade firmware: {}", &err);
 
@@ -238,19 +244,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                             SystemUpgradeError::FailedToDownload(err.to_string()),
                         ));
 
-                        cancellation_token.cancel();
                         return;
                     }
                 }
             }
 
-            cancellation_token.cancel();
-            _ = handle.await;
-
             if hash.to_lowercase() == firmware_checksum.to_lowercase() {
-                state_service.notify(SystemUpgradeState::DownloadFinished(
-                    firmware_checksum.clone(),
-                ));
+                state_service.notify(SystemUpgradeState::DownloadFinished {
+                    hash: firmware_checksum.clone(),
+                    total_mb,
+                });
                 _ = progress_sender.send(DownloadState::Finished {
                     hash: firmware_checksum,
                 });
@@ -266,34 +269,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         });
 
         progress_receiver
-    }
-
-    async fn send_download_progress(
-        downloaded_bytes: Arc<AtomicUsize>,
-        total_mb: f32,
-        state_service: StateService,
-        download_progress_sender: UnboundedSender<DownloadState>,
-        cancellation_token: CancellationToken,
-    ) {
-        let mut interval = time::interval(UPDATE_PROGRESS_INTERVAL);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-        while !cancellation_token.is_cancelled() {
-            interval.tick().await;
-
-            #[expect(clippy::cast_precision_loss)]
-            let downloaded_mb = downloaded_bytes.load(Ordering::Acquire) as f32 / 1_000_000.0;
-
-            state_service.notify(SystemUpgradeState::DownloadProgress {
-                downloaded_mb,
-                total_mb,
-            });
-
-            _ = download_progress_sender.send(DownloadState::Progress {
-                downloaded_mb,
-                total_mb,
-            });
-        }
     }
 
     pub async fn verify_and_upgrade(&self, hash: &str) -> Result<(), SystemUpgradeError> {
@@ -343,9 +318,9 @@ pub(crate) enum DownloadState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SystemUpgradeState {
-    DownloadStarted,
+    DownloadStarted { total_mb: f32 },
     DownloadProgress { downloaded_mb: f32, total_mb: f32 },
-    DownloadFinished(String),
+    DownloadFinished { hash: String, total_mb: f32 },
     UpgradeStarted,
     UpgradeFinished,
     Failed,

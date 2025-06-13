@@ -51,7 +51,8 @@ impl DisplayTasks {
             };
 
             match upgrade_state {
-                SystemUpgradeState::DownloadStarted => {
+                SystemUpgradeState::DownloadStarted { total_mb } => {
+                    display_controller.update_download_firmware_progress(0.0, *total_mb);
                     display_controller.set_screen(Screen::DownloadFirmware);
                 }
                 SystemUpgradeState::DownloadProgress {
@@ -60,7 +61,9 @@ impl DisplayTasks {
                 } => {
                     display_controller.update_download_firmware_progress(*downloaded_mb, *total_mb);
                 }
-                SystemUpgradeState::DownloadFinished(_) => (),
+                SystemUpgradeState::DownloadFinished { total_mb, .. } => {
+                    display_controller.update_download_firmware_progress(*total_mb, *total_mb);
+                }
                 SystemUpgradeState::UpgradeStarted => {
                     display_controller.set_screen(Screen::Upgrade);
                 }
