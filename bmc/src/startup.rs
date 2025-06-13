@@ -54,8 +54,8 @@ where
         );
 
         let display_tasks = DisplayTasks::new(
-            display_driver,
-            state_service,
+            display_driver.display_controller,
+            state_service.subscribe(),
             manager.watch_timezone_updates(),
         );
 
