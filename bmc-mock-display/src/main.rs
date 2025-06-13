@@ -1,6 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::time::Duration;
+#[allow(unused, clippy::allow_attributes)]
+// NOTE: slint is not directly used in the code, but defines cargo features
+use slint as _;
 
 use anyhow::Result;
 use bmc_display::display_driver::{DisplayHandle, DisplayHandler};
@@ -8,9 +10,7 @@ use bmc_mock_display::{
     VirtualDisplay, mock_backlight_driver::MockBacklightDriver,
     mock_data_provider::MockDataProvider,
 };
-use slint as _;
-use tokio as _;
-use tracing as _;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {

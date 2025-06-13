@@ -3,8 +3,6 @@
 use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow};
-use async_trait as _;
-use axum_extra as _;
 use bmc::{Configuration, log, time::Timezone};
 use bmc_display::{
     display_controller::DisplayController,
@@ -15,17 +13,7 @@ use bmc_openwrt::{
     generic_backlight_driver::GenericBacklightDriver, linux_framebuffer_platform::LinuxFbPlatform,
     manager::Manager, session::OpenwrtSessionManager,
 };
-use bmc_platform as _;
 use bmc_upgrade::firmware::FirmwareResolver;
-use get_if_addrs as _;
-use memmap2 as _;
-use pnet as _;
-use pw_hash as _;
-use serde as _;
-use serde_json as _;
-use thiserror as _;
-use time as _;
-use tracing as _;
 use tracing::{error, info};
 
 #[tokio::main]

@@ -1,24 +1,14 @@
-use std::sync::{Arc, Mutex};
 // Copyright (C) 2025  Braiins Systems s.r.o.
+
 use anyhow::Result;
-use async_trait as _;
-use axum_extra as _;
 use bmc::log;
 use bmc_mock::MockSessionManager;
 use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
 use bmc_mock_display::VirtualDisplay;
-use bmc_platform as _;
 use bmc_upgrade::firmware::FirmwareResolver;
-use chrono as _;
-use clap as _;
 use clap::Parser;
-use dirs as _;
-use rand as _;
-use reqwest as _;
-use thiserror as _;
-use time as _;
+use std::sync::{Arc, Mutex};
 use tokio::task::block_in_place;
-use tracing as _;
 
 #[tokio::main]
 async fn main() -> Result<()> {
