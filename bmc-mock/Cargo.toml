@@ -21,10 +21,6 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-uuid = { workspace = true, features = ["v4"] }
-
-[dev-dependencies]
-bmc-display.workspace = true
 
 [lints]
 workspace = true

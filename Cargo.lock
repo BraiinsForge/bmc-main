@@ -770,7 +770,6 @@ dependencies = [
  "async-trait",
  "axum-extra",
  "bmc",
- "bmc-display",
  "bmc-mock-display",
  "bmc-platform",
  "bmc-upgrade",
@@ -783,7 +782,6 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]

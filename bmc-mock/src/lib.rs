@@ -1,8 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow as _;
-#[cfg(test)]
-use bmc_display as _;
 use bmc_mock_display as _;
 pub use session::MockSessionManager;
 use tokio as _;
@@ -16,6 +14,5 @@ mod session;
 
 use bmc_mock_display as _;
 use reqwest as _;
-use uuid as _;
 
 pub use mockfs::MockFs;
