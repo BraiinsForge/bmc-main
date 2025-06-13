@@ -3,6 +3,8 @@
 use crate::data::{Screen, Widget};
 use crate::display_controller::DisplayController;
 use crate::generated;
+use crate::generated::DateTimeAdapter;
+use chrono::{Datelike, Timelike};
 use slint::{Global, Model, ModelRc, SharedString, VecModel};
 
 impl DisplayController {
@@ -35,6 +37,22 @@ impl DisplayController {
                 });
             }
             main_window.set_widgets(ModelRc::new(VecModel::from(widget_slint)));
+        });
+    }
+
+    pub fn update_datetime(&self) {
+        self.in_event_loop(|main_window| {
+            let datetime_adapter = DateTimeAdapter::get(&main_window);
+            let now = chrono::Local::now();
+            datetime_adapter.set_hour24(i32::try_from(now.hour()).unwrap_or_default());
+            datetime_adapter.set_hour12(i32::try_from(now.hour12().1).unwrap_or_default());
+            datetime_adapter.set_is_pm(now.hour12().0);
+            datetime_adapter.set_minute(i32::try_from(now.minute()).unwrap_or_default());
+            datetime_adapter.set_second(i32::try_from(now.second()).unwrap_or_default());
+            datetime_adapter.set_day(i32::try_from(now.day()).unwrap_or_default());
+            datetime_adapter.set_month(i32::try_from(now.month()).unwrap_or_default());
+            datetime_adapter.set_year(now.year());
+            datetime_adapter.set_weekday(slint::format!("{}", now.weekday()));
         });
     }
 

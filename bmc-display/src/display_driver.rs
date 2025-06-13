@@ -1,12 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::{
-    data::{Screen, Widget},
-    generated::{DateTimeAdapter, MainWindow},
-};
-use chrono::{Datelike, Timelike};
-use slint::{ComponentHandle, Global, Timer};
-use std::time::Duration;
+use crate::data::{Screen, Widget};
 use std::{
     fmt::Debug,
     fs::File,
@@ -56,8 +50,8 @@ pub trait DisplayHandle: Sync + Send + Clone + Debug {
 
 #[derive(Debug)]
 pub struct DisplayDriver<T: DisplayBacklightDriver> {
-    backlight_driver: Arc<Mutex<T>>,
-    display_controller: DisplayController,
+    pub backlight_driver: Arc<Mutex<T>>,
+    pub display_controller: DisplayController,
 }
 
 impl<T: DisplayBacklightDriver> DisplayDriver<T> {
@@ -66,30 +60,6 @@ impl<T: DisplayBacklightDriver> DisplayDriver<T> {
             backlight_driver: Arc::new(Mutex::new(backlight_driver)),
             display_controller,
         }
-    }
-
-    #[must_use]
-    pub fn start_clock_timer(&self, window: &MainWindow) -> Timer {
-        let timer = Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(250), {
-            let window_weak = window.as_weak();
-            move || {
-                let _ = window_weak.upgrade_in_event_loop(move |main_window| {
-                    let datetime_adapter = DateTimeAdapter::get(&main_window);
-                    let now = chrono::Local::now();
-                    datetime_adapter.set_hour24(i32::try_from(now.hour()).unwrap_or_default());
-                    datetime_adapter.set_hour12(i32::try_from(now.hour12().1).unwrap_or_default());
-                    datetime_adapter.set_is_pm(now.hour12().0);
-                    datetime_adapter.set_minute(i32::try_from(now.minute()).unwrap_or_default());
-                    datetime_adapter.set_second(i32::try_from(now.second()).unwrap_or_default());
-                    datetime_adapter.set_day(i32::try_from(now.day()).unwrap_or_default());
-                    datetime_adapter.set_month(i32::try_from(now.month()).unwrap_or_default());
-                    datetime_adapter.set_year(now.year());
-                    datetime_adapter.set_weekday(slint::format!("{}", now.weekday()));
-                });
-            }
-        });
-        timer
     }
 }
 

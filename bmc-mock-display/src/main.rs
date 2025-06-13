@@ -5,20 +5,21 @@
 use slint as _;
 
 use anyhow::Result;
+use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::{DisplayHandle, DisplayHandler};
 use bmc_mock_display::{
     VirtualDisplay, mock_backlight_driver::MockBacklightDriver,
     mock_data_provider::MockDataProvider,
 };
 use std::time::Duration;
+use tokio::time::interval;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let (window_handle, display_driver) = VirtualDisplay::create()?;
+    spawn_date_time_task(display_driver.display_controller.clone());
 
     let data_provider = MockDataProvider;
-
-    let _timer = display_driver.start_clock_timer(window_handle.slint_main_window());
 
     let display_handler = DisplayHandler::new(display_driver, data_provider);
 
@@ -38,6 +39,16 @@ fn run_scene(_scene: Scene) {
 
         // NOTE: Uncomment to run specific sequence of display scenes
         // scene.run_upgrade_failure_scene().await;
+    });
+}
+
+fn spawn_date_time_task(display_controller: DisplayController) {
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_millis(250));
+        loop {
+            interval.tick().await;
+            display_controller.update_datetime();
+        }
     });
 }
 

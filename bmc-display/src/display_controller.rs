@@ -46,12 +46,6 @@ impl fmt::Debug for DisplayController {
 pub struct WindowHandle(generated::MainWindow);
 
 impl WindowHandle {
-    // TODO: remove whole function
-    #[must_use]
-    pub fn slint_main_window(&self) -> &generated::MainWindow {
-        &self.0
-    }
-
     pub fn run(self) -> anyhow::Result<()> {
         Ok(self.0.run()?)
     }
