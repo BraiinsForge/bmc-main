@@ -21,6 +21,7 @@ pub mod authentication;
 mod metadata;
 mod system;
 use super::SystemUpgradeService;
+mod configuration_service;
 mod upgrade_service;
 
 struct AuthInterceptor<S: SessionManager> {
@@ -93,11 +94,20 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
             system::SystemService::new(self.manager, self.session_manager),
         );
 
+        let configuration_service =
+            web::configuration_service_server::ConfigurationServiceServer::new(
+                configuration_service::ConfigurationService::new(),
+            );
+
         // GrpcWebLayer is badly named, it's not a "layer", it's re-wrapper for other Services
         // All services requiring authentication have to be wrapped in GrpcWebLayer and use "InterceptorFor"
         Routes::new(GrpcWebLayer::new().layer(reflection_service))
             .add_service(GrpcWebLayer::new().layer(authentication_service))
             .add_service(GrpcWebLayer::new().layer(metadata_service))
+            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                configuration_service,
+                auth_interceptor.clone(),
+            )))
             .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
                 system_service,
                 auth_interceptor.clone(),

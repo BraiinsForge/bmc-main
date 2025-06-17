@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+import "google/protobuf/empty.proto";
+
+// Font style
+enum FontStyle {
+  FONTSTYLE_UNSPECIFIED = 0;
+  FONTSTYLE_LIGHT = 1;
+  FONTSTYLE_MEDIUM = 2;
+  FONTSTYLE_BOLD = 3;
+}
+
+// Position of the widget on the combined scene grid
+// Full screen widget position is row: 0, col: 0
+message Position {
+  uint32 row = 1;
+  uint32 col = 2;
+}
+
+// Clock Analog Round Config messages
+message ClockAnalogRoundSmall {
+  bool show_timezone = 1;
+}
+
+message ClockAnalogRoundMedium {
+  bool show_timezone = 1;
+}
+
+message ClockAnalogRoundLarge {
+  bool show_timezone = 1;
+}
+
+message ClockAnalogRoundFull {
+  bool show_timezone = 1;
+  bool show_date = 2;
+}
+
+// Clock Analog Rectangular Config messages
+message ClockAnalogRectSmall {
+  bool show_timezone = 1;
+}
+
+message ClockAnalogRectMedium {
+  bool show_timezone = 1;
+}
+
+message ClockAnalogRectLarge {
+  bool show_timezone = 1;
+}
+
+message ClockAnalogRectFull {
+  bool show_timezone = 1;
+  bool show_date = 2;
+}
+
+// Clock Digital Config messages
+message ClockDigitalSmall {
+  bool show_timezone = 1;
+  bool show_seconds = 2;
+}
+
+message ClockDigitalMedium {
+  bool show_timezone = 1;
+  bool show_seconds = 2;
+}
+
+message ClockDigitalLarge {
+  bool show_timezone = 1;
+  bool show_seconds = 2;
+}
+
+message ClockDigitalFull {
+  bool show_timezone = 1;
+  bool show_seconds = 2;
+  bool show_date = 3;
+}
+
+// Clock Style contains all size and type variants of clock widgets
+message ClockStyle {
+  oneof style {
+    // Analog Round
+    ClockAnalogRoundSmall clock_analog_round_s = 1;
+    ClockAnalogRoundMedium clock_analog_round_m = 2;
+    ClockAnalogRoundLarge clock_analog_round_l = 3;
+    ClockAnalogRoundFull clock_analog_round_f = 4;
+    // Analog Rectangular
+    ClockAnalogRectSmall clock_analog_rect_s = 5;
+    ClockAnalogRectMedium clock_analog_rect_m = 6;
+    ClockAnalogRectLarge clock_analog_rect_l = 7;
+    ClockAnalogRectFull clock_analog_rect_f = 8;
+    // Digital
+    ClockDigitalSmall clock_digital_s = 9;
+    ClockDigitalMedium clock_digital_m = 10;
+    ClockDigitalLarge clock_digital_l = 11;
+    ClockDigitalFull clock_digital_f = 12;
+  }
+}
+
+message AddClockRequest {
+  Position position = 1;
+  string timezone = 2;
+  FontStyle number_font_style = 3;
+  ClockStyle clock_style = 4;
+}
+
+service ConfigurationService {
+  rpc AddClockWidget(AddClockRequest) returns (google.protobuf.Empty);
+}
