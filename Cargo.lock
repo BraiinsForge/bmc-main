@@ -712,6 +712,8 @@ dependencies = [
  "minerctl-defs",
  "prost-types",
  "reqwest",
+ "serde",
+ "serde_json",
  "strum",
  "sysinfo",
  "thiserror 2.0.12",

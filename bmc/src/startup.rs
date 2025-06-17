@@ -5,12 +5,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::config::DisplayConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::manager::BmcManager;
@@ -28,6 +30,7 @@ where
     config: Configuration,
     display_tasks: DisplayTasks,
     system_upgrade_service: SystemUpgradeService<V, T>,
+    display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
 }
 
 impl<T, V> App<T, V>
@@ -53,6 +56,10 @@ where
             state_service.clone(),
         );
 
+        let mut display_config_handle =
+            DisplayConfigHandle::new(config.display_config_path.clone());
+        display_config_handle.init().await;
+
         let display_tasks = DisplayTasks::new(
             display_driver.display_controller,
             state_service.subscribe(),
@@ -66,6 +73,7 @@ where
             config,
             display_tasks,
             system_upgrade_service,
+            display_config_handle: Arc::new(RwLock::new(display_config_handle)),
         })
     }
 
@@ -81,6 +89,7 @@ where
             self.session_manager.clone(),
             self.config.server_config,
             self.system_upgrade_service,
+            self.display_config_handle.clone(),
         )
         .run(self.listener)
         .await?;
@@ -98,10 +107,12 @@ pub struct Configuration {
     pub address: SocketAddr,
     pub server_config: ServerConfig,
     pub upgrade_image_path: PathBuf,
+    pub display_config_path: PathBuf,
 }
 
 impl Configuration {
     const UPGRADE_IMAGE_PATH: &'static str = "/tmp/firmware.tar";
+    const DISPLAY_CONFIG_PATH: &'static str = "/etc/bmc_display.json";
 }
 
 impl Default for Configuration {
@@ -110,6 +121,7 @@ impl Default for Configuration {
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 9090),
             server_config: ServerConfig::default(),
             upgrade_image_path: PathBuf::from(Self::UPGRADE_IMAGE_PATH),
+            display_config_path: Self::DISPLAY_CONFIG_PATH.into(),
         }
     }
 }

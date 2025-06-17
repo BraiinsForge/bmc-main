@@ -1,11 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::Widget;
 use crate::display_controller::DisplayController;
 use std::{
     fmt::Debug,
-    fs::File,
-    path::Path,
     sync::{Arc, Mutex},
 };
 
@@ -46,19 +43,6 @@ impl<T: DisplayBacklightDriver> DisplayDriver<T> {
         backlight_driver: T,
         display_controller: DisplayController,
     ) -> anyhow::Result<Self> {
-        let json_data = Path::new("widgets.json");
-        let widgets: Vec<Widget> = File::open(json_data)
-            .map_err(|e| {
-                println!("Cannot open file {json_data:?}: {e}");
-            })
-            .and_then(|file| {
-                serde_json::from_reader(file).map_err(|e| {
-                    println!("Cannot read widget data: {e}");
-                })
-            })
-            .unwrap_or_default();
-
-        display_controller.populate_widgets(widgets);
         backlight_driver.turn_on()?;
 
         Ok(Self {

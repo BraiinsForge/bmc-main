@@ -5,6 +5,7 @@ mod http_server;
 mod no_password;
 mod session;
 
+use crate::config::DisplayConfigHandle;
 use crate::session::Manager as SessionManager;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
@@ -16,6 +17,7 @@ use std::{
     sync::Arc,
 };
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use tower::{Layer, steer::Steer};
 use tower_http::normalize_path::NormalizePathLayer;
 
@@ -24,6 +26,7 @@ pub(crate) struct WebService<T: BmcManager, S: SessionManager, U: FirmwareIndex>
     session_manager: Arc<S>,
     config: ServerConfig,
     system_upgrade_service: SystemUpgradeService<U, T>,
+    display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
@@ -32,12 +35,14 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
         session_manager: Arc<S>,
         config: ServerConfig,
         system_upgrade_service: SystemUpgradeService<U, T>,
+        display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
     ) -> Self {
         Self {
             manager,
             session_manager,
             config,
             system_upgrade_service,
+            display_config_handle,
         }
     }
 
@@ -47,6 +52,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
             self.manager,
             self.session_manager.clone(),
             self.system_upgrade_service,
+            self.display_config_handle,
         )
         .build()
         .into_axum_router()

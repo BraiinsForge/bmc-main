@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::config::DisplayConfigHandle;
 use crate::web::grpc::GrpcError;
 use bmc_display::data::{
     ClockAnalogRectConfig, ClockAnalogRoundConfig, ClockDigitalConfig, NumberFontStyle, Widget,
@@ -9,14 +10,21 @@ use bmc_grpc::web::{
     AddClockRequest, FontStyle, clock_style::Style,
     configuration_service_server::ConfigurationService as GrpcConfigurationService,
 };
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tonic::Status;
 use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
+use tracing::error;
 
-pub(crate) struct ConfigurationService {}
+pub(crate) struct ConfigurationService {
+    display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+}
 
 impl ConfigurationService {
-    pub(crate) fn new() -> Self {
-        Self {}
+    pub(crate) fn new(display_config_handle: Arc<RwLock<DisplayConfigHandle>>) -> Self {
+        Self {
+            display_config_handle,
+        }
     }
 }
 
@@ -82,7 +90,17 @@ impl GrpcConfigurationService for ConfigurationService {
             widget_type,
         };
 
-        todo!("Add widget to config");
+        {
+            let mut config_handle = self.display_config_handle.write().await;
+            let mut config_handle_cloned = config_handle.clone();
+            config_handle_cloned.add_widget(None, widget);
+            if let Err(e) = config_handle_cloned.sync_to_storage().await {
+                error!("Cannot save display config: {}", e);
+            } else {
+                *config_handle = config_handle_cloned;
+                // TODO: Update screen
+            }
+        }
 
         Ok(tonic::Response::new(()))
     }

@@ -50,6 +50,9 @@ pub struct Config {
     /// Hostname string for mockup test
     #[clap(long, default_value = "bmc-d00627")]
     pub hostname: String,
+    // TODO: Fix default value for scene_config_path
+    #[clap(long, default_value = "etc/bmc_display.json")]
+    pub display_config_path: PathBuf,
 }
 
 impl From<Config> for Configuration {
@@ -68,6 +71,7 @@ impl From<Config> for Configuration {
             address: value.address,
             server_config,
             upgrade_image_path: value.mockfs_path.join("tmp/firmware.tar"),
+            display_config_path: value.mockfs_path.join(value.display_config_path),
         }
     }
 }
