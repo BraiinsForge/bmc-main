@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_shared::time::Timezone;
-use chrono::{DateTime, NaiveDateTime, TimeZone};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use chrono_tz::Tz;
 use croner::Cron;
 use std::{collections::BTreeMap, pin::Pin, sync::Arc, time::Duration};
@@ -55,52 +55,69 @@ impl JobScheduler {
 
     fn init_timezone_change(&self) {
         let timezone_receiver = self.timezone_receiver.clone();
-        let scheduler_clone = self.inner.clone();
-        let storage_clone = self.storage.clone();
+        let scheduler = self.inner.clone();
+        let storage = self.storage.clone();
         tokio::spawn(async move {
             info!("Starting timezone receiver");
             let mut timezone_receiver = timezone_receiver;
-            loop {
-                if timezone_receiver.changed().await.is_ok() {
-                    let new_timezone: Timezone = timezone_receiver.borrow_and_update().clone();
-                    info!("New timezone: {:?}", new_timezone);
-                    let Ok(offset) = new_timezone.current_timezone_tz_offset() else {
-                        error!("Error getting timezone offset: {:?}", new_timezone);
+            while timezone_receiver.changed().await.is_ok() {
+                let new_timezone: Timezone = timezone_receiver.borrow_and_update().clone();
+                info!("New timezone: {:?}", new_timezone);
+                let Ok(offset) = new_timezone.current_timezone_tz_offset() else {
+                    error!("Error getting timezone offset: {:?}", new_timezone);
+                    continue;
+                };
+                let jobs = list_jobs(storage.clone(), scheduler.clone())
+                    .await
+                    .map_err(|_| JobSchedulerError::GetJobData)
+                    .unwrap_or_else(|_| vec![]);
+                info!("Updating jobs {}", jobs.len());
+                let date: DateTime<Tz> = DateTime::from_naive_utc_and_offset(
+                    NaiveDateTime::new(NaiveDate::default(), NaiveTime::default()),
+                    offset,
+                );
+                let date_timezone = date.timezone();
+                let scheduler = scheduler.clone().lock_owned().await;
+                for mut job_details in jobs {
+                    let job_id = job_details.job_id;
+                    info!("job_id before update: {:?}", job_id);
+                    if let Err(e) = scheduler.remove(&job_id).await {
+                        error!("Error removing job: {:?}", e);
+                        continue;
+                    }
+
+                    let Ok(mut job_data) = job_details.job.job_data() else {
+                        error!("Error getting job data: {:?}", job_details.job_id);
                         continue;
                     };
-                    let jobs = list_jobs(storage_clone.clone(), scheduler_clone.clone())
-                        .await
-                        .map_err(|_| JobSchedulerError::GetJobData)
-                        .unwrap_or_else(|_| vec![]);
-                    info!("Updating jobs {}", jobs.len());
-                    let date: DateTime<Tz> = DateTime::from_naive_utc_and_offset(
-                        NaiveDateTime::from_timestamp(0, 0),
-                        offset,
-                    );
-                    let date_timezone = date.timezone();
-                    for mut job in jobs {
-                        info!("guid: {:?}", job.job.guid());
 
-                        let Ok(mut job_data) = job.job.job_data() else {
-                            error!("Error getting job data: {:?}", job.job_id);
-                            continue;
-                        };
+                    info!("job_data before update: {:?}", job_data);
+                    job_data.set_timezone(date_timezone);
+                    info!("job_data after update: {:?}", job_data);
 
-                        info!("job_data before update: {:?}", job_data);
-                        job_data.timezone = date_timezone;
-                        info!("job_data after update: {:?}", job_data);
-
-                        if let Err(e) = job.job.set_job_data(job_data) {
-                            error!("Error setting job data: {:?}", e);
-                            continue;
-                        }
+                    if let Err(e) = job_details.job.set_job_data(job_data) {
+                        error!("Error setting job data: {:?}", e);
+                        continue;
                     }
+
+                    let Ok(job_id) = scheduler.add(job_details.job.clone()).await else {
+                        error!("Error adding job: {:?}", job_details.job_id);
+                        continue;
+                    };
+                    storage.clone().write().await.insert(job_id, job_details);
+                    info!("job_id after update: {:?}", job_id);
                 }
             }
         });
     }
 
-    pub async fn submit_job_simple<T, Z>(&self, schedule: Cron, timezone: Z, source: String, callback: T) -> Result<JobId, JobSchedulerError>
+    pub async fn submit_job_simple<T, Z>(
+        &self,
+        schedule: Cron,
+        timezone: Z,
+        source: String,
+        callback: T,
+    ) -> Result<JobId, JobSchedulerError>
     where
         T: 'static,
         T: FnMut(JobId, JobSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send>>
@@ -108,7 +125,7 @@ impl JobScheduler {
             + Sync,
         Z: TimeZone + ToString,
     {
-        if !schedule.pattern.with_seconds_required || !schedule.pattern.with_seconds_optional {
+        if !schedule.pattern.with_seconds_required && !schedule.pattern.with_seconds_optional {
             error!("Seconds are required in Cron schedule");
             return Err(JobSchedulerError::ParseSchedule);
         }
@@ -125,7 +142,12 @@ impl JobScheduler {
         Ok(job_id)
     }
 
-    pub async fn submit_job_oneshot<T, Z>(&self, after: Duration, source: String, callback: T) -> Result<JobId, JobSchedulerError>
+    pub async fn submit_job_oneshot<T, Z>(
+        &self,
+        after: Duration,
+        source: String,
+        callback: T,
+    ) -> Result<JobId, JobSchedulerError>
     where
         T: 'static,
         T: FnMut(JobId, JobSchedulerLocked) -> Pin<Box<dyn Future<Output = ()> + Send>>
@@ -166,7 +188,9 @@ impl JobScheduler {
     }
 
     pub async fn cancel_job(&self, job_id: &JobId) -> Result<(), JobSchedulerError> {
-        self.inner.lock().await.remove(job_id).await
+        self.inner.lock().await.remove(job_id).await?;
+        self.storage.write().await.remove(job_id);
+        Ok(())
     }
 }
 

@@ -30,7 +30,7 @@ impl JobDetails {
         Self {
             job_id: job.guid(),
             job: job.clone(),
-            schedule,   
+            schedule,
             next_tick: None,
             source: String::new(),
         }

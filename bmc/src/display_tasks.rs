@@ -1,8 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::{system_upgrade::SystemUpgradeState, time::Timezone};
+use crate::system_upgrade::SystemUpgradeState;
 use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
+use bmc_shared::time::Timezone;
 use tokio::sync::watch;
 use tracing::info;
 

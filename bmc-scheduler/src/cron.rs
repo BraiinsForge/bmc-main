@@ -75,34 +75,38 @@ impl CronBuilder {
             "{seconds} {minutes} {hours} {days} {months} {days_of_week}",
         ))
         .with_seconds_required()
+        .with_dom_and_dow()
         .parse()
         .map_err(|e| anyhow::anyhow!("Failed to parse cron pattern: {e}"))
     }
 
     /// Convenience method for common patterns
     pub fn every_minute() -> Result<Cron> {
-        CronBuilder::new().seconds("0").build()
+        Cron::new("0 * * * * *")
+            .with_seconds_required()
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Failed to parse cron pattern: {e}"))
     }
 
     pub fn every_hour() -> Result<Cron> {
-        CronBuilder::new().seconds("0").minutes("0").build()
+        Cron::new("0 0 * * * *")
+            .with_seconds_required()
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Failed to parse cron pattern: {e}"))
     }
 
     pub fn daily_at(hour: u8, minute: u8) -> Result<Cron> {
-        CronBuilder::new()
-            .seconds("0")
-            .minutes(&minute.to_string())
-            .hours(&hour.to_string())
-            .build()
+        Cron::new(&format!("0 {minute} {hour} * * *"))
+            .with_seconds_required()
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Failed to parse cron pattern: {e}"))
     }
 
     pub fn weekly_on(day_of_week: u8, hour: u8, minute: u8) -> Result<Cron> {
-        CronBuilder::new()
-            .seconds("0")
-            .minutes(&minute.to_string())
-            .hours(&hour.to_string())
-            .days_of_week(&day_of_week.to_string())
-            .build()
+        Cron::new(&format!("0 {minute} {hour} * * {day_of_week}"))
+            .with_seconds_required()
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Failed to parse cron pattern: {e}"))
     }
 
     #[must_use]
