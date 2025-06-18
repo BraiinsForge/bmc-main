@@ -1,11 +1,31 @@
-[
-  {
-    "row": 0,
-    "col": 0,
-    "widget_size": "FullScreen",
-    "widget_type": "ClockDigital",
-    "widget_data": [
-      "Prague"
-    ]
-  }
-]
+{
+  "scenes": [
+    {
+      "id": 0,
+      "widgets": [
+        {
+          "row": 0,
+          "col": 0,
+          "widget_type": "ClockAnalogRectLarge",
+          "widget_config": {
+            "show_date": true,
+            "show_timezone": true,
+            "number_font_style": "Medium",
+            "timezone": "Prague, CZ"
+          }
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "widget_type": "ClockAnalogRoundLarge",
+          "widget_config": {
+            "show_date": true,
+            "show_timezone": true,
+            "number_font_style": "Medium",
+            "timezone": "NYC, US"
+          }
+        }
+      ]
+    }
+  ]
+}

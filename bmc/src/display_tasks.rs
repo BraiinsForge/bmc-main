@@ -4,7 +4,9 @@ use crate::system_upgrade::SystemUpgradeState;
 use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_time::time::Timezone;
+use std::time::Duration;
 use tokio::sync::watch;
+use tokio::time::interval;
 use tracing::info;
 
 #[derive(Debug)]
@@ -35,11 +37,13 @@ impl DisplayTasks {
         } = self;
 
         tokio::spawn(Self::run_system_upgrade_listener(
-            display_controller,
+            display_controller.clone(),
             system_upgrade_receiver,
         ));
 
         tokio::spawn(Self::run_timezone_listener(timezone_receiver));
+
+        tokio::spawn(Self::run_date_time_update(display_controller.clone()));
     }
 
     async fn run_system_upgrade_listener(
@@ -82,6 +86,14 @@ impl DisplayTasks {
         while let Ok(()) = receiver.changed().await {
             let timezone = receiver.borrow_and_update();
             info!(?timezone, "Timezone was changed");
+        }
+    }
+
+    async fn run_date_time_update(display_controller: DisplayController) {
+        let mut interval = interval(Duration::from_millis(250));
+        loop {
+            interval.tick().await;
+            display_controller.update_datetime();
         }
     }
 }

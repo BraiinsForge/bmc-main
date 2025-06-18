@@ -1,11 +1,11 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::{Screen, Widget};
+use crate::data::{Scene, Screen};
 use crate::display_controller::DisplayController;
-use crate::generated;
 use crate::generated::DateTimeAdapter;
+use crate::generated::{self, WidgetSlint};
 use chrono::{Datelike, Timelike};
-use slint::{Global, Model, ModelRc, SharedString, VecModel};
+use slint::{Global, Model, ModelRc, VecModel};
 
 impl DisplayController {
     #[expect(unused)]
@@ -18,23 +18,13 @@ impl DisplayController {
             .expect("BUG: failed to extract VecModel")
     }
 
-    pub fn populate_widgets(&self, widgets: Vec<Widget>) {
+    pub fn populate_widgets(&self, scenes: Vec<Scene>) {
         self.in_event_loop(move |main_window| {
-            let mut widget_slint: Vec<generated::WidgetSlint> = vec![];
-            for widget in widgets {
-                widget_slint.push(generated::WidgetSlint {
-                    col: widget.col,
-                    row: widget.row,
-                    widget_data: ModelRc::new(VecModel::from(
-                        widget
-                            .widget_data
-                            .iter()
-                            .map(std::convert::Into::into)
-                            .collect::<Vec<SharedString>>(),
-                    )),
-                    widget_size: widget.widget_size,
-                    widget_type: widget.widget_type,
-                });
+            let mut widget_slint: Vec<WidgetSlint> = vec![];
+            for scene in scenes {
+                for widget in scene.widgets {
+                    widget_slint.push(widget.into());
+                }
             }
             main_window.set_widgets(ModelRc::new(VecModel::from(widget_slint)));
         });

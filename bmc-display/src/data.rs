@@ -1,7 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::generated::UIScreen;
+use crate::generated::{UIScreen, WidgetSize, WidgetSlint, WidgetType as WidgetTypeSlint};
 use serde::{Deserialize, Serialize};
+use slint::{ModelRc, SharedString, VecModel};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NumberFontStyle {
@@ -83,6 +84,84 @@ impl From<Screen> for UIScreen {
             Screen::Upgrade => UIScreen::UpgradeProgress,
             Screen::UpgradeFailed => UIScreen::UpgradeFailed,
             Screen::UpgradeSuccess => UIScreen::UpgradeSuccess,
+        }
+    }
+}
+
+impl From<Widget> for WidgetSlint {
+    fn from(value: Widget) -> Self {
+        let col = value.col;
+        let row = value.row;
+        let widget_type = value.widget_type;
+        let (widget_size, widget_data, widget_type_slint) = match widget_type {
+            WidgetType::ClockAnalogRoundSmall(config) => (
+                WidgetSize::Small,
+                config.timezone,
+                WidgetTypeSlint::ClockAnalogRound,
+            ),
+            WidgetType::ClockAnalogRoundMedium(config) => (
+                WidgetSize::Medium,
+                config.timezone,
+                WidgetTypeSlint::ClockAnalogRound,
+            ),
+            WidgetType::ClockAnalogRoundLarge(config) => (
+                WidgetSize::Large,
+                config.timezone,
+                WidgetTypeSlint::ClockAnalogRound,
+            ),
+            WidgetType::ClockAnalogRoundFull(config) => (
+                WidgetSize::FullScreen,
+                config.timezone,
+                WidgetTypeSlint::ClockAnalogRound,
+            ),
+            WidgetType::ClockAnalogRectSmall(config) => (
+                WidgetSize::Small,
+                config.timezone,
+                WidgetTypeSlint::ClockAnalogRect,
+            ),
+            WidgetType::ClockAnalogRectMedium(config) => (
+                WidgetSize::Medium,
+                config.timezone,
+                WidgetTypeSlint::ClockAnalogRect,
+            ),
+            WidgetType::ClockAnalogRectLarge(config) => (
+                WidgetSize::Large,
+                config.timezone,
+                WidgetTypeSlint::ClockAnalogRect,
+            ),
+            WidgetType::ClockAnalogRectFull(config) => (
+                WidgetSize::FullScreen,
+                config.timezone,
+                WidgetTypeSlint::ClockAnalogRect,
+            ),
+            WidgetType::ClockDigitalSmall(config) => (
+                WidgetSize::Small,
+                config.timezone,
+                WidgetTypeSlint::ClockDigital,
+            ),
+            WidgetType::ClockDigitalMedium(config) => (
+                WidgetSize::Medium,
+                config.timezone,
+                WidgetTypeSlint::ClockDigital,
+            ),
+            WidgetType::ClockDigitalLarge(config) => (
+                WidgetSize::Large,
+                config.timezone,
+                WidgetTypeSlint::ClockDigital,
+            ),
+            WidgetType::ClockDigitalFull(config) => (
+                WidgetSize::FullScreen,
+                config.timezone,
+                WidgetTypeSlint::ClockDigital,
+            ),
+        };
+        let widget_data = ModelRc::new(VecModel::from(vec![SharedString::from(widget_data)]));
+        WidgetSlint {
+            col,
+            row,
+            widget_data,
+            widget_size,
+            widget_type: widget_type_slint,
         }
     }
 }

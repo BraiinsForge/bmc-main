@@ -34,10 +34,16 @@ impl DisplayConfigHandle {
         }
     }
 
+    pub fn scenes(&self) -> Vec<Scene> {
+        self.data.scenes.clone()
+    }
+
     pub fn add_widget(&mut self, scene_id: Option<u32>, widget: Widget) {
         // TODO: Remove after scene ID functionality is properly implemented
         let scene_id = scene_id.unwrap_or_default();
 
+        // NOTE: In case of empty `scenes` vector new widget won't be added since `find` will
+        // return None
         if let Some(scene) = self.data.scenes.iter_mut().find(|s| s.id == scene_id) {
             scene.widgets.push(widget);
         }

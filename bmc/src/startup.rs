@@ -60,6 +60,10 @@ where
             DisplayConfigHandle::new(config.display_config_path.clone());
         display_config_handle.init().await;
 
+        display_driver
+            .display_controller
+            .populate_widgets(display_config_handle.scenes());
+
         let display_tasks = DisplayTasks::new(
             display_driver.display_controller,
             state_service.subscribe(),

@@ -50,7 +50,7 @@ pub struct Config {
     /// Hostname string for mockup test
     #[clap(long, default_value = "bmc-d00627")]
     pub hostname: String,
-    // TODO: Fix default value for scene_config_path
+    /// BMC display config file
     #[clap(long, default_value = "etc/bmc_display.json")]
     pub display_config_path: PathBuf,
 }
