@@ -9,6 +9,7 @@ use crate::config::DisplayConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
+use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
@@ -31,6 +32,7 @@ where
     display_tasks: DisplayTasks,
     system_upgrade_service: SystemUpgradeService<V, T>,
     display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+    display_controller: DisplayController,
 }
 
 impl<T, V> App<T, V>
@@ -60,12 +62,11 @@ where
             DisplayConfigHandle::new(config.display_config_path.clone());
         display_config_handle.init().await;
 
-        display_driver
-            .display_controller
-            .populate_widgets(display_config_handle.scenes());
+        let display_controller = display_driver.display_controller.clone();
+        display_controller.populate_widgets(display_config_handle.scenes());
 
         let display_tasks = DisplayTasks::new(
-            display_driver.display_controller,
+            display_controller.clone(),
             state_service.subscribe(),
             manager.watch_timezone_updates(),
         );
@@ -78,6 +79,7 @@ where
             display_tasks,
             system_upgrade_service,
             display_config_handle: Arc::new(RwLock::new(display_config_handle)),
+            display_controller,
         })
     }
 
@@ -94,6 +96,7 @@ where
             self.config.server_config,
             self.system_upgrade_service,
             self.display_config_handle.clone(),
+            self.display_controller,
         )
         .run(self.listener)
         .await?;

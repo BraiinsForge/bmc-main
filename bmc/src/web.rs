@@ -10,6 +10,7 @@ use crate::session::Manager as SessionManager;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
+use bmc_display::display_controller::DisplayController;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -27,6 +28,7 @@ pub(crate) struct WebService<T: BmcManager, S: SessionManager, U: FirmwareIndex>
     config: ServerConfig,
     system_upgrade_service: SystemUpgradeService<U, T>,
     display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+    display_controller: DisplayController,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
@@ -36,6 +38,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
         config: ServerConfig,
         system_upgrade_service: SystemUpgradeService<U, T>,
         display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+        display_controller: DisplayController,
     ) -> Self {
         Self {
             manager,
@@ -43,6 +46,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
             config,
             system_upgrade_service,
             display_config_handle,
+            display_controller,
         }
     }
 
@@ -53,6 +57,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
             self.session_manager.clone(),
             self.system_upgrade_service,
             self.display_config_handle,
+            self.display_controller,
         )
         .build()
         .into_axum_router()

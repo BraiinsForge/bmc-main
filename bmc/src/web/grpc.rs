@@ -4,6 +4,7 @@ use crate::BmcManager;
 use crate::config::DisplayConfigHandle;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
+use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::fmt::Display;
@@ -55,6 +56,7 @@ pub(crate) struct GrpcWeb<T: BmcManager, S: SessionManager, U: FirmwareIndex> {
     session_manager: Arc<S>,
     system_upgrade_service: SystemUpgradeService<U, T>,
     display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+    display_controller: DisplayController,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
@@ -63,12 +65,14 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
         session_manager: Arc<S>,
         system_upgrade_service: SystemUpgradeService<U, T>,
         display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+        display_controller: DisplayController,
     ) -> Self {
         Self {
             manager,
             session_manager,
             system_upgrade_service,
             display_config_handle,
+            display_controller,
         }
     }
 
@@ -101,7 +105,10 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
 
         let configuration_service =
             web::configuration_service_server::ConfigurationServiceServer::new(
-                configuration_service::ConfigurationService::new(self.display_config_handle),
+                configuration_service::ConfigurationService::new(
+                    self.display_config_handle,
+                    self.display_controller,
+                ),
             );
 
         // GrpcWebLayer is badly named, it's not a "layer", it's re-wrapper for other Services

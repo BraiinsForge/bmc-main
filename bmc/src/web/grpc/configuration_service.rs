@@ -6,6 +6,7 @@ use bmc_display::data::{
     ClockAnalogRectConfig, ClockAnalogRoundConfig, ClockDigitalConfig, NumberFontStyle, Widget,
     WidgetType,
 };
+use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web::{
     AddClockRequest, FontStyle, clock_style::Style,
     configuration_service_server::ConfigurationService as GrpcConfigurationService,
@@ -18,12 +19,17 @@ use tracing::error;
 
 pub(crate) struct ConfigurationService {
     display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+    display_controller: DisplayController,
 }
 
 impl ConfigurationService {
-    pub(crate) fn new(display_config_handle: Arc<RwLock<DisplayConfigHandle>>) -> Self {
+    pub(crate) fn new(
+        display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+        display_controller: DisplayController,
+    ) -> Self {
         Self {
             display_config_handle,
+            display_controller,
         }
     }
 }
@@ -96,10 +102,11 @@ impl GrpcConfigurationService for ConfigurationService {
             config_handle_cloned.add_widget(None, widget);
             if let Err(e) = config_handle_cloned.sync_to_storage().await {
                 error!("Cannot save display config: {}", e);
-            } else {
-                *config_handle = config_handle_cloned;
-                // TODO: Update screen
+                return Err(Status::internal("Failed to save widget configuration"));
             }
+            *config_handle = config_handle_cloned;
+            self.display_controller
+                .populate_widgets(config_handle.scenes());
         }
 
         Ok(tonic::Response::new(()))
