@@ -1,0 +1,12 @@
+import { InitSetupTemplate } from "../templates/init_setup.slint";
+import { Images } from "../../style/images.slint";
+import { InitSetupWifiAdapter } from "../../controls/adapters.slint";
+
+export component InitWifiConnectProgress inherits InitSetupTemplate {
+    icon_text_header_title: "Initial Setup";
+    icon_text_title: "Connecting...";
+    icon_text_content: "WiFi SSID";
+    icon_text_subtitle: InitSetupWifiAdapter.ssid;
+    icon_text_image_visible: true;
+    icon_text_image: Images.wifi;
+}

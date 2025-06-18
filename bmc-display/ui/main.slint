@@ -1,18 +1,21 @@
 import { Palette } from "style/palette.slint";
 import { ScreenAdapter, UpgradeDownloadAdapter, NotificationAdapter } from "controls/adapters.slint";
 import { UIScreen } from "controls/common.slint";
-import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed } from "screens/screens.slint";
+import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
+    InitStartConnect, InitWifiConnectProgress, InitWifiConnectSuccess, InitWifiConnectFailed, InitSetupSuccess, InitGeneralError, InitDeviceSetupQr, ConnectInfo
+} from "screens/screens.slint";
 import { WidgetSize, WidgetType, WidgetSlint } from "widgets/widget.slint";
 import { WidgetBuilder } from "controls/widget-builder.slint";
 import { Backend } from "backend.slint";
 import { DateTimeAdapter } from "controls/adapters.slint";
 import { Notification } from "components/notification.slint";
 import { Images } from "style/images.slint";
+import { DateTimeAdapter, InitSetupWifiAdapter, ConnectionAdapter } from "controls/adapters.slint";
 
 export { ScreenAdapter, UpgradeDownloadAdapter, UIScreen, NotificationAdapter }
 export { WidgetSize, WidgetType, WidgetSlint }
 export { Backend }
-export { DateTimeAdapter }
+export { DateTimeAdapter, InitSetupWifiAdapter, ConnectionAdapter }
 
 export component MainWindow inherits Window {
     default-font-family: "Braiins Sans";
@@ -61,13 +64,48 @@ export component MainWindow inherits Window {
     UpgradeProgress {
         visible: root.screen_id == UIScreen.UpgradeProgress;
     }
+
     UpgradeDownload {
         visible: root.screen_id == UIScreen.UpgradeDownload;
     }
+
     UpgradeSuccess {
         visible: root.screen_id == UIScreen.UpgradeSuccess;
     }
+
     UpgradeFailed {
         visible: root.screen_id == UIScreen.UpgradeFailed;
+    }
+
+    InitStartConnect {
+        visible: root.screen_id == UIScreen.InitStartConnect;
+    }
+
+    InitWifiConnectProgress {
+        visible: root.screen_id == UIScreen.InitWifiConnectProgress;
+    }
+
+    InitWifiConnectSuccess {
+        visible: root.screen_id == UIScreen.InitWifiConnectSuccess;
+    }
+
+    InitWifiConnectFailed {
+        visible: root.screen_id == UIScreen.InitWifiConnectFailed;
+    }
+
+    InitSetupSuccess {
+        visible: root.screen_id == UIScreen.InitSetupSuccess;
+    }
+
+    InitGeneralError {
+        visible: root.screen_id == UIScreen.InitGeneralError;
+    }
+
+    InitDeviceSetupQr {
+        visible: root.screen_id == UIScreen.InitDeviceSetupQr;
+    }
+
+    ConnectInfo {
+        visible: root.screen_id == UIScreen.ConnectInfo;
     }
 }

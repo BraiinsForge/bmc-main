@@ -39,3 +39,12 @@ export global DateTimeAdapter {
     out property <string> time-sec-12: self.hour12_str + ":" + self.minute_str + ":" + self.second_str;
     out property <string> date: self.day_str + ". " + self.month_str + ". " + self.year;
 }
+
+export global InitSetupWifiAdapter {
+    in property <string> ssid;
+}
+
+export global ConnectionAdapter {
+    in property <string> ip;
+    in property <image> ip_qr_code;
+}
