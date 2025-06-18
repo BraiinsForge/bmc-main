@@ -115,11 +115,21 @@ impl DisplayTasks {
             let state = (*receiver.borrow_and_update()).clone();
             if let Some(initial_setup_state) = state {
                 match initial_setup_state {
-                    InitSetupState::ConnectingToWifi { .. } => todo!(),
-                    InitSetupState::WifiConnectionSuccess => todo!(),
-                    InitSetupState::WifiConnectionFailed => todo!(),
-                    InitSetupState::UnexpectedError => todo!(),
-                    InitSetupState::DeviceSetupSuccess => todo!(),
+                    InitSetupState::ConnectingToWifi { wifi_ssid } => {
+                        dbg!("connecting to wifi", wifi_ssid);
+                    }
+                    InitSetupState::WifiConnectionSuccess => {
+                        dbg!("wifi connected");
+                    }
+                    InitSetupState::WifiConnectionFailed => {
+                        dbg!("wifi connection failed");
+                    }
+                    InitSetupState::UnexpectedError => {
+                        dbg!("error during initial setup");
+                    }
+                    InitSetupState::DeviceSetupSuccess => {
+                        dbg!("device setup completed");
+                    }
                 }
             }
         }
