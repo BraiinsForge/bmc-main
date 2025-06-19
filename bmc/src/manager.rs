@@ -78,6 +78,8 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     async fn device_state(&self) -> BmcState;
 
     async fn update_device_state(&self) -> anyhow::Result<()>;
+
+    async fn wifi_ssid(&self) -> String;
 }
 
 #[derive(Debug, Display, PartialEq)]

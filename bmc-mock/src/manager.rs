@@ -39,6 +39,8 @@ pub struct Manager {
 }
 
 impl Manager {
+    const WIFI_SSID: &str = "BMC 5a200d";
+
     #[must_use]
     pub fn new(
         mockfs: MockFs,
@@ -272,5 +274,9 @@ impl bmc::BmcManager for Manager {
         }
 
         Ok(())
+    }
+
+    async fn wifi_ssid(&self) -> String {
+        Self::WIFI_SSID.to_owned()
     }
 }

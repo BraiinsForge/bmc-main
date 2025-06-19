@@ -373,6 +373,10 @@ impl BmcManager for Manager {
             BmcState::Operational => Ok(()),
         }
     }
+
+    async fn wifi_ssid(&self) -> String {
+        todo!();
+    }
 }
 
 async fn uci_get_opt(opt: &str) -> Option<String> {
