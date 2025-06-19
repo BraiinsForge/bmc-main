@@ -1,0 +1,8 @@
+[target.armv7-unknown-linux-musleabihf]
+runner = [
+    "/usr/bin/env",
+    "bash",
+    "-c",
+    'scp "$1" "root@$MINER_IP:/tmp/bmc-test" && shift && ssh -t "root@$MINER_IP" "/tmp/bmc-test $@"',
+    "--",
+]

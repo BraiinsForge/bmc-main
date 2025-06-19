@@ -12,6 +12,17 @@ nix build -L .#frontend
 cargo run --bin bmc-mock -- --address=0.0.0.0:6070 --www-path=./result
 ```
 
+## Run bmc-openwrt on control board
+
+```shell
+cd bmc-openwrt/
+nix develop .#armv7-release
+
+export MINER_IP=192.168.1.2
+cargo run # or 'cargo run -- <ARGS>'
+# terminate it by Ctrl+C
+```
+
 ## Speed up Slint compilation during development
 
 We use by default resource embedding strategy `EmbedResourcesKind::EmbedForSoftwareRenderer` which is slow and generates
