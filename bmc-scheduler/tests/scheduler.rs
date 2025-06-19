@@ -3,7 +3,7 @@
 use bmc_scheduler::JobId;
 use bmc_scheduler::scheduler::JobSchedulerError;
 use bmc_scheduler::{JobScheduler, JobSchedulerLocked};
-use bmc_shared::time::Timezone;
+use bmc_shared_time::time::Timezone;
 use chrono_tz::US::Eastern;
 use croner::Cron;
 use std::future::Future;

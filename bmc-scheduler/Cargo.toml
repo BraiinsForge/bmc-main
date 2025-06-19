@@ -6,7 +6,7 @@ description = "A system event and notification scheduler for embedded Linux syst
 
 [dependencies]
 anyhow.workspace = true
-bmc-shared.workspace = true
+bmc-shared-time.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 croner.workspace = true

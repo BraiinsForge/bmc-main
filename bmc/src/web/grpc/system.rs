@@ -7,7 +7,7 @@ use bmc_grpc::web::{
     NetworkConfig, NetworkConfigStatic, NetworkInfoResponse, RemovePasswordRequest,
     SetTimezoneRequest, system_service_server::SystemService as GrpcSystemService,
 };
-use bmc_shared::time::Timezone;
+use bmc_shared_time::time::Timezone;
 use std::sync::Arc;
 use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, FieldViolation, StatusExt};

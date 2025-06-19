@@ -700,7 +700,7 @@ dependencies = [
  "bmc-display",
  "bmc-grpc",
  "bmc-platform",
- "bmc-shared",
+ "bmc-shared-time",
  "bmc-upgrade",
  "chrono",
  "futures",
@@ -772,7 +772,7 @@ dependencies = [
  "bmc-mock-display",
  "bmc-platform",
  "bmc-scheduler",
- "bmc-shared",
+ "bmc-shared-time",
  "bmc-upgrade",
  "chrono",
  "clap",
@@ -808,7 +808,7 @@ dependencies = [
  "bmc-display",
  "bmc-platform",
  "bmc-scheduler",
- "bmc-shared",
+ "bmc-shared-time",
  "bmc-upgrade",
  "drm",
  "flume",
@@ -839,7 +839,7 @@ name = "bmc-scheduler"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bmc-shared",
+ "bmc-shared-time",
  "chrono",
  "chrono-tz",
  "croner",
@@ -849,7 +849,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bmc-shared"
+name = "bmc-shared-time"
 version = "0.1.0"
 dependencies = [
  "chrono",

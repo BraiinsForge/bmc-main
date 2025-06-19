@@ -3,7 +3,7 @@
 use crate::system_upgrade::SystemUpgradeState;
 use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
-use bmc_shared::time::Timezone;
+use bmc_shared_time::time::Timezone;
 use tokio::sync::watch;
 use tracing::info;
 

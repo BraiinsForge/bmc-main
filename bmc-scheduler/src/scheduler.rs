@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use bmc_shared::time::Timezone;
+use bmc_shared_time::time::Timezone;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use chrono_tz::Tz;
 use croner::Cron;

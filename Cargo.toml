@@ -9,7 +9,7 @@ members = [
     "bmc-openwrt",
     "bmc-platform",
     "bmc-scheduler",
-    "bmc-shared",
+    "bmc-shared/*",
     "bmc-upgrade",
 ]
 
@@ -91,7 +91,7 @@ bmc-grpc = { path = "bmc-grpc" }
 bmc-mock-display = { path = "bmc-mock-display" }
 bmc-platform = { path = "bmc-platform" }
 bmc-scheduler = { path = "bmc-scheduler" }
-bmc-shared = { path = "bmc-shared" }
+bmc-shared-time = { path = "bmc-shared/time" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bstr = "1.11.3"
 bytes = { version = "1.6.0", default-features = false }
