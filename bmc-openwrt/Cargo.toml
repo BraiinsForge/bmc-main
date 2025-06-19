@@ -12,6 +12,7 @@ bmc.workspace = true
 bmc-display.workspace = true
 bmc-platform.workspace = true
 bmc-upgrade.workspace = true
+drm.workspace = true
 flume.workspace = true
 get_if_addrs.workspace = true
 iana-time-zone.workspace = true

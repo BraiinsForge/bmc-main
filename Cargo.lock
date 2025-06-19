@@ -806,6 +806,7 @@ dependencies = [
  "bmc-display",
  "bmc-platform",
  "bmc-upgrade",
+ "drm",
  "flume",
  "get_if_addrs",
  "iana-time-zone",

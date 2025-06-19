@@ -10,10 +10,11 @@ use bmc_display::{
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
 };
 use bmc_openwrt::{
-    generic_backlight_driver::GenericBacklightDriver, linux_framebuffer_platform::LinuxFbPlatform,
+    generic_backlight_driver::GenericBacklightDriver, linux_drm_platform::LinuxDrmPlatform,
     manager::Manager, session::OpenwrtSessionManager,
 };
 use bmc_upgrade::firmware::FirmwareResolver;
+use slint::platform::software_renderer::RenderingRotation;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -25,7 +26,7 @@ async fn main() -> Result<()> {
 
     //TODO: this will be read from config file or emmc
     let brightness = UsizeMetadata::new(18, 0, 20);
-    let resolution = ResolutionMetadata::new(480, 320);
+    let resolution = ResolutionMetadata::new(1280, 480);
     let display_metadata = DisplayMetadata::new(brightness, resolution);
 
     let display_controller = get_display_controller(display_metadata)?;
@@ -71,9 +72,10 @@ fn run_slint_platform(
 ) -> Result<()> {
     info!("Setting up slint platform for linux framebuffer display");
     slint::platform::set_platform(Box::new(
-        LinuxFbPlatform::new(
-            display_metadata.resolution.width as usize,
+        LinuxDrmPlatform::new(
             display_metadata.resolution.height as usize,
+            display_metadata.resolution.width as usize,
+            RenderingRotation::Rotate270,
         )
         .context("Cannot create platform")?,
     ))

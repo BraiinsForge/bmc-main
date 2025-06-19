@@ -98,6 +98,7 @@ clap = { version = "4.5.37", features = ["derive", "std"] }
 data-encoding = "2.6.0"
 dialoguer = "0.11.0"
 dirs = "6.0.0"
+drm = "0.14.1"
 enum-assoc = "1.2.4"
 fdlimit = "0.3.0"
 flume = { version = "0.11.1", default-features = false }
