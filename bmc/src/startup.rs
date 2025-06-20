@@ -31,7 +31,7 @@ where
     manager: Arc<T>,
     session_manager: Arc<T::SessionManager>,
     config: Configuration,
-    display_tasks: DisplayTasks,
+    display_tasks: DisplayTasks<T>,
     system_upgrade_service: SystemUpgradeService<V, T>,
     display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
     display_controller: DisplayController,
@@ -75,6 +75,7 @@ where
             state_service.subscribe(),
             manager.watch_timezone_updates(),
             initial_setup.subscribe(),
+            manager.clone(),
         );
 
         Ok(Self {
@@ -95,7 +96,6 @@ where
         info!("Starting server on http://{}", address);
 
         self.display_tasks.spawn();
-        self.system_upgrade_service.init().await;
 
         WebService::new(
             self.manager.clone(),
