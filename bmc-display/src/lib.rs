@@ -9,3 +9,4 @@ pub mod display_controller;
 pub mod display_driver;
 pub mod metadata;
 pub mod proxy;
+mod utils;

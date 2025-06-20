@@ -1,9 +1,13 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use std::net::IpAddr;
+
 use crate::data::{Scene, Screen};
 use crate::display_controller::DisplayController;
-use crate::generated::DateTimeAdapter;
-use crate::generated::{self, WidgetSlint};
+use crate::{
+    generated::{self, ConnectionAdapter, DateTimeAdapter, InitSetupWifiAdapter, WidgetSlint},
+    utils,
+};
 use chrono::{Datelike, Timelike};
 use slint::{Global, Model, ModelRc, VecModel};
 
@@ -75,6 +79,25 @@ impl DisplayController {
     pub fn set_screen(&self, screen: Screen) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
             main_window.set_screen_id(screen.into());
+        });
+    }
+
+    pub fn set_wifi_ssid(&self, wifi_ssid: String) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let init_setup_wifi_adapter = InitSetupWifiAdapter::get(&main_window);
+            init_setup_wifi_adapter.set_ssid(wifi_ssid.into());
+        });
+    }
+
+    pub fn set_connect_ip_qr_code(&self, ip: Option<IpAddr>) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let connection_adapter = ConnectionAdapter::get(&main_window);
+
+            connection_adapter.set_ip_qr_code(utils::ip_as_qrcode(ip));
+
+            if let Some(ip_address) = ip {
+                connection_adapter.set_ip(ip_address.to_string().into());
+            }
         });
     }
 }
