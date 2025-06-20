@@ -81,6 +81,7 @@ pub enum Screen {
     InitialSetupGeneralError,
     InitialSetupConnectInfo,
     InitialSetupCompleted,
+    ConnectInfo,
 }
 
 impl From<Screen> for UIScreen {
@@ -91,13 +92,14 @@ impl From<Screen> for UIScreen {
             Screen::Upgrade => UIScreen::UpgradeProgress,
             Screen::UpgradeFailed => UIScreen::UpgradeFailed,
             Screen::UpgradeSuccess => UIScreen::UpgradeSuccess,
-            Screen::InitialSetupStart => todo!(),
-            Screen::InitialSetupWifiConnecting => todo!(),
-            Screen::InitialSetupWifiConnected => todo!(),
-            Screen::InitialSetupWifiError => todo!(),
-            Screen::InitialSetupGeneralError => todo!(),
-            Screen::InitialSetupConnectInfo => todo!(),
-            Screen::InitialSetupCompleted => todo!(),
+            Screen::InitialSetupStart => UIScreen::InitStartConnect,
+            Screen::InitialSetupWifiConnecting => UIScreen::InitWifiConnectProgress,
+            Screen::InitialSetupWifiConnected => UIScreen::InitWifiConnectSuccess,
+            Screen::InitialSetupWifiError => UIScreen::InitWifiConnectFailed,
+            Screen::InitialSetupGeneralError => UIScreen::InitGeneralError,
+            Screen::InitialSetupConnectInfo => UIScreen::InitDeviceSetupQr,
+            Screen::InitialSetupCompleted => UIScreen::InitSetupSuccess,
+            Screen::ConnectInfo => UIScreen::ConnectInfo,
         }
     }
 }
