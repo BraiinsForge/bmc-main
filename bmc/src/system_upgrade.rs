@@ -108,15 +108,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         }
     }
 
-    pub(crate) async fn init(&self) {
-        let is_after_upgrade = self.bmc_manager.check_and_remove_upgrade_marker().await;
-
-        if is_after_upgrade {
-            self.state_service
-                .notify(SystemUpgradeState::UpgradeFinished);
-        }
-    }
-
     pub(crate) async fn check_for_upgrade(
         &self,
     ) -> Result<Option<UpgradeDetail>, SystemUpgradeError> {
@@ -322,7 +313,6 @@ pub(crate) enum SystemUpgradeState {
     DownloadProgress { downloaded_mb: f32, total_mb: f32 },
     DownloadFinished { hash: String, total_mb: f32 },
     UpgradeStarted,
-    UpgradeFinished,
     Failed,
 }
 

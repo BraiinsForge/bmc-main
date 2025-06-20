@@ -82,9 +82,6 @@ impl DisplayTasks {
                 SystemUpgradeState::UpgradeStarted => {
                     display_controller.set_screen(Screen::Upgrade);
                 }
-                SystemUpgradeState::UpgradeFinished => {
-                    display_controller.set_screen(Screen::UpgradeSuccess);
-                }
                 SystemUpgradeState::Failed => {
                     display_controller.set_screen(Screen::UpgradeFailed);
                 }
