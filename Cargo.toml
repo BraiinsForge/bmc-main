@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "bmc",
+    "bmc-audio",
     "bmc-display",
     "bmc-grpc",
     "bmc-mock",
