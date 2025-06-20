@@ -19,7 +19,7 @@ use crate::{
     utils::NumberFormat,
 };
 
-const REBOOT_SLEEP_DURATION: Duration = Duration::from_secs(30);
+const REBOOT_SLEEP_DURATION: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub(crate) struct StateService {
