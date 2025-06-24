@@ -31,17 +31,19 @@ pub enum WifiMode {
 }
 
 impl WifiMode {
+    #[must_use]
     pub fn to_uci_mode(&self) -> String {
         match self {
-            WifiMode::Ap => "ap".to_string(),
-            WifiMode::Station => "sta".to_string(),
+            WifiMode::Ap => "ap".to_owned(),
+            WifiMode::Station => "sta".to_owned(),
         }
     }
 
+    #[must_use]
     pub fn to_uci_network(&self) -> String {
         match self {
-            WifiMode::Ap => "wifi_ap".to_string(),
-            WifiMode::Station => "wifi_sta".to_string(),
+            WifiMode::Ap => "wifi_ap".to_owned(),
+            WifiMode::Station => "wifi_sta".to_owned(),
         }
     }
 }
@@ -56,9 +58,10 @@ pub enum SignalStrength {
 }
 
 impl SignalStrength {
+    #[must_use]
     pub fn new(signal: i32) -> Self {
         match signal {
-            x if x == 0 => SignalStrength::Offline,
+            0 => SignalStrength::Offline,
             x if x >= -60 => SignalStrength::Excellent,
             x if x >= -75 => SignalStrength::Fair,
             _ => SignalStrength::Low,
@@ -80,6 +83,7 @@ pub enum EncryptionType {
 }
 
 impl EncryptionType {
+    #[must_use]
     pub fn to_uci_str(&self) -> &str {
         match self {
             EncryptionType::None => "none",
@@ -93,6 +97,7 @@ impl EncryptionType {
         }
     }
 
+    #[must_use]
     pub fn from_uci_str(s: &str) -> Option<Self> {
         match s {
             "none" => Some(EncryptionType::None),
@@ -119,6 +124,7 @@ pub struct WifiScanItem {
 }
 
 impl WifiScanItem {
+    #[must_use]
     pub fn new(ssid: String, signal_level: i32, encryption_type: EncryptionType) -> Self {
         Self {
             ssid,
@@ -127,6 +133,7 @@ impl WifiScanItem {
         }
     }
 
+    #[must_use]
     pub fn signal_strength(&self) -> SignalStrength {
         SignalStrength::new(self.signal_level)
     }
@@ -153,13 +160,15 @@ pub struct WifiLinkState {
 }
 
 impl WifiLinkState {
+    #[must_use]
     pub fn new(ssid: &str, signal_level: i32) -> Self {
         Self {
-            ssid: ssid.to_string(),
+            ssid: ssid.to_owned(),
             signal_level,
         }
     }
 
+    #[must_use]
     pub fn signal_strength(&self) -> SignalStrength {
         SignalStrength::new(self.signal_level)
     }
