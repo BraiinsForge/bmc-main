@@ -92,6 +92,7 @@ bmc-grpc = { path = "bmc-grpc" }
 bmc-mock-display = { path = "bmc-mock-display" }
 bmc-platform = { path = "bmc-platform" }
 bmc-scheduler = { path = "bmc-scheduler" }
+bmc-shared-ii-net = { path = "bmc-shared/ii-net" }
 bmc-shared-time = { path = "bmc-shared/time" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bstr = "1.11.3"
@@ -125,6 +126,7 @@ index-common = { path = "tooling/crates/index-common" }
 indexmap = { version = "2.7.1", features = ["serde"] }
 infer = "0.19.0"
 itertools = "0.14.0"
+log = "0.4.27"
 markdown = "1.0.0-alpha.23"
 maud = "0.27.0"
 memmap2 = "0.9.4"

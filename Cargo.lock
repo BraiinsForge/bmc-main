@@ -3269,6 +3269,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ii-net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "log",
+ "strum",
+ "strum_macros",
+]
+
+[[package]]
 name = "image"
 version = "0.25.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
