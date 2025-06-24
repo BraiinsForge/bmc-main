@@ -92,6 +92,7 @@ bmc-grpc = { path = "bmc-grpc" }
 bmc-mock-display = { path = "bmc-mock-display" }
 bmc-platform = { path = "bmc-platform" }
 bmc-scheduler = { path = "bmc-scheduler" }
+bmc-shared-esp32 = { path = "bmc-shared/esp32" }
 bmc-shared-ii-net = { path = "bmc-shared/ii-net" }
 bmc-shared-time = { path = "bmc-shared/time" }
 bmc-upgrade = { path = "bmc-upgrade" }

@@ -1,0 +1,11 @@
+[package]
+name = "esp32"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

@@ -1838,6 +1838,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tokio",
+]
+
+[[package]]
 name = "euclid"
 version = "0.22.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
