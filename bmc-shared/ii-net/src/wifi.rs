@@ -20,7 +20,6 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use anyhow::Result;
 use strum_macros::{Display, EnumString};
 
 #[derive(Default, EnumString, Debug, Display, Eq, PartialEq, Clone)]
@@ -172,25 +171,4 @@ impl WifiLinkState {
     pub fn signal_strength(&self) -> SignalStrength {
         SignalStrength::new(self.signal_level)
     }
-}
-
-#[async_trait::async_trait]
-pub trait WifiManager {
-    async fn status(&self) -> Result<WifiStatus>;
-    async fn scan(&self) -> Result<Vec<WifiScanItem>>;
-    async fn enable(&self, enable: bool) -> Result<()>;
-    async fn save_and_connect(
-        &self,
-        ssid: String,
-        password: Option<String>,
-        encryption: EncryptionType,
-    ) -> Result<()>;
-    async fn configure_ap_mode(
-        &self,
-        ssid: String,
-        password: Option<String>,
-        encryption: EncryptionType,
-    ) -> Result<()>;
-    async fn reset_config(&self) -> Result<()>;
-    async fn reload(&self) -> Result<()>;
 }

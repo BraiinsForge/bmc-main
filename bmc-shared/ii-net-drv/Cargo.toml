@@ -6,9 +6,7 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 bstr.workspace = true
-esp32 = { path = "../esp32" }
 ii-net = { path = "../ii-net" }
 log.workspace = true
 pnet.workspace = true

@@ -21,9 +21,9 @@
 // contact us at opensource@braiins.com.
 
 use anyhow::{Result, anyhow, bail};
+use ii_net::wifi::WifiConfiguration;
 pub use ii_net::wifi::WifiScanItem;
 pub use ii_net::wifi::{EncryptionType, SignalStrength, WifiMode, WifiStatus};
-use ii_net::wifi::{WifiConfiguration, WifiManager};
 use log::debug;
 use scanner::WifiScanner;
 use sta::WifiSta;
@@ -201,10 +201,7 @@ impl OpenwrtWifiManager {
 
         bail!("Wi-Fi config is not present")
     }
-}
 
-#[async_trait::async_trait]
-impl WifiManager for OpenwrtWifiManager {
     async fn configure_ap_mode(
         &self,
         ssid: String,

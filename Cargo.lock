@@ -3280,8 +3280,6 @@ dependencies = [
 name = "ii-net"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
  "log",
  "strum",
  "strum_macros",
@@ -3292,9 +3290,7 @@ name = "ii-net-drv"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bstr",
- "esp32",
  "ii-net",
  "log",
  "pnet",
