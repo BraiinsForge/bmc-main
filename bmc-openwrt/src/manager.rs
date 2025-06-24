@@ -36,21 +36,21 @@ pub struct Manager {
 impl Manager {
     const SYSUPGRADE_BIN: &'static str = "/sbin/sysupgrade";
     const SYSUPGRADE_ARG_NO_SAVE: &'static str = "-n";
-    const UPGRADE_RESULT_FILE_PATH: &str = "/etc/upgrade_result";
-    const DEFAULT_INTERFACE: &str = "eth0";
+    const UPGRADE_RESULT_FILE_PATH: &'static str = "/etc/upgrade_result";
+    const DEFAULT_INTERFACE: &'static str = "eth0";
     const DEFAULT_AP_INTERFACE_NAME: &'static str = "ethap0";
-    const UCI_SYSTEM_ZONENAME: &str = "system.@system[0].zonename";
-    const UCI_SYSTEM_TIMEZONE: &str = "system.@system[0].timezone";
-    const UCI_SYSTEM_HOSTNAME: &str = "system.@system[0].hostname";
-    const UCI_NET_LAN: &str = "network.lan";
-    const UCI_NET_LAN_PROTO_DHCP_VARIANT: &str = "dhcp";
-    const UCI_NET_LAN_PROTO_STATIC_VARIANT: &str = "static";
-    const UCI_NET_LAN_PROTO: &str = "network.lan.proto";
-    const UCI_NET_LAN_IPADDR: &str = "network.lan.ipaddr";
-    const UCI_NET_LAN_NETMASK: &str = "network.lan.netmask";
-    const UCI_NET_LAN_GATEWAY: &str = "network.lan.gateway";
-    const UCI_NET_LAN_DNS: &str = "network.lan.dns";
-    const DEVICE_SETUP_PENDING_FILE_PATH: &str = "/etc/setup-pending";
+    const UCI_SYSTEM_ZONENAME: &'static str = "system.@system[0].zonename";
+    const UCI_SYSTEM_TIMEZONE: &'static str = "system.@system[0].timezone";
+    const UCI_SYSTEM_HOSTNAME: &'static str = "system.@system[0].hostname";
+    const UCI_NET_LAN: &'static str = "network.lan";
+    const UCI_NET_LAN_PROTO_DHCP_VARIANT: &'static str = "dhcp";
+    const UCI_NET_LAN_PROTO_STATIC_VARIANT: &'static str = "static";
+    const UCI_NET_LAN_PROTO: &'static str = "network.lan.proto";
+    const UCI_NET_LAN_IPADDR: &'static str = "network.lan.ipaddr";
+    const UCI_NET_LAN_NETMASK: &'static str = "network.lan.netmask";
+    const UCI_NET_LAN_GATEWAY: &'static str = "network.lan.gateway";
+    const UCI_NET_LAN_DNS: &'static str = "network.lan.dns";
+    const DEVICE_SETUP_PENDING_FILE_PATH: &'static str = "/etc/setup-pending";
 
     #[must_use]
     pub fn new(session_manager: OpenwrtSessionManager, timezone: Timezone) -> Self {
