@@ -122,12 +122,13 @@ pub async fn ip_report(format: impl AsRef<str>) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NetworkInterface {
     inner: PNetNetworkInterface,
 }
 
 impl NetworkInterface {
+    #[must_use]
     pub fn get_by_name(intf_name: &str) -> Option<Self> {
         pnet::datalink::interfaces()
             .into_iter()
@@ -135,6 +136,7 @@ impl NetworkInterface {
             .map(|network| Self { inner: network })
     }
 
+    #[must_use]
     pub fn find_default() -> Option<Self> {
         pnet::datalink::interfaces()
             .into_iter()
@@ -142,32 +144,38 @@ impl NetworkInterface {
             .map(|network| Self { inner: network })
     }
 
+    #[must_use]
     pub fn mac_address(&self) -> Option<MacAddr> {
         self.inner
             .mac
             .map(|mac| PNetMacAddrWrapper::from(mac).into())
     }
 
+    #[must_use]
     pub fn ipv4_address(&self) -> Option<IpAddr> {
         self.inner
             .ips
             .iter()
             .find(|ip| ip.is_ipv4())
-            .map(|ipv4| ipv4.ip())
+            .map(pnet::ipnetwork::IpNetwork::ip)
     }
 
+    #[must_use]
     pub fn name(&self) -> String {
-        self.inner.name.to_string()
+        self.inner.name.clone()
     }
 
+    #[must_use]
     pub fn index(&self) -> u32 {
         self.inner.index
     }
 
+    #[must_use]
     pub fn all_ips(&self) -> Vec<IpNetwork> {
         self.inner.ips.clone()
     }
 
+    #[must_use]
     pub fn get_by_substr(substring: &str) -> Option<Self> {
         pnet::datalink::interfaces()
             .into_iter()

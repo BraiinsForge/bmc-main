@@ -20,7 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ii_net::wifi::WifiLinkState;
 
 use crate::wifi::utils::CommandUtils;

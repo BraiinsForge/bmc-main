@@ -20,30 +20,37 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use std::{fs, path::Path};
+use std::path::Path;
 
 use anyhow::{Error, Result, anyhow};
 use bstr::ByteSlice;
 use log::debug;
-use strum::{Display, EnumString};
+use std::fmt::Debug;
+use strum_macros::{Display, EnumString};
 use tokio::process::Command;
 
+#[derive(Debug)]
 pub struct WifiUtils;
 
 impl WifiUtils {
     pub async fn get_device_by_syspath(syspath: &str) -> Result<String> {
-        fs::read_dir(Path::new(syspath).join("ii-net"))?
-            .into_iter()
-            .next()
+        tokio::fs::read_dir(Path::new(syspath).join("net"))
+            .await?
+            .next_entry()
+            .await?
             .ok_or(anyhow!("No wifi device in specified syspath: {}", syspath))?
-            .map(|direntry| direntry.file_name().into_string())?
-            .map_err(|e| Error::msg(format!("{:?}", e)))
+            .file_name()
+            .into_string()
+            .map_err(|e| Error::msg(e.to_string_lossy().to_string()))
     }
 }
 
+#[derive(Debug)]
 pub struct CommandUtils;
 
 impl CommandUtils {
+    const DEFAULT_DELAY: u64 = 10;
+
     async fn call_command_to_string(
         command_name: &str,
         args: &[&str],
@@ -79,24 +86,24 @@ impl CommandUtils {
             })?
     }
 
-    pub async fn call_iw_cmd(args: &[&str], timeout: u64) -> Result<String> {
-        Self::call_command_to_string("/usr/sbin/iw", args, timeout).await
+    pub async fn call_iw_cmd(args: &[&str]) -> Result<String> {
+        Self::call_command_to_string("/usr/sbin/iw", args, Self::DEFAULT_DELAY).await
     }
 
-    pub async fn call_ifconfig_cmd(args: &[&str], timeout: u64) -> Result<String> {
-        Self::call_command_to_string("/sbin/ifconfig", args, timeout).await
+    pub async fn call_ifconfig_cmd(args: &[&str]) -> Result<String> {
+        Self::call_command_to_string("/sbin/ifconfig", args, Self::DEFAULT_DELAY).await
     }
 
-    pub async fn call_ubus_cmd(args: &[&str], timeout: u64) -> Result<String> {
-        Self::call_command_to_string("/bin/ubus", args, timeout).await
+    pub async fn call_ubus_cmd(args: &[&str]) -> Result<String> {
+        Self::call_command_to_string("/bin/ubus", args, Self::DEFAULT_DELAY).await
     }
 
-    pub async fn call_wifi_cmd(args: &[&str], timeout: u64) -> Result<String> {
-        Self::call_command_to_string("/sbin/wifi", args, timeout).await
+    pub async fn call_wifi_cmd(args: &[&str]) -> Result<String> {
+        Self::call_command_to_string("/sbin/wifi", args, Self::DEFAULT_DELAY).await
     }
 }
 
-#[derive(Display, EnumString)]
+#[derive(Display, EnumString, Debug)]
 pub enum WifiCommand {
     #[strum(serialize = "up")]
     Up,
@@ -131,7 +138,7 @@ impl WifiCommand {
     }
 
     async fn run(command: WifiCommand) -> Result<()> {
-        _ = CommandUtils::call_wifi_cmd(&[&command.to_string()], 10).await?;
+        _ = CommandUtils::call_wifi_cmd(&[&command.to_string()]).await?;
         Ok(())
     }
 }

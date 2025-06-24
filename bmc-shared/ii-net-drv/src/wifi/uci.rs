@@ -54,7 +54,7 @@ struct UciWirelessIface {
 
 impl From<UciWirelessIface> for WifiConfiguration {
     fn from(iface: UciWirelessIface) -> Self {
-        let mode = if iface.mode.trim() == "ap" {
+        let mode = if iface.mode == "ap" {
             WifiMode::Ap
         } else {
             WifiMode::Station
@@ -63,7 +63,7 @@ impl From<UciWirelessIface> for WifiConfiguration {
         Self {
             mode,
             ssid: iface.ssid,
-            encryption_type: EncryptionType::from_uci_str(iface.encryption.trim())
+            encryption_type: EncryptionType::from_uci_str(&iface.encryption)
                 .unwrap_or(EncryptionType::None),
         }
     }
@@ -94,8 +94,7 @@ impl UciCommand {
 
     async fn call_ubus(mode: Self, params: Value) -> Result<String> {
         debug!("Ubus uci {mode} command invoked with params: {params}");
-        CommandUtils::call_ubus_cmd(&["call", "uci", &mode.to_string(), &params.to_string()], 10)
-            .await
+        CommandUtils::call_ubus_cmd(&["call", "uci", &mode.to_string(), &params.to_string()]).await
     }
 
     pub async fn get<T: DeserializeOwned>(uci_type: UciType) -> Result<T> {
@@ -179,7 +178,7 @@ impl UciHelper {
         match self.get_all_wifi_ifaces().await {
             Ok(ifaces) => ifaces
                 .into_iter()
-                .find(|iface| iface.disabled.as_ref().is_none_or(|tmp| tmp.trim() == "0"))
+                .find(|iface| iface.disabled.as_ref().is_none_or(|tmp| tmp == "0"))
                 .map(Into::into),
             Err(e) => {
                 log::warn!("Cannot get iface from uci: {e}");

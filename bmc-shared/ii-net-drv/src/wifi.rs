@@ -92,6 +92,15 @@ pub struct OpenwrtWifiManager {
     pub wifi_ap_ssid_base: String,
 }
 
+#[expect(clippy::missing_fields_in_debug)]
+impl Debug for OpenwrtWifiManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenwrtWifiManager")
+            .field("wlan_dev_syspath", &self.wlan_dev_syspath)
+            .finish()
+    }
+}
+
 impl OpenwrtWifiManager {
     const WIFI_INTERACTION_DELAY: Duration = Duration::from_secs(5);
 
@@ -109,7 +118,7 @@ impl OpenwrtWifiManager {
         device: &str,
         unsupported_enc: Vec<EncryptionType>,
     ) -> Result<Vec<WifiScanItem>> {
-        Ok(WifiScanner::wifi_scan(&device)
+        Ok(WifiScanner::wifi_scan(device)
             .await?
             .into_iter()
             .filter(|result| !unsupported_enc.contains(&result.encryption_type))
@@ -154,11 +163,11 @@ impl OpenwrtWifiManager {
             if let Some(ip) =
                 NetworkInterface::get_by_substr(device).and_then(|network| network.ipv4_address())
             {
-                debug!("IP is assigned: {}, connection is complete", ip);
+                debug!("IP is assigned: {ip}, connection is complete");
                 return Ok(());
             }
         }
-        return Err(anyhow!("IP cannot be assigned. Failed to setup wifi"));
+        Err(anyhow!("IP cannot be assigned. Failed to setup wifi"))
     }
 
     pub async fn get_wifi_device_name(&self) -> Result<String, anyhow::Error> {

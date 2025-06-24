@@ -20,6 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
+use anyhow::bail;
 use ii_net::wifi::{EncryptionType, WifiScanItem};
 use log::warn;
 use serde::{self, Deserialize};
@@ -78,23 +79,22 @@ impl WifiScanner {
     pub(crate) async fn wifi_scan(device: &str) -> Result<Vec<WifiScanItem>, anyhow::Error> {
         let device_ubus_param = json!({"device": device}).to_string();
         // Ensure that interface is up (Later we should ensure that uci wireless config has SSIDs disabled but radio enabled and use wifi up instead)
-        if let Err(e) = CommandUtils::call_ifconfig_cmd(&[device, "up"], 10).await {
+        if let Err(e) = CommandUtils::call_ifconfig_cmd(&[device, "up"]).await {
             warn!("Cannot put {device} interface up: {e}");
         }
         // ubus iwinfo scan uses some kind of cache which is not refreshed frequently so we intentionally flush the kernel cache here first
-        if let Err(e) = CommandUtils::call_iw_cmd(&["dev", device, "scan", "flush"], 10).await {
+        if let Err(e) = CommandUtils::call_iw_cmd(&["dev", device, "scan", "flush"]).await {
             warn!("Cannot flush wifi scan results for device {device}: {e}");
         }
         let scan_result =
-            CommandUtils::call_ubus_cmd(&["call", "iwinfo", "scan", &device_ubus_param], 10)
-                .await?;
+            CommandUtils::call_ubus_cmd(&["call", "iwinfo", "scan", &device_ubus_param]).await?;
 
         let output: anyhow::Result<Vec<WifiScanItem>> =
             serde_json::from_str::<WifiScanResultJsonContainer>(&scan_result)?
                 .results
                 .into_iter()
                 .filter(|item| item.mode == "Master")
-                .map(|item| item.try_into())
+                .map(TryInto::try_into)
                 .collect();
 
         Ok(Self::filter_sort_by_strongest_signal(output?))
@@ -126,12 +126,14 @@ impl TryFrom<WifiScanEncryptionJson> for EncryptionType {
                 "shared" => Ok(Self::WepShared),
                 "open" => Ok(Self::Wep),
                 _ => {
-                    warn!("WEP encryption not recognized: {item:?}");
-                    Ok(Self::None)
+                    let msg = format!("WEP encryption not recognized: {item:?}");
+                    warn!("{msg}");
+                    bail!(msg)
                 }
             }
         } else if !item.wpa.is_empty() {
-            item.wpa.sort_unstable();
+            #[expect(clippy::stable_sort_primitive)]
+            item.wpa.sort();
             match item.wpa.as_slice() {
                 [1] => Ok(Self::Wpa),
                 [2] => Ok(Self::Wpa2),
@@ -139,13 +141,15 @@ impl TryFrom<WifiScanEncryptionJson> for EncryptionType {
                 [1, 2] => Ok(Self::Wpa1_2),
                 [2, 3] => Ok(Self::Wpa2_3),
                 _ => {
-                    warn!("WPA encryption not recognized: {item:?}");
-                    Ok(Self::None)
+                    let msg = format!("WPA encryption not recognized: {item:?}");
+                    warn!("{msg}");
+                    bail!(msg)
                 }
             }
         } else {
-            warn!("Encryption not recognized: {item:?}");
-            Ok(Self::None)
+            let msg = format!("Encryption not recognized: {item:?}");
+            warn!("{msg}");
+            bail!(msg)
         }
     }
 }
@@ -161,28 +165,28 @@ mod tests {
     fn test_filter_sort_by_strongest_signal() {
         let entries: Result<Vec<WifiScanItem>> = vec![
             WifiScanResultJson {
-                mode: "Master".to_string(),
+                mode: "Master".to_owned(),
                 signal: -80,
                 encryption: WifiScanEncryptionJson {
                     enabled: true,
                     wep: Vec::new(),
                     wpa: vec![2],
                 },
-                ssid: "test".to_string(),
+                ssid: "test".to_owned(),
             },
             WifiScanResultJson {
-                mode: "Master".to_string(),
+                mode: "Master".to_owned(),
                 signal: -50,
                 encryption: WifiScanEncryptionJson {
                     enabled: true,
                     wep: Vec::new(),
                     wpa: vec![2],
                 },
-                ssid: "test".to_string(),
+                ssid: "test".to_owned(),
             },
         ]
         .into_iter()
-        .map(|x| WifiScanItem::try_from(x))
+        .map(WifiScanItem::try_from)
         .collect();
 
         let entries = entries.expect("BUG: Error in struct conversion");
@@ -194,6 +198,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::too_many_lines)]
     fn test_parse_scanner_output() {
         let output = r#"{
                     "results": [
@@ -319,27 +324,20 @@ mod tests {
                 }"#;
 
         let scan_parsed: WifiScanResultJsonContainer =
-            serde_json::from_str(&output).expect("BUG: Test failed!");
+            serde_json::from_str(output).expect("BUG: Test failed!");
 
-        assert!(
-            scan_parsed
-                .results
-                .iter()
-                .find(|e| {
-                    e.ssid == "braiins_service"
-                        && EncryptionType::try_from(e.encryption.clone()).expect("BUG: Error")
-                            == EncryptionType::Wpa2_3
-                })
-                .is_some()
-        );
+        assert!(scan_parsed.results.iter().any(|e| {
+            e.ssid == "braiins_service"
+                && EncryptionType::try_from(e.encryption.clone()).expect("BUG: Error")
+                    == EncryptionType::Wpa2_3
+        }));
 
         let cell = scan_parsed
             .clone()
             .results
             .into_iter()
             .find(|e| e.ssid == "ubnt-ms")
-            .map(|e| WifiScanItem::try_from(e).ok())
-            .flatten()
+            .and_then(|e| WifiScanItem::try_from(e).ok())
             .expect("BUG: Failed to parse cell");
         assert_eq!(cell.ssid, "ubnt-ms");
         assert_eq!(cell.encryption_type, EncryptionType::Wpa);
@@ -350,8 +348,7 @@ mod tests {
             .results
             .into_iter()
             .find(|e| e.ssid == "Vodafone-2EB2")
-            .map(|e| WifiScanItem::try_from(e).ok())
-            .flatten()
+            .and_then(|e| WifiScanItem::try_from(e).ok())
             .expect("BUG: Failed to parse cell");
         assert_eq!(cell.ssid, "Vodafone-2EB2");
         assert_eq!(cell.encryption_type, EncryptionType::Wpa2_3);
@@ -362,8 +359,7 @@ mod tests {
             .results
             .into_iter()
             .find(|e| e.ssid == "braiins_service")
-            .map(|e| WifiScanItem::try_from(e).ok())
-            .flatten()
+            .and_then(|e| WifiScanItem::try_from(e).ok())
             .expect("BUG: Failed to parse cell");
         assert_eq!(cell.ssid, "braiins_service");
         assert_eq!(cell.encryption_type, EncryptionType::Wpa2_3);
@@ -374,8 +370,7 @@ mod tests {
             .results
             .into_iter()
             .find(|e| e.ssid == "TestWEP")
-            .map(|e| WifiScanItem::try_from(e).ok())
-            .flatten()
+            .and_then(|e| WifiScanItem::try_from(e).ok())
             .expect("BUG: Failed to parse cell");
         assert_eq!(cell.ssid, "TestWEP");
         assert_eq!(cell.encryption_type, EncryptionType::Wep);
@@ -386,8 +381,7 @@ mod tests {
             .results
             .into_iter()
             .find(|e| e.ssid == "TestNoSignal")
-            .map(|e| WifiScanItem::try_from(e).ok())
-            .flatten()
+            .and_then(|e| WifiScanItem::try_from(e).ok())
             .expect("BUG: Failed to parse cell");
         assert_eq!(cell.ssid, "TestNoSignal");
         assert_eq!(cell.encryption_type, EncryptionType::Wep);
@@ -398,8 +392,7 @@ mod tests {
                 .clone()
                 .results
                 .into_iter()
-                .map(|e| WifiScanItem::try_from(e).ok())
-                .flatten()
+                .filter_map(|e| WifiScanItem::try_from(e).ok())
                 .collect::<Vec<WifiScanItem>>(),
         );
         assert_eq!(res.len(), 6);
