@@ -3288,6 +3288,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ii-net-drv"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bstr",
+ "esp32",
+ "ii-net",
+ "log",
+ "pnet",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "tokio",
+]
+
+[[package]]
 name = "image"
 version = "0.25.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

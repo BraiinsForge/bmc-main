@@ -94,6 +94,7 @@ bmc-platform = { path = "bmc-platform" }
 bmc-scheduler = { path = "bmc-scheduler" }
 bmc-shared-esp32 = { path = "bmc-shared/esp32" }
 bmc-shared-ii-net = { path = "bmc-shared/ii-net" }
+bmc-shared-ii-net-drv = { path = "bmc-shared/ii-net-drv" }
 bmc-shared-time = { path = "bmc-shared/time" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bstr = "1.11.3"
