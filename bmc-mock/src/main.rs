@@ -17,8 +17,8 @@ async fn main() -> Result<()> {
     let config = cli::Config::parse();
     let system_password = config.system_password.clone();
 
-    let mockfs = mockfs::MockFs::new(&config.mockfs_path);
-    mockfs.init(config.factory_default)?;
+    let mockfs = mockfs::MockFs::new(&config.mockfs_template, &config.mockfs_path);
+    mockfs.init(config.mockfs_reset, config.factory_default)?;
 
     let password = Arc::new(Mutex::new(system_password));
 

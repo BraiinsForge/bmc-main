@@ -8,19 +8,21 @@ use std::{
 #[derive(Debug, Clone)]
 pub struct MockFs {
     pub mockfs_root: PathBuf,
+    template_dir: PathBuf,
 }
 
 impl MockFs {
     const UPGRADE_RESULT_FILE: &'static str = "etc/upgrade_result";
     const FACTORY_DEFAULT_FILE: &'static str = "etc/factory-default";
 
-    pub fn new(runtime_dir: impl AsRef<Path>) -> Self {
+    pub fn new(template_dir: impl AsRef<Path>, runtime_dir: impl AsRef<Path>) -> Self {
         Self {
             mockfs_root: runtime_dir.as_ref().to_owned(),
+            template_dir: template_dir.as_ref().to_owned(),
         }
     }
 
-    pub fn init(&self, factory_default: bool) -> io::Result<()> {
+    pub fn init(&self, reset: bool, factory_default: bool) -> io::Result<()> {
         let src: &Path = self.mockfs_root.as_ref();
 
         let dirs = vec!["etc", "tmp"];
@@ -28,6 +30,7 @@ impl MockFs {
             fs::create_dir_all(src.join(dir))?;
         }
         self.add_or_remove_factory_default_flag(factory_default)?;
+        copy_recursive(&self.template_dir, &self.mockfs_root, reset)?;
         Ok(())
     }
 
@@ -62,4 +65,24 @@ impl MockFs {
 
         Ok(())
     }
+}
+
+fn copy_recursive(src: impl AsRef<Path>, dst: impl AsRef<Path>, overwrite: bool) -> io::Result<()> {
+    let src = src.as_ref();
+    let dst = dst.as_ref();
+
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+
+        if entry.file_type()?.is_dir() {
+            copy_recursive(from, to, overwrite)?;
+        } else if !to.exists() || overwrite {
+            fs::copy(from, to)?;
+        }
+    }
+    Ok(())
 }

@@ -33,6 +33,8 @@ nix build .#web-assets --out-link ~/.local/share/bmc-mockup/www
   `~/.local/share/bmc-mockup/www/var`
 - `--mockfs-path` — Set the path to a writable directory for mockup config files. Default value:
   `~/.local/share/bmc-mockup/mockfs`
+- `--mockfs-template` — Path to a directory where the mock files should be copied from. Default value:
+  `./bmc-mock/mockfs-template/bmc100`
 
 Example of running a mockup with a custom path to the web content directory:
 

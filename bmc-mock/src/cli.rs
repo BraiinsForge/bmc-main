@@ -36,6 +36,12 @@ pub struct Config {
     /// Set path to a writeable directory for mockup config files
     #[clap(long, default_value = data_dir("mockfs"))]
     pub mockfs_path: PathBuf,
+    /// Set path to a directory where the mock files should be copied from
+    #[clap(long, default_value = "./bmc-mock/mockfs-template/bmc100")]
+    pub mockfs_template: PathBuf,
+    /// Delete all local mockfs changes
+    #[clap(long)]
+    pub mockfs_reset: bool,
     #[clap(long)]
     pub system_password: Option<String>,
     /// Run miner with a factory-default flag
