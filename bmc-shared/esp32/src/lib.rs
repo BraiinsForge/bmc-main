@@ -24,6 +24,7 @@ use anyhow::Result;
 use std::io::BufRead;
 use tokio::process::Command;
 
+#[derive(Debug)]
 pub struct Esp32Sdio;
 
 const CLI_COMMAND: &str = "esp32-sdio-cli";
@@ -46,21 +47,24 @@ impl Esp32Sdio {
         let networks = output
             .stdout
             .lines()
-            .filter_map(|line| line.ok().and_then(Self::parse_ap_scan_line))
+            .filter_map(|line| {
+                line.ok()
+                    .and_then(|network| Self::parse_ap_scan_line(&network))
+            })
             .collect::<Vec<Ap>>();
 
         Ok(networks)
     }
 
     // line is in a format: "SSID: Public-wifi rssi: -53 auth: 3"
-    pub(crate) fn parse_ap_scan_line(line: String) -> Option<Ap> {
+    pub(crate) fn parse_ap_scan_line(line: &str) -> Option<Ap> {
         let parts: Vec<&str> = line.split_ascii_whitespace().collect();
 
         if parts.len() < 6 {
             return None;
         }
 
-        let ssid = parts[1].to_string();
+        let ssid = parts[1].to_owned();
         let rssi: i32 = parts[3].parse().ok()?;
         let auth: AuthMode = parts[5].parse::<u8>().ok()?.into();
 
@@ -116,7 +120,7 @@ mod tests {
 
         let result = output
             .iter()
-            .map(|line| Esp32Sdio::parse_ap_scan_line(line.to_string()))
+            .map(|line| Esp32Sdio::parse_ap_scan_line(line))
             .collect::<Vec<Option<Ap>>>();
 
         let expected = vec![
