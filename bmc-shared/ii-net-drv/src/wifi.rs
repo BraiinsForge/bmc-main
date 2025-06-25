@@ -180,7 +180,7 @@ impl OpenwrtWifiManager {
         uci.save_changes().await
     }
 
-    async fn wifi_config_exists(&self) -> Result<()> {
+    pub async fn wifi_config_exists(&self) -> Result<()> {
         let mut interval = time::interval(WIRELESS_CONFIG_WAIT_INTERVAL);
         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
@@ -202,7 +202,7 @@ impl OpenwrtWifiManager {
         bail!("Wi-Fi config is not present")
     }
 
-    async fn configure_ap_mode(
+    pub async fn configure_ap_mode(
         &self,
         ssid: String,
         password: Option<String>,
@@ -212,7 +212,7 @@ impl OpenwrtWifiManager {
             .await
     }
 
-    async fn save_and_connect(
+    pub async fn save_and_connect(
         &self,
         ssid: String,
         password: Option<String>,
@@ -228,16 +228,16 @@ impl OpenwrtWifiManager {
             .await
     }
 
-    async fn enable(&self, enable: bool) -> Result<()> {
+    pub async fn enable(&self, enable: bool) -> Result<()> {
         self.enable_radio(enable).await?;
         WifiCommand::reload().await
     }
 
-    async fn reload(&self) -> Result<()> {
+    pub async fn reload(&self) -> Result<()> {
         WifiCommand::reload().await
     }
 
-    async fn scan(&self) -> Result<Vec<WifiScanItem>> {
+    pub async fn scan(&self) -> Result<Vec<WifiScanItem>> {
         let device = WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath).await?;
         let unsupported_enc = vec![EncryptionType::Wpa3];
 
@@ -250,7 +250,7 @@ impl OpenwrtWifiManager {
             .await
     }
 
-    async fn status(&self) -> Result<WifiStatus> {
+    pub async fn status(&self) -> Result<WifiStatus> {
         let device = WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath).await?;
 
         Ok(WifiStatus {
@@ -265,7 +265,7 @@ impl OpenwrtWifiManager {
         })
     }
 
-    async fn reset_config(&self) -> Result<()> {
+    pub async fn reset_config(&self) -> Result<()> {
         debug!("Removing wireless config");
         tokio::fs::remove_file(WIRELESS_CONFIG_FILE_PATH).await?;
         WifiCommand::config().await?;
