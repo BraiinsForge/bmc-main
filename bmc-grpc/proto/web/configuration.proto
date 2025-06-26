@@ -3,6 +3,7 @@ syntax = "proto3";
 package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
 
 // Font style
 enum FontStyle {
@@ -105,6 +106,19 @@ message AddClockRequest {
   ClockStyle clock_style = 4;
 }
 
+message BrightnessInfo {
+  uint32 value = 1;
+  uint32 min = 2;
+  uint32 max = 3;
+  uint32 step = 4;
+}
+
+message DisplaySettingsResponse {
+  BrightnessInfo brightness = 1;
+}
+
 service ConfigurationService {
   rpc AddClockWidget(AddClockRequest) returns (google.protobuf.Empty);
+  rpc SetBrightness(google.protobuf.UInt32Value) returns (google.protobuf.Empty);
+  rpc GetDisplaySettings(google.protobuf.Empty) returns (DisplaySettingsResponse);
 }
