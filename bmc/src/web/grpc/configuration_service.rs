@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::backlight::DisplayBacklightController;
 use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use bmc_display::data::{
@@ -7,35 +8,43 @@ use bmc_display::data::{
     WidgetType,
 };
 use bmc_display::display_controller::DisplayController;
+use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_grpc::web::{
-    AddClockRequest, FontStyle, clock_style::Style,
+    AddClockRequest, BrightnessInfo, DisplaySettingsResponse, FontStyle, clock_style::Style,
     configuration_service_server::ConfigurationService as GrpcConfigurationService,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::Status;
 use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
-use tracing::error;
+use tracing::{error, warn};
 
-pub(crate) struct ConfigurationService {
+const API_BRIGHTNESS_MIN: u32 = 0;
+const API_BRIGHTNESS_MAX: u32 = 100;
+const API_BRIGHTNESS_STEP: u32 = 5;
+
+pub(crate) struct ConfigurationService<T: DisplayBacklightDriver> {
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
+    backlight_controller: DisplayBacklightController<T>,
 }
 
-impl ConfigurationService {
+impl<T: DisplayBacklightDriver> ConfigurationService<T> {
     pub(crate) fn new(
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
+        backlight_controller: DisplayBacklightController<T>,
     ) -> Self {
         Self {
             config_handle,
             display_controller,
+            backlight_controller,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl GrpcConfigurationService for ConfigurationService {
+impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationService<T> {
     async fn add_clock_widget(
         &self,
         request: tonic::Request<AddClockRequest>,
@@ -108,6 +117,45 @@ impl GrpcConfigurationService for ConfigurationService {
             self.display_controller
                 .populate_widgets(config_handle.scenes());
         }
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn get_display_settings(
+        &self,
+        _request: tonic::Request<()>,
+    ) -> Result<tonic::Response<DisplaySettingsResponse>, Status> {
+        let value = u32::from(self.backlight_controller.get_brightness_pct().await);
+
+        Ok(tonic::Response::new(DisplaySettingsResponse {
+            brightness: Some(BrightnessInfo {
+                value,
+                min: API_BRIGHTNESS_MIN,
+                max: API_BRIGHTNESS_MAX,
+                step: API_BRIGHTNESS_STEP,
+            }),
+        }))
+    }
+
+    async fn set_brightness(
+        &self,
+        request: tonic::Request<u32>,
+    ) -> Result<tonic::Response<()>, Status> {
+        let value = request.into_inner();
+
+        if value > API_BRIGHTNESS_MAX {
+            return Err(Status::invalid_argument(format!(
+                "Invalid brightness. Value must be within a range [{API_BRIGHTNESS_MIN}-{API_BRIGHTNESS_MAX}]"
+            )));
+        }
+        #[expect(clippy::cast_possible_truncation)]
+        self.backlight_controller
+            .set_brightness_pct(value as u8)
+            .await
+            .map_err(|e| {
+                warn!("Cannot set display brightness: {}", e);
+                Status::internal("Failed to set display brightness")
+            })?;
 
         Ok(tonic::Response::new(()))
     }

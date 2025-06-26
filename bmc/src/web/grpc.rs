@@ -1,11 +1,13 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::BmcManager;
+use crate::backlight::DisplayBacklightController;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
 use bmc_display::display_controller::DisplayController;
+use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_grpc::web;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::fmt::Display;
@@ -53,16 +55,24 @@ impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
 }
 
 #[derive(Clone)]
-pub(crate) struct GrpcWeb<T: BmcManager, S: SessionManager, U: FirmwareIndex> {
+pub(crate) struct GrpcWeb<
+    T: BmcManager,
+    S: SessionManager,
+    U: FirmwareIndex,
+    V: DisplayBacklightDriver,
+> {
     manager: Arc<T>,
     session_manager: Arc<S>,
     system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     initial_setup: InitialSetup<T>,
+    display_backlight_controller: DisplayBacklightController<V>,
 }
 
-impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
+impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
+    GrpcWeb<T, S, U, V>
+{
     pub(crate) fn new(
         manager: Arc<T>,
         session_manager: Arc<S>,
@@ -70,6 +80,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
         initial_setup: InitialSetup<T>,
+        display_backlight_controller: DisplayBacklightController<V>,
     ) -> Self {
         Self {
             manager,
@@ -78,6 +89,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
             config_handle,
             display_controller,
             initial_setup,
+            display_backlight_controller,
         }
     }
 
@@ -118,6 +130,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
                 configuration_service::ConfigurationService::new(
                     self.config_handle,
                     self.display_controller,
+                    self.display_backlight_controller,
                 ),
             );
 

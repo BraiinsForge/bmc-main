@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use crate::backlight::DisplayBacklightController;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
@@ -22,9 +23,10 @@ use crate::manager::BmcManager;
 use crate::web::{ServerConfig, WebService};
 
 #[derive(Debug)]
-pub struct App<T, V>
+pub struct App<T, U, V>
 where
     T: BmcManager,
+    U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
     listener: TcpListener,
@@ -36,14 +38,16 @@ where
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     initial_setup: InitialSetup<T>,
+    display_backlight_controller: DisplayBacklightController<U>,
 }
 
-impl<T, V> App<T, V>
+impl<T, U, V> App<T, U, V>
 where
     T: BmcManager,
+    U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
-    pub async fn init<U: DisplayBacklightDriver>(
+    pub async fn init(
         config: Configuration,
         manager: Arc<T>,
         session_manager: T::SessionManager,
@@ -76,6 +80,11 @@ where
             config_handle.clone(),
         );
 
+        let display_backlight_controller =
+            DisplayBacklightController::new(config_handle.clone(), display_driver.backlight_driver);
+
+        display_backlight_controller.init().await?;
+
         let display_tasks = DisplayTasks::new(
             display_controller.clone(),
             state_service.subscribe(),
@@ -94,6 +103,7 @@ where
             config_handle,
             display_controller,
             initial_setup,
+            display_backlight_controller,
         })
     }
 
@@ -111,6 +121,7 @@ where
             self.config_handle.clone(),
             self.display_controller,
             self.initial_setup,
+            self.display_backlight_controller,
         )
         .run(self.listener)
         .await?;

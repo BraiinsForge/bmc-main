@@ -6,6 +6,7 @@ mod http_server;
 mod no_password;
 mod session;
 
+use crate::backlight::DisplayBacklightController;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::session::Manager as SessionManager;
@@ -13,6 +14,7 @@ use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
 use bmc_display::display_controller::DisplayController;
+use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -24,7 +26,12 @@ use tokio::sync::RwLock;
 use tower::{Layer, steer::Steer};
 use tower_http::normalize_path::NormalizePathLayer;
 
-pub(crate) struct WebService<T: BmcManager, S: SessionManager, U: FirmwareIndex> {
+pub(crate) struct WebService<
+    T: BmcManager,
+    S: SessionManager,
+    U: FirmwareIndex,
+    V: DisplayBacklightDriver,
+> {
     manager: Arc<T>,
     session_manager: Arc<S>,
     config: ServerConfig,
@@ -32,9 +39,13 @@ pub(crate) struct WebService<T: BmcManager, S: SessionManager, U: FirmwareIndex>
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     initial_setup: InitialSetup<T>,
+    display_backlight_controller: DisplayBacklightController<V>,
 }
 
-impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
+impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
+    WebService<T, S, U, V>
+{
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         manager: Arc<T>,
         session_manager: Arc<S>,
@@ -43,6 +54,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
         initial_setup: InitialSetup<T>,
+        display_backlight_controller: DisplayBacklightController<V>,
     ) -> Self {
         Self {
             manager,
@@ -52,6 +64,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
             config_handle,
             display_controller,
             initial_setup,
+            display_backlight_controller,
         }
     }
 
@@ -64,6 +77,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
             self.config_handle,
             self.display_controller,
             self.initial_setup,
+            self.display_backlight_controller,
         )
         .build()
         .into_axum_router()
