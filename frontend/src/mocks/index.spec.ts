@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect } from '@rstest/core';
 import * as fc from 'fast-check';
 
 import { randomSlices } from './index';

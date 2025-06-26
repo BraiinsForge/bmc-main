@@ -6,7 +6,6 @@
             "@/*": ["./src/*"]
         },
 
-        "types": ["vitest/globals", "@testing-library/jest-dom"],
         "lib": ["dom", "es2023"],
         "jsx": "react-jsx",
         "noEmit": true,

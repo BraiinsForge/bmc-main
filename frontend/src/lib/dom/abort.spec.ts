@@ -1,4 +1,4 @@
-import { vi, describe, test, expect, beforeEach } from 'vitest';
+import { rstest, describe, test, expect, beforeEach } from '@rstest/core';
 
 import { Component, createElement } from 'react';
 import { cleanup, render } from '@testing-library/react/pure';
@@ -9,7 +9,7 @@ import { ConnectError, Code } from '@connectrpc/connect';
 describe('lib/abort', () => {
     describe('Aborter', () => {
         test('Has AbortController interface methods', () => {
-            const onAbortOne = vi.fn();
+            const onAbortOne = rstest.fn();
             const $ = new Aborter(onAbortOne);
 
             expect($.signal).toBeInstanceOf(AbortSignal);
@@ -21,7 +21,7 @@ describe('lib/abort', () => {
             expect(onAbortOne).toHaveBeenCalledTimes(1);
 
             const oldSignal = $.signal;
-            const onAbortTwo = vi.fn();
+            const onAbortTwo = rstest.fn();
             $.replace(onAbortTwo as any);
             expect($.signal).not.toBe(oldSignal);
             expect($.signal.aborted).toBe(false);
@@ -87,7 +87,7 @@ describe('lib/abort', () => {
 
     describe('abort (AbortCtrlHost)', () => {
         test('get', () => {
-            const onAbort = vi.fn();
+            const onAbort = rstest.fn();
             const $ = abort.get(onAbort);
             expect($).toBeInstanceOf(Aborter);
 
@@ -110,7 +110,7 @@ describe('lib/abort', () => {
             beforeEach(cleanup);
 
             test('React component', () => {
-                const onAbort = vi.fn();
+                const onAbort = rstest.fn();
                 class Foo extends Component {
                     // @ts-expect-error: Called on unmount
                     private abort = abort.get(onAbort);
@@ -126,7 +126,7 @@ describe('lib/abort', () => {
         });
 
         test('combine', () => {
-            const onAbort = vi.fn();
+            const onAbort = rstest.fn();
             const one = abort.get(onAbort);
             const two = abort.get(onAbort);
             const three = abort.get(onAbort);

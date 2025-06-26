@@ -18,5 +18,5 @@
   - examples:
     - module.ts → module.spec.ts
     - module.tsx → module.spec.tsx
-- always import test functions like "describe", "test", "expec" from "vitest"
+- always import test functions like "describe", "test", "expec" from "@rstest/core"
 - do not use "it", use "test"

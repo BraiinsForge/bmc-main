@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect } from '@rstest/core';
 
 import type { BadRequest_FieldViolation } from '../gen/google/rpc/error_details_pb';
 import { parseFieldPath, parseFieldViolations } from './parseFieldViolation';

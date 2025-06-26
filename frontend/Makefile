@@ -27,12 +27,12 @@ format:
 .PHONY: lint
 lint:
 	yarn run biome check --max-diagnostics=100 .
-	yarn run stylelint '**/*.scss' --color --quiet --formatter --allow-empty-input --config stylelint.config.cjs
+	yarn run stylelint '**/*.scss' --color --quiet --formatter string --allow-empty-input --config stylelint.config.cjs
 
 .PHONY: test
 test:
 	yarn run tsc --diagnostics --pretty --project ./tsconfig.json
-	yarn run vitest run
+	yarn run rstest run
 
 #
 # Build

@@ -1,4 +1,4 @@
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, rstest } from '@rstest/core';
 
 import { deferred } from '../async';
 import { handleAsyncIterable, abortableAsyncIterable } from './index';
@@ -11,10 +11,10 @@ describe('handleAsyncIterable', () => {
             throw new Error('Foo');
         }
 
-        const tap = vi.fn();
-        const onEnd = vi.fn();
-        const onError = vi.fn();
-        const onAbort = vi.fn();
+        const tap = rstest.fn();
+        const onEnd = rstest.fn();
+        const onError = rstest.fn();
+        const onAbort = rstest.fn();
 
         await handleAsyncIterable(gen(), { tap, onEnd, onError, onAbort });
 
@@ -30,10 +30,10 @@ describe('handleAsyncIterable', () => {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        const tap = vi.fn();
-        const onEnd = vi.fn();
-        const onError = vi.fn();
-        const onAbort = vi.fn();
+        const tap = rstest.fn();
+        const onEnd = rstest.fn();
+        const onError = rstest.fn();
+        const onAbort = rstest.fn();
 
         await handleAsyncIterable(gen(), { tap, onEnd, onError, onAbort });
 
@@ -49,10 +49,10 @@ describe('handleAsyncIterable', () => {
             yield 3;
         }
 
-        const tap = vi.fn();
-        const onEnd = vi.fn();
-        const onError = vi.fn();
-        const onAbort = vi.fn();
+        const tap = rstest.fn();
+        const onEnd = rstest.fn();
+        const onError = rstest.fn();
+        const onAbort = rstest.fn();
 
         await handleAsyncIterable(gen(), { tap, onEnd, onError, onAbort });
 
