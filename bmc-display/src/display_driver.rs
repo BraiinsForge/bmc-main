@@ -1,10 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use tokio::sync::Mutex;
+
 use crate::display_controller::DisplayController;
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-};
+use std::{fmt::Debug, sync::Arc};
 
 pub trait DisplayBacklightDriver: Sync + Send + Clone + Debug + 'static {
     fn init(&mut self) -> anyhow::Result<()>;
