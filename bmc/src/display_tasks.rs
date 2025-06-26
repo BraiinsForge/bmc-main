@@ -126,6 +126,7 @@ impl<T: BmcManager> DisplayTasks<T> {
     ) {
         while let Ok(()) = receiver.changed().await {
             let state = (*receiver.borrow_and_update()).clone();
+            info!(?state, "Initial setup state was changed");
             if let Some(initial_setup_state) = state {
                 match initial_setup_state {
                     InitSetupState::ConnectingToWifi { wifi_ssid } => {
@@ -135,7 +136,7 @@ impl<T: BmcManager> DisplayTasks<T> {
                     InitSetupState::WifiConnectionSuccess => {
                         display_controller.set_screen(Screen::InitialSetupWifiConnected);
                         tokio::time::sleep(SCREEN_DURATION).await;
-                        let ip = manager.ip_address();
+                        let ip = manager.ip_address().await;
                         display_controller.set_connect_ip_qr_code(ip);
                         display_controller.set_screen(Screen::InitialSetupConnectInfo);
                     }
@@ -174,12 +175,12 @@ impl<T: BmcManager> DisplayTasks<T> {
                 display_controller.set_screen(Screen::InitialSetupStart);
             }
             crate::manager::BmcState::SetupPending => {
-                let ip = manager.ip_address();
+                let ip = manager.ip_address().await;
                 display_controller.set_connect_ip_qr_code(ip);
                 display_controller.set_screen(Screen::InitialSetupConnectInfo);
             }
             crate::manager::BmcState::Operational => {
-                let ip = manager.ip_address();
+                let ip = manager.ip_address().await;
                 display_controller.set_connect_ip_qr_code(ip);
                 display_controller.set_screen(Screen::ConnectInfo);
                 tokio::time::sleep(Duration::from_secs(10)).await;

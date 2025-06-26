@@ -13,7 +13,6 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::fs;
 use tracing::info;
 use tracing::log::warn;
 
@@ -156,7 +155,7 @@ impl bmc::BmcManager for Manager {
         Some(self.mac_address.to_ascii_lowercase().clone())
     }
 
-    fn ip_address(&self) -> Option<IpAddr> {
+    async fn ip_address(&self) -> Option<IpAddr> {
         Some(self.ip_address)
     }
 
@@ -295,17 +294,5 @@ impl bmc::BmcManager for Manager {
             password, encryption
         );
         Ok(())
-    }
-
-    async fn wifi_set_enabled(&self, enable: bool) -> Result<(), Self::Error> {
-        info!("Switch wifi state to {:?}", enable);
-        let path = self.mockfs.is_wifi_enabled();
-        let contents = enable.to_string().into_bytes();
-        fs::write(path, contents).await?;
-        Ok(())
-    }
-
-    async fn wifi_ssid(&self) -> String {
-        Self::WIFI_SSID.to_owned()
     }
 }

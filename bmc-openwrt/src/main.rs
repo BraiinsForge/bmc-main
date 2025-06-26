@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
 
     let current_timezone = iana_time_zone::get_timezone()
         .ok()
-        .and_then(|timezome| Timezone::from_str(&timezome).ok())
+        .and_then(|timezone| Timezone::from_str(&timezone).ok())
         .unwrap_or_default();
 
     let wifi_manager = Arc::new(OpenwrtWifiManager::new(
@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
         "BMC",
     ));
 
-    let manager = Manager::new(OpenwrtSessionManager, current_timezone, Some(wifi_manager));
+    let manager = Manager::new(OpenwrtSessionManager, current_timezone, wifi_manager);
 
     let job_scheduler = bmc_scheduler::JobScheduler::new(
         bmc_scheduler::JobSchedulerLocked::new().await?,

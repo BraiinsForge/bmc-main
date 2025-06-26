@@ -1,12 +1,10 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_grpc::web::{
-    DateFormat, EncryptionType as GrpcEncryptionType, NumberFormat, ScanWifiResponse,
-    SetWifiRequest, SettingsDataResponse, SettingsRequest, SignalStrength as GrpcSignalStrength,
-    TimeFormat, WifiNetwork,
+    DateFormat, NumberFormat, ScanWifiResponse, SetWifiRequest, SettingsDataResponse,
+    SettingsRequest, TimeFormat,
     initial_setup_service_server::InitialSetupService as GrpcInitialSetupService,
 };
-use bmc_shared_ii_net::wifi::{EncryptionType, SignalStrength};
 use bmc_shared_time::time::{TimeSystem, Timezone};
 use std::{str::FromStr, sync::Arc};
 use tonic::{Code, Request, Response, Status};
@@ -14,10 +12,12 @@ use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
 use tracing::warn;
 
 use super::{GrpcError, system::into_grpc_timezone};
+use crate::initial_setup::{DeviceSetupError, WifiSetupError};
+use crate::web::grpc::network::{scan_wifi_response, try_into_wifi_network_config};
 use crate::{
     BmcManager,
-    initial_setup::{DeviceSetupConfig, InitialSetup, SetupError},
-    manager::{BmcState, WifiNetworkConfig},
+    initial_setup::{DeviceSetupConfig, InitialSetup},
+    manager::BmcState,
 };
 
 #[derive(Clone)]
@@ -41,9 +41,10 @@ where
     }
 
     async fn check_precondition(&self, state: BmcState) -> Result<(), Status> {
-        if self.manager.device_state().await != state {
+        let current_state = self.manager.device_state().await;
+        if current_state != state {
             return Err(Status::failed_precondition(format!(
-                "Function is only available when the device is in '{state}' state.",
+                "Function is only available when the device is in '{state}' state. Current state is '{current_state}'.",
             )));
         }
         Ok(())
@@ -60,7 +61,7 @@ where
 
         let request = request.into_inner();
 
-        let config = try_into_network_config(request)?;
+        let config = try_into_wifi_network_config(request)?;
 
         match self.initial_setup.connect_to_wifi(config) {
             Ok(()) => Ok(Response::new(())),
@@ -75,22 +76,9 @@ where
     async fn scan_wifi(&self, _request: Request<()>) -> Result<Response<ScanWifiResponse>, Status> {
         self.check_precondition(BmcState::FactoryDefault).await?;
 
-        let available_wifi = self.manager.wifi_scan().await.map_err(|e| {
-            warn!("Failed to scan WiFi networks: {}", e);
-            Status::internal("Failed to scan WiFi networks")
-        })?;
-
-        Ok(Response::new(ScanWifiResponse {
-            networks: available_wifi
-                .into_iter()
-                .filter(|wifi| wifi.signal_strength() != SignalStrength::Offline)
-                .map(|wifi| WifiNetwork {
-                    signal_strength: into_grpc_signal_strength(wifi.signal_strength()) as i32,
-                    ssid: wifi.ssid,
-                    encryption_type: into_encryption_type(wifi.encryption_type) as i32,
-                })
-                .collect(),
-        }))
+        Ok(Response::new(
+            scan_wifi_response(self.manager.clone()).await?,
+        ))
     }
 
     async fn get_settings_data(
@@ -142,59 +130,6 @@ where
             })?;
 
         Ok(Response::new(()))
-    }
-}
-
-fn try_into_network_config(request: SetWifiRequest) -> Result<WifiNetworkConfig, Status> {
-    let encryption = try_into_encryption_type(request.encryption_type())?;
-
-    Ok(WifiNetworkConfig {
-        ssid: request.ssid,
-        password: request.password,
-        encryption,
-    })
-}
-
-fn try_into_encryption_type(value: GrpcEncryptionType) -> Result<EncryptionType, Status> {
-    match value {
-        GrpcEncryptionType::Unspecified => Err(Status::with_error_details(
-            Code::InvalidArgument,
-            GrpcError::BadRequest.to_string(),
-            ErrorDetails::with_bad_request_violation(
-                "encryption_type",
-                "Encryption type must be specified and cannot be UNSPECIFIED.",
-            ),
-        )),
-        GrpcEncryptionType::None => Ok(EncryptionType::None),
-        GrpcEncryptionType::Wep => Ok(EncryptionType::Wep),
-        GrpcEncryptionType::WepShared => Ok(EncryptionType::WepShared),
-        GrpcEncryptionType::Wpa => Ok(EncryptionType::Wpa),
-        GrpcEncryptionType::Wpa12 => Ok(EncryptionType::Wpa1_2),
-        GrpcEncryptionType::Wpa2 => Ok(EncryptionType::Wpa2),
-        GrpcEncryptionType::Wpa23 => Ok(EncryptionType::Wpa2_3),
-        GrpcEncryptionType::Wpa3 => Ok(EncryptionType::Wpa3),
-    }
-}
-
-fn into_encryption_type(value: EncryptionType) -> GrpcEncryptionType {
-    match value {
-        EncryptionType::None => GrpcEncryptionType::None,
-        EncryptionType::Wep => GrpcEncryptionType::Wep,
-        EncryptionType::WepShared => GrpcEncryptionType::WepShared,
-        EncryptionType::Wpa => GrpcEncryptionType::Wpa,
-        EncryptionType::Wpa1_2 => GrpcEncryptionType::Wpa12,
-        EncryptionType::Wpa2 => GrpcEncryptionType::Wpa2,
-        EncryptionType::Wpa2_3 => GrpcEncryptionType::Wpa23,
-        EncryptionType::Wpa3 => GrpcEncryptionType::Wpa3,
-    }
-}
-
-fn into_grpc_signal_strength(value: SignalStrength) -> GrpcSignalStrength {
-    match value {
-        SignalStrength::Offline => GrpcSignalStrength::Unspecified, // Offline WiFi is filtered out
-        SignalStrength::Low => GrpcSignalStrength::Weak,
-        SignalStrength::Fair => GrpcSignalStrength::Moderate,
-        SignalStrength::Excellent => GrpcSignalStrength::Strong,
     }
 }
 

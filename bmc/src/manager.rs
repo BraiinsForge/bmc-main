@@ -60,7 +60,7 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     fn mac_address(&self) -> Option<String>;
 
-    fn ip_address(&self) -> Option<IpAddr>;
+    async fn ip_address(&self) -> Option<IpAddr>;
 
     async fn network_config(&self) -> Option<NetworkProtocolConfig>;
 
@@ -90,8 +90,6 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
         password: Option<String>,
         encryption: EncryptionType,
     ) -> Result<(), Self::Error>;
-
-    async fn wifi_set_enabled(&self, enable: bool) -> Result<(), Self::Error>;
 }
 
 #[derive(Debug, Display, PartialEq)]
@@ -171,13 +169,6 @@ pub struct NetworkInfo {
 pub struct IpNetwork {
     pub address: Ipv4Addr,
     pub netmask: Ipv4Addr,
-}
-
-#[derive(Debug)]
-pub struct InitialSetupConfig {
-    pub wifi: Option<WifiNetworkConfig>,
-    pub lan: Option<NetworkProtocolConfig>,
-    pub admin_password: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

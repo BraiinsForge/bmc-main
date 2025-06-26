@@ -1,25 +1,20 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::{net::Ipv4Addr, str::FromStr};
+use std::str::FromStr;
 
 use bmc_grpc::web::{
     ChangePasswordRequest, CreatePasswordRequest, GetTimezoneListResponse, GetTimezoneResponse,
-    NetworkConfig, NetworkConfigStatic, NetworkInfoResponse, RemovePasswordRequest,
-    SetTimezoneRequest, system_service_server::SystemService as GrpcSystemService,
+    RemovePasswordRequest, SetTimezoneRequest,
+    system_service_server::SystemService as GrpcSystemService,
 };
 use bmc_shared_time::time::Timezone;
 use std::sync::Arc;
 use tonic::{Code, Request, Response, Status};
-use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
+use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
 
 use super::GrpcError;
-use crate::{
-    BmcManager,
-    manager::{NetworkProtocolConfig, NetworkProtocolConfigStatic},
-    session::Manager as SessionManager,
-    web::session::extract_session,
-};
+use crate::{BmcManager, session::Manager as SessionManager, web::session::extract_session};
 
 #[derive(Clone)]
 pub(crate) struct SystemService<T, S>
@@ -229,6 +224,7 @@ where
         let ip_address = self
             .manager
             .ip_address()
+            .await
             .ok_or(Status::internal("Failed to get ip address"))?
             .to_string();
 
