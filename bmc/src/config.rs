@@ -17,19 +17,23 @@ struct ConfigRoot {
     localization: Option<LocalizationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     data_collection: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brightness_pct: Option<u8>,
 }
 
 #[derive(Clone, Debug)]
 pub struct ConfigHandle {
     path: PathBuf,
     data: ConfigRoot,
+    default_brightness_pct: u8,
 }
 
 impl ConfigHandle {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(path: PathBuf, default_brightness_pct: u8) -> Self {
         Self {
             path,
             data: ConfigRoot::default(),
+            default_brightness_pct,
         }
     }
 
@@ -98,6 +102,16 @@ impl ConfigHandle {
 
     pub fn set_data_collection(&mut self, data_collection: bool) {
         self.data.data_collection = Some(data_collection);
+    }
+
+    pub fn set_brightness_pct(&mut self, brightness_pct: u8) {
+        self.data.brightness_pct = Some(brightness_pct);
+    }
+
+    pub fn brightness_pct(&self) -> u8 {
+        self.data
+            .brightness_pct
+            .unwrap_or(self.default_brightness_pct)
     }
 }
 

@@ -61,7 +61,8 @@ where
             state_service.clone(),
         );
 
-        let mut config_handle = ConfigHandle::new(config.config_path.clone());
+        let mut config_handle =
+            ConfigHandle::new(config.config_path.clone(), config.default_brightness_pct);
         config_handle.init().await;
 
         let display_controller = display_driver.display_controller.clone();
@@ -128,11 +129,13 @@ pub struct Configuration {
     pub server_config: ServerConfig,
     pub upgrade_image_path: PathBuf,
     pub config_path: PathBuf,
+    pub default_brightness_pct: u8,
 }
 
 impl Configuration {
     const UPGRADE_IMAGE_PATH: &'static str = "/tmp/firmware.tar";
     const CONFIG_PATH: &'static str = "/etc/bmc_config.json";
+    const DEFAULT_BRIGHTNESS: u8 = 80;
 }
 
 impl Default for Configuration {
@@ -142,6 +145,7 @@ impl Default for Configuration {
             server_config: ServerConfig::default(),
             upgrade_image_path: PathBuf::from(Self::UPGRADE_IMAGE_PATH),
             config_path: Self::CONFIG_PATH.into(),
+            default_brightness_pct: Self::DEFAULT_BRIGHTNESS,
         }
     }
 }
