@@ -3,22 +3,20 @@
 use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
 use crate::session::OpenwrtSessionManager;
 use crate::unix::system_reboot;
-use crate::{ROOT_USERNAME, pwd, unix};
-use crate::{
-    network::NetworkInterface,
-    unix::{
-        call_command, call_command_stdin, call_command_to_string, get_hostname, get_ip_address,
-    },
+use crate::unix::{
+    call_command, call_command_stdin, call_command_to_string, get_hostname, get_ip_address,
 };
+use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
-use bmc::manager::{BmcState, InitialSetupError, WifiNetworkConfig, WifiScanItem};
+use bmc::manager::{BmcState, IfaceData, InitialSetupError, WifiNetworkConfig};
 use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
 };
 use bmc_platform::BmcPlatform;
-use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
-use bmc_shared_ii_net_drv::DEFAULT_AP_INTERFACE_NAME;
+use bmc_shared_ii_net::MacAddr;
+use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
+use bmc_shared_ii_net_drv::NetworkInterface;
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use std::io;
@@ -28,7 +26,8 @@ use std::{
     path::Path,
 };
 use tokio::{fs, process::Command};
-use tracing::info;
+use tracing::log::debug;
+use tracing::{error, info};
 
 #[derive(Debug)]
 pub struct Manager {
@@ -41,7 +40,7 @@ impl Manager {
     const SYSUPGRADE_BIN: &'static str = "/sbin/sysupgrade";
     const SYSUPGRADE_ARG_NO_SAVE: &'static str = "-n";
     const UPGRADE_RESULT_FILE_PATH: &'static str = "/etc/upgrade_result";
-    const DEFAULT_INTERFACE: &'static str = "eth0";
+    const DEFAULT_INTERFACE: &'static str = "wlan0";
     const DEFAULT_AP_INTERFACE_NAME: &'static str = "ethap0";
     const UCI_SYSTEM_ZONENAME: &'static str = "system.@system[0].zonename";
     const UCI_SYSTEM_TIMEZONE: &'static str = "system.@system[0].timezone";
@@ -368,20 +367,34 @@ impl BmcManager for Manager {
         self.ip_address().map(|ip| ip.to_string())
     }
 
-    async fn wifi_initial_setup(
-        &self,
-        _config: WifiNetworkConfig,
-    ) -> Result<(), InitialSetupError> {
-        //TODO: call self.update_device_state().await to move from FactoryDefault to SetupPending state
-        todo!();
+    async fn wifi_initial_setup(&self, config: WifiNetworkConfig) -> Result<(), InitialSetupError> {
+        debug!(
+            "Connecting to wifi '{}', with password: {:?}",
+            config.ssid, config.password
+        );
+        self.wifi_save_and_connect(config.ssid, config.password, config.encryption)
+            .await
+            .map_err(|e| InitialSetupError::WifiConnectionFailure(e.to_string()))?;
+        debug!("Connection to wifi finished successfully");
+        self.update_device_state()
+            .await
+            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))
     }
 
     async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
-        todo!();
+        if !self.is_factory_default().await {
+            return Err(InitialSetupError::NotSupported);
+        }
+
+        self.configure_wifi_ap().await
     }
 
     async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
-        todo!();
+        let Some(ref wifi_manager) = self.wifi_manager else {
+            return Err(anyhow!(Error::WifiNotPresent));
+        };
+
+        wifi_manager.scan().await
     }
 
     async fn reboot(&self) -> anyhow::Result<()> {
@@ -432,6 +445,49 @@ impl BmcManager for Manager {
         let mac_id = Self::get_mac_short_id(&get_default_net_data(Self::DEFAULT_INTERFACE));
         format!("{} {}", wifi_manager.wifi_ap_ssid_base, mac_id)
     }
+
+    async fn init_wifi_ap(&self) -> Result<(), Self::Error> {
+        if self.is_factory_default().await {
+            self.configure_wifi_ap()
+                .await
+                .map_err(|e| self::Error::InitialSetupWifiAp(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    async fn wifi_save_and_connect(
+        &self,
+        ssid: String,
+        password: Option<String>,
+        encryption: EncryptionType,
+    ) -> Result<(), Self::Error> {
+        let Some(ref wifi_manager) = self.wifi_manager else {
+            return Err(Error::WifiNotPresent);
+        };
+
+        wifi_manager
+            .save_and_connect(ssid, password, encryption)
+            .await
+            .map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })
+    }
+
+    async fn wifi_set_enabled(&self, enable: bool) -> Result<(), Self::Error> {
+        let Some(ref wifi_manager) = self.wifi_manager else {
+            return Err(Error::WifiNotPresent);
+        };
+
+        wifi_manager.enable(enable).await.map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })
+    }
 }
 
 async fn uci_get_opt(opt: &str) -> Option<String> {
@@ -439,6 +495,24 @@ async fn uci_get_opt(opt: &str) -> Option<String> {
         .await
         .ok()
         .map(|value| value.trim().to_owned())
+}
+
+#[must_use]
+pub fn get_default_net_data(default_interface: &str) -> IfaceData {
+    debug!("Getting net data... {default_interface}");
+
+    let (ip, mac) = NetworkInterface::get_by_name(default_interface)
+        .ok_or(bmc_shared_ii_net_drv::NetworkInterface::find_default)
+        .map_or((None, None), |net_iface_default| {
+            (
+                net_iface_default.ipv4_address(),
+                net_iface_default.mac_address(),
+            )
+        });
+
+    debug!("IP: {ip:?}, MAC: {mac:?}");
+
+    IfaceData { ip, mac }
 }
 
 #[derive(thiserror::Error, Debug)]

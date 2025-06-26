@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
 
     let wifi_manager = Arc::new(OpenwrtWifiManager::new(
         "/sys/devices/platform/soc/48004000.sdmmc/mmc_host/mmc2/mmc2:0001/mmc2:0001:1/",
+        "BMC",
     ));
 
     let manager = Manager::new(OpenwrtSessionManager, current_timezone, Some(wifi_manager));
