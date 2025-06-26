@@ -1,7 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::str::FromStr;
-
 use anyhow::{Context, Result, anyhow};
 use bmc::{BmcManager, Configuration, log};
 use bmc_display::{
@@ -13,9 +11,12 @@ use bmc_openwrt::{
     generic_backlight_driver::GenericBacklightDriver, linux_drm_platform::LinuxDrmPlatform,
     manager::Manager, session::OpenwrtSessionManager,
 };
+use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;
 use slint::platform::software_renderer::RenderingRotation;
+use std::str::FromStr;
+use std::sync::Arc;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -44,7 +45,11 @@ async fn main() -> Result<()> {
         .and_then(|timezome| Timezone::from_str(&timezome).ok())
         .unwrap_or_default();
 
-    let manager = Manager::new(OpenwrtSessionManager, current_timezone);
+    let wifi_manager = Arc::new(OpenwrtWifiManager::new(
+        "/sys/devices/platform/soc/48004000.sdmmc/mmc_host/mmc2/mmc2:0001/mmc2:0001:1/",
+    ));
+
+    let manager = Manager::new(OpenwrtSessionManager, current_timezone, Some(wifi_manager));
 
     let job_scheduler = bmc_scheduler::JobScheduler::new(
         bmc_scheduler::JobSchedulerLocked::new().await?,

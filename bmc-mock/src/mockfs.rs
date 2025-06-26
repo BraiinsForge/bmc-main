@@ -12,9 +12,10 @@ pub struct MockFs {
 }
 
 impl MockFs {
-    const UPGRADE_RESULT_FILE: &str = "etc/upgrade_result";
-    const FACTORY_DEFAULT_FILE: &str = "etc/factory-default";
-    const DEVICE_SETUP_PENDING_FILE: &str = "etc/setup-pending";
+    const UPGRADE_RESULT_FILE: &'static str = "etc/upgrade_result";
+    const FACTORY_DEFAULT_FILE: &'static str = "etc/factory-default";
+    const DEVICE_SETUP_PENDING_FILE: &'static str = "etc/setup-pending";
+    const WIFI_STATUS_FILE: &'static str = "etc/is_wifi_enabled";
 
     pub fn new(template_dir: impl AsRef<Path>, runtime_dir: impl AsRef<Path>) -> Self {
         Self {
@@ -85,6 +86,11 @@ impl MockFs {
         }
 
         Ok(())
+    }
+
+    #[must_use]
+    pub fn is_wifi_enabled(&self) -> PathBuf {
+        self.build_mockfs_path(Self::WIFI_STATUS_FILE)
     }
 }
 

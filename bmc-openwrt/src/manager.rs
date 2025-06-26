@@ -4,6 +4,12 @@ use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
 use crate::session::OpenwrtSessionManager;
 use crate::unix::system_reboot;
 use crate::{ROOT_USERNAME, pwd, unix};
+use crate::{
+    network::NetworkInterface,
+    unix::{
+        call_command, call_command_stdin, call_command_to_string, get_hostname, get_ip_address,
+    },
+};
 use anyhow::{anyhow, bail};
 use bmc::manager::{BmcState, InitialSetupError, WifiNetworkConfig, WifiScanItem};
 use bmc::{
@@ -11,8 +17,12 @@ use bmc::{
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
 };
 use bmc_platform::BmcPlatform;
+use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
+use bmc_shared_ii_net_drv::DEFAULT_AP_INTERFACE_NAME;
+use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use std::io;
+use std::sync::Arc;
 use std::{
     net::{IpAddr, Ipv4Addr},
     path::Path,
@@ -20,17 +30,11 @@ use std::{
 use tokio::{fs, process::Command};
 use tracing::info;
 
-use crate::{
-    network::NetworkInterface,
-    unix::{
-        call_command, call_command_stdin, call_command_to_string, get_hostname, get_ip_address,
-    },
-};
-
 #[derive(Debug)]
 pub struct Manager {
     pub session_manager: OpenwrtSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
+    wifi_manager: Option<Arc<OpenwrtWifiManager>>,
 }
 
 impl Manager {
@@ -53,11 +57,16 @@ impl Manager {
     const DEVICE_SETUP_PENDING_FILE_PATH: &'static str = "/etc/setup-pending";
 
     #[must_use]
-    pub fn new(session_manager: OpenwrtSessionManager, timezone: Timezone) -> Self {
+    pub fn new(
+        session_manager: OpenwrtSessionManager,
+        timezone: Timezone,
+        wifi_manager: Option<Arc<OpenwrtWifiManager>>,
+    ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
         Self {
             session_manager,
             timezone_sender,
+            wifi_manager,
         }
     }
 
@@ -99,6 +108,48 @@ impl Manager {
             .iter()
             .find_map(|iface| Self::get_network_ip_by_name(iface))
             .or_else(get_ip_address)
+    }
+
+    fn get_mac_short_id(eth_data: &IfaceData) -> String {
+        let mac = eth_data
+            .mac
+            .clone()
+            .unwrap_or_else(|| {
+                error!("Cannot obtain MAC address");
+                MacAddr::default()
+            })
+            .to_string()
+            .replace(MacAddr::DELIMITER, "");
+        let mac = mac.as_bytes();
+
+        mac.len()
+            .checked_sub(3)
+            .map_or("UNK".to_owned(), |start_idx| {
+                String::from_utf8_lossy(&mac[start_idx..]).to_string()
+            })
+    }
+
+    async fn configure_wifi_ap(&self) -> Result<(), InitialSetupError> {
+        info!("Setting up WiFi AP for initial setup");
+        if let Some(wifi_manager) = self.wifi_manager.as_ref() {
+            debug!("Resetting wifi to default");
+
+            wifi_manager
+                .reset_config()
+                .await
+                .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
+            wifi_manager
+                .configure_ap_mode(self.wifi_ssid(), None, EncryptionType::None)
+                .await
+                .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
+            wifi_manager
+                .enable_radio(true)
+                .await
+                .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))
+        } else {
+            info!("Initial setup manager is not available");
+            Ok(())
+        }
     }
 }
 
@@ -374,8 +425,12 @@ impl BmcManager for Manager {
         }
     }
 
-    async fn wifi_ssid(&self) -> String {
-        todo!();
+    fn wifi_ssid(&self) -> String {
+        let Some(ref wifi_manager) = self.wifi_manager else {
+            return "Wi-Fi Unavailable".to_owned();
+        };
+        let mac_id = Self::get_mac_short_id(&get_default_net_data(Self::DEFAULT_INTERFACE));
+        format!("{} {}", wifi_manager.wifi_ap_ssid_base, mac_id)
     }
 }
 
@@ -394,4 +449,8 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error(transparent)]
     Unix(#[from] unix::Error),
+    #[error("Wi-Fi is not present")]
+    WifiNotPresent,
+    #[error("Cannot configure WiFi AP for initial setup: {0}")]
+    InitialSetupWifiAp(String),
 }

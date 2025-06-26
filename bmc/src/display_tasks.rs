@@ -142,7 +142,7 @@ impl<T: BmcManager> DisplayTasks<T> {
                     InitSetupState::WifiConnectionFailed => {
                         display_controller.set_screen(Screen::InitialSetupWifiError);
                         tokio::time::sleep(SCREEN_DURATION).await;
-                        let ssid = manager.wifi_ssid().await;
+                        let ssid = manager.wifi_ssid();
                         display_controller.set_wifi_ssid(ssid);
                         display_controller.set_screen(Screen::InitialSetupStart);
                     }
@@ -169,7 +169,7 @@ impl<T: BmcManager> DisplayTasks<T> {
 
         match state {
             crate::manager::BmcState::FactoryDefault => {
-                let ssid = manager.wifi_ssid().await;
+                let ssid = manager.wifi_ssid();
                 display_controller.set_wifi_ssid(ssid);
                 display_controller.set_screen(Screen::InitialSetupStart);
             }

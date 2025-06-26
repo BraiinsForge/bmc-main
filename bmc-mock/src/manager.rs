@@ -1,11 +1,10 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::{MockSessionManager, mockfs::MockFs};
 use anyhow::anyhow;
-use bmc::manager::{
-    BmcState, EncryptionType, InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig,
-    WifiScanItem,
-};
+use bmc::manager::{BmcState, InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig};
 use bmc_platform::BmcPlatform;
+use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
 use bmc_shared_time::time::Timezone;
 use rand::Rng;
 use std::{
@@ -14,9 +13,9 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::fs;
 use tracing::info;
-
-use crate::{MockSessionManager, mockfs::MockFs};
+use tracing::log::warn;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -39,7 +38,7 @@ pub struct Manager {
 }
 
 impl Manager {
-    const WIFI_SSID: &str = "BMC 5a200d";
+    const WIFI_SSID: &'static str = "BMC 5a200d";
 
     #[must_use]
     pub fn new(
@@ -209,8 +208,8 @@ impl bmc::BmcManager for Manager {
     async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
         info!("Scanning WiFi...");
 
-        let mut rng = rand::thread_rng();
-        let mut signal_strength = || rng.gen_range(-90..=-50);
+        let mut rng = rand::rng();
+        let mut signal_strength = || rng.random_range(-90..=-50);
 
         let mut wifi_list = vec![
             WifiScanItem {
@@ -242,7 +241,7 @@ impl bmc::BmcManager for Manager {
         });
 
         // return random number of elements
-        let count = rng.gen_range(0..=3);
+        let count = rng.random_range(0..=3);
         Ok(wifi_list.split_off(count))
     }
 
@@ -273,6 +272,36 @@ impl bmc::BmcManager for Manager {
             BmcState::Operational => (),
         }
 
+        Ok(())
+    }
+
+    fn wifi_ssid(&self) -> String {
+        Self::WIFI_SSID.to_owned()
+    }
+
+    async fn init_wifi_ap(&self) -> Result<(), Self::Error> {
+        warn!("Wifi init not implemented");
+        Ok(())
+    }
+
+    async fn wifi_save_and_connect(
+        &self,
+        ssid: String,
+        password: Option<String>,
+        encryption: EncryptionType,
+    ) -> Result<(), Self::Error> {
+        info!(
+            "Connect to wifi network {ssid}:{:?}:{:?}",
+            password, encryption
+        );
+        Ok(())
+    }
+
+    async fn wifi_set_enabled(&self, enable: bool) -> Result<(), Self::Error> {
+        info!("Switch wifi state to {:?}", enable);
+        let path = self.mockfs.is_wifi_enabled();
+        let contents = enable.to_string().into_bytes();
+        fs::write(path, contents).await?;
         Ok(())
     }
 

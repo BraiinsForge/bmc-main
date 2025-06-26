@@ -7,11 +7,12 @@ use std::{
 };
 
 use bmc_platform::BmcPlatform;
-use strum::{Display, EnumString};
+use bmc_shared_ii_net::MacAddr;
+use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
+use bmc_shared_time::time::Timezone;
+use strum::Display;
 use thiserror::Error;
 use tokio::sync::watch;
-
-use bmc_shared_time::time::Timezone;
 
 #[async_trait::async_trait]
 pub trait BmcManager: Sync + Send + 'static + Debug {
@@ -79,7 +80,18 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     async fn update_device_state(&self) -> anyhow::Result<()>;
 
-    async fn wifi_ssid(&self) -> String;
+    fn wifi_ssid(&self) -> String;
+
+    async fn init_wifi_ap(&self) -> Result<(), Self::Error>;
+
+    async fn wifi_save_and_connect(
+        &self,
+        ssid: String,
+        password: Option<String>,
+        encryption: EncryptionType,
+    ) -> Result<(), Self::Error>;
+
+    async fn wifi_set_enabled(&self, enable: bool) -> Result<(), Self::Error>;
 }
 
 #[derive(Debug, Display, PartialEq)]
@@ -144,58 +156,38 @@ pub struct WifiNetworkConfig {
     pub encryption: EncryptionType,
 }
 
-#[derive(Debug, EnumString, PartialEq, Eq, PartialOrd, Ord, Default, Clone, Copy, Display)]
-pub enum EncryptionType {
-    #[default]
-    None,
-    Wep,
-    WepShared,
-    Wpa,
-    Wpa1_2,
-    Wpa2,
-    Wpa2_3,
+#[derive(Debug)]
+pub struct NetworkInfo {
+    pub interface_name: String,
+    pub mac_address: Option<String>,
+    pub hostname: Option<String>,
+    pub protocol: Option<NetworkProtocol>,
+    pub dns_servers: Vec<Ipv4Addr>,
+    pub networks: Vec<IpNetwork>,
+    pub default_gateway: Option<Ipv4Addr>,
 }
 
 #[derive(Debug, Clone)]
-pub struct WifiScanItem {
-    pub ssid: String,
-    pub signal_level: i32,
-    pub encryption_type: EncryptionType,
+pub struct IpNetwork {
+    pub address: Ipv4Addr,
+    pub netmask: Ipv4Addr,
 }
 
-impl WifiScanItem {
-    #[must_use]
-    pub fn new(ssid: String, signal_level: i32, encryption_type: EncryptionType) -> Self {
-        Self {
-            ssid,
-            signal_level,
-            encryption_type,
-        }
-    }
-
-    #[must_use]
-    pub fn signal_strength(&self) -> SignalStrength {
-        SignalStrength::new(self.signal_level)
-    }
+#[derive(Debug)]
+pub struct InitialSetupConfig {
+    pub wifi: Option<WifiNetworkConfig>,
+    pub lan: Option<NetworkProtocolConfig>,
+    pub admin_password: String,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Default, Display, PartialOrd, Ord)]
-pub enum SignalStrength {
-    #[default]
-    Offline,
-    Low,
-    Fair,
-    Excellent,
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IfaceData {
+    pub ip: Option<IpAddr>,
+    pub mac: Option<MacAddr>,
 }
 
-impl SignalStrength {
-    #[must_use]
-    pub fn new(signal: i32) -> Self {
-        match signal {
-            0 => SignalStrength::Offline,
-            x if x >= -60 => SignalStrength::Excellent,
-            x if x >= -75 => SignalStrength::Fair,
-            _ => SignalStrength::Low,
-        }
-    }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WifiData {
+    pub iface: IfaceData,
+    pub status: WifiStatus,
 }
