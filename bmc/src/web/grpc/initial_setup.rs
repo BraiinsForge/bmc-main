@@ -6,6 +6,7 @@ use bmc_grpc::web::{
     TimeFormat, WifiNetwork,
     initial_setup_service_server::InitialSetupService as GrpcInitialSetupService,
 };
+use bmc_shared_ii_net::wifi::{EncryptionType, SignalStrength};
 use bmc_shared_time::time::{TimeSystem, Timezone};
 use std::{str::FromStr, sync::Arc};
 use tonic::{Code, Request, Response, Status};
@@ -15,8 +16,8 @@ use tracing::warn;
 use super::{GrpcError, system::into_grpc_timezone};
 use crate::{
     BmcManager,
-    initial_setup::{DeviceSetupConfig, DeviceSetupError, InitialSetup, WifiSetupError},
-    manager::{BmcState, EncryptionType, SignalStrength, WifiNetworkConfig},
+    initial_setup::{DeviceSetupConfig, InitialSetup, SetupError},
+    manager::{BmcState, WifiNetworkConfig},
 };
 
 #[derive(Clone)]
@@ -171,6 +172,7 @@ fn try_into_encryption_type(value: GrpcEncryptionType) -> Result<EncryptionType,
         GrpcEncryptionType::Wpa12 => Ok(EncryptionType::Wpa1_2),
         GrpcEncryptionType::Wpa2 => Ok(EncryptionType::Wpa2),
         GrpcEncryptionType::Wpa23 => Ok(EncryptionType::Wpa2_3),
+        GrpcEncryptionType::Wpa3 => Ok(EncryptionType::Wpa3),
     }
 }
 
@@ -183,6 +185,7 @@ fn into_encryption_type(value: EncryptionType) -> GrpcEncryptionType {
         EncryptionType::Wpa1_2 => GrpcEncryptionType::Wpa12,
         EncryptionType::Wpa2 => GrpcEncryptionType::Wpa2,
         EncryptionType::Wpa2_3 => GrpcEncryptionType::Wpa23,
+        EncryptionType::Wpa3 => GrpcEncryptionType::Wpa3,
     }
 }
 

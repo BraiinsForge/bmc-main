@@ -21,6 +21,7 @@ enum EncryptionType {
   ENCRYPTION_TYPE_WPA1_2 = 5;
   ENCRYPTION_TYPE_WPA2 = 6;
   ENCRYPTION_TYPE_WPA2_3 = 7;
+  ENCRYPTION_TYPE_WPA3 = 8;
 }
 
 message ScanWifiResponse {
