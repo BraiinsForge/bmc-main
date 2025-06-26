@@ -19,9 +19,17 @@ pkgs.mkShell {
     xorg.libXrender
     xorg.libxcb
 
-    # Additional graphics libraries
+    # Wayland dependencies
+    wayland
+    wayland-protocols
     libxkbcommon
+
+    # Additional graphics libraries
     libGL
+    vulkan-loader
+
+    # EGL libraries (needed for graphics rendering)
+    libGL.dev
   ];
 
   # Set environment variables if needed
@@ -34,6 +42,13 @@ pkgs.mkShell {
       pkgs.xorg.libXinerama
       pkgs.libxkbcommon
       pkgs.libGL
+      pkgs.wayland
+      pkgs.mesa
+      pkgs.vulkan-loader
     ]}:$LD_LIBRARY_PATH
+
+    # Set Wayland/X11 backend preference (optional)
+    # export WINIT_UNIX_BACKEND=wayland
+    # export WINIT_UNIX_BACKEND=x11
   '';
 }
