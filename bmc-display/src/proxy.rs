@@ -2,38 +2,38 @@
 
 use slint::EventLoopError;
 use slint::platform::EventLoopProxy;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+
+#[expect(missing_debug_implementations)]
+pub enum ProxyEvent {
+    Event(Box<dyn FnOnce() + Send>),
+    Quit,
+}
 
 #[derive(Clone, Debug)]
 pub struct Proxy {
-    pub quit_loop: Arc<AtomicBool>,
-    event_channel: flume::Sender<Box<dyn FnOnce() + Send>>,
+    event_sender: flume::Sender<ProxyEvent>,
 }
 
 impl Proxy {
     #[must_use]
-    pub fn new(event_channel: flume::Sender<Box<dyn FnOnce() + Send>>) -> Self {
-        Self {
-            quit_loop: Arc::new(AtomicBool::new(false)),
-            event_channel,
-        }
+    pub fn new(event_sender: flume::Sender<ProxyEvent>) -> Self {
+        Self { event_sender }
     }
 }
 
 impl EventLoopProxy for Proxy {
     fn quit_event_loop(&self) -> Result<(), EventLoopError> {
-        self.quit_loop
-            .store(true, std::sync::atomic::Ordering::Release);
-        Ok(())
+        self.event_sender
+            .send(ProxyEvent::Quit)
+            .map_err(|_| EventLoopError::EventLoopTerminated)
     }
 
     fn invoke_from_event_loop(
         &self,
         event: Box<dyn FnOnce() + Send>,
     ) -> Result<(), EventLoopError> {
-        self.event_channel
-            .send(event)
+        self.event_sender
+            .send(ProxyEvent::Event(event))
             .map_err(|_| EventLoopError::EventLoopTerminated)
     }
 }

@@ -1,18 +1,17 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::Result;
-use bmc_display::proxy::Proxy;
+use bmc_display::proxy::{Proxy, ProxyEvent};
 use drm::Device;
 use drm::buffer::{Buffer, DrmFourcc};
 use drm::control::Device as ControlDevice;
 use drm::control::{self, AtomicCommitFlags, atomic, connector, crtc, property};
 use slint::platform::software_renderer::{RenderingRotation, Rgb565Pixel};
 use slint::platform::{EventLoopProxy, Platform, software_renderer::MinimalSoftwareWindow};
+use std::iter;
 use std::rc::Rc;
-use std::time::Duration;
 use tracing::{debug, info};
 
-const SLEEP_DURATION: Duration = Duration::from_secs(1);
 const PIXEL_FORMAT: DrmFourcc = DrmFourcc::Rgb565;
 const BITS_PER_PIXEL: u32 = 16;
 const BYTES_PER_PIXEL: usize = 2;
@@ -52,7 +51,7 @@ pub struct LinuxDrmPlatform {
     height: usize,
     rotation: RenderingRotation,
     proxy: Box<Proxy>,
-    event_receiver: flume::Receiver<Box<dyn FnOnce() + Send>>,
+    event_receiver: flume::Receiver<ProxyEvent>,
 }
 
 impl Platform for LinuxDrmPlatform {
@@ -251,31 +250,70 @@ impl Platform for LinuxDrmPlatform {
             .expect("Could not map dumbbuffer");
         let (_, frame_buffer, _) = unsafe { map.align_to_mut::<Rgb565Pixel>() };
 
-        // Check if we should terminate the event loop
-        // HACK: the loop should be terminated immediately
-        // after the quit_loop is set to true not after SLEEP_DURATION
-        while !self
-            .proxy
-            .quit_loop
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
-            // Call all events invoked from other threads
-            self.event_receiver.drain().for_each(|event| event());
+        let mut in_memory_buffer = frame_buffer.to_vec();
 
+        // Event loop is inspired by official `linuxkms` implementation.
+        // https://github.com/slint-ui/slint/blob/b80d5a23042c866fbc6d82d00c633bfda9057dd2/internal/backends/linuxkms/calloop_backend.rs#L249
+        // Steps:
+        // - update timers and animations
+        // - run events
+        // - redraw
+        // - wait for next event:
+        //   - only if animations are not active
+        //   - timeout on the closest timer tick
+
+        let mut saved_proxy_event: Option<ProxyEvent> = None;
+
+        // This loop condition is just a double check, in case sender is dropped before
+        // sending ProxyEvent::Quit
+        'outer: while !self.event_receiver.is_disconnected() {
             // Update timers and animations
             slint::platform::update_timers_and_animations();
+
+            // Call all events invoked from other threads
+            let proxy_events = {
+                let saved = saved_proxy_event.take().into_iter();
+                let lazy_drain = iter::once_with(|| self.event_receiver.drain()).flatten();
+
+                saved.chain(lazy_drain)
+            };
+
+            for proxy_event in proxy_events {
+                match proxy_event {
+                    ProxyEvent::Event(event) => event(),
+                    ProxyEvent::Quit => break 'outer,
+                }
+            }
 
             // Render the display only if needed
             self.window.draw_if_needed(|renderer| {
                 debug!("Rendering display");
                 renderer.set_rendering_rotation(self.rotation);
-                renderer.render(frame_buffer, pixel_stride);
+
+                // We need to clear in_memory_buffer each time to get rid of leftovers/artifacts.
+                // Not sure why, since we are using `RepaintBufferType::NewBuffer` anyway
+                in_memory_buffer.fill(Rgb565Pixel::default());
+
+                // We are rendering into in_memory_buffer first to avoid flickering on the display,
+                // because looks like Slint is rendering layers (z-index and alpha?) one by one.
+                // This behaviour does not work well in DRM without double buffering,
+                // because immediate states are rendered as well, not only the final result
+                renderer.render(&mut in_memory_buffer, pixel_stride);
+                frame_buffer.copy_from_slice(&in_memory_buffer);
             });
-            // Wait for the next event or sleep for a while, error is ignored because it is timeout
-            let _ = self
-                .event_receiver
-                .recv_timeout(SLEEP_DURATION)
-                .map(|event| event());
+
+            // Do not sleep when there are active animations (as mentioned in `duration_until_next_timer_update` docs)
+            if self.window.has_active_animations() {
+                // If there will be performance issues, we can introduce small delay, like in official `android-activity` implementation.
+                // https://github.com/slint-ui/slint/blob/b80d5a23042c866fbc6d82d00c633bfda9057dd2/internal/backends/android-activity/lib.rs#L102
+                continue;
+            }
+
+            // Wait for the next event, error is ignored because it is timeout/close.
+            saved_proxy_event = match slint::platform::duration_until_next_timer_update() {
+                Some(timeout) => self.event_receiver.recv_timeout(timeout).ok(),
+                None => self.event_receiver.recv().ok(),
+            };
         }
 
         drop(map);
@@ -295,7 +333,7 @@ impl LinuxDrmPlatform {
     pub fn new(width: usize, height: usize, rotation: RenderingRotation) -> Result<Self> {
         info!("Creating linux framebuffer platform");
         let window = MinimalSoftwareWindow::new(
-            slint::platform::software_renderer::RepaintBufferType::ReusedBuffer,
+            slint::platform::software_renderer::RepaintBufferType::NewBuffer,
         );
 
         let (event_sender, event_receiver) = flume::unbounded();
