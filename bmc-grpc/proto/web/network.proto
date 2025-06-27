@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
+import "web/shared.proto";
+
+message NetworkInfoResponse {
+  string mac_address = 1;
+  string ip_address = 2;
+  string hostname = 3;
+}
+
+message NetworkConfig {
+  oneof protocol {
+    google.protobuf.Empty dhcp = 1;
+    NetworkConfigStatic static = 2;
+  }
+}
+
+message NetworkConfigStatic {
+  string address = 1;
+  string netmask = 2;
+  string gateway = 3;
+  repeated string dns_servers = 4;
+}
+
+message SetWifiRequest {
+  string ssid = 1;
+  optional string password = 2;
+  EncryptionType encryption_type = 3;
+}
+
+enum EncryptionType {
+  ENCRYPTION_TYPE_UNSPECIFIED = 0;
+  ENCRYPTION_TYPE_NONE = 1;
+  ENCRYPTION_TYPE_WEP = 2;
+  ENCRYPTION_TYPE_WEP_SHARED = 3;
+  ENCRYPTION_TYPE_WPA = 4;
+  ENCRYPTION_TYPE_WPA1_2 = 5;
+  ENCRYPTION_TYPE_WPA2 = 6;
+  ENCRYPTION_TYPE_WPA2_3 = 7;
+  ENCRYPTION_TYPE_WPA3 = 8;
+}
+
+message ScanWifiResponse {
+  repeated WifiNetwork networks = 1;
+}
+
+enum SignalStrength {
+  SIGNAL_STRENGTH_UNSPECIFIED = 0;
+  SIGNAL_STRENGTH_WEAK = 1;
+  SIGNAL_STRENGTH_MODERATE = 2;
+  SIGNAL_STRENGTH_STRONG = 3;
+}
+
+message WifiNetwork {
+  string ssid = 1;
+  EncryptionType encryption_type = 2;
+  SignalStrength signal_strength = 3;
+}
+
+service NetworkService {
+  rpc GetNetworkInfo(google.protobuf.Empty) returns (NetworkInfoResponse);
+  rpc GetNetworkConfig(google.protobuf.Empty) returns (NetworkConfig);
+  rpc SetNetworkConfig(NetworkConfig) returns (google.protobuf.Empty);
+  rpc SetWifi(SetWifiRequest) returns (google.protobuf.Empty);
+  rpc ScanWifi(google.protobuf.Empty) returns (ScanWifiResponse);
+}
