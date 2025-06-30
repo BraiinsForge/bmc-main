@@ -4,8 +4,8 @@
 
 import type { GenEnum, GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv2';
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
-import type { EmptySchema } from '@bufbuild/protobuf/wkt';
-import { file_google_protobuf_empty } from '@bufbuild/protobuf/wkt';
+import type { EmptySchema, UInt32ValueSchema } from '@bufbuild/protobuf/wkt';
+import { file_google_protobuf_empty, file_google_protobuf_wrappers } from '@bufbuild/protobuf/wkt';
 import type { Message } from '@bufbuild/protobuf';
 
 /**
@@ -14,8 +14,8 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_configuration: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chd3ZWIvY29uZmlndXJhdGlvbi5wcm90bxIPYnJhaWlucy5ibWMud2ViIiQKCFBvc2l0aW9uEgsKA3JvdxgBIAEoDRILCgNjb2wYAiABKA0iLgoVQ2xvY2tBbmFsb2dSb3VuZFNtYWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgiLwoWQ2xvY2tBbmFsb2dSb3VuZE1lZGl1bRIVCg1zaG93X3RpbWV6b25lGAEgASgIIi4KFUNsb2NrQW5hbG9nUm91bmRMYXJnZRIVCg1zaG93X3RpbWV6b25lGAEgASgIIkAKFENsb2NrQW5hbG9nUm91bmRGdWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgSEQoJc2hvd19kYXRlGAIgASgIIi0KFENsb2NrQW5hbG9nUmVjdFNtYWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgiLgoVQ2xvY2tBbmFsb2dSZWN0TWVkaXVtEhUKDXNob3dfdGltZXpvbmUYASABKAgiLQoUQ2xvY2tBbmFsb2dSZWN0TGFyZ2USFQoNc2hvd190aW1lem9uZRgBIAEoCCI/ChNDbG9ja0FuYWxvZ1JlY3RGdWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgSEQoJc2hvd19kYXRlGAIgASgIIkAKEUNsb2NrRGlnaXRhbFNtYWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgSFAoMc2hvd19zZWNvbmRzGAIgASgIIkEKEkNsb2NrRGlnaXRhbE1lZGl1bRIVCg1zaG93X3RpbWV6b25lGAEgASgIEhQKDHNob3dfc2Vjb25kcxgCIAEoCCJAChFDbG9ja0RpZ2l0YWxMYXJnZRIVCg1zaG93X3RpbWV6b25lGAEgASgIEhQKDHNob3dfc2Vjb25kcxgCIAEoCCJSChBDbG9ja0RpZ2l0YWxGdWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgSFAoMc2hvd19zZWNvbmRzGAIgASgIEhEKCXNob3dfZGF0ZRgDIAEoCCLJBgoKQ2xvY2tTdHlsZRJGChRjbG9ja19hbmFsb2dfcm91bmRfcxgBIAEoCzImLmJyYWlpbnMuYm1jLndlYi5DbG9ja0FuYWxvZ1JvdW5kU21hbGxIABJHChRjbG9ja19hbmFsb2dfcm91bmRfbRgCIAEoCzInLmJyYWlpbnMuYm1jLndlYi5DbG9ja0FuYWxvZ1JvdW5kTWVkaXVtSAASRgoUY2xvY2tfYW5hbG9nX3JvdW5kX2wYAyABKAsyJi5icmFpaW5zLmJtYy53ZWIuQ2xvY2tBbmFsb2dSb3VuZExhcmdlSAASRQoUY2xvY2tfYW5hbG9nX3JvdW5kX2YYBCABKAsyJS5icmFpaW5zLmJtYy53ZWIuQ2xvY2tBbmFsb2dSb3VuZEZ1bGxIABJEChNjbG9ja19hbmFsb2dfcmVjdF9zGAUgASgLMiUuYnJhaWlucy5ibWMud2ViLkNsb2NrQW5hbG9nUmVjdFNtYWxsSAASRQoTY2xvY2tfYW5hbG9nX3JlY3RfbRgGIAEoCzImLmJyYWlpbnMuYm1jLndlYi5DbG9ja0FuYWxvZ1JlY3RNZWRpdW1IABJEChNjbG9ja19hbmFsb2dfcmVjdF9sGAcgASgLMiUuYnJhaWlucy5ibWMud2ViLkNsb2NrQW5hbG9nUmVjdExhcmdlSAASQwoTY2xvY2tfYW5hbG9nX3JlY3RfZhgIIAEoCzIkLmJyYWlpbnMuYm1jLndlYi5DbG9ja0FuYWxvZ1JlY3RGdWxsSAASPQoPY2xvY2tfZGlnaXRhbF9zGAkgASgLMiIuYnJhaWlucy5ibWMud2ViLkNsb2NrRGlnaXRhbFNtYWxsSAASPgoPY2xvY2tfZGlnaXRhbF9tGAogASgLMiMuYnJhaWlucy5ibWMud2ViLkNsb2NrRGlnaXRhbE1lZGl1bUgAEj0KD2Nsb2NrX2RpZ2l0YWxfbBgLIAEoCzIiLmJyYWlpbnMuYm1jLndlYi5DbG9ja0RpZ2l0YWxMYXJnZUgAEjwKD2Nsb2NrX2RpZ2l0YWxfZhgMIAEoCzIhLmJyYWlpbnMuYm1jLndlYi5DbG9ja0RpZ2l0YWxGdWxsSABCBwoFc3R5bGUiuQEKD0FkZENsb2NrUmVxdWVzdBIrCghwb3NpdGlvbhgBIAEoCzIZLmJyYWlpbnMuYm1jLndlYi5Qb3NpdGlvbhIQCgh0aW1lem9uZRgCIAEoCRI1ChFudW1iZXJfZm9udF9zdHlsZRgDIAEoDjIaLmJyYWlpbnMuYm1jLndlYi5Gb250U3R5bGUSMAoLY2xvY2tfc3R5bGUYBCABKAsyGy5icmFpaW5zLmJtYy53ZWIuQ2xvY2tTdHlsZSplCglGb250U3R5bGUSGQoVRk9OVFNUWUxFX1VOU1BFQ0lGSUVEEAASEwoPRk9OVFNUWUxFX0xJR0hUEAESFAoQRk9OVFNUWUxFX01FRElVTRACEhIKDkZPTlRTVFlMRV9CT0xEEAMyYgoUQ29uZmlndXJhdGlvblNlcnZpY2USSgoOQWRkQ2xvY2tXaWRnZXQSIC5icmFpaW5zLmJtYy53ZWIuQWRkQ2xvY2tSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5YgZwcm90bzM',
-        [file_google_protobuf_empty],
+        'Chd3ZWIvY29uZmlndXJhdGlvbi5wcm90bxIPYnJhaWlucy5ibWMud2ViIiQKCFBvc2l0aW9uEgsKA3JvdxgBIAEoDRILCgNjb2wYAiABKA0iLgoVQ2xvY2tBbmFsb2dSb3VuZFNtYWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgiLwoWQ2xvY2tBbmFsb2dSb3VuZE1lZGl1bRIVCg1zaG93X3RpbWV6b25lGAEgASgIIi4KFUNsb2NrQW5hbG9nUm91bmRMYXJnZRIVCg1zaG93X3RpbWV6b25lGAEgASgIIkAKFENsb2NrQW5hbG9nUm91bmRGdWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgSEQoJc2hvd19kYXRlGAIgASgIIi0KFENsb2NrQW5hbG9nUmVjdFNtYWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgiLgoVQ2xvY2tBbmFsb2dSZWN0TWVkaXVtEhUKDXNob3dfdGltZXpvbmUYASABKAgiLQoUQ2xvY2tBbmFsb2dSZWN0TGFyZ2USFQoNc2hvd190aW1lem9uZRgBIAEoCCI/ChNDbG9ja0FuYWxvZ1JlY3RGdWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgSEQoJc2hvd19kYXRlGAIgASgIIkAKEUNsb2NrRGlnaXRhbFNtYWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgSFAoMc2hvd19zZWNvbmRzGAIgASgIIkEKEkNsb2NrRGlnaXRhbE1lZGl1bRIVCg1zaG93X3RpbWV6b25lGAEgASgIEhQKDHNob3dfc2Vjb25kcxgCIAEoCCJAChFDbG9ja0RpZ2l0YWxMYXJnZRIVCg1zaG93X3RpbWV6b25lGAEgASgIEhQKDHNob3dfc2Vjb25kcxgCIAEoCCJSChBDbG9ja0RpZ2l0YWxGdWxsEhUKDXNob3dfdGltZXpvbmUYASABKAgSFAoMc2hvd19zZWNvbmRzGAIgASgIEhEKCXNob3dfZGF0ZRgDIAEoCCLJBgoKQ2xvY2tTdHlsZRJGChRjbG9ja19hbmFsb2dfcm91bmRfcxgBIAEoCzImLmJyYWlpbnMuYm1jLndlYi5DbG9ja0FuYWxvZ1JvdW5kU21hbGxIABJHChRjbG9ja19hbmFsb2dfcm91bmRfbRgCIAEoCzInLmJyYWlpbnMuYm1jLndlYi5DbG9ja0FuYWxvZ1JvdW5kTWVkaXVtSAASRgoUY2xvY2tfYW5hbG9nX3JvdW5kX2wYAyABKAsyJi5icmFpaW5zLmJtYy53ZWIuQ2xvY2tBbmFsb2dSb3VuZExhcmdlSAASRQoUY2xvY2tfYW5hbG9nX3JvdW5kX2YYBCABKAsyJS5icmFpaW5zLmJtYy53ZWIuQ2xvY2tBbmFsb2dSb3VuZEZ1bGxIABJEChNjbG9ja19hbmFsb2dfcmVjdF9zGAUgASgLMiUuYnJhaWlucy5ibWMud2ViLkNsb2NrQW5hbG9nUmVjdFNtYWxsSAASRQoTY2xvY2tfYW5hbG9nX3JlY3RfbRgGIAEoCzImLmJyYWlpbnMuYm1jLndlYi5DbG9ja0FuYWxvZ1JlY3RNZWRpdW1IABJEChNjbG9ja19hbmFsb2dfcmVjdF9sGAcgASgLMiUuYnJhaWlucy5ibWMud2ViLkNsb2NrQW5hbG9nUmVjdExhcmdlSAASQwoTY2xvY2tfYW5hbG9nX3JlY3RfZhgIIAEoCzIkLmJyYWlpbnMuYm1jLndlYi5DbG9ja0FuYWxvZ1JlY3RGdWxsSAASPQoPY2xvY2tfZGlnaXRhbF9zGAkgASgLMiIuYnJhaWlucy5ibWMud2ViLkNsb2NrRGlnaXRhbFNtYWxsSAASPgoPY2xvY2tfZGlnaXRhbF9tGAogASgLMiMuYnJhaWlucy5ibWMud2ViLkNsb2NrRGlnaXRhbE1lZGl1bUgAEj0KD2Nsb2NrX2RpZ2l0YWxfbBgLIAEoCzIiLmJyYWlpbnMuYm1jLndlYi5DbG9ja0RpZ2l0YWxMYXJnZUgAEjwKD2Nsb2NrX2RpZ2l0YWxfZhgMIAEoCzIhLmJyYWlpbnMuYm1jLndlYi5DbG9ja0RpZ2l0YWxGdWxsSABCBwoFc3R5bGUiuQEKD0FkZENsb2NrUmVxdWVzdBIrCghwb3NpdGlvbhgBIAEoCzIZLmJyYWlpbnMuYm1jLndlYi5Qb3NpdGlvbhIQCgh0aW1lem9uZRgCIAEoCRI1ChFudW1iZXJfZm9udF9zdHlsZRgDIAEoDjIaLmJyYWlpbnMuYm1jLndlYi5Gb250U3R5bGUSMAoLY2xvY2tfc3R5bGUYBCABKAsyGy5icmFpaW5zLmJtYy53ZWIuQ2xvY2tTdHlsZSJHCg5CcmlnaHRuZXNzSW5mbxINCgV2YWx1ZRgBIAEoDRILCgNtaW4YAiABKA0SCwoDbWF4GAMgASgNEgwKBHN0ZXAYBCABKA0iTgoXRGlzcGxheVNldHRpbmdzUmVzcG9uc2USMwoKYnJpZ2h0bmVzcxgBIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5CcmlnaHRuZXNzSW5mbyplCglGb250U3R5bGUSGQoVRk9OVFNUWUxFX1VOU1BFQ0lGSUVEEAASEwoPRk9OVFNUWUxFX0xJR0hUEAESFAoQRk9OVFNUWUxFX01FRElVTRACEhIKDkZPTlRTVFlMRV9CT0xEEAMygQIKFENvbmZpZ3VyYXRpb25TZXJ2aWNlEkoKDkFkZENsb2NrV2lkZ2V0EiAuYnJhaWlucy5ibWMud2ViLkFkZENsb2NrUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJFCg1TZXRCcmlnaHRuZXNzEhwuZ29vZ2xlLnByb3RvYnVmLlVJbnQzMlZhbHVlGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElYKEkdldERpc3BsYXlTZXR0aW5ncxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRooLmJyYWlpbnMuYm1jLndlYi5EaXNwbGF5U2V0dGluZ3NSZXNwb25zZWIGcHJvdG8z',
+        [file_google_protobuf_empty, file_google_protobuf_wrappers],
     );
 
 /**
@@ -440,6 +440,55 @@ export type AddClockRequest = Message<'braiins.bmc.web.AddClockRequest'> & {
 export const AddClockRequestSchema: GenMessage<AddClockRequest> = /*@__PURE__*/ messageDesc(file_web_configuration, 14);
 
 /**
+ * @generated from message braiins.bmc.web.BrightnessInfo
+ */
+export type BrightnessInfo = Message<'braiins.bmc.web.BrightnessInfo'> & {
+    /**
+     * @generated from field: uint32 value = 1;
+     */
+    value: number;
+
+    /**
+     * @generated from field: uint32 min = 2;
+     */
+    min: number;
+
+    /**
+     * @generated from field: uint32 max = 3;
+     */
+    max: number;
+
+    /**
+     * @generated from field: uint32 step = 4;
+     */
+    step: number;
+};
+
+/**
+ * Describes the message braiins.bmc.web.BrightnessInfo.
+ * Use `create(BrightnessInfoSchema)` to create a new message.
+ */
+export const BrightnessInfoSchema: GenMessage<BrightnessInfo> = /*@__PURE__*/ messageDesc(file_web_configuration, 15);
+
+/**
+ * @generated from message braiins.bmc.web.DisplaySettingsResponse
+ */
+export type DisplaySettingsResponse = Message<'braiins.bmc.web.DisplaySettingsResponse'> & {
+    /**
+     * @generated from field: braiins.bmc.web.BrightnessInfo brightness = 1;
+     */
+    brightness?: BrightnessInfo;
+};
+
+/**
+ * Describes the message braiins.bmc.web.DisplaySettingsResponse.
+ * Use `create(DisplaySettingsResponseSchema)` to create a new message.
+ */
+export const DisplaySettingsResponseSchema: GenMessage<DisplaySettingsResponse> =
+    /*@__PURE__*/
+    messageDesc(file_web_configuration, 16);
+
+/**
  * Font style
  *
  * @generated from enum braiins.bmc.web.FontStyle
@@ -482,5 +531,21 @@ export const ConfigurationService: GenService<{
         methodKind: 'unary';
         input: typeof AddClockRequestSchema;
         output: typeof EmptySchema;
+    };
+    /**
+     * @generated from rpc braiins.bmc.web.ConfigurationService.SetBrightness
+     */
+    setBrightness: {
+        methodKind: 'unary';
+        input: typeof UInt32ValueSchema;
+        output: typeof EmptySchema;
+    };
+    /**
+     * @generated from rpc braiins.bmc.web.ConfigurationService.GetDisplaySettings
+     */
+    getDisplaySettings: {
+        methodKind: 'unary';
+        input: typeof EmptySchema;
+        output: typeof DisplaySettingsResponseSchema;
     };
 }> = /*@__PURE__*/ serviceDesc(file_web_configuration, 0);

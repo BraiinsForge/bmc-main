@@ -18,7 +18,7 @@ export default {
     title: 'settings/components/SectionDisplay',
     component: Component,
     args: {
-        brightnessDay: getArg('brightnessDay', 75),
+        brightness: getArg('brightnessDay', 75),
         nightBrightness: getArg('nightBrightness', 25),
         nightEnabled: getArg('nightEnabled', true),
         nightUseLocation: getArg('nightUseLocation', true),

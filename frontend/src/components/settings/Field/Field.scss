@@ -91,5 +91,19 @@ $left-size-min: to-rem(280px);
         [role='listbox'] {
             box-shadow: shadows.$elevation-8dp;
         }
+
+        :global {
+            // Stretch the slider container
+            // This was needed after allowing the slider to go narrower.
+            .cds--slider-container {
+                width: 100%;
+            }
+
+            // Allow the slider to go narrower not to stretch our widget area.
+            // In combination with stretch of the container, this will still let the slider to go as wide as possible.
+            .cds--slider {
+                min-inline-size: mini-units(10);
+            }
+        }
     }
 }

@@ -1,6 +1,6 @@
 import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
-import { Form, type iField, getID } from '@/lib/form';
+import { Form, type iField, type iFieldNumber, getID } from '@/lib/form';
 
 import { CarbonFormField, Field, FieldSet, Button } from '@/components';
 import { Toggle, Slider, TextInput } from '@carbon/react';
@@ -10,8 +10,8 @@ import { Location } from '@carbon/react/icons';
 import css from './SectionDisplay.scss';
 
 export interface SectionDisplayProps {
-    brightnessDay: iField<Integer<0, 100>>;
-    nightBrightness: iField<Integer<0, 100>>;
+    brightness: iFieldNumber<Integer<0, 100>>;
+    nightBrightness: iFieldNumber<Integer<0, 100>>;
     nightEnabled: iField<boolean>;
     nightUseLocation: iField<boolean>;
     nightLocation: iField<string>;
@@ -30,7 +30,7 @@ class View extends Component<Props> {
             intl,
 
             // Fields
-            brightnessDay,
+            brightness,
             nightBrightness,
 
             // Night mode
@@ -46,26 +46,28 @@ class View extends Component<Props> {
                 <FieldSet title={intl.formatMessage({ defaultMessage: 'Brigthness' })}>
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Screen Brightness' })}
-                        disabled={brightnessDay.disabled}
+                        disabled={brightness.disabled}
                     >
                         <Slider
                             id={$id.get('brightness-day')}
                             hideLabel
                             labelText=""
                             // Range
-                            step={1}
                             stepMultiplier={10}
-                            min={0}
-                            max={100}
+                            min={brightness.min ?? 0}
+                            max={brightness.max ?? 0}
+                            step={brightness.step ?? 1}
                             // Value
-                            value={brightnessDay.value ?? 0}
-                            disabled={brightnessDay.disabled}
-                            onChange={x => brightnessDay.onChange(x.value)}
-                            invalid={!!brightnessDay.error}
-                            invalidText={brightnessDay.error}
+                            value={brightness.value ?? 0}
+                            disabled={brightness.disabled}
+                            onChange={x => brightness.onChange(x.value)}
+                            invalid={!!brightness.error}
+                            invalidText={brightness.error}
                         />
                     </Field>
+                </FieldSet>
 
+                <FieldSet title={intl.formatMessage({ defaultMessage: 'Night Mode' })}>
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Night Mode Brightness' })}
                         disabled={nightBrightness.disabled}
@@ -75,10 +77,10 @@ class View extends Component<Props> {
                             hideLabel
                             labelText=""
                             // Range
-                            step={1}
                             stepMultiplier={10}
-                            min={0}
-                            max={100}
+                            min={brightness.min ?? 0}
+                            max={brightness.max ?? 100}
+                            step={brightness.step ?? 1}
                             // Value
                             value={nightBrightness.value ?? 0}
                             disabled={nightBrightness.disabled}
@@ -87,9 +89,7 @@ class View extends Component<Props> {
                             invalidText={nightBrightness.error}
                         />
                     </Field>
-                </FieldSet>
 
-                <FieldSet title={intl.formatMessage({ defaultMessage: 'Night Mode' })}>
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Enable Night Mode' })}
                         description={intl.formatMessage({

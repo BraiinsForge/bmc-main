@@ -78,10 +78,13 @@ interface State {
     globalErrors: Maybe<string[]>;
     data: {
         timezones: ReadonlyArray<pb.Timezone>;
+        display: null | pb.DisplaySettingsResponse;
         upgradeInfo: null | pb.CheckForUpgradeResponse;
     };
 
     genTimezone: LeafState<pb.Timezone>;
+
+    dspBrightness: LeafState<number>;
 
     secAllowDataCollection: LeafState<boolean>;
 
@@ -93,8 +96,11 @@ const getInitialState = (): State => ({
     globalErrors: null,
     data: {
         timezones: [],
+        display: null,
         upgradeInfo: null,
     },
+
+    dspBrightness: getEmptyLeafState(),
 
     genTimezone: getEmptyLeafState(),
     secAllowDataCollection: getEmptyLeafState(),
@@ -152,7 +158,7 @@ class View extends Component<Props, State> {
 
     #noop = () => {};
     #fetchData = async (): Promise<void> => {
-        await Promise.allSettled([this.#upgradesFeedCheck(), this.#fetchSystemInfo()]);
+        await Promise.allSettled([this.#upgradesFeedCheck(), this.#fetchSystemInfo(), this.#displayFetch()]);
     };
 
     private fetchSystemInfoAbort = pb.abort.get();
@@ -308,13 +314,61 @@ class View extends Component<Props, State> {
     // Display
     //
 
+    private displayFetchAbort = pb.abort.get();
+    #displayFetch = async (): Promise<void> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.displayFetchAbort.replace();
+            const d = await pb.rpc.config.getDisplaySettings({}, { signal });
+            this.setState(s => ({
+                data: {
+                    ...s.data,
+                    display: d,
+                },
+            }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            notify('error', formatMessage({ defaultMessage: 'Failed to load display settings!' }));
+        }
+    };
+    private displaySetBrightnessAbort = pb.abort.get();
+    #displaySetBrightness = debounce(async (value: Maybe<number>): Promise<void> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+        const currentValue = this.state.data.display?.brightness?.value ?? null;
+        if (value == null || value === currentValue) return;
+
+        try {
+            const { signal } = this.displaySetBrightnessAbort.replace();
+            await pb.rpc.config.setBrightness({ value }, { signal });
+            notify('success', formatMessage({ defaultMessage: 'Brightness Saved' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            this.setState(s => ({
+                dspBrightness: {
+                    ...s.dspBrightness,
+                    errors: pb.collectAllErrors($) ?? [
+                        formatMessage({ defaultMessage: 'Failed to save the brightness!' }),
+                    ],
+                },
+            }));
+        }
+    }, 600);
     #displayRender = (): ReactNode => {
+        const { dspBrightness, data } = this.state;
+
         return (
             <SectionDisplay
-                brightnessDay={{
-                    value: 78,
-                    disabled: true,
-                    onChange: this.#noop,
+                brightness={{
+                    value: dspBrightness.value ?? data.display?.brightness?.value ?? null,
+                    min: data.display?.brightness?.min,
+                    max: data.display?.brightness?.max,
+                    step: data.display?.brightness?.step,
+                    error: pb.renderFieldErrorsAsList(dspBrightness.errors),
+                    disabled: !data.display?.brightness,
+                    onChange: this.#displaySetBrightness,
                 }}
                 // Night
                 nightBrightness={{
