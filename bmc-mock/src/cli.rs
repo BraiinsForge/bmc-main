@@ -64,7 +64,10 @@ pub struct Config {
     pub setup_pending: bool,
     /// Default display brightness. Value between 0-100
     #[clap(long, default_value = "80")]
-    pub default_brightness_percentage: u8,
+    pub default_brightness_pct: u8,
+    /// Default display brightness in night mode. Value between 0-100
+    #[clap(long, default_value = "50")]
+    pub default_night_mode_brightness_pct: u8,
 }
 
 impl From<Config> for Configuration {
@@ -84,7 +87,8 @@ impl From<Config> for Configuration {
             server_config,
             upgrade_image_path: value.mockfs_path.join("tmp/firmware.tar"),
             config_path: value.mockfs_path.join(value.config_path),
-            default_brightness_pct: value.default_brightness_percentage,
+            default_brightness_pct: value.default_brightness_pct,
+            default_night_mode_brightness_pct: value.default_night_mode_brightness_pct,
         }
     }
 }

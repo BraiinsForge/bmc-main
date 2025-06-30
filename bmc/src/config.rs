@@ -6,6 +6,7 @@ use bmc_display::data::{
     Scene, SceneCycling, SceneId, SceneKind, WidgetSize, deserialize_scenes, serialize_scenes,
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem};
+use chrono::NaiveTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,8 @@ pub struct Config {
     data_collection: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     brightness_pct: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    night_mode: Option<NightModeConfigData>,
 }
 
 impl Config {
@@ -65,10 +68,6 @@ impl Config {
 
     pub fn set_data_collection(&mut self, data_collection: bool) {
         self.data_collection = Some(data_collection);
-    }
-
-    pub fn set_brightness_pct(&mut self, brightness_pct: u8) {
-        self.brightness_pct = Some(brightness_pct);
     }
 
     fn validate(&self) -> Result<()> {
@@ -158,10 +157,15 @@ pub struct ConfigHandle {
     path: PathBuf,
     config: Config,
     default_brightness_pct: u8,
+    default_night_mode_brightness_pct: u8,
 }
 
 impl ConfigHandle {
-    pub async fn init(path: PathBuf, default_brightness_pct: u8) -> Result<Self> {
+    pub async fn init(
+        path: PathBuf,
+        default_brightness_pct: u8,
+        default_night_mode_brightness_pct: u8,
+    ) -> Result<Self> {
         let config_data = fs::read_to_string(&path).await?;
         let config: Config = serde_json::from_str(config_data.as_str())?;
 
@@ -171,6 +175,7 @@ impl ConfigHandle {
             path,
             config,
             default_brightness_pct,
+            default_night_mode_brightness_pct,
         })
     }
 
@@ -181,10 +186,58 @@ impl ConfigHandle {
         Ok(())
     }
 
+    pub fn set_brightness(&mut self, brightness_pct: u8) {
+        self.brightness_pct = Some(brightness_pct);
+    }
+
     pub fn brightness_pct(&self) -> u8 {
-        self.config
-            .brightness_pct
-            .unwrap_or(self.default_brightness_pct)
+        self.brightness_pct.unwrap_or(self.default_brightness_pct)
+    }
+
+    pub fn night_mode(&self) -> NightModeConfig {
+        self.night_mode
+            .clone()
+            .unwrap_or_default()
+            .into_night_mode_config(self.default_night_mode_brightness_pct)
+    }
+
+    pub fn set_night_mode_enabled(&mut self, enabled: bool) {
+        if let Some(ref mut night_mode) = self.night_mode {
+            night_mode.enabled = enabled;
+        } else {
+            let night_mode = NightModeConfigData {
+                enabled,
+                ..Default::default()
+            };
+            self.night_mode = Some(night_mode);
+        }
+    }
+
+    pub fn set_night_mode_brightness(&mut self, brightness_pct: u8) {
+        if let Some(ref mut night_mode) = self.night_mode {
+            night_mode.brightness_pct = Some(brightness_pct);
+        } else {
+            let night_mode = NightModeConfigData {
+                brightness_pct: Some(brightness_pct),
+                ..Default::default()
+            };
+            self.night_mode = Some(night_mode);
+        }
+    }
+
+    pub fn set_night_mode_interval(&mut self, from: NaiveTime, to: NaiveTime) {
+        if let Some(ref mut night_mode) = self.night_mode {
+            night_mode.from = from;
+            night_mode.to = to;
+        } else {
+            let night_mode = NightModeConfigData {
+                from,
+                to,
+                ..Default::default()
+            };
+
+            self.night_mode = Some(night_mode);
+        }
     }
 }
 
@@ -211,5 +264,52 @@ impl AsRef<Config> for ConfigHandle {
 impl AsMut<Config> for ConfigHandle {
     fn as_mut(&mut self) -> &mut Config {
         self
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct NightModeConfigData {
+    enabled: bool,
+    from: NaiveTime,
+    to: NaiveTime,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brightness_pct: Option<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NightModeConfig {
+    pub enabled: bool,
+    pub from: NaiveTime,
+    pub to: NaiveTime,
+    pub brightness_pct: u8,
+}
+
+impl NightModeConfigData {
+    fn default_from() -> NaiveTime {
+        NaiveTime::from_hms_opt(22, 30, 0).expect("BUG: Invalid default night mode interval")
+    }
+
+    fn default_to() -> NaiveTime {
+        NaiveTime::from_hms_opt(6, 30, 0).expect("BUG: Invalid default night mode interval")
+    }
+
+    fn into_night_mode_config(self, default_brightness: u8) -> NightModeConfig {
+        NightModeConfig {
+            enabled: self.enabled,
+            from: self.from,
+            to: self.to,
+            brightness_pct: self.brightness_pct.unwrap_or(default_brightness),
+        }
+    }
+}
+
+impl Default for NightModeConfigData {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            from: NightModeConfigData::default_from(),
+            to: NightModeConfigData::default_to(),
+            brightness_pct: None,
+        }
     }
 }
