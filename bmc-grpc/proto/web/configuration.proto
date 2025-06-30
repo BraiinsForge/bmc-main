@@ -14,9 +14,20 @@ message BrightnessInfo {
 
 message DisplaySettingsResponse {
   BrightnessInfo brightness = 1;
+  BrightnessInfo brightness_nightmode = 2;
+  bool nightmode_enabled = 3;
+  TimeInterval nightmode_interval = 4;
+}
+
+message TimeInterval {
+  string from = 1; // Expected format: HH:MM
+  string to = 2; // Expected format: HH:MM
 }
 
 service ConfigurationService {
   rpc SetBrightness(google.protobuf.UInt32Value) returns (google.protobuf.Empty);
   rpc GetDisplaySettings(google.protobuf.Empty) returns (DisplaySettingsResponse);
+  rpc SetBrightnessNightmode(google.protobuf.UInt32Value) returns (google.protobuf.Empty);
+  rpc SetNightmodeEnabled(google.protobuf.BoolValue) returns (google.protobuf.Empty);
+  rpc SetNightmodeInterval(TimeInterval) returns (google.protobuf.Empty);
 }
