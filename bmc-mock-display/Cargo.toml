@@ -3,10 +3,15 @@ name = "bmc-mock-display"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+winit = ["slint/backend-winit", "slint/renderer-winit-software"]
+
 [dependencies]
 anyhow.workspace = true
 bmc-display.workspace = true
-slint = { workspace = true, features = ["backend-winit", "renderer-winit-software"] }
+flume.workspace = true
+minifb.workspace = true
+slint = { workspace = true, features = ["renderer-software"] }
 tokio.workspace = true
 tracing.workspace = true
 

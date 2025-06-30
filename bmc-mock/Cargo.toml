@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Braiins <braiins@braiins.com>"]
 
+[features]
+winit = ["bmc-mock-display/winit"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

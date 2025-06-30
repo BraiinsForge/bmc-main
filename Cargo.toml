@@ -129,6 +129,7 @@ maud = "0.27.0"
 memmap2 = "0.9.4"
 mime_guess = "2.0.5"
 minerctl-defs = { path = "tooling/minerctl/minerctl-defs" }
+minifb = "0.28.0"
 nonzero_ext = "0.3.0"
 parking_lot = "0.12.3"
 pin-project = "1.1.10"
