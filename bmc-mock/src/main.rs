@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use bmc::log;
+use bmc_led::led_driver::LedDriver;
 use bmc_mock::MockSessionManager;
 use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
 use bmc_mock_display::VirtualDisplay;
@@ -41,13 +42,24 @@ async fn main() -> Result<()> {
 
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
+    let mut led_driver = LedDriver::new();
+    let led_cmd_tx = led_driver.init()?;
+
     let firmware_resolver = FirmwareResolver::new(MockIndex);
 
     let main_join_handle = tokio::task::spawn({
         let display_controller = display_driver.display_controller.clone();
         let window_closed_fut = display_controller.window_closed();
         async move {
-            let result = bmc::entry::main(manager, config, display_driver, firmware_resolver).await;
+            let result = bmc::entry::main(
+                manager,
+                config,
+                display_driver,
+                led_driver,
+                led_cmd_tx,
+                firmware_resolver,
+            )
+            .await;
             display_controller.quit();
             result
         }

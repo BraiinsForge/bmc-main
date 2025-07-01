@@ -7,6 +7,7 @@ use bmc_display::{
     display_driver::{DisplayBacklightDriver, DisplayDriver},
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
 };
+use bmc_led::led_driver::LedDriver;
 use bmc_openwrt::{
     generic_backlight_driver::GenericBacklightDriver, linux_drm_platform::LinuxDrmPlatform,
     manager::Manager, session::OpenwrtSessionManager,
@@ -26,6 +27,9 @@ async fn main() -> Result<()> {
     let mut backlight_driver = GenericBacklightDriver::new("/sys/class/backlight/display-bl");
     backlight_driver.init()?;
 
+    let mut led_driver = LedDriver::new();
+    let led_cmd_tx = led_driver.init()?;
+
     //TODO: this will be read from config file or emmc
     let brightness = UsizeMetadata::new(18, 0, 20);
     let resolution = ResolutionMetadata::new(1280, 480);
@@ -36,10 +40,8 @@ async fn main() -> Result<()> {
     let display_driver = DisplayDriver::init(backlight_driver, display_controller)?;
 
     let config = Configuration::default();
-
     let bmc_index = bmc::firmware::BmcIndex;
     let firmware_resolver = FirmwareResolver::new(bmc_index);
-
     let current_timezone = iana_time_zone::get_timezone()
         .ok()
         .and_then(|timezone| Timezone::from_str(&timezone).ok())
@@ -57,7 +59,15 @@ async fn main() -> Result<()> {
     );
     manager.init_wifi_ap().await?; // Has check on factory default already
 
-    bmc::entry::main(manager, config, display_driver, firmware_resolver).await?;
+    bmc::entry::main(
+        manager,
+        config,
+        display_driver,
+        led_driver,
+        led_cmd_tx,
+        firmware_resolver,
+    )
+    .await?;
 
     Ok(())
 }

@@ -16,6 +16,7 @@ pub trait LedHandle: Sync + Send + Clone + Debug {
 pub struct LedDriver;
 
 impl LedDriver {
+    #[must_use]
     pub fn new() -> Self {
         Self {}
     }
@@ -44,6 +45,7 @@ impl LedDriver {
         Ok(0)
     }
 
+    #[must_use]
     pub fn max_brightness(&self) -> u8 {
         0
     }
@@ -63,6 +65,7 @@ pub struct LedHandler {
 }
 
 impl LedHandler {
+    #[must_use]
     pub fn new(_: LedDriver) -> Self {
         Self {
             event_sender: EventHandler::init(),

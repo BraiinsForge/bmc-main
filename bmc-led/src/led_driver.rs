@@ -32,6 +32,7 @@ struct LedState {
 }
 
 impl LedState {
+    #[expect(clippy::integer_division)]
     const fn default() -> Self {
         let mut temp = LedState {
             period_us: config::DEFAULT_PERIOD * 1_000,
@@ -39,7 +40,8 @@ impl LedState {
             fireflies_state: FirefliesState::default(),
             brightness: config::APA102_MAX_BRIGHTNESS,
             effect: LedEffect::Fireflies,
-            color: Rgb::from(0x8B, 0x31, 0xCF),
+            // color: Rgb::from(0x8B, 0x31, 0xCF),
+            color: Rgb::from(0xFF, 0xFF, 0xFF),
         };
 
         temp.frame_interval = Duration::from_micros(
@@ -49,9 +51,11 @@ impl LedState {
         temp
     }
 
+    #[expect(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_sign_loss)]
     fn set_brightness(&mut self, brightness: f32) {
         self.brightness =
-            ((config::APA102_MAX_BRIGHTNESS as f32) * brightness.clamp(0.0, 1.0)) as u8
+            ((f32::from(config::APA102_MAX_BRIGHTNESS)) * brightness.clamp(0.0, 1.0)) as u8;
     }
 }
 
@@ -59,6 +63,7 @@ impl LedState {
 pub struct LedDriver;
 
 impl LedDriver {
+    #[must_use]
     pub fn new() -> Self {
         Self {}
     }
@@ -87,6 +92,7 @@ impl LedDriver {
         Ok(0)
     }
 
+    #[must_use]
     pub fn max_brightness(&self) -> u8 {
         config::APA102_MAX_BRIGHTNESS
     }
@@ -96,19 +102,34 @@ impl LedDriver {
     }
 
     async fn led_worker(mut led_cmd_rx: Receiver<LedCommand>) -> ! {
-        let mut raw_spi = Spidev::open(config::SPI_DEV).expect("Failed to open SPI device");
+        let mut raw_spi = match Spidev::open(config::SPI_DEV) {
+            Ok(raw_spi) => raw_spi,
+            Err(error) => {
+                panic!("SPI device open failed {error}");
+            }
+        };
+
         let options = SpidevOptions::new()
             .bits_per_word(8)
             .max_speed_hz(4_000_000)
             .mode(SpiModeFlags::SPI_MODE_0)
             .build();
-        raw_spi
-            .configure(&options)
-            .expect("Failed to configure SPI");
+
+        match raw_spi.configure(&options) {
+            Ok(()) => {
+                // Do nothing
+            }
+            Err(error) => {
+                panic!("SPI device configuration failed {error}");
+            }
+        }
 
         let mut spi = embedded_hal::SpidevHalWrapper(raw_spi);
-        let mut strip =
-            apa102_spi::Apa102Writer::new(&mut spi, config::LED_COUNT, apa102_spi::PixelOrder::BGR);
+        let mut strip = apa102_spi::Apa102Writer::new(
+            &mut spi,
+            config::LED_COUNT as usize,
+            apa102_spi::PixelOrder::BGR,
+        );
 
         let mut led_state: LedState = LedState::default();
 
@@ -140,7 +161,9 @@ impl LedDriver {
                 }
             }
 
-            let elapsed = (Instant::now() - start).as_micros() as u64 % led_state.period_us;
+            #[expect(clippy::cast_possible_truncation)]
+            let elapsed = start.elapsed().as_micros() as u64 % led_state.period_us;
+            #[expect(clippy::cast_precision_loss)]
             let phase = elapsed as f32 / led_state.period_us as f32;
 
             match led_state.effect {
@@ -173,6 +196,14 @@ impl LedDriver {
                     led_state.color,
                     &mut strip,
                 ),
+                data::LedEffect::KnightRider => effects::update_knight_rider(
+                    phase,
+                    3,
+                    4,
+                    led_state.brightness,
+                    led_state.color,
+                    &mut strip,
+                ),
             }
 
             tokio::time::sleep_until(tokio::time::Instant::from_std(next)).await;
@@ -197,6 +228,7 @@ pub struct LedHandler {
 }
 
 impl LedHandler {
+    #[must_use]
     pub fn new(command_sender: Sender<LedCommand>) -> Self {
         Self {
             event_sender: EventHandler::init(command_sender),
@@ -250,10 +282,12 @@ impl EventHandler {
                             Rgb::from(0, 255, 0),
                         )
                     }
-                    _ => data::LedCommand::NoChange,
+                    data::LedEvent::DownloadProgress
+                    | data::LedEvent::DownloadFinished
+                    | data::LedEvent::TimezoneChanged => data::LedCommand::NoChange,
                 };
 
-                let _ = command_sender.send(cmd);
+                std::mem::drop(command_sender.send(cmd));
             }
         });
 

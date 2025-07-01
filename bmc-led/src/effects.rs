@@ -1,19 +1,19 @@
-// https://github.com/wled/WLED/wiki/List-of-effects-and-palettes
+// Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::Rgb;
+// https://github.com/wled/WLED/wiki/List-of-effects-and-palettes
 
 use apa102_spi::{Apa102Pixel, SmartLedsWrite};
 
 use super::config;
-
+use crate::data::Rgb;
 use rand::Rng;
 use ux::u5;
 
 #[derive(Debug)]
 pub struct Firefly {
-    pos: usize,
+    pos: u16,
     bright: f32,
-    grow: bool, // true → zesiluje, false → pohasíná
+    grow: bool,
 }
 
 #[derive(Debug)]
@@ -22,18 +22,23 @@ pub struct FirefliesState {
 }
 
 #[inline]
+#[expect(clippy::cast_possible_truncation)]
+#[expect(clippy::cast_sign_loss)]
 fn scale(channel: u8, factor: f32) -> u8 {
-    (channel as f32 * factor * factor) as u8 // simple gamma ≈2.0
+    (f32::from(channel) * factor * factor) as u8 // simple gamma ≈2.0
 }
 
 /// Snake effect
-pub fn update_snake<W>(phase: f32, len: usize, br: u8, color: Rgb, strip: &mut W)
+#[expect(clippy::cast_sign_loss)]
+pub fn update_snake<W>(phase: f32, len: u8, br: u8, color: Rgb, strip: &mut W)
 where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
-    let head_pos = phase * config::LED_COUNT as f32;
-    let head_idx = head_pos as usize;
-    let frac = head_pos - head_idx as f32;
+    let head_pos = phase * f32::from(config::LED_COUNT);
+
+    #[expect(clippy::cast_possible_truncation)]
+    let head_idx = head_pos as u8;
+    let frac = head_pos - f32::from(head_idx);
 
     strip
         .write((0..config::LED_COUNT).map(|i| {
@@ -63,23 +68,25 @@ where
 }
 
 /// Chase effect
-pub fn update_chase<W>(phase: f32, trail: usize, br: u8, color: Rgb, strip: &mut W)
+pub fn update_chase<W>(phase: f32, trail: u8, br: u8, color: Rgb, strip: &mut W)
 where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
-    let n = config::LED_COUNT as isize;
-    let t = phase.fract() * 2.0 * (n as f32 - 1.0);
-    let (head_pos, _forward) = if t < (n as f32 - 1.0) {
+    let n = config::LED_COUNT;
+    let t = phase.fract() * 2.0 * (f32::from(n) - 1.0);
+    let (head_pos, _forward) = if t < (f32::from(n) - 1.0) {
         (t, true)
     } else {
-        (2.0 * (n as f32 - 1.0) - t, false)
+        (2.0 * (f32::from(n) - 1.0) - t, false)
     };
-    let head_idx = head_pos.floor() as isize;
+
+    #[expect(clippy::cast_possible_truncation)]
+    let head_idx = head_pos.floor() as i16;
 
     strip
         .write((0..n).map(|i| {
-            let dist = (i - head_idx).abs();
-            if dist > trail as isize {
+            let dist = (i16::from(i) - head_idx).abs();
+            if dist > i16::from(trail) {
                 Apa102Pixel {
                     red: 0,
                     green: 0,
@@ -87,7 +94,7 @@ where
                     brightness: u5::new(0),
                 }
             } else {
-                let fade = 1.0 - (dist as f32 / (trail as f32 + 1.0));
+                let fade = 1.0 - (f32::from(dist) / (f32::from(trail) + 1.0));
                 Apa102Pixel {
                     red: scale(color.r, fade),
                     green: scale(color.g, fade),
@@ -100,19 +107,24 @@ where
 }
 
 /// Scanner effect
-pub fn update_scan<W>(phase: f32, len: usize, br: u8, color: Rgb, strip: &mut W)
+pub fn update_scan<W>(phase: f32, len: u8, br: u8, color: Rgb, strip: &mut W)
 where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
-    let travel = config::LED_COUNT + len;
-    let head_f = phase * travel as f32;
-    let head = (head_f as usize) % travel;
-    let frac = head_f - head as f32;
-    let start = head.saturating_sub(len - 1).min(config::LED_COUNT - 1);
+    let travel: u16 = u16::from(config::LED_COUNT) + u16::from(len);
+    let head_f = phase * f32::from(travel);
+    #[expect(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_sign_loss)]
+    let head = (head_f as u16) % travel;
+    let frac = head_f - f32::from(head);
+    let start = head
+        .saturating_sub(u16::from(len) - 1)
+        .min(u16::from(config::LED_COUNT) - 1);
 
     strip
         .write((0..config::LED_COUNT).map(|idx| {
-            if idx < start || idx > head.min(config::LED_COUNT - 1) {
+            if u16::from(idx) < start || u16::from(idx) > head.min(u16::from(config::LED_COUNT) - 1)
+            {
                 return Apa102Pixel {
                     red: 0,
                     green: 0,
@@ -120,10 +132,10 @@ where
                     brightness: u5::new(0),
                 };
             }
-            let off = head - idx;
+            let off = head - u16::from(idx);
             let f = match off {
                 0 => frac,
-                x if x == len - 1 => 1.0 - frac,
+                x if x == u16::from(len) - 1 => 1.0 - frac,
                 _ => 1.0,
             };
             Apa102Pixel {
@@ -137,25 +149,28 @@ where
 }
 
 impl FirefliesState {
+    #[must_use]
     pub const fn default() -> Self {
         FirefliesState { flies: Vec::new() }
     }
 }
 
 // Fireflies effect
+#[expect(clippy::cast_sign_loss)]
 pub fn update_fireflies<W>(
     state: &mut FirefliesState,
     _phase: f32,
-    max_flies: usize,
+    max_flies: u8,
     br: u8,
     color: Rgb,
     strip: &mut W,
 ) where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
-    let n = config::LED_COUNT as isize;
-    let radius = ((n as f32) * config::FIREFLY_SHINE_RADIUS).ceil() as isize;
-    let spawn_p = 0.02;
+    let n = config::LED_COUNT;
+    #[expect(clippy::cast_possible_truncation)]
+    let radius = ((f32::from(n)) * config::FIREFLY_SHINE_RADIUS).ceil() as i16;
+    let spawn_p = 0.005;
     let mut rng = rand::thread_rng();
 
     state.flies.retain_mut(|f| {
@@ -172,10 +187,10 @@ pub fn update_fireflies<W>(
         f.bright > config::FLIES_MIN_BRIGHTNESS
     });
 
-    if state.flies.len() < max_flies && rng.gen_bool(spawn_p) {
+    if state.flies.len() < max_flies as usize && rng.gen_bool(spawn_p) {
         let mut attempts = 0;
         while attempts < 6 {
-            let pos = rng.gen_range(0..n as usize);
+            let pos = rng.gen_range(0..u16::from(n));
             if state.flies.iter().all(|f| f.pos != pos) {
                 state.flies.push(Firefly {
                     pos,
@@ -188,17 +203,17 @@ pub fn update_fireflies<W>(
         }
     }
 
-    let mut frame = vec![0.0f32; n as usize];
+    let mut frame = vec![0.0_f32; n as usize];
 
     for fly in &state.flies {
-        let p = fly.pos as isize;
+        let p = i32::from(fly.pos);
         for d in -radius..=radius {
-            let idx = p + d;
-            if idx < 0 || idx >= n {
+            let idx = p + i32::from(d);
+            if idx < 0 || idx >= i32::from(n) {
                 continue;
             }
-            let dist = d.unsigned_abs() as f32;
-            let w = 1.0 - dist / radius as f32;
+            let dist = f32::from(d.unsigned_abs());
+            let w = 1.0 - dist / f32::from(radius);
             if w > 0.0 {
                 frame[idx as usize] += (fly.bright - config::FLIES_MIN_BRIGHTNESS) * w;
             }
@@ -215,4 +230,41 @@ pub fn update_fireflies<W>(
         blue: scale(color.b, f),
         brightness: u5::new(br),
     }));
+}
+
+pub fn update_knight_rider<W>(phase: f32, core: u8, fade: u8, br: u8, color: Rgb, strip: &mut W)
+where
+    W: SmartLedsWrite<Color = Apa102Pixel>,
+{
+    let n = config::LED_COUNT;
+    let travel = f32::from(n - 1);
+    let t = phase.fract() * 2.0 * travel;
+    let head_pos = if t <= travel { t } else { 2.0 * travel - t };
+
+    #[expect(clippy::cast_possible_truncation)]
+    let head_idx = head_pos.floor() as i16;
+
+    #[expect(clippy::integer_division)]
+    let half_core = (i16::from(core)) / 2;
+    let min_factor = 0.1; // TODO: Configurable
+
+    strip
+        .write((0..n).map(|i| {
+            let dist = (i16::from(i) - head_idx).abs();
+            let factor = if dist > half_core + i16::from(fade) {
+                min_factor
+            } else if dist <= half_core {
+                1.0
+            } else {
+                let fade_factor = 1.0 - f32::from(dist - half_core) / (f32::from(fade.max(1)));
+                fade_factor.max(min_factor)
+            };
+            Apa102Pixel {
+                red: scale(color.r, factor),
+                green: scale(color.g, factor),
+                blue: scale(color.b, factor),
+                brightness: u5::new(br),
+            }
+        }))
+        .ok();
 }
