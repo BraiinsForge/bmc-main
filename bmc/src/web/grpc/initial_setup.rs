@@ -15,7 +15,7 @@ use tracing::warn;
 use super::{GrpcError, system::into_grpc_timezone};
 use crate::{
     BmcManager,
-    initial_setup::{DeviceSetupConfig, InitialSetup, SetupError},
+    initial_setup::{DeviceSetupConfig, DeviceSetupError, InitialSetup, WifiSetupError},
     manager::{BmcState, EncryptionType, SignalStrength, WifiNetworkConfig},
 };
 
@@ -64,8 +64,8 @@ where
         match self.initial_setup.connect_to_wifi(config) {
             Ok(()) => Ok(Response::new(())),
             Err(e) => match e {
-                SetupError::InProgress => {
-                    Err(Status::failed_precondition("Initial setup is in progress"))
+                WifiSetupError::InProgress => {
+                    Err(Status::failed_precondition("WiFi setup is in progress"))
                 }
             },
         }
@@ -124,10 +124,21 @@ where
 
         let config = request.try_into()?;
 
-        self.initial_setup.setup_device(config).await.map_err(|e| {
-            warn!("Error while setting device, {}", e);
-            Status::internal("Error while saving device settings")
-        })?;
+        self.initial_setup
+            .setup_device(config)
+            .await
+            .inspect_err(|e| warn!("Error while setting device, {}", e))
+            .map_err(|e| match e {
+                DeviceSetupError::InProgress => {
+                    Status::failed_precondition("Device setup is in progress")
+                }
+                DeviceSetupError::SetTimezone(..)
+                | DeviceSetupError::SetPassword
+                | DeviceSetupError::SyncConfigData(..)
+                | DeviceSetupError::UpdateDeviceState(..) => {
+                    Status::internal("Error while saving device settings")
+                }
+            })?;
 
         Ok(Response::new(()))
     }

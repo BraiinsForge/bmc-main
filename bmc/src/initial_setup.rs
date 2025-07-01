@@ -182,7 +182,7 @@ impl<T: BmcManager> InitialSetup<T> {
 
 #[derive(Error, Debug)]
 pub(crate) enum WifiSetupError {
-    #[error("Initial setup is in progress")]
+    #[error("WiFi setup is in progress")]
     InProgress,
 }
 
