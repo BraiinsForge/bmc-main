@@ -1,15 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::net::IpAddr;
-
 use crate::data::{Scene, Screen};
 use crate::display_controller::DisplayController;
-use crate::{
-    generated::{self, ConnectionAdapter, DateTimeAdapter, InitSetupWifiAdapter, WidgetSlint},
-    utils,
-};
+use crate::generated::{self, ConnectionAdapter, DateTimeAdapter, InitSetupWifiAdapter};
+use crate::utils;
 use chrono::{Datelike, Timelike};
 use slint::{Global, Model, ModelRc, VecModel};
+use std::net::IpAddr;
 
 impl DisplayController {
     #[expect(unused)]
@@ -24,13 +21,29 @@ impl DisplayController {
 
     pub fn populate_widgets(&self, scenes: Vec<Scene>) {
         self.in_event_loop(move |main_window| {
-            let mut widget_slint: Vec<WidgetSlint> = vec![];
-            for scene in scenes {
-                for widget in scene.widgets {
-                    widget_slint.push(widget.into());
-                }
-            }
-            main_window.set_widgets(ModelRc::new(VecModel::from(widget_slint)));
+            let scenes = scenes
+                .into_iter()
+                .map(|scene| {
+                    #[expect(clippy::cast_possible_truncation)]
+                    let duration = scene.duration.as_millis() as i64;
+
+                    generated::Scene {
+                        id: scene.id,
+                        duration,
+                        widgets: {
+                            let widgets = scene
+                                .widgets
+                                .into_iter()
+                                .map(generated::WidgetSlint::from)
+                                .collect::<Vec<_>>();
+
+                            ModelRc::new(VecModel::from(widgets))
+                        },
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            main_window.set_scenes(ModelRc::new(VecModel::from(scenes)));
         });
     }
 

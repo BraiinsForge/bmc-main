@@ -3,6 +3,7 @@
 use crate::generated::{UIScreen, WidgetSize, WidgetSlint, WidgetType as WidgetTypeSlint};
 use serde::{Deserialize, Serialize};
 use slint::{ModelRc, SharedString, VecModel};
+use std::time::Duration;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NumberFontStyle {
@@ -63,8 +64,14 @@ pub struct Widget {
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct Scene {
-    pub id: u32,
+    pub id: i32,
+    #[serde(default = "default_scene_duration")]
+    pub duration: Duration,
     pub widgets: Vec<Widget>,
+}
+
+fn default_scene_duration() -> Duration {
+    Duration::from_secs(5)
 }
 
 #[derive(Debug)]

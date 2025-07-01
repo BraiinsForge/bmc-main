@@ -11,6 +11,9 @@ export component Notification {
     in property <brush> stripe_color;
     in property <length> padding_top_override;
 
+    // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+    TouchArea { }
+
     HorizontalLayout {
         Rectangle {
             height: root.heigth_override;

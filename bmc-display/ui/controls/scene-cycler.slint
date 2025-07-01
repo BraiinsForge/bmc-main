@@ -1,0 +1,174 @@
+import { Scene } from "../widgets/scene.slint";
+import { WidgetBuilder } from "widget-builder.slint";
+
+component SwipeHandler inherits Rectangle {
+    in property <bool> enabled <=> swipe.enabled;
+    in property <length> min-swipe-distance: self.width / 4;
+    in property <bool> allow-swipe-right <=> swipe.handle-swipe-right;
+    in property <bool> allow-swipe-left <=> swipe.handle-swipe-left;
+    out property <bool> swiping <=> swipe.swiping;
+    out property <Point> current-position <=> swipe.current-position;
+    out property <Point> pressed-position <=> swipe.pressed-position;
+
+    callback swiped_left();
+    callback swiped_right();
+
+    swipe := SwipeGestureHandler {
+        swiped => {
+            if (self.current-position.x > (self.pressed-position.x + root.min-swipe-distance)) {
+                root.swiped_right();
+            } else if (self.current-position.x < (self.pressed-position.x - root.min-swipe-distance)) {
+                root.swiped_left();
+            }
+        }
+
+        @children
+    }
+}
+
+component SceneCycler {
+    in property <bool> enabled: true;
+    in property <duration> duration;
+    in property <int> scenes-count;
+    in-out property <int> current-scene;
+
+    changed current-scene => {
+        timer.restart();
+    }
+
+    timer := Timer {
+        in-out property <bool> restarting;
+
+        running: !self.restarting && (root.enabled && root.scenes-count > 1);
+        interval: Math.max(root.duration, 1s);
+
+        public function restart() {
+            self.restarting = true;
+
+            // Run timer to revert self.restarting back to false in the next event loop cycle.
+            // This is something like `setTimeout(callback, 0)` in JavaScript.
+            restart_workaround_timer.running = true;
+        }
+
+        triggered() => {
+            root.current-scene = Math.mod(root.current-scene + 1, root.scenes-count);
+        }
+    }
+
+    // this is needed until https://github.com/slint-ui/slint/pull/8821 is released
+    restart_workaround_timer := Timer {
+        // triggered manually from timer.restart()
+        running: false;
+        interval: 0ms;
+
+        triggered => {
+            timer.restarting = false;
+
+            // run only once when requested
+            self.running = false;
+        }
+    }
+}
+
+export component SceneCyclerHorizontal inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <[Scene]> scenes;
+    in-out property <int> current-scene <=> cycler.current-scene;
+
+    cycler := SceneCycler {
+        enabled: root.enabled && !swipe.swiping;
+        duration: root.scenes[root.current-scene].duration;
+        scenes-count: root.scenes.length;
+    }
+
+    swipe := SwipeHandler {
+        enabled: root.enabled;
+        allow-swipe-right: root.current-scene > 0;
+        allow-swipe-left: root.current-scene < root.scenes.length - 1;
+
+        swiped_left => {
+            root.current-scene = Math.mod(root.current-scene + 1, root.scenes.length);
+        }
+
+        swiped_right => {
+            root.current-scene = Math.mod(root.current-scene - 1, root.scenes.length);
+        }
+
+        HorizontalLayout {
+            property <length> position: -(root.current-scene * root.width);
+            animate position {
+                duration: 300ms;
+                easing: ease-in-out;
+            }
+
+            property <length> swipe-offset;
+            x: position + swipe-offset;
+
+            states [
+                swiping when swipe.swiping: {
+                    swipe-offset: swipe.current-position.x - swipe.pressed-position.x;
+                    out {
+                        animate swipe-offset {
+                            duration: 300ms;
+                            easing: ease-in-out;
+                        }
+                    }
+                }
+            ]
+
+            for scene in root.scenes: WidgetBuilder {
+                width: root.width;
+                height: root.height;
+                widgets: scene.widgets;
+            }
+        }
+    }
+}
+
+export component SceneCyclerStacked inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <[Scene]> scenes;
+    in-out property <int> current-scene <=> cycler.current-scene;
+
+    cycler := SceneCycler {
+        enabled: root.enabled && !swipe.swiping;
+        duration: root.scenes[root.current-scene].duration;
+        scenes-count: root.scenes.length;
+    }
+
+    swipe := SwipeHandler {
+        enabled: root.enabled;
+        allow-swipe-right: root.current-scene > 0;
+        allow-swipe-left: root.current-scene < root.scenes.length - 1;
+
+        swiped_left => {
+            root.current-scene = Math.mod(root.current-scene + 1, root.scenes.length);
+        }
+
+        swiped_right => {
+            root.current-scene = Math.mod(root.current-scene - 1, root.scenes.length);
+        }
+
+        for scene[index] in root.scenes: WidgetBuilder {
+            width: root.width;
+            height: root.height;
+            widgets: scene.widgets;
+            opacity: 0;
+
+            states [
+                active when root.current-scene == index: {
+                    opacity: 1;
+                    in {
+                        animate opacity {
+                            duration: 250ms;
+                            delay: 250ms;
+                        }
+                    }
+                    out {
+                        animate opacity { duration: 250ms; }
+                    }
+                }
+            ]
+        }
+    }
+}

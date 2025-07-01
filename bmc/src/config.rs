@@ -43,7 +43,7 @@ impl ConfigHandle {
         self.data.scenes.clone()
     }
 
-    pub fn add_widget(&mut self, scene_id: Option<u32>, widget: Widget) {
+    pub fn add_widget(&mut self, scene_id: Option<i32>, widget: Widget) {
         // TODO: Remove after scene ID functionality is properly implemented
         let scene_id = scene_id.unwrap_or_default();
 

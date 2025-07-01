@@ -6,6 +6,8 @@ import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
 } from "screens/screens.slint";
 import { WidgetSize, WidgetType, WidgetSlint } from "widgets/widget.slint";
 import { WidgetBuilder } from "controls/widget-builder.slint";
+import { Scene } from "widgets/scene.slint";
+import { SceneCyclerHorizontal } from "controls/scene-cycler.slint";
 import { Backend } from "backend.slint";
 import { DateTimeAdapter } from "controls/adapters.slint";
 import { Notification } from "components/notification.slint";
@@ -25,7 +27,14 @@ export component MainWindow inherits Window {
 
     in property <UIScreen> screen-id <=> ScreenAdapter.screen-id;
 
-    in property <[WidgetSlint]> widgets;
+    in property <[Scene]> scenes;
+    in-out property <int> current-scene <=> cycler.current-scene;
+
+    cycler := SceneCyclerHorizontal {
+        z: 0.1;
+        scenes: root.scenes;
+        enabled: root.screen_id == UIScreen.Void;
+    }
 
     // Status Bar
     Rectangle {
@@ -33,8 +42,13 @@ export component MainWindow inherits Window {
         height: 40px;
         x: 0px;
         y: 0px;
+        z: 0.2;
         border-width: 2px;
         border-color: red;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
+
         Text {
             text: "Wifi: Offline";
             font-size: 16px;
@@ -47,6 +61,7 @@ export component MainWindow inherits Window {
     Notification {
         x: 0px;
         y: 40px;
+        z: 0.2;
         width: parent.width;
         icon: Images.notification_info;
         heigth_override: 100px;
@@ -54,58 +69,100 @@ export component MainWindow inherits Window {
         padding_top_override: 12px;
     }
 
-    WidgetBuilder {
-        width: parent.width;
-        height: parent.height;
-        widgets: widgets;
-    }
-
     // Overlay screens
     UpgradeProgress {
+        z: 0.3;
         visible: root.screen_id == UIScreen.UpgradeProgress;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     UpgradeDownload {
+        z: 0.3;
         visible: root.screen_id == UIScreen.UpgradeDownload;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     UpgradeSuccess {
+        z: 0.3;
         visible: root.screen_id == UIScreen.UpgradeSuccess;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     UpgradeFailed {
+        z: 0.3;
         visible: root.screen_id == UIScreen.UpgradeFailed;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     InitStartConnect {
+        z: 0.3;
         visible: root.screen_id == UIScreen.InitStartConnect;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     InitWifiConnectProgress {
+        z: 0.3;
         visible: root.screen_id == UIScreen.InitWifiConnectProgress;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     InitWifiConnectSuccess {
+        z: 0.3;
         visible: root.screen_id == UIScreen.InitWifiConnectSuccess;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     InitWifiConnectFailed {
+        z: 0.3;
         visible: root.screen_id == UIScreen.InitWifiConnectFailed;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     InitSetupSuccess {
+        z: 0.3;
         visible: root.screen_id == UIScreen.InitSetupSuccess;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     InitGeneralError {
+        z: 0.3;
         visible: root.screen_id == UIScreen.InitGeneralError;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     InitDeviceSetupQr {
+        z: 0.3;
         visible: root.screen_id == UIScreen.InitDeviceSetupQr;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 
     ConnectInfo {
+        z: 0.3;
         visible: root.screen_id == UIScreen.ConnectInfo;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
     }
 }
