@@ -82,17 +82,11 @@ impl<T: BmcManager> InitialSetup<T> {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .map_err(|_| WifiSetupError::InProgress)?;
 
-        // Once dropped, progress is set to false
-        let progress_guard = ProgressGuard {
-            in_progress: self.in_progress.clone(),
-        };
-
+        let in_progress = self.in_progress.clone();
         let state_service = self.state_service.clone();
         let manager = self.manager.clone();
 
         tokio::task::spawn(async move {
-            let _guard = progress_guard;
-
             state_service.notify(InitSetupState::ConnectingToWifi {
                 wifi_ssid: config.ssid.clone(),
             });
@@ -123,6 +117,8 @@ impl<T: BmcManager> InitialSetup<T> {
                     }
                 }
             }
+
+            in_progress.store(false, Ordering::Release);
         });
 
         Ok(())
@@ -198,16 +194,6 @@ pub(crate) enum DeviceSetupError {
     SyncConfigData(#[source] anyhow::Error),
     #[error("Failed to update device state, error: {0}")]
     UpdateDeviceState(#[source] anyhow::Error),
-}
-
-struct ProgressGuard {
-    in_progress: Arc<AtomicBool>,
-}
-
-impl Drop for ProgressGuard {
-    fn drop(&mut self) {
-        self.in_progress.store(false, Ordering::Release);
-    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
