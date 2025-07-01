@@ -68,7 +68,13 @@ where
         let display_controller = display_driver.display_controller.clone();
         display_controller.populate_widgets(display_config_handle.scenes());
 
-        let initial_setup = InitialSetup::new(manager.clone(), Arc::new(AtomicBool::new(false)));
+        let display_config_handle = Arc::new(RwLock::new(display_config_handle));
+
+        let initial_setup = InitialSetup::new(
+            manager.clone(),
+            Arc::new(AtomicBool::new(false)),
+            display_config_handle.clone(),
+        );
 
         let display_tasks = DisplayTasks::new(
             display_controller.clone(),
@@ -85,7 +91,7 @@ where
             config,
             display_tasks,
             system_upgrade_service,
-            display_config_handle: Arc::new(RwLock::new(display_config_handle)),
+            display_config_handle,
             display_controller,
             initial_setup,
         })
