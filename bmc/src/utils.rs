@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tokio::fs;
@@ -36,15 +37,20 @@ pub async fn replace_file(path: &Path, data: &[u8]) -> Result<Option<SystemTime>
 }
 
 #[expect(clippy::enum_variant_names)]
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub(crate) enum NumberFormat {
+    #[default]
     SpaceGroupCommaDecimal, // 1 234 567,89
-    CommaGroupDotDecimal,   // 1,234,567.89
-    DotGroupCommaDecimal,   // 1.234.567,89
-    SpaceGroupDotDecimal,   // 1 234 567.89
+    CommaGroupDotDecimal, // 1,234,567.89
+    DotGroupCommaDecimal, // 1.234.567,89
+    SpaceGroupDotDecimal, // 1 234 567.89
 }
 
 impl NumberFormat {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "format_number will be used in display scenes")
+    )]
     pub(crate) fn format_number<T: FormatNumberValue + Copy>(self, number: T) -> String {
         let (group_sep, decimal_sep) = match self {
             NumberFormat::SpaceGroupCommaDecimal => (" ", ","),

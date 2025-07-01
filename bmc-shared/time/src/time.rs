@@ -3,6 +3,7 @@
 use chrono::{Duration, TimeZone};
 use chrono_tz::OffsetComponents;
 use core::fmt;
+use serde::{Deserialize, Serialize};
 use std::{convert::TryInto, str::FromStr};
 use strum_macros::{Display, EnumString};
 
@@ -11,7 +12,7 @@ use crate::timezone_variant::TIMEZONE_VARIANTS;
 const DEFAULT_IANA: &str = "Etc/GMT";
 const DEFAULT_POSIX: &str = "GMT0";
 
-#[derive(EnumString, Display, Debug)]
+#[derive(EnumString, Display, Debug, Serialize, Deserialize, Clone)]
 pub enum TimeSystem {
     #[strum(serialize = "%I:%M")]
     Hour12,
@@ -161,8 +162,9 @@ impl fmt::Display for Offset {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub enum DateFormat {
+    #[default]
     DdMmYyyyDot,
     DdMmYyyySlash,
     DMYyyySlash,
