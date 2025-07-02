@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 winit = ["slint/backend-winit", "slint/renderer-winit-software"]
+slint-embed-files = ["bmc-display/slint-embed-files"]
 
 [dependencies]
 anyhow.workspace = true

@@ -6,6 +6,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [features]
 winit = ["bmc-mock-display/winit"]
+slint-embed-files = ["bmc-mock-display/slint-embed-files"]
 
 [dependencies]
 anyhow.workspace = true
