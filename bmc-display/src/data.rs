@@ -62,16 +62,12 @@ pub struct Widget {
     pub widget_type: WidgetType,
 }
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Scene {
     pub id: i32,
-    #[serde(default = "default_scene_duration")]
+    #[serde(with = "humantime_serde")]
     pub duration: Duration,
     pub widgets: Vec<Widget>,
-}
-
-fn default_scene_duration() -> Duration {
-    Duration::from_secs(5)
 }
 
 #[derive(Debug)]

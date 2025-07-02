@@ -2,6 +2,7 @@
   "scenes": [
     {
       "id": 0,
+      "duration": "5s",
       "widgets": [
         {
           "row": 0,
