@@ -18,7 +18,7 @@ use tracing::warn;
 
 use crate::{
     BmcManager,
-    config::DisplayConfigHandle,
+    config::ConfigHandle,
     manager::{InitialSetupError, WifiNetworkConfig},
     utils::NumberFormat,
 };
@@ -60,14 +60,14 @@ pub(crate) struct InitialSetup<T: BmcManager> {
     manager: Arc<T>,
     in_progress: Arc<AtomicBool>,
     state_service: StateService,
-    config_handle: Arc<RwLock<DisplayConfigHandle>>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
 }
 
 impl<T: BmcManager> InitialSetup<T> {
     pub(crate) fn new(
         manager: Arc<T>,
         in_progress: Arc<AtomicBool>,
-        config_handle: Arc<RwLock<DisplayConfigHandle>>,
+        config_handle: Arc<RwLock<ConfigHandle>>,
     ) -> Self {
         Self {
             manager,

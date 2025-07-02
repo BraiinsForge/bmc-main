@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::config::DisplayConfigHandle;
+use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use bmc_display::data::{
     ClockAnalogRectConfig, ClockAnalogRoundConfig, ClockDigitalConfig, NumberFontStyle, Widget,
@@ -18,17 +18,17 @@ use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
 use tracing::error;
 
 pub(crate) struct ConfigurationService {
-    display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
 }
 
 impl ConfigurationService {
     pub(crate) fn new(
-        display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+        config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
     ) -> Self {
         Self {
-            display_config_handle,
+            config_handle,
             display_controller,
         }
     }
@@ -97,7 +97,7 @@ impl GrpcConfigurationService for ConfigurationService {
         };
 
         {
-            let mut config_handle = self.display_config_handle.write().await;
+            let mut config_handle = self.config_handle.write().await;
             let mut config_handle_cloned = config_handle.clone();
             config_handle_cloned.add_widget(None, widget);
             if let Err(e) = config_handle_cloned.sync_to_storage().await {

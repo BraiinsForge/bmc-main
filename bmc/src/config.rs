@@ -20,12 +20,12 @@ struct ConfigRoot {
 }
 
 #[derive(Clone, Debug)]
-pub struct DisplayConfigHandle {
+pub struct ConfigHandle {
     path: PathBuf,
     data: ConfigRoot,
 }
 
-impl DisplayConfigHandle {
+impl ConfigHandle {
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
@@ -55,8 +55,8 @@ impl DisplayConfigHandle {
     }
 
     async fn load_from_file(&mut self) -> Result<()> {
-        let display_config_data = fs::read_to_string(&self.path).await?;
-        self.data = serde_json::from_str(display_config_data.as_str())?;
+        let config_data = fs::read_to_string(&self.path).await?;
+        self.data = serde_json::from_str(config_data.as_str())?;
 
         Ok(())
     }

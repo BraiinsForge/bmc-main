@@ -56,9 +56,9 @@ pub struct Config {
     /// Hostname string for mockup test
     #[clap(long, default_value = "bmc-d00627")]
     pub hostname: String,
-    /// BMC display config file
-    #[clap(long, default_value = "etc/bmc_display.json")]
-    pub display_config_path: PathBuf,
+    /// BMC config file
+    #[clap(long, default_value = "etc/bmc_config.json")]
+    pub config_path: PathBuf,
     /// Run bmc with a setup-pending flag
     #[clap(long)]
     pub setup_pending: bool,
@@ -80,7 +80,7 @@ impl From<Config> for Configuration {
             address: value.address,
             server_config,
             upgrade_image_path: value.mockfs_path.join("tmp/firmware.tar"),
-            display_config_path: value.mockfs_path.join(value.display_config_path),
+            config_path: value.mockfs_path.join(value.config_path),
         }
     }
 }

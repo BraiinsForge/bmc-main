@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::BmcManager;
-use crate::config::DisplayConfigHandle;
+use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
@@ -57,7 +57,7 @@ pub(crate) struct GrpcWeb<T: BmcManager, S: SessionManager, U: FirmwareIndex> {
     manager: Arc<T>,
     session_manager: Arc<S>,
     system_upgrade_service: SystemUpgradeService<U, T>,
-    display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     initial_setup: InitialSetup<T>,
 }
@@ -67,7 +67,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
         manager: Arc<T>,
         session_manager: Arc<S>,
         system_upgrade_service: SystemUpgradeService<U, T>,
-        display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+        config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
         initial_setup: InitialSetup<T>,
     ) -> Self {
@@ -75,7 +75,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
             manager,
             session_manager,
             system_upgrade_service,
-            display_config_handle,
+            config_handle,
             display_controller,
             initial_setup,
         }
@@ -116,7 +116,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> GrpcWeb<T, S, U> {
         let configuration_service =
             web::configuration_service_server::ConfigurationServiceServer::new(
                 configuration_service::ConfigurationService::new(
-                    self.display_config_handle,
+                    self.config_handle,
                     self.display_controller,
                 ),
             );

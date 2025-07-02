@@ -6,7 +6,7 @@ mod http_server;
 mod no_password;
 mod session;
 
-use crate::config::DisplayConfigHandle;
+use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::session::Manager as SessionManager;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
@@ -29,7 +29,7 @@ pub(crate) struct WebService<T: BmcManager, S: SessionManager, U: FirmwareIndex>
     session_manager: Arc<S>,
     config: ServerConfig,
     system_upgrade_service: SystemUpgradeService<U, T>,
-    display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     initial_setup: InitialSetup<T>,
 }
@@ -40,7 +40,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
         session_manager: Arc<S>,
         config: ServerConfig,
         system_upgrade_service: SystemUpgradeService<U, T>,
-        display_config_handle: Arc<RwLock<DisplayConfigHandle>>,
+        config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
         initial_setup: InitialSetup<T>,
     ) -> Self {
@@ -49,7 +49,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
             session_manager,
             config,
             system_upgrade_service,
-            display_config_handle,
+            config_handle,
             display_controller,
             initial_setup,
         }
@@ -61,7 +61,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex> WebService<T, S, U> {
             self.manager,
             self.session_manager.clone(),
             self.system_upgrade_service,
-            self.display_config_handle,
+            self.config_handle,
             self.display_controller,
             self.initial_setup,
         )
