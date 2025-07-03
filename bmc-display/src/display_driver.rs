@@ -29,6 +29,12 @@ pub trait DisplayBacklightDriver: Sync + Send + Clone + Debug + 'static {
     fn max_brightness(&self) -> u8;
 
     fn set_brightness(&self, value: u8) -> anyhow::Result<()>;
+
+    fn set_brightness_pct(&self, percent: u8) -> anyhow::Result<()> {
+        #[expect(clippy::cast_possible_truncation)]
+        #[expect(clippy::integer_division)]
+        self.set_brightness(((u16::from(percent) * u16::from(self.max_brightness())) / 100) as u8)
+    }
 }
 
 #[derive(Debug)]
