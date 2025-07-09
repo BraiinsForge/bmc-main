@@ -1,49 +1,122 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::{Scene, Screen};
+use crate::data::{Scene, SceneId, Screen, Widget, WidgetId};
 use crate::display_controller::DisplayController;
 use crate::generated::{self, ConnectionAdapter, DateTimeAdapter, InitSetupWifiAdapter};
+use crate::indexmap_model::IndexMapModel;
 use crate::utils;
 use chrono::{Datelike, Timelike};
+use indexmap::IndexMap;
 use slint::{Global, Model, ModelRc, VecModel};
+use std::any::type_name;
 use std::net::IpAddr;
+use std::time::Duration;
 
 impl DisplayController {
-    #[expect(unused)]
-    #[track_caller]
-    /// Use this function to cast ModelRc<T> into VecModel<T> when you want to manipulate items in the VecModel
-    fn vec_model_ref<T: 'static>(model_rc: &ModelRc<T>) -> &VecModel<T> {
-        model_rc
-            .as_any()
-            .downcast_ref::<VecModel<T>>()
-            .expect("BUG: failed to extract VecModel")
-    }
-
-    pub fn populate_widgets(&self, scenes: Vec<Scene>) {
+    pub fn set_scenes(&self, scenes: IndexMap<SceneId, Scene>) {
         self.in_event_loop(move |main_window| {
             let scenes = scenes
                 .into_iter()
-                .map(|scene| {
-                    #[expect(clippy::cast_possible_truncation)]
-                    let duration = scene.duration.as_millis() as i64;
+                .map(|(id, scene)| (id, generated::Scene::from(scene)))
+                .collect::<IndexMapModel<_, _>>();
 
-                    generated::Scene {
-                        id: scene.id,
-                        duration,
-                        widgets: {
-                            let widgets = scene
-                                .widgets
-                                .into_iter()
-                                .map(generated::WidgetSlint::from)
-                                .collect::<Vec<_>>();
+            main_window.set_scenes(ModelRc::new(scenes));
+        });
+    }
 
-                            ModelRc::new(VecModel::from(widgets))
-                        },
-                    }
-                })
-                .collect::<Vec<_>>();
+    pub fn add_scene(&self, scene: Scene) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
 
-            main_window.set_scenes(ModelRc::new(VecModel::from(scenes)));
+            let replaced_scene = scenes_ref.insert(scene.id.clone(), scene.into());
+            debug_assert!(replaced_scene.is_none());
+        });
+    }
+
+    pub fn insert_scene(&self, index: usize, scene: Scene) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            let replaced_scene = scenes_ref.shift_insert(index, scene.id.clone(), scene.into());
+            debug_assert!(replaced_scene.is_none());
+        });
+    }
+
+    pub fn update_scene(&self, id: SceneId, enabled: bool, duration: Duration) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            scenes_ref.modify(&id, |scene| {
+                scene.enabled = enabled;
+
+                #[expect(clippy::cast_possible_truncation)]
+                let duration = duration.as_millis() as i64;
+                scene.duration = duration;
+            });
+        });
+    }
+
+    pub fn move_scene(&self, from_index: usize, to_index: usize) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            scenes_ref.move_index(from_index, to_index);
+        });
+    }
+
+    pub fn remove_scene(&self, id: SceneId) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            let removed_scene = scenes_ref.shift_remove(&id);
+            debug_assert!(removed_scene.is_some());
+        });
+    }
+
+    pub fn add_scene_widget(&self, scene_id: SceneId, widget: Widget) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                let replaced_widget = widgets_ref.insert(widget.id.clone(), widget.into());
+                debug_assert!(replaced_widget.is_none());
+            }
+        });
+    }
+
+    pub fn replace_scene_widget(&self, scene_id: SceneId, widget: Widget) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                let replaced_widget = widgets_ref.insert(widget.id.clone(), widget.into());
+                debug_assert!(replaced_widget.is_some());
+            }
+        });
+    }
+
+    pub fn remove_scene_widget(&self, scene_id: SceneId, widget_id: WidgetId) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                let removed_widget = widgets_ref.shift_remove(&widget_id);
+                debug_assert!(removed_widget.is_some());
+            }
         });
     }
 
@@ -113,4 +186,31 @@ impl DisplayController {
             }
         });
     }
+}
+
+#[allow(unused, clippy::allow_attributes)]
+#[track_caller]
+/// Use this function to cast ModelRc<T> into VecModel<T> when you want to manipulate items in the VecModel
+fn vec_model_ref<T: 'static>(model_rc: &ModelRc<T>) -> &VecModel<T> {
+    let expect_message = format!("BUG: failed to downcast VecModel<{}>", type_name::<T>());
+    model_rc
+        .as_any()
+        .downcast_ref::<VecModel<T>>()
+        .expect(&expect_message)
+}
+
+#[allow(unused, clippy::allow_attributes)]
+#[track_caller]
+/// Use this function to cast ModelRc<V> into IndexMapModel<K, V> when you want to manipulate items in the IndexMapModel
+fn indexmap_model_ref<K: 'static, V: 'static>(model_rc: &ModelRc<V>) -> &IndexMapModel<K, V> {
+    let expect_message = format!(
+        "BUG: failed to downcast IndexMapModel<{}, {}>",
+        type_name::<K>(),
+        type_name::<V>()
+    );
+
+    model_rc
+        .as_any()
+        .downcast_ref::<IndexMapModel<K, V>>()
+        .expect(&expect_message)
 }

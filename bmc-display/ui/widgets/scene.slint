@@ -1,7 +1,8 @@
 import { WidgetSlint } from "widget.slint";
 
 export struct Scene {
-    id: int,
+    id: string,
+    enabled: bool,
     duration: duration,
     widgets: [WidgetSlint],
 }

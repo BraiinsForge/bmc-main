@@ -65,12 +65,11 @@ where
             state_service.clone(),
         );
 
-        let mut config_handle =
-            ConfigHandle::new(config.config_path.clone(), config.default_brightness_pct);
-        config_handle.init().await;
+        let config_handle =
+            ConfigHandle::init(config.config_path.clone(), config.default_brightness_pct).await?;
 
         let display_controller = display_driver.display_controller.clone();
-        display_controller.populate_widgets(config_handle.scenes());
+        display_controller.set_scenes(config_handle.data.scenes.clone());
 
         let config_handle = Arc::new(RwLock::new(config_handle));
 

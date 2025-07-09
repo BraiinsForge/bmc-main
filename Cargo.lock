@@ -709,6 +709,7 @@ dependencies = [
  "ii-net",
  "index-bmc",
  "index-common",
+ "indexmap",
  "mime_guess",
  "minerctl-defs",
  "prost-types",
@@ -717,6 +718,7 @@ dependencies = [
  "serde_json",
  "strum",
  "sysinfo",
+ "tap",
  "thiserror 2.0.12",
  "tokio",
  "tokio-stream",
@@ -747,6 +749,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bmc-shared-time",
  "chrono",
  "flume",
  "humantime-serde",
@@ -756,9 +759,11 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-stream",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
