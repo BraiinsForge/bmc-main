@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-use bmc_platform::BmcPlatform;
+use bmc_platform::{BmcPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
 use bmc_shared_time::time::Timezone;
@@ -19,7 +19,7 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     type SessionManager: crate::session::Manager;
     type Error: std::error::Error + Send + Sync;
 
-    fn version(&self) -> String;
+    async fn version(&self) -> BosVersion;
 
     fn platform(&self) -> BmcPlatform;
 

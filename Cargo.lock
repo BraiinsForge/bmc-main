@@ -850,6 +850,7 @@ version = "0.1.0"
 dependencies = [
  "index-bmc",
  "strum",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

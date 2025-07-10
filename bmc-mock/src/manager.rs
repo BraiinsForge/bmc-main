@@ -3,7 +3,7 @@
 use crate::{MockSessionManager, mockfs::MockFs};
 use anyhow::anyhow;
 use bmc::manager::{BmcState, InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig};
-use bmc_platform::BmcPlatform;
+use bmc_platform::{BmcPlatform, BosVersion};
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
 use bmc_shared_time::time::Timezone;
 use rand::Rng;
@@ -70,8 +70,8 @@ impl bmc::BmcManager for Manager {
     type Error = Error;
     type SessionManager = MockSessionManager;
 
-    fn version(&self) -> String {
-        "0.1.0".to_owned()
+    async fn version(&self) -> BosVersion {
+        BosVersion::new(&25, &7)
     }
 
     fn platform(&self) -> BmcPlatform {

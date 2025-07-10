@@ -13,7 +13,7 @@ use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
 };
-use bmc_platform::BmcPlatform;
+use bmc_platform::{BmcInfo, BmcPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
 use bmc_shared_ii_net_drv::NetworkInterface;
@@ -31,6 +31,7 @@ use tracing::{error, info};
 
 #[derive(Debug)]
 pub struct Manager {
+    bmc_info: Arc<BmcInfo>,
     pub session_manager: OpenwrtSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     wifi_manager: Arc<OpenwrtWifiManager>,
@@ -61,7 +62,9 @@ impl Manager {
         wifi_manager: Arc<OpenwrtWifiManager>,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
+        let bmc_info = BmcInfo::load().expect("Load BMC info failed");
         Self {
+            bmc_info: Arc::new(bmc_info),
             session_manager,
             timezone_sender,
             wifi_manager,
@@ -145,8 +148,8 @@ impl BmcManager for Manager {
     type SessionManager = OpenwrtSessionManager;
     type Error = Error;
 
-    fn version(&self) -> String {
-        todo!()
+    async fn version(&self) -> BosVersion {
+        self.bmc_info.bos_version.clone()
     }
 
     fn platform(&self) -> BmcPlatform {
