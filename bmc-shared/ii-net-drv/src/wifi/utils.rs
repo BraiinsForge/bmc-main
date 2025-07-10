@@ -49,7 +49,7 @@ impl WifiUtils {
 pub struct CommandUtils;
 
 impl CommandUtils {
-    const DEFAULT_DELAY: u64 = 10;
+    const DEFAULT_DELAY: u64 = 20;
 
     async fn call_command_to_string(
         command_name: &str,
