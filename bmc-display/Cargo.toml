@@ -14,6 +14,7 @@ async-trait.workspace = true
 chrono.workspace = true
 flume.workspace = true
 humantime-serde.workspace = true
+indexmap.workspace = true
 qrcode-generator.workspace = true
 serde.workspace = true
 serde_json.workspace = true

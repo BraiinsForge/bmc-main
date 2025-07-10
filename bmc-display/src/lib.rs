@@ -7,6 +7,7 @@ mod generated {
 pub mod data;
 pub mod display_controller;
 pub mod display_driver;
+mod indexmap_model;
 pub mod metadata;
 pub mod proxy;
 mod utils;
