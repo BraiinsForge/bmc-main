@@ -16,7 +16,6 @@ chrono.workspace = true
 flume.workspace = true
 minifb.workspace = true
 slint = { workspace = true, features = ["renderer-software"] }
-bmc-led = { workspace = true, features = ["simulator"] }
 tokio.workspace = true
 tracing.workspace = true
 

@@ -17,7 +17,7 @@ axum-extra = { workspace = true, features = [
 bmc-audio.workspace = true
 bmc-display.workspace = true
 bmc-grpc.workspace = true
-bmc-led = { workspace = true, features = ["hardware"] }
+bmc-led.workspace = true
 bmc-platform.workspace = true
 bmc-scheduler.workspace = true
 bmc-shared-ii-net.workspace = true

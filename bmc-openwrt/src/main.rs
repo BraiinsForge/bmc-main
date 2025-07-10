@@ -27,8 +27,7 @@ async fn main() -> Result<()> {
     let mut backlight_driver = GenericBacklightDriver::new("/sys/class/backlight/display-bl");
     backlight_driver.init()?;
 
-    let mut led_driver = LedDriver::new();
-    let led_cmd_tx = led_driver.init()?;
+    let led_driver = LedDriver::new("/dev/spidev0.0");
 
     //TODO: this will be read from config file or emmc
     let brightness = UsizeMetadata::new(18, 0, 20);
@@ -40,8 +39,10 @@ async fn main() -> Result<()> {
     let display_driver = DisplayDriver::init(backlight_driver, display_controller)?;
 
     let config = Configuration::default();
+
     let bmc_index = bmc::firmware::BmcIndex;
     let firmware_resolver = FirmwareResolver::new(bmc_index);
+
     let current_timezone = iana_time_zone::get_timezone()
         .ok()
         .and_then(|timezone| Timezone::from_str(&timezone).ok())
@@ -64,7 +65,6 @@ async fn main() -> Result<()> {
         config,
         display_driver,
         led_driver,
-        led_cmd_tx,
         firmware_resolver,
     )
     .await?;

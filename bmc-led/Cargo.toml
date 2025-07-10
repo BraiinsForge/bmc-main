@@ -7,7 +7,6 @@ edition = "2024"
 anyhow.workspace = true
 apa102-spi.workspace = true
 async-trait.workspace = true
-bisync.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 rand.workspace = true
@@ -20,7 +19,3 @@ ux.workspace = true
 [lints]
 workspace = true
 
-[features]
-default = ["hardware"]
-simulator = []
-hardware = []

@@ -4,24 +4,24 @@ use super::config;
 use super::data;
 use super::effects;
 use super::embedded_hal;
+use crate::config::LED_COLOR_CYAN;
+use crate::config::LED_COLOR_MAGENTA;
+use crate::config::LED_COLOR_RED;
+use crate::config::LED_COLOR_WARM_WHITE;
 use crate::data::{LedCommand, LedEffect, Rgb};
-use crate::effects::FirefliesState;
 use spidev::{SpiModeFlags, Spidev, SpidevOptions};
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
+use tokio::time::interval;
+use tracing::error;
 
-const EVENT_BUFFER_SIZE: usize = 4;
 const COMMAND_BUFFER_SIZE: usize = 4;
+const EVENT_BUFFER_SIZE: usize = 4;
 
-#[async_trait::async_trait]
-pub trait LedHandle: Sync + Send + Clone + Debug {
-    fn init(&self) -> anyhow::Result<()>;
-    async fn emit_event(&self, event: data::LedEvent);
-}
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct LedState {
     period_us: u64,
     frame_interval: Duration,
@@ -33,47 +33,53 @@ struct LedState {
 
 impl LedState {
     #[expect(clippy::integer_division)]
-    const fn default() -> Self {
-        let mut temp = LedState {
-            period_us: config::DEFAULT_PERIOD * 1_000,
-            frame_interval: Duration::new(0, 0),
-            fireflies_state: FirefliesState::default(),
-            brightness: config::APA102_MAX_BRIGHTNESS,
-            effect: LedEffect::Fireflies,
-            // color: Rgb::from(0x8B, 0x31, 0xCF),
-            color: Rgb::from(0xFF, 0xFF, 0xFF),
-        };
+    fn default() -> Self {
+        let period_us_temp = config::DEFAULT_PERIOD * 1_000;
 
-        temp.frame_interval = Duration::from_micros(
-            temp.period_us / (config::LED_COUNT as u64 * config::SUB_STEPS as u64),
-        );
-
-        temp
+        LedState {
+            period_us: period_us_temp,
+            frame_interval: Duration::from_micros(
+                period_us_temp / (u64::from(config::LED_COUNT) * u64::from(config::SUB_STEPS)),
+            ),
+            brightness: data::APA102_MAX_BRIGHTNESS,
+            color: Rgb::new(0x8B, 0x31, 0xCF),
+            ..Default::default()
+        }
     }
 
     #[expect(clippy::cast_possible_truncation)]
     #[expect(clippy::cast_sign_loss)]
     fn set_brightness(&mut self, brightness: f32) {
         self.brightness =
-            ((f32::from(config::APA102_MAX_BRIGHTNESS)) * brightness.clamp(0.0, 1.0)) as u8;
+            ((f32::from(data::APA102_MAX_BRIGHTNESS)) * brightness.clamp(0.0, 1.0)) as u8;
     }
 }
 
 #[derive(Debug)]
-pub struct LedDriver;
+pub struct LedDriver {
+    pub command_sender: Sender<LedCommand>,
+}
 
 impl LedDriver {
     #[must_use]
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(device_path: &str) -> Self {
+        let (command_sender, command_receiver) =
+            tokio::sync::mpsc::channel::<LedCommand>(COMMAND_BUFFER_SIZE);
+
+        tokio::spawn(Self::led_worker(
+            PathBuf::from(device_path),
+            command_receiver,
+        ));
+
+        Self { command_sender }
     }
 
     pub fn change_state(&self, _enabled: bool) -> anyhow::Result<()> {
-        Ok(())
+        Ok(()) // TODO: Implement once new BMC board config is available
     }
 
     pub fn state(&self) -> anyhow::Result<bool> {
-        Ok(true)
+        Ok(true) // TODO: Implement once new BMC board config is available
     }
 
     pub fn toggle_state(&mut self) -> anyhow::Result<()> {
@@ -88,24 +94,25 @@ impl LedDriver {
         self.change_state(false)
     }
 
-    pub fn brightness(&self) -> anyhow::Result<u8> {
-        Ok(0)
+    pub fn brightness(&self) -> anyhow::Result<f32> {
+        Ok(1.0) // TODO: Implement once new BMC board config is available
     }
 
     #[must_use]
-    pub fn max_brightness(&self) -> u8 {
-        config::APA102_MAX_BRIGHTNESS
+    pub fn max_brightness(&self) -> f32 {
+        data::LED_MAX_BRIGHTNESS
     }
 
-    pub fn set_brightness(&self, _value: u8) -> anyhow::Result<()> {
-        Ok(())
+    pub fn set_brightness(&self, _value: f32) -> anyhow::Result<()> {
+        Ok(()) // TODO: Implement once new BMC board config is available
     }
 
-    async fn led_worker(mut led_cmd_rx: Receiver<LedCommand>) -> ! {
-        let mut raw_spi = match Spidev::open(config::SPI_DEV) {
+    async fn led_worker(device_path: PathBuf, mut led_cmd_rx: Receiver<LedCommand>) {
+        let mut raw_spi = match Spidev::open(device_path) {
             Ok(raw_spi) => raw_spi,
             Err(error) => {
-                panic!("SPI device open failed {error}");
+                error!("SPI device open failed {error}");
+                return;
             }
         };
 
@@ -115,13 +122,9 @@ impl LedDriver {
             .mode(SpiModeFlags::SPI_MODE_0)
             .build();
 
-        match raw_spi.configure(&options) {
-            Ok(()) => {
-                // Do nothing
-            }
-            Err(error) => {
-                panic!("SPI device configuration failed {error}");
-            }
+        if let Err(error) = raw_spi.configure(&options) {
+            error!("SPI device configuration failed {error}");
+            return;
         }
 
         let mut spi = embedded_hal::SpidevHalWrapper(raw_spi);
@@ -130,17 +133,17 @@ impl LedDriver {
             config::LED_COUNT as usize,
             apa102_spi::PixelOrder::BGR,
         );
-
         let mut led_state: LedState = LedState::default();
-
         let start = Instant::now();
-        let mut next = start + led_state.frame_interval;
+        let mut interval = interval(led_state.frame_interval);
+
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             if !led_cmd_rx.is_empty() {
                 if let Some(command) = led_cmd_rx.recv().await {
                     match command {
-                        /* LedCommand::SetTemporaryEffect(new_effect, new_color) => {
+                        /* LedCommand::SetTemporaryEffect(new_effect, new_color) => { // TODO: Implement temporary effects once we decide how to handle temporary states
                             led_state.effect = new_effect;
                             led_state.color = new_color;
                         } */
@@ -153,9 +156,6 @@ impl LedDriver {
                         LedCommand::SetPersistentEffect(new_effect, new_color) => {
                             led_state.effect = new_effect;
                             led_state.color = new_color;
-                        }
-                        LedCommand::NoChange => {
-                            // Do nothing
                         }
                     }
                 }
@@ -206,88 +206,45 @@ impl LedDriver {
                 ),
             }
 
-            tokio::time::sleep_until(tokio::time::Instant::from_std(next)).await;
-
-            next += led_state.frame_interval;
+            interval.tick().await;
         }
     }
-
-    pub fn init(&mut self) -> anyhow::Result<Sender<LedCommand>> {
-        let (command_sender, command_receiver) =
-            tokio::sync::mpsc::channel::<LedCommand>(COMMAND_BUFFER_SIZE);
-
-        tokio::spawn(Self::led_worker(command_receiver));
-
-        Ok(command_sender)
-    }
 }
 
-#[derive(Debug, Clone)]
-pub struct LedHandler {
-    event_sender: Sender<data::LedEvent>,
-}
+#[derive(Debug, Default)]
+pub struct LedEventHandler;
 
-impl LedHandler {
+impl LedEventHandler {
     #[must_use]
-    pub fn new(command_sender: Sender<LedCommand>) -> Self {
-        Self {
-            event_sender: EventHandler::init(command_sender),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl LedHandle for LedHandler {
-    fn init(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn emit_event(&self, event: data::LedEvent) {
-        _ = self.event_sender.send(event).await;
-    }
-}
-
-struct EventHandler;
-
-impl EventHandler {
-    fn init(command_sender: Sender<LedCommand>) -> Sender<data::LedEvent> {
+    pub fn init(&self, command_sender: Sender<LedCommand>) -> Sender<data::LedEvent> {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
 
         tokio::spawn(async move {
             while let Some(event) = receiver.recv().await {
-                let cmd = match event {
-                    data::LedEvent::Idle => data::LedCommand::SetPersistentEffect(
-                        data::LedEffect::Fireflies,
-                        Rgb::from(226, 52, 235),
-                    ),
-                    data::LedEvent::Alarm => data::LedCommand::SetPersistentEffect(
-                        data::LedEffect::Scan,
-                        Rgb::from(235, 232, 52),
-                    ),
-                    data::LedEvent::DownloadStarted => data::LedCommand::SetPersistentEffect(
-                        data::LedEffect::Snake,
-                        Rgb::from(52, 180, 235),
-                    ),
-                    data::LedEvent::UpgradeStarted => data::LedCommand::SetPersistentEffect(
-                        data::LedEffect::Chase,
-                        Rgb::from(52, 180, 235),
-                    ),
-                    data::LedEvent::UpgradeFailed => data::LedCommand::SetPersistentEffect(
-                        data::LedEffect::Fireflies,
-                        Rgb::from(255, 0, 0),
-                    ),
-                    data::LedEvent::UpgradeFinishedSuccessfully => {
-                        data::LedCommand::SetPersistentEffect(
-                            data::LedEffect::Fireflies,
-                            Rgb::from(0, 255, 0),
-                        )
+                let update = match event {
+                    data::LedEvent::Idle => {
+                        Some((data::LedEffect::Fireflies, LED_COLOR_MAGENTA))
                     }
-                    data::LedEvent::DownloadProgress
-                    | data::LedEvent::DownloadFinished
-                    | data::LedEvent::TimezoneChanged => data::LedCommand::NoChange,
+                    data::LedEvent::Alarm => Some((data::LedEffect::Scan, LED_COLOR_WARM_WHITE)),
+                    data::LedEvent::DownloadStarted => {
+                        Some((data::LedEffect::Snake, LED_COLOR_CYAN))
+                    }
+                    data::LedEvent::UpgradeStarted => {
+                        Some((data::LedEffect::Chase, LED_COLOR_CYAN))
+                    }
+                    data::LedEvent::Failed => {
+                        Some((data::LedEffect::Fireflies, LED_COLOR_RED))
+                    }
+                    data::LedEvent::DownloadFinished | data::LedEvent::DownloadProgress => None,
                 };
 
-                std::mem::drop(command_sender.send(cmd));
+                if let Some((effect, color)) = update {
+                    let cmd = LedCommand::SetPersistentEffect(effect, color);
+                    // Ignore the result, since we don't care if the send fails
+                    if let Err(e) = command_sender.send(cmd).await {
+                        error!("Failed to send command: {}", e);
+                    }
+                }
             }
         });
 

@@ -42,8 +42,7 @@ async fn main() -> Result<()> {
 
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
-    let mut led_driver = LedDriver::new();
-    let led_cmd_tx = led_driver.init()?;
+    let led_driver = LedDriver::new("");
 
     let firmware_resolver = FirmwareResolver::new(MockIndex);
 
@@ -56,7 +55,6 @@ async fn main() -> Result<()> {
                 config,
                 display_driver,
                 led_driver,
-                led_cmd_tx,
                 firmware_resolver,
             )
             .await;

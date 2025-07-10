@@ -88,7 +88,6 @@ axum = "0.8.4"
 axum-extra = "0.10.1"
 base64 = "0.22.1"
 bincode = "2.0.0" # NOTE: check https://docs.rs/bincode/latest/bincode/serde/index.html#known-issues before enabling `serde` feature
-bisync = { version = "0.3.0" }
 bmc = { path = "bmc" }
 bmc-audio = { path = "bmc-audio" }
 bmc-display = { path = "bmc-display" }

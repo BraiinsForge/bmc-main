@@ -3,17 +3,15 @@
 use crate::{App, BmcManager, Configuration};
 use anyhow::Result;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
-use bmc_led::{data::LedCommand, led_driver::LedDriver};
+use bmc_led::led_driver::LedDriver;
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 
 pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
     manager: impl BmcManager,
     config: Configuration,
     display: DisplayDriver<T>,
-    led: LedDriver,
-    led_cmd_tx: Sender<LedCommand>,
+    led_driver: LedDriver,
     firmware_resolver: FirmwareResolver<U>,
 ) -> Result<()> {
     let manager = Arc::new(manager);
@@ -24,8 +22,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
         manager,
         session_manager,
         display,
-        led,
-        led_cmd_tx,
+        led_driver,
         firmware_resolver,
     )
     .await?;

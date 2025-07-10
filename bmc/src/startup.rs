@@ -17,12 +17,11 @@ use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
 use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
-use bmc_led::{data::LedCommand, led_driver::LedDriver};
+use bmc_led::led_driver::LedDriver;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-use tokio::sync::mpsc::Sender;
 use tracing::info;
 
 use crate::manager::BmcManager;
@@ -42,7 +41,8 @@ where
     config: Configuration,
     display_tasks: DisplayTasks<T>,
     widget_tasks: WidgetTasks,
-    led_controller: LedController,
+    _led_driver: LedDriver,
+    _led_controller: LedController,
     system_upgrade_service: SystemUpgradeService<V, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
@@ -64,14 +64,9 @@ where
         session_manager: T::SessionManager,
         display_driver: DisplayDriver<U>,
         led_driver: LedDriver,
-        led_cmd_tx: Sender<LedCommand>,
         firmware_resolver: FirmwareResolver<V>,
     ) -> Result<Self> {
-        info!("Binding address");
-
         let listener = TcpListener::bind(config.address).await?;
-
-        info!("Address bound {}", config.address);
 
         let state_service = StateService::new();
 
@@ -153,12 +148,8 @@ where
             alarm_bus,
         );
 
-        let led_controller = LedController::new(
-            led_driver,
-            led_cmd_tx,
-            &state_service,
-            manager.watch_timezone_updates(),
-        );
+        let led_controller = LedController::new(&state_service);
+        led_controller.init(led_driver.command_sender.clone());
 
         Ok(Self {
             listener,
@@ -167,7 +158,8 @@ where
             config,
             display_tasks,
             widget_tasks,
-            led_controller,
+            _led_driver: led_driver,
+            _led_controller: led_controller,
             system_upgrade_service,
             config_handle,
             display_controller,
@@ -183,7 +175,6 @@ where
         info!("Starting server on http://{}", address);
 
         self.display_tasks.spawn();
-        self.led_controller.init()?;
 
         WebService::new(
             self.manager,
