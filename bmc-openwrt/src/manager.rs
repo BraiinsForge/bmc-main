@@ -411,7 +411,7 @@ impl BmcManager for Manager {
         // check flag if setup is pending
         else if fs::try_exists(Self::DEVICE_SETUP_PENDING_FILE_PATH)
             .await
-            .is_ok()
+            .is_ok_and(|exists| exists)
         {
             BmcState::SetupPending
         } else {
