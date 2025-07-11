@@ -45,14 +45,14 @@ impl Manager {
     const UCI_SYSTEM_ZONENAME: &'static str = "system.@system[0].zonename";
     const UCI_SYSTEM_TIMEZONE: &'static str = "system.@system[0].timezone";
     const UCI_SYSTEM_HOSTNAME: &'static str = "system.@system[0].hostname";
-    const UCI_NET_LAN: &'static str = "network.lan";
+    const UCI_NET_LAN: &'static str = "network.wifi_sta";
     const UCI_NET_LAN_PROTO_DHCP_VARIANT: &'static str = "dhcp";
     const UCI_NET_LAN_PROTO_STATIC_VARIANT: &'static str = "static";
-    const UCI_NET_LAN_PROTO: &'static str = "network.lan.proto";
-    const UCI_NET_LAN_IPADDR: &'static str = "network.lan.ipaddr";
-    const UCI_NET_LAN_NETMASK: &'static str = "network.lan.netmask";
-    const UCI_NET_LAN_GATEWAY: &'static str = "network.lan.gateway";
-    const UCI_NET_LAN_DNS: &'static str = "network.lan.dns";
+    const UCI_NET_LAN_PROTO: &'static str = "network.wifi_sta.proto";
+    const UCI_NET_LAN_IPADDR: &'static str = "network.wifi_sta.ipaddr";
+    const UCI_NET_LAN_NETMASK: &'static str = "network.wifi_sta.netmask";
+    const UCI_NET_LAN_GATEWAY: &'static str = "network.wifi_sta.gateway";
+    const UCI_NET_LAN_DNS: &'static str = "network.wifi_sta.dns";
     const DEVICE_SETUP_PENDING_FILE_PATH: &'static str = "/etc/setup-pending";
 
     #[must_use]
