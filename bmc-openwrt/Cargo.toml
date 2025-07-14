@@ -11,7 +11,6 @@ axum-extra.workspace = true
 bmc.workspace = true
 bmc-display.workspace = true
 bmc-platform.workspace = true
-bmc-scheduler.workspace = true
 bmc-shared-ii-net.workspace = true
 bmc-shared-ii-net-drv.workspace = true
 bmc-shared-time.workspace = true

@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::Result;
-use bmc::{BmcManager, log};
+use bmc::log;
 use bmc_mock::MockSessionManager;
 use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
 use bmc_mock_display::VirtualDisplay;
@@ -42,8 +42,6 @@ async fn main() -> Result<()> {
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
     let firmware_resolver = FirmwareResolver::new(MockIndex);
-
-    bmc_scheduler::JobScheduler::init(manager.watch_timezone_updates(), None).await;
 
     let main_join_handle = tokio::task::spawn({
         let display_controller = display_driver.display_controller.clone();

@@ -57,8 +57,6 @@ async fn main() -> Result<()> {
     );
     manager.init_wifi_ap().await?; // Has check on factory default already
 
-    bmc_scheduler::JobScheduler::init(manager.watch_timezone_updates(), None).await;
-
     bmc::entry::main(manager, config, display_driver, firmware_resolver).await?;
 
     Ok(())
