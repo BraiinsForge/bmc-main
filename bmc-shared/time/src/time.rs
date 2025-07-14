@@ -4,6 +4,7 @@ use chrono::{Duration, TimeZone};
 use chrono_tz::OffsetComponents;
 use core::fmt;
 use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{convert::TryInto, str::FromStr};
 use strum_macros::{Display, EnumString};
 
@@ -44,7 +45,7 @@ pub(crate) enum TimeSystemWithSeconds {
     Hour24,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, SerializeDisplay, DeserializeFromStr)]
 pub struct Timezone {
     pub iana: &'static str,
     pub posix: &'static str,
