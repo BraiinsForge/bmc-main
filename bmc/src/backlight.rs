@@ -24,28 +24,25 @@ impl<T: DisplayBacklightDriver> DisplayBacklightController<T> {
         }
     }
 
-    pub(crate) async fn init(&self) -> anyhow::Result<()> {
-        let brightness_pct = self.config_handle.read().await.brightness_pct();
-        self.backlight_driver
-            .lock()
-            .await
-            .set_brightness_pct(brightness_pct)?;
-        Ok(())
-    }
-
-    pub(crate) async fn get_brightness_pct(&self) -> u8 {
+    pub(crate) async fn brightness(&self) -> u8 {
         self.config_handle.read().await.brightness_pct()
     }
 
-    pub(crate) async fn set_brightness_pct(&self, value: u8) -> anyhow::Result<()> {
+    pub(crate) async fn set_config_brightness(&self, value_pct: u8) -> anyhow::Result<()> {
         let mut config_handle = self.config_handle.write().await;
-        config_handle.set_brightness_pct(value);
+        config_handle.set_brightness(value_pct);
+
+        config_handle.sync_to_storage().await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn set_display_brightness(&self, value_pct: u8) -> anyhow::Result<()> {
         self.backlight_driver
             .lock()
             .await
-            .set_brightness_pct(value)?;
+            .set_brightness_pct(value_pct)?;
 
-        config_handle.sync_to_storage().await?;
         Ok(())
     }
 }

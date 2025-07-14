@@ -14,6 +14,7 @@ use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
 use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
+use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -78,6 +79,9 @@ where
         display_controller.set_scenes(config_handle.scenes.clone());
         display_controller.set_scene_cycling(config_handle.scene_cycling());
 
+        let night_mode_config = config_handle.night_mode();
+        let brightness_pct = config_handle.brightness_pct();
+
         let config_handle = Arc::new(RwLock::new(config_handle));
 
         let widget_tasks = WidgetTasks::new(
@@ -100,10 +104,20 @@ where
             config_handle.clone(),
         );
 
-        let display_backlight_controller =
-            DisplayBacklightController::new(config_handle.clone(), display_driver.backlight_driver);
+        let scheduler = JobScheduler::init(manager.watch_timezone_updates(), None).await;
 
-        display_backlight_controller.init().await?;
+        let display_backlight_controller = DisplayBacklightController::new(
+            config_handle.clone(),
+            display_driver.backlight_driver,
+            scheduler,
+            brightness_pct,
+            night_mode_config.brightness_pct,
+            manager.watch_timezone_updates(),
+        );
+
+        display_backlight_controller
+            .init(night_mode_config.into())
+            .await?;
 
         let display_tasks = DisplayTasks::new(
             display_controller.clone(),

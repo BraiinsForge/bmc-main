@@ -8,6 +8,7 @@ pub mod firmware;
 mod initial_setup;
 pub mod log;
 pub mod manager;
+mod night_mode;
 pub mod session;
 mod startup;
 mod storage_checker;

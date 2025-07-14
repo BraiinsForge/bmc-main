@@ -17,10 +17,12 @@ axum-extra = { workspace = true, features = [
 bmc-display.workspace = true
 bmc-grpc.workspace = true
 bmc-platform.workspace = true
+bmc-scheduler.workspace = true
 bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true
 bmc-upgrade.workspace = true
 chrono = { workspace = true }
+chrono-tz.workspace = true
 futures.workspace = true
 http.workspace = true
 humantime-serde.workspace = true
