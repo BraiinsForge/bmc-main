@@ -27,11 +27,11 @@ export component WidgetClockAnalogRound inherits Rectangle {
         }
         timezone := Text {
             text: root.timezone[0];
-            y: (widget-size == WidgetSize.FullScreen) ? 104px
+            y: (widget-size == WidgetSize.Full) ? 104px
                 : (widget-size == WidgetSize.Large) ? 112px
                 : 53px;
             font-weight: Theme.font.weight.regular;
-            font-size: (widget-size == WidgetSize.FullScreen || widget-size == WidgetSize.Large) ? 24px : 16px;
+            font-size: (widget-size == WidgetSize.Full || widget-size == WidgetSize.Large) ? 24px : 16px;
             color: Palette.gray-40;
         }
         date-window := Rectangle {
@@ -125,14 +125,14 @@ export component WidgetClockAnalogRect inherits Rectangle {
     in property <[string]> timezone;
 
     property <percent> relative-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
-    property <percent> relative-width: (widget-size == WidgetSize.FullScreen) ? 100% : (widget-size == WidgetSize.Small) ? 25% : 50%;
+    property <percent> relative-width: (widget-size == WidgetSize.Full) ? 100% : (widget-size == WidgetSize.Small) ? 25% : 50%;
     property <percent> relative-height: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
 
-    property <length> hour-font-size: (widget-size == WidgetSize.FullScreen) ? 64px
+    property <length> hour-font-size: (widget-size == WidgetSize.Full) ? 64px
         : (widget-size == WidgetSize.Large) ? 40px
         : (widget-size == WidgetSize.Medium) ? 24px
         : 24px;
-    property <int> hour-font-weight: (widget-size == WidgetSize.FullScreen) ? Theme.font.weight.bold : Theme.font.weight.semi-bold;
+    property <int> hour-font-weight: (widget-size == WidgetSize.Full) ? Theme.font.weight.bold : Theme.font.weight.semi-bold;
 
     width: base-width * (widget-size == WidgetSize.Small ? 1 : (widget-size == WidgetSize.Medium || widget-size == WidgetSize.Large) ? 2 : 4);
     height: base-height * ((widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 1 : 2);
@@ -175,7 +175,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             x: nine-horizontal-offset(widget-size);
         }
         date := Text {
-            visible: widget-size == WidgetSize.FullScreen;
+            visible: widget-size == WidgetSize.Full;
             text: DateTimeAdapter.weekday + " " + DateTimeAdapter.day;
             font-size: 40px;
             font-weight: Theme.font.weight.regular;
@@ -185,7 +185,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
         }
         timezone_element := Text {
             text: root.timezone[0];
-            y: (widget-size == WidgetSize.FullScreen) ? 265px
+            y: (widget-size == WidgetSize.Full) ? 265px
                 : (widget-size == WidgetSize.Large) ? 270px
                 : (widget-size == WidgetSize.Medium) ? 130px
                 : 130px;
@@ -274,7 +274,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
         }
 
         function twelve-vertical-offset(w-size: WidgetSize) -> length {
-            return (w-size == WidgetSize.FullScreen) ? 59px
+            return (w-size == WidgetSize.Full) ? 59px
                 : (w-size == WidgetSize.Large) ? 80px
                 : (w-size == WidgetSize.Medium) ? 35px
                 // Small
@@ -282,7 +282,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
         }
 
         function three-horizontal-offset(w-size: WidgetSize, r-w: length, s-w: length) -> length {
-            return (w-size == WidgetSize.FullScreen) ? r-w - s-w - 105px
+            return (w-size == WidgetSize.Full) ? r-w - s-w - 105px
                 : (w-size == WidgetSize.Large) ? r-w - s-w - 90px
                 : (w-size == WidgetSize.Medium) ? r-w - s-w - 50px
                 // Small
@@ -290,7 +290,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
         }
 
         function six-vertical-offset(w-size: WidgetSize, r-h: length, s-h: length) -> length {
-            return (w-size == WidgetSize.FullScreen) ? r-h - s-h - 59px
+            return (w-size == WidgetSize.Full) ? r-h - s-h - 59px
                 : (w-size == WidgetSize.Large) ? r-h - s-h - 80px
                 : (w-size == WidgetSize.Medium) ? r-h - s-h - 35px
                 // Small
@@ -298,7 +298,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
         }
 
         function nine-horizontal-offset(w-size: WidgetSize) -> length {
-            return (w-size == WidgetSize.FullScreen) ? 105px
+            return (w-size == WidgetSize.Full) ? 105px
                 : (w-size == WidgetSize.Large) ? 90px
                 : (w-size == WidgetSize.Medium) ? 50px
                 // Small

@@ -479,7 +479,7 @@ impl From<WidgetSize> for generated::WidgetSize {
             WidgetSize::Small => Self::Small,
             WidgetSize::Medium => Self::Medium,
             WidgetSize::Large => Self::Large,
-            WidgetSize::Full => Self::FullScreen,
+            WidgetSize::Full => Self::Full,
         }
     }
 }
