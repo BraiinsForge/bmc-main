@@ -8,13 +8,13 @@ import { DateTimeAdapter } from "../../controls/adapters.slint";
 export component WidgetClockAnalogRound inherits Rectangle {
     property <length> base-width: 320px;
     property <length> base-height: 220px;
-    in property <WidgetSize> widget-size;
+    in property <WidgetSize> size;
     in property <[string]> timezone;
 
-    property <percent> relative-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
+    property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
-    width: base-width * (widget-size == WidgetSize.Small ? 1 : (widget-size == WidgetSize.Medium || widget-size == WidgetSize.Large) ? 2 : 4);
-    height: base-height * ((widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 1 : 2);
+    width: base-width * (size == WidgetSize.Small ? 1 : (size == WidgetSize.Medium || size == WidgetSize.Large) ? 2 : 4);
+    height: base-height * ((size == WidgetSize.Small || size == WidgetSize.Medium) ? 1 : 2);
 
     Rectangle {
         width: 390px * relative-size;
@@ -27,15 +27,15 @@ export component WidgetClockAnalogRound inherits Rectangle {
         }
         timezone := Text {
             text: root.timezone[0];
-            y: (widget-size == WidgetSize.Full) ? 104px
-                : (widget-size == WidgetSize.Large) ? 112px
+            y: (size == WidgetSize.Full) ? 104px
+                : (size == WidgetSize.Large) ? 112px
                 : 53px;
             font-weight: Theme.font.weight.regular;
-            font-size: (widget-size == WidgetSize.Full || widget-size == WidgetSize.Large) ? 24px : 16px;
+            font-size: (size == WidgetSize.Full || size == WidgetSize.Large) ? 24px : 16px;
             color: Palette.gray-40;
         }
         date-window := Rectangle {
-            visible: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? false : true;
+            visible: (size == WidgetSize.Small || size == WidgetSize.Medium) ? false : true;
             width: 60px;
             height: 60px;
             x: parent.width / 2 - self.width / 2;
@@ -121,21 +121,21 @@ export component WidgetClockAnalogRound inherits Rectangle {
 export component WidgetClockAnalogRect inherits Rectangle {
     property <length> base-width: 320px;
     property <length> base-height: 220px;
-    in property <WidgetSize> widget-size;
+    in property <WidgetSize> size;
     in property <[string]> timezone;
 
-    property <percent> relative-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
-    property <percent> relative-width: (widget-size == WidgetSize.Full) ? 100% : (widget-size == WidgetSize.Small) ? 25% : 50%;
-    property <percent> relative-height: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
+    property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
+    property <percent> relative-width: (size == WidgetSize.Full) ? 100% : (size == WidgetSize.Small) ? 25% : 50%;
+    property <percent> relative-height: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
-    property <length> hour-font-size: (widget-size == WidgetSize.Full) ? 64px
-        : (widget-size == WidgetSize.Large) ? 40px
-        : (widget-size == WidgetSize.Medium) ? 24px
+    property <length> hour-font-size: (size == WidgetSize.Full) ? 64px
+        : (size == WidgetSize.Large) ? 40px
+        : (size == WidgetSize.Medium) ? 24px
         : 24px;
-    property <int> hour-font-weight: (widget-size == WidgetSize.Full) ? Theme.font.weight.bold : Theme.font.weight.semi-bold;
+    property <int> hour-font-weight: (size == WidgetSize.Full) ? Theme.font.weight.bold : Theme.font.weight.semi-bold;
 
-    width: base-width * (widget-size == WidgetSize.Small ? 1 : (widget-size == WidgetSize.Medium || widget-size == WidgetSize.Large) ? 2 : 4);
-    height: base-height * ((widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 1 : 2);
+    width: base-width * (size == WidgetSize.Small ? 1 : (size == WidgetSize.Medium || size == WidgetSize.Large) ? 2 : 4);
+    height: base-height * ((size == WidgetSize.Small || size == WidgetSize.Medium) ? 1 : 2);
 
     property <[int]> clock-angles: [0, 15, 28, 40, 48, 54, 59, 63, 66, 69, 71, 73, 76, 80, 85, 90, 95, 100, 104, 107, 109, 111, 114, 117, 121, 126, 132, 140, 152, 165];
     property <[int]> hour-hand-difference-angles: [54, 17, 19, 19, 17];
@@ -151,31 +151,31 @@ export component WidgetClockAnalogRect inherits Rectangle {
             font-size: hour-font-size;
             font-weight: hour-font-weight;
             color: Palette.white;
-            y: twelve-vertical-offset(widget-size);
+            y: twelve-vertical-offset(size);
         }
         three := Text {
             text: "3";
             font-size: hour-font-size;
             font-weight: hour-font-weight;
             color: Palette.white;
-            x: three-horizontal-offset(widget-size, root.width, self.width);
+            x: three-horizontal-offset(size, root.width, self.width);
         }
         six := Text {
             text: "6";
             font-size: hour-font-size;
             font-weight: hour-font-weight;
             color: Palette.white;
-            y: six-vertical-offset(widget-size, root.height, self.height);
+            y: six-vertical-offset(size, root.height, self.height);
         }
         nine := Text {
             text: "9";
             font-size: hour-font-size;
             font-weight: hour-font-weight;
             color: Palette.white;
-            x: nine-horizontal-offset(widget-size);
+            x: nine-horizontal-offset(size);
         }
         date := Text {
-            visible: widget-size == WidgetSize.Full;
+            visible: size == WidgetSize.Full;
             text: DateTimeAdapter.weekday + " " + DateTimeAdapter.day;
             font-size: 40px;
             font-weight: Theme.font.weight.regular;
@@ -185,19 +185,19 @@ export component WidgetClockAnalogRect inherits Rectangle {
         }
         timezone_element := Text {
             text: root.timezone[0];
-            y: (widget-size == WidgetSize.Full) ? 265px
-                : (widget-size == WidgetSize.Large) ? 270px
-                : (widget-size == WidgetSize.Medium) ? 130px
+            y: (size == WidgetSize.Full) ? 265px
+                : (size == WidgetSize.Large) ? 270px
+                : (size == WidgetSize.Medium) ? 130px
                 : 130px;
             font-weight: Theme.font.weight.regular;
-            font-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 16px : 24px;
+            font-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 16px : 24px;
             color: Palette.gray-40;
         }
         hour := Image {
             width: 0.9 * Images.hour-hand-rect-width * relative-size;
             height: 0.9 * Images.hour-hand-rect-height * relative-size;
             y: 95px * relative-size;
-            rotation-angle: hour-angle(widget-size);
+            rotation-angle: hour-angle(size);
             rotation-origin-y: 123px * relative-size;
             source: Images.hand-hour-rect;
         }
@@ -205,7 +205,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             width: 0.9 * Images.minute-hand-rect-width * relative-size;
             height: 0.9 * Images.minute-hand-rect-height * relative-size;
             y: 2px;
-            rotation-angle: minute-angle(widget-size);
+            rotation-angle: minute-angle(size);
             rotation-origin-y: 217px * relative-size;
             source: Images.hand-minute-rect;
         }
@@ -220,7 +220,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             width: 0.9 * Images.second-hand-rect-width * relative-size;
             height: 0.9 * Images.second-hand-rect-height * relative-size;
             y: 4px * relative-size;
-            rotation-angle: second-angle(widget-size);
+            rotation-angle: second-angle(size);
             rotation-origin-y: 215px * relative-size;
             source: Images.hand-second-rect;
         }
@@ -310,13 +310,13 @@ export component WidgetClockAnalogRect inherits Rectangle {
 export component WidgetClockDigital inherits Rectangle {
     property <length> base-width: 320px;
     property <length> base-height: 220px;
-    in property <WidgetSize> widget-size;
+    in property <WidgetSize> size;
     in property <[string]> timezone;
 
-    property <percent> relative-size: (widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 50% : 100%;
+    property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
-    width: base-width * (widget-size == WidgetSize.Small ? 1 : (widget-size == WidgetSize.Medium || widget-size == WidgetSize.Large) ? 2 : 4);
-    height: base-height * ((widget-size == WidgetSize.Small || widget-size == WidgetSize.Medium) ? 1 : 2);
+    width: base-width * (size == WidgetSize.Small ? 1 : (size == WidgetSize.Medium || size == WidgetSize.Large) ? 2 : 4);
+    height: base-height * ((size == WidgetSize.Small || size == WidgetSize.Medium) ? 1 : 2);
 
     VerticalLayout {
         alignment: space-between;

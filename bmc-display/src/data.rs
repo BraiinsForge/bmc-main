@@ -502,7 +502,7 @@ impl From<Widget> for generated::Widget {
             row: value.position.row.into(),
             col: value.position.col.into(),
             widget_data: ModelRc::new(VecModel::from(widget_data)),
-            widget_size: value.size.into(),
+            size: value.size.into(),
             kind,
         }
     }

@@ -5,21 +5,21 @@ export component WidgetBuilder inherits Rectangle {
     in property <[Widget]> widgets;
 
     for widget[index] in widgets: WidgetContainer {
-        size: widget.widget-size;
+        size: widget.size;
         position-row: widget.row;
         position-col: widget.col;
         visible: true;
         //
         if widget.kind == WidgetKind.ClockAnalogRound: WidgetClockAnalogRound {
-            widget-size: widget.widget-size;
+            size: widget.size;
             timezone: widget.widget-data;
         }
         if widget.kind == WidgetKind.ClockAnalogRect: WidgetClockAnalogRect {
-            widget-size: widget.widget-size;
+            size: widget.size;
             timezone: widget.widget-data;
         }
         if widget.kind == WidgetKind.ClockDigital: WidgetClockDigital {
-            widget-size: widget.widget-size;
+            size: widget.size;
             timezone: widget.widget-data;
         }
     }
