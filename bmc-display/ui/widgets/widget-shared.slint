@@ -1,6 +1,26 @@
+import { Theme } from "../style/theme.slint";
+
 export enum WidgetSize {
     Small,
     Medium,
     Large,
     Full,
+}
+
+export enum FontStyle {
+  Light,
+  Medium,
+  Bold
+}
+
+export global WidgetUtilsAdapter {
+  public function font-style-to-font-weight(font-style: FontStyle) -> int {
+    if font-style == FontStyle.Light {
+      return Theme.font.weight.regular;
+    } else if font-style == FontStyle.Medium {
+      return Theme.font.weight.semi-bold;
+    } else {
+      return Theme.font.weight.bold;
+    }
+  }
 }
