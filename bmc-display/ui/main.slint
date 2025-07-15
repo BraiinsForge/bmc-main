@@ -4,7 +4,7 @@ import { UIScreen } from "controls/common.slint";
 import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
     InitStartConnect, InitWifiConnectProgress, InitWifiConnectSuccess, InitWifiConnectFailed, InitSetupSuccess, InitGeneralError, InitDeviceSetupQr, ConnectInfo
 } from "screens/screens.slint";
-import { WidgetSize, WidgetType, Widget } from "widgets/widget.slint";
+import { WidgetSize, WidgetKind, Widget } from "widgets/widget.slint";
 import { WidgetBuilder } from "controls/widget-builder.slint";
 import { Scene } from "widgets/scene.slint";
 import { SceneCyclerHorizontal } from "controls/scene-cycler.slint";
@@ -15,7 +15,7 @@ import { Images } from "style/images.slint";
 import { DateTimeAdapter, InitSetupWifiAdapter, ConnectionAdapter } from "controls/adapters.slint";
 
 export { ScreenAdapter, UpgradeDownloadAdapter, UIScreen, NotificationAdapter }
-export { WidgetSize, WidgetType, Widget }
+export { WidgetSize, WidgetKind, Widget }
 export { Backend }
 export { DateTimeAdapter, InitSetupWifiAdapter, ConnectionAdapter }
 

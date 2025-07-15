@@ -487,13 +487,13 @@ impl From<WidgetSize> for generated::WidgetSize {
 impl From<Widget> for generated::Widget {
     fn from(value: Widget) -> Self {
         // FIXME: propagate all params to slint
-        let (widget_data, widget_type) = match value.kind {
+        let (widget_data, kind) = match value.kind {
             WidgetKind::Clock(config) => (
                 vec![],
                 match config.clock_style {
-                    ClockStyle::AnalogRound => generated::WidgetType::ClockAnalogRound,
-                    ClockStyle::AnalogRect => generated::WidgetType::ClockAnalogRect,
-                    ClockStyle::Digital => generated::WidgetType::ClockDigital,
+                    ClockStyle::AnalogRound => generated::WidgetKind::ClockAnalogRound,
+                    ClockStyle::AnalogRect => generated::WidgetKind::ClockAnalogRect,
+                    ClockStyle::Digital => generated::WidgetKind::ClockDigital,
                 },
             ),
         };
@@ -503,7 +503,7 @@ impl From<Widget> for generated::Widget {
             col: value.position.col.into(),
             widget_data: ModelRc::new(VecModel::from(widget_data)),
             widget_size: value.size.into(),
-            widget_type,
+            kind,
         }
     }
 }

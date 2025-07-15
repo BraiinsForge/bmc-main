@@ -1,4 +1,4 @@
-export enum WidgetType {
+export enum WidgetKind {
     ClockAnalogRound,
     ClockAnalogRect,
     ClockDigital,
@@ -12,7 +12,7 @@ export enum WidgetSize {
 }
 
 export struct Widget {
-    widget-type: WidgetType,
+    kind: WidgetKind,
     widget-size: WidgetSize,
     widget-data: [string],
     row: int,
