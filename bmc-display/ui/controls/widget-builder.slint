@@ -1,8 +1,8 @@
-import { WidgetContainer, WidgetSlint, WidgetType } from "../widgets/widget.slint";
+import { WidgetContainer, Widget, WidgetType } from "../widgets/widget.slint";
 import { WidgetClockAnalogRound, WidgetClockAnalogRect, WidgetClockDigital } from "../widgets/categories/clock.slint";
 
 export component WidgetBuilder inherits Rectangle {
-    in property <[WidgetSlint]> widgets;
+    in property <[Widget]> widgets;
 
     for widget[index] in widgets: WidgetContainer {
         size: widget.widget-size;

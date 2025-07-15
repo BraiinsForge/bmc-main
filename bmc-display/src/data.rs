@@ -484,7 +484,7 @@ impl From<WidgetSize> for generated::WidgetSize {
     }
 }
 
-impl From<Widget> for generated::WidgetSlint {
+impl From<Widget> for generated::Widget {
     fn from(value: Widget) -> Self {
         // FIXME: propagate all params to slint
         let (widget_data, widget_type) = match value.kind {
