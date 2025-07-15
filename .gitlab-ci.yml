@@ -45,7 +45,7 @@ bmc-openwrt:
   script:
     - nix build .#bmc-openwrt-armv7-release
 
-web-assets:
+frontend:
   extends: .app
   script:
-    - nix build .#web-assets
+    - nix build .#frontend
