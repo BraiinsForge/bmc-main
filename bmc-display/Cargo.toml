@@ -22,7 +22,7 @@ serde_json.workspace = true
 slint.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tokio-stream = { workspace = true, features = ["sync"] }
+tokio-stream = { workspace = true, features = ["sync", "time"] }
 tracing.workspace = true
 uuid.workspace = true
 

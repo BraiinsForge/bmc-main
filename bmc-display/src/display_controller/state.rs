@@ -7,7 +7,7 @@ use crate::indexmap_model::IndexMapModel;
 use crate::utils;
 use chrono::{Datelike, Timelike};
 use indexmap::IndexMap;
-use slint::{Global, Model, ModelRc, VecModel};
+use slint::{FilterModel, Global, Model, ModelRc, VecModel};
 use std::any::type_name;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -15,12 +15,45 @@ use std::time::Duration;
 impl DisplayController {
     pub fn set_scenes(&self, scenes: IndexMap<SceneId, Scene>) {
         self.in_event_loop(move |main_window| {
-            let scenes = scenes
-                .into_iter()
-                .map(|(id, scene)| (id, generated::Scene::from(scene)))
-                .collect::<IndexMapModel<_, _>>();
+            let scenes = ModelRc::new(
+                scenes
+                    .into_iter()
+                    .map(|(id, scene)| (id, generated::Scene::from(scene)))
+                    .collect::<IndexMapModel<_, _>>(),
+            );
 
-            main_window.set_scenes(ModelRc::new(scenes));
+            let cycler_scenes =
+                ModelRc::new(FilterModel::new(scenes.clone(), |scene| scene.enabled));
+
+            main_window.set_scenes(scenes);
+            main_window.set_preview_scene_index(-1);
+            main_window.set_cycler_scenes(cycler_scenes);
+            main_window.set_cycler_scene_index(0);
+        });
+    }
+
+    pub fn reset_cycler(&self) {
+        self.in_event_loop(|main_window| {
+            main_window.set_cycler_scene_index(0);
+        });
+    }
+
+    pub fn set_preview_scene(&self, scene_id: Option<SceneId>) {
+        self.in_event_loop(move |main_window| {
+            if let Some(scene_id) = scene_id {
+                let scenes_ref = main_window.get_scenes();
+                let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+                let index = scenes_ref.get_index_of(&scene_id);
+                debug_assert!(index.is_some());
+
+                if let Some(index) = index {
+                    #[expect(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                    main_window.set_preview_scene_index(index as i32);
+                }
+            } else {
+                main_window.set_preview_scene_index(-1);
+            }
         });
     }
 

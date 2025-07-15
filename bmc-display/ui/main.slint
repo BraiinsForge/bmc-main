@@ -8,6 +8,7 @@ import { WidgetSize, WidgetKind, Widget } from "widgets/widget.slint";
 import { WidgetBuilder } from "controls/widget-builder.slint";
 import { Scene } from "widgets/scene.slint";
 import { SceneCyclerHorizontal } from "controls/scene-cycler.slint";
+import { ScenePreview } from "controls/scene-preview.slint";
 import { Backend } from "backend.slint";
 import { DateTimeAdapter } from "controls/adapters.slint";
 import { Notification } from "components/notification.slint";
@@ -27,13 +28,23 @@ export component MainWindow inherits Window {
 
     in property <UIScreen> screen-id <=> ScreenAdapter.screen-id;
 
+    // all (enabled & disabled) scenes
     in property <[Scene]> scenes;
-    in-out property <int> current-scene <=> cycler.current-scene;
+    in property <int> preview-scene-index: -1;
+    // only enabled scenes (derived from `scenes` using FilterModel)
+    in property <[Scene]> cycler-scenes;
+    in-out property <int> cycler-scene-index;
 
-    cycler := SceneCyclerHorizontal {
+    if preview-scene-index < 0: SceneCyclerHorizontal {
         z: 0.1;
-        scenes: root.scenes;
+        scenes: root.cycler-scenes;
+        scene-index <=> root.cycler-scene-index;
         enabled: root.screen_id == UIScreen.Void;
+    }
+
+    if preview-scene-index >= 0: ScenePreview {
+        z: 0.1;
+        scene: root.scenes[root.preview-scene-index];
     }
 
     // Status Bar

@@ -28,6 +28,10 @@ impl<K, V> IndexMapModel<K, V> {
 
 #[allow(unused, clippy::allow_attributes)]
 impl<K: Hash + Eq + 'static, V: 'static> IndexMapModel<K, V> {
+    pub fn len(&self) -> usize {
+        self.map.borrow().len()
+    }
+
     pub fn get_index_of<Q: ?Sized + Hash + Equivalent<K>>(&self, key: &Q) -> Option<usize> {
         self.map.borrow().get_index_of(key)
     }

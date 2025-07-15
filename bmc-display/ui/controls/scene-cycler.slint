@@ -30,10 +30,12 @@ component SceneCycler {
     in property <bool> enabled: true;
     in property <duration> duration;
     in property <int> scenes-count;
-    in-out property <int> current-scene;
+    in-out property <int> scene-index;
 
-    changed current-scene => {
-        timer.restart();
+    changed scene-index => {
+        if enabled {
+          timer.restart();
+        }
     }
 
     timer := Timer {
@@ -51,7 +53,7 @@ component SceneCycler {
         }
 
         triggered() => {
-            root.current-scene = Math.mod(root.current-scene + 1, root.scenes-count);
+            root.scene-index = Math.mod(root.scene-index + 1, root.scenes-count);
         }
     }
 
@@ -73,29 +75,29 @@ component SceneCycler {
 export component SceneCyclerHorizontal inherits Rectangle {
     in property <bool> enabled: true;
     in property <[Scene]> scenes;
-    in-out property <int> current-scene <=> cycler.current-scene;
+    in-out property <int> scene-index <=> cycler.scene-index;
 
     cycler := SceneCycler {
         enabled: root.enabled && !swipe.swiping;
-        duration: root.scenes[root.current-scene].duration;
+        duration: root.scenes[root.scene-index].duration;
         scenes-count: root.scenes.length;
     }
 
     swipe := SwipeHandler {
         enabled: root.enabled;
-        allow-swipe-right: root.current-scene > 0;
-        allow-swipe-left: root.current-scene < root.scenes.length - 1;
+        allow-swipe-right: root.scene-index > 0;
+        allow-swipe-left: root.scene-index < root.scenes.length - 1;
 
         swiped_left => {
-            root.current-scene = Math.mod(root.current-scene + 1, root.scenes.length);
+            root.scene-index = Math.mod(root.scene-index + 1, root.scenes.length);
         }
 
         swiped_right => {
-            root.current-scene = Math.mod(root.current-scene - 1, root.scenes.length);
+            root.scene-index = Math.mod(root.scene-index - 1, root.scenes.length);
         }
 
         HorizontalLayout {
-            property <length> position: -(root.current-scene * root.width);
+            property <length> position: -(root.scene-index * root.width);
             animate position {
                 duration: 300ms;
                 easing: ease-in-out;
@@ -128,25 +130,25 @@ export component SceneCyclerHorizontal inherits Rectangle {
 export component SceneCyclerStacked inherits Rectangle {
     in property <bool> enabled: true;
     in property <[Scene]> scenes;
-    in-out property <int> current-scene <=> cycler.current-scene;
+    in-out property <int> scene-index <=> cycler.scene-index;
 
     cycler := SceneCycler {
         enabled: root.enabled && !swipe.swiping;
-        duration: root.scenes[root.current-scene].duration;
+        duration: root.scenes[root.scene-index].duration;
         scenes-count: root.scenes.length;
     }
 
     swipe := SwipeHandler {
         enabled: root.enabled;
-        allow-swipe-right: root.current-scene > 0;
-        allow-swipe-left: root.current-scene < root.scenes.length - 1;
+        allow-swipe-right: root.scene-index > 0;
+        allow-swipe-left: root.scene-index < root.scenes.length - 1;
 
         swiped_left => {
-            root.current-scene = Math.mod(root.current-scene + 1, root.scenes.length);
+            root.scene-index = Math.mod(root.scene-index + 1, root.scenes.length);
         }
 
         swiped_right => {
-            root.current-scene = Math.mod(root.current-scene - 1, root.scenes.length);
+            root.scene-index = Math.mod(root.scene-index - 1, root.scenes.length);
         }
 
         for scene[index] in root.scenes: WidgetBuilder {
@@ -156,7 +158,7 @@ export component SceneCyclerStacked inherits Rectangle {
             opacity: 0;
 
             states [
-                active when root.current-scene == index: {
+                active when root.scene-index == index: {
                     opacity: 1;
                     in {
                         animate opacity {

@@ -728,6 +728,7 @@ dependencies = [
  "tonic-reflection",
  "tonic-types",
  "tonic-web",
+ "tooling-std",
  "tower 0.5.2",
  "tower-cookies",
  "tower-http",

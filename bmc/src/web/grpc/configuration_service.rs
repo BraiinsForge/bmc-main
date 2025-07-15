@@ -11,15 +11,19 @@ use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_grpc::web;
 use bmc_shared_time::time::Timezone;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use std::panic;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tap::{TapFallible, TapOptional};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+use tokio::time;
+use tokio_stream::wrappers::IntervalStream;
 use tonic::{Request, Response, Status};
 use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
+use tooling_std::attach_data::AttachData;
 use tracing::{error, warn};
 
 const API_BRIGHTNESS_MIN: u32 = 0;
@@ -30,6 +34,7 @@ pub(crate) struct ConfigurationService<T: DisplayBacklightDriver> {
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     backlight_controller: DisplayBacklightController<T>,
+    preview_scene_id: Arc<Mutex<Option<SceneId>>>,
 }
 
 impl<T: DisplayBacklightDriver> ConfigurationService<T> {
@@ -42,6 +47,7 @@ impl<T: DisplayBacklightDriver> ConfigurationService<T> {
             config_handle,
             display_controller,
             backlight_controller,
+            preview_scene_id: Arc::default(),
         }
     }
 }
@@ -225,6 +231,8 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                     .get_mut(&id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
 
+                let old_enabled = scene.enabled;
+
                 scene.enabled = enabled;
                 scene.duration = duration;
 
@@ -233,6 +241,11 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                     return Err(Status::internal("Failed to save configuration"));
                 }
                 *config = temp_config;
+
+                if enabled != old_enabled {
+                    // NOTE: we need to reset cycler, because this operation could move scene to another index
+                    display_controller.reset_cycler();
+                }
 
                 display_controller.update_scene(id, enabled, duration);
 
@@ -271,6 +284,7 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let preview_scene_id = self.preview_scene_id.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
@@ -295,6 +309,12 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                 *config = temp_config;
 
                 display_controller.move_scene(from_index, to_index);
+
+                // NOTE: we need to reset cycler, because this operation could move scene to another index
+                display_controller.reset_cycler();
+
+                // NOTE: we need to re-focus preview scene, because this operation could move scene to another index
+                display_controller.set_preview_scene(preview_scene_id.lock().await.clone());
 
                 Ok(Response::new(()))
             }
@@ -327,6 +347,7 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let preview_scene_id = self.preview_scene_id.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
@@ -356,6 +377,12 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
 
                 display_controller.insert_scene(cloned_scene_index, cloned_scene);
 
+                // NOTE: we need to reset cycler, because this operation could move scene to another index
+                display_controller.reset_cycler();
+
+                // NOTE: we need to re-focus preview scene, because this operation could move scene to another index
+                display_controller.set_preview_scene(preview_scene_id.lock().await.clone());
+
                 Ok(Response::new(cloned_scene_id.to_string()))
             }
         });
@@ -383,10 +410,24 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
 
         let id = id.ok_or_else(unchecked_field_violations_status)?;
 
+        {
+            let preview_scene_id = self.preview_scene_id.lock().await;
+
+            if preview_scene_id
+                .as_ref()
+                .is_some_and(|preview_id| *preview_id == id)
+            {
+                return Err(Status::failed_precondition(
+                    "Scene is currently displayed in preview",
+                ));
+            }
+        }
+
         // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let preview_scene_id = self.preview_scene_id.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
@@ -405,6 +446,12 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
 
                 display_controller.remove_scene(id);
 
+                // NOTE: we need to reset cycler, because this operation could move scene to another index
+                display_controller.reset_cycler();
+
+                // NOTE: we need to re-focus preview scene, because this operation could move scene to another index
+                display_controller.set_preview_scene(preview_scene_id.lock().await.clone());
+
                 Ok(Response::new(()))
             }
         });
@@ -418,9 +465,63 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
 
     async fn preview_scene(
         &self,
-        _request: Request<web::SceneRequest>,
+        request: Request<web::SceneRequest>,
     ) -> Result<Response<Self::PreviewSceneStream>, Status> {
-        Err(Status::unimplemented("todo"))
+        let request = request.into_inner();
+
+        let (id, field_violations) = parse_scene_id("id", &request.id);
+
+        if !field_violations.is_empty() {
+            return Err(Status::with_error_details(
+                tonic::Code::InvalidArgument,
+                GrpcError::BadRequest.to_string(),
+                ErrorDetails::with_bad_request(field_violations),
+            ));
+        }
+
+        let id = id.ok_or_else(unchecked_field_violations_status)?;
+
+        {
+            let mut preview_scene_id = self.preview_scene_id.lock().await;
+            if preview_scene_id.is_some() {
+                return Err(Status::resource_exhausted(
+                    "Scene preview is already enabled",
+                ));
+            }
+            *preview_scene_id = Some(id.clone());
+        }
+
+        self.display_controller.set_preview_scene(Some(id.clone()));
+
+        struct DisableScenePreviewOnDrop {
+            display_controller: DisplayController,
+            preview_scene_id: Arc<Mutex<Option<SceneId>>>,
+        }
+
+        impl Drop for DisableScenePreviewOnDrop {
+            fn drop(&mut self) {
+                self.display_controller.set_preview_scene(None);
+
+                tokio::spawn({
+                    let preview_scene_id = self.preview_scene_id.clone();
+                    async move {
+                        // NOTE: we cannot use `blocking_lock` here, because it panics.
+                        // Therefore, it needs to be wrapped in async task
+                        *preview_scene_id.lock().await = None;
+                    }
+                });
+            }
+        }
+
+        let stream = IntervalStream::new(time::interval(Duration::from_secs(5)))
+            .map(|_| Ok(()))
+            .attach_data(DisableScenePreviewOnDrop {
+                display_controller: self.display_controller.clone(),
+                preview_scene_id: self.preview_scene_id.clone(),
+            })
+            .boxed();
+
+        Ok(Response::new(stream))
     }
 
     async fn add_widget(
