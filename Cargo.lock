@@ -813,6 +813,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-display",
+ "bmc-shared-time",
+ "chrono",
  "flume",
  "minifb",
  "slint",

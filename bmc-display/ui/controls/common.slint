@@ -1,2 +1,19 @@
 export enum UIScreen { Void, UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed, 
 InitStartConnect, InitWifiConnectProgress, InitWifiConnectSuccess, InitWifiConnectFailed, InitSetupSuccess, InitGeneralError, InitDeviceSetupQr, ConnectInfo }
+
+export struct DateTime {
+    is-24-format: bool,
+    hour24: int,
+    hour12: int,
+    is-pm: bool,
+    minute: int,
+    second: int,
+    day: int,
+    month: int,
+    year: int,
+    weekday: string,
+    time-sec-24: string,
+    time-sec-12: string,
+    date: string,
+    timezone: string,
+}

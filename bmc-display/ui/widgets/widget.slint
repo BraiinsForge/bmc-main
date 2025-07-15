@@ -1,63 +1,16 @@
 import { WidgetSize } from "widget-shared.slint";
+import { WidgetClockData } from "./categories/clock.slint";
 export { WidgetSize }
 
 export enum WidgetKind {
-    ClockAnalogRound,
-    ClockAnalogRect,
-    ClockDigital,
+    Clock,
 }
 
 export struct Widget {
-    kind: WidgetKind,
-    size: WidgetSize,
-    widget-data: [string],
+    id: string,
     row: int,
     col: int,
-}
-
-export component WidgetContainer inherits Rectangle {
-    property <length> widget-base-width: 320px;
-    property <length> widget-base-height: 220px;
-    property <length> top-bar-height: 40px;
-
-    in property <WidgetSize> size;
-    in property <int> position-row;
-    in property <int> position-col;
-
-    x: self.position-col * widget-base-width;
-    y: self.position-row * widget-base-height + top-bar-height;
-    width: self.get-col-span() * widget-base-width;
-    height: self.get-row-span() * widget-base-height;
-
-    background: black;
-
-    @children
-
-    pure function get-row-span() -> int {
-        if self.size == WidgetSize.Small {
-            return 1;
-        }
-        else if self.size == WidgetSize.Medium {
-            return 1;
-        }
-        else if self.size == WidgetSize.Large {
-            return 2;
-        }
-        // Full screen
-        return 2;
-    }
-
-    pure function get-col-span() -> int {
-        if self.size == WidgetSize.Small {
-            return 1;
-        }
-        else if self.size == WidgetSize.Medium {
-            return 2;
-        }
-        else if self.size == WidgetSize.Large {
-            return 2;
-        }
-        // Full screen
-        return 4;
-    }
+    size: WidgetSize,
+    kind: WidgetKind,
+    clock: WidgetClockData,
 }

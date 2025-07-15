@@ -4,12 +4,13 @@ use crate::BmcManager;
 use crate::initial_setup::InitSetupState;
 use crate::system_upgrade::SystemUpgradeState;
 
+use crate::config::ConfigHandle;
 use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_time::time::Timezone;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
+use tokio::sync::{RwLock, watch};
 use tokio::time::interval;
 use tracing::info;
 
@@ -22,6 +23,7 @@ pub(crate) struct DisplayTasks<T: BmcManager> {
     timezone_receiver: watch::Receiver<Timezone>,
     initial_setup_receiver: watch::Receiver<Option<InitSetupState>>,
     manager: Arc<T>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
 }
 
 impl<T: BmcManager> DisplayTasks<T> {
@@ -31,6 +33,7 @@ impl<T: BmcManager> DisplayTasks<T> {
         timezone_receiver: watch::Receiver<Timezone>,
         initial_setup_receiver: watch::Receiver<Option<InitSetupState>>,
         manager: Arc<T>,
+        config_handle: Arc<RwLock<ConfigHandle>>,
     ) -> Self {
         Self {
             display_controller,
@@ -38,6 +41,7 @@ impl<T: BmcManager> DisplayTasks<T> {
             timezone_receiver,
             initial_setup_receiver,
             manager,
+            config_handle,
         }
     }
 
@@ -48,6 +52,7 @@ impl<T: BmcManager> DisplayTasks<T> {
             timezone_receiver,
             initial_setup_receiver,
             manager,
+            config_handle,
         } = self;
 
         tokio::spawn(Self::run_init_display_screen(
@@ -62,7 +67,11 @@ impl<T: BmcManager> DisplayTasks<T> {
 
         tokio::spawn(Self::run_timezone_listener(timezone_receiver));
 
-        tokio::spawn(Self::run_date_time_update(display_controller.clone()));
+        tokio::spawn(Self::run_date_time_update(
+            display_controller.clone(),
+            config_handle.clone(),
+            manager.clone(),
+        ));
 
         tokio::spawn(Self::run_initial_setup_listener(
             display_controller,
@@ -111,11 +120,33 @@ impl<T: BmcManager> DisplayTasks<T> {
         }
     }
 
-    async fn run_date_time_update(display_controller: DisplayController) {
+    async fn run_date_time_update(
+        display_controller: DisplayController,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        manager: Arc<T>,
+    ) {
         let mut interval = interval(Duration::from_millis(250));
+        let mut is_24_format = config_handle
+            .read()
+            .await
+            .localization_config()
+            .time_system
+            .is_24();
+
         loop {
             interval.tick().await;
-            display_controller.update_datetime();
+
+            let timezone = manager.timezone();
+            let now = chrono::Local::now()
+                .with_timezone(timezone.chrono())
+                .fixed_offset();
+
+            // FIXME: avoid lock contention
+            if let Ok(config) = config_handle.try_read() {
+                is_24_format = config.localization_config().time_system.is_24();
+            }
+
+            display_controller.update_system_datetime(now, timezone.to_string(), is_24_format);
         }
     }
 

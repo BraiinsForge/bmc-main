@@ -2,14 +2,34 @@ import { Palette } from "../../style/palette.slint";
 import { Theme } from "../../style/theme.slint";
 import { Images } from "../../style/images.slint";
 import { Backend } from "../../backend.slint";
-import { WidgetSize } from "../widget-shared.slint";
-import { DateTimeAdapter } from "../../controls/adapters.slint";
+import { WidgetSize, FontStyle, WidgetUtilsAdapter } from "../widget-shared.slint";
+import { DateTime } from "../../controls/common.slint";
+
+export enum ClockStyle {
+  AnalogRound,
+  AnalogRect,
+  Digital,
+}
+
+export struct WidgetClockConfig {
+    clock-style: ClockStyle,
+    numbers-font-style: FontStyle,
+    show-date: bool,
+    show-seconds: bool,
+    show-timezone: bool,
+}
+
+export struct WidgetClockData {
+    config: WidgetClockConfig,
+    datetime: DateTime,
+}
 
 export component WidgetClockAnalogRound inherits Rectangle {
     property <length> base-width: 320px;
     property <length> base-height: 220px;
     in property <WidgetSize> size;
-    in property <[string]> timezone;
+    in property <WidgetClockConfig> config;
+    in property <DateTime> datetime;
 
     property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
@@ -26,7 +46,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             source: Images.clock-dial-round;
         }
         timezone := Text {
-            text: root.timezone[0];
+            text: root.datetime.timezone;
             y: (size == WidgetSize.Full) ? 104px
                 : (size == WidgetSize.Large) ? 112px
                 : 53px;
@@ -44,7 +64,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             border-width: 1px;
             border-color: Palette.gray-90;
             date := Text {
-                text: DateTimeAdapter.day;
+                text: root.datetime.day;
                 font-size: 24px;
                 font-weight: Theme.font.weight.regular;
                 color: Palette.gray-40;
@@ -106,14 +126,14 @@ export component WidgetClockAnalogRound inherits Rectangle {
         }
 
         function second-angle() -> angle {
-            return DateTimeAdapter.second * 6deg;
+            return root.datetime.second * 6deg;
         }
         function minute-angle() -> angle {
-            return DateTimeAdapter.minute * 6deg;
+            return root.datetime.minute * 6deg;
         }
 
         function hour-angle() -> angle {
-            return (DateTimeAdapter.hour12 * 30deg) + (DateTimeAdapter.minute * 30deg / 60);
+            return (root.datetime.hour12 * 30deg) + (root.datetime.minute * 30deg / 60);
         }
     }
 }
@@ -122,7 +142,8 @@ export component WidgetClockAnalogRect inherits Rectangle {
     property <length> base-width: 320px;
     property <length> base-height: 220px;
     in property <WidgetSize> size;
-    in property <[string]> timezone;
+    in property <WidgetClockConfig> config;
+    in property <DateTime> datetime;
 
     property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
     property <percent> relative-width: (size == WidgetSize.Full) ? 100% : (size == WidgetSize.Small) ? 25% : 50%;
@@ -176,7 +197,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
         }
         date := Text {
             visible: size == WidgetSize.Full;
-            text: DateTimeAdapter.weekday + " " + DateTimeAdapter.day;
+            text: root.datetime.weekday + " " + root.datetime.day;
             font-size: 40px;
             font-weight: Theme.font.weight.regular;
             color: Palette.gray-40;
@@ -184,7 +205,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             x: 870px;
         }
         timezone_element := Text {
-            text: root.timezone[0];
+            text: root.datetime.timezone;
             y: (size == WidgetSize.Full) ? 265px
                 : (size == WidgetSize.Large) ? 270px
                 : (size == WidgetSize.Medium) ? 130px
@@ -248,28 +269,28 @@ export component WidgetClockAnalogRect inherits Rectangle {
 
         function second-angle(w-size: WidgetSize) -> angle {
             if (w-size == WidgetSize.Small || w-size == WidgetSize.Large) {
-                return DateTimeAdapter.second * 6deg;
+                return root.datetime.second * 6deg;
             }
             // Medium || Full Screen
-            return (clock-angles[mod(DateTimeAdapter.second, 30)] + (floor(DateTimeAdapter.second / 30) * 180)) * 1deg;
+            return (clock-angles[mod(root.datetime.second, 30)] + (floor(root.datetime.second / 30) * 180)) * 1deg;
         }
         function minute-angle(w-size: WidgetSize) -> angle {
             if (w-size == WidgetSize.Small || w-size == WidgetSize.Large) {
-                return DateTimeAdapter.minute * 6deg;
+                return root.datetime.minute * 6deg;
             }
             // Medium || Full Screen
-            return (clock-angles[mod(DateTimeAdapter.minute, 30)] + (floor(DateTimeAdapter.minute / 30) * 180)) * 1deg;
+            return (clock-angles[mod(root.datetime.minute, 30)] + (floor(root.datetime.minute / 30) * 180)) * 1deg;
         }
 
         function hour-angle(w-size: WidgetSize) -> angle {
             if (w-size == WidgetSize.Small || w-size == WidgetSize.Large) {
-                return (DateTimeAdapter.hour12 * 30deg) + (DateTimeAdapter.minute * 30deg / 60);
+                return (root.datetime.hour12 * 30deg) + (root.datetime.minute * 30deg / 60);
             }
             // Medium || Full Screen
             return (
-                clock-angles[5 * DateTimeAdapter.hour12]
-                + (floor(DateTimeAdapter.hour12 / 6) * 180)
-                + (hour-hand-difference-angles[mod(DateTimeAdapter.hour12, 5)] * (DateTimeAdapter.minute / 60))
+                clock-angles[5 * root.datetime.hour12]
+                + (floor(root.datetime.hour12 / 6) * 180)
+                + (hour-hand-difference-angles[mod(root.datetime.hour12, 5)] * (root.datetime.minute / 60))
                 ) * 1deg;
         }
 
@@ -311,7 +332,8 @@ export component WidgetClockDigital inherits Rectangle {
     property <length> base-width: 320px;
     property <length> base-height: 220px;
     in property <WidgetSize> size;
-    in property <[string]> timezone;
+    in property <WidgetClockConfig> config;
+    in property <DateTime> datetime;
 
     property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
@@ -327,21 +349,23 @@ export component WidgetClockDigital inherits Rectangle {
             padding-left: 32px;
             padding-right: 32px;
             Text {
-                text: DateTimeAdapter.weekday + " " + DateTimeAdapter.day + ", " + DateTimeAdapter.year;
+                text: root.datetime.weekday + " " + root.datetime.day + ", " + root.datetime.year;
                 font-size: 32px;
                 font-weight: Theme.font.weight.regular;
                 color: Palette.gray-60;
                 horizontal-alignment: left;
                 width: parent.width / 3 - 32px;
             }
+
             Text {
-                text: root.timezone[0];
+                text: root.datetime.timezone;
                 font-size: 32px;
                 font-weight: Theme.font.weight.regular;
                 color: Palette.gray-60;
                 horizontal-alignment: center;
                 width: parent.width / 3;
             }
+
             Text {
                 text: "29°C";
                 font-size: 32px;
@@ -356,20 +380,22 @@ export component WidgetClockDigital inherits Rectangle {
             HorizontalLayout {
                 width: 228px;
             }
+
             HorizontalLayout {
                 alignment: center;
                 Text {
-                    text: DateTimeAdapter.is_24_format ? DateTimeAdapter.time-sec-24 : DateTimeAdapter.time-sec-12;
+                    text: root.datetime.is_24_format ? root.datetime.time-sec-24 : root.datetime.time-sec-12;
                     font-size: 200px;
                     font-weight: Theme.font.weight.regular;
                     color: Palette.white;
                 }
             }
+
             HorizontalLayout {
                 width: 228px;
                 Text {
-                    visible: !DateTimeAdapter.is_24_format;
-                    text: DateTimeAdapter.is_pm ? "PM" : "AM";
+                    visible: !root.datetime.is_24_format;
+                    text: root.datetime.is_pm ? "PM" : "AM";
                     font-size: 32px;
                     font-weight: Theme.font.weight.regular;
                     color: Palette.gray-60;
@@ -388,5 +414,27 @@ export component WidgetClockDigital inherits Rectangle {
                 color: Palette.gray-60;
             }
         }
+    }
+}
+
+export component WidgetClock {
+    in property <WidgetSize> size;
+    in property <WidgetClockConfig> config;
+    in property <DateTime> datetime;
+
+    if config.clock-style == ClockStyle.AnalogRound: WidgetClockAnalogRound {
+        size: root.size;
+        config: root.config;
+        datetime: root.datetime;
+    }
+    if config.clock-style == ClockStyle.AnalogRect: WidgetClockAnalogRect {
+        size: root.size;
+        config: root.config;
+        datetime: root.datetime;
+    }
+    if config.clock-style == ClockStyle.Digital: WidgetClockDigital {
+        size: root.size;
+        config: root.config;
+        datetime: root.datetime;
     }
 }

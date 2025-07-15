@@ -121,6 +121,7 @@ export component SceneCyclerHorizontal inherits Rectangle {
             for scene in root.scenes: WidgetBuilder {
                 width: root.width;
                 height: root.height;
+                scene_id: scene.id;
                 widgets: scene.widgets;
             }
         }
@@ -154,6 +155,7 @@ export component SceneCyclerStacked inherits Rectangle {
         for scene[index] in root.scenes: WidgetBuilder {
             width: root.width;
             height: root.height;
+            scene_id: scene.id;
             widgets: scene.widgets;
             opacity: 0;
 

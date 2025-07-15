@@ -50,10 +50,6 @@ impl ConfigHandle {
         Ok(())
     }
 
-    #[expect(
-        dead_code,
-        reason = "localization_config will be used in settings page"
-    )]
     pub fn localization_config(&self) -> LocalizationConfig {
         self.data.localization.clone().unwrap_or_default()
     }

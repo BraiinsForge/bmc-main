@@ -1,26 +1,64 @@
-import { WidgetContainer, Widget, WidgetKind } from "../widgets/widget.slint";
-import { WidgetClockAnalogRound, WidgetClockAnalogRect, WidgetClockDigital } from "../widgets/categories/clock.slint";
+import { Widget, WidgetKind, WidgetSize } from "../widgets/widget.slint";
+import { WidgetClock } from "../widgets/categories/clock.slint";
+
+component WidgetContainer inherits Rectangle {
+    property <length> widget-base-width: 320px;
+    property <length> widget-base-height: 220px;
+    property <length> top-bar-height: 40px;
+
+    in property <WidgetSize> size;
+    in property <int> position-row;
+    in property <int> position-col;
+
+    x: self.position-col * widget-base-width;
+    y: self.position-row * widget-base-height + top-bar-height;
+    width: self.get-col-span() * widget-base-width;
+    height: self.get-row-span() * widget-base-height;
+
+    @children
+
+    pure function get-row-span() -> int {
+        if self.size == WidgetSize.Small {
+            return 1;
+        }
+        else if self.size == WidgetSize.Medium {
+            return 1;
+        }
+        else if self.size == WidgetSize.Large {
+            return 2;
+        }
+        // Full screen
+        return 2;
+    }
+
+    pure function get-col-span() -> int {
+        if self.size == WidgetSize.Small {
+            return 1;
+        }
+        else if self.size == WidgetSize.Medium {
+            return 2;
+        }
+        else if self.size == WidgetSize.Large {
+            return 2;
+        }
+        // Full screen
+        return 4;
+    }
+}
 
 export component WidgetBuilder inherits Rectangle {
+    in property <string> scene_id;
     in property <[Widget]> widgets;
 
     for widget[index] in widgets: WidgetContainer {
         size: widget.size;
         position-row: widget.row;
         position-col: widget.col;
-        visible: true;
-        //
-        if widget.kind == WidgetKind.ClockAnalogRound: WidgetClockAnalogRound {
+
+        if widget.kind == WidgetKind.Clock: WidgetClock {
             size: widget.size;
-            timezone: widget.widget-data;
-        }
-        if widget.kind == WidgetKind.ClockAnalogRect: WidgetClockAnalogRect {
-            size: widget.size;
-            timezone: widget.widget-data;
-        }
-        if widget.kind == WidgetKind.ClockDigital: WidgetClockDigital {
-            size: widget.size;
-            timezone: widget.widget-data;
+            config: widget.clock.config;
+            datetime: widget.clock.datetime;
         }
     }
 }

@@ -6,7 +6,7 @@ use anyhow::anyhow;
 use bmc_shared_time::time::Timezone;
 use indexmap::{IndexMap, indexmap};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use slint::{ModelRc, ToSharedString, VecModel};
+use slint::{ModelRc, ToSharedString};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::mem;
@@ -485,25 +485,45 @@ impl From<WidgetSize> for generated::WidgetSize {
 }
 
 impl From<Widget> for generated::Widget {
-    fn from(value: Widget) -> Self {
-        // FIXME: propagate all params to slint
-        let (widget_data, kind) = match value.kind {
-            WidgetKind::Clock(config) => (
-                vec![],
-                match config.clock_style {
-                    ClockStyle::AnalogRound => generated::WidgetKind::ClockAnalogRound,
-                    ClockStyle::AnalogRect => generated::WidgetKind::ClockAnalogRect,
-                    ClockStyle::Digital => generated::WidgetKind::ClockDigital,
-                },
-            ),
+    fn from(widget: Widget) -> Self {
+        let mut slint_widget = generated::Widget {
+            id: widget.id.to_shared_string(),
+            row: widget.position.row.into(),
+            col: widget.position.col.into(),
+            size: widget.size.into(),
+            ..generated::Widget::default()
         };
 
+        match widget.kind {
+            WidgetKind::Clock(config) => {
+                slint_widget.kind = generated::WidgetKind::Clock;
+                slint_widget.clock = generated::WidgetClockData {
+                    config: config.into(),
+                    ..generated::WidgetClockData::default()
+                }
+            }
+        }
+
+        slint_widget
+    }
+}
+
+impl From<ClockWidget> for generated::WidgetClockConfig {
+    fn from(from: ClockWidget) -> Self {
         Self {
-            row: value.position.row.into(),
-            col: value.position.col.into(),
-            widget_data: ModelRc::new(VecModel::from(widget_data)),
-            size: value.size.into(),
-            kind,
+            clock_style: match from.clock_style {
+                ClockStyle::AnalogRound => generated::ClockStyle::AnalogRound,
+                ClockStyle::AnalogRect => generated::ClockStyle::AnalogRect,
+                ClockStyle::Digital => generated::ClockStyle::Digital,
+            },
+            numbers_font_style: match from.numbers_font_style {
+                FontStyle::Light => generated::FontStyle::Light,
+                FontStyle::Medium => generated::FontStyle::Medium,
+                FontStyle::Bold => generated::FontStyle::Bold,
+            },
+            show_date: from.show_date,
+            show_seconds: from.show_seconds,
+            show_timezone: from.show_timezone,
         }
     }
 }

@@ -5,6 +5,7 @@ export component ScenePreview inherits Rectangle {
     in property <Scene> scene;
 
     WidgetBuilder {
+        scene_id: root.scene.id;
         widgets: root.scene.widgets;
     }
 

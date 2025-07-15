@@ -2,7 +2,7 @@
 
 use crate::data::{Scene, SceneId, Screen, Widget, WidgetId};
 use crate::display_controller::DisplayController;
-use crate::generated::{self, ConnectionAdapter, DateTimeAdapter, InitSetupWifiAdapter};
+use crate::generated::{self, ConnectionAdapter, InitSetupWifiAdapter};
 use crate::indexmap_model::IndexMapModel;
 use crate::utils;
 use chrono::{Datelike, Timelike};
@@ -153,19 +153,14 @@ impl DisplayController {
         });
     }
 
-    pub fn update_datetime(&self) {
-        self.in_event_loop(|main_window| {
-            let datetime_adapter = DateTimeAdapter::get(&main_window);
-            let now = chrono::Local::now();
-            datetime_adapter.set_hour24(i32::try_from(now.hour()).unwrap_or_default());
-            datetime_adapter.set_hour12(i32::try_from(now.hour12().1).unwrap_or_default());
-            datetime_adapter.set_is_pm(now.hour12().0);
-            datetime_adapter.set_minute(i32::try_from(now.minute()).unwrap_or_default());
-            datetime_adapter.set_second(i32::try_from(now.second()).unwrap_or_default());
-            datetime_adapter.set_day(i32::try_from(now.day()).unwrap_or_default());
-            datetime_adapter.set_month(i32::try_from(now.month()).unwrap_or_default());
-            datetime_adapter.set_year(now.year());
-            datetime_adapter.set_weekday(slint::format!("{}", now.weekday()));
+    pub fn update_system_datetime(
+        &self,
+        datetime: chrono::DateTime<chrono::FixedOffset>,
+        timezone: String,
+        is_24_format: bool,
+    ) {
+        self.in_event_loop(move |main_window| {
+            main_window.set_system_datetime(to_datetime(datetime, timezone, is_24_format));
         });
     }
 
@@ -246,4 +241,40 @@ fn indexmap_model_ref<K: 'static, V: 'static>(model_rc: &ModelRc<V>) -> &IndexMa
         .as_any()
         .downcast_ref::<IndexMapModel<K, V>>()
         .expect(&expect_message)
+}
+
+fn to_datetime(
+    datetime: chrono::DateTime<chrono::FixedOffset>,
+    timezone: String,
+    is_24_format: bool,
+) -> generated::DateTime {
+    let hour24 = i32::try_from(datetime.hour()).unwrap_or_default();
+    let hour12 = i32::try_from(datetime.hour12().1).unwrap_or_default();
+    let is_pm = datetime.hour12().0;
+    let minute = i32::try_from(datetime.minute()).unwrap_or_default();
+    let second = i32::try_from(datetime.second()).unwrap_or_default();
+    let day = i32::try_from(datetime.day()).unwrap_or_default();
+    let month = i32::try_from(datetime.month()).unwrap_or_default();
+    let year = datetime.year();
+    let weekday = slint::format!("{}", datetime.weekday());
+    let time_sec_24 = slint::format!("{hour24:02}:{minute:02}:{second:02}");
+    let time_sec_12 = slint::format!("{hour12:02}:{minute:02}:{second:02}");
+    let date = slint::format!("{day:02}. {month:02}. {year}");
+
+    generated::DateTime {
+        is_24_format,
+        hour24,
+        hour12,
+        is_pm,
+        minute,
+        second,
+        day,
+        month,
+        year,
+        weekday,
+        time_sec_24,
+        time_sec_12,
+        date,
+        timezone: timezone.into(),
+    }
 }

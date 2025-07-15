@@ -10,6 +10,8 @@ slint-embed-files = ["bmc-display/slint-embed-files"]
 [dependencies]
 anyhow.workspace = true
 bmc-display.workspace = true
+bmc-shared-time.workspace = true
+chrono.workspace = true
 flume.workspace = true
 minifb.workspace = true
 slint = { workspace = true, features = ["renderer-software"] }

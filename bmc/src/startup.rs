@@ -90,6 +90,7 @@ where
             manager.watch_timezone_updates(),
             initial_setup.subscribe(),
             manager.clone(),
+            config_handle.clone(),
         );
 
         Ok(Self {

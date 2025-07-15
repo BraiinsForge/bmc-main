@@ -29,6 +29,11 @@ impl TimeSystem {
             TimeSystem::Hour24 => TimeSystemWithSeconds::Hour24,
         }
     }
+
+    #[must_use]
+    pub fn is_24(&self) -> bool {
+        matches!(self, Self::Hour24)
+    }
 }
 
 impl Default for TimeSystem {

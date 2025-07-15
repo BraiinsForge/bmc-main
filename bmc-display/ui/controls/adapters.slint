@@ -16,30 +16,6 @@ export global NotificationAdapter {
     in property <string> timestamp: "TIMESTAMP";
 }
 
-export global DateTimeAdapter {
-    in property <bool> is_24_format;
-    in property <int> hour24;
-    in property <int> hour12;
-    in property <bool> is_pm;
-    in property <int> minute;
-    in property <int> second;
-    in property <int> day;
-    in property <int> month;
-    in property <int> year;
-    in property <string> weekday;
-    //
-    out property <string> hour24_str: self.hour24 <= 9 ? "0" + self.hour24 : self.hour24;
-    out property <string> hour12_str: self.hour12 <= 9 ? "0" + self.hour12 : self.hour12;
-    out property <string> minute_str: self.minute <= 9 ? "0" + self.minute : self.minute;
-    out property <string> second_str: self.second <= 9 ? "0" + self.second : self.second;
-    out property <string> day_str: self.day <= 9 ? "0" + self.day : self.day;
-    out property <string> month_str: self.month <= 9 ? "0" + self.month : self.month;
-    //
-    out property <string> time-sec-24: self.hour24_str + ":" + self.minute_str + ":" + self.second_str;
-    out property <string> time-sec-12: self.hour12_str + ":" + self.minute_str + ":" + self.second_str;
-    out property <string> date: self.day_str + ". " + self.month_str + ". " + self.year;
-}
-
 export global InitSetupWifiAdapter {
     in property <string> ssid;
 }
