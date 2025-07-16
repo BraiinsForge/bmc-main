@@ -31,6 +31,8 @@ pub struct Config {
     brightness_pct: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     night_mode: Option<NightModeConfigData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sound_volume_pct: Option<u8>,
 }
 
 impl Config {
@@ -158,6 +160,8 @@ pub struct ConfigHandle {
     config: Config,
     default_brightness_pct: u8,
     default_night_mode_brightness_pct: u8,
+    default_sound_volume_pct: u8,
+    default_night_mode_sound_volume_pct: u8,
 }
 
 impl ConfigHandle {
@@ -165,6 +169,8 @@ impl ConfigHandle {
         path: PathBuf,
         default_brightness_pct: u8,
         default_night_mode_brightness_pct: u8,
+        default_sound_volume_pct: u8,
+        default_night_mode_sound_volume_pct: u8,
     ) -> Result<Self> {
         let config_data = fs::read_to_string(&path).await?;
         let config: Config = serde_json::from_str(config_data.as_str())?;
@@ -176,6 +182,8 @@ impl ConfigHandle {
             config,
             default_brightness_pct,
             default_night_mode_brightness_pct,
+            default_sound_volume_pct,
+            default_night_mode_sound_volume_pct,
         })
     }
 
@@ -198,7 +206,10 @@ impl ConfigHandle {
         self.night_mode
             .clone()
             .unwrap_or_default()
-            .into_night_mode_config(self.default_night_mode_brightness_pct)
+            .into_night_mode_config(
+                self.default_night_mode_brightness_pct,
+                self.default_night_mode_sound_volume_pct,
+            )
     }
 
     pub fn set_night_mode_enabled(&mut self, enabled: bool) {
@@ -213,6 +224,28 @@ impl ConfigHandle {
         let night_mode = self.night_mode.get_or_insert_default();
         night_mode.from = from;
         night_mode.to = to;
+    }
+
+    pub fn set_night_mode_sound_volume(&mut self, sound_volume_pct: u8) {
+        if let Some(ref mut night_mode) = self.night_mode {
+            night_mode.sound_volume_pct = Some(sound_volume_pct);
+        } else {
+            let night_mode = NightModeConfigData {
+                sound_volume_pct: Some(sound_volume_pct),
+                ..Default::default()
+            };
+
+            self.night_mode = Some(night_mode);
+        }
+    }
+
+    pub fn set_sound_volume(&mut self, sound_volume_pct: u8) {
+        self.sound_volume_pct = Some(sound_volume_pct);
+    }
+
+    pub fn sound_volume_pct(&self) -> u8 {
+        self.sound_volume_pct
+            .unwrap_or(self.default_sound_volume_pct)
     }
 }
 
@@ -249,6 +282,8 @@ struct NightModeConfigData {
     to: NaiveTime,
     #[serde(skip_serializing_if = "Option::is_none")]
     brightness_pct: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sound_volume_pct: Option<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +292,7 @@ pub struct NightModeConfig {
     pub from: NaiveTime,
     pub to: NaiveTime,
     pub brightness_pct: u8,
+    pub sound_volume_pct: u8,
 }
 
 impl NightModeConfig {
@@ -286,12 +322,17 @@ impl NightModeConfigData {
         NaiveTime::from_hms_opt(6, 30, 0).expect("BUG: Invalid default night mode interval")
     }
 
-    fn into_night_mode_config(self, default_brightness: u8) -> NightModeConfig {
+    fn into_night_mode_config(
+        self,
+        default_brightness: u8,
+        default_sound_volume: u8,
+    ) -> NightModeConfig {
         NightModeConfig {
             enabled: self.enabled,
             from: self.from,
             to: self.to,
             brightness_pct: self.brightness_pct.unwrap_or(default_brightness),
+            sound_volume_pct: self.sound_volume_pct.unwrap_or(default_sound_volume),
         }
     }
 }
@@ -303,6 +344,7 @@ impl Default for NightModeConfigData {
             from: NightModeConfigData::default_from(),
             to: NightModeConfigData::default_to(),
             brightness_pct: None,
+            sound_volume_pct: None,
         }
     }
 }
