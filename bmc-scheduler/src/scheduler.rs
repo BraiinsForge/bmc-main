@@ -51,6 +51,7 @@ impl JobConfig {
     }
 }
 
+#[expect(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Schedule {
     Cron(Cron),

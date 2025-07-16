@@ -7,7 +7,8 @@ use bmc_display::{
     display_driver::{DisplayBacklightDriver, DisplayDriver},
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
 };
-use bmc_led::led_driver::LedDriver;
+use bmc_led::led_driver::LedDriverFactory;
+use bmc_openwrt::led_driver::platform_led_driver::PlatformLedDriver;
 use bmc_openwrt::{
     generic_backlight_driver::GenericBacklightDriver, linux_drm_platform::LinuxDrmPlatform,
     manager::Manager, session::OpenwrtSessionManager,
@@ -27,7 +28,7 @@ async fn main() -> Result<()> {
     let mut backlight_driver = GenericBacklightDriver::new("/sys/class/backlight/display-bl");
     backlight_driver.init()?;
 
-    let led_driver = LedDriver::new("/dev/spidev0.0");
+    let led_driver = PlatformLedDriver::new("/dev/spidev0.0");
 
     //TODO: this will be read from config file or emmc
     let brightness = UsizeMetadata::new(18, 0, 20);
@@ -64,7 +65,7 @@ async fn main() -> Result<()> {
         manager,
         config,
         display_driver,
-        led_driver,
+        led_driver.0,
         firmware_resolver,
     )
     .await?;

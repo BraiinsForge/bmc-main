@@ -840,14 +840,9 @@ dependencies = [
  "anyhow",
  "apa102-spi",
  "async-trait",
- "embedded-hal",
- "embedded-hal-async",
- "rand 0.9.1",
  "smart-leds-trait",
- "spidev",
  "tokio",
  "tracing",
- "ux",
 ]
 
 [[package]]
@@ -897,6 +892,7 @@ name = "bmc-openwrt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "apa102-spi",
  "async-trait",
  "axum-extra",
  "bmc",
@@ -906,6 +902,8 @@ dependencies = [
  "bmc-shared-time",
  "bmc-upgrade",
  "drm 0.14.1",
+ "embedded-hal",
+ "embedded-hal-async",
  "evdev",
  "flume",
  "get_if_addrs",
@@ -915,13 +913,17 @@ dependencies = [
  "memmap2",
  "pnet",
  "pw_hash",
+ "rand 0.9.1",
  "serde",
  "serde_json",
  "slint",
+ "smart-leds-trait",
+ "spidev",
  "thiserror 2.0.12",
  "time",
  "tokio",
  "tracing",
+ "ux",
 ]
 
 [[package]]

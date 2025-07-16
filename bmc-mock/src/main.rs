@@ -2,8 +2,9 @@
 
 use anyhow::Result;
 use bmc::log;
-use bmc_led::led_driver::LedDriver;
+use bmc_led::led_driver::LedDriverFactory;
 use bmc_mock::MockSessionManager;
+use bmc_mock::led_driver::PlatformLedDriver;
 use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
 use bmc_mock_display::VirtualDisplay;
 use bmc_upgrade::firmware::FirmwareResolver;
@@ -42,7 +43,7 @@ async fn main() -> Result<()> {
 
     let (main_window, display_driver) = VirtualDisplay::create()?;
 
-    let led_driver = LedDriver::new("");
+    let led_driver = PlatformLedDriver::new("");
 
     let firmware_resolver = FirmwareResolver::new(MockIndex);
 
@@ -54,7 +55,7 @@ async fn main() -> Result<()> {
                 manager,
                 config,
                 display_driver,
-                led_driver,
+                led_driver.0,
                 firmware_resolver,
             )
             .await;

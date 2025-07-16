@@ -7,15 +7,9 @@ edition = "2024"
 anyhow.workspace = true
 apa102-spi.workspace = true
 async-trait.workspace = true
-embedded-hal.workspace = true
-embedded-hal-async.workspace = true
-rand.workspace = true
 smart-leds-trait.workspace = true
-spidev.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-ux.workspace = true
 
 [lints]
 workspace = true
-

@@ -16,6 +16,7 @@ impl Rgb {
 
 #[derive(Debug, Copy, Clone, Default)]
 pub enum LedEffect {
+    None,
     Chase,
     #[default]
     Fireflies,
@@ -26,26 +27,23 @@ pub enum LedEffect {
 
 #[derive(Debug, Clone, Copy)]
 pub enum LedCommand {
+    Disable,
+    Enable,
     SetBrightness(f32),
     SetColor(Rgb),
     SetPersistentEffect(LedEffect, Rgb),
-    // SetTemporaryEffect(LedEffect, Rgb), // TODO: Implement temporary effects once we decide how to handle temporary states
+    // SetTemporaryEffect(LedEffect, Rgb), // TODO: Implement temporary effects once we decide how to handle temporary states #BOS-3299
 }
 
 #[derive(Debug)]
 pub enum LedEvent {
     Alarm,
+    Disable,
     DownloadFinished,
     DownloadProgress,
     DownloadStarted,
+    Enable,
     Failed,
     Idle,
     UpgradeStarted,
 }
-
-pub const APA102_MAX_BRIGHTNESS: u8 = 31; // APA102 max brightness value (5 bits)
-pub const LED_MAX_BRIGHTNESS: f32 = 1.0;
-pub const RGB_MAX: u8 = 255;
-pub const LED_FRACTION_MAX: f32 = 1.0;
-pub const LED_MIN_FACTOR: f32 = 0.1;
-pub const LED_PHASE_MULTIPLIER: f32 = 2.0;

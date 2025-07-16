@@ -2,10 +2,11 @@
 
 // https://github.com/wled/WLED/wiki/List-of-effects-and-palettes
 
+use crate::led_driver::config::{LED_FRACTION_MAX, LED_MIN_FACTOR, LED_PHASE_MULTIPLIER, RGB_MAX};
+
 use super::config;
-use super::data;
-use crate::data::Rgb;
 use apa102_spi::{Apa102Pixel, SmartLedsWrite};
+use bmc_led::{config::LED_MAX_BRIGHTNESS, data::Rgb};
 use rand::Rng;
 use ux::u5;
 
@@ -26,7 +27,7 @@ pub struct FirefliesState {
 #[expect(clippy::cast_sign_loss)]
 fn scale(channel: u8, factor: f32) -> u8 {
     let scaled = f32::from(channel) * factor * factor;
-    scaled.clamp(0.0, f32::from(data::RGB_MAX)) as u8
+    scaled.clamp(0.0, f32::from(RGB_MAX)) as u8
 }
 
 /// Snake effect
@@ -35,27 +36,28 @@ pub fn update_snake<W>(phase: f32, length: u8, brightness: u8, color: Rgb, strip
 where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
-    let real_head_position = phase * f32::from(config::LED_COUNT);
+    let real_head_position = phase * f32::from(bmc_led::config::LED_COUNT);
     #[expect(clippy::cast_possible_truncation)]
     let discrete_head_position = real_head_position.floor() as i16;
     let fraction = real_head_position - f32::from(discrete_head_position);
 
     // Ignore result, since we don't care about the outcome here
-    let _ = strip.write((0..config::LED_COUNT).map(|current_led_index| {
+    let _ = strip.write((0..bmc_led::config::LED_COUNT).map(|current_led_index| {
         #[expect(clippy::cast_possible_truncation)]
-        let current_led_offset = ((u16::from(current_led_index) + u16::from(config::LED_COUNT)
+        let current_led_offset = ((u16::from(current_led_index)
+            + u16::from(bmc_led::config::LED_COUNT)
             - discrete_head_position as u16
-            + u16::from(config::LED_COUNT))
-            % u16::from(config::LED_COUNT)) as u8;
+            + u16::from(bmc_led::config::LED_COUNT))
+            % u16::from(bmc_led::config::LED_COUNT)) as u8;
 
         // If offset is outside of snake's body, do not light the LED
         if current_led_offset >= length {
             Apa102Pixel::default()
         } else {
             let factor = match current_led_offset {
-                0 => data::LED_FRACTION_MAX - fraction,
+                0 => LED_FRACTION_MAX - fraction,
                 x if x == length - 1 => fraction * fraction,
-                _ => data::LED_FRACTION_MAX,
+                _ => LED_FRACTION_MAX,
             };
 
             Apa102Pixel {
@@ -73,12 +75,12 @@ pub fn update_chase<W>(phase: f32, trail_length: u8, brightness: u8, color: Rgb,
 where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
-    let time = phase.fract() * data::LED_PHASE_MULTIPLIER * (f32::from(config::LED_COUNT) - 1.0);
-    let (real_head_position, _forward) = if time < (f32::from(config::LED_COUNT) - 1.0) {
+    let time = phase.fract() * LED_PHASE_MULTIPLIER * (f32::from(bmc_led::config::LED_COUNT) - 1.0);
+    let (real_head_position, _forward) = if time < (f32::from(bmc_led::config::LED_COUNT) - 1.0) {
         (time, true)
     } else {
         (
-            data::LED_PHASE_MULTIPLIER * (f32::from(config::LED_COUNT) - 1.0) - time,
+            LED_PHASE_MULTIPLIER * (f32::from(bmc_led::config::LED_COUNT) - 1.0) - time,
             false,
         )
     };
@@ -87,7 +89,7 @@ where
     let discrete_head_position = real_head_position.floor() as i16;
 
     // Ignore result, since we don't care about the outcome here
-    let _ = strip.write((0..config::LED_COUNT).map(|current_led_index| {
+    let _ = strip.write((0..bmc_led::config::LED_COUNT).map(|current_led_index| {
         let distance = (i16::from(current_led_index) - discrete_head_position).abs();
         if distance > i16::from(trail_length) {
             Apa102Pixel::default()
@@ -109,7 +111,7 @@ pub fn update_scan<W>(phase: f32, length: u8, brightness: u8, color: Rgb, strip:
 where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
-    let travel: u16 = u16::from(config::LED_COUNT) + u16::from(length);
+    let travel: u16 = u16::from(bmc_led::config::LED_COUNT) + u16::from(length);
     let head_float = phase * f32::from(travel);
     #[expect(clippy::cast_possible_truncation)]
     #[expect(clippy::cast_sign_loss)]
@@ -117,11 +119,12 @@ where
     let fraction = head_float - f32::from(head);
     let start = head
         .saturating_sub(u16::from(length) - 1)
-        .min(u16::from(config::LED_COUNT) - 1);
+        .min(u16::from(bmc_led::config::LED_COUNT) - 1);
 
     // Ignore result, since we don't care about the outcome here
-    let _ = strip.write((0..config::LED_COUNT).map(|index| {
-        if u16::from(index) < start || u16::from(index) > head.min(u16::from(config::LED_COUNT) - 1)
+    let _ = strip.write((0..bmc_led::config::LED_COUNT).map(|index| {
+        if u16::from(index) < start
+            || u16::from(index) > head.min(u16::from(bmc_led::config::LED_COUNT) - 1)
         {
             Apa102Pixel::default()
         } else {
@@ -154,7 +157,7 @@ pub fn update_fireflies<W>(
 ) where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
-    let led_count = config::LED_COUNT;
+    let led_count = bmc_led::config::LED_COUNT;
     #[expect(clippy::cast_possible_truncation)]
     let radius = ((f32::from(led_count)) * config::FIREFLY_SHINE_RADIUS).ceil() as i16;
     let spawn_probability = config::FIREFLY_SPAWN_PROBABILITY;
@@ -164,8 +167,8 @@ pub fn update_fireflies<W>(
         if firefly.grow {
             firefly.bright += config::FIREFLY_STEP_SPEED;
 
-            if firefly.bright >= data::LED_MAX_BRIGHTNESS {
-                firefly.bright = data::LED_MAX_BRIGHTNESS;
+            if firefly.bright >= LED_MAX_BRIGHTNESS {
+                firefly.bright = LED_MAX_BRIGHTNESS;
                 firefly.grow = false;
             }
         } else {
@@ -209,8 +212,7 @@ pub fn update_fireflies<W>(
 
     // Convert frame to pixels and write to strip
     let pixels = frame.into_iter().map(|value| {
-        let final_brightness =
-            (value + config::FIREFLY_MIN_BRIGHTNESS).min(data::LED_MAX_BRIGHTNESS);
+        let final_brightness = (value + config::FIREFLY_MIN_BRIGHTNESS).min(LED_MAX_BRIGHTNESS);
         Apa102Pixel {
             red: scale(color.r, final_brightness),
             green: scale(color.g, final_brightness),
@@ -232,13 +234,13 @@ pub fn update_knight_rider<W>(
 ) where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
-    let led_count = config::LED_COUNT;
+    let led_count = bmc_led::config::LED_COUNT;
     let travel = f32::from(led_count - 1);
-    let time = phase.fract() * data::LED_PHASE_MULTIPLIER * travel;
+    let time = phase.fract() * LED_PHASE_MULTIPLIER * travel;
     let real_head_position = if time <= travel {
         time
     } else {
-        data::LED_PHASE_MULTIPLIER * travel - time
+        LED_PHASE_MULTIPLIER * travel - time
     };
 
     #[expect(clippy::cast_possible_truncation)]
@@ -246,7 +248,7 @@ pub fn update_knight_rider<W>(
 
     #[expect(clippy::integer_division)]
     let half_core_size = (i16::from(core_size)) / 2;
-    let min_factor = data::LED_MIN_FACTOR;
+    let min_factor = LED_MIN_FACTOR;
 
     // Ignore result, since we don't care about the outcome here
     let _ = strip.write((0..led_count).map(|current_led_index| {
@@ -268,4 +270,11 @@ pub fn update_knight_rider<W>(
             brightness: u5::new(brightness),
         }
     }));
+}
+
+pub fn update_none<W>(strip: &mut W)
+where
+    W: SmartLedsWrite<Color = Apa102Pixel>,
+{
+    let _ = strip.write((0..bmc_led::config::LED_COUNT).map(|_| Apa102Pixel::default()));
 }
