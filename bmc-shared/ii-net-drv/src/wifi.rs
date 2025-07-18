@@ -20,8 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use anyhow::{Result, anyhow, bail};
-use ii_net::wifi::WifiConfiguration;
+use anyhow::{anyhow, bail, Result};
 pub use ii_net::wifi::WifiScanItem;
 pub use ii_net::wifi::{EncryptionType, SignalStrength, WifiMode, WifiStatus};
 use log::debug;
@@ -87,7 +86,7 @@ where
 
 pub struct OpenwrtWifiManager {
     scan_result_list: Mutex<SharedCache<Vec<WifiScanItem>>>,
-    wifi_uci_config_cache: Mutex<SharedCache<Option<WifiConfiguration>>>,
+    wifi_status_cache: Mutex<SharedCache<WifiStatus>>,
     wlan_dev_syspath: String,
     pub wifi_ap_ssid_base: String,
 }
@@ -108,7 +107,7 @@ impl OpenwrtWifiManager {
     pub fn new(wlan_dev_syspath: &str, wifi_ap_ssid_base: &str) -> Self {
         Self {
             scan_result_list: Mutex::new(SharedCache::new(Self::WIFI_INTERACTION_DELAY)),
-            wifi_uci_config_cache: Mutex::new(SharedCache::new(Self::WIFI_INTERACTION_DELAY)),
+            wifi_status_cache: Mutex::new(SharedCache::new(Self::WIFI_INTERACTION_DELAY)),
             wlan_dev_syspath: wlan_dev_syspath.to_owned(),
             wifi_ap_ssid_base: wifi_ap_ssid_base.to_owned(),
         }
@@ -138,18 +137,6 @@ impl OpenwrtWifiManager {
             .await?;
 
         uci.save_changes().await
-    }
-
-    async fn find_active_iface_config(&self) -> Option<WifiConfiguration> {
-        let device = self.wlan_dev_syspath.clone();
-        self.wifi_uci_config_cache
-            .lock()
-            .await
-            .cached_or_else::<()>(Box::pin(async move {
-                Ok(UciHelper::new(&device).wifi_iface_find_enabled().await)
-            }))
-            .await
-            .unwrap_or_default()
     }
 
     async fn wait_for_network_ip_address(&self, device: &str, attempts: u8) -> Result<()> {
@@ -202,6 +189,19 @@ impl OpenwrtWifiManager {
         bail!("Wi-Fi config is not present")
     }
 
+    async fn get_status(wlan_dev_syspath: String) -> Result<WifiStatus> {
+        let device = WifiUtils::get_device_by_syspath(&wlan_dev_syspath).await?;
+
+        Ok(WifiStatus {
+            enabled: UciHelper::new(&wlan_dev_syspath).wifi_enabled().await?,
+            configuration: UciHelper::new(&device).wifi_iface_find_enabled().await,
+            sta_link_state: WifiSta::link_details(&device)
+                .await
+                .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))
+                .ok(),
+        })
+    }
+
     pub async fn configure_ap_mode(
         &self,
         ssid: String,
@@ -251,18 +251,14 @@ impl OpenwrtWifiManager {
     }
 
     pub async fn status(&self) -> Result<WifiStatus> {
-        let device = WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath).await?;
-
-        Ok(WifiStatus {
-            enabled: UciHelper::new(&self.wlan_dev_syspath)
-                .wifi_enabled()
-                .await?,
-            configuration: self.find_active_iface_config().await,
-            sta_link_state: WifiSta::link_details(&device)
-                .await
-                .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))
-                .ok(),
-        })
+        let wlan_dev_syspath = self.wlan_dev_syspath.clone();
+        self.wifi_status_cache
+            .lock()
+            .await
+            .cached_or_else::<anyhow::Error>(Box::pin(async move {
+                Self::get_status(wlan_dev_syspath).await
+            }))
+            .await
     }
 
     pub async fn reset_config(&self) -> Result<()> {
