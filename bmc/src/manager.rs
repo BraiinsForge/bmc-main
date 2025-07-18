@@ -42,10 +42,6 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     fn timezone(&self) -> Timezone;
 
-    fn timezone_list(&self) -> impl Iterator<Item = Timezone> {
-        Timezone::timezone_list()
-    }
-
     async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()>;
 
     fn watch_timezone_updates(&self) -> watch::Receiver<Timezone>;

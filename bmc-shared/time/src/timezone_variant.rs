@@ -1,1804 +1,469 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::time::Timezone;
+use std::sync::LazyLock;
 
 /// This array was taken from openwrt supported timezone variants
-/// https://github.com/openwrt/luci/blob/master/modules/luci-lua-runtime/luasrc/sys/zoneinfo/tzdata.lua
-pub(crate) const TIMEZONE_VARIANTS: [Timezone; 449] = [
-    Timezone {
-        iana: "Africa/Abidjan",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Accra",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Addis Ababa",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Africa/Algiers",
-        posix: "CET-1",
-    },
-    Timezone {
-        iana: "Africa/Asmara",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Africa/Bamako",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Bangui",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Banjul",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Bissau",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Blantyre",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Brazzaville",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Bujumbura",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Cairo",
-        posix: "EET-2",
-    },
-    Timezone {
-        iana: "Africa/Casablanca",
-        posix: "<+01>-1",
-    },
-    Timezone {
-        iana: "Africa/Ceuta",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Africa/Conakry",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Dakar",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Dar es Salaam",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Africa/Djibouti",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Africa/Douala",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/El Aaiun",
-        posix: "<+01>-1",
-    },
-    Timezone {
-        iana: "Africa/Freetown",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Gaborone",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Harare",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Johannesburg",
-        posix: "SAST-2",
-    },
-    Timezone {
-        iana: "Africa/Juba",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Kampala",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Africa/Khartoum",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Kigali",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Kinshasa",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Lagos",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Libreville",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Lome",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Luanda",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Lubumbashi",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Lusaka",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Malabo",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Maputo",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "Africa/Maseru",
-        posix: "SAST-2",
-    },
-    Timezone {
-        iana: "Africa/Mbabane",
-        posix: "SAST-2",
-    },
-    Timezone {
-        iana: "Africa/Mogadishu",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Africa/Monrovia",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Nairobi",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Africa/Ndjamena",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Niamey",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Nouakchott",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Ouagadougou",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Porto-Novo",
-        posix: "WAT-1",
-    },
-    Timezone {
-        iana: "Africa/Sao Tome",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Africa/Tripoli",
-        posix: "EET-2",
-    },
-    Timezone {
-        iana: "Africa/Tunis",
-        posix: "CET-1",
-    },
-    Timezone {
-        iana: "Africa/Windhoek",
-        posix: "CAT-2",
-    },
-    Timezone {
-        iana: "America/Adak",
-        posix: "HST10HDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Anchorage",
-        posix: "AKST9AKDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Anguilla",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Antigua",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Araguaina",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/Buenos Aires",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/Catamarca",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/Cordoba",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/Jujuy",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/La Rioja",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/Mendoza",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/Rio Gallegos",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/Salta",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/San Juan",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/San Luis",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/Tucuman",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Argentina/Ushuaia",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Aruba",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Asuncion",
-        posix: "<-04>4<-03>,M10.1.0/0,M3.4.0/0",
-    },
-    Timezone {
-        iana: "America/Atikokan",
-        posix: "EST5",
-    },
-    Timezone {
-        iana: "America/Bahia",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Bahia Banderas",
-        posix: "CST6CDT,M4.1.0,M10.5.0",
-    },
-    Timezone {
-        iana: "America/Barbados",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Belem",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Belize",
-        posix: "CST6",
-    },
-    Timezone {
-        iana: "America/Blanc-Sablon",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Boa Vista",
-        posix: "<-04>4",
-    },
-    Timezone {
-        iana: "America/Bogota",
-        posix: "<-05>5",
-    },
-    Timezone {
-        iana: "America/Boise",
-        posix: "MST7MDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Cambridge Bay",
-        posix: "MST7MDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Campo Grande",
-        posix: "<-04>4",
-    },
-    Timezone {
-        iana: "America/Cancun",
-        posix: "EST5",
-    },
-    Timezone {
-        iana: "America/Caracas",
-        posix: "<-04>4",
-    },
-    Timezone {
-        iana: "America/Cayenne",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Cayman",
-        posix: "EST5",
-    },
-    Timezone {
-        iana: "America/Chicago",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Chihuahua",
-        posix: "MST7MDT,M4.1.0,M10.5.0",
-    },
-    Timezone {
-        iana: "America/Costa Rica",
-        posix: "CST6",
-    },
-    Timezone {
-        iana: "America/Creston",
-        posix: "MST7",
-    },
-    Timezone {
-        iana: "America/Cuiaba",
-        posix: "<-04>4",
-    },
-    Timezone {
-        iana: "America/Curacao",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Danmarkshavn",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "America/Dawson",
-        posix: "MST7",
-    },
-    Timezone {
-        iana: "America/Dawson Creek",
-        posix: "MST7",
-    },
-    Timezone {
-        iana: "America/Denver",
-        posix: "MST7MDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Detroit",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Dominica",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Edmonton",
-        posix: "MST7MDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Eirunepe",
-        posix: "<-05>5",
-    },
-    Timezone {
-        iana: "America/El Salvador",
-        posix: "CST6",
-    },
-    Timezone {
-        iana: "America/Fort Nelson",
-        posix: "MST7",
-    },
-    Timezone {
-        iana: "America/Fortaleza",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Glace Bay",
-        posix: "AST4ADT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Goose Bay",
-        posix: "AST4ADT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Grand Turk",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Grenada",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Guadeloupe",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Guatemala",
-        posix: "CST6",
-    },
-    Timezone {
-        iana: "America/Guayaquil",
-        posix: "<-05>5",
-    },
-    Timezone {
-        iana: "America/Guyana",
-        posix: "<-04>4",
-    },
-    Timezone {
-        iana: "America/Halifax",
-        posix: "AST4ADT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Havana",
-        posix: "CST5CDT,M3.2.0/0,M11.1.0/1",
-    },
-    Timezone {
-        iana: "America/Hermosillo",
-        posix: "MST7",
-    },
-    Timezone {
-        iana: "America/Indiana/Indianapolis",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Indiana/Knox",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Indiana/Marengo",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Indiana/Petersburg",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Indiana/Tell City",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Indiana/Vevay",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Indiana/Vincennes",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Indiana/Winamac",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Inuvik",
-        posix: "MST7MDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Iqaluit",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Jamaica",
-        posix: "EST5",
-    },
-    Timezone {
-        iana: "America/Juneau",
-        posix: "AKST9AKDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Kentucky/Louisville",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Kentucky/Monticello",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Kralendijk",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/La Paz",
-        posix: "<-04>4",
-    },
-    Timezone {
-        iana: "America/Lima",
-        posix: "<-05>5",
-    },
-    Timezone {
-        iana: "America/Los Angeles",
-        posix: "PST8PDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Lower Princes",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Maceio",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Managua",
-        posix: "CST6",
-    },
-    Timezone {
-        iana: "America/Manaus",
-        posix: "<-04>4",
-    },
-    Timezone {
-        iana: "America/Marigot",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Martinique",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Matamoros",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Mazatlan",
-        posix: "MST7MDT,M4.1.0,M10.5.0",
-    },
-    Timezone {
-        iana: "America/Menominee",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Merida",
-        posix: "CST6CDT,M4.1.0,M10.5.0",
-    },
-    Timezone {
-        iana: "America/Metlakatla",
-        posix: "AKST9AKDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Mexico City",
-        posix: "CST6CDT,M4.1.0,M10.5.0",
-    },
-    Timezone {
-        iana: "America/Miquelon",
-        posix: "<-03>3<-02>,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Moncton",
-        posix: "AST4ADT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Monterrey",
-        posix: "CST6CDT,M4.1.0,M10.5.0",
-    },
-    Timezone {
-        iana: "America/Montevideo",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Montserrat",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Nassau",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/New York",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Nipigon",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Nome",
-        posix: "AKST9AKDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Noronha",
-        posix: "<-02>2",
-    },
-    Timezone {
-        iana: "America/North Dakota/Beulah",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/North Dakota/Center",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/North Dakota/New Salem",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Nuuk",
-        posix: "<-03>3<-02>,M3.5.0/-2,M10.5.0/-1",
-    },
-    Timezone {
-        iana: "America/Ojinaga",
-        posix: "MST7MDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Panama",
-        posix: "EST5",
-    },
-    Timezone {
-        iana: "America/Pangnirtung",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Paramaribo",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Phoenix",
-        posix: "MST7",
-    },
-    Timezone {
-        iana: "America/Port of Spain",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Port-au-Prince",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Porto Velho",
-        posix: "<-04>4",
-    },
-    Timezone {
-        iana: "America/Puerto Rico",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Punta Arenas",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Rainy River",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Rankin Inlet",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Recife",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Regina",
-        posix: "CST6",
-    },
-    Timezone {
-        iana: "America/Resolute",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Rio Branco",
-        posix: "<-05>5",
-    },
-    Timezone {
-        iana: "America/Santarem",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Santiago",
-        posix: "<-04>4<-03>,M9.1.6/24,M4.1.6/24",
-    },
-    Timezone {
-        iana: "America/Santo Domingo",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Sao Paulo",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "America/Scoresbysund",
-        posix: "<-01>1<+00>,M3.5.0/0,M10.5.0/1",
-    },
-    Timezone {
-        iana: "America/Sitka",
-        posix: "AKST9AKDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/St Barthelemy",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/St Johns",
-        posix: "NST3:30NDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/St Kitts",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/St Lucia",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/St Thomas",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/St Vincent",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Swift Current",
-        posix: "CST6",
-    },
-    Timezone {
-        iana: "America/Tegucigalpa",
-        posix: "CST6",
-    },
-    Timezone {
-        iana: "America/Thule",
-        posix: "AST4ADT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Thunder Bay",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Tijuana",
-        posix: "PST8PDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Toronto",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Tortola",
-        posix: "AST4",
-    },
-    Timezone {
-        iana: "America/Vancouver",
-        posix: "PST8PDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Whitehorse",
-        posix: "MST7",
-    },
-    Timezone {
-        iana: "America/Winnipeg",
-        posix: "CST6CDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Yakutat",
-        posix: "AKST9AKDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "America/Yellowknife",
-        posix: "MST7MDT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "Antarctica/Casey",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Antarctica/Davis",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Antarctica/DumontDUrville",
-        posix: "<+10>-10",
-    },
-    Timezone {
-        iana: "Antarctica/Macquarie",
-        posix: "AEST-10AEDT,M10.1.0,M4.1.0/3",
-    },
-    Timezone {
-        iana: "Antarctica/Mawson",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Antarctica/McMurdo",
-        posix: "NZST-12NZDT,M9.5.0,M4.1.0/3",
-    },
-    Timezone {
-        iana: "Antarctica/Palmer",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "Antarctica/Rothera",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "Antarctica/Syowa",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Antarctica/Troll",
-        posix: "<+00>0<+02>-2,M3.5.0/1,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Antarctica/Vostok",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Arctic/Longyearbyen",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Asia/Aden",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Asia/Almaty",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Asia/Amman",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Asia/Anadyr",
-        posix: "<+12>-12",
-    },
-    Timezone {
-        iana: "Asia/Aqtau",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Aqtobe",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Ashgabat",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Atyrau",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Baghdad",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Asia/Bahrain",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Asia/Baku",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Asia/Bangkok",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Barnaul",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Beirut",
-        posix: "EET-2EEST,M3.5.0/0,M10.5.0/0",
-    },
-    Timezone {
-        iana: "Asia/Bishkek",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Asia/Brunei",
-        posix: "<+08>-8",
-    },
-    Timezone {
-        iana: "Asia/Chita",
-        posix: "<+09>-9",
-    },
-    Timezone {
-        iana: "Asia/Choibalsan",
-        posix: "<+08>-8",
-    },
-    Timezone {
-        iana: "Asia/Colombo",
-        posix: "<+0530>-5:30",
-    },
-    Timezone {
-        iana: "Asia/Damascus",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Asia/Dhaka",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Asia/Dili",
-        posix: "<+09>-9",
-    },
-    Timezone {
-        iana: "Asia/Dubai",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Asia/Dushanbe",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Famagusta",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Asia/Gaza",
-        posix: "EET-2EEST,M3.4.4/50,M10.4.4/50",
-    },
-    Timezone {
-        iana: "Asia/Hebron",
-        posix: "EET-2EEST,M3.4.4/50,M10.4.4/50",
-    },
-    Timezone {
-        iana: "Asia/Ho Chi Minh",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Hong Kong",
-        posix: "HKT-8",
-    },
-    Timezone {
-        iana: "Asia/Hovd",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Irkutsk",
-        posix: "<+08>-8",
-    },
-    Timezone {
-        iana: "Asia/Jakarta",
-        posix: "WIB-7",
-    },
-    Timezone {
-        iana: "Asia/Jayapura",
-        posix: "WIT-9",
-    },
-    Timezone {
-        iana: "Asia/Jerusalem",
-        posix: "IST-2IDT,M3.4.4/26,M10.5.0",
-    },
-    Timezone {
-        iana: "Asia/Kabul",
-        posix: "<+0430>-4:30",
-    },
-    Timezone {
-        iana: "Asia/Kamchatka",
-        posix: "<+12>-12",
-    },
-    Timezone {
-        iana: "Asia/Karachi",
-        posix: "PKT-5",
-    },
-    Timezone {
-        iana: "Asia/Kathmandu",
-        posix: "<+0545>-5:45",
-    },
-    Timezone {
-        iana: "Asia/Khandyga",
-        posix: "<+09>-9",
-    },
-    Timezone {
-        iana: "Asia/Kolkata",
-        posix: "IST-5:30",
-    },
-    Timezone {
-        iana: "Asia/Krasnoyarsk",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Kuala Lumpur",
-        posix: "<+08>-8",
-    },
-    Timezone {
-        iana: "Asia/Kuching",
-        posix: "<+08>-8",
-    },
-    Timezone {
-        iana: "Asia/Kuwait",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Asia/Macau",
-        posix: "CST-8",
-    },
-    Timezone {
-        iana: "Asia/Magadan",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Asia/Makassar",
-        posix: "WITA-8",
-    },
-    Timezone {
-        iana: "Asia/Manila",
-        posix: "PST-8",
-    },
-    Timezone {
-        iana: "Asia/Muscat",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Asia/Nicosia",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Asia/Novokuznetsk",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Novosibirsk",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Omsk",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Asia/Oral",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Phnom Penh",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Pontianak",
-        posix: "WIB-7",
-    },
-    Timezone {
-        iana: "Asia/Pyongyang",
-        posix: "KST-9",
-    },
-    Timezone {
-        iana: "Asia/Qatar",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Asia/Qostanay",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Asia/Qyzylorda",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Riyadh",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Asia/Sakhalin",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Asia/Samarkand",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Seoul",
-        posix: "KST-9",
-    },
-    Timezone {
-        iana: "Asia/Shanghai",
-        posix: "CST-8",
-    },
-    Timezone {
-        iana: "Asia/Singapore",
-        posix: "<+08>-8",
-    },
-    Timezone {
-        iana: "Asia/Srednekolymsk",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Asia/Taipei",
-        posix: "CST-8",
-    },
-    Timezone {
-        iana: "Asia/Tashkent",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Tbilisi",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Asia/Tehran",
-        posix: "<+0330>-3:30",
-    },
-    Timezone {
-        iana: "Asia/Thimphu",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Asia/Tokyo",
-        posix: "JST-9",
-    },
-    Timezone {
-        iana: "Asia/Tomsk",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Ulaanbaatar",
-        posix: "<+08>-8",
-    },
-    Timezone {
-        iana: "Asia/Urumqi",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Asia/Ust-Nera",
-        posix: "<+10>-10",
-    },
-    Timezone {
-        iana: "Asia/Vientiane",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Asia/Vladivostok",
-        posix: "<+10>-10",
-    },
-    Timezone {
-        iana: "Asia/Yakutsk",
-        posix: "<+09>-9",
-    },
-    Timezone {
-        iana: "Asia/Yangon",
-        posix: "<+0630>-6:30",
-    },
-    Timezone {
-        iana: "Asia/Yekaterinburg",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Asia/Yerevan",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Atlantic/Azores",
-        posix: "<-01>1<+00>,M3.5.0/0,M10.5.0/1",
-    },
-    Timezone {
-        iana: "Atlantic/Bermuda",
-        posix: "AST4ADT,M3.2.0,M11.1.0",
-    },
-    Timezone {
-        iana: "Atlantic/Canary",
-        posix: "WET0WEST,M3.5.0/1,M10.5.0",
-    },
-    Timezone {
-        iana: "Atlantic/Cape Verde",
-        posix: "<-01>1",
-    },
-    Timezone {
-        iana: "Atlantic/Faroe",
-        posix: "WET0WEST,M3.5.0/1,M10.5.0",
-    },
-    Timezone {
-        iana: "Atlantic/Madeira",
-        posix: "WET0WEST,M3.5.0/1,M10.5.0",
-    },
-    Timezone {
-        iana: "Atlantic/Reykjavik",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Atlantic/South Georgia",
-        posix: "<-02>2",
-    },
-    Timezone {
-        iana: "Atlantic/St Helena",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Atlantic/Stanley",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "Australia/Adelaide",
-        posix: "ACST-9:30ACDT,M10.1.0,M4.1.0/3",
-    },
-    Timezone {
-        iana: "Australia/Brisbane",
-        posix: "AEST-10",
-    },
-    Timezone {
-        iana: "Australia/Broken Hill",
-        posix: "ACST-9:30ACDT,M10.1.0,M4.1.0/3",
-    },
-    Timezone {
-        iana: "Australia/Darwin",
-        posix: "ACST-9:30",
-    },
-    Timezone {
-        iana: "Australia/Eucla",
-        posix: "<+0845>-8:45",
-    },
-    Timezone {
-        iana: "Australia/Hobart",
-        posix: "AEST-10AEDT,M10.1.0,M4.1.0/3",
-    },
-    Timezone {
-        iana: "Australia/Lindeman",
-        posix: "AEST-10",
-    },
-    Timezone {
-        iana: "Australia/Lord Howe",
-        posix: "<+1030>-10:30<+11>-11,M10.1.0,M4.1.0",
-    },
-    Timezone {
-        iana: "Australia/Melbourne",
-        posix: "AEST-10AEDT,M10.1.0,M4.1.0/3",
-    },
-    Timezone {
-        iana: "Australia/Perth",
-        posix: "AWST-8",
-    },
-    Timezone {
-        iana: "Australia/Sydney",
-        posix: "AEST-10AEDT,M10.1.0,M4.1.0/3",
-    },
-    Timezone {
-        iana: "Etc/GMT",
-        posix: "GMT0",
-    },
-    Timezone {
-        iana: "Etc/GMT+1",
-        posix: "<-01>1",
-    },
-    Timezone {
-        iana: "Etc/GMT+10",
-        posix: "<-10>10",
-    },
-    Timezone {
-        iana: "Etc/GMT+11",
-        posix: "<-11>11",
-    },
-    Timezone {
-        iana: "Etc/GMT+12",
-        posix: "<-12>12",
-    },
-    Timezone {
-        iana: "Etc/GMT+2",
-        posix: "<-02>2",
-    },
-    Timezone {
-        iana: "Etc/GMT+3",
-        posix: "<-03>3",
-    },
-    Timezone {
-        iana: "Etc/GMT+4",
-        posix: "<-04>4",
-    },
-    Timezone {
-        iana: "Etc/GMT+5",
-        posix: "<-05>5",
-    },
-    Timezone {
-        iana: "Etc/GMT+6",
-        posix: "<-06>6",
-    },
-    Timezone {
-        iana: "Etc/GMT+7",
-        posix: "<-07>7",
-    },
-    Timezone {
-        iana: "Etc/GMT+8",
-        posix: "<-08>8",
-    },
-    Timezone {
-        iana: "Etc/GMT+9",
-        posix: "<-09>9",
-    },
-    Timezone {
-        iana: "Etc/GMT-1",
-        posix: "<+01>-1",
-    },
-    Timezone {
-        iana: "Etc/GMT-10",
-        posix: "<+10>-10",
-    },
-    Timezone {
-        iana: "Etc/GMT-11",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Etc/GMT-12",
-        posix: "<+12>-12",
-    },
-    Timezone {
-        iana: "Etc/GMT-13",
-        posix: "<+13>-13",
-    },
-    Timezone {
-        iana: "Etc/GMT-14",
-        posix: "<+14>-14",
-    },
-    Timezone {
-        iana: "Etc/GMT-2",
-        posix: "<+02>-2",
-    },
-    Timezone {
-        iana: "Etc/GMT-3",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Etc/GMT-4",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Etc/GMT-5",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Etc/GMT-6",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Etc/GMT-7",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Etc/GMT-8",
-        posix: "<+08>-8",
-    },
-    Timezone {
-        iana: "Etc/GMT-9",
-        posix: "<+09>-9",
-    },
-    Timezone {
-        iana: "Europe/Amsterdam",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Andorra",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Astrakhan",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Europe/Athens",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Europe/Belgrade",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Berlin",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Bratislava",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Brussels",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Bucharest",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Europe/Budapest",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Busingen",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Chisinau",
-        posix: "EET-2EEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Copenhagen",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Dublin",
-        posix: "IST-1GMT0,M10.5.0,M3.5.0/1",
-    },
-    Timezone {
-        iana: "Europe/Gibraltar",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Guernsey",
-        posix: "GMT0BST,M3.5.0/1,M10.5.0",
-    },
-    Timezone {
-        iana: "Europe/Helsinki",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Europe/Isle of Man",
-        posix: "GMT0BST,M3.5.0/1,M10.5.0",
-    },
-    Timezone {
-        iana: "Europe/Istanbul",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Europe/Jersey",
-        posix: "GMT0BST,M3.5.0/1,M10.5.0",
-    },
-    Timezone {
-        iana: "Europe/Kaliningrad",
-        posix: "EET-2",
-    },
-    Timezone {
-        iana: "Europe/Kirov",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Europe/Kyiv",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Europe/Lisbon",
-        posix: "WET0WEST,M3.5.0/1,M10.5.0",
-    },
-    Timezone {
-        iana: "Europe/Ljubljana",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/London",
-        posix: "GMT0BST,M3.5.0/1,M10.5.0",
-    },
-    Timezone {
-        iana: "Europe/Luxembourg",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Madrid",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Malta",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Mariehamn",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Europe/Minsk",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Europe/Monaco",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Moscow",
-        posix: "MSK-3",
-    },
-    Timezone {
-        iana: "Europe/Oslo",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Paris",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Podgorica",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Prague",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Riga",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Europe/Rome",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Samara",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Europe/San Marino",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Sarajevo",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Saratov",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Europe/Simferopol",
-        posix: "MSK-3",
-    },
-    Timezone {
-        iana: "Europe/Skopje",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Sofia",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Europe/Stockholm",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Tallinn",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Europe/Tirane",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Ulyanovsk",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Europe/Vaduz",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Vatican",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Vienna",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Vilnius",
-        posix: "EET-2EEST,M3.5.0/3,M10.5.0/4",
-    },
-    Timezone {
-        iana: "Europe/Volgograd",
-        posix: "<+03>-3",
-    },
-    Timezone {
-        iana: "Europe/Warsaw",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Zagreb",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Europe/Zurich",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    },
-    Timezone {
-        iana: "Indian/Antananarivo",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Indian/Chagos",
-        posix: "<+06>-6",
-    },
-    Timezone {
-        iana: "Indian/Christmas",
-        posix: "<+07>-7",
-    },
-    Timezone {
-        iana: "Indian/Cocos",
-        posix: "<+0630>-6:30",
-    },
-    Timezone {
-        iana: "Indian/Comoro",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Indian/Kerguelen",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Indian/Mahe",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Indian/Maldives",
-        posix: "<+05>-5",
-    },
-    Timezone {
-        iana: "Indian/Mauritius",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Indian/Mayotte",
-        posix: "EAT-3",
-    },
-    Timezone {
-        iana: "Indian/Reunion",
-        posix: "<+04>-4",
-    },
-    Timezone {
-        iana: "Pacific/Apia",
-        posix: "<+13>-13",
-    },
-    Timezone {
-        iana: "Pacific/Auckland",
-        posix: "NZST-12NZDT,M9.5.0,M4.1.0/3",
-    },
-    Timezone {
-        iana: "Pacific/Bougainville",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Pacific/Chatham",
-        posix: "<+1245>-12:45<+1345>,M9.5.0/2:45,M4.1.0/3:45",
-    },
-    Timezone {
-        iana: "Pacific/Chuuk",
-        posix: "<+10>-10",
-    },
-    Timezone {
-        iana: "Pacific/Easter",
-        posix: "<-06>6<-05>,M9.1.6/22,M4.1.6/22",
-    },
-    Timezone {
-        iana: "Pacific/Efate",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Pacific/Fakaofo",
-        posix: "<+13>-13",
-    },
-    Timezone {
-        iana: "Pacific/Fiji",
-        posix: "<+12>-12<+13>,M11.2.0,M1.2.3/99",
-    },
-    Timezone {
-        iana: "Pacific/Funafuti",
-        posix: "<+12>-12",
-    },
-    Timezone {
-        iana: "Pacific/Galapagos",
-        posix: "<-06>6",
-    },
-    Timezone {
-        iana: "Pacific/Gambier",
-        posix: "<-09>9",
-    },
-    Timezone {
-        iana: "Pacific/Guadalcanal",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Pacific/Guam",
-        posix: "ChST-10",
-    },
-    Timezone {
-        iana: "Pacific/Honolulu",
-        posix: "HST10",
-    },
-    Timezone {
-        iana: "Pacific/Kanton",
-        posix: "<+13>-13",
-    },
-    Timezone {
-        iana: "Pacific/Kiritimati",
-        posix: "<+14>-14",
-    },
-    Timezone {
-        iana: "Pacific/Kosrae",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Pacific/Kwajalein",
-        posix: "<+12>-12",
-    },
-    Timezone {
-        iana: "Pacific/Majuro",
-        posix: "<+12>-12",
-    },
-    Timezone {
-        iana: "Pacific/Marquesas",
-        posix: "<-0930>9:30",
-    },
-    Timezone {
-        iana: "Pacific/Midway",
-        posix: "SST11",
-    },
-    Timezone {
-        iana: "Pacific/Nauru",
-        posix: "<+12>-12",
-    },
-    Timezone {
-        iana: "Pacific/Niue",
-        posix: "<-11>11",
-    },
-    Timezone {
-        iana: "Pacific/Norfolk",
-        posix: "<+11>-11<+12>,M10.1.0,M4.1.0/3",
-    },
-    Timezone {
-        iana: "Pacific/Noumea",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Pacific/Pago Pago",
-        posix: "SST11",
-    },
-    Timezone {
-        iana: "Pacific/Palau",
-        posix: "<+09>-9",
-    },
-    Timezone {
-        iana: "Pacific/Pitcairn",
-        posix: "<-08>8",
-    },
-    Timezone {
-        iana: "Pacific/Pohnpei",
-        posix: "<+11>-11",
-    },
-    Timezone {
-        iana: "Pacific/Port Moresby",
-        posix: "<+10>-10",
-    },
-    Timezone {
-        iana: "Pacific/Rarotonga",
-        posix: "<-10>10",
-    },
-    Timezone {
-        iana: "Pacific/Saipan",
-        posix: "ChST-10",
-    },
-    Timezone {
-        iana: "Pacific/Tahiti",
-        posix: "<-10>10",
-    },
-    Timezone {
-        iana: "Pacific/Tarawa",
-        posix: "<+12>-12",
-    },
-    Timezone {
-        iana: "Pacific/Tongatapu",
-        posix: "<+13>-13",
-    },
-    Timezone {
-        iana: "Pacific/Wake",
-        posix: "<+12>-12",
-    },
-    Timezone {
-        iana: "Pacific/Wallis",
-        posix: "<+12>-12",
-    },
-];
+/// https://github.com/openwrt/luci/blob/05c7844389e36385aa64549a3cc449b9d1a552e7/modules/luci-base/ucode/zoneinfo.uc
+pub(crate) static TIMEZONE_VARIANTS: LazyLock<Vec<Timezone>> = LazyLock::new(|| {
+    vec![
+        Timezone::new("Africa/Abidjan", "GMT0"),
+        Timezone::new("Africa/Accra", "GMT0"),
+        Timezone::new("Africa/Addis Ababa", "EAT-3"),
+        Timezone::new("Africa/Algiers", "CET-1"),
+        Timezone::new("Africa/Asmara", "EAT-3"),
+        Timezone::new("Africa/Bamako", "GMT0"),
+        Timezone::new("Africa/Bangui", "WAT-1"),
+        Timezone::new("Africa/Banjul", "GMT0"),
+        Timezone::new("Africa/Bissau", "GMT0"),
+        Timezone::new("Africa/Blantyre", "CAT-2"),
+        Timezone::new("Africa/Brazzaville", "WAT-1"),
+        Timezone::new("Africa/Bujumbura", "CAT-2"),
+        Timezone::new("Africa/Cairo", "EET-2EEST,M4.5.5/0,M10.5.4/24"),
+        Timezone::new("Africa/Casablanca", "XXX-2<+01>-1,0/0,J365/23"),
+        Timezone::new("Africa/Ceuta", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Africa/Conakry", "GMT0"),
+        Timezone::new("Africa/Dakar", "GMT0"),
+        Timezone::new("Africa/Dar es Salaam", "EAT-3"),
+        Timezone::new("Africa/Djibouti", "EAT-3"),
+        Timezone::new("Africa/Douala", "WAT-1"),
+        Timezone::new("Africa/El Aaiun", "XXX-2<+01>-1,0/0,J365/23"),
+        Timezone::new("Africa/Freetown", "GMT0"),
+        Timezone::new("Africa/Gaborone", "CAT-2"),
+        Timezone::new("Africa/Harare", "CAT-2"),
+        Timezone::new("Africa/Johannesburg", "SAST-2"),
+        Timezone::new("Africa/Juba", "CAT-2"),
+        Timezone::new("Africa/Kampala", "EAT-3"),
+        Timezone::new("Africa/Khartoum", "CAT-2"),
+        Timezone::new("Africa/Kigali", "CAT-2"),
+        Timezone::new("Africa/Kinshasa", "WAT-1"),
+        Timezone::new("Africa/Lagos", "WAT-1"),
+        Timezone::new("Africa/Libreville", "WAT-1"),
+        Timezone::new("Africa/Lome", "GMT0"),
+        Timezone::new("Africa/Luanda", "WAT-1"),
+        Timezone::new("Africa/Lubumbashi", "CAT-2"),
+        Timezone::new("Africa/Lusaka", "CAT-2"),
+        Timezone::new("Africa/Malabo", "WAT-1"),
+        Timezone::new("Africa/Maputo", "CAT-2"),
+        Timezone::new("Africa/Maseru", "SAST-2"),
+        Timezone::new("Africa/Mbabane", "SAST-2"),
+        Timezone::new("Africa/Mogadishu", "EAT-3"),
+        Timezone::new("Africa/Monrovia", "GMT0"),
+        Timezone::new("Africa/Nairobi", "EAT-3"),
+        Timezone::new("Africa/Ndjamena", "WAT-1"),
+        Timezone::new("Africa/Niamey", "WAT-1"),
+        Timezone::new("Africa/Nouakchott", "GMT0"),
+        Timezone::new("Africa/Ouagadougou", "GMT0"),
+        Timezone::new("Africa/Porto-Novo", "WAT-1"),
+        Timezone::new("Africa/Sao Tome", "GMT0"),
+        Timezone::new("Africa/Tripoli", "EET-2"),
+        Timezone::new("Africa/Tunis", "CET-1"),
+        Timezone::new("Africa/Windhoek", "CAT-2"),
+        Timezone::new("America/Adak", "HST10HDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Anchorage", "AKST9AKDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Anguilla", "AST4"),
+        Timezone::new("America/Antigua", "AST4"),
+        Timezone::new("America/Araguaina", "<-03>3"),
+        Timezone::new("America/Argentina/Buenos Aires", "<-03>3"),
+        Timezone::new("America/Argentina/Catamarca", "<-03>3"),
+        Timezone::new("America/Argentina/Cordoba", "<-03>3"),
+        Timezone::new("America/Argentina/Jujuy", "<-03>3"),
+        Timezone::new("America/Argentina/La Rioja", "<-03>3"),
+        Timezone::new("America/Argentina/Mendoza", "<-03>3"),
+        Timezone::new("America/Argentina/Rio Gallegos", "<-03>3"),
+        Timezone::new("America/Argentina/Salta", "<-03>3"),
+        Timezone::new("America/Argentina/San Juan", "<-03>3"),
+        Timezone::new("America/Argentina/San Luis", "<-03>3"),
+        Timezone::new("America/Argentina/Tucuman", "<-03>3"),
+        Timezone::new("America/Argentina/Ushuaia", "<-03>3"),
+        Timezone::new("America/Aruba", "AST4"),
+        Timezone::new("America/Asuncion", "<-03>3"),
+        Timezone::new("America/Atikokan", "EST5"),
+        Timezone::new("America/Bahia", "<-03>3"),
+        Timezone::new("America/Bahia Banderas", "CST6"),
+        Timezone::new("America/Barbados", "AST4"),
+        Timezone::new("America/Belem", "<-03>3"),
+        Timezone::new("America/Belize", "CST6"),
+        Timezone::new("America/Blanc-Sablon", "AST4"),
+        Timezone::new("America/Boa Vista", "<-04>4"),
+        Timezone::new("America/Bogota", "<-05>5"),
+        Timezone::new("America/Boise", "MST7MDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Cambridge Bay", "MST7MDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Campo Grande", "<-04>4"),
+        Timezone::new("America/Cancun", "EST5"),
+        Timezone::new("America/Caracas", "<-04>4"),
+        Timezone::new("America/Cayenne", "<-03>3"),
+        Timezone::new("America/Cayman", "EST5"),
+        Timezone::new("America/Chicago", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Chihuahua", "CST6"),
+        Timezone::new("America/Ciudad Juarez", "MST7MDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Costa Rica", "CST6"),
+        Timezone::new("America/Coyhaique", "<-03>3"),
+        Timezone::new("America/Creston", "MST7"),
+        Timezone::new("America/Cuiaba", "<-04>4"),
+        Timezone::new("America/Curacao", "AST4"),
+        Timezone::new("America/Danmarkshavn", "GMT0"),
+        Timezone::new("America/Dawson", "MST7"),
+        Timezone::new("America/Dawson Creek", "MST7"),
+        Timezone::new("America/Denver", "MST7MDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Detroit", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Dominica", "AST4"),
+        Timezone::new("America/Edmonton", "MST7MDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Eirunepe", "<-05>5"),
+        Timezone::new("America/El Salvador", "CST6"),
+        Timezone::new("America/Fort Nelson", "MST7"),
+        Timezone::new("America/Fortaleza", "<-03>3"),
+        Timezone::new("America/Glace Bay", "AST4ADT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Goose Bay", "AST4ADT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Grand Turk", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Grenada", "AST4"),
+        Timezone::new("America/Guadeloupe", "AST4"),
+        Timezone::new("America/Guatemala", "CST6"),
+        Timezone::new("America/Guayaquil", "<-05>5"),
+        Timezone::new("America/Guyana", "<-04>4"),
+        Timezone::new("America/Halifax", "AST4ADT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Havana", "CST5CDT,M3.2.0/0,M11.1.0/1"),
+        Timezone::new("America/Hermosillo", "MST7"),
+        Timezone::new("America/Indiana/Indianapolis", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Indiana/Knox", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Indiana/Marengo", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Indiana/Petersburg", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Indiana/Tell City", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Indiana/Vevay", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Indiana/Vincennes", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Indiana/Winamac", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Inuvik", "MST7MDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Iqaluit", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Jamaica", "EST5"),
+        Timezone::new("America/Juneau", "AKST9AKDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Kentucky/Louisville", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Kentucky/Monticello", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Kralendijk", "AST4"),
+        Timezone::new("America/La Paz", "<-04>4"),
+        Timezone::new("America/Lima", "<-05>5"),
+        Timezone::new("America/Los Angeles", "PST8PDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Lower Princes", "AST4"),
+        Timezone::new("America/Maceio", "<-03>3"),
+        Timezone::new("America/Managua", "CST6"),
+        Timezone::new("America/Manaus", "<-04>4"),
+        Timezone::new("America/Marigot", "AST4"),
+        Timezone::new("America/Martinique", "AST4"),
+        Timezone::new("America/Matamoros", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Mazatlan", "MST7"),
+        Timezone::new("America/Menominee", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Merida", "CST6"),
+        Timezone::new("America/Metlakatla", "AKST9AKDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Mexico City", "CST6"),
+        Timezone::new("America/Miquelon", "<-03>3<-02>,M3.2.0,M11.1.0"),
+        Timezone::new("America/Moncton", "AST4ADT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Monterrey", "CST6"),
+        Timezone::new("America/Montevideo", "<-03>3"),
+        Timezone::new("America/Montserrat", "AST4"),
+        Timezone::new("America/Nassau", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/New York", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Nome", "AKST9AKDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Noronha", "<-02>2"),
+        Timezone::new("America/North Dakota/Beulah", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/North Dakota/Center", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/North Dakota/New Salem", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Nuuk", "<-02>2<-01>,M3.5.0/-1,M10.5.0/0"),
+        Timezone::new("America/Ojinaga", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Panama", "EST5"),
+        Timezone::new("America/Paramaribo", "<-03>3"),
+        Timezone::new("America/Phoenix", "MST7"),
+        Timezone::new("America/Port of Spain", "AST4"),
+        Timezone::new("America/Port-au-Prince", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Porto Velho", "<-04>4"),
+        Timezone::new("America/Puerto Rico", "AST4"),
+        Timezone::new("America/Punta Arenas", "<-03>3"),
+        Timezone::new("America/Rankin Inlet", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Recife", "<-03>3"),
+        Timezone::new("America/Regina", "CST6"),
+        Timezone::new("America/Resolute", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Rio Branco", "<-05>5"),
+        Timezone::new("America/Santarem", "<-03>3"),
+        Timezone::new("America/Santiago", "<-04>4<-03>,M9.1.6/24,M4.1.6/24"),
+        Timezone::new("America/Santo Domingo", "AST4"),
+        Timezone::new("America/Sao Paulo", "<-03>3"),
+        Timezone::new("America/Scoresbysund", "<-02>2<-01>,M3.5.0/-1,M10.5.0/0"),
+        Timezone::new("America/Sitka", "AKST9AKDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/St Barthelemy", "AST4"),
+        Timezone::new("America/St Johns", "NST3:30NDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/St Kitts", "AST4"),
+        Timezone::new("America/St Lucia", "AST4"),
+        Timezone::new("America/St Thomas", "AST4"),
+        Timezone::new("America/St Vincent", "AST4"),
+        Timezone::new("America/Swift Current", "CST6"),
+        Timezone::new("America/Tegucigalpa", "CST6"),
+        Timezone::new("America/Thule", "AST4ADT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Tijuana", "PST8PDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Toronto", "EST5EDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Tortola", "AST4"),
+        Timezone::new("America/Vancouver", "PST8PDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Whitehorse", "MST7"),
+        Timezone::new("America/Winnipeg", "CST6CDT,M3.2.0,M11.1.0"),
+        Timezone::new("America/Yakutat", "AKST9AKDT,M3.2.0,M11.1.0"),
+        Timezone::new("Antarctica/Casey", "<+08>-8"),
+        Timezone::new("Antarctica/Davis", "<+07>-7"),
+        Timezone::new("Antarctica/DumontDUrville", "<+10>-10"),
+        Timezone::new("Antarctica/Macquarie", "AEST-10AEDT,M10.1.0,M4.1.0/3"),
+        Timezone::new("Antarctica/Mawson", "<+05>-5"),
+        Timezone::new("Antarctica/McMurdo", "NZST-12NZDT,M9.5.0,M4.1.0/3"),
+        Timezone::new("Antarctica/Palmer", "<-03>3"),
+        Timezone::new("Antarctica/Rothera", "<-03>3"),
+        Timezone::new("Antarctica/Syowa", "<+03>-3"),
+        Timezone::new("Antarctica/Troll", "<+00>0<+02>-2,M3.5.0/1,M10.5.0/3"),
+        Timezone::new("Antarctica/Vostok", "<+05>-5"),
+        Timezone::new("Arctic/Longyearbyen", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Asia/Aden", "<+03>-3"),
+        Timezone::new("Asia/Almaty", "<+05>-5"),
+        Timezone::new("Asia/Amman", "<+03>-3"),
+        Timezone::new("Asia/Anadyr", "<+12>-12"),
+        Timezone::new("Asia/Aqtau", "<+05>-5"),
+        Timezone::new("Asia/Aqtobe", "<+05>-5"),
+        Timezone::new("Asia/Ashgabat", "<+05>-5"),
+        Timezone::new("Asia/Atyrau", "<+05>-5"),
+        Timezone::new("Asia/Baghdad", "<+03>-3"),
+        Timezone::new("Asia/Bahrain", "<+03>-3"),
+        Timezone::new("Asia/Baku", "<+04>-4"),
+        Timezone::new("Asia/Bangkok", "<+07>-7"),
+        Timezone::new("Asia/Barnaul", "<+07>-7"),
+        Timezone::new("Asia/Beirut", "EET-2EEST,M3.5.0/0,M10.5.0/0"),
+        Timezone::new("Asia/Bishkek", "<+06>-6"),
+        Timezone::new("Asia/Brunei", "<+08>-8"),
+        Timezone::new("Asia/Chita", "<+09>-9"),
+        Timezone::new("Asia/Colombo", "<+0530>-5:30"),
+        Timezone::new("Asia/Damascus", "<+03>-3"),
+        Timezone::new("Asia/Dhaka", "<+06>-6"),
+        Timezone::new("Asia/Dili", "<+09>-9"),
+        Timezone::new("Asia/Dubai", "<+04>-4"),
+        Timezone::new("Asia/Dushanbe", "<+05>-5"),
+        Timezone::new("Asia/Famagusta", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Asia/Gaza", "EET-2EEST,M3.4.4/50,M10.4.4/50"),
+        Timezone::new("Asia/Hebron", "EET-2EEST,M3.4.4/50,M10.4.4/50"),
+        Timezone::new("Asia/Ho Chi Minh", "<+07>-7"),
+        Timezone::new("Asia/Hong Kong", "HKT-8"),
+        Timezone::new("Asia/Hovd", "<+07>-7"),
+        Timezone::new("Asia/Irkutsk", "<+08>-8"),
+        Timezone::new("Asia/Jakarta", "WIB-7"),
+        Timezone::new("Asia/Jayapura", "WIT-9"),
+        Timezone::new("Asia/Jerusalem", "IST-2IDT,M3.4.4/26,M10.5.0"),
+        Timezone::new("Asia/Kabul", "<+0430>-4:30"),
+        Timezone::new("Asia/Kamchatka", "<+12>-12"),
+        Timezone::new("Asia/Karachi", "PKT-5"),
+        Timezone::new("Asia/Kathmandu", "<+0545>-5:45"),
+        Timezone::new("Asia/Khandyga", "<+09>-9"),
+        Timezone::new("Asia/Kolkata", "IST-5:30"),
+        Timezone::new("Asia/Krasnoyarsk", "<+07>-7"),
+        Timezone::new("Asia/Kuala Lumpur", "<+08>-8"),
+        Timezone::new("Asia/Kuching", "<+08>-8"),
+        Timezone::new("Asia/Kuwait", "<+03>-3"),
+        Timezone::new("Asia/Macau", "CST-8"),
+        Timezone::new("Asia/Magadan", "<+11>-11"),
+        Timezone::new("Asia/Makassar", "WITA-8"),
+        Timezone::new("Asia/Manila", "PST-8"),
+        Timezone::new("Asia/Muscat", "<+04>-4"),
+        Timezone::new("Asia/Nicosia", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Asia/Novokuznetsk", "<+07>-7"),
+        Timezone::new("Asia/Novosibirsk", "<+07>-7"),
+        Timezone::new("Asia/Omsk", "<+06>-6"),
+        Timezone::new("Asia/Oral", "<+05>-5"),
+        Timezone::new("Asia/Phnom Penh", "<+07>-7"),
+        Timezone::new("Asia/Pontianak", "WIB-7"),
+        Timezone::new("Asia/Pyongyang", "KST-9"),
+        Timezone::new("Asia/Qatar", "<+03>-3"),
+        Timezone::new("Asia/Qostanay", "<+05>-5"),
+        Timezone::new("Asia/Qyzylorda", "<+05>-5"),
+        Timezone::new("Asia/Riyadh", "<+03>-3"),
+        Timezone::new("Asia/Sakhalin", "<+11>-11"),
+        Timezone::new("Asia/Samarkand", "<+05>-5"),
+        Timezone::new("Asia/Seoul", "KST-9"),
+        Timezone::new("Asia/Shanghai", "CST-8"),
+        Timezone::new("Asia/Singapore", "<+08>-8"),
+        Timezone::new("Asia/Srednekolymsk", "<+11>-11"),
+        Timezone::new("Asia/Taipei", "CST-8"),
+        Timezone::new("Asia/Tashkent", "<+05>-5"),
+        Timezone::new("Asia/Tbilisi", "<+04>-4"),
+        Timezone::new("Asia/Tehran", "<+0330>-3:30"),
+        Timezone::new("Asia/Thimphu", "<+06>-6"),
+        Timezone::new("Asia/Tokyo", "JST-9"),
+        Timezone::new("Asia/Tomsk", "<+07>-7"),
+        Timezone::new("Asia/Ulaanbaatar", "<+08>-8"),
+        Timezone::new("Asia/Urumqi", "<+06>-6"),
+        Timezone::new("Asia/Ust-Nera", "<+10>-10"),
+        Timezone::new("Asia/Vientiane", "<+07>-7"),
+        Timezone::new("Asia/Vladivostok", "<+10>-10"),
+        Timezone::new("Asia/Yakutsk", "<+09>-9"),
+        Timezone::new("Asia/Yangon", "<+0630>-6:30"),
+        Timezone::new("Asia/Yekaterinburg", "<+05>-5"),
+        Timezone::new("Asia/Yerevan", "<+04>-4"),
+        Timezone::new("Atlantic/Azores", "<-01>1<+00>,M3.5.0/0,M10.5.0/1"),
+        Timezone::new("Atlantic/Bermuda", "AST4ADT,M3.2.0,M11.1.0"),
+        Timezone::new("Atlantic/Canary", "WET0WEST,M3.5.0/1,M10.5.0"),
+        Timezone::new("Atlantic/Cape Verde", "<-01>1"),
+        Timezone::new("Atlantic/Faroe", "WET0WEST,M3.5.0/1,M10.5.0"),
+        Timezone::new("Atlantic/Madeira", "WET0WEST,M3.5.0/1,M10.5.0"),
+        Timezone::new("Atlantic/Reykjavik", "GMT0"),
+        Timezone::new("Atlantic/South Georgia", "<-02>2"),
+        Timezone::new("Atlantic/St Helena", "GMT0"),
+        Timezone::new("Atlantic/Stanley", "<-03>3"),
+        Timezone::new("Australia/Adelaide", "ACST-9:30ACDT,M10.1.0,M4.1.0/3"),
+        Timezone::new("Australia/Brisbane", "AEST-10"),
+        Timezone::new("Australia/Broken Hill", "ACST-9:30ACDT,M10.1.0,M4.1.0/3"),
+        Timezone::new("Australia/Darwin", "ACST-9:30"),
+        Timezone::new("Australia/Eucla", "<+0845>-8:45"),
+        Timezone::new("Australia/Hobart", "AEST-10AEDT,M10.1.0,M4.1.0/3"),
+        Timezone::new("Australia/Lindeman", "AEST-10"),
+        Timezone::new(
+            "Australia/Lord Howe",
+            "<+1030>-10:30<+11>-11,M10.1.0,M4.1.0",
+        ),
+        Timezone::new("Australia/Melbourne", "AEST-10AEDT,M10.1.0,M4.1.0/3"),
+        Timezone::new("Australia/Perth", "AWST-8"),
+        Timezone::new("Australia/Sydney", "AEST-10AEDT,M10.1.0,M4.1.0/3"),
+        Timezone::new("Etc/GMT", "GMT0"),
+        Timezone::new("Etc/GMT+1", "<-01>1"),
+        Timezone::new("Etc/GMT+10", "<-10>10"),
+        Timezone::new("Etc/GMT+11", "<-11>11"),
+        Timezone::new("Etc/GMT+12", "<-12>12"),
+        Timezone::new("Etc/GMT+2", "<-02>2"),
+        Timezone::new("Etc/GMT+3", "<-03>3"),
+        Timezone::new("Etc/GMT+4", "<-04>4"),
+        Timezone::new("Etc/GMT+5", "<-05>5"),
+        Timezone::new("Etc/GMT+6", "<-06>6"),
+        Timezone::new("Etc/GMT+7", "<-07>7"),
+        Timezone::new("Etc/GMT+8", "<-08>8"),
+        Timezone::new("Etc/GMT+9", "<-09>9"),
+        Timezone::new("Etc/GMT-1", "<+01>-1"),
+        Timezone::new("Etc/GMT-10", "<+10>-10"),
+        Timezone::new("Etc/GMT-11", "<+11>-11"),
+        Timezone::new("Etc/GMT-12", "<+12>-12"),
+        Timezone::new("Etc/GMT-13", "<+13>-13"),
+        Timezone::new("Etc/GMT-14", "<+14>-14"),
+        Timezone::new("Etc/GMT-2", "<+02>-2"),
+        Timezone::new("Etc/GMT-3", "<+03>-3"),
+        Timezone::new("Etc/GMT-4", "<+04>-4"),
+        Timezone::new("Etc/GMT-5", "<+05>-5"),
+        Timezone::new("Etc/GMT-6", "<+06>-6"),
+        Timezone::new("Etc/GMT-7", "<+07>-7"),
+        Timezone::new("Etc/GMT-8", "<+08>-8"),
+        Timezone::new("Etc/GMT-9", "<+09>-9"),
+        Timezone::new("Europe/Amsterdam", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Andorra", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Astrakhan", "<+04>-4"),
+        Timezone::new("Europe/Athens", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Europe/Belgrade", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Berlin", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Bratislava", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Brussels", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Bucharest", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Europe/Budapest", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Busingen", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Chisinau", "EET-2EEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Copenhagen", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Dublin", "GMT0IST,M3.5.0/1,M10.5.0"),
+        Timezone::new("Europe/Gibraltar", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Guernsey", "GMT0BST,M3.5.0/1,M10.5.0"),
+        Timezone::new("Europe/Helsinki", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Europe/Isle of Man", "GMT0BST,M3.5.0/1,M10.5.0"),
+        Timezone::new("Europe/Istanbul", "<+03>-3"),
+        Timezone::new("Europe/Jersey", "GMT0BST,M3.5.0/1,M10.5.0"),
+        Timezone::new("Europe/Kaliningrad", "EET-2"),
+        Timezone::new("Europe/Kirov", "MSK-3"),
+        Timezone::new("Europe/Kyiv", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Europe/Lisbon", "WET0WEST,M3.5.0/1,M10.5.0"),
+        Timezone::new("Europe/Ljubljana", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/London", "GMT0BST,M3.5.0/1,M10.5.0"),
+        Timezone::new("Europe/Luxembourg", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Madrid", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Malta", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Mariehamn", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Europe/Minsk", "<+03>-3"),
+        Timezone::new("Europe/Monaco", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Moscow", "MSK-3"),
+        Timezone::new("Europe/Oslo", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Paris", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Podgorica", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Prague", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Riga", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Europe/Rome", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Samara", "<+04>-4"),
+        Timezone::new("Europe/San Marino", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Sarajevo", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Saratov", "<+04>-4"),
+        Timezone::new("Europe/Simferopol", "MSK-3"),
+        Timezone::new("Europe/Skopje", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Sofia", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Europe/Stockholm", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Tallinn", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Europe/Tirane", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Ulyanovsk", "<+04>-4"),
+        Timezone::new("Europe/Vaduz", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Vatican", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Vienna", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Vilnius", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+        Timezone::new("Europe/Volgograd", "MSK-3"),
+        Timezone::new("Europe/Warsaw", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Zagreb", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Europe/Zurich", "CET-1CEST,M3.5.0,M10.5.0/3"),
+        Timezone::new("Indian/Antananarivo", "EAT-3"),
+        Timezone::new("Indian/Chagos", "<+06>-6"),
+        Timezone::new("Indian/Christmas", "<+07>-7"),
+        Timezone::new("Indian/Cocos", "<+0630>-6:30"),
+        Timezone::new("Indian/Comoro", "EAT-3"),
+        Timezone::new("Indian/Kerguelen", "<+05>-5"),
+        Timezone::new("Indian/Mahe", "<+04>-4"),
+        Timezone::new("Indian/Maldives", "<+05>-5"),
+        Timezone::new("Indian/Mauritius", "<+04>-4"),
+        Timezone::new("Indian/Mayotte", "EAT-3"),
+        Timezone::new("Indian/Reunion", "<+04>-4"),
+        Timezone::new("Pacific/Apia", "<+13>-13"),
+        Timezone::new("Pacific/Auckland", "NZST-12NZDT,M9.5.0,M4.1.0/3"),
+        Timezone::new("Pacific/Bougainville", "<+11>-11"),
+        Timezone::new(
+            "Pacific/Chatham",
+            "<+1245>-12:45<+1345>,M9.5.0/2:45,M4.1.0/3:45",
+        ),
+        Timezone::new("Pacific/Chuuk", "<+10>-10"),
+        Timezone::new("Pacific/Easter", "<-06>6<-05>,M9.1.6/22,M4.1.6/22"),
+        Timezone::new("Pacific/Efate", "<+11>-11"),
+        Timezone::new("Pacific/Fakaofo", "<+13>-13"),
+        Timezone::new("Pacific/Fiji", "<+12>-12"),
+        Timezone::new("Pacific/Funafuti", "<+12>-12"),
+        Timezone::new("Pacific/Galapagos", "<-06>6"),
+        Timezone::new("Pacific/Gambier", "<-09>9"),
+        Timezone::new("Pacific/Guadalcanal", "<+11>-11"),
+        Timezone::new("Pacific/Guam", "ChST-10"),
+        Timezone::new("Pacific/Honolulu", "HST10"),
+        Timezone::new("Pacific/Kanton", "<+13>-13"),
+        Timezone::new("Pacific/Kiritimati", "<+14>-14"),
+        Timezone::new("Pacific/Kosrae", "<+11>-11"),
+        Timezone::new("Pacific/Kwajalein", "<+12>-12"),
+        Timezone::new("Pacific/Majuro", "<+12>-12"),
+        Timezone::new("Pacific/Marquesas", "<-0930>9:30"),
+        Timezone::new("Pacific/Midway", "SST11"),
+        Timezone::new("Pacific/Nauru", "<+12>-12"),
+        Timezone::new("Pacific/Niue", "<-11>11"),
+        Timezone::new("Pacific/Norfolk", "<+11>-11<+12>,M10.1.0,M4.1.0/3"),
+        Timezone::new("Pacific/Noumea", "<+11>-11"),
+        Timezone::new("Pacific/Pago Pago", "SST11"),
+        Timezone::new("Pacific/Palau", "<+09>-9"),
+        Timezone::new("Pacific/Pitcairn", "<-08>8"),
+        Timezone::new("Pacific/Pohnpei", "<+11>-11"),
+        Timezone::new("Pacific/Port Moresby", "<+10>-10"),
+        Timezone::new("Pacific/Rarotonga", "<-10>10"),
+        Timezone::new("Pacific/Saipan", "ChST-10"),
+        Timezone::new("Pacific/Tahiti", "<-10>10"),
+        Timezone::new("Pacific/Tarawa", "<+12>-12"),
+        Timezone::new("Pacific/Tongatapu", "<+13>-13"),
+        Timezone::new("Pacific/Wake", "<+12>-12"),
+        Timezone::new("Pacific/Wallis", "<+12>-12"),
+    ]
+});
+
+#[test]
+fn all_timezone_variants_are_supported() {
+    // Just to make sure Timezone::new() does not panic due to IANA normalization.
+    // This is here just to invoke Deref on LazyLock.
+    let _variants = LazyLock::force(&TIMEZONE_VARIANTS);
+}

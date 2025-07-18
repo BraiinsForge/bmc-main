@@ -172,11 +172,7 @@ where
         &self,
         _request: Request<()>,
     ) -> Result<Response<GetTimezoneListResponse>, Status> {
-        let timezones = self
-            .manager
-            .timezone_list()
-            .map(|tz| into_grpc_timezone(&tz))
-            .collect();
+        let timezones = Timezone::list().iter().map(into_grpc_timezone).collect();
         Ok(Response::new(GetTimezoneListResponse { timezones }))
     }
 
@@ -214,11 +210,8 @@ where
 
 pub(crate) fn into_grpc_timezone(timezone: &Timezone) -> bmc_grpc::web::Timezone {
     bmc_grpc::web::Timezone {
-        id: timezone.normalize_iana(),
-        label: timezone.iana.to_owned(),
-        offset: timezone
-            .current_timezone_offset()
-            .map(|offset| offset.to_string())
-            .unwrap_or_default(),
+        id: timezone.iana().to_owned(),
+        label: timezone.iana().to_owned(),
+        offset: timezone.offset().to_string(),
     }
 }

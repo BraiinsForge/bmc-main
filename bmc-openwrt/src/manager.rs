@@ -220,10 +220,10 @@ impl BmcManager for Manager {
     }
 
     async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()> {
-        let zonename_cmd = format!("{}={}", Self::UCI_SYSTEM_ZONENAME, timezone.iana);
+        let zonename_cmd = format!("{}={}", Self::UCI_SYSTEM_ZONENAME, timezone.iana());
         call_command("uci", &["set", &zonename_cmd]).await?;
 
-        let timezone_cmd: String = format!("{}={}", Self::UCI_SYSTEM_TIMEZONE, timezone.posix);
+        let timezone_cmd: String = format!("{}={}", Self::UCI_SYSTEM_TIMEZONE, timezone.posix());
         call_command("uci", &["set", &timezone_cmd]).await?;
 
         self.restart_system_service().await?;

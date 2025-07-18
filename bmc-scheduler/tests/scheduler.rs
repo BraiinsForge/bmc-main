@@ -21,12 +21,15 @@ fn simple_job_callback(
 
 #[tokio::test]
 async fn test_timezone_change_and_reschedule() -> Result<(), JobSchedulerError> {
-    // Create job scheduler with initial US/Eastern timezone
+    // Create job scheduler with initial America/New_York (a.k.a US/Eastern) timezone
     let job_scheduler = JobSchedulerLocked::new().await?;
-    let (timezone_sender, timezone_receiver) = tokio::sync::watch::channel(Timezone {
-        iana: "US/Eastern",
-        posix: "EST5EDT,M3.2.0,M11.1.0",
-    });
+    let (timezone_sender, timezone_receiver) = tokio::sync::watch::channel(
+        Timezone::list()
+            .iter()
+            .find(|tz| tz.iana() == "America/New_York")
+            .expect("America/New_York timezone not found")
+            .clone(),
+    );
 
     let mut scheduler = JobScheduler::new(job_scheduler, timezone_receiver);
     scheduler.init().await?;
@@ -59,10 +62,11 @@ async fn test_timezone_change_and_reschedule() -> Result<(), JobSchedulerError> 
     println!("Initial job next tick: {initial_next_tick:?}");
 
     // Change timezone to Europe/Prague
-    let new_timezone = Timezone {
-        iana: "Europe/Prague",
-        posix: "CET-1CEST,M3.5.0,M10.5.0/3",
-    };
+    let new_timezone = Timezone::list()
+        .iter()
+        .find(|tz| tz.iana() == "Europe/Prague")
+        .expect("Europe/Prague timezone not found")
+        .clone();
     let time_till_next_job_before_update = scheduler.time_till_next_job().await?;
     println!("Time till next job before update: {time_till_next_job_before_update:?}");
 

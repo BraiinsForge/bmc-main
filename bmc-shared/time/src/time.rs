@@ -5,12 +5,12 @@ use chrono_tz::OffsetComponents;
 use core::fmt;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
-use std::{convert::TryInto, str::FromStr};
+use std::str::FromStr;
 use strum_macros::{Display, EnumString};
 
 use crate::timezone_variant::TIMEZONE_VARIANTS;
 
-const DEFAULT_IANA: &str = "Etc/GMT";
+const DEFAULT_CHRONO: chrono_tz::Tz = chrono_tz::Etc::GMT;
 const DEFAULT_POSIX: &str = "GMT0";
 
 #[derive(EnumString, Display, Debug, Serialize, Deserialize, Clone)]
@@ -47,84 +47,103 @@ pub(crate) enum TimeSystemWithSeconds {
 
 #[derive(Clone, Debug, SerializeDisplay, DeserializeFromStr)]
 pub struct Timezone {
-    pub iana: &'static str,
-    pub posix: &'static str,
+    chrono: chrono_tz::Tz,
+    posix: &'static str,
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum TimezoneError {
     #[error("Couldn't parse timezone")]
     ParseTimezone,
-    #[error("Couldn't get offset for timezone")]
-    Offset,
 }
 
 impl Timezone {
-    /// Returns list of supported timezones for OpenWrt
-    pub fn timezone_list() -> impl Iterator<Item = Self> {
-        IntoIterator::into_iter(TIMEZONE_VARIANTS)
-    }
+    /// This function may panic, if IANA string is not supported.
+    /// It should be used only in [TIMEZONE_VARIANTS] initialization.
+    pub(crate) fn new(iana: &'static str, posix: &'static str) -> Self {
+        // IANA values are normalized - replaced whitespace with underscore, which is a typical format & required for chrono_tz.
+        // OpenWRT is doing it anyway - https://github.com/openwrt/openwrt/blob/4dd35ca6747a57261f3b10982a4a8cc765d6549f/package/base-files/files/etc/init.d/system#L25
+        // It was tested using `uci set system.@system[0].zonename="America/Port of Spain"` and `uci set system.@system[0].zonename="America/Port_of_Spain"`
+        let iana = iana.replace(' ', "_");
+        let expect_msg = format!("BUG: invalid IANA timezone '{iana}'");
+        let chrono = chrono_tz::Tz::from_str(&iana).expect(&expect_msg);
 
-    /// Returns current timezone offset from UTC
-    pub fn current_timezone_offset(&self) -> Result<Offset, TimezoneError> {
-        TryInto::<chrono_tz::Tz>::try_into(self)
-            .map_err(|_| TimezoneError::Offset)
-            .map(|tz| {
-                let now = chrono::Utc::now().naive_utc();
-                let offset = tz.offset_from_utc_datetime(&now);
-                let offset_duration = offset.base_utc_offset() + offset.dst_offset();
-                Offset::new(offset_duration)
-            })
-    }
-
-    /// Returns current timezone offset from UTC
-    pub fn current_timezone_tz_offset(&self) -> Result<chrono_tz::TzOffset, TimezoneError> {
-        TryInto::<chrono_tz::Tz>::try_into(self)
-            .map_err(|_| TimezoneError::Offset)
-            .map(|tz| {
-                let now = chrono::Utc::now().naive_utc();
-                tz.offset_from_utc_datetime(&now)
-            })
+        Self { chrono, posix }
     }
 
     #[must_use]
-    pub fn normalize_iana(&self) -> String {
-        self.iana.replace(' ', "_")
+    #[inline]
+    pub fn iana(&self) -> &str {
+        self.chrono.name()
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn posix(&self) -> &str {
+        self.posix
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn chrono(&self) -> &chrono_tz::Tz {
+        &self.chrono
+    }
+
+    /// Returns list of supported timezones for OpenWrt
+    #[inline]
+    pub fn list() -> &'static [Timezone] {
+        TIMEZONE_VARIANTS.as_slice()
+    }
+
+    /// Returns current timezone offset from UTC
+    #[must_use]
+    pub fn chrono_offset(&self) -> chrono_tz::TzOffset {
+        let now = chrono::Utc::now().naive_utc();
+        self.chrono.offset_from_utc_datetime(&now)
+    }
+
+    /// Returns current timezone offset from UTC
+    #[must_use]
+    pub fn offset(&self) -> Offset {
+        let offset = self.chrono_offset();
+        let offset_duration = offset.base_utc_offset() + offset.dst_offset();
+        Offset::new(offset_duration)
     }
 }
 
 impl FromStr for Timezone {
     type Err = TimezoneError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match TIMEZONE_VARIANTS
-            .iter()
-            .find(|tz| tz.iana == s || tz.normalize_iana() == s)
-        {
+    fn from_str(iana: &str) -> Result<Self, Self::Err> {
+        match Self::list().iter().find(|tz| tz.iana() == iana) {
             Some(timezone) => Ok(timezone.clone()),
             None => Err(TimezoneError::ParseTimezone),
         }
     }
 }
 
-impl TryInto<chrono_tz::Tz> for &Timezone {
-    type Error = TimezoneError;
+impl From<Timezone> for chrono_tz::Tz {
+    fn from(value: Timezone) -> Self {
+        value.chrono
+    }
+}
 
-    fn try_into(self) -> Result<chrono_tz::Tz, Self::Error> {
-        chrono_tz::Tz::from_str(&self.normalize_iana()).map_err(|_| TimezoneError::ParseTimezone)
+impl From<&Timezone> for chrono_tz::Tz {
+    fn from(value: &Timezone) -> Self {
+        value.chrono
     }
 }
 
 impl fmt::Display for Timezone {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.iana)
+        f.write_str(self.iana())
     }
 }
 
 impl Default for Timezone {
     fn default() -> Self {
         Self {
-            iana: DEFAULT_IANA,
+            chrono: DEFAULT_CHRONO,
             posix: DEFAULT_POSIX,
         }
     }
@@ -132,7 +151,7 @@ impl Default for Timezone {
 
 impl PartialEq for Timezone {
     fn eq(&self, other: &Self) -> bool {
-        self.iana == other.iana && self.posix == other.posix
+        self.chrono == other.chrono && self.posix == other.posix
     }
 }
 

@@ -63,10 +63,7 @@ impl JobScheduler {
             while timezone_receiver.changed().await.is_ok() {
                 let new_timezone: Timezone = timezone_receiver.borrow_and_update().clone();
                 info!("New timezone: {:?}", new_timezone);
-                let Ok(offset) = new_timezone.current_timezone_tz_offset() else {
-                    error!("Error getting timezone offset: {:?}", new_timezone);
-                    continue;
-                };
+                let offset = new_timezone.chrono_offset();
                 let jobs = list_jobs(storage.clone(), scheduler.clone())
                     .await
                     .map_err(|_| JobSchedulerError::GetJobData)

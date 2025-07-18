@@ -87,15 +87,11 @@ where
     ) -> Result<Response<SettingsDataResponse>, Status> {
         self.check_precondition(BmcState::SetupPending).await?;
 
-        let timezones = self
-            .manager
-            .timezone_list()
-            .map(|tz| into_grpc_timezone(&tz))
-            .collect();
+        let timezones = Timezone::list().iter().map(into_grpc_timezone).collect();
 
         Ok(Response::new(SettingsDataResponse {
             timezones,
-            timezone_id: Timezone::default().iana.to_owned(),
+            timezone_id: Timezone::default().iana().to_owned(),
             data_collection: Some(true),
             time_format: TimeFormat::TimeFormat24Hour.into(),
             date_format: DateFormat::DdMmYyyyDot.into(),
