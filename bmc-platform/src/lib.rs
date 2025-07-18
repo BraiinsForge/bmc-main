@@ -54,7 +54,7 @@ pub struct BosVersion {
 }
 
 impl BosVersion {
-    const BOS_PLUS_SUFFIX: &'static str = "-plus";
+    const BOS_PLUS_SUFFIX: &str = "-plus";
 
     pub fn new<T: ToString>(full: &T, major: &T) -> Self {
         // TODO: do better parsing of BOS version
@@ -75,9 +75,9 @@ pub struct BmcInfo {
 }
 
 impl BmcInfo {
-    const BOS_PLATFORM_PATH: &'static str = "etc/bos_platform";
-    const BOS_VERSION_PATH: &'static str = "etc/bos_version";
-    const BOS_MAJOR_VERSION_PATH: &'static str = "etc/bos_major";
+    const BOS_PLATFORM_PATH: &str = "etc/bos_platform";
+    const BOS_VERSION_PATH: &str = "etc/bos_version";
+    const BOS_MAJOR_VERSION_PATH: &str = "etc/bos_major";
 
     /// Standard BosInfo loader that ignores any path prefix
     pub fn load() -> Result<Self, LoadError> {

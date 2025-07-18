@@ -144,8 +144,8 @@ pub struct Configuration {
 }
 
 impl Configuration {
-    const UPGRADE_IMAGE_PATH: &'static str = "/tmp/firmware.tar";
-    const CONFIG_PATH: &'static str = "/etc/bmc_config.json";
+    const UPGRADE_IMAGE_PATH: &str = "/tmp/firmware.tar";
+    const CONFIG_PATH: &str = "/etc/bmc_config.json";
     const DEFAULT_BRIGHTNESS: u8 = 80;
 }
 

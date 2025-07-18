@@ -90,7 +90,7 @@ enum UciCommand {
 }
 
 impl UciCommand {
-    const CONFIG: &'static str = "wireless";
+    const CONFIG: &str = "wireless";
 
     async fn call_ubus(mode: Self, params: Value) -> Result<String> {
         debug!("Ubus uci {mode} command invoked with params: {params}");

@@ -64,23 +64,23 @@ pub enum Error {
 pub struct OpenwrtSessionManager;
 
 impl OpenwrtSessionManager {
-    const COOKIE_SESSION: &'static str = "session_id";
-    const COOKIE_SESSION_PATH: &'static str = "/";
+    const COOKIE_SESSION: &str = "session_id";
+    const COOKIE_SESSION_PATH: &str = "/";
     const COOKIE_HTTP_ONLY: bool = true;
     const COOKIE_SAME_SITE: SameSite = SameSite::Strict;
 
     // dumy token for LuCI access via ubus session
-    const LUCI_DUMMY_TOKEN: &'static str = "0000";
+    const LUCI_DUMMY_TOKEN: &str = "0000";
     // dumy section for LuCI access via ubus session
-    const LUCI_DUMMY_SECTION: &'static str = "0000";
+    const LUCI_DUMMY_SECTION: &str = "0000";
 
-    const UBUS_COMMAND: &'static str = "ubus";
-    const UBUS_COMMAND_ARG_CALL: &'static str = "call";
-    const UBUS_COMMAND_ARG_SESSION: &'static str = "session";
-    const UBUS_COMMAND_ARG_LOGIN: &'static str = "login";
-    const UBUS_COMMAND_ARG_SET: &'static str = "set";
-    const UBUS_COMMAND_ARG_LIST: &'static str = "list";
-    const UBUS_COMMAND_ARG_DESTROY: &'static str = "destroy";
+    const UBUS_COMMAND: &str = "ubus";
+    const UBUS_COMMAND_ARG_CALL: &str = "call";
+    const UBUS_COMMAND_ARG_SESSION: &str = "session";
+    const UBUS_COMMAND_ARG_LOGIN: &str = "login";
+    const UBUS_COMMAND_ARG_SET: &str = "set";
+    const UBUS_COMMAND_ARG_LIST: &str = "list";
+    const UBUS_COMMAND_ARG_DESTROY: &str = "destroy";
 
     async fn call_ubus_session(command_name: &str, arg: Option<&str>) -> Result<String, Error> {
         let mut cmd = Command::new(Self::UBUS_COMMAND);

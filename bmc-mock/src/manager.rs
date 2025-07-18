@@ -37,7 +37,7 @@ pub struct Manager {
 }
 
 impl Manager {
-    const WIFI_SSID: &'static str = "BMC 5a200d";
+    const WIFI_SSID: &str = "BMC 5a200d";
 
     #[must_use]
     pub fn new(

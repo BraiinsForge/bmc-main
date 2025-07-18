@@ -81,12 +81,12 @@ impl Debug for MockSessionManager {
 }
 
 impl MockSessionManager {
-    const COOKIE_SESSION: &'static str = "session_id";
-    const COOKIE_SESSION_PATH: &'static str = "/";
+    const COOKIE_SESSION: &str = "session_id";
+    const COOKIE_SESSION_PATH: &str = "/";
     const COOKIE_HTTP_ONLY: bool = true;
     const COOKIE_SAME_SITE: SameSite = SameSite::Strict;
     const DEFAULT_RANDOM_SESSION_LENGTH: usize = 16;
-    const IMPLICIT_USERNAME: &'static str = "root";
+    const IMPLICIT_USERNAME: &str = "root";
 
     #[must_use]
     pub fn new(password: Arc<Mutex<Option<String>>>) -> Self {

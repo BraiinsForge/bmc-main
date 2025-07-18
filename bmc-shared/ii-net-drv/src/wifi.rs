@@ -20,7 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 pub use ii_net::wifi::WifiScanItem;
 pub use ii_net::wifi::{EncryptionType, SignalStrength, WifiMode, WifiStatus};
 use log::debug;

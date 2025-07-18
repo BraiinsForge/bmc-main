@@ -39,7 +39,7 @@ pub struct MacAddr {
 }
 
 impl MacAddr {
-    pub const DELIMITER: &'static str = ":";
+    pub const DELIMITER: &str = ":";
 
     #[must_use]
     #[expect(clippy::many_single_char_names)]
