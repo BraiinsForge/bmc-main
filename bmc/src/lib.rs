@@ -14,6 +14,7 @@ mod storage_checker;
 mod system_upgrade;
 pub mod utils;
 mod web;
+mod widget_tasks;
 
 pub use manager::BmcManager;
 pub use startup::{App, Configuration};

@@ -10,6 +10,7 @@ use crate::backlight::DisplayBacklightController;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::session::Manager as SessionManager;
+use crate::widget_tasks::WidgetTasks;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
@@ -38,6 +39,7 @@ pub(crate) struct WebService<
     system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
+    widget_tasks: WidgetTasks<T>,
     initial_setup: InitialSetup<T>,
     display_backlight_controller: DisplayBacklightController<V>,
 }
@@ -53,6 +55,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         system_upgrade_service: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
+        widget_tasks: WidgetTasks<T>,
         initial_setup: InitialSetup<T>,
         display_backlight_controller: DisplayBacklightController<V>,
     ) -> Self {
@@ -63,6 +66,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             system_upgrade_service,
             config_handle,
             display_controller,
+            widget_tasks,
             initial_setup,
             display_backlight_controller,
         }
@@ -76,6 +80,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.system_upgrade_service,
             self.config_handle,
             self.display_controller,
+            self.widget_tasks,
             self.initial_setup,
             self.display_backlight_controller,
         )

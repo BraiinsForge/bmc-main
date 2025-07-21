@@ -1,8 +1,10 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::BmcManager;
 use crate::backlight::DisplayBacklightController;
 use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
+use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
     AddWidgetError, ClockStyle, ClockWidget, FontStyle, RemoveWidgetError, Scene, SceneId,
     SceneKind, UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
@@ -30,31 +32,34 @@ const API_BRIGHTNESS_MIN: u32 = 0;
 const API_BRIGHTNESS_MAX: u32 = 100;
 const API_BRIGHTNESS_STEP: u32 = 5;
 
-pub(crate) struct ConfigurationService<T: DisplayBacklightDriver> {
+pub(crate) struct ConfigurationService<T: DisplayBacklightDriver, U: BmcManager> {
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     backlight_controller: DisplayBacklightController<T>,
+    widget_tasks: WidgetTasks<U>,
     preview_scene_id: Arc<Mutex<Option<SceneId>>>,
 }
 
-impl<T: DisplayBacklightDriver> ConfigurationService<T> {
+impl<T: DisplayBacklightDriver, U: BmcManager> ConfigurationService<T, U> {
     pub(crate) fn new(
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
         backlight_controller: DisplayBacklightController<T>,
+        widget_tasks: WidgetTasks<U>,
     ) -> Self {
         Self {
             config_handle,
             display_controller,
             backlight_controller,
+            widget_tasks,
             preview_scene_id: Arc::default(),
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<T: DisplayBacklightDriver> web::configuration_service_server::ConfigurationService
-    for ConfigurationService<T>
+impl<T: DisplayBacklightDriver, U: BmcManager>
+    web::configuration_service_server::ConfigurationService for ConfigurationService<T, U>
 {
     async fn get_scenes(
         &self,
@@ -125,6 +130,7 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let widget_tasks = self.widget_tasks.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
@@ -144,6 +150,8 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                 }
                 *config = temp_config;
 
+                widget_tasks.spawn_all(&new_scene, false).await;
+
                 display_controller.add_scene(new_scene);
 
                 Ok(Response::new(new_scene_id.to_string()))
@@ -160,6 +168,7 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let widget_tasks = self.widget_tasks.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
@@ -178,6 +187,8 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                     return Err(Status::internal("Failed to save configuration"));
                 }
                 *config = temp_config;
+
+                widget_tasks.spawn_all(&new_scene, false).await;
 
                 display_controller.add_scene(new_scene);
 
@@ -221,6 +232,7 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let widget_tasks = self.widget_tasks.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
@@ -243,6 +255,10 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                 *config = temp_config;
 
                 if enabled != old_enabled {
+                    let scene = &config.data.scenes[&id];
+                    widget_tasks.abort_all(scene).await;
+                    widget_tasks.spawn_all(scene, false).await;
+
                     // NOTE: we need to reset cycler, because this operation could move scene to another index
                     display_controller.reset_cycler();
                 }
@@ -347,6 +363,7 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let widget_tasks = self.widget_tasks.clone();
             let preview_scene_id = self.preview_scene_id.clone();
             async move {
                 let mut config = config_handle.write().await;
@@ -374,6 +391,8 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                     return Err(Status::internal("Failed to save configuration"));
                 }
                 *config = temp_config;
+
+                widget_tasks.spawn_all(&cloned_scene, false).await;
 
                 display_controller.insert_scene(cloned_scene_index, cloned_scene);
 
@@ -427,12 +446,13 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let widget_tasks = self.widget_tasks.clone();
             let preview_scene_id = self.preview_scene_id.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
 
-                temp_config
+                let scene = temp_config
                     .data
                     .scenes
                     .shift_remove(&id)
@@ -443,6 +463,8 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                     return Err(Status::internal("Failed to save configuration"));
                 }
                 *config = temp_config;
+
+                widget_tasks.abort_all(&scene).await;
 
                 display_controller.remove_scene(id);
 
@@ -481,33 +503,69 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
 
         let id = id.ok_or_else(unchecked_field_violations_status)?;
 
-        {
-            let mut preview_scene_id = self.preview_scene_id.lock().await;
-            if preview_scene_id.is_some() {
-                return Err(Status::resource_exhausted(
-                    "Scene preview is already enabled",
-                ));
+        let scene_disabled = {
+            let config = self.config_handle.read().await;
+            let scene = config
+                .data
+                .scenes
+                .get(&id)
+                .ok_or_else(|| Status::not_found("Scene not found"))?;
+
+            {
+                let mut preview_scene_id = self.preview_scene_id.lock().await;
+                if preview_scene_id.is_some() {
+                    return Err(Status::resource_exhausted(
+                        "Scene preview is already enabled",
+                    ));
+                }
+                *preview_scene_id = Some(id.clone());
             }
-            *preview_scene_id = Some(id.clone());
-        }
+
+            // we want to start widget tasks if scene is disabled, otherwise we won't have data
+            // to properly render preview
+            let scene_disabled = !scene.enabled;
+            if scene_disabled {
+                self.widget_tasks.spawn_all(scene, true).await;
+            }
+
+            scene_disabled
+        };
 
         self.display_controller.set_preview_scene(Some(id.clone()));
 
-        struct DisableScenePreviewOnDrop {
+        struct DisableScenePreviewOnDrop<T: BmcManager> {
+            config_handle: Arc<RwLock<ConfigHandle>>,
             display_controller: DisplayController,
+            widget_tasks: WidgetTasks<T>,
             preview_scene_id: Arc<Mutex<Option<SceneId>>>,
+            scene_disabled: bool,
         }
 
-        impl Drop for DisableScenePreviewOnDrop {
+        impl<T: BmcManager> Drop for DisableScenePreviewOnDrop<T> {
             fn drop(&mut self) {
                 self.display_controller.set_preview_scene(None);
 
                 tokio::spawn({
                     let preview_scene_id = self.preview_scene_id.clone();
+                    let config_handle = self.config_handle.clone();
+                    let widget_tasks = self.widget_tasks.clone();
+                    let scene_disabled = self.scene_disabled;
                     async move {
-                        // NOTE: we cannot use `blocking_lock` here, because it panics.
-                        // Therefore, it needs to be wrapped in async task
-                        *preview_scene_id.lock().await = None;
+                        let scene_id = preview_scene_id
+                            .lock()
+                            .await
+                            .take()
+                            .expect("BUG: preview_scene_id should be set");
+
+                        // we need to stop widget tasks, because they shouldn't be running
+                        // outside of preview since scene is disabled
+                        if scene_disabled {
+                            let config = config_handle.read().await;
+
+                            if let Some(scene) = config.data.scenes.get(&scene_id) {
+                                widget_tasks.abort_all(scene).await;
+                            }
+                        }
                     }
                 });
             }
@@ -516,8 +574,11 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let stream = IntervalStream::new(time::interval(Duration::from_secs(5)))
             .map(|_| Ok(()))
             .attach_data(DisableScenePreviewOnDrop {
+                config_handle: self.config_handle.clone(),
                 display_controller: self.display_controller.clone(),
+                widget_tasks: self.widget_tasks.clone(),
                 preview_scene_id: self.preview_scene_id.clone(),
+                scene_disabled,
             })
             .boxed();
 
@@ -560,6 +621,8 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let widget_tasks = self.widget_tasks.clone();
+            let preview_scene_id = self.preview_scene_id.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
@@ -588,6 +651,17 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                     return Err(Status::internal("Failed to save widget configuration"));
                 }
                 *config = temp_config;
+
+                let scene = &config.data.scenes[&scene_id];
+                let is_preview_scene = preview_scene_id
+                    .lock()
+                    .await
+                    .as_ref()
+                    .is_some_and(|preview_scene_id| *preview_scene_id == scene_id);
+
+                if scene.enabled || is_preview_scene {
+                    widget_tasks.spawn(scene_id.clone(), &new_widget).await;
+                }
 
                 display_controller.add_scene_widget(scene_id, new_widget);
 
@@ -640,6 +714,8 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let widget_tasks = self.widget_tasks.clone();
+            let preview_scene_id = self.preview_scene_id.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
@@ -668,6 +744,17 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                     return Err(Status::internal("Failed to save widget configuration"));
                 }
                 *config = temp_config;
+
+                let scene = &config.data.scenes[&scene_id];
+                let is_preview_scene = preview_scene_id
+                    .lock()
+                    .await
+                    .as_ref()
+                    .is_some_and(|preview_scene_id| *preview_scene_id == scene_id);
+
+                if scene.enabled || is_preview_scene {
+                    widget_tasks.spawn(scene_id.clone(), &updated_widget).await;
+                }
 
                 display_controller.replace_scene_widget(scene_id, updated_widget);
 
@@ -708,6 +795,7 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
+            let widget_tasks = self.widget_tasks.clone();
             async move {
                 let mut config = config_handle.write().await;
                 let mut temp_config = config.clone();
@@ -730,6 +818,10 @@ impl<T: DisplayBacklightDriver> web::configuration_service_server::Configuration
                     return Err(Status::internal("Failed to save widget configuration"));
                 }
                 *config = temp_config;
+
+                widget_tasks
+                    .abort(scene_id.clone(), widget_id.clone())
+                    .await;
 
                 display_controller.remove_scene_widget(scene_id, widget_id);
 

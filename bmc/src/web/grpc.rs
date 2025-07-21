@@ -6,6 +6,7 @@ use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
+use crate::widget_tasks::WidgetTasks;
 use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_grpc::web;
@@ -55,7 +56,6 @@ impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
     }
 }
 
-#[derive(Clone)]
 pub(crate) struct GrpcWeb<
     T: BmcManager,
     S: SessionManager,
@@ -67,6 +67,7 @@ pub(crate) struct GrpcWeb<
     system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
+    widget_tasks: WidgetTasks<T>,
     initial_setup: InitialSetup<T>,
     display_backlight_controller: DisplayBacklightController<V>,
 }
@@ -74,12 +75,14 @@ pub(crate) struct GrpcWeb<
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
     GrpcWeb<T, S, U, V>
 {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         manager: Arc<T>,
         session_manager: Arc<S>,
         system_upgrade_service: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
+        widget_tasks: WidgetTasks<T>,
         initial_setup: InitialSetup<T>,
         display_backlight_controller: DisplayBacklightController<V>,
     ) -> Self {
@@ -89,6 +92,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             system_upgrade_service,
             config_handle,
             display_controller,
+            widget_tasks,
             initial_setup,
             display_backlight_controller,
         }
@@ -136,6 +140,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                     self.config_handle,
                     self.display_controller,
                     self.display_backlight_controller,
+                    self.widget_tasks,
                 ),
             );
 

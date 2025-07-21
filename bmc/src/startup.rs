@@ -21,6 +21,7 @@ use tracing::info;
 
 use crate::manager::BmcManager;
 use crate::web::{ServerConfig, WebService};
+use crate::widget_tasks::WidgetTasks;
 
 #[derive(Debug)]
 pub struct App<T, U, V>
@@ -34,6 +35,7 @@ where
     session_manager: Arc<T::SessionManager>,
     config: Configuration,
     display_tasks: DisplayTasks<T>,
+    widget_tasks: WidgetTasks<T>,
     system_upgrade_service: SystemUpgradeService<V, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
@@ -73,6 +75,16 @@ where
 
         let config_handle = Arc::new(RwLock::new(config_handle));
 
+        let widget_tasks = WidgetTasks::new(
+            display_controller.clone(),
+            config_handle.clone(),
+            manager.clone(),
+        );
+
+        for scene in config_handle.read().await.data.scenes.values() {
+            widget_tasks.spawn_all(scene, false).await;
+        }
+
         let initial_setup = InitialSetup::new(
             manager.clone(),
             Arc::new(AtomicBool::new(false)),
@@ -99,6 +111,7 @@ where
             session_manager: session_manager.into(),
             config,
             display_tasks,
+            widget_tasks,
             system_upgrade_service,
             config_handle,
             display_controller,
@@ -114,12 +127,13 @@ where
         self.display_tasks.spawn();
 
         WebService::new(
-            self.manager.clone(),
-            self.session_manager.clone(),
+            self.manager,
+            self.session_manager,
             self.config.server_config,
             self.system_upgrade_service,
-            self.config_handle.clone(),
+            self.config_handle,
             self.display_controller,
+            self.widget_tasks,
             self.initial_setup,
             self.display_backlight_controller,
         )
