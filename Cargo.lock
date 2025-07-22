@@ -6085,6 +6085,7 @@ dependencies = [
  "i-slint-backend-selector",
  "i-slint-core",
  "i-slint-core-macros",
+ "log",
  "num-traits",
  "once_cell",
  "pin-weak",
