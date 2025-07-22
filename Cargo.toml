@@ -87,6 +87,7 @@ axum-extra = "0.10.1"
 base64 = "0.22.1"
 bincode = "2.0.0" # NOTE: check https://docs.rs/bincode/latest/bincode/serde/index.html#known-issues before enabling `serde` feature
 bmc = { path = "bmc" }
+bmc-audio = { path = "bmc-audio" }
 bmc-display = { path = "bmc-display" }
 bmc-grpc = { path = "bmc-grpc" }
 bmc-mock-display = { path = "bmc-mock-display" }

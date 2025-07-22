@@ -14,6 +14,7 @@ axum-extra = { workspace = true, features = [
     "multipart",
     "typed-header",
 ] }
+bmc-audio.workspace = true
 bmc-display.workspace = true
 bmc-grpc.workspace = true
 bmc-platform.workspace = true
