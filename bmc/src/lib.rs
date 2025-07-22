@@ -10,6 +10,7 @@ pub mod log;
 pub mod manager;
 mod night_mode;
 pub mod session;
+mod sound;
 mod startup;
 mod storage_checker;
 mod system_manager;
