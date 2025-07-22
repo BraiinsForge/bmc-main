@@ -3,7 +3,7 @@
 use std::{ffi::OsStr, time::Duration};
 
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{error, info};
 
 #[derive(Debug)]
 pub struct Audio;
@@ -42,6 +42,13 @@ impl Audio {
                 Ok(())
             }
         }
+    }
+
+    pub async fn set_volume(value: u8) -> anyhow::Result<()> {
+        //todo
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        info!("Setting volume to {value}%");
+        Ok(())
     }
 }
 

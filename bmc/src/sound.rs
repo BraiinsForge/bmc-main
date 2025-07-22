@@ -31,7 +31,6 @@ impl SoundController {
     pub(crate) async fn set_config_sound_volume(&self, value: u8) -> anyhow::Result<()> {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_sound_volume(value);
-        let config_handle = config_handle.downgrade();
 
         config_handle.sync_to_storage().await?;
 

@@ -9,6 +9,7 @@ mod session;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::session::Manager as SessionManager;
+use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::widget_tasks::WidgetTasks;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
@@ -42,6 +43,7 @@ pub(crate) struct WebService<
     widget_tasks: WidgetTasks,
     initial_setup: InitialSetup<T>,
     system_manager: SystemManager<V>,
+    sound_controller: SoundController,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -58,6 +60,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         widget_tasks: WidgetTasks,
         initial_setup: InitialSetup<T>,
         system_manager: SystemManager<V>,
+        sound_controller: SoundController,
     ) -> Self {
         Self {
             manager,
@@ -69,6 +72,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             widget_tasks,
             initial_setup,
             system_manager,
+            sound_controller,
         }
     }
 
@@ -83,6 +87,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.widget_tasks,
             self.initial_setup,
             self.system_manager,
+            self.sound_controller,
         )
         .build()
         .into_axum_router()

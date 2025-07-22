@@ -74,6 +74,9 @@ pub struct Config {
     /// Default volume in night mode. Value between 0-100
     #[clap(long, default_value = "50")]
     pub default_night_mode_volume_pct: u8,
+    /// Path to a directory with sounds
+    #[clap(long, default_value = data_dir("sounds"))]
+    pub sounds_dir: PathBuf,
 }
 
 impl From<Config> for Configuration {
@@ -97,6 +100,7 @@ impl From<Config> for Configuration {
             default_night_mode_brightness_pct: value.default_night_mode_brightness_pct,
             default_volume_pct: value.default_volume_pct,
             default_night_mode_volume_pct: value.default_night_mode_volume_pct,
+            sounds_dir: value.sounds_dir,
         }
     }
 }

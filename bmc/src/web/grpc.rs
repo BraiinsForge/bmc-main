@@ -3,6 +3,7 @@
 use crate::BmcManager;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
+use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
@@ -71,6 +72,7 @@ pub(crate) struct GrpcWeb<
     widget_tasks: WidgetTasks,
     initial_setup: InitialSetup<T>,
     system_manager: SystemManager<V>,
+    sound_controller: SoundController,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -86,6 +88,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         widget_tasks: WidgetTasks,
         initial_setup: InitialSetup<T>,
         system_manager: SystemManager<V>,
+        sound_controller: SoundController,
     ) -> Self {
         Self {
             manager,
@@ -96,6 +99,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             widget_tasks,
             initial_setup,
             system_manager,
+            sound_controller,
         }
     }
 
@@ -137,7 +141,10 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 
         let configuration_service =
             web::configuration_service_server::ConfigurationServiceServer::new(
-                configuration_service::ConfigurationService::new(self.system_manager),
+                configuration_service::ConfigurationService::new(
+                    self.system_manager,
+                    self.sound_controller,
+                ),
             );
 
         let scene_management_service =

@@ -184,6 +184,7 @@ pub struct Configuration {
     pub default_night_mode_brightness_pct: u8,
     pub default_volume_pct: u8,
     pub default_night_mode_volume_pct: u8,
+    pub sounds_dir: PathBuf,
 }
 
 impl Configuration {
@@ -193,6 +194,7 @@ impl Configuration {
     const DEFAULT_NIGHT_MODE_BRIGHTNESS_PCT: u8 = 50;
     const DEFAULT_VOLUME_PCT: u8 = 80;
     const DEFAULT_NIGHT_MODE_VOLUME_PCT: u8 = 50;
+    const SOUNDS_DIR: &str = "/usr/share/bmc/sounds/";
 }
 
 impl Default for Configuration {
@@ -206,6 +208,7 @@ impl Default for Configuration {
             default_night_mode_brightness_pct: Self::DEFAULT_NIGHT_MODE_BRIGHTNESS_PCT,
             default_volume_pct: Self::DEFAULT_VOLUME_PCT,
             default_night_mode_volume_pct: Self::DEFAULT_NIGHT_MODE_VOLUME_PCT,
+            sounds_dir: PathBuf::from(Self::SOUNDS_DIR),
         }
     }
 }
