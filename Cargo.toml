@@ -157,7 +157,7 @@ serde_with = { version = "3.14.0", default-features = false, features = ["macros
 sha2 = "0.10.9"
 # we cannot upgrade to 1.11.0 because it panicks with our minifb platform,
 # and we cannot upgrade to >1.11.0 because it does not support MUSL anymore
-slint = { version = "=1.10.0", default-features = false, features = ["compat-1-2", "serde", "std", "log"] }
+slint = { version = "=1.10.0", default-features = false, features = ["compat-1-2", "log", "serde", "std"] }
 slint-build = "=1.10.0"
 strum = { version = "0.27", default-features = false }
 strum_macros = "0.27"

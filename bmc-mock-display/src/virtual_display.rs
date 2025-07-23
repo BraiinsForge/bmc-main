@@ -35,7 +35,9 @@ impl VirtualDisplay {
             u8::try_from(display_metadata.brightness.max)?,
         );
 
-        if cfg!(feature = "winit") {
+        if cfg!(feature = "winit-skia") {
+            info!("Using winit skia renderer");
+        } else if cfg!(feature = "winit-software") {
             info!("Using winit software renderer");
         } else {
             info!("Using minifb software renderer");

@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-winit = ["slint/backend-winit", "slint/renderer-winit-software"]
+winit-software = ["slint/backend-winit", "slint/renderer-winit-software"]
+winit-skia = ["slint/backend-winit", "slint/renderer-winit-skia", "slint-embed-files"]
 slint-embed-files = ["bmc-display/slint-embed-files"]
 
 [dependencies]
