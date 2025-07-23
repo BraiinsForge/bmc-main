@@ -10,7 +10,7 @@ use slint::platform::software_renderer::{RenderingRotation, Rgb565Pixel};
 use slint::platform::{EventLoopProxy, Platform, software_renderer::MinimalSoftwareWindow};
 use std::iter;
 use std::rc::Rc;
-use tracing::{debug, info};
+use tracing::{info, trace};
 
 const PIXEL_FORMAT: DrmFourcc = DrmFourcc::Rgb565;
 const BITS_PER_PIXEL: u32 = 16;
@@ -287,7 +287,7 @@ impl Platform for LinuxDrmPlatform {
 
             // Render the display only if needed
             self.window.draw_if_needed(|renderer| {
-                debug!("Rendering display");
+                trace!("Rendering display");
                 renderer.set_rendering_rotation(self.rotation);
 
                 // We need to clear in_memory_buffer each time to get rid of leftovers/artifacts.

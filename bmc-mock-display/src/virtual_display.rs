@@ -15,7 +15,7 @@ use slint::platform::{EventLoopProxy, Platform, software_renderer::MinimalSoftwa
 use std::cell::RefCell;
 use std::iter;
 use std::rc::Rc;
-use tracing::{debug, info};
+use tracing::{info, trace};
 
 const WINDOW_TITLE: &str = "BMC - display mockup";
 const WINDOW_TITLE_OFF: &str = "OFF";
@@ -117,7 +117,7 @@ impl Platform for VirtualDisplayPlatform {
 
             // Render the display only if needed
             self.window.draw_if_needed(|renderer| {
-                debug!("Rendering display");
+                trace!("Rendering display");
 
                 // TODO: Implement proper rendering using `TargetPixel` trait
                 renderer.render(&mut self.buffer.borrow_mut(), self.width);
