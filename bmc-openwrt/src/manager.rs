@@ -1,23 +1,23 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
+use crate::pwd::{PasswordHashType, ShadowFile, SHADOW_PATH};
 use crate::session::OpenwrtSessionManager;
 use crate::unix::system_reboot;
 use crate::unix::{
     call_command, call_command_stdin, call_command_to_string, get_hostname, get_ip_address,
 };
-use crate::{ROOT_USERNAME, pwd, unix};
+use crate::{pwd, unix, ROOT_USERNAME};
 use anyhow::{anyhow, bail};
 use bmc::manager::{BmcState, IfaceData, InitialSetupError, WifiNetworkConfig};
 use bmc::{
-    BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
+    BmcManager,
 };
 use bmc_platform::{BmcInfo, BmcPlatform, BosVersion};
-use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
-use bmc_shared_ii_net_drv::NetworkInterface;
+use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
+use bmc_shared_ii_net_drv::NetworkInterface;
 use bmc_shared_time::time::Timezone;
 use std::io;
 use std::sync::Arc;
@@ -53,7 +53,6 @@ impl Manager {
     const UCI_NET_LAN_NETMASK: &str = "network.wifi_sta.netmask";
     const UCI_NET_LAN_GATEWAY: &str = "network.wifi_sta.gateway";
     const UCI_NET_LAN_DNS: &str = "network.wifi_sta.dns";
-    const DEVICE_SETUP_PENDING_FILE_PATH: &str = "/etc/setup-pending";
 
     #[must_use]
     pub fn new(
@@ -265,6 +264,15 @@ impl BmcManager for Manager {
         Ok(())
     }
 
+    async fn is_setup_pending(&self) -> bool {
+        call_command(
+            "sh",
+            &["-c", ". /lib/functions/bos-defaults.sh && is_setup_pending"],
+        )
+        .await
+        .is_ok()
+    }
+
     async fn hostname(&self) -> Option<String> {
         match uci_get_opt(Self::UCI_SYSTEM_HOSTNAME).await {
             None => get_hostname().await,
@@ -409,10 +417,7 @@ impl BmcManager for Manager {
             BmcState::FactoryDefault
         }
         // check flag if setup is pending
-        else if fs::try_exists(Self::DEVICE_SETUP_PENDING_FILE_PATH)
-            .await
-            .is_ok_and(|exists| exists)
-        {
+        else if self.is_setup_pending().await {
             BmcState::SetupPending
         } else {
             BmcState::Operational
@@ -431,11 +436,20 @@ impl BmcManager for Manager {
                     ],
                 )
                 .await
-                .map_err(|e| anyhow!("Failed to remove initial setup flag, error: {}", e))
+                .map_err(|e| anyhow!("Failed to remove factory default flag, error: {}", e))
             }
-            BmcState::SetupPending => fs::remove_file(Self::DEVICE_SETUP_PENDING_FILE_PATH)
+            BmcState::SetupPending => {
+                // Remove setup pending flag
+                call_command(
+                    "sh",
+                    &[
+                        "-c",
+                        ". /lib/functions/bos-defaults.sh && unset_setup_pending",
+                    ],
+                )
                 .await
-                .map_err(|e| anyhow!("Failed to remove setup pending flag, error: {}", e)),
+                .map_err(|e| anyhow!("Failed to remove setup pending flag, error: {}", e))
+            }
             BmcState::Operational => Ok(()),
         }
     }

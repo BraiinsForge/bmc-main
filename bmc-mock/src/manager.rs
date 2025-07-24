@@ -38,6 +38,7 @@ pub struct Manager {
 
 impl Manager {
     const WIFI_SSID: &str = "BMC 5a200d";
+    const FLAG_TRUE: &str = "true";
 
     #[must_use]
     pub fn new(
@@ -137,14 +138,20 @@ impl bmc::BmcManager for Manager {
     }
 
     async fn is_factory_default(&self) -> bool {
-        let result = self.mockfs.factory_default().exists();
+        let result = self.mockfs.factory_default().to_string_lossy().to_string();
         info!("Checking if factory default... {result}");
-        result
+        result.trim() == Self::FLAG_TRUE
     }
 
     async fn factory_reset(&self, hard: bool) -> Result<(), Self::Error> {
         info!(hard, "Performing factory reset...");
         Ok(())
+    }
+
+    async fn is_setup_pending(&self) -> bool {
+        let result = self.mockfs.setup_pending().to_string_lossy().to_string();
+        info!("Checking if setup pending... {result}");
+        result.trim() == Self::FLAG_TRUE
     }
 
     async fn hostname(&self) -> Option<String> {
@@ -252,7 +259,7 @@ impl bmc::BmcManager for Manager {
     async fn device_state(&self) -> BmcState {
         if self.mockfs.factory_default().exists() {
             BmcState::FactoryDefault
-        } else if self.mockfs.pending_setup().exists() {
+        } else if self.mockfs.setup_pending().exists() {
             BmcState::SetupPending
         } else {
             BmcState::Operational

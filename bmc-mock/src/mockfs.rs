@@ -51,7 +51,7 @@ impl MockFs {
     }
 
     #[must_use]
-    pub fn pending_setup(&self) -> PathBuf {
+    pub fn setup_pending(&self) -> PathBuf {
         self.build_mockfs_path(Self::DEVICE_SETUP_PENDING_FILE)
     }
 
@@ -78,7 +78,7 @@ impl MockFs {
     }
 
     pub fn add_or_remove_setup_pending_flag(&self, add: bool) -> io::Result<()> {
-        let path = self.pending_setup();
+        let path = self.setup_pending();
         if add {
             fs::File::create(path)?;
         } else {
