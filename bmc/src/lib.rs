@@ -2,6 +2,7 @@
 
 mod alarm;
 mod backlight;
+mod button_manager;
 mod config;
 mod display_tasks;
 pub mod entry;

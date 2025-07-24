@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::alarm::{AlarmBus, AlarmController};
+use crate::button_manager::ButtonManager;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
@@ -15,6 +16,7 @@ use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
+use bmc_button::Buttons;
 use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use bmc_led::led_driver::LedDriver;
@@ -50,6 +52,7 @@ where
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
     alarm_controller: AlarmController,
+    button_manager: ButtonManager<T>,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -65,6 +68,7 @@ where
         display_driver: DisplayDriver<U>,
         led_driver: LedDriver,
         firmware_resolver: FirmwareResolver<V>,
+        buttons: Arc<Box<dyn Buttons + Send + Sync>>,
     ) -> Result<Self> {
         let listener = TcpListener::bind(config.address).await?;
 
@@ -151,6 +155,8 @@ where
         let led_controller = LedController::new(&state_service);
         led_controller.init(led_driver.command_sender.clone());
 
+        let button_manager = ButtonManager::new(buttons, manager.clone());
+
         Ok(Self {
             listener,
             manager,
@@ -167,6 +173,7 @@ where
             system_manager,
             sound_controller,
             alarm_controller,
+            button_manager,
         })
     }
 
@@ -175,6 +182,8 @@ where
         info!("Starting server on http://{}", address);
 
         self.display_tasks.spawn();
+
+        tokio::spawn(self.button_manager.run());
 
         WebService::new(
             self.manager,

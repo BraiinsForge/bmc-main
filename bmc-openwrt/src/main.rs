@@ -1,5 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use std::{str::FromStr, sync::Arc};
+
 use anyhow::{Context, Result, anyhow};
 use bmc::{BmcManager, Configuration, log};
 use bmc_display::{
@@ -10,15 +12,13 @@ use bmc_display::{
 use bmc_led::led_driver::LedDriverFactory;
 use bmc_openwrt::led_driver::platform_led_driver::PlatformLedDriver;
 use bmc_openwrt::{
-    generic_backlight_driver::GenericBacklightDriver, linux_drm_platform::LinuxDrmPlatform,
-    manager::Manager, session::OpenwrtSessionManager,
+    button_driver::UEventButtons, generic_backlight_driver::GenericBacklightDriver,
+    linux_drm_platform::LinuxDrmPlatform, manager::Manager, session::OpenwrtSessionManager,
 };
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;
 use slint::platform::software_renderer::RenderingRotation;
-use std::str::FromStr;
-use std::sync::Arc;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -67,6 +67,7 @@ async fn main() -> Result<()> {
         display_driver,
         led_driver.0,
         firmware_resolver,
+        Arc::new(Box::new(UEventButtons)),
     )
     .await?;
 

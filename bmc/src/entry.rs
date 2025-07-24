@@ -13,6 +13,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
     display: DisplayDriver<T>,
     led_driver: LedDriver,
     firmware_resolver: FirmwareResolver<U>,
+    buttons: Arc<Box<dyn bmc_button::Buttons + Send + Sync>>,
 ) -> Result<()> {
     let manager = Arc::new(manager);
     let session_manager = manager.session_manager();
@@ -24,6 +25,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
         display,
         led_driver,
         firmware_resolver,
+        buttons,
     )
     .await?;
     app.run().await

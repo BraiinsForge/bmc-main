@@ -4,6 +4,7 @@ use anyhow::Result;
 use bmc::log;
 use bmc_led::led_driver::LedDriverFactory;
 use bmc_mock::MockSessionManager;
+use bmc_mock::button_driver::build_buttons;
 use bmc_mock::led_driver::PlatformLedDriver;
 use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
 use bmc_mock_display::VirtualDisplay;
@@ -57,6 +58,7 @@ async fn main() -> Result<()> {
                 display_driver,
                 led_driver.0,
                 firmware_resolver,
+                build_buttons(), // Create dummy buttons
             )
             .await;
             display_controller.quit();

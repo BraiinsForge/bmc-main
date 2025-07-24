@@ -760,6 +760,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "bmc-audio",
+ "bmc-button",
  "bmc-display",
  "bmc-grpc",
  "bmc-led",
@@ -907,6 +908,7 @@ dependencies = [
  "async-trait",
  "axum-extra",
  "bmc",
+ "bmc-button",
  "bmc-led",
  "bmc-mock-display",
  "bmc-platform",
@@ -947,10 +949,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apa102-spi",
+ "async-stream",
  "async-trait",
  "axum-extra",
  "bmc",
+ "bmc-button",
  "bmc-display",
+ "bmc-gpio",
+ "bmc-kobject",
  "bmc-led",
  "bmc-platform",
  "bmc-shared-time",
@@ -960,11 +966,16 @@ dependencies = [
  "embedded-hal-async",
  "evdev",
  "flume",
+ "futures",
  "get_if_addrs",
+ "gpiod",
  "iana-time-zone",
  "ii-net",
  "ii-net-drv",
+ "log",
  "memmap2",
+ "merge-streams",
+ "netlink-sys",
  "pnet",
  "pw_hash",
  "rand 0.9.1",
@@ -973,6 +984,7 @@ dependencies = [
  "slint",
  "smart-leds-trait",
  "spidev",
+ "sysfs_gpio",
  "thiserror 2.0.12",
  "time",
  "tokio",
@@ -4330,6 +4342,18 @@ dependencies = [
 
 [[package]]
 name = "mio"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4a650543ca06a924e8b371db273b2756685faae30f8487da1b56505a8f78b0c"
+dependencies = [
+ "libc",
+ "log",
+ "wasi 0.11.0+wasi-snapshot-preview1",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "mio"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2886843bf800fba2e3377cff24abf6379b4c4d5c6681eaf9ea5b0d15090450bd"
@@ -4420,8 +4444,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16c903aa70590cb93691bf97a767c8d1d6122d2cc9070433deb3bbf36ce8bd23"
 dependencies = [
  "bytes",
+ "futures",
  "libc",
  "log",
+ "tokio",
 ]
 
 [[package]]
@@ -6765,7 +6791,10 @@ version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8808c55bc926565c62ef7838bcaa8add51585236803e2bdfa1472e3a3ab5e17"
 dependencies = [
+ "futures",
+ "mio 0.8.11",
  "nix 0.23.2",
+ "tokio",
 ]
 
 [[package]]
@@ -7033,7 +7062,7 @@ dependencies = [
  "bytes",
  "io-uring",
  "libc",
- "mio",
+ "mio 1.0.3",
  "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",

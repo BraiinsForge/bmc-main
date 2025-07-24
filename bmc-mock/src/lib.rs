@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+pub mod button_driver;
 pub mod cli;
 pub mod led_driver;
 pub mod manager;

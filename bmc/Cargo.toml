@@ -15,6 +15,7 @@ axum-extra = { workspace = true, features = [
     "typed-header",
 ] }
 bmc-audio.workspace = true
+bmc-button.workspace = true
 bmc-display.workspace = true
 bmc-grpc.workspace = true
 bmc-led.workspace = true
