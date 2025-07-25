@@ -84,7 +84,8 @@ impl WidgetTasks {
                 widget.id.clone(),
                 ticker_widget.time_frame.clone(),
             ))),
-            WidgetKind::BlockHeight(_) => todo!(),
+            // BlockHeight widget does not have any widget specific data
+            WidgetKind::BlockHeight(_) => None,
         };
 
         join_handle.map(|handle| TaskHandle {

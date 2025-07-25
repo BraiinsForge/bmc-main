@@ -136,6 +136,7 @@ mime_guess = "2.0.5"
 minerctl-defs = { path = "tooling/minerctl/minerctl-defs" }
 minifb = "0.28.0"
 nonzero_ext = "0.3.0"
+num-format = "0.4.4"
 parking_lot = "0.12.3"
 pin-project = "1.1.10"
 pnet = "0.35.0"

@@ -6,6 +6,7 @@ use crate::system_upgrade::SystemUpgradeState;
 
 use crate::config::ConfigHandle;
 use bmc_display::bitcoin_data::BitcoinData;
+use bmc_display::blockheight_data::BlockheightData;
 use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_time::time::Timezone;
@@ -19,6 +20,9 @@ use tracing::{debug, info, warn};
 const SCREEN_DURATION: Duration = Duration::from_secs(5);
 
 const PRICE_API_URL: &str = "https://public-api.braiins.com/v1/price-stats";
+const BLOCK_HEIGHT_API_URL: &str = "https://public-api.braiins.com/v2/blocks";
+const BLOCK_HEIGHT_LIMIT_API_PARAM: &str = "limit";
+const CURRENCY_API_PARAM: &str = "currency";
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
@@ -79,6 +83,12 @@ impl<T: BmcManager> DisplayTasks<T> {
         ));
 
         tokio::spawn(Self::run_price_update(display_controller.clone()));
+
+        tokio::spawn(Self::run_blockheight_update(
+            display_controller.clone(),
+            config_handle.clone(),
+            manager.clone(),
+        ));
 
         tokio::spawn(Self::run_initial_setup_listener(
             display_controller,
@@ -240,6 +250,59 @@ impl<T: BmcManager> DisplayTasks<T> {
                 };
 
             display_controller.update_btc_price(btc_price_data);
+        }
+    }
+
+    async fn run_blockheight_update(
+        display_controller: DisplayController,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        manager: Arc<T>,
+    ) {
+        let mut interval = interval(Duration::from_secs(60));
+
+        loop {
+            interval.tick().await;
+
+            debug!("Getting blockheight data...");
+            let client = Client::new();
+            let blockheight_data = if let Ok(response) = client
+                .get(BLOCK_HEIGHT_API_URL)
+                .query(&[
+                    (BLOCK_HEIGHT_LIMIT_API_PARAM, "1"),
+                    (CURRENCY_API_PARAM, "usd"),
+                ])
+                .timeout(API_TIMEOUT)
+                .send()
+                .await
+            {
+                response
+                    .json::<Vec<BlockheightData>>()
+                    .await
+                    .unwrap_or_default()
+                    .first()
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                warn!("Failed to get blockheight data from API");
+                BlockheightData::default()
+            };
+
+            let timezone = manager.timezone();
+
+            let is_24_format = config_handle
+                .read()
+                .await
+                .localization_config()
+                .time_system
+                .is_24();
+            let date_format = config_handle.read().await.localization_config().date_format;
+
+            display_controller.update_blockheight_data(
+                blockheight_data,
+                timezone,
+                is_24_format,
+                date_format,
+            );
         }
     }
 }

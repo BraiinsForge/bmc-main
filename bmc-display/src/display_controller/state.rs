@@ -1,15 +1,17 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::bitcoin_data::BitcoinData;
+use crate::blockheight_data::BlockheightData;
 use crate::btc_history_data::BtcHistoryData;
 use crate::data::{Scene, SceneCycling, SceneCyclingTransition, SceneId, Screen, Widget, WidgetId};
 use crate::display_controller::DisplayController;
 use crate::generated::{
-    self, BaseDimensions, BitcoinAdapter, ConnectionAdapter, InitSetupWifiAdapter,
-    SceneCyclingAdapter,
+    self, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, ConnectionAdapter,
+    InitSetupWifiAdapter, SceneCyclingAdapter,
 };
 use crate::indexmap_model::IndexMapModel;
 use crate::utils;
+use bmc_shared_time::time::{DateFormat, Timezone};
 use chrono::{Datelike, Timelike};
 use indexmap::IndexMap;
 use slint::{FilterModel, Global, Model, ModelRc, VecModel};
@@ -255,6 +257,24 @@ impl DisplayController {
                         btc_history_data.into_graph_image(&main_window, width, height);
                 });
             }
+        });
+    }
+
+    pub fn update_blockheight_data(
+        &self,
+        blockheight_data: BlockheightData,
+        timezone: Timezone,
+        is_24_format: bool,
+        date_format: DateFormat,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let blockheight_adapter = BlockHeightAdapter::get(&main_window);
+            blockheight_adapter.set_block_height(blockheight_data.clone().blockheight_as_shared());
+            blockheight_adapter.set_timestamp(blockheight_data.timestamp_as_shared(
+                &timezone,
+                is_24_format,
+                date_format,
+            ));
         });
     }
 

@@ -187,7 +187,7 @@ impl fmt::Display for Offset {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default)]
 pub enum DateFormat {
     #[default]
     DdMmYyyyDot,
