@@ -12,6 +12,7 @@ mod night_mode;
 pub mod session;
 mod startup;
 mod storage_checker;
+mod system_manager;
 mod system_upgrade;
 pub mod utils;
 mod web;

@@ -1,9 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::BmcManager;
-use crate::backlight::DisplayBacklightController;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
+use crate::system_manager::SystemManager;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
 use crate::widget_tasks::WidgetTasks;
@@ -70,7 +70,7 @@ pub(crate) struct GrpcWeb<
     display_controller: DisplayController,
     widget_tasks: WidgetTasks,
     initial_setup: InitialSetup<T>,
-    display_backlight_controller: DisplayBacklightController<V>,
+    system_manager: SystemManager<V>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -85,7 +85,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         display_controller: DisplayController,
         widget_tasks: WidgetTasks,
         initial_setup: InitialSetup<T>,
-        display_backlight_controller: DisplayBacklightController<V>,
+        system_manager: SystemManager<V>,
     ) -> Self {
         Self {
             manager,
@@ -95,7 +95,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             display_controller,
             widget_tasks,
             initial_setup,
-            display_backlight_controller,
+            system_manager,
         }
     }
 
@@ -137,7 +137,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 
         let configuration_service =
             web::configuration_service_server::ConfigurationServiceServer::new(
-                configuration_service::ConfigurationService::new(self.display_backlight_controller),
+                configuration_service::ConfigurationService::new(self.system_manager),
             );
 
         let scene_management_service =

@@ -6,10 +6,10 @@ mod http_server;
 mod no_password;
 mod session;
 
-use crate::backlight::DisplayBacklightController;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::session::Manager as SessionManager;
+use crate::system_manager::SystemManager;
 use crate::widget_tasks::WidgetTasks;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
@@ -41,7 +41,7 @@ pub(crate) struct WebService<
     display_controller: DisplayController,
     widget_tasks: WidgetTasks,
     initial_setup: InitialSetup<T>,
-    display_backlight_controller: DisplayBacklightController<V>,
+    system_manager: SystemManager<V>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -57,7 +57,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         display_controller: DisplayController,
         widget_tasks: WidgetTasks,
         initial_setup: InitialSetup<T>,
-        display_backlight_controller: DisplayBacklightController<V>,
+        system_manager: SystemManager<V>,
     ) -> Self {
         Self {
             manager,
@@ -68,7 +68,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             display_controller,
             widget_tasks,
             initial_setup,
-            display_backlight_controller,
+            system_manager,
         }
     }
 
@@ -82,7 +82,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.display_controller,
             self.widget_tasks,
             self.initial_setup,
-            self.display_backlight_controller,
+            self.system_manager,
         )
         .build()
         .into_axum_router()

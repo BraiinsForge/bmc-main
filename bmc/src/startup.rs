@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::backlight::DisplayBacklightController;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
+use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
 use bmc_display::display_controller::DisplayController;
@@ -41,7 +41,7 @@ where
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     initial_setup: InitialSetup<T>,
-    display_backlight_controller: DisplayBacklightController<U>,
+    system_manager: SystemManager<U>,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -106,18 +106,16 @@ where
 
         let scheduler = JobScheduler::init(manager.watch_timezone_updates(), None).await;
 
-        let display_backlight_controller = DisplayBacklightController::new(
+        let system_manager = SystemManager::new(
             config_handle.clone(),
-            display_driver.backlight_driver,
-            scheduler,
             brightness_pct,
             night_mode_config.brightness_pct,
             manager.watch_timezone_updates(),
+            display_driver.backlight_driver,
+            scheduler,
         );
 
-        display_backlight_controller
-            .init(night_mode_config.into())
-            .await?;
+        system_manager.init().await?;
 
         let display_tasks = DisplayTasks::new(
             display_controller.clone(),
@@ -139,7 +137,7 @@ where
             config_handle,
             display_controller,
             initial_setup,
-            display_backlight_controller,
+            system_manager,
         })
     }
 
@@ -158,7 +156,7 @@ where
             self.display_controller,
             self.widget_tasks,
             self.initial_setup,
-            self.display_backlight_controller,
+            self.system_manager,
         )
         .run(self.listener)
         .await?;
