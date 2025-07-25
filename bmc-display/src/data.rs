@@ -40,7 +40,7 @@ pub enum SceneCyclingTransition {
     Fade,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FontStyle {
     Light,
@@ -126,11 +126,27 @@ impl Default for TickerBtcWidget {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockHeightWidget {
+    pub show_timestamp: bool,
+    pub numbers_font_style: FontStyle,
+}
+
+impl Default for BlockHeightWidget {
+    fn default() -> Self {
+        Self {
+            show_timestamp: true,
+            numbers_font_style: FontStyle::Bold,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "params")]
 #[serde(rename_all = "snake_case")]
 pub enum WidgetKind {
     Clock(ClockWidget),
     TickerBtc(TickerBtcWidget),
+    BlockHeight(BlockHeightWidget),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -587,6 +603,12 @@ impl From<Widget> for generated::Widget {
                     ..generated::WidgetBtcData::default()
                 }
             }
+            WidgetKind::BlockHeight(config) => {
+                slint_widget.kind = generated::WidgetKind::BlockHeight;
+                slint_widget.blockheight = generated::WidgetBlockHeightData {
+                    config: config.into(),
+                }
+            }
         }
 
         slint_widget
@@ -601,11 +623,7 @@ impl From<ClockWidget> for generated::WidgetClockConfig {
                 ClockStyle::AnalogRect => generated::ClockStyle::AnalogRect,
                 ClockStyle::Digital => generated::ClockStyle::Digital,
             },
-            numbers_font_style: match from.numbers_font_style {
-                FontStyle::Light => generated::FontStyle::Light,
-                FontStyle::Medium => generated::FontStyle::Medium,
-                FontStyle::Bold => generated::FontStyle::Bold,
-            },
+            numbers_font_style: font_style(from.numbers_font_style),
             show_date: from.show_date,
             show_seconds: from.show_seconds,
             show_timezone: from.show_timezone,
@@ -632,6 +650,15 @@ impl From<TickerBtcWidget> for generated::WidgetBtcConfig {
     }
 }
 
+impl From<BlockHeightWidget> for generated::WidgetBlockHeightConfig {
+    fn from(value: BlockHeightWidget) -> Self {
+        Self {
+            show_timestamp: value.show_timestamp,
+            numbers_font_style: font_style(value.numbers_font_style),
+        }
+    }
+}
+
 impl From<Scene> for generated::Scene {
     fn from(value: Scene) -> Self {
         // NOTE: value -1 is used as sentinel value to signal that we should use default
@@ -654,6 +681,14 @@ impl From<Scene> for generated::Scene {
             cycle_duration,
             widgets: ModelRc::new(widgets),
         }
+    }
+}
+
+fn font_style(font_style: FontStyle) -> generated::FontStyle {
+    match font_style {
+        FontStyle::Light => generated::FontStyle::Light,
+        FontStyle::Medium => generated::FontStyle::Medium,
+        FontStyle::Bold => generated::FontStyle::Bold,
     }
 }
 

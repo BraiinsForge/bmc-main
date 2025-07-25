@@ -84,6 +84,7 @@ impl WidgetTasks {
                 widget.id.clone(),
                 ticker_widget.time_frame.clone(),
             ))),
+            WidgetKind::BlockHeight(_) => todo!(),
         };
 
         join_handle.map(|handle| TaskHandle {
