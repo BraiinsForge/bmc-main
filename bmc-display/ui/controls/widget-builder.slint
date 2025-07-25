@@ -3,6 +3,7 @@ import { WidgetClock } from "../widgets/categories/clock.slint";
 import { Palette } from "../style/palette.slint";
 import { Theme } from "../style/theme.slint";
 import { WidgetBtcGraph } from "../widgets/categories/ticker-btc.slint";
+import { WidgetBlockHeight } from "../widgets/categories/block-height.slint";
 
 component WidgetContainer inherits Rectangle {
     property <length> widget-base-width: 320px;
@@ -99,6 +100,10 @@ export component WidgetBuilder inherits Rectangle {
             if widget.kind == WidgetKind.TickerBtc: WidgetBtcGraph {
                 size: widget.size;
                 data: widget.ticker-btc;
+            }
+            if widget.kind == WidgetKind.BlockHeight: WidgetBlockHeight {
+                size: widget.size;
+                data: widget.blockheight;
             }
         }
     }

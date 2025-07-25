@@ -1,0 +1,88 @@
+import { Palette } from "../../style/palette.slint";
+import { Theme } from "../../style/theme.slint";
+import { WidgetSize, FontStyle, BaseDimensions } from "../widget-shared.slint";
+import { BlockHeightAdapter } from "../../controls/adapters.slint";
+
+export struct WidgetBlockHeightConfig {
+    show-timestamp: bool,
+    numbers-font-style: FontStyle,
+}
+
+export struct WidgetBlockHeightData {
+    config: WidgetBlockHeightConfig,
+}
+
+export component WidgetBlockHeight inherits Rectangle {
+    background: Palette.black;
+
+    in property <WidgetSize> size;
+    in property <WidgetBlockHeightData> data;
+
+    width: BaseDimensions.widget-width(size);
+    height: BaseDimensions.widget-height(size);
+
+    in property <string> block-height <=> BlockHeightAdapter.block-height;
+    in property <string> timestamp <=> BlockHeightAdapter.timestamp;
+    in property <int> font-weight: data.config.numbers-font-style == FontStyle.Light ? Theme.font.weight.regular
+        : data.config.numbers-font-style == FontStyle.Medium ? Theme.font.weight.semi-bold
+        : Theme.font.weight.bold;
+
+    property <length> grid-padding-top: (WidgetSize.Full == size) ? 22px : (WidgetSize.Large == size) ? 90px : 31px;
+    property <length> grid-padding-bottom: (WidgetSize.Full == size) ? 62px : (WidgetSize.Large == size) ? 90px : 31px;
+
+    pure function blockheight-fontsize(size: WidgetSize) -> length {
+        if (WidgetSize.Small == size) {
+            return 64px;
+        } else if (WidgetSize.Medium == size) {
+            return 96px;
+        } else if (WidgetSize.Large == size) {
+            return 120px;
+        } else {
+            // WidgetSize.Full
+            return 200px;
+        }
+    }
+
+    pure function text-fontsize(size: WidgetSize) -> length {
+        if (WidgetSize.Small == size || WidgetSize.Medium == size) {
+            return 24px;
+        } else if (WidgetSize.Large == size) {
+            return 32px;
+        } else {
+            // WidgetSize.Full
+            return 48px;
+        }
+    }
+
+    GridLayout {
+        padding-top: grid-padding-top;
+        padding-bottom: grid-padding-bottom;
+        Row {
+            Text {
+                text: "Bitcoin Block Height";
+                color: Palette.gray-60;
+                font-size: text-fontsize(size);
+                font-weight: Theme.font.weight.regular;
+                horizontal-alignment: center;
+            }
+        }
+        Row {
+            Text {
+                text: block-height;
+                color: Palette.white;
+                font-size: blockheight-fontsize(size);
+                font-weight: font-weight;
+                horizontal-alignment: center;
+            }
+        }
+        Row {
+            Text {
+                text: data.config.show-timestamp ? timestamp : "";
+                color: Palette.gray-60;
+                font-size: text-fontsize(size);
+                font-weight: Theme.font.weight.regular;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

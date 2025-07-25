@@ -1,11 +1,13 @@
 import { WidgetSize } from "widget-shared.slint";
 import { WidgetClockData } from "./categories/clock.slint";
 import { WidgetBtcData } from "./categories/ticker-btc.slint";
+import { WidgetBlockHeightData } from "./categories/block-height.slint";
 export { WidgetSize }
 
 export enum WidgetKind {
     Clock,
     TickerBtc,
+    BlockHeight,
 }
 
 export struct Widget {
@@ -16,4 +18,5 @@ export struct Widget {
     kind: WidgetKind,
     clock: WidgetClockData,
     ticker-btc: WidgetBtcData,
+    blockheight: WidgetBlockHeightData,
 }
