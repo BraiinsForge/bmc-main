@@ -1,5 +1,7 @@
 import { Widget, WidgetKind, WidgetSize } from "../widgets/widget.slint";
 import { WidgetClock } from "../widgets/categories/clock.slint";
+import { Palette } from "../style/palette.slint";
+import { Theme } from "../style/theme.slint";
 
 component WidgetContainer inherits Rectangle {
     property <length> widget-base-width: 320px;
@@ -50,15 +52,49 @@ export component WidgetBuilder inherits Rectangle {
     in property <string> scene_id;
     in property <[Widget]> widgets;
 
-    for widget[index] in widgets: WidgetContainer {
-        size: widget.size;
-        position-row: widget.row;
-        position-col: widget.col;
+    if widgets.length == 0: Rectangle {
+        property <[{row: int, col: int, size: WidgetSize, text: string}]> examples: [
+            { row: 0, col: 0, size: WidgetSize.Small, text: "Small size" },
+            { row: 0, col: 1, size: WidgetSize.Small, text: "Small size" },
+            { row: 0, col: 2, size: WidgetSize.Large, text: "Large size" },
+            { row: 1, col: 0, size: WidgetSize.Medium, text: "Medium size" },
+        ];
 
-        if widget.kind == WidgetKind.Clock: WidgetClock {
+        for example in examples: WidgetContainer {
+            size: example.size;
+            position-row: example.row;
+            position-col: example.col;
+
+            border-color: Palette.gray-90;
+            border-width: 1px;
+
+            Text {
+                text: example.text;
+                color: Palette.gray-80;
+                font-size: Theme.font.size.common.default;
+                font-weight: Theme.font.weight.regular;
+            }
+        }
+
+        Text {
+            text: "This scene is empty. Use web interface to add some widgets.";
+            color: Palette.white;
+            font-size: Theme.font.size.common.default;
+            font-weight: Theme.font.weight.regular;
+        }
+    }
+
+    if widgets.length > 0: Rectangle {
+        for widget[index] in widgets: WidgetContainer {
             size: widget.size;
-            config: widget.clock.config;
-            datetime: widget.clock.datetime;
+            position-row: widget.row;
+            position-col: widget.col;
+
+            if widget.kind == WidgetKind.Clock: WidgetClock {
+                size: widget.size;
+                config: widget.clock.config;
+                datetime: widget.clock.datetime;
+            }
         }
     }
 }
