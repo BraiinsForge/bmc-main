@@ -6,6 +6,7 @@ use crate::{
     backlight::DisplayBacklightController,
     config::{ConfigHandle, NightModeConfig},
     night_mode::NightModeController,
+    sound::SoundController,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::DisplayBacklightDriver;
@@ -22,11 +23,19 @@ pub(crate) struct DisplaySettings {
     pub(crate) night_mode_config: NightModeConfig,
 }
 
+#[derive(Debug)]
+pub(crate) struct SoundSettings {
+    pub(crate) volume: u8,
+    pub(crate) volume_night_mode: u8,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SystemManager<T: DisplayBacklightDriver> {
     night_mode_controller: NightModeController,
     backlight_controller: DisplayBacklightController<T>,
     brightness_modified: Arc<Notify>,
+    sound_controller: SoundController,
+    sound_volume_modified: Arc<Notify>,
 }
 
 impl<T: DisplayBacklightDriver> SystemManager<T> {
@@ -36,6 +45,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         backlight_driver: Arc<Mutex<T>>,
         scheduler: JobScheduler,
         display_controller: DisplayController,
+        sound_controller: SoundController,
     ) -> anyhow::Result<Self> {
         let backlight_controller =
             DisplayBacklightController::new(config_handle.clone(), backlight_driver);
@@ -56,10 +66,20 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             night_mode_controller.clone(),
         ));
 
+        let sound_volume_modified = Arc::new(Notify::new());
+
+        tokio::spawn(Self::set_current_sound_volume(
+            sound_controller.clone(),
+            night_mode_controller.clone(),
+            sound_volume_modified.clone(),
+        ));
+
         Ok(Self {
             night_mode_controller,
             backlight_controller,
             brightness_modified,
+            sound_controller,
+            sound_volume_modified,
         })
     }
 
@@ -93,6 +113,37 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                     }
                 },
                 () = brightness_modified.notified() => {},
+            }
+        }
+    }
+
+    async fn set_current_sound_volume(
+        sound_controller: SoundController,
+        night_mode_controller: NightModeController,
+        sound_volume_modified: Arc<Notify>,
+    ) {
+        let mut night_mode_receiver = night_mode_controller.subscribe();
+        loop {
+            let night_mode_is_active = *night_mode_receiver.borrow_and_update();
+
+            let sound_volume = if night_mode_is_active {
+                night_mode_controller.config().await.sound_volume_pct
+            } else {
+                sound_controller.sound_volume().await
+            };
+
+            if let Err(err) = sound_controller.set_audio_sound_volume(sound_volume).await {
+                warn!(?err, "Failed to set audio sound volume");
+            }
+
+            tokio::select! {
+                biased;
+                result = night_mode_receiver.changed() => {
+                    if result.is_err() {
+                        break;
+                    }
+                },
+                () = sound_volume_modified.notified() => {},
             }
         }
     }
@@ -152,5 +203,29 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             brightness_pct,
             night_mode_config,
         }
+    }
+
+    pub(crate) async fn sound_settings(&self) -> SoundSettings {
+        let volume = self.sound_controller.sound_volume().await;
+        let volume_night_mode = self.night_mode_controller.config().await.sound_volume_pct;
+
+        SoundSettings {
+            volume,
+            volume_night_mode,
+        }
+    }
+
+    pub(crate) async fn set_sound_volume(&self, value: u8) -> anyhow::Result<()> {
+        self.sound_controller.set_config_sound_volume(value).await?;
+        self.sound_volume_modified.notify_waiters();
+
+        Ok(())
+    }
+
+    pub(crate) async fn set_sound_volume_night_mode(&self, value: u8) -> anyhow::Result<()> {
+        self.night_mode_controller.set_sound_volume(value).await?;
+        self.sound_volume_modified.notify_waiters();
+
+        Ok(())
     }
 }

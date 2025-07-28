@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicBool;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
+use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use anyhow::Result;
@@ -42,6 +43,7 @@ where
     display_controller: DisplayController,
     initial_setup: InitialSetup<T>,
     system_manager: SystemManager<U>,
+    sound_controller: SoundController,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -105,12 +107,16 @@ where
 
         let scheduler = JobScheduler::init(manager.watch_timezone_updates(), None).await;
 
+        let sound_controller =
+            SoundController::new(config_handle.clone(), config.sounds_dir.clone());
+
         let system_manager = SystemManager::init(
             config_handle.clone(),
             manager.watch_timezone_updates(),
             display_driver.backlight_driver,
             scheduler,
             display_controller.clone(),
+            sound_controller.clone(),
         )
         .await?;
 
@@ -135,6 +141,7 @@ where
             display_controller,
             initial_setup,
             system_manager,
+            sound_controller,
         })
     }
 
@@ -154,6 +161,7 @@ where
             self.widget_tasks,
             self.initial_setup,
             self.system_manager,
+            self.sound_controller,
         )
         .run(self.listener)
         .await?;
