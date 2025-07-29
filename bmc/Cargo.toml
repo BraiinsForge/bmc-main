@@ -27,6 +27,7 @@ hyper.workspace = true
 index-bmc.workspace = true
 index-common.workspace = true
 indexmap.workspace = true
+itertools.workspace = true
 mime_guess.workspace = true
 minerctl-defs.workspace = true
 prost-types.workspace = true

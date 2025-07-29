@@ -710,6 +710,7 @@ dependencies = [
  "index-bmc",
  "index-common",
  "indexmap",
+ "itertools 0.14.0",
  "mime_guess",
  "minerctl-defs",
  "prost-types",

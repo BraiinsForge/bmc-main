@@ -149,7 +149,16 @@ impl Widget {
         cloned
     }
 
-    fn overlaps(&self, other: &Self) -> bool {
+    #[must_use]
+    pub fn in_bounds(&self) -> bool {
+        let bottom = u32::from(self.position.row + self.size.row_span());
+        let right = u32::from(self.position.col + self.size.col_span());
+
+        (bottom <= WidgetPosition::MAX_ROWS) && (right <= WidgetPosition::MAX_COLS)
+    }
+
+    #[must_use]
+    pub fn overlaps(&self, other: &Self) -> bool {
         let self_left = self.position.col;
         let self_right = self_left + self.size.col_span();
         let self_top = self.position.row;
@@ -374,13 +383,7 @@ impl Scene {
         widget: &'a Widget,
         other_widgets: impl IntoIterator<Item = &'a Widget>,
     ) -> Result<(), InvalidWidgetPlacementError> {
-        let bottom: u32 = (widget.position.row + widget.size.row_span()).into();
-        if bottom > WidgetPosition::MAX_ROWS {
-            return Err(InvalidWidgetPlacementError::OutOfBounds);
-        }
-
-        let right: u32 = (widget.position.col + widget.size.col_span()).into();
-        if right > WidgetPosition::MAX_COLS {
+        if !widget.in_bounds() {
             return Err(InvalidWidgetPlacementError::OutOfBounds);
         }
 
