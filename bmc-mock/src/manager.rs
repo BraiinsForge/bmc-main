@@ -38,7 +38,6 @@ pub struct Manager {
 
 impl Manager {
     const WIFI_SSID: &str = "BMC 5a200d";
-    const FLAG_TRUE: &str = "true";
 
     #[must_use]
     pub fn new(
@@ -138,9 +137,7 @@ impl bmc::BmcManager for Manager {
     }
 
     async fn is_factory_default(&self) -> bool {
-        let result = self.mockfs.factory_default().to_string_lossy().to_string();
-        info!("Checking if factory default... {result}");
-        result.trim() == Self::FLAG_TRUE
+        self.mockfs.factory_default().exists()
     }
 
     async fn factory_reset(&self, hard: bool) -> Result<(), Self::Error> {
@@ -149,9 +146,7 @@ impl bmc::BmcManager for Manager {
     }
 
     async fn is_setup_pending(&self) -> bool {
-        let result = self.mockfs.setup_pending().to_string_lossy().to_string();
-        info!("Checking if setup pending... {result}");
-        result.trim() == Self::FLAG_TRUE
+        self.mockfs.setup_pending().exists()
     }
 
     async fn hostname(&self) -> Option<String> {
@@ -257,9 +252,9 @@ impl bmc::BmcManager for Manager {
     }
 
     async fn device_state(&self) -> BmcState {
-        if self.mockfs.factory_default().exists() {
+        if self.is_factory_default().await {
             BmcState::FactoryDefault
-        } else if self.mockfs.setup_pending().exists() {
+        } else if self.is_setup_pending().await {
             BmcState::SetupPending
         } else {
             BmcState::Operational
@@ -269,11 +264,14 @@ impl bmc::BmcManager for Manager {
     async fn update_device_state(&self) -> anyhow::Result<()> {
         match self.device_state().await {
             BmcState::FactoryDefault => {
-                self.mockfs.add_or_remove_factory_default_flag(false)?;
-                self.mockfs.add_or_remove_setup_pending_flag(true)?;
+                self.mockfs
+                    .add_or_remove_flag(false, &self.mockfs.factory_default())?;
+                self.mockfs
+                    .add_or_remove_flag(true, &self.mockfs.setup_pending())?;
             }
             BmcState::SetupPending => {
-                self.mockfs.add_or_remove_setup_pending_flag(false)?;
+                self.mockfs
+                    .add_or_remove_flag(false, &self.mockfs.setup_pending())?;
             }
             BmcState::Operational => (),
         }

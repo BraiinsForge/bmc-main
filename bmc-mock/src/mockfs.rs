@@ -34,8 +34,8 @@ impl MockFs {
 
         copy_recursive(&self.template_dir, &self.mockfs_root, reset)?;
 
-        self.add_or_remove_factory_default_flag(factory_default)?;
-        self.add_or_remove_setup_pending_flag(setup_pending)?;
+        self.add_or_remove_flag(factory_default, &self.factory_default())?;
+        self.add_or_remove_flag(setup_pending, &self.setup_pending())?;
 
         Ok(())
     }
@@ -66,19 +66,7 @@ impl MockFs {
         self.mockfs_root.join(stripped)
     }
 
-    pub fn add_or_remove_factory_default_flag(&self, add: bool) -> io::Result<()> {
-        let path = self.factory_default();
-        if add {
-            fs::File::create(path)?;
-        } else {
-            _ = fs::remove_file(path);
-        }
-
-        Ok(())
-    }
-
-    pub fn add_or_remove_setup_pending_flag(&self, add: bool) -> io::Result<()> {
-        let path = self.setup_pending();
+    pub fn add_or_remove_flag(&self, add: bool, path: &PathBuf) -> io::Result<()> {
         if add {
             fs::File::create(path)?;
         } else {

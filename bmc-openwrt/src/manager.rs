@@ -1,23 +1,23 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::pwd::{PasswordHashType, ShadowFile, SHADOW_PATH};
+use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
 use crate::session::OpenwrtSessionManager;
 use crate::unix::system_reboot;
 use crate::unix::{
     call_command, call_command_stdin, call_command_to_string, get_hostname, get_ip_address,
 };
-use crate::{pwd, unix, ROOT_USERNAME};
+use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
 use bmc::manager::{BmcState, IfaceData, InitialSetupError, WifiNetworkConfig};
 use bmc::{
-    manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
     BmcManager,
+    manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
 };
 use bmc_platform::{BmcInfo, BmcPlatform, BosVersion};
-use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
 use bmc_shared_ii_net::MacAddr;
-use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
+use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
 use bmc_shared_ii_net_drv::NetworkInterface;
+use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use std::io;
 use std::sync::Arc;
