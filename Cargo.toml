@@ -167,7 +167,7 @@ sysinfo = "0.35.0"
 tap = "1.0.1"
 thiserror = "2.0.12"
 time = { version = "0.3.41", default-features = false }
-tokio = { version = "1.44.2", features = ["full"] }
+tokio = { version = "1.47.0", features = ["full"] }
 tokio-cron-scheduler = { version = "0.15.0", registry = "braiins" }
 tokio-stream = { version = "0.1.17", default-features = false }
 tokio-util = "0.7"

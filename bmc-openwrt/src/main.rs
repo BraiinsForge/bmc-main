@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
         .await
         .map_err(|_| anyhow::anyhow!("Failed to initialize job scheduler"))?;
 
-    bmc::entry::main(manager, config, display_driver, firmware_resolver).await;
+    bmc::entry::main(manager, config, display_driver, firmware_resolver).await?;
 
     Ok(())
 }

@@ -9,6 +9,7 @@ use bmc_upgrade::firmware::FirmwareResolver;
 use clap::Parser;
 use std::sync::{Arc, Mutex};
 use tokio::task::block_in_place;
+use tooling_std::cancel::Cancel;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -51,12 +52,29 @@ async fn main() -> Result<()> {
         .await
         .map_err(|_| anyhow::anyhow!("Failed to initialize job scheduler"))?;
 
-    tokio::task::spawn(bmc::entry::main(
-        manager,
-        config,
-        display_driver,
-        firmware_resolver,
-    ));
+    let main_join_handle = tokio::task::spawn({
+        let display_controller = display_driver.display_controller.clone();
+        let window_closed_fut = display_controller.window_closed();
+        async move {
+            let result = bmc::entry::main(manager, config, display_driver, firmware_resolver).await;
+            display_controller.quit();
+            result
+        }
+        .cancel(window_closed_fut)
+    });
 
-    block_in_place(move || main_window.run())
+    block_in_place(move || main_window.run())?;
+
+    match main_join_handle.await {
+        Ok(Ok(main_result)) => {
+            // main stopped
+            main_result
+        }
+        Ok(Err(())) => {
+            // window was closed
+            Ok(())
+        }
+        Err(err) if err.is_panic() => std::panic::resume_unwind(err.into_panic()),
+        Err(_) => unreachable!("BUG: main_join_handle aborted"),
+    }
 }
