@@ -24,3 +24,9 @@ export global ConnectionAdapter {
     in property <string> ip;
     in property <image> ip_qr_code;
 }
+
+export global BitcoinAdapter {
+    in property <string> price: "--";
+    in property <string> price_change: "--";
+    in property <bool> price_increase: false;
+}

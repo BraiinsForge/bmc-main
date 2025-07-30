@@ -13,6 +13,19 @@ export enum FontStyle {
   Bold
 }
 
+export enum TimeFrame {
+  Day1,
+  Week1,
+  Week2,
+  Month1,
+  Month3,
+  Month6,
+  Year1,
+  Year2,
+  Year5,
+  All
+}
+
 export global WidgetUtilsAdapter {
   pure public function font-style-to-font-weight(font-style: FontStyle) -> int {
     if font-style == FontStyle.Light {
@@ -22,5 +35,35 @@ export global WidgetUtilsAdapter {
     } else {
       return Theme.font.weight.bold;
     }
+  }
+}
+
+export global BaseDimensions {
+  public pure function widget-width-int(size: WidgetSize) -> int {
+    if (size == WidgetSize.Small) {
+      return 320;
+    } else if (size == WidgetSize.Medium || size == WidgetSize.Large) {
+      return 640;
+    } else {
+      // WidgetSize.Full
+      return 1280;
+    }
+  }
+
+  public pure function widget-width(size: WidgetSize) -> length {
+    return widget-width-int(size) * 1px;
+  }
+
+  public pure function widget-height-int(size: WidgetSize) -> int {
+    if (size == WidgetSize.Small || size == WidgetSize.Medium) {
+      return 220;
+    } else {
+      // WidgetSize.Large || WidgetSize.Full
+      return 440;
+    }
+  }
+
+  public pure function widget-height(size: WidgetSize) -> length {
+    return widget-height-int(size) * 1px;
   }
 }

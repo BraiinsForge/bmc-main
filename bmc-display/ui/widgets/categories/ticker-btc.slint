@@ -1,0 +1,130 @@
+import { Palette } from "../../style/palette.slint";
+import { Theme } from "../../style/theme.slint";
+import { Images } from "../../style/images.slint";
+import { WidgetSize, BaseDimensions, TimeFrame } from "../widget-shared.slint";
+import { BitcoinAdapter } from "../../controls/adapters.slint";
+
+export struct WidgetBtcConfig {
+    time-frame: TimeFrame,
+}
+
+export struct WidgetBtcData {
+    config: WidgetBtcConfig,
+    btc-graph: image,
+}
+
+export component WidgetBtcGraph inherits Rectangle {
+    background: Palette.black;
+
+    in property <WidgetSize> size;
+    in property <WidgetBtcData> data;
+
+    width: BaseDimensions.widget-width(size);
+    height: BaseDimensions.widget-height(size);
+
+    in property <string> btc_price <=> BitcoinAdapter.price;
+    in property <string> price_change <=> BitcoinAdapter.price_change;
+    in property <bool> price_increase <=> BitcoinAdapter.price_increase;
+
+    pure function btc-fontsize(size: WidgetSize) -> length {
+        if (WidgetSize.Small == size) {
+            return 64px;
+        } else if (WidgetSize.Medium == size) {
+            return 96px;
+        } else if (WidgetSize.Large == size) {
+            return 144px;
+        } else {
+            // WidgetSize.Full
+            return 200px;
+        }
+    }
+    in property <length> btc_font_size: btc-fontsize(size);
+
+    property <length> bar_padding_left: (size == WidgetSize.Full) ? 32px : 16px;
+    property <length> bar_padding_right: (size == WidgetSize.Full) ? 32px : 16px;
+    property <length> bar_spacing: (size == WidgetSize.Full || size == WidgetSize.Large) ? 16px : 8px;
+
+    property <length> trend_box_width: (size == WidgetSize.Full) ? 139px : 91px;
+    property <length> trend_box_height: (size == WidgetSize.Full) ? 60px : 39px;
+    property <length> trend_font_size: (size == WidgetSize.Full) ? 40px : 24px;
+
+    property <length> ticker_text_font_size: (size == WidgetSize.Full || size == WidgetSize.Large) ? 32px : 24px;
+
+    property <length> btc_icon_size: (size == WidgetSize.Full || size == WidgetSize.Large) ? 40px : 32px;
+
+    VerticalLayout {
+        HorizontalLayout {
+            alignment: space-between;
+            padding-left: bar_padding_left;
+            padding-right: bar_padding_right;
+            padding-top: 5px;
+            HorizontalLayout {
+                spacing: bar_spacing;
+                Rectangle {
+                    Image {
+                        source: Images.btc-icon;
+                    }
+                }
+                Rectangle {
+                    Text {
+                        text: "BTC-USD";
+                        color: Palette.white;
+                        font-size: ticker_text_font_size;
+                        font-weight: Theme.font.weight.semi-bold;
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: bar_spacing;
+                if (size == WidgetSize.Full): Rectangle {
+                    Text {
+                        text: "Last 24h";
+                        color: Palette.gray-40;
+                        font-size: 24px;
+                        font-weight: Theme.font.weight.regular;
+                    }
+                }
+                Rectangle {
+                    width: trend_box_width;
+                    height: trend_box_height;
+                    border-radius: 4px;
+                    states [
+                        positive when price_increase: {
+                            background: Palette.green-90;
+                        }
+                        negative when !price_increase: {
+                            background: Palette.red-100;
+                        }
+                    ]
+                    Text {
+                        text: price_change;
+                        font-size: trend_font_size;
+                        font-weight: Theme.font.weight.semi-bold;
+                        states [
+                            positive when price_increase: {
+                                color: Palette.green-30;
+                            }
+                            negative when !price_increase: {
+                                color: Palette.red-40;
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    Rectangle {
+        Image {
+            y: 0.4 * parent.height;
+            width: parent.width + 1px;
+            height: 0.6 * parent.height;
+            source: data.btc-graph;
+        }
+        Text {
+            text: btc_price;
+            color: Palette.white;
+            font-size: btc-fontsize(size);
+            font-weight: Theme.font.weight.semi-bold;
+        }
+    }
+}
