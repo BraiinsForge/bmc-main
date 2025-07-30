@@ -28,7 +28,7 @@ use serde_json::json;
 
 use super::utils::CommandUtils;
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 struct WifiScanEncryptionJson {
     enabled: bool,
     #[serde(default)]
@@ -39,9 +39,13 @@ struct WifiScanEncryptionJson {
 
 #[derive(Deserialize, Clone)]
 struct WifiScanResultJson {
+    #[serde(default)]
     ssid: String,
+    #[serde(default)]
     mode: String,
+    #[serde(default)]
     signal: i32,
+    #[serde(default)]
     encryption: WifiScanEncryptionJson,
 }
 
@@ -132,8 +136,7 @@ impl TryFrom<WifiScanEncryptionJson> for EncryptionType {
                 }
             }
         } else if !item.wpa.is_empty() {
-            #[expect(clippy::stable_sort_primitive)]
-            item.wpa.sort();
+            item.wpa.sort_unstable();
             match item.wpa.as_slice() {
                 [1] => Ok(Self::Wpa),
                 [2] => Ok(Self::Wpa2),
@@ -198,7 +201,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::too_many_lines)]
     fn test_parse_scanner_output() {
         let output = r#"{
                     "results": [
@@ -301,7 +303,6 @@ mod tests {
                             }
                         },
                         {
-                            "ssid": "TestNoSignal",
                             "bssid": "DC:41:A9:36:E9:8A",
                             "mode": "Master",
                             "channel": 6,
@@ -380,10 +381,10 @@ mod tests {
             .clone()
             .results
             .into_iter()
-            .find(|e| e.ssid == "TestNoSignal")
+            .find(|e| e.ssid.is_empty())
             .and_then(|e| WifiScanItem::try_from(e).ok())
             .expect("BUG: Failed to parse cell");
-        assert_eq!(cell.ssid, "TestNoSignal");
+        assert_eq!(cell.ssid, ""); // Intentionally empty SSID
         assert_eq!(cell.encryption_type, EncryptionType::Wep);
         assert_eq!(cell.signal_strength(), SignalStrength::Offline);
 
@@ -397,7 +398,7 @@ mod tests {
         );
         assert_eq!(res.len(), 6);
         assert_eq!(res[0].signal_level, 0);
-        assert_eq!(res[0].ssid, "TestNoSignal");
+        assert_eq!(res[0].ssid, ""); // Intentionally empty SSID
         assert_eq!(res[1].signal_level, -33);
         assert_eq!(res[1].ssid, "braiins_servicexxx");
         assert_eq!(res[3].signal_level, -37);

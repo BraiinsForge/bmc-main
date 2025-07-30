@@ -157,7 +157,7 @@ impl NetworkInterface {
             .ips
             .iter()
             .find(|ip| ip.is_ipv4())
-            .map(pnet::ipnetwork::IpNetwork::ip)
+            .map(IpNetwork::ip)
     }
 
     #[must_use]

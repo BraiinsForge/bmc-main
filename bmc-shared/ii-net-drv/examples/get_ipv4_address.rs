@@ -20,6 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
+extern crate ii_net_drv;
 use ii_net_drv::NetworkInterface;
 
 fn main() {

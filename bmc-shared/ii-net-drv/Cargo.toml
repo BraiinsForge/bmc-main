@@ -10,10 +10,9 @@ bstr.workspace = true
 ii-net = { path = "../ii-net" }
 log.workspace = true
 pnet.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-strum.workspace = true
-strum_macros.workspace = true
+strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
 
 [[example]]
@@ -26,6 +25,3 @@ path = "examples/get_ipv4_address.rs"
 
 [package.metadata.cargo-machete]
 ignored = ["strum"]
-
-[lints]
-workspace = true

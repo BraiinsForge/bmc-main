@@ -67,14 +67,15 @@ impl WifiSta {
 mod tests {
     #[test]
     fn test_parser() {
-        let output = r"
+        // Keep the formatting as is including leading whitespaces!
+        let output = r#"
 Connected to 80:2a:a8:5a:05:36 (on wlan0)
 	SSID: ubnt-ms
 	freq: 2462
-	RX: 1214 bytes (14 packets)
-	TX: 3528 bytes (22 packets)
+	RX: 305344 bytes (2085 packets)
+	TX: 60248 bytes (507 packets)
 	signal: -58 dBm
-";
+"#;
 
         let ssid = crate::wifi::WifiSta::get_ssid(output).expect("BUG: SSID parsing error");
         let signal_level =

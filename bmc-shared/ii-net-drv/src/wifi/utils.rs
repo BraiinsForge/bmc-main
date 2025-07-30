@@ -25,8 +25,7 @@ use std::path::Path;
 use anyhow::{Error, Result, anyhow};
 use bstr::ByteSlice;
 use log::debug;
-use std::fmt::Debug;
-use strum_macros::{Display, EnumString};
+use strum::{Display, EnumString};
 use tokio::process::Command;
 
 #[derive(Debug)]
@@ -41,7 +40,7 @@ impl WifiUtils {
             .ok_or(anyhow!("No wifi device in specified syspath: {}", syspath))?
             .file_name()
             .into_string()
-            .map_err(|e| Error::msg(e.to_string_lossy().to_string()))
+            .map_err(|e| Error::msg(format!("{e:?}")))
     }
 }
 

@@ -27,7 +27,7 @@ use ii_net::wifi::{EncryptionType, WifiConfiguration, WifiMode};
 use log::debug;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-use strum_macros::EnumString;
+use strum::{Display, EnumString};
 
 use super::utils::CommandUtils;
 
@@ -69,7 +69,7 @@ impl From<UciWirelessIface> for WifiConfiguration {
     }
 }
 
-#[derive(strum_macros::Display, EnumString, Debug)]
+#[derive(Display, EnumString)]
 enum UciType {
     #[strum(serialize = "wifi-device")]
     WifiDevice,
@@ -77,7 +77,7 @@ enum UciType {
     WifiIface,
 }
 
-#[derive(strum_macros::Display, EnumString, Debug)]
+#[derive(Display, EnumString)]
 enum UciCommand {
     #[strum(serialize = "get")]
     Get,
@@ -243,7 +243,6 @@ impl UciHelper {
         UciCommand::set(iface_name, serde_json::to_value(values)?).await
     }
 
-    #[must_use = "The changes will not be saved if not called!"]
     pub async fn save_changes(self) -> Result<()> {
         UciCommand::commit().await
     }

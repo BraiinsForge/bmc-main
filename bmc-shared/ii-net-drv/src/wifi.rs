@@ -88,7 +88,6 @@ pub struct OpenwrtWifiManager {
     scan_result_list: Mutex<SharedCache<Vec<WifiScanItem>>>,
     wifi_status_cache: Mutex<SharedCache<WifiStatus>>,
     wlan_dev_syspath: String,
-    pub wifi_ap_ssid_base: String,
 }
 
 #[expect(clippy::missing_fields_in_debug)]
@@ -104,12 +103,11 @@ impl OpenwrtWifiManager {
     const WIFI_INTERACTION_DELAY: Duration = Duration::from_secs(5);
 
     #[must_use]
-    pub fn new(wlan_dev_syspath: &str, wifi_ap_ssid_base: &str) -> Self {
+    pub fn new(wlan_dev_syspath: &str) -> Self {
         Self {
             scan_result_list: Mutex::new(SharedCache::new(Self::WIFI_INTERACTION_DELAY)),
             wifi_status_cache: Mutex::new(SharedCache::new(Self::WIFI_INTERACTION_DELAY)),
             wlan_dev_syspath: wlan_dev_syspath.to_owned(),
-            wifi_ap_ssid_base: wifi_ap_ssid_base.to_owned(),
         }
     }
 
@@ -167,7 +165,7 @@ impl OpenwrtWifiManager {
         uci.save_changes().await
     }
 
-    pub async fn wifi_config_exists(&self) -> Result<()> {
+    async fn wifi_config_exists(&self) -> Result<()> {
         let mut interval = time::interval(WIRELESS_CONFIG_WAIT_INTERVAL);
         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
@@ -191,10 +189,11 @@ impl OpenwrtWifiManager {
 
     async fn get_status(wlan_dev_syspath: String) -> Result<WifiStatus> {
         let device = WifiUtils::get_device_by_syspath(&wlan_dev_syspath).await?;
+        let uci = UciHelper::new(&wlan_dev_syspath);
 
         Ok(WifiStatus {
-            enabled: UciHelper::new(&wlan_dev_syspath).wifi_enabled().await?,
-            configuration: UciHelper::new(&device).wifi_iface_find_enabled().await,
+            enabled: uci.wifi_enabled().await?,
+            configuration: uci.wifi_iface_find_enabled().await,
             sta_link_state: WifiSta::link_details(&device)
                 .await
                 .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))

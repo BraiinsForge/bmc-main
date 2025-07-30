@@ -3414,7 +3414,6 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
- "strum_macros",
  "tokio",
 ]
 
