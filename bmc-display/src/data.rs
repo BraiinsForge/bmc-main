@@ -81,10 +81,56 @@ impl Default for ClockWidget {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeFrame {
+    Day1,
+    Week1,
+    Week2,
+    Month1,
+    Month3,
+    Month6,
+    Year1,
+    Year2,
+    Year5,
+    All,
+}
+
+impl From<TimeFrame> for String {
+    fn from(value: TimeFrame) -> Self {
+        match value {
+            TimeFrame::Day1 => "1d".into(),
+            TimeFrame::Week1 => "1w".into(),
+            TimeFrame::Week2 => "2w".into(),
+            TimeFrame::Month1 => "1m".into(),
+            TimeFrame::Month3 => "3m".into(),
+            TimeFrame::Month6 => "6m".into(),
+            TimeFrame::Year1 => "1y".into(),
+            TimeFrame::Year2 => "2y".into(),
+            TimeFrame::Year5 => "5y".into(),
+            TimeFrame::All => "all".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TickerBtcWidget {
+    pub time_frame: TimeFrame,
+}
+
+impl Default for TickerBtcWidget {
+    fn default() -> Self {
+        Self {
+            time_frame: TimeFrame::Day1,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "params")]
 #[serde(rename_all = "snake_case")]
 pub enum WidgetKind {
     Clock(ClockWidget),
+    TickerBtc(TickerBtcWidget),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -534,6 +580,13 @@ impl From<Widget> for generated::Widget {
                     ..generated::WidgetClockData::default()
                 }
             }
+            WidgetKind::TickerBtc(config) => {
+                slint_widget.kind = generated::WidgetKind::TickerBtc;
+                slint_widget.ticker_btc = generated::WidgetBtcData {
+                    config: config.into(),
+                    ..generated::WidgetBtcData::default()
+                }
+            }
         }
 
         slint_widget
@@ -556,6 +609,25 @@ impl From<ClockWidget> for generated::WidgetClockConfig {
             show_date: from.show_date,
             show_seconds: from.show_seconds,
             show_timezone: from.show_timezone,
+        }
+    }
+}
+
+impl From<TickerBtcWidget> for generated::WidgetBtcConfig {
+    fn from(value: TickerBtcWidget) -> Self {
+        Self {
+            time_frame: match value.time_frame {
+                TimeFrame::Day1 => generated::TimeFrame::Day1,
+                TimeFrame::Week1 => generated::TimeFrame::Week1,
+                TimeFrame::Week2 => generated::TimeFrame::Week2,
+                TimeFrame::Month1 => generated::TimeFrame::Month1,
+                TimeFrame::Month3 => generated::TimeFrame::Month3,
+                TimeFrame::Month6 => generated::TimeFrame::Month6,
+                TimeFrame::Year1 => generated::TimeFrame::Year1,
+                TimeFrame::Year2 => generated::TimeFrame::Year2,
+                TimeFrame::Year5 => generated::TimeFrame::Year5,
+                TimeFrame::All => generated::TimeFrame::All,
+            },
         }
     }
 }

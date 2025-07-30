@@ -1,8 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::bitcoin_data::BitcoinData;
 use crate::data::{Scene, SceneCycling, SceneCyclingTransition, SceneId, Screen, Widget, WidgetId};
 use crate::display_controller::DisplayController;
-use crate::generated::{self, ConnectionAdapter, InitSetupWifiAdapter, SceneCyclingAdapter};
+use crate::generated::{
+    self, BaseDimensions, BitcoinAdapter, ConnectionAdapter, InitSetupWifiAdapter,
+    SceneCyclingAdapter,
+};
 use crate::indexmap_model::IndexMapModel;
 use crate::utils;
 use chrono::{Datelike, Timelike};
@@ -210,6 +214,15 @@ impl DisplayController {
                     widget.clock.datetime = to_datetime(datetime, timezone, is_24_format);
                 });
             }
+        });
+    }
+
+    pub fn update_btc_price(&self, btc_data: BitcoinData) {
+        self.in_event_loop(move |main_window| {
+            let bitcoin_adapter = BitcoinAdapter::get(&main_window);
+            bitcoin_adapter.set_price(btc_data.price_as_shared());
+            bitcoin_adapter.set_price_change(btc_data.price_change_as_shared());
+            bitcoin_adapter.set_price_increase(btc_data.increasing_trend());
         });
     }
 
