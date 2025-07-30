@@ -35,6 +35,7 @@ pub struct Manager {
     pub session_manager: OpenwrtSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     wifi_manager: Arc<OpenwrtWifiManager>,
+    wifi_ap_ssid_base: String,
 }
 
 impl Manager {
@@ -59,6 +60,7 @@ impl Manager {
         session_manager: OpenwrtSessionManager,
         timezone: Timezone,
         wifi_manager: Arc<OpenwrtWifiManager>,
+        wifi_ap_ssid_base: String,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
         let bmc_info = BmcInfo::load().expect("Load BMC info failed");
@@ -67,6 +69,7 @@ impl Manager {
             session_manager,
             timezone_sender,
             wifi_manager,
+            wifi_ap_ssid_base,
         }
     }
 
@@ -456,7 +459,7 @@ impl BmcManager for Manager {
 
     fn wifi_ssid(&self) -> String {
         let mac_id = Self::get_mac_short_id(&get_default_net_data(Self::DEFAULT_INTERFACE));
-        format!("{} {mac_id}", self.wifi_manager.wifi_ap_ssid_base)
+        format!("{} {mac_id}", self.wifi_ap_ssid_base)
     }
 
     async fn init_wifi_ap(&self) -> Result<(), Self::Error> {

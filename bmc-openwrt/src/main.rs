@@ -47,10 +47,14 @@ async fn main() -> Result<()> {
 
     let wifi_manager = Arc::new(OpenwrtWifiManager::new(
         "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1:1.0/", // TODO: This is pre-prod board specific
-        "Braiins Mining Clock",
     ));
 
-    let manager = Manager::new(OpenwrtSessionManager, current_timezone, wifi_manager);
+    let manager = Manager::new(
+        OpenwrtSessionManager,
+        current_timezone,
+        wifi_manager,
+        "Braiins Mining Clock".to_owned(),
+    );
     manager.init_wifi_ap().await?; // Has check on factory default already
 
     let job_scheduler = bmc_scheduler::JobScheduler::new(
