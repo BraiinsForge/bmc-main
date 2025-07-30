@@ -17,9 +17,11 @@ flume.workspace = true
 humantime-serde.workspace = true
 indexmap.workspace = true
 qrcode-generator.workspace = true
+resvg.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 slint.workspace = true
+svg.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream = { workspace = true, features = ["sync", "time"] }

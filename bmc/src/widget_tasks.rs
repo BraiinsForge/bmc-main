@@ -1,15 +1,22 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::config::ConfigHandle;
-use bmc_display::data::{SceneId, Widget, WidgetId, WidgetKind};
+use bmc_display::btc_history_data::BtcHistoryData;
+use bmc_display::data::{SceneId, TimeFrame, Widget, WidgetId, WidgetKind};
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_time::time::Timezone;
+use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::spawn;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
+use tracing::{debug, warn};
+
+const BTC_HISTORY_API_URL: &str = "https://public-api.braiins.com/v1/price-history";
+const BTC_HISTORY_TIMEFRAME_API_PARAM: &str = "timeframe";
+const API_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 struct TaskHandle {
@@ -71,6 +78,11 @@ impl WidgetTasks {
                 scene_id.clone(),
                 widget.id.clone(),
                 clock_widget.timezone.clone(),
+            ))),
+            WidgetKind::TickerBtc(ticker_widget) => Some(spawn(self.make_btc_graph_task(
+                scene_id.clone(),
+                widget.id.clone(),
+                ticker_widget.time_frame.clone(),
             ))),
         };
 
@@ -156,6 +168,47 @@ impl WidgetTasks {
                     now,
                     timezone.to_string(),
                     is_24_format,
+                );
+            }
+        }
+    }
+
+    fn make_btc_graph_task(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        timeframe: TimeFrame,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        let display_controller = self.display_controller.clone();
+
+        async move {
+            let mut interval = interval(Duration::from_secs(60));
+
+            loop {
+                interval.tick().await;
+
+                debug!("Getting bitcoin history data...");
+                let client = Client::new();
+                let btc_history_data = if let Ok(response) = client
+                    .get(BTC_HISTORY_API_URL)
+                    .query(&[(
+                        BTC_HISTORY_TIMEFRAME_API_PARAM,
+                        Into::<String>::into(timeframe.clone()),
+                    )])
+                    .timeout(API_TIMEOUT)
+                    .send()
+                    .await
+                {
+                    response.json::<BtcHistoryData>().await.unwrap_or_default()
+                } else {
+                    warn!("Failed to get btc history data from API");
+                    BtcHistoryData::default()
+                };
+
+                display_controller.update_btc_graph(
+                    scene_id.clone(),
+                    widget_id.clone(),
+                    btc_history_data,
                 );
             }
         }

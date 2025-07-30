@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::bitcoin_data::BitcoinData;
+use crate::btc_history_data::BtcHistoryData;
 use crate::data::{Scene, SceneCycling, SceneCyclingTransition, SceneId, Screen, Widget, WidgetId};
 use crate::display_controller::DisplayController;
 use crate::generated::{
@@ -223,6 +224,37 @@ impl DisplayController {
             bitcoin_adapter.set_price(btc_data.price_as_shared());
             bitcoin_adapter.set_price_change(btc_data.price_change_as_shared());
             bitcoin_adapter.set_price_increase(btc_data.increasing_trend());
+        });
+    }
+
+    pub fn update_btc_graph(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        btc_history_data: BtcHistoryData,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    let widget_size = widget.size;
+                    let base_dimensions = BaseDimensions::get(&main_window);
+                    let width: u32 = base_dimensions
+                        .invoke_widget_width_int(widget_size)
+                        .try_into()
+                        .unwrap_or_default();
+                    let height: u32 = base_dimensions
+                        .invoke_widget_height_int(widget_size)
+                        .try_into()
+                        .unwrap_or_default();
+                    widget.ticker_btc.btc_graph =
+                        btc_history_data.into_graph_image(&main_window, width, height);
+                });
+            }
         });
     }
 
