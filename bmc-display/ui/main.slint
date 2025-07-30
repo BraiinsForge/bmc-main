@@ -1,11 +1,12 @@
 import { Palette } from "style/palette.slint";
 import { Theme } from "style/theme.slint";
-import { ScreenAdapter, UpgradeDownloadAdapter, NotificationAdapter } from "controls/adapters.slint";
+import { ScreenAdapter, UpgradeDownloadAdapter, NotificationAdapter, BitcoinAdapter } from "controls/adapters.slint";
 import { UIScreen, DateTime } from "controls/common.slint";
 import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
     InitStartConnect, InitWifiConnectProgress, InitWifiConnectSuccess, InitWifiConnectFailed, InitSetupSuccess, InitGeneralError, InitDeviceSetupQr, ConnectInfo
 } from "screens/screens.slint";
 import { WidgetSize, WidgetKind, Widget } from "widgets/widget.slint";
+import { BaseDimensions } from "widgets/widget-shared.slint";
 import { WidgetBuilder } from "controls/widget-builder.slint";
 import { Scene } from "widgets/scene.slint";
 import { SceneCycler, SceneCyclingAdapter } from "controls/scene-cycler.slint";
@@ -15,9 +16,10 @@ import { Notification } from "components/notification.slint";
 import { Images } from "style/images.slint";
 import { InitSetupWifiAdapter, ConnectionAdapter } from "controls/adapters.slint";
 
-export { ScreenAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, UIScreen, DateTime, NotificationAdapter }
+export { ScreenAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, UIScreen, DateTime, NotificationAdapter, BitcoinAdapter }
 export { WidgetSize, WidgetKind, Widget }
 export { Backend }
+export { Palette, BaseDimensions }
 export { InitSetupWifiAdapter, ConnectionAdapter }
 
 export component MainWindow inherits Window {
