@@ -3,8 +3,6 @@ syntax = "proto3";
 package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
-import "google/protobuf/wrappers.proto";
-import "web/shared.proto";
 
 message NetworkInfoResponse {
   string mac_address = 1;
