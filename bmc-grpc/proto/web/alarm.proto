@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
+import "web/shared.proto";
+
+message Alarm {
+  string id = 1;
+  string name = 2;
+  string time = 3; // Expected format: HH:MM, Range 00:00 - 23:59
+  bool enabled = 4;
+  repeated Weekday repeat = 5;
+  optional braiins.bmc.web.SoundInfo sound = 6;
+  SnoozeOptionsWrapper snooze_options = 7;
+}
+
+message Off {}
+
+message SnoozeOptions {
+  SnoozeLimit limit = 1;
+  SnoozeDuration duration = 2;
+}
+
+message ListAlarmsResponse {
+  repeated Alarm alarms = 1;
+}
+
+message AddAlarmRequest {
+  string name = 1;
+  string time = 2; // Expected format: HH:MM, Range 00:00 - 23:59
+  bool enabled = 3;
+  repeated Weekday repeat = 4;
+  optional string sound_id = 5;
+  SnoozeOptionsWrapper snooze_options = 6;
+}
+
+enum Weekday {
+  WEEKDAY_UNSPECIFIED = 0;
+  WEEKDAY_MONDAY = 1;
+  WEEKDAY_TUESDAY = 2;
+  WEEKDAY_WEDNESDAY = 3;
+  WEEKDAY_THURSDAY = 4;
+  WEEKDAY_FRIDAY = 5;
+  WEEKDAY_SATURDAY = 6;
+  WEEKDAY_SUNDAY = 7;
+}
+
+enum SnoozeLimit {
+  SNOOZE_LIMIT_UNSPECIFIED = 0;
+  SNOOZE_LIMIT_FOREVER = 1;
+  SNOOZE_LIMIT_3 = 2;
+  SNOOZE_LIMIT_5 = 3;
+}
+
+enum SnoozeDuration {
+  SNOOZE_DURATION_UNSPECIFIED = 0;
+  SNOOZE_DURATION_5_MINUTES = 1;
+  SNOOZE_DURATION_10_MINUTES = 2;
+  SNOOZE_DURATION_15_MINUTES = 3;
+  SNOOZE_DURATION_30_MINUTES = 4;
+}
+
+message AlarmInfoResponse {
+  string time = 1; // Format: HH:MM, Range 00:00 - 23:59
+  string name = 2;
+  repeated Weekday repeat = 3;
+  string sound_id = 4;
+  SnoozeOptionsWrapper snooze_options = 5;
+}
+
+message SnoozeOptionsWrapper {
+  oneof kind {
+    SnoozeOptions snooze = 1;
+    Off off = 2;
+  }
+}
+
+message SetAlarmEnabledRequest {
+  string id = 1;
+  bool enabled = 2;
+}
+
+service AlarmService {
+  rpc GetAlarmInfo(google.protobuf.Empty) returns (AlarmInfoResponse);
+  rpc ListAlarms(google.protobuf.Empty) returns (ListAlarmsResponse);
+  rpc AddAlarm(AddAlarmRequest) returns (google.protobuf.Empty);
+  rpc SetAlarm(Alarm) returns (google.protobuf.Empty);
+  rpc DeleteAlarm(google.protobuf.StringValue) returns (google.protobuf.Empty); // StringValue for alarm id
+  rpc SetAlarmEnabled(SetAlarmEnabledRequest) returns (google.protobuf.Empty);
+}
