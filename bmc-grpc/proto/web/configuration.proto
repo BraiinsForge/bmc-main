@@ -4,6 +4,7 @@ package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/wrappers.proto";
+import "web/shared.proto";
 
 message BrightnessInfo {
   uint32 value = 1;
@@ -36,13 +37,8 @@ message SoundVolumeSettingsResponse {
   SoundVolume volume_nightmode = 2;
 }
 
-message SoundInfo {
-  string id = 1;
-  string name = 2;
-}
-
 message ListSoundsResponse {
-  repeated SoundInfo sounds = 1;
+  repeated braiins.bmc.web.SoundInfo sounds = 1;
 }
 
 message PlaySoundRequest {

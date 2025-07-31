@@ -41,3 +41,8 @@ enum DateFormat {
   DATE_FORMAT_YYYY_MM_DD_DOT = 7;
   DATE_FORMAT_YYYY_MM_DD_DASH = 8;
 }
+
+message SoundInfo {
+  string id = 1;
+  string name = 2;
+}
