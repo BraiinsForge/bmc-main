@@ -112,11 +112,12 @@ where
         let sound_controller =
             SoundController::new(config_handle.clone(), config.sounds_dir.clone());
 
-        let alarm_controller = AlarmController::new(
+        let alarm_controller = AlarmController::init(
             config_handle.clone(),
             scheduler.clone(),
             sound_controller.clone(),
-        );
+        )
+        .await?;
 
         let system_manager = SystemManager::init(
             config_handle.clone(),

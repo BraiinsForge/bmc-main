@@ -9,7 +9,6 @@ use bmc_grpc::web::{
     configuration_service_server::ConfigurationService as GrpcConfigurationService,
 };
 use bmc_grpc::web::{ListSoundsResponse, PlaySoundRequest, SoundInfo, SoundVolume};
-use chrono::NaiveTime;
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
@@ -17,6 +16,7 @@ use tonic::{Request, Response, Status};
 use tracing::{error, warn};
 
 use super::SoundController;
+use super::shared::{naive_time_to_hhmm, parse_hhmm_to_naive_time};
 
 const API_BRIGHTNESS_MIN: u32 = 0;
 const API_BRIGHTNESS_MAX: u32 = 100;
@@ -258,17 +258,6 @@ fn validate_sound_volume(value: u32) -> Result<(), Status> {
         )));
     }
     Ok(())
-}
-
-fn naive_time_to_hhmm(time: NaiveTime) -> String {
-    time.format("%H:%M").to_string()
-}
-
-fn parse_hhmm_to_naive_time(input: &str) -> Result<NaiveTime, Status> {
-    NaiveTime::parse_from_str(input, "%H:%M").map_err(|e| {
-        warn!("Failed to parse Time in format HH:MM, error: {}", e);
-        Status::invalid_argument("Invalid time format")
-    })
 }
 
 impl From<Sounds> for SoundInfo {

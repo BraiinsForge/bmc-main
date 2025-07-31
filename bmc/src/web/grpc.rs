@@ -34,6 +34,7 @@ mod configuration_service;
 mod initial_setup;
 mod network;
 mod scene_management;
+mod shared;
 mod upgrade_service;
 
 struct AuthInterceptor<S: SessionManager> {
@@ -161,7 +162,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             );
 
         let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
-            alarm::AlarmService::new(self.config_handle, self.alarm_controller),
+            alarm::AlarmService::new(self.alarm_controller),
         );
 
         // GrpcWebLayer is badly named, it's not a "layer", it's re-wrapper for other Services

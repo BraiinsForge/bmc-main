@@ -36,6 +36,16 @@ message AddAlarmRequest {
   SnoozeOptionsWrapper snooze_options = 6;
 }
 
+message SetAlarmRequest {
+  string id = 1;
+  string name = 2;
+  string time = 3; // Expected format: HH:MM, Range 00:00 - 23:59
+  bool enabled = 4;
+  repeated Weekday repeat = 5;
+  optional string sound_id = 6;
+  SnoozeOptionsWrapper snooze_options = 7;
+}
+
 enum Weekday {
   WEEKDAY_UNSPECIFIED = 0;
   WEEKDAY_MONDAY = 1;
@@ -86,7 +96,7 @@ service AlarmService {
   rpc GetAlarmInfo(google.protobuf.Empty) returns (AlarmInfoResponse);
   rpc ListAlarms(google.protobuf.Empty) returns (ListAlarmsResponse);
   rpc AddAlarm(AddAlarmRequest) returns (google.protobuf.Empty);
-  rpc SetAlarm(Alarm) returns (google.protobuf.Empty);
+  rpc SetAlarm(SetAlarmRequest) returns (google.protobuf.Empty);
   rpc DeleteAlarm(google.protobuf.StringValue) returns (google.protobuf.Empty); // StringValue for alarm id
   rpc SetAlarmEnabled(SetAlarmEnabledRequest) returns (google.protobuf.Empty);
 }
