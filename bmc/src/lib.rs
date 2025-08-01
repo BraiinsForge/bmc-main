@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+mod alarm;
 mod backlight;
 mod config;
 mod display_tasks;
