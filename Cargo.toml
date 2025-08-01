@@ -3,8 +3,11 @@ resolver = "3"
 members = [
     "bmc",
     "bmc-audio",
+    "bmc-button",
     "bmc-display",
+    "bmc-gpio",
     "bmc-grpc",
+    "bmc-kobject",
     "bmc-led",
     "bmc-mock",
     "bmc-mock-display",
@@ -90,8 +93,11 @@ base64 = "0.22.1"
 bincode = "2.0.0" # NOTE: check https://docs.rs/bincode/latest/bincode/serde/index.html#known-issues before enabling `serde` feature
 bmc = { path = "bmc" }
 bmc-audio = { path = "bmc-audio" }
+bmc-button = { path = "bmc-button" }
 bmc-display = { path = "bmc-display" }
+bmc-gpio = { path = "bmc-gpio" }
 bmc-grpc = { path = "bmc-grpc" }
+bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led" }
 bmc-mock-display = { path = "bmc-mock-display" }
 bmc-platform = { path = "bmc-platform" }
@@ -184,6 +190,9 @@ tokio = { version = "1.47.0", features = ["full"] }
 tokio-cron-scheduler = { version = "0.17.1", registry = "braiins" }
 tokio-stream = { version = "0.1.17", default-features = false }
 tokio-util = "0.7"
+tokio-retry = "0.3.0"
+tokio-test = "0.4.2"
+tokio-tungstenite = "0.24.0"
 tonic = "0.13.1"
 tonic-build = "0.13.1"
 tonic-middleware = "0.3.0"
@@ -200,3 +209,9 @@ tracing-subscriber = "0.3.19"
 url = { version = "2.5.4", features = ["serde"] }
 uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
 ux = { version = "0.1.6" }
+sysfs_gpio = "0.6.1"
+gpiod = "0.2.3"
+merge-streams = "0.1.2"
+netlink-packet-route = "0.20.1"
+netlink-sys = "0.8.5"
+rtnetlink = { git = "https://github.com/rust-netlink/rtnetlink.git", rev = "d6e8b4c" } # FIXME: change to a crates.io version after they update netlink-packet-route

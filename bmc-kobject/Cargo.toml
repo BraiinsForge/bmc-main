@@ -1,0 +1,16 @@
+[package]
+name = "bmc-kobject"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+async-stream.workspace = true
+futures.workspace = true
+log.workspace = true
+merge-streams.workspace = true
+netlink-sys.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

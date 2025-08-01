@@ -1,0 +1,60 @@
+// Copyright (C) 2024  Braiins Systems s.r.o.
+//
+// This file is part of Braiins Open-Source Initiative (BOSI).
+//
+// BOSI is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// Please, keep in mind that we may also license BOSI or any part thereof
+// under a proprietary license. For more information on the terms and conditions
+// of such proprietary license or if you have any other questions, please
+// contact us at opensource@braiins.com.
+
+//! Provides Interface for button primitives
+
+use anyhow::Result;
+use futures::stream::BoxStream;
+
+/// Enum to hold different button types
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ButtonId {
+    Reset,
+}
+/// Enum to hold different button events
+#[derive(Clone, Debug)]
+pub enum ButtonEvent {
+    Pressed(ButtonId),
+    Released(ButtonId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edge {
+    NoInterrupt,
+    RisingEdge,
+    FallingEdge,
+    BothEdges,
+}
+
+/// Type alias for stream of `ButtonEvent`
+pub type ButtonEventStream = BoxStream<'static, Result<ButtonEvent>>;
+
+/// Trait Button which has to be implemented in order to ButtonManager to work with
+pub trait Buttons {
+    fn to_stream(&self) -> Result<ButtonEventStream>;
+}
+
+impl std::fmt::Debug for dyn Buttons + Send + Sync {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<Buttons trait>")
+    }
+}
