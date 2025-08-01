@@ -31,6 +31,7 @@ use super::SystemUpgradeService;
 mod configuration_service;
 mod initial_setup;
 mod network;
+mod scene_management;
 mod upgrade_service;
 
 struct AuthInterceptor<S: SessionManager> {
@@ -136,10 +137,14 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 
         let configuration_service =
             web::configuration_service_server::ConfigurationServiceServer::new(
-                configuration_service::ConfigurationService::new(
+                configuration_service::ConfigurationService::new(self.display_backlight_controller),
+            );
+
+        let scene_management_service =
+            web::scene_management_service_server::SceneManagementServiceServer::new(
+                scene_management::SceneManagementService::new(
                     self.config_handle,
                     self.display_controller,
-                    self.display_backlight_controller,
                     self.widget_tasks,
                 ),
             );
@@ -151,6 +156,10 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             .add_service(GrpcWebLayer::new().layer(metadata_service))
             .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
                 configuration_service,
+                auth_interceptor.clone(),
+            )))
+            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                scene_management_service,
                 auth_interceptor.clone(),
             )))
             .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
