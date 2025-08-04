@@ -129,6 +129,7 @@ message WidgetKind {
   oneof value {
     ClockWidget clock = 1;
     TickerBtcWidget ticker_btc = 2;
+    BlockHeightWidget block_height = 3;
   }
 }
 
@@ -171,6 +172,13 @@ message TickerBtcWidget {
     TIME_FRAME_YEAR_5 = 9;
     TIME_FRAME_ALL = 10;
   }
+}
+
+message BlockHeightWidget {
+  // required
+  bool show_timestamp = 1;
+  // required
+  FontStyle numbers_font_style = 2;
 }
 
 // Font style

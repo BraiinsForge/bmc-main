@@ -4,9 +4,9 @@ use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
-    AddWidgetError, ClockStyle, ClockWidget, FontStyle, RemoveWidgetError, Scene, SceneCycling,
-    SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget, TimeFrame, UpdateWidgetError,
-    Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
+    AddWidgetError, BlockHeightWidget, ClockStyle, ClockWidget, FontStyle, RemoveWidgetError,
+    Scene, SceneCycling, SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget, TimeFrame,
+    UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
@@ -1050,6 +1050,9 @@ fn parse_widget_kind_with_default_params(
     let kind = match value {
         web::widget_kind::Value::Clock(_) => WidgetKind::Clock(ClockWidget::default()),
         web::widget_kind::Value::TickerBtc(_) => WidgetKind::TickerBtc(TickerBtcWidget::default()),
+        web::widget_kind::Value::BlockHeight(_) => {
+            WidgetKind::BlockHeight(BlockHeightWidget::default())
+        }
     };
 
     (Some(kind), field_violations)
@@ -1081,6 +1084,12 @@ fn parse_widget_kind(
         web::widget_kind::Value::TickerBtc(ticker_btc_proto) => {
             let (maybe_kind, field_violations) =
                 parse_ticker_btc_widget_kind("ticker_btc", ticker_btc_proto);
+            all_field_violations.extend(field_violations);
+            maybe_kind
+        }
+        web::widget_kind::Value::BlockHeight(block_height_proto) => {
+            let (maybe_kind, field_violations) =
+                parse_block_height_widget_kind("block_height", block_height_proto);
             all_field_violations.extend(field_violations);
             maybe_kind
         }
@@ -1173,6 +1182,34 @@ fn parse_ticker_btc_widget_kind(
     (maybe_kind, field_violations)
 }
 
+fn parse_block_height_widget_kind(
+    field: &str,
+    block_height_proto: web::BlockHeightWidget,
+) -> ParseOutput<WidgetKind> {
+    use web::FontStyle as FontStyleProto;
+
+    let mut field_violations = FieldViolations::new();
+
+    let maybe_numbers_font_style = match block_height_proto.numbers_font_style() {
+        FontStyleProto::Unspecified => {
+            field_violations.push(format!("{field}.numbers_font_style"), "Missing value!");
+            None
+        }
+        FontStyleProto::Light => Some(FontStyle::Light),
+        FontStyleProto::Medium => Some(FontStyle::Medium),
+        FontStyleProto::Bold => Some(FontStyle::Bold),
+    };
+
+    let maybe_kind = maybe_numbers_font_style.map(|numbers_font_style| {
+        WidgetKind::BlockHeight(BlockHeightWidget {
+            show_timestamp: block_height_proto.show_timestamp,
+            numbers_font_style,
+        })
+    });
+
+    (maybe_kind, field_violations)
+}
+
 fn map_scene_to_proto(scene: Scene) -> web::Scene {
     let kind = match &scene.kind {
         SceneKind::Fullscreen => web::scene::Kind::Fullscreen(web::scene::Fullscreen {
@@ -1209,6 +1246,7 @@ fn map_widget_to_proto(widget: Widget) -> web::Widget {
     let kind = match widget.kind {
         WidgetKind::Clock(clock) => map_clock_to_proto(clock),
         WidgetKind::TickerBtc(ticker_btc) => map_ticker_btc_to_proto(&ticker_btc),
+        WidgetKind::BlockHeight(block_height) => map_block_height_to_proto(&block_height),
     };
 
     web::Widget {
@@ -1334,5 +1372,23 @@ fn map_ticker_btc_to_proto(ticker_btc: &TickerBtcWidget) -> web::WidgetKind {
 
     web::WidgetKind {
         value: Some(web::widget_kind::Value::TickerBtc(proto)),
+    }
+}
+
+fn map_block_height_to_proto(block_height: &BlockHeightWidget) -> web::WidgetKind {
+    use web::FontStyle as FontStyleProto;
+
+    let proto = web::BlockHeightWidget {
+        show_timestamp: block_height.show_timestamp,
+        numbers_font_style: match block_height.numbers_font_style {
+            FontStyle::Light => FontStyleProto::Light,
+            FontStyle::Medium => FontStyleProto::Medium,
+            FontStyle::Bold => FontStyleProto::Bold,
+        }
+        .into(),
+    };
+
+    web::WidgetKind {
+        value: Some(web::widget_kind::Value::BlockHeight(proto)),
     }
 }
