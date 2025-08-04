@@ -5,8 +5,8 @@ use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
     AddWidgetError, ClockStyle, ClockWidget, FontStyle, RemoveWidgetError, Scene, SceneCycling,
-    SceneCyclingTransition, SceneId, SceneKind, UpdateWidgetError, Widget, WidgetId, WidgetKind,
-    WidgetPosition, WidgetSize,
+    SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget, TimeFrame, UpdateWidgetError,
+    Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
@@ -1049,6 +1049,7 @@ fn parse_widget_kind_with_default_params(
 
     let kind = match value {
         web::widget_kind::Value::Clock(_) => WidgetKind::Clock(ClockWidget::default()),
+        web::widget_kind::Value::TickerBtc(_) => WidgetKind::TickerBtc(TickerBtcWidget::default()),
     };
 
     (Some(kind), field_violations)
@@ -1074,6 +1075,12 @@ fn parse_widget_kind(
         web::widget_kind::Value::Clock(clock_proto) => {
             let (maybe_kind, field_violations) =
                 parse_clock_widget_kind(format!("{field}.clock"), clock_proto);
+            all_field_violations.extend(field_violations);
+            maybe_kind
+        }
+        web::widget_kind::Value::TickerBtc(ticker_btc_proto) => {
+            let (maybe_kind, field_violations) =
+                parse_ticker_btc_widget_kind("ticker_btc", ticker_btc_proto);
             all_field_violations.extend(field_violations);
             maybe_kind
         }
@@ -1135,6 +1142,37 @@ fn parse_clock_widget_kind(
     (maybe_kind, field_violations)
 }
 
+fn parse_ticker_btc_widget_kind(
+    field: &str,
+    ticker_btc_proto: web::TickerBtcWidget,
+) -> ParseOutput<WidgetKind> {
+    use web::ticker_btc_widget::TimeFrame as TimeFrameProto;
+
+    let mut field_violations = FieldViolations::new();
+
+    let maybe_time_frame = match ticker_btc_proto.time_frame() {
+        TimeFrameProto::Unspecified => {
+            field_violations.push(format!("{field}.time_frame"), "Missing value!");
+            None
+        }
+        TimeFrameProto::Day1 => Some(TimeFrame::Day1),
+        TimeFrameProto::Week1 => Some(TimeFrame::Week1),
+        TimeFrameProto::Week2 => Some(TimeFrame::Week2),
+        TimeFrameProto::Month1 => Some(TimeFrame::Month1),
+        TimeFrameProto::Month3 => Some(TimeFrame::Month3),
+        TimeFrameProto::Month6 => Some(TimeFrame::Month6),
+        TimeFrameProto::Year1 => Some(TimeFrame::Year1),
+        TimeFrameProto::Year2 => Some(TimeFrame::Year2),
+        TimeFrameProto::Year5 => Some(TimeFrame::Year5),
+        TimeFrameProto::All => Some(TimeFrame::All),
+    };
+
+    let maybe_kind =
+        maybe_time_frame.map(|time_frame| WidgetKind::TickerBtc(TickerBtcWidget { time_frame }));
+
+    (maybe_kind, field_violations)
+}
+
 fn map_scene_to_proto(scene: Scene) -> web::Scene {
     let kind = match &scene.kind {
         SceneKind::Fullscreen => web::scene::Kind::Fullscreen(web::scene::Fullscreen {
@@ -1170,6 +1208,7 @@ fn map_scene_to_proto(scene: Scene) -> web::Scene {
 fn map_widget_to_proto(widget: Widget) -> web::Widget {
     let kind = match widget.kind {
         WidgetKind::Clock(clock) => map_clock_to_proto(clock),
+        WidgetKind::TickerBtc(ticker_btc) => map_ticker_btc_to_proto(&ticker_btc),
     };
 
     web::Widget {
@@ -1271,5 +1310,29 @@ fn map_scene_cycling_to_proto(config: SceneCycling) -> web::SceneCycling {
             SceneCyclingTransition::Slide => web::SceneCyclingTransition::Slide.into(),
             SceneCyclingTransition::Fade => web::SceneCyclingTransition::Fade.into(),
         },
+    }
+}
+
+fn map_ticker_btc_to_proto(ticker_btc: &TickerBtcWidget) -> web::WidgetKind {
+    use web::ticker_btc_widget::TimeFrame as TimeFrameProto;
+
+    let proto = web::TickerBtcWidget {
+        time_frame: match ticker_btc.time_frame {
+            TimeFrame::Day1 => TimeFrameProto::Day1,
+            TimeFrame::Week1 => TimeFrameProto::Week1,
+            TimeFrame::Week2 => TimeFrameProto::Week2,
+            TimeFrame::Month1 => TimeFrameProto::Month1,
+            TimeFrame::Month3 => TimeFrameProto::Month3,
+            TimeFrame::Month6 => TimeFrameProto::Month6,
+            TimeFrame::Year1 => TimeFrameProto::Year1,
+            TimeFrame::Year2 => TimeFrameProto::Year2,
+            TimeFrame::Year5 => TimeFrameProto::Year5,
+            TimeFrame::All => TimeFrameProto::All,
+        }
+        .into(),
+    };
+
+    web::WidgetKind {
+        value: Some(web::widget_kind::Value::TickerBtc(proto)),
     }
 }
