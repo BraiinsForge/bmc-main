@@ -77,7 +77,7 @@ impl DisplayController {
         });
     }
 
-    pub fn update_scene(&self, id: SceneId, enabled: bool, duration: Duration) {
+    pub fn update_scene(&self, id: SceneId, enabled: bool, cycle_duration: Duration) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
             let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
@@ -86,8 +86,8 @@ impl DisplayController {
                 scene.enabled = enabled;
 
                 #[expect(clippy::cast_possible_truncation)]
-                let duration = duration.as_millis() as i64;
-                scene.duration = duration;
+                let cycle_duration = cycle_duration.as_millis() as i64;
+                scene.cycle_duration = cycle_duration;
             });
         });
     }

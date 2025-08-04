@@ -217,7 +217,7 @@ pub struct Scene {
     pub id: SceneId,
     pub enabled: bool,
     #[serde(with = "humantime_serde")]
-    pub duration: Duration,
+    pub cycle_duration: Duration,
     pub kind: SceneKind,
     #[serde(
         serialize_with = "serialize_widgets",
@@ -227,8 +227,8 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub const MIN_DURATION: Duration = Duration::from_secs(1);
-    const DEFAULT_DURATION: Duration = Duration::from_secs(5);
+    pub const MIN_CYCLE_DURATION: Duration = Duration::from_secs(1);
+    const DEFAULT_CYCLE_DURATION: Duration = Duration::from_secs(5);
     const DEFAULT_ENABLED: bool = true;
 
     #[must_use]
@@ -236,7 +236,7 @@ impl Scene {
         Self {
             id: SceneId::generate(),
             enabled: Self::DEFAULT_ENABLED,
-            duration: Self::DEFAULT_DURATION,
+            cycle_duration: Self::DEFAULT_CYCLE_DURATION,
             kind: SceneKind::Fullscreen,
             widgets: {
                 let id = WidgetId::generate();
@@ -258,7 +258,7 @@ impl Scene {
         Self {
             id: SceneId::generate(),
             enabled: Self::DEFAULT_ENABLED,
-            duration: Self::DEFAULT_DURATION,
+            cycle_duration: Self::DEFAULT_CYCLE_DURATION,
             kind: SceneKind::Combined,
             widgets: IndexMap::with_capacity(0),
         }
@@ -534,7 +534,7 @@ impl From<ClockWidget> for generated::WidgetClockConfig {
 impl From<Scene> for generated::Scene {
     fn from(value: Scene) -> Self {
         #[expect(clippy::cast_possible_truncation)]
-        let duration = value.duration.as_millis() as i64;
+        let cycle_duration = value.cycle_duration.as_millis() as i64;
 
         let widgets = value
             .widgets
@@ -545,7 +545,7 @@ impl From<Scene> for generated::Scene {
         Self {
             id: value.id.to_shared_string(),
             enabled: value.enabled,
-            duration,
+            cycle_duration,
             widgets: ModelRc::new(widgets),
         }
     }
@@ -604,7 +604,7 @@ mod deserialization_tests {
         let json = json!({
             "id": Uuid::new_v4(),
             "enabled": true,
-            "duration": "5s",
+            "cycle_duration": "5s",
             "kind": "fullscreen",
             "widgets": [{
                 "id": Uuid::new_v4(),
@@ -632,7 +632,7 @@ mod deserialization_tests {
         let json = json!({
             "id": Uuid::new_v4(),
             "enabled": true,
-            "duration": "5s",
+            "cycle_duration": "5s",
             "kind": "combined",
             "widgets": [{
                 "id": Uuid::new_v4(),

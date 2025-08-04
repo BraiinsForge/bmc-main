@@ -1,29 +1,38 @@
 {
   "scenes": [
     {
-      "id": 0,
-      "duration": "5s",
+      "id": "3da7bea3-58e2-4bc4-83ce-21f416c894df",
+      "enabled": true,
+      "cycle_duration": "5s",
       "widgets": [
         {
+          "id": "180dcb35-fa30-4245-9e48-6a671627dcb5",
           "row": 0,
           "col": 0,
-          "widget_type": "ClockAnalogRectLarge",
-          "widget_config": {
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
             "show_date": true,
+            "show_seconds": true,
             "show_timezone": true,
-            "number_font_style": "Medium",
-            "timezone": "Prague, CZ"
+            "timezone": "Europe/Prague"
           }
         },
         {
+          "id": "21c216d2-d040-40aa-ae68-2cbc8ed765b3",
           "row": 0,
           "col": 2,
-          "widget_type": "ClockAnalogRoundLarge",
-          "widget_config": {
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_round",
+            "numbers_font_style": "medium",
             "show_date": true,
+            "show_seconds": true,
             "show_timezone": true,
-            "number_font_style": "Medium",
-            "timezone": "NYC, US"
+            "timezone": "America/New_York"
           }
         }
       ]

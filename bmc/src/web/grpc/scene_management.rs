@@ -202,8 +202,8 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         let (id, field_violations) = parse_scene_id("id", &request.id);
         all_field_violations.extend(field_violations);
 
-        let (duration, field_violations) =
-            parse_scene_duration("duration_sec", request.duration_sec);
+        let (cycle_duration, field_violations) =
+            parse_scene_cycle_duration("cycle_duration_sec", request.cycle_duration_sec);
         all_field_violations.extend(field_violations);
 
         let enabled = request.enabled;
@@ -217,7 +217,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         }
 
         let id = id.ok_or_else(unchecked_field_violations_status)?;
-        let duration = duration.ok_or_else(unchecked_field_violations_status)?;
+        let cycle_duration = cycle_duration.ok_or_else(unchecked_field_violations_status)?;
 
         // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
         let join_handle = tokio::spawn({
@@ -237,7 +237,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let old_enabled = scene.enabled;
 
                 scene.enabled = enabled;
-                scene.duration = duration;
+                scene.cycle_duration = cycle_duration;
 
                 if let Err(err) = temp_config.sync_to_storage().await {
                     error!("Cannot save config: {}", err);
@@ -254,7 +254,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                     display_controller.reset_cycler();
                 }
 
-                display_controller.update_scene(id, enabled, duration);
+                display_controller.update_scene(id, enabled, cycle_duration);
 
                 Ok(Response::new(()))
             }
@@ -878,19 +878,19 @@ fn parse_widget_id(field: &str, input: &str) -> ParseOutput<WidgetId> {
     (maybe_id, field_violations)
 }
 
-fn parse_scene_duration(field: &str, input: u32) -> ParseOutput<Duration> {
+fn parse_scene_cycle_duration(field: &str, input: u32) -> ParseOutput<Duration> {
     let mut field_violations = FieldViolations::new();
 
-    let duration = Duration::from_secs(input.into());
+    let cycle_duration = Duration::from_secs(input.into());
 
-    if duration < Scene::MIN_DURATION {
+    if cycle_duration < Scene::MIN_CYCLE_DURATION {
         field_violations.push(
             field,
-            format!("Out of range: {}..", Scene::MIN_DURATION.as_secs()),
+            format!("Out of range: {}..", Scene::MIN_CYCLE_DURATION.as_secs()),
         );
         (None, field_violations)
     } else {
-        (Some(duration), field_violations)
+        (Some(cycle_duration), field_violations)
     }
 }
 
@@ -1067,12 +1067,12 @@ fn map_scene_to_proto(scene: Scene) -> web::Scene {
     };
 
     #[expect(clippy::cast_possible_truncation)]
-    let duration_sec = scene.duration.as_secs() as u32;
+    let cycle_duration_sec = scene.cycle_duration.as_secs() as u32;
 
     web::Scene {
         id: scene.id.to_string(),
         enabled: scene.enabled,
-        duration_sec,
+        cycle_duration_sec,
         kind: Some(kind),
     }
 }

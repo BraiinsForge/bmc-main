@@ -34,7 +34,7 @@ impl ConfigRoot {
 
     fn validate_scenes(&self) -> Result<()> {
         for scene in self.scenes.values() {
-            if scene.duration < Scene::MIN_DURATION {
+            if scene.cycle_duration < Scene::MIN_CYCLE_DURATION {
                 bail!("Duration for scene `{}` is too short", scene.id);
             }
 

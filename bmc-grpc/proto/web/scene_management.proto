@@ -11,7 +11,7 @@ message Scene {
   // required
   bool enabled = 2;
   // required, minimum 1
-  uint32 duration_sec = 3;
+  uint32 cycle_duration_sec = 3;
   // required
   oneof kind {
     Fullscreen fullscreen = 4;
@@ -45,7 +45,7 @@ message UpdateSceneRequest {
   // required
   bool enabled = 2;
   // required, minimum 1
-  uint32 duration_sec = 3;
+  uint32 cycle_duration_sec = 3;
 }
 
 message MoveSceneRequest {

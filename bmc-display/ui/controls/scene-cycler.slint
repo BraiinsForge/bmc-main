@@ -79,7 +79,7 @@ export component SceneCyclerHorizontal inherits Rectangle {
 
     cycler := SceneCycler {
         enabled: root.enabled && !swipe.swiping;
-        duration: root.scenes[root.scene-index].duration;
+        duration: root.scenes[root.scene-index].cycle-duration;
         scenes-count: root.scenes.length;
     }
 
@@ -135,7 +135,7 @@ export component SceneCyclerStacked inherits Rectangle {
 
     cycler := SceneCycler {
         enabled: root.enabled && !swipe.swiping;
-        duration: root.scenes[root.scene-index].duration;
+        duration: root.scenes[root.scene-index].cycle-duration;
         scenes-count: root.scenes.length;
     }
 
