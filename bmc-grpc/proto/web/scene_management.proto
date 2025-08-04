@@ -169,6 +169,59 @@ enum FontStyle {
 // Configures scenes & widgets for individual scenes.
 // CQRS pattern, commands only modify state, queries only return state.
 // FE should fetch scene(s) after executing command to get into proper state.
+//
+// FE implementation tips:
+//
+// add new scene:
+// - combined:
+//   - call `AddCombinedScene`
+//     - creates empty scene without any widgets
+//     - response contains ID of newly created scene
+//   - redirect user to page with grid
+//   - call `GetScene`
+//   - call `PreviewScene` & keep stream open while user is on grid page
+// - fullscreen:
+//   - call `AddFullscreenScene` - you *don't need* to specify inner values for widget kind (BE ignores them)
+//     - creates scene with single fullscreen widget (with default values, decided by BE)
+//     - response contains ID of newly created scene
+//   - call `GetScene` & show modal to edit fullscreen widget
+//   - call `PreviewScene` & keep stream open while modal is open
+//
+// update scene:
+// - combined & fullscreen:
+//   - call `UpdateScene`
+//   - call `GetScene`
+//
+// move scene:
+// - combined & fullscreen:
+//   - call `MoveScene`
+//   - call `GetScenes`
+//
+// clone scene:
+// - combined & fullscreen:
+//   - call `CloneScene`
+//   - call `GetScenes`
+//
+// remove scene:
+// - combined & fullscreen:
+//   - call `RemoveScene`
+//   - call `GetScenes`
+//
+// add widget:
+// - combined:
+//   - call `AddWidget` - you *don't need* to specify inner values for widget kind (BE ignores them)
+//     - response contains ID of newly created widget
+//   - call `GetScene` & show modal to edit new widget
+//
+// update widget:
+// - combined & fullscreen:
+//   - call `UpdateWidget` - you *must* specify all inner values for widget kind
+//   - call `GetScene`
+//
+// remove widget:
+// - combined & fullscreen:
+//   - call `RemoveWidget`
+//   - call `GetScene`
 service SceneManagementService {
   // Get all scenes
   rpc GetScenes(google.protobuf.Empty) returns (GetScenesResponse);
@@ -182,6 +235,7 @@ service SceneManagementService {
   // Returns ID of thew new scene.
   rpc AddCombinedScene(google.protobuf.Empty) returns (google.protobuf.StringValue);
   // Update only common properties for fullscreen and combined scene, not widgets.
+  // This is not patch, but rather full update.
   rpc UpdateScene(UpdateSceneRequest) returns (google.protobuf.Empty);
   // Move scene to different index
   rpc MoveScene(MoveSceneRequest) returns (google.protobuf.Empty);
@@ -190,10 +244,7 @@ service SceneManagementService {
   rpc CloneScene(SceneRequest) returns (google.protobuf.StringValue);
   // Remove scene by ID.
   rpc RemoveScene(SceneRequest) returns (google.protobuf.Empty);
-  // Keep preview screen shown on the display while stream is open.
-  // This should be called:
-  //   fullscreen scene - while modal is open, on the list page
-  //   combined scene - whole time on the grid page
+  // Keep preview screen shown on the display while stream is open
   rpc PreviewScene(SceneRequest) returns (stream google.protobuf.Empty);
   // Add widget into the scene. You need to specify size, position, kind.
   // It will use default values for widget kind specific params.
@@ -201,6 +252,7 @@ service SceneManagementService {
   rpc AddWidget(AddWidgetRequest) returns (google.protobuf.StringValue);
   // Update widget by ID. You need to specify size, position, kind.
   // It will use passed values for widget kind specific params.
+  // This is not patch, but rather full update.
   rpc UpdateWidget(UpdateWidgetRequest) returns (google.protobuf.Empty);
   // Remove widget by ID.
   rpc RemoveWidget(WidgetRequest) returns (google.protobuf.Empty);
