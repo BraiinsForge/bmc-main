@@ -8,7 +8,13 @@ export const URLS = {
     pages: {
         initSetup: '/init_setup',
 
-        display: '/display',
+        display: {
+            list: '/display',
+            combined: {
+                path: '/display/:id',
+                getHref: (id: string) => `/display/${id}`,
+            },
+        },
         settings: '/settings',
         alarms: '/alarms',
         priceAlerts: '/price-alerts',

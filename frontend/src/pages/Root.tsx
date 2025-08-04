@@ -8,7 +8,8 @@ import { useStore } from '@/store';
 import AppContext, {
     getAppContextDefault,
     type AppContextType,
-    type NotificationType,
+    type NotifyFunction,
+    type NotificationExtra,
     type ConfirmationDescriptor,
 } from '@/context';
 
@@ -32,12 +33,12 @@ interface Confirmation extends ConfirmationDescriptor {
 }
 interface Notification {
     id: string | number;
-    type: NotificationType;
-    text: string;
+    externalID: null | NotificationExtra['id'];
+    data: NotificationItem;
 }
 
 interface State {
-    notifications: ReadonlyArray<NotificationItem>;
+    notifications: Notification[];
     confirmation: null | Confirmation;
 }
 const getInitialState = (): State => ({
@@ -146,32 +147,44 @@ class View extends Component<Props, State> {
     //
 
     #notificationLastID: number = 0;
-    #notificationHide = (id: Notification['id']): void => {
+    #notificationClearInternal = (id: Notification['id']): void => {
         this.setState({ notifications: this.state.notifications.filter(x => x.id !== id) });
     };
-    #notificationClear = (_?: any): void => this.setState({ notifications: [] });
-    #notify = (type: Notification['type'], text: Notification['text'], duration?: number): void => {
+    #notificationClearExternal = (externalID?: NotificationExtra['id']): void => {
+        this.setState(s => ({
+            notifications: externalID != null ? s.notifications.filter(x => x.externalID !== externalID) : [],
+        }));
+    };
+    #notificationClearExternalAll = (): void => this.#notificationClearExternal();
+    #notify: NotifyFunction = (type, text, extra): void => {
+        const externalID = extra?.id ?? null;
+        const timeoutSeconds = extra?.timeoutSeconds;
+
         this.#notificationLastID += +1;
         const id: number = this.#notificationLastID;
-        const newItem = {
-            id,
-            kind: type,
-            content: text,
-        } satisfies NotificationItem;
-        this.setState(s => ({ notifications: [...s.notifications, newItem] }));
 
-        if (duration != null && Number.isInteger(duration)) {
-            setTimeout(() => this.#notificationHide(id), duration * 3e3);
+        let currentList = this.state.notifications.slice(0);
+        const data: NotificationItem = { id, kind: type, content: text, counter: null };
+
+        if (externalID != null) {
+            const existingItem = currentList.find(x => x.externalID === externalID);
+            currentList = currentList.filter(x => x.externalID !== externalID);
+            if (existingItem) data.counter = (existingItem.data.counter ?? 0) + 1;
+        }
+
+        this.setState({
+            notifications: [...currentList, { id, externalID, data }],
+        });
+
+        if (timeoutSeconds != null && Number.isFinite(timeoutSeconds)) {
+            setTimeout(() => this.#notificationClearInternal(id), timeoutSeconds * 3e3);
         }
     };
 
     #appContextValue = Object.assign({}, getAppContextDefault(), {
-        notify: Object.assign(
-            (type: Notification['type'], message: Notification['text'], timeoutSeconds?: number) => {
-                this.#notify(type, message, timeoutSeconds);
-            },
-            { clear: this.#notificationClear },
-        ) as AppContextType['notify'],
+        notify: Object.assign(((type, message, extra) => this.#notify(type, message, extra)) as NotifyFunction, {
+            clear: this.#notificationClearExternal,
+        }) as AppContextType['notify'],
         confirm: (conf => {
             return this.#confirm({
                 size: conf.size,
@@ -193,9 +206,9 @@ class View extends Component<Props, State> {
             <AppContext value={this.#appContextValue}>
                 <Notifications
                     top={12}
-                    items={notifications}
-                    onHide={x => this.#notificationHide(x.id)}
-                    onClear={this.#notificationClear}
+                    items={notifications.map(x => x.data)}
+                    onHide={x => this.#notificationClearInternal(x.id)}
+                    onClear={this.#notificationClearExternalAll}
                 />
 
                 {this.#confirmRender()}

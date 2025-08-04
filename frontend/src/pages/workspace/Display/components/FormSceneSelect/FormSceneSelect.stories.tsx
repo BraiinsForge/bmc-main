@@ -8,5 +8,5 @@ export default {
 } satisfies Meta<FormSceneSelectProps>;
 
 export function FormSceneSelect() {
-    return <Component onClick={action('onClick')} />;
+    return <Component onSelection={action('onClick')} onClose={action('onClose')} isOpen={true} variant="scene" />;
 }

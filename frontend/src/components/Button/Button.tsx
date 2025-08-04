@@ -50,7 +50,7 @@ function ButtonComponent(props: ButtonProps & { innerRef: Ref<HTMLButtonElement>
     const $hasIconOnly: boolean = hasIconOnly || Boolean(renderIcon && !children);
     const targetProps: ButtonBaseProps = {
         kind,
-        title,
+        title: undefined,
 
         // Icon
         renderIcon,

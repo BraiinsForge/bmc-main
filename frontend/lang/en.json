@@ -1,6 +1,6 @@
 {
     "+jJI2H": {
-        "defaultMessage": "BMC 100 - Braiins Mining Clock"
+        "defaultMessage": "BMC 100 - Braiins Deck"
     },
     "/TZvjA": {
         "defaultMessage": "Add Scene"
@@ -12,7 +12,7 @@
         "defaultMessage": "Show Seconds"
     },
     "1bOsc+": {
-        "defaultMessage": "Location is used for Timezone and Weather data."
+        "defaultMessage": "Location is used for Timezone."
     },
     "1iEPTM": {
         "defaultMessage": "General"

@@ -180,3 +180,86 @@ export function numberFormatToString(x: Maybe<pb.NumberFormat>): null | string {
             assertUnreachable(x, 'number format');
     }
 }
+
+export function clockStyleToString(intl: IntlShape, style: pb.ClockWidget_ClockStyle): null | string {
+    if (!style) return null;
+    switch (style) {
+        case pb.ClockWidget_ClockStyle.ANALOG_ROUND:
+            return intl.formatMessage({ defaultMessage: 'Analog (round)' });
+
+        case pb.ClockWidget_ClockStyle.ANALOG_RECT:
+            return intl.formatMessage({ defaultMessage: 'Analog (rectangular)' });
+
+        case pb.ClockWidget_ClockStyle.DIGITAL:
+            return intl.formatMessage({ defaultMessage: 'Digital' });
+
+        default:
+            assertUnreachable(style, 'clock style');
+    }
+}
+export function fontStyleToString(intl: IntlShape, style: pb.FontStyle): null | string {
+    if (!style) return null;
+    switch (style) {
+        case pb.FontStyle.LIGHT:
+            return intl.formatMessage({ defaultMessage: 'Light' });
+
+        case pb.FontStyle.MEDIUM:
+            return intl.formatMessage({ defaultMessage: 'Medium' });
+
+        case pb.FontStyle.BOLD:
+            return intl.formatMessage({ defaultMessage: 'Bold' });
+
+        default:
+            assertUnreachable(style, 'clock style');
+    }
+}
+
+export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.WidgetKind['value']>>): null | string {
+    switch (kind) {
+        case null:
+        case undefined:
+            return null;
+
+        case 'clock':
+            return intl.formatMessage({ defaultMessage: 'Clock' });
+
+        default:
+            assertUnreachable(kind);
+    }
+}
+
+export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
+    const val = data?.value;
+    switch (val?.case) {
+        case undefined:
+            return null;
+
+        case 'clock':
+            return intl.formatMessage(
+                { defaultMessage: 'Style: {style}, font: {font}' },
+                {
+                    style: clockStyleToString(intl, val.value.clockStyle) || 'N/A',
+                    font: fontStyleToString(intl, val.value.numbersFontStyle) || 'N/A',
+                },
+            );
+
+        default:
+            assertUnreachable(val, 'fullscreen widget kind');
+    }
+}
+export function sceneDescription(intl: IntlShape, data: Maybe<MaybeArray<pb.Widget>>): null | string {
+    if (data == null) return null;
+
+    // Combined scene
+    if (Array.isArray(data)) {
+        return data
+            .map(x => sceneTitle(intl, x.kind?.value.case))
+            .filter(Boolean)
+            .join(', ');
+    }
+
+    // Fullscreen widget
+    else if (data) return widgetDescription(intl, data.kind);
+    // Fail
+    else assertUnreachable(data);
+}

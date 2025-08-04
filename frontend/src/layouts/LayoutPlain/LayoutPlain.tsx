@@ -15,7 +15,7 @@ interface Props extends LayoutPlainProps {
 
 class Base extends Component<Props> {
     #txt = {
-        name: this.props.intl.formatMessage({ defaultMessage: 'BMC 100 - Braiins Mining Clock' }),
+        name: this.props.intl.formatMessage({ defaultMessage: 'BMC 100 - Braiins Deck' }),
         documentation: this.props.intl.formatMessage({ defaultMessage: 'Documentation' }),
     };
 

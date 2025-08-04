@@ -1,6 +1,6 @@
+import invariant from 'invariant';
 import { random } from 'es-toolkit';
 import { knuthShuffle } from 'knuth-shuffle';
-import invariant from 'invariant';
 
 import COLORS from '@/styles/colors';
 import { number } from './number';
@@ -8,10 +8,6 @@ import { type LengthRange, getLength } from './generics';
 
 export function randomItem<T>(input: ReadonlyArray<T>): T {
     return input[random(0, input.length - 1)];
-}
-export function randomEnumItem<V extends string | number>(enm: Record<string, V>): V {
-    const input = Object.values(enm) as V[];
-    return randomItem<V>(input);
 }
 
 export function randomSlices(

@@ -1,8 +1,9 @@
 import { Component } from 'react';
+import { assertUnreachable } from '@/lib/ts.ts';
 import { useIntl, type IntlShape } from 'react-intl';
 
 // App
-import type * as pb from '@/proto';
+import * as pb from '@/proto';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
@@ -16,7 +17,12 @@ import css from './SceneOverviewList.scss';
 
 export interface SceneOverviewListProps {
     scenes: pb.Scene[];
-    setScenes(scenes: pb.Scene[]): void;
+    onMove(scenes: pb.Scene[], move: { id: string; from: number; into: number }): void;
+    onEdit(id: string): void;
+    onClone(id: string): void;
+    onDelete(id: string): void;
+    onToggle(id: string, value: boolean): void;
+    onDurationChange(id: string, value: string): void;
 }
 interface Props extends SceneOverviewListProps {
     intl: IntlShape;
@@ -26,25 +32,51 @@ class View extends Component<Props> {
     static contextType = AppContext;
     declare context: AppContextType;
 
-    #noop = (): void => {
-        this.context.notify('error', 'Not implemented!');
-    };
+    componentWillUnmount = () => pb.abort.all(this);
+
     #renderItem: SortableProps<pb.Scene>['renderItem'] = props => {
+        const { onEdit, onToggle, onClone, onDelete, onDurationChange, intl } = this.props;
         const { item, state, rootProps, dragHandleProps } = props;
+
+        let title: string = 'N/A';
+        let description: string = '';
+        switch (item.kind.case) {
+            case undefined:
+                break;
+
+            case 'combined':
+                title = intl.formatMessage({ defaultMessage: 'Combined Scene' });
+                description = pb.sceneDescription(intl, item.kind.value.widgets) || '';
+                break;
+
+            case 'fullscreen':
+                title = pb.sceneTitle(intl, item.kind.value.widget?.kind?.value.case) ?? 'N/A';
+                description = pb.sceneDescription(intl, item.kind.value.widget) || '';
+                break;
+
+            default:
+                assertUnreachable(item.kind, 'scene kind');
+        }
+
         return (
             <SceneOverviewRow
                 id={item.id}
                 className={cn(css.line, state.isDragging && css.dragged)}
                 enabled={item.enabled}
-                preview={<ScenePreview kind={item.kind} variant={item.variant} />}
-                title={item.title}
-                description={item.description}
-                duration={item.durationSeconds}
+                preview={
+                    <ScenePreview
+                        kind={item.kind.case === 'fullscreen' ? item.kind.value?.widget?.kind?.value : 'combined'}
+                    />
+                }
+                title={title}
+                description={description}
+                duration={item.cycleDurationSec}
                 // Handlers
-                onEdit={this.#noop}
-                onToggle={this.#noop}
-                onDelete={this.#noop}
-                onDurationChange={this.#noop}
+                onEdit={onEdit}
+                onClone={onClone}
+                onToggle={onToggle}
+                onDelete={onDelete}
+                onDurationChange={onDurationChange}
                 // DnD
                 dndRootProps={rootProps}
                 dndDragHandleProps={dragHandleProps}
@@ -53,15 +85,10 @@ class View extends Component<Props> {
     };
 
     render() {
-        const { scenes, setScenes } = this.props;
+        const { scenes, onMove } = this.props;
 
         return (
-            <Sortable<pb.Scene>
-                className={css.list}
-                items={scenes}
-                onChange={setScenes}
-                renderItem={this.#renderItem}
-            />
+            <Sortable<pb.Scene> className={css.list} items={scenes} onChange={onMove} renderItem={this.#renderItem} />
         );
     }
 }

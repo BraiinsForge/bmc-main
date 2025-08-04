@@ -2,8 +2,8 @@
 
 .root {
     position: absolute;
-    width: 100vw;
-    height: 100vh;
+    inline-size: 100vw;
+    block-size: 100vh;
 
     composes: vertical center from 'styles/layout.scss';
     padding-block-start: mini-units(8);
@@ -15,6 +15,7 @@
 .inner {
     composes: vertical from 'styles/layout.scss';
     inline-size: to-rem(512px);
+    max-inline-size: 100%;
     gap: mini-units(2);
 }
 .innerSetup {

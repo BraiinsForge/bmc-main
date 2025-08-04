@@ -1,42 +1,45 @@
 import type { ImgHTMLAttributes } from 'react';
 import { assertUnreachable } from '@/lib/ts';
-import * as pb from '@/proto';
+import type * as pb from '@/proto';
 
 import { ClockScenePreview } from './clock';
-import { TickerScenePreview } from './ticker';
+// import { TickerScenePreview } from './ticker';
 
 export interface ScenePreviewProps extends ImgHTMLAttributes<HTMLImageElement> {
-    kind: pb.SceneKind;
-    variant?: pb.SceneVariant;
+    kind: Maybe<pb.WidgetKind['value'] | 'combined'>;
 }
 export function ScenePreview(props: ScenePreviewProps) {
-    const { kind, variant, ...rest } = props;
+    const { kind, ...rest } = props;
+    if (kind == null) return null;
 
-    switch (kind) {
-        case pb.SceneKind.clock:
-            return <ClockScenePreview {...rest} kind={variant as pb.SceneVariantClock} />;
+    // Combined scene
+    if (kind === 'combined') return <img {...rest} src={require('./preview-combined.png')} alt="Preview Combined" />;
 
-        case pb.SceneKind.ticker:
-            return <TickerScenePreview {...rest} kind={variant as pb.SceneVariantTicker} />;
+    switch (kind.case) {
+        case undefined:
+            return null;
 
-        case pb.SceneKind.combined:
-            return <img {...rest} src={require('./preview-combined.png')} alt="Preview Combined" />;
+        case 'clock':
+            return <ClockScenePreview {...rest} kind={kind.value.clockStyle} />;
 
-        case pb.SceneKind.image:
-            return (
-                <img
-                    {...rest}
-                    src={require('./preview-image.png')}
-                    // biome-ignore lint/a11y/noRedundantAlt: Bullshit, this is talking about use picture
-                    alt="Preview Image"
-                />
-            );
+        // case 'ticker':
+        //      return <TickerScenePreview {...rest} kind={variant as pb.SceneVariantTicker} />;
 
-        case pb.SceneKind.pool:
-            return <img {...rest} src={require('./preview-pool.png')} alt="Preview Pool" />;
+        // case 'image':
+        //     return (
+        //         <img
+        //             {...rest}
+        //             src={require('./preview-image.png')}
+        //             // biome-ignore lint/a11y/noRedundantAlt: Bullshit, this is talking about use picture
+        //             alt="Preview Image"
+        //         />
+        //     );
 
-        case pb.SceneKind.manager:
-            return <img {...rest} src={require('./preview-manager.png')} alt="Preview Manager" />;
+        // case 'pool':
+        //     return <img {...rest} src={require('./preview-pool.png')} alt="Preview Pool"/>;
+
+        // case 'manager':
+        //     return <img {...rest} src={require('./preview-manager.png')} alt="Preview Manager" />;
 
         default:
             assertUnreachable(kind, 'scene preview');

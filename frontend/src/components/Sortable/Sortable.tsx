@@ -79,7 +79,7 @@ function Item<D extends Datum>({ data, render }: Item<D>) {
 
 export interface SortableProps<D extends Datum> {
     items: Array<D>;
-    onChange(items: Array<D>): void;
+    onChange(items: Array<D>, move: { id: D['id']; from: number; into: number }): void;
     renderItem(props: RenderSortableListItemProps<D>): ReactElement;
 
     className?: string;
@@ -94,14 +94,20 @@ export function Sortable<D extends Datum>(props: SortableProps<D>) {
     );
 
     function handleDragEnd(e: DragEndEvent) {
-        if (e.active.id === e.over?.id) return;
+        const idSource = e.active.id;
+        const idTarget = e.over?.id;
 
-        const oldIndex = items.findIndex(x => x.id === e.active.id);
-        const newIndex = items.findIndex(x => x.id === e.over?.id);
-        const updated = arrayMove(items, oldIndex, newIndex);
+        if (idSource === idTarget) return;
 
-        onChange(updated);
+        const from = items.findIndex(x => x.id === idSource);
+        const into = items.findIndex(x => x.id === idTarget);
+
+        const updated = arrayMove(items, from, into);
+        const move = { id: idSource, from, into };
+
+        onChange(updated, move);
     }
+
     return (
         <div {...rest} className={cn(css.root, className)}>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>

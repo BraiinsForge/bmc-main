@@ -49,7 +49,7 @@ const getInitialState = (): State => ({});
 class Base extends Component<Props, State> {
     readonly state = getInitialState();
     #txt = {
-        name: this.props.intl.formatMessage({ defaultMessage: 'BMC 100 - Braiins Mining Clock' }),
+        name: this.props.intl.formatMessage({ defaultMessage: 'BMC 100 - Braiins Deck' }),
         sidenav: this.props.intl.formatMessage({ defaultMessage: 'Side navigation' }),
 
         documentation: this.props.intl.formatMessage({ defaultMessage: 'Documentation' }),
@@ -63,7 +63,7 @@ class Base extends Component<Props, State> {
             <Fragment>
                 <SideLink
                     icon={IconScreen}
-                    url={URLS.pages.display}
+                    url={URLS.pages.display.list}
                     label={formatMessage({ defaultMessage: 'Display Scenes' })}
                 />
                 <SideLink

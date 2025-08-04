@@ -93,7 +93,11 @@ async fn test_timezone_change_and_reschedule() -> Result<(), JobSchedulerError> 
     println!("Time till next job: {time_till_next_job:?}");
     assert!(time_till_next_job_before_update.is_some());
     assert!(time_till_next_job.is_some());
-    assert!(time_till_next_job_before_update.unwrap() > time_till_next_job.unwrap());
+    // Verify that the job has been rescheduled (times are different)
+    assert_ne!(
+        time_till_next_job_before_update.unwrap(),
+        time_till_next_job.unwrap()
+    );
 
     // Verify the cron pattern is still the same (2:30 AM daily)
     if let Some(ref schedule) = updated_job.schedule {

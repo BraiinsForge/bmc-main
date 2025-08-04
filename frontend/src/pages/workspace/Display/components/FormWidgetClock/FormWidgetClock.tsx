@@ -5,35 +5,41 @@ import * as pb from '@/proto';
 import { Form, type iField, getID } from '@/lib/form';
 
 // Components
-import { Checkbox } from '@/components';
-import { Location as IconLocation, Earth as IconEarth, Screen as IconScreen } from '@carbon/react/icons';
+import { ModalCustom, Checkbox, ButtonSwitch } from '@/components';
 import { RadioButtonGroup, RadioButton, CheckboxGroup, ComboBox } from '@carbon/react';
+import {
+    // Location as IconLocation,
+    Earth as IconEarth,
+    Screen as IconScreen,
+} from '@carbon/react/icons';
 
 // styles
 import css from './FormWidgetClock.scss';
 
-interface OptionItem {
-    value: string;
-    label: string;
+interface OptionItem<T extends string | number> {
+    value: T;
+    label: number | string;
 }
-interface LocationItem {
-    value: string;
-    label: string;
-}
-
-const $id = getID('settings', 'clock', 'scene');
+const $ = getID('settings', 'clock', 'scene').get;
 
 export interface FormWidgetClockProps {
-    clockStyle: iField<pb.ClockStyle>;
+    isOpen: boolean;
+    isEdit: boolean;
+    onClose(): void;
+
+    widgetSize: null | (iField<pb.WidgetSize> & { options: Array<Exclude<pb.WidgetSize, 0>> });
+
+    clockStyle: iField<pb.ClockWidget_ClockStyle>;
     fontStyle: iField<pb.FontStyle>;
 
     showDate: iField<boolean>;
     showSeconds: iField<boolean>;
-    showTimezone: iField<boolean>;
-    showWeather: iField<boolean>;
 
-    timezone: iField<string>;
-    weatherLocation: iField<string>;
+    showTimezone: iField<boolean>;
+    timezone: iField<string> & { options: pb.Timezone[] };
+
+    // showWeather: iField<boolean>;
+    // weatherLocation: iField<string>;
 
     style?: CSSProperties;
 }
@@ -42,45 +48,83 @@ interface Props extends FormWidgetClockProps {
 }
 
 class View extends Component<Props> {
-    get #clockStyleOptions(): OptionItem[] {
+    get #clockStyleOptions(): Array<OptionItem<pb.ClockWidget_ClockStyle>> {
         const { formatMessage } = this.props.intl;
         return [
-            { value: pb.ClockStyle.analog1, label: formatMessage({ defaultMessage: 'Analog 1' }) },
-            { value: pb.ClockStyle.analog2, label: formatMessage({ defaultMessage: 'Analog 2' }) },
-            { value: pb.ClockStyle.digital1, label: formatMessage({ defaultMessage: 'Digital 1' }) },
-            { value: pb.ClockStyle.digital2, label: formatMessage({ defaultMessage: 'Digital 2' }) },
+            { value: pb.ClockWidget_ClockStyle.ANALOG_RECT, label: formatMessage({ defaultMessage: 'Analog 1' }) },
+            { value: pb.ClockWidget_ClockStyle.ANALOG_ROUND, label: formatMessage({ defaultMessage: 'Analog 2' }) },
+            { value: pb.ClockWidget_ClockStyle.DIGITAL, label: formatMessage({ defaultMessage: 'Digital 1' }) },
         ];
     }
-    get #fontStyleOptions(): OptionItem[] {
+    get #fontStyleOptions(): Array<OptionItem<pb.FontStyle>> {
         const { formatMessage } = this.props.intl;
         return [
-            { value: pb.FontStyle.light, label: formatMessage({ defaultMessage: 'Light' }) },
-            { value: pb.FontStyle.medium, label: formatMessage({ defaultMessage: 'Medium' }) },
-            { value: pb.FontStyle.bold, label: formatMessage({ defaultMessage: 'Bold' }) },
+            { value: pb.FontStyle.LIGHT, label: formatMessage({ defaultMessage: 'Light' }) },
+            { value: pb.FontStyle.MEDIUM, label: formatMessage({ defaultMessage: 'Medium' }) },
+            { value: pb.FontStyle.BOLD, label: formatMessage({ defaultMessage: 'Bold' }) },
         ];
     }
 
+    #txt = {
+        clock: this.props.intl.formatMessage({ defaultMessage: 'Clock' }),
+        addScene: this.props.intl.formatMessage({ defaultMessage: 'Add Scene' }),
+        editScene: this.props.intl.formatMessage({ defaultMessage: 'Edit Scene' }),
+    };
+
     render() {
         const {
+            isOpen,
+            isEdit,
+            onClose,
+
             // Main
+            widgetSize,
             clockStyle,
             fontStyle,
 
             // Additional
             showDate,
             showSeconds,
-            showTimezone,
-            showWeather,
 
+            showTimezone,
             timezone,
-            weatherLocation,
+
+            // showWeather,
+            // weatherLocation,
 
             style,
             intl: { formatMessage },
         } = this.props;
 
-        return (
+        const form = (
             <Form className={css.root} style={style}>
+                {widgetSize == null ? null : (
+                    <ButtonSwitch
+                        options={[
+                            {
+                                id: pb.WidgetSize.SMALL,
+                                text: formatMessage({ defaultMessage: 'Small' }),
+                                disabled: !widgetSize.options.includes(pb.WidgetSize.SMALL),
+                            },
+                            {
+                                id: pb.WidgetSize.MEDIUM,
+                                text: formatMessage({ defaultMessage: 'Medium' }),
+                                disabled: !widgetSize.options.includes(pb.WidgetSize.MEDIUM),
+                            },
+                            {
+                                id: pb.WidgetSize.LARGE,
+                                text: formatMessage({ defaultMessage: 'Large' }),
+                                disabled: !widgetSize.options.includes(pb.WidgetSize.LARGE),
+                            },
+                        ]}
+                        onChange={widgetSize.onChange}
+                        selectedOption={widgetSize.value}
+                        disabled={widgetSize.disabled}
+                        invalid={!!widgetSize.error}
+                        invalidText={widgetSize.error}
+                    />
+                )}
+
                 <BoundRadioGroup
                     {...clockStyle}
                     idSuffix="style"
@@ -110,58 +154,29 @@ class View extends Component<Props> {
                         idSuffix="show-timezone"
                         labelText={formatMessage({ defaultMessage: 'Show Timezone' })}
                     />
-                    <BoundCheckbox
-                        {...showWeather}
-                        idSuffix="show-weather"
-                        labelText={formatMessage({ defaultMessage: 'Show Weather' })}
-                    />
+                    {/* <BoundCheckbox {...showWeather} idSuffix="show-weather" labelText={formatMessage({ defaultMessage: 'Show Weather' })} /> */}
                 </CheckboxGroup>
 
                 {showTimezone.value === true ? (
-                    <BoundComboBox
+                    <BoundComboBox<string>
                         idSuffix="timezone"
                         {...timezone}
-                        // FIXME: Format and real data?
-                        items={[
-                            { value: 'America/New_York', label: 'New York (UTC-5)' },
-                            { value: 'Europe/London', label: 'London (UTC+0)' },
-                            { value: 'Europe/Paris', label: 'Paris (UTC+1)' },
-                            { value: 'Asia/Tokyo', label: 'Tokyo (UTC+9)' },
-                            { value: 'Asia/Dubai', label: 'Dubai (UTC+4)' },
-                            { value: 'Australia/Sydney', label: 'Sydney (UTC+11)' },
-                            { value: 'Pacific/Auckland', label: 'Auckland (UTC+13)' },
-                            { value: 'Asia/Singapore', label: 'Singapore (UTC+8)' },
-                            { value: 'Europe/Moscow', label: 'Moscow (UTC+3)' },
-                            { value: 'America/Los_Angeles', label: 'Los Angeles (UTC-8)' },
-                            { value: 'Asia/Shanghai', label: 'Shanghai (UTC+8)' },
-                            { value: 'Europe/Berlin', label: 'Berlin (UTC+1)' },
-                            { value: 'Asia/Hong_Kong', label: 'Hong Kong (UTC+8)' },
-                            { value: 'America/Chicago', label: 'Chicago (UTC-6)' },
-                            { value: 'Asia/Seoul', label: 'Seoul (UTC+9)' },
-                        ]}
-                        // FIXME: Format and real data?
+                        items={timezone.options.map(x => ({ value: x.id, label: `${x.offset} ${x.label}` }))}
                         labelText={formatMessage({ defaultMessage: 'Timezone' })}
                         decorator={<IconEarth size={20} />}
-                        helperText={formatMessage({
-                            defaultMessage: 'Location is used for Timezone and Weather data.',
-                        })}
+                        helperText={formatMessage({ defaultMessage: 'Location is used for Timezone.' })}
                     />
                 ) : null}
 
-                {showWeather.value === true ? (
+                {/* showWeather.value === true ? (
                     <BoundComboBox
                         idSuffix="location"
                         {...weatherLocation}
-                        // FIXME: Format and real data?
                         items={[{ label: 'Location', value: 'Location' }]}
-                        // FIXME: Format and real data?
                         labelText={formatMessage({ defaultMessage: 'Weather Location' })}
                         decorator={<IconLocation size={20} />}
-                        helperText={formatMessage({
-                            defaultMessage: 'Location is used for Timezone and Weather data.',
-                        })}
                     />
-                ) : null}
+                ) : null */}
 
                 <div className={css.note}>
                     <IconScreen size={16} />
@@ -172,6 +187,26 @@ class View extends Component<Props> {
                     />
                 </div>
             </Form>
+        );
+
+        const verb = isEdit ? this.#txt.editScene : this.#txt.addScene;
+
+        return (
+            <ModalCustom
+                id={$('dialog')}
+                className={css.modal}
+                selectorPrimaryFocus="input"
+                // State
+                size="sm"
+                open={isOpen}
+                // Heading
+                title={this.#txt.clock}
+                label={verb}
+                // Cancel
+                onClose={onClose}
+                // Content
+                children={form}
+            />
         );
     }
 }
@@ -188,7 +223,7 @@ function BoundCheckbox(props: BoundCheckboxProps) {
     const { idSuffix, value, labelText, error, onChange, disabled } = props;
     return (
         <Checkbox
-            id={$id.get(idSuffix)}
+            id={$(idSuffix)}
             checked={!!value}
             label={labelText}
             disabled={disabled}
@@ -199,25 +234,26 @@ function BoundCheckbox(props: BoundCheckboxProps) {
     );
 }
 
-interface BoundComboBoxProps extends iField<string> {
+interface BoundComboBoxProps<T extends string | number> extends iField<T> {
     idSuffix: string;
     labelText: string;
-    items: OptionItem[];
+    items: Array<OptionItem<T>>;
     decorator?: ReactNode;
     helperText?: ReactNode;
 }
-function BoundComboBox(props: BoundComboBoxProps) {
+function BoundComboBox<T extends string | number>(props: BoundComboBoxProps<T>) {
     const { idSuffix, labelText, helperText, decorator, value, items, onChange, disabled, error } = props;
 
     return (
-        <ComboBox<LocationItem>
-            id={$id.get(idSuffix)}
+        <ComboBox<OptionItem<T>>
+            id={$(idSuffix)}
             className={css.comboBox}
-            onChange={x => onChange(x.selectedItem?.value ?? '')}
-            itemToString={x => x?.label ?? 'N/A'}
-            // FIXME: Data source?
+            onChange={x => {
+                const v = x.selectedItem?.value;
+                if (v != null) onChange(v);
+            }}
+            itemToString={x => (x?.label ? String(x.label) : 'N/A')}
             items={items}
-            // FIXME: Format and real data?
             selectedItem={value ? { label: value, value } : undefined}
             titleText={labelText}
             decorator={decorator}
@@ -229,16 +265,16 @@ function BoundComboBox(props: BoundComboBoxProps) {
     );
 }
 
-interface BoundRadioGroupProps extends iField<string> {
+interface BoundRadioGroupProps<T extends string | number> extends iField<T> {
     idSuffix: string;
     labelText: string;
-    items: OptionItem[];
+    items: Array<OptionItem<T>>;
     decorator?: ReactNode;
     helperText?: ReactNode;
 }
-function BoundRadioGroup(props: BoundRadioGroupProps) {
+function BoundRadioGroup<T extends string | number>(props: BoundRadioGroupProps<T>) {
     const { idSuffix, labelText, helperText, decorator, value, items, onChange, disabled, error } = props;
-    const id = $id.get(idSuffix);
+    const id = $(idSuffix);
 
     return (
         <RadioButtonGroup
@@ -249,7 +285,7 @@ function BoundRadioGroup(props: BoundRadioGroupProps) {
             children={items.map(x => (
                 <RadioButton key={x.value} value={x.value} labelText={x.label} checked={value === x.value} />
             ))}
-            onChange={v => onChange(v as string)}
+            onChange={v => onChange(v as T)}
             invalid={!!error}
             invalidText={error}
             helperText={helperText}

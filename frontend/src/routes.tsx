@@ -11,7 +11,10 @@ import PageNotFound from './pages/404';
 
 import PageLogin from './pages/auth/Login';
 import PageSettings from './pages/workspace/Settings';
-import PageDisplay from './pages/workspace/Display';
+
+import PageDisplayList from './pages/workspace/Display/DisplayList';
+import PageDisplayCombined from './pages/workspace/Display/DisplayCombined.tsx';
+
 import PageAlarms from './pages/workspace/Alarms';
 import PagePriceAlerts from './pages/workspace/PriceAlerts';
 import PageNotifications from './pages/workspace/Notifications';
@@ -43,7 +46,10 @@ export default createBrowserRouter([
                 Component: ContainerWorkspace,
                 children: [
                     { path: URLS.pages.settings, Component: PageSettings },
-                    { path: URLS.pages.display, Component: PageDisplay },
+
+                    { path: URLS.pages.display.list, Component: PageDisplayList },
+                    { path: URLS.pages.display.combined.path, Component: PageDisplayCombined },
+
                     { path: URLS.pages.alarms, Component: PageAlarms },
                     { path: URLS.pages.priceAlerts, Component: PagePriceAlerts },
                     { path: URLS.pages.notifications, Component: PageNotifications },

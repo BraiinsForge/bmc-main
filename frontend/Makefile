@@ -55,7 +55,9 @@ serve: EXTRA_ARGS ?= ;
 serve:
 	echo $(FACTORY_DEFAULT)
 	cd ..; \
-	cargo run --package bmc-mock -- \
+	cargo run \
+		--features=winit-skia \
+		--package bmc-mock -- \
 		--address="0.0.0.0:6070" \
 		--system-password="root" \
 		--www-path="$(shell realpath ./dist)" \
@@ -92,9 +94,8 @@ minify-images: minify-png minify-svg
 intl-extract:
 	yarn run formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json
 
-.PHONY: nix-yarn-files
-nix-yarn-files:
-	# "build" the yarn files derivation to check
-	# if the hard-coded hash is correct
-	nix build -L '.#yarnFiles'
-	rm -rf ./result
+.PHONY: nix-build
+nix-build:
+	# Builds the frontend through nix, verifying the integrity.
+	# Usefull for update of the nix-files hash.
+	cd ..; nix build -L '.#frontend'

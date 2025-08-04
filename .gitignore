@@ -1,4 +1,6 @@
+.claude
 target/
 result**
 .idea
 **/*#
+.DS_Store

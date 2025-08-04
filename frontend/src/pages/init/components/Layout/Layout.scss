@@ -4,7 +4,10 @@
     composes: vertical from 'styles/layout.scss';
 
     position: relative;
+
     inline-size: to-rem(512px);
+    max-inline-size: 100%;
+
     max-block-size: 100%;
     block-size: auto;
 

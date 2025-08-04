@@ -149,3 +149,12 @@ $workers-table-toolbar-height: to-rem(48px);
         }
     }
 }
+
+/// Mixes a color with transparency
+/// @link https://developer.mozilla.org/en-US/docs/Web/CSS/color_value/color-mix#adding_transparency
+/// @param {Color} $colour - The color to mix with transparency (can be a color value, variable or CSS custom property)
+/// @param {Percentage} $amount - The percentage of the original color to keep (0-100%)
+/// @return {Color} The resulting color with transparency
+@function opacify-color($colour, $amount) {
+    @return color-mix(in srgb, $colour $amount, transparent);
+}

@@ -29,7 +29,7 @@ $left-size-min: to-rem(280px);
     // When the description is empty, we want to stretch the title to center it vertically.
     // This requires:
     //  - description be present even when empty
-    //  - separate "grid-template-areas" because spaning is ignore with named areas
+    //  - separate "grid-template-areas" because spaning is ignored with named areas
     &:has(.description:empty) {
         grid-template-areas: 'title widget';
         grid-template-rows: 1fr;

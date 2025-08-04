@@ -5,6 +5,16 @@
     gap: mini-units(3);
 }
 
+.modal :global {
+    .cds--modal-header {
+        border-block-end: 1px solid $border-subtle;
+        padding-block: mini-units(2);
+    }
+    .cds--list-box__menu {
+        position: fixed;
+    }
+}
+
 .comboBox {
     input {
         padding-inline-end: 5.5rem !important;

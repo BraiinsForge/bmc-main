@@ -68,7 +68,10 @@ export function hasFormErrors<T extends iFormErrors<string, any>>(errors: Maybe<
  * // { name: string; age: number }
  */
 export type FormPropsToValuesRec<FormProps> = {
-    [K in keyof FormProps]?: FormProps[K] extends iField<infer T> ? T : never;
+    // We often use null to signify that a field can be explicitly omited from the form,
+    // but that causes problems here and in derived types further down the road.
+    // Therefore we will strip the `null` and just leave it at optional key.
+    [K in keyof FormProps]?: NonNullable<FormProps[K]> extends iField<infer T> ? T : never;
 };
 /**
  * Convert a collection (either interface or record) of iField types

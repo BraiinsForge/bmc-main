@@ -1,7 +1,9 @@
 import { useState } from 'react';
+import { action } from 'storybook/actions';
 import type { Meta } from '@storybook/react';
 
 import * as pb from '@/proto';
+import * as mock from '@/mocks';
 import { SceneOverviewList as Component, type SceneOverviewListProps } from './SceneOverviewList';
 
 export default {
@@ -11,61 +13,242 @@ export default {
 
 const initialState: pb.Scene[] = [
     {
-        id: 0,
+        $typeName: 'braiins.bmc.web.Scene',
+        id: '0',
         enabled: true,
-        durationSeconds: 10,
-        kind: pb.SceneKind.combined,
-        title: 'Combined Scene',
-        description: 'Clock, Clock, Weather, Ticker (BTC-USD)',
+        cycleDurationSec: 10,
+        kind: {
+            case: 'fullscreen',
+            value: {
+                $typeName: 'braiins.bmc.web.Scene.Fullscreen',
+                widget: {
+                    $typeName: 'braiins.bmc.web.Widget',
+                    id: mock.uuid(),
+                    size: pb.WidgetSize.FULL,
+                    position: {
+                        $typeName: 'braiins.bmc.web.WidgetPosition',
+                        row: 0,
+                        col: 0,
+                    },
+                    kind: {
+                        $typeName: 'braiins.bmc.web.WidgetKind',
+                        value: {
+                            case: 'clock',
+                            value: {
+                                $typeName: 'braiins.bmc.web.ClockWidget',
+                                clockStyle: mock.proto.randomEnumItem(pb.ClockWidget_ClockStyle),
+                                showDate: true,
+                                showSeconds: true,
+                                showTimezone: true,
+                                timezone: 'UTC',
+                                numbersFontStyle: mock.proto.randomEnumItem(pb.FontStyle),
+                            },
+                        },
+                    },
+                },
+            },
+        },
     } satisfies pb.Scene,
     {
-        id: 1,
-        durationSeconds: 11,
+        $typeName: 'braiins.bmc.web.Scene',
+        id: '1',
+        cycleDurationSec: 11,
         enabled: true,
-        kind: pb.SceneKind.image,
-        title: 'Image',
-        description: 'Your Image',
+        kind: {
+            case: 'fullscreen',
+            value: {
+                $typeName: 'braiins.bmc.web.Scene.Fullscreen',
+                widget: {
+                    $typeName: 'braiins.bmc.web.Widget',
+                    id: mock.uuid(),
+                    size: pb.WidgetSize.FULL,
+                    position: {
+                        $typeName: 'braiins.bmc.web.WidgetPosition',
+                        row: 0,
+                        col: 0,
+                    },
+                    kind: {
+                        $typeName: 'braiins.bmc.web.WidgetKind',
+                        value: {
+                            case: 'clock',
+                            value: {
+                                $typeName: 'braiins.bmc.web.ClockWidget',
+                                clockStyle: mock.proto.randomEnumItem(pb.ClockWidget_ClockStyle),
+                                showDate: true,
+                                showSeconds: true,
+                                showTimezone: true,
+                                timezone: 'UTC',
+                                numbersFontStyle: mock.proto.randomEnumItem(pb.FontStyle),
+                            },
+                        },
+                    },
+                },
+            },
+        },
     } satisfies pb.Scene,
     {
-        id: 2,
+        $typeName: 'braiins.bmc.web.Scene',
+        id: '2',
         enabled: true,
-        durationSeconds: 11,
-        kind: pb.SceneKind.clock,
-        variant: pb.SceneVariantClock.analog_rect,
-        title: 'Clock – Analog Rectangular',
-        description: 'Horizontal analog layout in a rectangular frame',
+        cycleDurationSec: 11,
+        kind: {
+            case: 'fullscreen',
+            value: {
+                $typeName: 'braiins.bmc.web.Scene.Fullscreen',
+                widget: {
+                    $typeName: 'braiins.bmc.web.Widget',
+                    id: mock.uuid(),
+                    size: pb.WidgetSize.FULL,
+                    position: {
+                        $typeName: 'braiins.bmc.web.WidgetPosition',
+                        row: 0,
+                        col: 0,
+                    },
+                    kind: {
+                        $typeName: 'braiins.bmc.web.WidgetKind',
+                        value: {
+                            case: 'clock',
+                            value: {
+                                $typeName: 'braiins.bmc.web.ClockWidget',
+                                clockStyle: mock.proto.randomEnumItem(pb.ClockWidget_ClockStyle),
+                                showDate: true,
+                                showSeconds: true,
+                                showTimezone: true,
+                                timezone: 'UTC',
+                                numbersFontStyle: mock.proto.randomEnumItem(pb.FontStyle),
+                            },
+                        },
+                    },
+                },
+            },
+        },
     } satisfies pb.Scene,
     {
-        id: 3,
+        $typeName: 'braiins.bmc.web.Scene',
+        id: '3',
         enabled: true,
-        durationSeconds: 13,
-        kind: pb.SceneKind.ticker,
-        variant: pb.SceneVariantTicker.candle,
-        title: 'Ticker: Big Price',
-        description: 'BTC-USD',
+        cycleDurationSec: 13,
+        kind: {
+            case: 'fullscreen',
+            value: {
+                $typeName: 'braiins.bmc.web.Scene.Fullscreen',
+                widget: {
+                    $typeName: 'braiins.bmc.web.Widget',
+                    id: mock.uuid(),
+                    size: pb.WidgetSize.FULL,
+                    position: {
+                        $typeName: 'braiins.bmc.web.WidgetPosition',
+                        row: 0,
+                        col: 0,
+                    },
+                    kind: {
+                        $typeName: 'braiins.bmc.web.WidgetKind',
+                        value: {
+                            case: 'clock',
+                            value: {
+                                $typeName: 'braiins.bmc.web.ClockWidget',
+                                clockStyle: mock.proto.randomEnumItem(pb.ClockWidget_ClockStyle),
+                                showDate: true,
+                                showSeconds: true,
+                                showTimezone: true,
+                                timezone: 'UTC',
+                                numbersFontStyle: mock.proto.randomEnumItem(pb.FontStyle),
+                            },
+                        },
+                    },
+                },
+            },
+        },
     } satisfies pb.Scene,
     {
-        id: 4,
+        $typeName: 'braiins.bmc.web.Scene',
+        id: '4',
         enabled: true,
-        durationSeconds: 14,
-        kind: pb.SceneKind.pool,
-        title: 'Braiins Pool Stats',
-        description: 'account.name',
+        cycleDurationSec: 14,
+        kind: {
+            case: 'fullscreen',
+            value: {
+                $typeName: 'braiins.bmc.web.Scene.Fullscreen',
+                widget: {
+                    $typeName: 'braiins.bmc.web.Widget',
+                    id: mock.uuid(),
+                    size: pb.WidgetSize.FULL,
+                    position: {
+                        $typeName: 'braiins.bmc.web.WidgetPosition',
+                        row: 0,
+                        col: 0,
+                    },
+                    kind: {
+                        $typeName: 'braiins.bmc.web.WidgetKind',
+                        value: {
+                            case: 'clock',
+                            value: {
+                                $typeName: 'braiins.bmc.web.ClockWidget',
+                                clockStyle: mock.proto.randomEnumItem(pb.ClockWidget_ClockStyle),
+                                showDate: true,
+                                showSeconds: true,
+                                showTimezone: true,
+                                timezone: 'UTC',
+                                numbersFontStyle: mock.proto.randomEnumItem(pb.FontStyle),
+                            },
+                        },
+                    },
+                },
+            },
+        },
     } satisfies pb.Scene,
     {
-        id: 5,
-        durationSeconds: 15,
+        $typeName: 'braiins.bmc.web.Scene',
+        id: '5',
+        cycleDurationSec: 15,
         enabled: false,
-        kind: pb.SceneKind.clock,
-        variant: pb.SceneVariantClock.digital_flip,
-        title: 'Clock – Flip',
-        description: 'Flip-style digital clock with adjustable font weight',
+        kind: {
+            case: 'fullscreen',
+            value: {
+                $typeName: 'braiins.bmc.web.Scene.Fullscreen',
+                widget: {
+                    $typeName: 'braiins.bmc.web.Widget',
+                    id: mock.uuid(),
+                    size: pb.WidgetSize.FULL,
+                    position: {
+                        $typeName: 'braiins.bmc.web.WidgetPosition',
+                        row: 0,
+                        col: 0,
+                    },
+                    kind: {
+                        $typeName: 'braiins.bmc.web.WidgetKind',
+                        value: {
+                            case: 'clock',
+                            value: {
+                                $typeName: 'braiins.bmc.web.ClockWidget',
+                                clockStyle: mock.proto.randomEnumItem(pb.ClockWidget_ClockStyle),
+                                showDate: true,
+                                showSeconds: true,
+                                showTimezone: true,
+                                timezone: 'UTC',
+                                numbersFontStyle: mock.proto.randomEnumItem(pb.FontStyle),
+                            },
+                        },
+                    },
+                },
+            },
+        },
     } satisfies pb.Scene,
 ];
 
 function Demo() {
     const [scenes, setScenes] = useState<pb.Scene[]>(initialState);
-    return <Component scenes={scenes} setScenes={setScenes} />;
+    return (
+        <Component
+            scenes={scenes}
+            onMove={setScenes}
+            onEdit={action('onEdit')}
+            onClone={action('onClone')}
+            onDelete={action('onDelete')}
+            onToggle={action('onToggle')}
+            onDurationChange={action('onDurationChange')}
+        />
+    );
 }
 
 export function SceneOverviewList() {

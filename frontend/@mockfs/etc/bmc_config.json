@@ -1,0 +1,99 @@
+{
+  "scenes": [
+    {
+      "id": "879ad46d-0bd2-4a8f-aaf3-94905570665b",
+      "enabled": false,
+      "cycle_duration": "3s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "9375dedb-97f4-4414-a49a-c0321807afb9",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "clock",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "bold",
+            "show_date": false,
+            "show_seconds": false,
+            "show_timezone": false,
+            "timezone": "Europe/Prague"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e453fd2c-003f-4d6b-9c17-00aabe74c92a",
+      "enabled": false,
+      "cycle_duration": "7s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "011416ee-c8aa-4c02-be94-acda7ccd7243",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "be3df44e-a4d7-4625-9312-cc142aba09a1",
+      "enabled": true,
+      "cycle_duration": "5s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "3262d3e7-3733-4216-a0ec-7b7bd5ccccd1",
+          "row": 1,
+          "col": 3,
+          "size": "small",
+          "kind": "clock",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "f8e6106d-3d2c-4f25-b498-173dcdafe206",
+          "row": 0,
+          "col": 1,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "e519cca3-5624-4bdf-a054-458a1ea0ac7b",
+          "row": 0,
+          "col": 3,
+          "size": "small",
+          "kind": "clock",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    }
+  ]
+}

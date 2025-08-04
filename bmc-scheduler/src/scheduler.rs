@@ -1,8 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_shared_time::time::Timezone;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
-use chrono_tz::Tz;
+use chrono::TimeZone;
 use croner::Cron;
 use std::{collections::BTreeMap, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, RwLock};
@@ -63,17 +62,12 @@ impl JobScheduler {
             while timezone_receiver.changed().await.is_ok() {
                 let new_timezone: Timezone = timezone_receiver.borrow_and_update().clone();
                 info!("New timezone: {:?}", new_timezone);
-                let offset = new_timezone.chrono_offset();
+                let date_timezone = *new_timezone.chrono();
                 let jobs = list_jobs(storage.clone(), scheduler.clone())
                     .await
                     .map_err(|_| JobSchedulerError::GetJobData)
                     .unwrap_or_else(|_| vec![]);
                 info!("Updating jobs {}", jobs.len());
-                let date: DateTime<Tz> = DateTime::from_naive_utc_and_offset(
-                    NaiveDateTime::new(NaiveDate::default(), NaiveTime::default()),
-                    offset,
-                );
-                let date_timezone = date.timezone();
                 let scheduler = scheduler.clone().lock_owned().await;
                 for mut job_details in jobs {
                     let job_id = job_details.job_id;

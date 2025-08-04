@@ -8,7 +8,11 @@ import cn from 'clsx';
 import css from './ModalCustom.scss';
 
 export interface CustomModalProps extends Omit<ComposedModalProps, 'title' | 'children' | 'open'> {
+    // Header labeling
     title?: ReactNode;
+    label?: ReactNode;
+
+    // Content
     children: ReactNode;
     footer?: ReactNode;
 
@@ -103,16 +107,29 @@ export class ModalCustom extends Component<CustomModalProps> {
 
     render() {
         const {
+            id,
+
+            // Header labeling
+            title,
+            label,
+
+            // Content
             children,
             footer,
-            title,
+
+            // Handlers
             onSubmit,
             onClose,
+
+            // State
             isLoading,
             open,
-            hideHeader,
-            id,
+
+            // Behaviour
             portal,
+            hideHeader,
+
+            // Styling
             isInnerModal,
             bodyClassName,
             cancelBodyOverflowShadow,
@@ -135,6 +152,7 @@ export class ModalCustom extends Component<CustomModalProps> {
                         className={cn(!onClose && css.hideModalCloseButton)}
                         {...this.#commonClickProps}
                         title={title}
+                        label={label}
                     />
                 )}
                 <ModalBody

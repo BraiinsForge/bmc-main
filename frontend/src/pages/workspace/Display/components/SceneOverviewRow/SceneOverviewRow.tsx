@@ -1,4 +1,4 @@
-import type { DetailedHTMLProps, HTMLAttributes } from 'react';
+import { type DetailedHTMLProps, type HTMLAttributes, useCallback } from 'react';
 import { useIntl } from 'react-intl';
 
 // Lib
@@ -7,23 +7,29 @@ import { useID } from '@/lib/form';
 // Components
 import { Button } from '@/components';
 import { Toggle, NumberInput } from '@carbon/react';
-import { Draggable, TrashCan, Edit } from '@carbon/react/icons';
+import {
+    Draggable as IconDraggable,
+    TrashCan as IconDelete,
+    Edit as IconEdit,
+    Copy as IconClone,
+} from '@carbon/react/icons';
 
 // Styles
 import cn from 'clsx';
 import css from './SceneOverviewRow.scss';
 
 interface DataProps {
-    id: number | string;
+    id: string;
 
     enabled: boolean;
-    onToggle(value: boolean): void;
+    onToggle(id: string, value: boolean): void;
 
     duration: string | number;
-    onDurationChange(duration: string): void;
+    onDurationChange(id: string, duration: string): void;
 
-    onEdit(): void;
-    onDelete(): void;
+    onEdit(id: string): void;
+    onClone(id: string): void;
+    onDelete(id: string): void;
 
     preview: ReactNode;
     title: ReactNode;
@@ -47,6 +53,7 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
         onDurationChange,
 
         onEdit,
+        onClone,
         onDelete,
 
         preview,
@@ -65,11 +72,24 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
     const disabled: boolean = enabled === false;
     const $ = useID('scene', 'overview', 'row', id);
 
+    const handleToggle = useCallback((value: boolean) => onToggle(id, value), [id, onToggle]);
+    const handleDurationChange = useCallback(
+        (_: any, s: { value: number | string }) => {
+            onDurationChange(id, String(s.value));
+        },
+        [id, onDurationChange],
+    );
+    const handleEdit = useCallback(() => onEdit(id), [id, onEdit]);
+    const handleClone = useCallback(() => onClone(id), [id, onClone]);
+    const handleDelete = useCallback(() => onDelete(id), [id, onDelete]);
+
     return (
         <div {...rest} {...dndRootProps} className={cn(css.root, disabled && css.disabled, className)}>
-            <div {...dndDragHandleProps} className={cn(css.dragHandle, dndDragHandleProps?.className)}>
-                <Draggable />
-            </div>
+            <div
+                {...dndDragHandleProps}
+                className={cn(css.dragHandle, dndDragHandleProps?.className)}
+                children={<IconDraggable />}
+            />
 
             <div className={css.toggle}>
                 <Toggle
@@ -78,7 +98,7 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
                     labelA={formatMessage({ defaultMessage: 'Off' })}
                     labelB={formatMessage({ defaultMessage: 'On' })}
                     toggled={enabled}
-                    onToggle={onToggle}
+                    onToggle={handleToggle}
                 />
             </div>
 
@@ -95,9 +115,7 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
                     disabled={disabled}
                     id={$('duration')}
                     value={duration}
-                    onChange={(_, s) => {
-                        onDurationChange(String(s.value));
-                    }}
+                    onChange={handleDurationChange}
                     step={1}
                 />
             </div>
@@ -107,19 +125,28 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
                     size="sm"
                     kind="primary"
                     hasIconOnly
-                    icon={Edit}
+                    icon={IconEdit}
                     tooltipPosition="bottom"
                     title={formatMessage({ defaultMessage: 'Edit' })}
-                    onClick={onEdit}
+                    onClick={handleEdit}
                 />
                 <Button
                     size="sm"
                     kind="secondary"
                     hasIconOnly
-                    icon={TrashCan}
+                    icon={IconClone}
+                    tooltipPosition="bottom"
+                    title={formatMessage({ defaultMessage: 'Clone' })}
+                    onClick={handleClone}
+                />
+                <Button
+                    size="sm"
+                    kind="secondary"
+                    hasIconOnly
+                    icon={IconDelete}
                     tooltipPosition="bottom"
                     title={formatMessage({ defaultMessage: 'Edit' })}
-                    onClick={onDelete}
+                    onClick={handleDelete}
                 />
             </div>
         </div>

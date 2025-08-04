@@ -1,0 +1,254 @@
+@use 'styles/carbon' as *;
+@use 'styles/var/shadows';
+@use 'styles/var/transition';
+
+$transition: all 150ms transition.$transition-timing-ease-in-out;
+
+.root {
+    position: relative;
+
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+
+    container-type: inline-size;
+}
+
+//
+// Grid
+//
+
+.grid {
+    --min-block-width: 100px;
+    --min-block-height: 150px;
+
+    position: relative;
+    height: 100%;
+    max-width: 100%;
+    overflow: hidden;
+
+    display: grid;
+    gap: 2px;
+
+    grid-template-columns: repeat(4, minmax(var(--min-block-width), auto));
+    grid-template-rows: repeat(2, minmax(var(--min-block-height), auto));
+    grid-template-areas:
+        'r1c1 r1c2 r1c3 r1c4'
+        'r2c1 r2c2 r2c3 r2c4';
+
+    @container (width <= 600px) {
+        --min-block-width: 60px;
+        --min-block-height: 180px;
+    }
+}
+
+//
+// widget
+//
+
+// The min-max shennanigan was required to make the rows/columns behave
+// in the mobile layout (namely, have them collapse when empty).
+$widget-corners-size: minmax(0, mini-units(6));
+
+.widget {
+    --bg: #{$layer-03};
+    --fg-base: #{$icon-secondary};
+    --fg-active: #{$icon-primary};
+
+    position: relative;
+    container-type: inline-size;
+
+    background-color: var(--bg);
+    outline-offset: -1px;
+
+    // Drang and drop
+    user-select: none;
+    touch-action: none;
+    transform-origin: 0 0;
+
+    display: grid;
+    grid-template-rows: $widget-corners-size 1fr $widget-corners-size;
+    grid-template-columns: $widget-corners-size 1fr $widget-corners-size;
+
+    @container (width <= 80px) {
+        grid-template-rows: repeat(5, minmax(0, 1fr));
+
+        .widgetContent {
+            grid-area: 1 / 1 / span 2 / span 3;
+            padding-block-end: mini-units(2);
+        }
+
+        .widgetDragHandle {
+            grid-area: 3 / 1 / span 1 / span 3;
+        }
+        .widgetEditButton {
+            grid-area: 4 / 1 / span 1 / span 3;
+        }
+        .widgetDeleteButton {
+            grid-area: 5 / 1 / span 1 / span 3;
+        }
+    }
+
+    &.taken {
+        --bg: #{$braiins-violet-100};
+        --fg-base: #{$braiins-violet-50};
+        --fg-active: #{$braiins-violet-30};
+
+        outline: 1px solid var(--fg-base);
+    }
+
+    //
+    // DnD
+    //
+
+    &.isPreview {
+        z-index: 99;
+        opacity: 0.75;
+        box-shadow: shadows.$elevation-8dp;
+        pointer-events: none; // No sense in allowing pointer events on a preview
+    }
+
+    &.isDropHovered {
+        background-color: opacify-color($braiins-violet-50, 30%);
+        outline: 2px dashed $braiins-violet-50;
+        outline-offset: -2px;
+    }
+
+    &.isInvalidTarget {
+        --bg: #{$braiins-red-80};
+        --fg-base: #{$braiins-red-60};
+        --fg-active: #{$braiins-red-60};
+
+        opacity: 0.4;
+        * {
+            color: var(--fg-base);
+        }
+
+        // Angled slash-through
+        &::before {
+            position: absolute;
+            z-index: 10;
+            content: '';
+
+            top: 50%;
+            left: 25%;
+
+            transform-origin: center center;
+            transform: rotate(-45deg);
+
+            width: 50%;
+            height: mini-units(1);
+
+            background-color: opacify-color(var(--fg-base), 25%);
+        }
+    }
+
+    &:not(.isPreview).isDragging {
+        filter: grayscale(100%) brightness(150%) contrast(50%);
+        opacity: 0.75;
+
+        .widgetButton {
+            opacity: 0;
+        }
+    }
+}
+
+//
+// Widget controls
+//
+
+.widgetButton {
+    padding: mini-units(2);
+
+    appearance: none;
+    background: none;
+    border: none;
+
+    cursor: pointer;
+    user-select: none;
+    transition: $transition;
+
+    color: var(--fg-base);
+    svg {
+        transition: $transition;
+        fill: currentcolor;
+    }
+
+    &:hover,
+    &:focus {
+        color: var(--fg-active);
+    }
+}
+.widgetDragHandle {
+    composes: widgetButton;
+    grid-area: 1 / 1;
+    cursor: move;
+}
+.widgetEditButton {
+    composes: widgetButton;
+    grid-area: 3 / 1;
+}
+.widgetDeleteButton {
+    composes: widgetButton;
+    grid-area: 3 / 3;
+}
+
+.widgetContent {
+    composes: vertical from 'styles/layout.scss';
+    grid-area: 2 / 1 / span 1 / span 3;
+    padding-block-start: mini-units(2);
+}
+
+.widgetAddButtom {
+    position: absolute;
+    z-index: 20;
+    inset: 0;
+
+    border: none;
+    background: none;
+    appearance: none;
+
+    margin: 0;
+    padding: 0;
+    line-height: 0;
+
+    cursor: pointer;
+    user-select: none;
+
+    color: var(--fg-base);
+    outline: 1px solid var(--fg-base);
+    outline-offset: -1px;
+
+    transition: $transition;
+    &:hover,
+    &:focus {
+        color: var(--fg-active);
+        outline-color: var(--fg-active);
+    }
+}
+
+//
+// Widget labeling
+//
+
+.widgetTitle {
+    color: $text-primary;
+    text-align: center;
+    font-size: to-rem(16px);
+    font-weight: 600;
+    line-height: 1.12;
+}
+.widgetSubtitle {
+    composes: body-long-01 from 'styles/carbon/typography.scss';
+    color: $text-secondary;
+}
+
+.widgetTitle,
+.widgetSubtitle {
+    text-align-last: center;
+    max-inline-size: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    padding-inline: mini-units(2);
+}

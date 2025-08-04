@@ -1,0 +1,17 @@
+@use 'styles/carbon' as *;
+
+.header {
+    composes: horizontal justified from 'styles/layout.scss';
+    margin-block-end: mini-units(3);
+
+    container-type: inline-size;
+    width: 100%;
+}
+
+.headerLeft {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(2);
+}
+.title {
+    composes: heading-06 from 'styles/carbon/typography.scss';
+}

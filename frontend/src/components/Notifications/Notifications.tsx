@@ -1,4 +1,4 @@
-import { Component, createRef, Fragment, type MouseEvent } from 'react';
+import { Component, createRef, Fragment } from 'react';
 import { injectIntl, type IntlShape } from 'react-intl';
 
 import gsap from 'gsap';
@@ -31,7 +31,7 @@ export interface NotificationsProps {
     items: Items;
 
     onHide(x: NotificationItem): void;
-    onClear?(e: MouseEvent): void;
+    onClear?(): void;
 
     className?: string;
     style?: CSSProperties;
