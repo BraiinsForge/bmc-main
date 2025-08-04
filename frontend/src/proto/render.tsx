@@ -85,6 +85,12 @@ export function wifiEncryptionTypeToString(intl: IntlShape, x: pb.EncryptionType
 
         case pb.EncryptionType.WPA2_3:
             return formatMessage({ defaultMessage: 'WPA2 / WPA3' });
+
+        case pb.EncryptionType.WPA3:
+            return formatMessage({ defaultMessage: 'WPA3' });
+
+        default:
+            assertUnreachable(x, 'Wifi encryption type');
     }
 }
 

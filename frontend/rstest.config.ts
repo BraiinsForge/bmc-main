@@ -1,4 +1,4 @@
-import { defineConfig } from '@rstest/core';
+import { defineConfig, type RstestConfig } from '@rstest/core';
 import rsbuildConfig from './rsbuild.config';
 
 const { plugins, resolve } = rsbuildConfig;
@@ -12,4 +12,4 @@ export default defineConfig({
 
     plugins,
     resolve,
-});
+} as RstestConfig);

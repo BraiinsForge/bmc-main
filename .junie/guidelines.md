@@ -11,6 +11,7 @@
   - props are named the same as the component plus `Props` suffix
     - example: `interface ComponentNameProps {}`
   - if there is a state, it's type declaration is followed by `getInitialState` function
+  - Do not use curly braces where un-neccessary
 
 ### Tests
 

@@ -119,8 +119,8 @@ class View extends Component<Props, State> {
         try {
             const { signal } = this.loadAbort.replace();
             const [netInfo, netConfig] = await Promise.all([
-                pb.rpc.sys.getNetworkInfo({}, { signal }),
-                pb.rpc.sys.getNetworkConfig({}, { signal }),
+                pb.rpc.net.getNetworkInfo({}, { signal }),
+                pb.rpc.net.getNetworkConfig({}, { signal }),
             ]);
 
             const newState = {
@@ -181,7 +181,7 @@ class View extends Component<Props, State> {
                     assertUnreachable(confTemp.case, 'settings: confCase');
             }
 
-            await pb.rpc.sys.setNetworkConfig(payload, { signal });
+            await pb.rpc.net.setNetworkConfig(payload, { signal });
             notify('success', 'Network configuration saved!');
             await this.#load();
         } catch ($) {

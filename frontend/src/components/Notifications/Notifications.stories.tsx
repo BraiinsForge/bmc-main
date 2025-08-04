@@ -31,7 +31,8 @@ class Test extends PureComponent<NotificationsProps, TestState> {
     #i = -1;
     #push = (count: number = 1): void => {
         const newItems = arrayOf(count, () => {
-            const id = this.#i--;
+            this.#i -= 1;
+            const id = this.#i;
             return {
                 id,
                 counter: number(0, 15, false),

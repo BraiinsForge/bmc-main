@@ -5,6 +5,7 @@ import {
     ConfigurationService,
     InitialSetupService,
     MetadataService,
+    NetworkService,
     SystemService,
     UpgradeService,
 } from './pb';
@@ -14,9 +15,10 @@ export const rpc = {
     init: getClient(InitialSetupService),
 
     auth: getClient(AuthenticationService),
-    meta: getClient(MetadataService),
-    sys: getClient(SystemService),
     config: getClient(ConfigurationService),
+    meta: getClient(MetadataService),
+    net: getClient(NetworkService),
+    sys: getClient(SystemService),
     upgrade: getClient(UpgradeService),
 };
 

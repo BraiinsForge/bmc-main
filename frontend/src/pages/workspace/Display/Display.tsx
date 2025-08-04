@@ -147,7 +147,7 @@ class View extends Component<Props, State> {
     readonly state = getInitialState();
 
     #cyclePopOverRef = createRef<null | HTMLDivElement>();
-    #windowClickHandle = (e: MouseEvent): void => {
+    #windowClickHandle = (e: PointerEvent): void => {
         const { cycle } = this.state;
         const clickTarget = e.target as HTMLElement;
         const catchTarget = this.#cyclePopOverRef.current as Maybe<HTMLElement>;

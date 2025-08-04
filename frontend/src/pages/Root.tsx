@@ -151,7 +151,8 @@ class View extends Component<Props, State> {
     };
     #notificationClear = (_?: any): void => this.setState({ notifications: [] });
     #notify = (type: Notification['type'], text: Notification['text'], duration?: number): void => {
-        const id: number = this.#notificationLastID++;
+        this.#notificationLastID += +1;
+        const id: number = this.#notificationLastID;
         const newItem = {
             id,
             kind: type,

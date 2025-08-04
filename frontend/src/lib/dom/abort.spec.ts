@@ -113,6 +113,7 @@ describe('lib/abort', () => {
                 const onAbort = rstest.fn();
                 class Foo extends Component {
                     // @ts-expect-error: Called on unmount
+                    // biome-ignore lint/correctness/noUnusedPrivateClassMembers: Intentionally not referred to as part of the test
                     private abort = abort.get(onAbort);
                     componentWillUnmount = () => abort.all(this);
                     render = () => null;
