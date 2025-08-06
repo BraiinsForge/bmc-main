@@ -126,12 +126,6 @@ impl<T: BmcManager> DisplayTasks<T> {
         manager: Arc<T>,
     ) {
         let mut interval = interval(Duration::from_millis(250));
-        let mut is_24_format = config_handle
-            .read()
-            .await
-            .localization_config()
-            .time_system
-            .is_24();
 
         loop {
             interval.tick().await;
@@ -141,10 +135,12 @@ impl<T: BmcManager> DisplayTasks<T> {
                 .with_timezone(timezone.chrono())
                 .fixed_offset();
 
-            // FIXME: avoid lock contention
-            if let Ok(config) = config_handle.try_read() {
-                is_24_format = config.localization_config().time_system.is_24();
-            }
+            let is_24_format = config_handle
+                .read()
+                .await
+                .localization_config()
+                .time_system
+                .is_24();
 
             display_controller.update_system_datetime(now, timezone.to_string(), is_24_format);
         }
