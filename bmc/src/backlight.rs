@@ -45,7 +45,6 @@ impl<T: DisplayBacklightDriver> DisplayBacklightController<T> {
             .await
             .set_brightness_pct(value)?;
 
-        let config_handle = config_handle.downgrade();
         config_handle.sync_to_storage().await?;
         Ok(())
     }

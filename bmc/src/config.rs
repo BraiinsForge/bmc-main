@@ -161,7 +161,7 @@ impl ConfigHandle {
         })
     }
 
-    pub async fn sync_to_storage(&self) -> Result<()> {
+    pub async fn sync_to_storage(&mut self) -> Result<()> {
         let config_data = serde_json::to_string_pretty(&self.config)?;
         replace_file(&self.path, config_data.as_bytes()).await?;
 
