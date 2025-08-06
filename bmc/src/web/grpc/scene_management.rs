@@ -58,7 +58,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
     ) -> Result<Response<web::GetScenesResponse>, Status> {
         let config = self.config_handle.read().await;
         let scenes = config
-            .data
             .scenes
             .clone()
             .into_values()
@@ -88,7 +87,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
 
         let config = self.config_handle.read().await;
         let scene = config
-            .data
             .scenes
             .get(&id)
             .cloned()
@@ -130,7 +128,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let new_scene_id = new_scene.id.clone();
 
                 let replaced_scene = temp_config
-                    .data
                     .scenes
                     .insert(new_scene_id.clone(), new_scene.clone());
                 debug_assert!(replaced_scene.is_none());
@@ -168,7 +165,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let new_scene_id = new_scene.id.clone();
 
                 let replaced_scene = temp_config
-                    .data
                     .scenes
                     .insert(new_scene_id.clone(), new_scene.clone());
                 debug_assert!(replaced_scene.is_none());
@@ -229,7 +225,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let mut temp_config = config.clone();
 
                 let scene = temp_config
-                    .data
                     .scenes
                     .get_mut(&id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
@@ -246,7 +241,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 *config = temp_config;
 
                 if enabled != old_enabled {
-                    let scene = &config.data.scenes[&id];
+                    let scene = &config.scenes[&id];
                     widget_tasks.abort_all(scene).await;
                     widget_tasks.spawn_all(scene, false).await;
 
@@ -297,17 +292,16 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let mut temp_config = config.clone();
 
                 let from_index = temp_config
-                    .data
                     .scenes
                     .get_index_of(&id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                let to_index = to_index.min(temp_config.data.scenes.len() - 1);
+                let to_index = to_index.min(temp_config.scenes.len() - 1);
 
                 if from_index == to_index {
                     return Ok(Response::new(()));
                 }
-                temp_config.data.scenes.move_index(from_index, to_index);
+                temp_config.scenes.move_index(from_index, to_index);
 
                 if let Err(err) = temp_config.sync_to_storage().await {
                     error!("Cannot save config: {}", err);
@@ -361,7 +355,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let mut temp_config = config.clone();
 
                 let (scene_index, _id, scene) = temp_config
-                    .data
                     .scenes
                     .get_full(&id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
@@ -370,7 +363,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let cloned_scene_id = cloned_scene.id.clone();
                 let cloned_scene_index = scene_index + 1;
 
-                let replaced_scene = temp_config.data.scenes.shift_insert(
+                let replaced_scene = temp_config.scenes.shift_insert(
                     cloned_scene_index,
                     cloned_scene_id.clone(),
                     cloned_scene.clone(),
@@ -444,7 +437,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let mut temp_config = config.clone();
 
                 let scene = temp_config
-                    .data
                     .scenes
                     .shift_remove(&id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
@@ -497,7 +489,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         let scene_disabled = {
             let config = self.config_handle.read().await;
             let scene = config
-                .data
                 .scenes
                 .get(&id)
                 .ok_or_else(|| Status::not_found("Scene not found"))?;
@@ -553,7 +544,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                         if scene_disabled {
                             let config = config_handle.read().await;
 
-                            if let Some(scene) = config.data.scenes.get(&scene_id) {
+                            if let Some(scene) = config.scenes.get(&scene_id) {
                                 widget_tasks.abort_all(scene).await;
                             }
                         }
@@ -619,7 +610,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let mut temp_config = config.clone();
 
                 let scene = temp_config
-                    .data
                     .scenes
                     .get_mut(&scene_id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
@@ -643,7 +633,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 }
                 *config = temp_config;
 
-                let scene = &config.data.scenes[&scene_id];
+                let scene = &config.scenes[&scene_id];
                 let is_preview_scene = preview_scene_id
                     .lock()
                     .await
@@ -712,7 +702,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let mut temp_config = config.clone();
 
                 let scene = temp_config
-                    .data
                     .scenes
                     .get_mut(&scene_id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
@@ -736,7 +725,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 }
                 *config = temp_config;
 
-                let scene = &config.data.scenes[&scene_id];
+                let scene = &config.scenes[&scene_id];
                 let is_preview_scene = preview_scene_id
                     .lock()
                     .await
@@ -792,7 +781,6 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 let mut temp_config = config.clone();
 
                 let scene = temp_config
-                    .data
                     .scenes
                     .get_mut(&scene_id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;

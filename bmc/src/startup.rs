@@ -71,7 +71,7 @@ where
             ConfigHandle::init(config.config_path.clone(), config.default_brightness_pct).await?;
 
         let display_controller = display_driver.display_controller.clone();
-        display_controller.set_scenes(config_handle.data.scenes.clone());
+        display_controller.set_scenes(config_handle.scenes.clone());
 
         let config_handle = Arc::new(RwLock::new(config_handle));
 
@@ -81,7 +81,7 @@ where
             manager.clone(),
         );
 
-        for scene in config_handle.read().await.data.scenes.values() {
+        for scene in config_handle.read().await.scenes.values() {
             widget_tasks.spawn_all(scene, false).await;
         }
 
