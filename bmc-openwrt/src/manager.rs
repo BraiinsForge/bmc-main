@@ -8,16 +8,16 @@ use crate::unix::{
 };
 use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
-use bmc::manager::{BmcState, IfaceData, InitialSetupError, WifiNetworkConfig};
+use bmc::manager::{BmcState, IfaceData, InitialSetupError, WifiData, WifiNetworkConfig};
 use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
 };
 use bmc_platform::{BmcInfo, BmcPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
-use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
-use bmc_shared_ii_net_drv::NetworkInterface;
+use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
+use bmc_shared_ii_net_drv::{NetworkInterface, get_primary_interface};
 use bmc_shared_time::time::Timezone;
 use std::io;
 use std::sync::Arc;
@@ -481,6 +481,24 @@ impl BmcManager for Manager {
             .save_and_connect(ssid, password, encryption)
             .await
             .map_err(|e| Error::WifiError(e.to_string()))
+    }
+
+    async fn wifi_status(&self) -> anyhow::Result<WifiData> {
+        let iface = get_primary_interface()
+            .ok_or(Error::WifiError("No Wi-Fi interface found".to_owned()))?;
+        let status = self.wifi_manager.status().await?;
+
+        Ok(WifiData {
+            iface: IfaceData {
+                ip: iface.ipv4_address(),
+                mac: iface.mac_address(),
+            },
+            status,
+        })
+    }
+
+    async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>> {
+        self.wifi_manager.status_all().await
     }
 }
 

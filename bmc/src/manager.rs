@@ -89,6 +89,10 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
         password: Option<String>,
         encryption: EncryptionType,
     ) -> Result<(), Self::Error>;
+
+    async fn wifi_status(&self) -> anyhow::Result<WifiData>;
+
+    async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>>;
 }
 
 #[derive(Debug, Display, PartialEq)]

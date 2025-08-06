@@ -2,9 +2,14 @@
 
 use crate::{MockSessionManager, mockfs::MockFs};
 use anyhow::anyhow;
-use bmc::manager::{BmcState, InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig};
+use bmc::manager::{
+    BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, WifiData, WifiNetworkConfig,
+};
 use bmc_platform::{BmcPlatform, BosVersion};
-use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
+use bmc_shared_ii_net::MacAddr;
+use bmc_shared_ii_net::wifi::{
+    EncryptionType, WifiConfiguration, WifiLinkState, WifiMode, WifiScanItem, WifiStatus,
+};
 use bmc_shared_time::time::Timezone;
 use rand::Rng;
 use std::{
@@ -299,5 +304,50 @@ impl bmc::BmcManager for Manager {
             password, encryption
         );
         Ok(())
+    }
+
+    async fn wifi_status(&self) -> anyhow::Result<WifiData> {
+        let status = WifiStatus {
+            enabled: true,
+            configuration: Some(WifiConfiguration {
+                mode: WifiMode::Station,
+                ssid: "MockWiFi".to_owned(),
+                encryption_type: EncryptionType::Wpa2,
+            }),
+            sta_link_state: Some(WifiLinkState::new("MockWiFi", -45)),
+        };
+
+        let iface_data = IfaceData {
+            ip: Some("192.168.1.100".parse().unwrap()),
+            mac: Some(MacAddr::new(0x00, 0x11, 0x22, 0x33, 0x44, 0x55)),
+        };
+
+        Ok(WifiData {
+            iface: iface_data,
+            status,
+        })
+    }
+
+    async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>> {
+        Ok(vec![
+            WifiStatus {
+                enabled: true,
+                configuration: Some(WifiConfiguration {
+                    mode: WifiMode::Station,
+                    ssid: "MockWiFi".to_owned(),
+                    encryption_type: EncryptionType::Wpa2,
+                }),
+                sta_link_state: Some(WifiLinkState::new("MockWiFi", -45)),
+            },
+            WifiStatus {
+                enabled: false,
+                configuration: Some(WifiConfiguration {
+                    mode: WifiMode::Station,
+                    ssid: "MockWiFiDisabled".to_owned(),
+                    encryption_type: EncryptionType::Wpa1_2,
+                }),
+                sta_link_state: Some(WifiLinkState::new("MockWiFiDisabled", -5)),
+            },
+        ])
     }
 }

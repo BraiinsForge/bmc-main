@@ -2,7 +2,9 @@
 
 use bmc_grpc::web::{
     EncryptionType as GrpcEncryptionType, NetworkConfig, NetworkConfigStatic, NetworkInfoResponse,
-    ScanWifiResponse, SetWifiRequest, SignalStrength as GrpcSignalStrength, WifiNetwork,
+    ScanWifiResponse, SetWifiRequest, SignalStrength as GrpcSignalStrength,
+    WifiNetwork as GrpcWifiNetwork, WifiNetwork, WifiSavedNetworksResponse,
+    WifiStatus as GrpcWifiStatus, WifiStatusResponse,
     network_service_server::NetworkService as GrpcNetworkService,
 };
 use bmc_shared_ii_net::wifi::{EncryptionType, SignalStrength};
@@ -107,6 +109,47 @@ where
 
         Ok(Response::new(()))
     }
+    async fn get_wifi_status(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<WifiStatusResponse>, Status> {
+        self.check_precondition(BmcState::Operational).await?;
+
+        let wifi_data = self.manager.wifi_status().await.map_err(|e| {
+            warn!("Failed to get WiFi status: {}", e);
+            Status::internal("Failed to get WiFi status")
+        })?;
+
+        let status = into_grpc_wifi_status(wifi_data.status);
+
+        Ok(Response::new(WifiStatusResponse {
+            status: Some(status),
+        }))
+    }
+
+    async fn get_wifi_saved_networks(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<WifiSavedNetworksResponse>, Status> {
+        self.check_precondition(BmcState::Operational).await?;
+
+        let wifi_data = self
+            .manager
+            .wifi_saved_networks()
+            .await
+            .map_err(|e| {
+                warn!("Failed to get WiFi status: {}", e);
+                Status::internal("Failed to get WiFi status")
+            })?
+            .into_iter()
+            .map(into_grpc_wifi_status)
+            .collect();
+
+        Ok(Response::new(WifiSavedNetworksResponse {
+            status: wifi_data,
+        }))
+    }
+
     async fn set_wifi(&self, request: Request<SetWifiRequest>) -> Result<Response<()>, Status> {
         self.check_precondition(BmcState::Operational).await?;
 

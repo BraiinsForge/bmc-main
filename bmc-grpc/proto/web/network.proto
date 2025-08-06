@@ -26,6 +26,10 @@ message NetworkConfigStatic {
   repeated string dns_servers = 4;
 }
 
+message WifiConfig {
+  string ssid = 1;
+}
+
 message SetWifiRequest {
   string ssid = 1;
   optional string password = 2;
@@ -61,10 +65,25 @@ message WifiNetwork {
   SignalStrength signal_strength = 3;
 }
 
+message WifiStatus {
+  bool enabled = 1;
+  WifiNetwork network = 2;
+}
+
+message WifiStatusResponse {
+  WifiStatus status = 1;
+}
+
+message WifiSavedNetworksResponse {
+  repeated WifiStatus status = 1;
+}
+
 service NetworkService {
   rpc GetNetworkInfo(google.protobuf.Empty) returns (NetworkInfoResponse);
   rpc GetNetworkConfig(google.protobuf.Empty) returns (NetworkConfig);
   rpc SetNetworkConfig(NetworkConfig) returns (google.protobuf.Empty);
+  rpc GetWifiStatus(google.protobuf.Empty) returns (WifiStatusResponse);
+  rpc GetWifiSavedNetworks(google.protobuf.Empty) returns (WifiSavedNetworksResponse);
   rpc SetWifi(SetWifiRequest) returns (google.protobuf.Empty);
   rpc ScanWifi(google.protobuf.Empty) returns (ScanWifiResponse);
 }
