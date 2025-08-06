@@ -140,7 +140,7 @@ impl TryFrom<WifiScanEncryptionJson> for EncryptionType {
             match item.wpa.as_slice() {
                 [1] => Ok(Self::Wpa),
                 [2] => Ok(Self::Wpa2),
-                [3] => Ok(Self::Wpa3),
+                [3] | [1, 2, 3] => Ok(Self::Wpa3),
                 [1, 2] => Ok(Self::Wpa1_2),
                 [2, 3] => Ok(Self::Wpa2_3),
                 _ => {

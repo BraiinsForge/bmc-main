@@ -40,15 +40,25 @@ fn get_hostname() -> io::Result<String> {
     fs::read_to_string(HOSTNAME_PATH).map(|x| x.trim().to_owned())
 }
 
-fn get_primary_interface() -> Option<(IpAddr, PNetMacAddr)> {
+fn get_primary_interface_details() -> Option<(IpAddr, PNetMacAddr)> {
+    let iface = get_primary_interface()?;
+    let network = iface.inner.ips.into_iter().find(IpNetwork::is_ipv4)?;
+    let mac = iface.inner.mac?;
+    Some((network.ip(), mac))
+}
+
+pub fn get_primary_interface() -> Option<NetworkInterface> {
     datalink::interfaces().into_iter().find_map(|interface| {
+        let interface_clone = interface.clone();
         match (
             interface.is_running(),
             interface.is_loopback(),
             interface.ips.into_iter().find(IpNetwork::is_ipv4),
             interface.mac,
         ) {
-            (true, false, Some(ip), Some(mac)) => Some((ip.ip(), mac)),
+            (true, false, Some(_), Some(_)) => Some(NetworkInterface {
+                inner: interface_clone,
+            }),
             _ => None,
         }
     })
@@ -64,7 +74,8 @@ pub async fn ip_report(format: impl AsRef<str>) -> Result<()> {
     // how long to wait for reporter app reply
     const REPLY_TIMEOUT: Duration = Duration::from_secs(3);
 
-    let (ip, mac) = get_primary_interface().context("primary interface couldn't be determined")?;
+    let (ip, mac) =
+        get_primary_interface_details().context("primary interface couldn't be determined")?;
     let ip = ip.to_string();
     let mac = mac.to_string();
     let hostname = get_hostname()?;

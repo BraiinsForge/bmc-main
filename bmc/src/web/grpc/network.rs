@@ -300,3 +300,15 @@ pub(crate) fn into_grpc_signal_strength(value: SignalStrength) -> GrpcSignalStre
         SignalStrength::Excellent => GrpcSignalStrength::Strong,
     }
 }
+
+pub(crate) fn into_grpc_wifi_status(value: bmc_shared_ii_net::wifi::WifiStatus) -> GrpcWifiStatus {
+    let network = value.configuration.unwrap_or_default();
+    GrpcWifiStatus {
+        enabled: value.enabled,
+        network: Some(GrpcWifiNetwork {
+            ssid: network.ssid,
+            encryption_type: network.encryption_type as i32,
+            signal_strength: value.sta_link_state.unwrap_or_default().signal_level,
+        }),
+    }
+}

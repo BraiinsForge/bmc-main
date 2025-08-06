@@ -35,6 +35,7 @@ use tokio::time::{self, Instant, MissedTickBehavior};
 use uci::UciHelper;
 use utils::{WifiCommand, WifiUtils};
 
+use crate::wifi::uci::map_uci_iface_to_wifi_status;
 use crate::{NetworkInterface, WIRELESS_CONFIG_FILE_PATH};
 
 mod scanner;
@@ -86,7 +87,7 @@ where
 
 pub struct OpenwrtWifiManager {
     scan_result_list: Mutex<SharedCache<Vec<WifiScanItem>>>,
-    wifi_status_cache: Mutex<SharedCache<WifiStatus>>,
+    wifi_status_cache: Mutex<SharedCache<Vec<WifiStatus>>>,
     wlan_dev_syspath: String,
 }
 
@@ -187,6 +188,7 @@ impl OpenwrtWifiManager {
         bail!("Wi-Fi config is not present")
     }
 
+    #[allow(dead_code)]
     async fn get_status(wlan_dev_syspath: String) -> Result<WifiStatus> {
         let device = WifiUtils::get_device_by_syspath(&wlan_dev_syspath).await?;
         let uci = UciHelper::new(&wlan_dev_syspath);
@@ -199,6 +201,22 @@ impl OpenwrtWifiManager {
                 .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))
                 .ok(),
         })
+    }
+
+    async fn get_status_all(wlan_dev_syspath: String) -> Result<Vec<WifiStatus>> {
+        let device = WifiUtils::get_device_by_syspath(&wlan_dev_syspath).await?;
+        let uci = UciHelper::new(&wlan_dev_syspath);
+        let sta_link_state = WifiSta::link_details(&device)
+            .await
+            .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))
+            .ok();
+        let wifi_ifaces = uci.get_all_wifi_ifaces().await?;
+        let wifi_statuses = wifi_ifaces
+            .into_iter()
+            .map(|iface| map_uci_iface_to_wifi_status(iface, sta_link_state.clone()))
+            .collect();
+
+        Ok(wifi_statuses)
     }
 
     pub async fn configure_ap_mode(
@@ -250,12 +268,22 @@ impl OpenwrtWifiManager {
     }
 
     pub async fn status(&self) -> Result<WifiStatus> {
+        self.status_all()
+            .await?
+            .into_iter()
+            .find(|s| s.enabled)
+            .ok_or_else(|| {
+                anyhow!("No enabled WiFi interface found. Please check your configuration.")
+            })
+    }
+
+    pub async fn status_all(&self) -> Result<Vec<WifiStatus>> {
         let wlan_dev_syspath = self.wlan_dev_syspath.clone();
         self.wifi_status_cache
             .lock()
             .await
             .cached_or_else::<anyhow::Error>(Box::pin(async move {
-                Self::get_status(wlan_dev_syspath).await
+                Self::get_status_all(wlan_dev_syspath).await
             }))
             .await
     }

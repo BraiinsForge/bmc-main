@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
-use ii_net::wifi::{EncryptionType, WifiConfiguration, WifiMode};
+use ii_net::wifi::{EncryptionType, WifiConfiguration, WifiLinkState, WifiMode, WifiStatus};
 use log::debug;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -40,7 +40,7 @@ struct UciWirelessRadio {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct UciWirelessIface {
+pub(crate) struct UciWirelessIface {
     #[serde(alias = ".name", skip_serializing)]
     name: String,
     device: String,
@@ -67,6 +67,39 @@ impl From<UciWirelessIface> for WifiConfiguration {
                 .unwrap_or(EncryptionType::None),
         }
     }
+}
+
+impl From<UciWirelessIface> for WifiStatus {
+    fn from(iface: UciWirelessIface) -> Self {
+        let configuration = Some(WifiConfiguration::from(iface.clone()));
+
+        Self {
+            enabled: iface.disabled.is_none_or(|val| val == "0"),
+            configuration,
+            sta_link_state: None,
+        }
+    }
+}
+
+pub(crate) fn map_uci_iface_to_wifi_status(
+    iface: UciWirelessIface,
+    link_state: Option<WifiLinkState>,
+) -> WifiStatus {
+    let mut status = WifiStatus::from(iface);
+
+    let Some(link_state) = link_state else {
+        return status;
+    };
+
+    let Some(config) = &status.configuration else {
+        return status;
+    };
+
+    if config.ssid == link_state.ssid {
+        status.sta_link_state = Some(link_state);
+    }
+
+    status
 }
 
 #[derive(Display, EnumString)]
@@ -153,6 +186,7 @@ impl UciHelper {
             .ok_or_else(|| anyhow!("Specified radio not found"))
     }
 
+    #[allow(dead_code)]
     pub async fn wifi_enabled(&self) -> Result<bool> {
         Ok(self
             .get_radio()
@@ -161,7 +195,7 @@ impl UciHelper {
             .is_none_or(|val| val != "1"))
     }
 
-    async fn get_all_wifi_ifaces(&self) -> Result<Vec<UciWirelessIface>> {
+    pub(crate) async fn get_all_wifi_ifaces(&self) -> Result<Vec<UciWirelessIface>> {
         let radio = self.get_radio().await?;
 
         Ok(
@@ -173,6 +207,7 @@ impl UciHelper {
         )
     }
 
+    #[allow(dead_code)]
     /// Returns only first wifi iface
     pub async fn wifi_iface_find_enabled(&self) -> Option<WifiConfiguration> {
         match self.get_all_wifi_ifaces().await {
