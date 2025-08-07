@@ -69,11 +69,11 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
 
     async fn get_scene(
         &self,
-        request: Request<web::SceneRequest>,
+        request: Request<String>,
     ) -> Result<Response<web::SceneResponse>, Status> {
-        let request = request.into_inner();
+        let value = request.into_inner();
 
-        let (id, field_violations) = parse_scene_id("id", &request.id);
+        let (id, field_violations) = parse_scene_id("value", &value);
 
         if !field_violations.is_empty() {
             return Err(Status::with_error_details(
@@ -342,13 +342,10 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
     }
 
-    async fn clone_scene(
-        &self,
-        request: Request<web::SceneRequest>,
-    ) -> Result<Response<String>, Status> {
-        let request = request.into_inner();
+    async fn clone_scene(&self, request: Request<String>) -> Result<Response<String>, Status> {
+        let value = request.into_inner();
 
-        let (id, field_violations) = parse_scene_id("id", &request.id);
+        let (id, field_violations) = parse_scene_id("value", &value);
 
         if !field_violations.is_empty() {
             return Err(Status::with_error_details(
@@ -415,13 +412,10 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
     }
 
-    async fn remove_scene(
-        &self,
-        request: Request<web::SceneRequest>,
-    ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
+    async fn remove_scene(&self, request: Request<String>) -> Result<Response<()>, Status> {
+        let value = request.into_inner();
 
-        let (id, field_violations) = parse_scene_id("id", &request.id);
+        let (id, field_violations) = parse_scene_id("value", &value);
 
         if !field_violations.is_empty() {
             return Err(Status::with_error_details(
@@ -492,11 +486,11 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
 
     async fn preview_scene(
         &self,
-        request: Request<web::SceneRequest>,
+        request: Request<String>,
     ) -> Result<Response<Self::PreviewSceneStream>, Status> {
-        let request = request.into_inner();
+        let value = request.into_inner();
 
-        let (id, field_violations) = parse_scene_id("id", &request.id);
+        let (id, field_violations) = parse_scene_id("value", &value);
 
         if !field_violations.is_empty() {
             return Err(Status::with_error_details(
@@ -769,7 +763,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
 
     async fn remove_widget(
         &self,
-        request: Request<web::WidgetRequest>,
+        request: Request<web::RemoveWidgetRequest>,
     ) -> Result<Response<()>, Status> {
         let request = request.into_inner();
         let mut all_field_violations = FieldViolations::new();

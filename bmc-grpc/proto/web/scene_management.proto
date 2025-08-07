@@ -55,11 +55,6 @@ message MoveSceneRequest {
   uint32 index = 2;
 }
 
-message SceneRequest {
-  // required
-  string id = 1;
-}
-
 message SceneResponse {
   // required
   Scene scene = 1;
@@ -117,7 +112,7 @@ message UpdateWidgetRequest {
   WidgetKind kind = 5;
 }
 
-message WidgetRequest {
+message RemoveWidgetRequest {
   // required
   string id = 1;
   // required
@@ -226,7 +221,7 @@ service SceneManagementService {
   // Get all scenes
   rpc GetScenes(google.protobuf.Empty) returns (GetScenesResponse);
   // Get single scene by ID. This is an optimization for FE to avoid fetching all scenes
-  rpc GetScene(SceneRequest) returns (SceneResponse);
+  rpc GetScene(google.protobuf.StringValue) returns (SceneResponse);
   // Add fullscreen scene. It contains single fullscreen widget at position (0,0).
   // It will use default values for widget kind specific params.
   // Returns ID of thew new scene.
@@ -239,13 +234,13 @@ service SceneManagementService {
   rpc UpdateScene(UpdateSceneRequest) returns (google.protobuf.Empty);
   // Move scene to different index
   rpc MoveScene(MoveSceneRequest) returns (google.protobuf.Empty);
-  // Add copy of a scene, right next to it (index + 1).
+  // Add copy of a scene by ID, placed right next to it (index + 1).
   // Returns ID of thew new scene.
-  rpc CloneScene(SceneRequest) returns (google.protobuf.StringValue);
+  rpc CloneScene(google.protobuf.StringValue) returns (google.protobuf.StringValue);
   // Remove scene by ID.
-  rpc RemoveScene(SceneRequest) returns (google.protobuf.Empty);
-  // Keep preview screen shown on the display while stream is open
-  rpc PreviewScene(SceneRequest) returns (stream google.protobuf.Empty);
+  rpc RemoveScene(google.protobuf.StringValue) returns (google.protobuf.Empty);
+  // Keep preview screen shown on the display while stream is open. Takes scene ID as an argument.
+  rpc PreviewScene(google.protobuf.StringValue) returns (stream google.protobuf.Empty);
   // Add widget into the scene. You need to specify size, position, kind.
   // It will use default values for widget kind specific params.
   // Returns ID of the new widget.
@@ -255,5 +250,5 @@ service SceneManagementService {
   // This is not patch, but rather full update.
   rpc UpdateWidget(UpdateWidgetRequest) returns (google.protobuf.Empty);
   // Remove widget by ID.
-  rpc RemoveWidget(WidgetRequest) returns (google.protobuf.Empty);
+  rpc RemoveWidget(RemoveWidgetRequest) returns (google.protobuf.Empty);
 }
