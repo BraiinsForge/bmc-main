@@ -82,7 +82,11 @@ where
         );
 
         for scene in config_handle.read().await.scenes.values() {
-            widget_tasks.spawn_all(scene, false).await;
+            if scene.enabled {
+                widget_tasks
+                    .spawn_all(&scene.id, scene.widgets.values())
+                    .await;
+            }
         }
 
         let initial_setup = InitialSetup::new(

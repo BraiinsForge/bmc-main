@@ -138,7 +138,11 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 }
                 *config = temp_config;
 
-                widget_tasks.spawn_all(&new_scene, false).await;
+                if new_scene.enabled {
+                    widget_tasks
+                        .spawn_all(&new_scene.id, new_scene.widgets.values())
+                        .await;
+                }
 
                 display_controller.add_scene(new_scene);
 
@@ -175,7 +179,11 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 }
                 *config = temp_config;
 
-                widget_tasks.spawn_all(&new_scene, false).await;
+                if new_scene.enabled {
+                    widget_tasks
+                        .spawn_all(&new_scene.id, new_scene.widgets.values())
+                        .await;
+                }
 
                 display_controller.add_scene(new_scene);
 
@@ -229,7 +237,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                     .get_mut(&id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                let old_enabled = scene.enabled;
+                let previously_enabled = scene.enabled;
 
                 scene.enabled = enabled;
                 scene.cycle_duration = cycle_duration;
@@ -240,10 +248,18 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 }
                 *config = temp_config;
 
-                if enabled != old_enabled {
+                if enabled != previously_enabled {
                     let scene = &config.scenes[&id];
-                    widget_tasks.abort_all(scene).await;
-                    widget_tasks.spawn_all(scene, false).await;
+
+                    if previously_enabled {
+                        widget_tasks.abort_all(&scene.id).await;
+                    }
+
+                    if enabled {
+                        widget_tasks
+                            .spawn_all(&scene.id, scene.widgets.values())
+                            .await;
+                    }
 
                     // NOTE: we need to reset cycler, because this operation could move scene to another index
                     display_controller.reset_cycler();
@@ -376,7 +392,11 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 }
                 *config = temp_config;
 
-                widget_tasks.spawn_all(&cloned_scene, false).await;
+                if cloned_scene.enabled {
+                    widget_tasks
+                        .spawn_all(&cloned_scene.id, cloned_scene.widgets.values())
+                        .await;
+                }
 
                 display_controller.insert_scene(cloned_scene_index, cloned_scene);
 
@@ -447,7 +467,9 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 }
                 *config = temp_config;
 
-                widget_tasks.abort_all(&scene).await;
+                if scene.enabled {
+                    widget_tasks.abort_all(&scene.id).await;
+                }
 
                 display_controller.remove_scene(id);
 
@@ -486,7 +508,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
 
         let id = id.ok_or_else(unchecked_field_violations_status)?;
 
-        let scene_disabled = {
+        let started_temporary_widget_tasks = {
             let config = self.config_handle.read().await;
             let scene = config
                 .scenes
@@ -503,24 +525,26 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 *preview_scene_id = Some(id.clone());
             }
 
-            // we want to start widget tasks if scene is disabled, otherwise we won't have data
-            // to properly render preview
-            let scene_disabled = !scene.enabled;
-            if scene_disabled {
-                self.widget_tasks.spawn_all(scene, true).await;
-            }
+            // we want to start temporary widget tasks if scene is disabled, otherwise we won't have
+            // data to properly render preview
+            if scene.enabled {
+                false
+            } else {
+                self.widget_tasks
+                    .spawn_all(&scene.id, scene.widgets.values())
+                    .await;
 
-            scene_disabled
+                true
+            }
         };
 
         self.display_controller.set_preview_scene(Some(id.clone()));
 
         struct DisableScenePreviewOnDrop<T: BmcManager> {
-            config_handle: Arc<RwLock<ConfigHandle>>,
             display_controller: DisplayController,
             widget_tasks: WidgetTasks<T>,
             preview_scene_id: Arc<Mutex<Option<SceneId>>>,
-            scene_disabled: bool,
+            started_temporary_widget_tasks: bool,
         }
 
         impl<T: BmcManager> Drop for DisableScenePreviewOnDrop<T> {
@@ -529,9 +553,8 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
 
                 tokio::spawn({
                     let preview_scene_id = self.preview_scene_id.clone();
-                    let config_handle = self.config_handle.clone();
                     let widget_tasks = self.widget_tasks.clone();
-                    let scene_disabled = self.scene_disabled;
+                    let started_temporary_widget_tasks = self.started_temporary_widget_tasks;
                     async move {
                         let scene_id = preview_scene_id
                             .lock()
@@ -539,14 +562,10 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                             .take()
                             .expect("BUG: preview_scene_id should be set");
 
-                        // we need to stop widget tasks, because they shouldn't be running
+                        // we need to stop temporary widget tasks, because they shouldn't be running
                         // outside of preview since scene is disabled
-                        if scene_disabled {
-                            let config = config_handle.read().await;
-
-                            if let Some(scene) = config.scenes.get(&scene_id) {
-                                widget_tasks.abort_all(scene).await;
-                            }
+                        if started_temporary_widget_tasks {
+                            widget_tasks.abort_all(&scene_id).await;
                         }
                     }
                 });
@@ -556,11 +575,10 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         let stream = IntervalStream::new(time::interval(Duration::from_secs(5)))
             .map(|_| Ok(()))
             .attach_data(DisableScenePreviewOnDrop {
-                config_handle: self.config_handle.clone(),
                 display_controller: self.display_controller.clone(),
                 widget_tasks: self.widget_tasks.clone(),
                 preview_scene_id: self.preview_scene_id.clone(),
-                scene_disabled,
+                started_temporary_widget_tasks,
             })
             .boxed();
 
@@ -641,7 +659,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                     .is_some_and(|preview_scene_id| *preview_scene_id == scene_id);
 
                 if scene.enabled || is_preview_scene {
-                    widget_tasks.spawn(scene_id.clone(), &new_widget).await;
+                    widget_tasks.spawn(&scene_id, &new_widget).await;
                 }
 
                 display_controller.add_scene_widget(scene_id, new_widget);
@@ -733,7 +751,9 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                     .is_some_and(|preview_scene_id| *preview_scene_id == scene_id);
 
                 if scene.enabled || is_preview_scene {
-                    widget_tasks.spawn(scene_id.clone(), &updated_widget).await;
+                    widget_tasks.abort(&scene_id, &updated_widget.id).await;
+
+                    widget_tasks.spawn(&scene_id, &updated_widget).await;
                 }
 
                 display_controller.replace_scene_widget(scene_id, updated_widget);
@@ -785,6 +805,8 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                     .get_mut(&scene_id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
 
+                let scene_enabled = scene.enabled;
+
                 scene.remove_widget(&widget_id).map_err(|err| match err {
                     RemoveWidgetError::NotFound => Status::not_found(err.to_string()),
                     RemoveWidgetError::CannotRemoveWidgetFromFullscreenScene => {
@@ -798,9 +820,9 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
                 }
                 *config = temp_config;
 
-                widget_tasks
-                    .abort(scene_id.clone(), widget_id.clone())
-                    .await;
+                if scene_enabled {
+                    widget_tasks.abort(&scene_id, &widget_id).await;
+                }
 
                 display_controller.remove_scene_widget(scene_id, widget_id);
 
