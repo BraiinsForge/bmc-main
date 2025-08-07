@@ -39,7 +39,7 @@ pub(crate) struct WebService<
     system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
-    widget_tasks: WidgetTasks<T>,
+    widget_tasks: WidgetTasks,
     initial_setup: InitialSetup<T>,
     display_backlight_controller: DisplayBacklightController<V>,
 }
@@ -55,7 +55,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         system_upgrade_service: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
-        widget_tasks: WidgetTasks<T>,
+        widget_tasks: WidgetTasks,
         initial_setup: InitialSetup<T>,
         display_backlight_controller: DisplayBacklightController<V>,
     ) -> Self {

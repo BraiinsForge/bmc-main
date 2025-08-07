@@ -1,6 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::BmcManager;
 use crate::config::ConfigHandle;
 use bmc_display::data::{SceneId, Widget, WidgetId, WidgetKind};
 use bmc_display::display_controller::DisplayController;
@@ -8,7 +7,7 @@ use bmc_shared_time::time::Timezone;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::spawn;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
 
@@ -20,24 +19,24 @@ struct TaskHandle {
 }
 
 #[derive(Debug)]
-pub(crate) struct WidgetTasks<T: BmcManager> {
+pub(crate) struct WidgetTasks {
     task_handles: Arc<Mutex<Vec<TaskHandle>>>,
     display_controller: DisplayController,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    manager: Arc<T>,
+    system_timezone_receiver: watch::Receiver<Timezone>,
 }
 
-impl<T: BmcManager> WidgetTasks<T> {
+impl WidgetTasks {
     pub(crate) fn new(
         display_controller: DisplayController,
         config_handle: Arc<RwLock<ConfigHandle>>,
-        manager: Arc<T>,
+        system_timezone_receiver: watch::Receiver<Timezone>,
     ) -> Self {
         Self {
             task_handles: Arc::default(),
             display_controller,
             config_handle,
-            manager,
+            system_timezone_receiver,
         }
     }
 
@@ -128,7 +127,7 @@ impl<T: BmcManager> WidgetTasks<T> {
     ) -> impl Future<Output = ()> + Send + 'static {
         let display_controller = self.display_controller.clone();
         let config_handle = self.config_handle.clone();
-        let manager = self.manager.clone();
+        let mut system_timezone_receiver = self.system_timezone_receiver.clone();
 
         async move {
             let mut interval = interval(Duration::from_millis(250));
@@ -136,7 +135,10 @@ impl<T: BmcManager> WidgetTasks<T> {
             loop {
                 interval.tick().await;
 
-                let timezone = timezone.clone().unwrap_or_else(|| manager.timezone());
+                let timezone = timezone
+                    .clone()
+                    .unwrap_or_else(|| system_timezone_receiver.borrow_and_update().clone());
+
                 let now = chrono::Local::now()
                     .with_timezone(timezone.chrono())
                     .fixed_offset();
@@ -160,13 +162,13 @@ impl<T: BmcManager> WidgetTasks<T> {
     }
 }
 
-impl<T: BmcManager> Clone for WidgetTasks<T> {
+impl Clone for WidgetTasks {
     fn clone(&self) -> Self {
         Self {
             task_handles: self.task_handles.clone(),
             display_controller: self.display_controller.clone(),
             config_handle: self.config_handle.clone(),
-            manager: self.manager.clone(),
+            system_timezone_receiver: self.system_timezone_receiver.clone(),
         }
     }
 }

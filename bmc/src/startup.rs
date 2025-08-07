@@ -35,7 +35,7 @@ where
     session_manager: Arc<T::SessionManager>,
     config: Configuration,
     display_tasks: DisplayTasks<T>,
-    widget_tasks: WidgetTasks<T>,
+    widget_tasks: WidgetTasks,
     system_upgrade_service: SystemUpgradeService<V, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
@@ -78,7 +78,7 @@ where
         let widget_tasks = WidgetTasks::new(
             display_controller.clone(),
             config_handle.clone(),
-            manager.clone(),
+            manager.watch_timezone_updates(),
         );
 
         for scene in config_handle.read().await.scenes.values() {

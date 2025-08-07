@@ -1,6 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::BmcManager;
 use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
@@ -26,18 +25,18 @@ use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
 use tooling_std::attach_data::AttachData;
 use tracing::error;
 
-pub(crate) struct SceneManagementService<T: BmcManager> {
+pub(crate) struct SceneManagementService {
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
-    widget_tasks: WidgetTasks<T>,
+    widget_tasks: WidgetTasks,
     preview_scene_id: Arc<Mutex<Option<SceneId>>>,
 }
 
-impl<T: BmcManager> SceneManagementService<T> {
+impl SceneManagementService {
     pub(crate) fn new(
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
-        widget_tasks: WidgetTasks<T>,
+        widget_tasks: WidgetTasks,
     ) -> Self {
         Self {
             config_handle,
@@ -49,9 +48,7 @@ impl<T: BmcManager> SceneManagementService<T> {
 }
 
 #[async_trait::async_trait]
-impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
-    for SceneManagementService<T>
-{
+impl web::scene_management_service_server::SceneManagementService for SceneManagementService {
     async fn get_scenes(
         &self,
         _request: Request<()>,
@@ -534,14 +531,14 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
 
         self.display_controller.set_preview_scene(Some(id.clone()));
 
-        struct DisableScenePreviewOnDrop<T: BmcManager> {
+        struct DisableScenePreviewOnDrop {
             display_controller: DisplayController,
-            widget_tasks: WidgetTasks<T>,
+            widget_tasks: WidgetTasks,
             preview_scene_id: Arc<Mutex<Option<SceneId>>>,
             started_temporary_widget_tasks: bool,
         }
 
-        impl<T: BmcManager> Drop for DisableScenePreviewOnDrop<T> {
+        impl Drop for DisableScenePreviewOnDrop {
             fn drop(&mut self) {
                 self.display_controller.set_preview_scene(None);
 
