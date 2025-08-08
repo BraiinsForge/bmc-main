@@ -1,7 +1,5 @@
 // Copyright (C) 2024  Braiins Systems s.r.o.
 
-#![allow(unused_crate_dependencies)]
-
 use std::time::Duration;
 use tokio::{task, time};
 use tooling_std::cond_runner::ConditionalRunner;

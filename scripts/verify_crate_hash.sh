@@ -3,7 +3,7 @@ set -euo pipefail
 
 # CONFIG
 UPSTREAM_REPO="ssh://git@gitlab.ii.zone/tooling/tooling.git"
-UPSTREAM_COMMIT="b325c4bbdc6170d1be03dcef334b7eec064ec259"
+UPSTREAM_COMMIT="0bf48952586c5e475368fad41d05b4ddb2b6a079"
 
 # ARGS
 if [ $# -ne 1 ]; then

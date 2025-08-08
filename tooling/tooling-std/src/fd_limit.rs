@@ -1,6 +1,6 @@
 // Copyright (C) 2024  Braiins Systems s.r.o.
 
-use crate::error_chain::ErrorChain;
+use crate::error_display::ErrorDisplay;
 use fdlimit::Outcome;
 use tracing::{debug, warn};
 
@@ -14,6 +14,6 @@ pub fn raise_fd_limit() {
     match fdlimit::raise_fd_limit() {
         Ok(Outcome::LimitRaised { from, to }) => debug!(from, to, "raised fd limit"),
         Ok(Outcome::Unsupported) => warn!("raising fd limit is not supported"),
-        Err(err) => warn!("{}", err.error_chain()),
+        Err(err) => warn!("{}", err.display_chain()),
     }
 }
