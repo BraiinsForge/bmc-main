@@ -75,7 +75,7 @@ impl ReleaseMetadata for BmcReleaseMetadata {
             BmcReleaseMetadata::V1(metadata) => &metadata.bmc_version.version,
         };
 
-        format!("Braiins Mining Clock FW {version}")
+        format!("Braiins Deck FW {version}")
     }
 
     fn release_date(&self) -> String {

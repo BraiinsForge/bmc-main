@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
         OpenwrtSessionManager,
         current_timezone,
         wifi_manager,
-        "Braiins Mining Clock".to_owned(),
+        "Braiins Deck".to_owned(),
     );
     manager.init_wifi_ap().await?; // Has check on factory default already
 
