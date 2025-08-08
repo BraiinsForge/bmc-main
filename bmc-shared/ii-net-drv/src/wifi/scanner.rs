@@ -94,15 +94,24 @@ impl WifiScanner {
             CommandUtils::call_ubus_cmd(&["call", "iwinfo", "scan", &device_ubus_param]).await?;
 
         let output: anyhow::Result<Vec<WifiScanItem>> =
-            serde_json::from_str::<WifiScanResultJsonContainer>(&scan_result)?
-                .results
-                .into_iter()
-                .filter(|item| item.mode == "Master")
-                .map(TryInto::try_into)
-                .collect();
+            parse_scan_result(&scan_result).map(process_json_entry)?;
 
         Ok(Self::filter_sort_by_strongest_signal(output?))
     }
+}
+
+fn parse_scan_result(scan_result: &str) -> anyhow::Result<WifiScanResultJsonContainer> {
+    serde_json::from_str::<WifiScanResultJsonContainer>(scan_result)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+fn process_json_entry(container: WifiScanResultJsonContainer) -> anyhow::Result<Vec<WifiScanItem>> {
+    container
+        .results
+        .into_iter()
+        .filter(|item| item.mode == "Master")
+        .map(TryInto::try_into)
+        .collect()
 }
 
 impl TryFrom<WifiScanResultJson> for WifiScanItem {
@@ -159,10 +168,94 @@ impl TryFrom<WifiScanEncryptionJson> for EncryptionType {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::wifi::OpenwrtWifiManager;
     use anyhow::Result;
     use ii_net::wifi::SignalStrength;
 
-    use super::*;
+    #[test]
+    fn test_filter_with_empty_ssid() {
+        let entries: Result<Vec<WifiScanItem>> = vec![
+            WifiScanResultJson {
+                mode: "Master".to_owned(),
+                signal: -80,
+                encryption: WifiScanEncryptionJson {
+                    enabled: true,
+                    wep: Vec::new(),
+                    wpa: vec![2],
+                },
+                ssid: "test".to_owned(),
+            },
+            WifiScanResultJson {
+                mode: "Master".to_owned(),
+                signal: -50,
+                encryption: WifiScanEncryptionJson {
+                    enabled: true,
+                    wep: Vec::new(),
+                    wpa: vec![2],
+                },
+                ssid: "".to_owned(),
+            },
+        ]
+        .into_iter()
+        .map(WifiScanItem::try_from)
+        .collect();
+
+        let entries: Vec<WifiScanItem> = entries
+            .expect("BUG: Error in struct conversion")
+            .into_iter()
+            .filter(OpenwrtWifiManager::filter_empty_ssid)
+            .collect();
+
+        assert_eq!(1, entries.len());
+    }
+
+    #[test]
+    fn test_filter_unsupported_enc() {
+        let entries: Result<Vec<WifiScanItem>> = vec![
+            WifiScanResultJson {
+                mode: "Master".to_owned(),
+                signal: -80,
+                encryption: WifiScanEncryptionJson {
+                    enabled: true,
+                    wep: Vec::new(),
+                    wpa: vec![2],
+                },
+                ssid: "test".to_owned(),
+            },
+            WifiScanResultJson {
+                mode: "Master".to_owned(),
+                signal: -50,
+                encryption: WifiScanEncryptionJson {
+                    enabled: true,
+                    wep: Vec::new(),
+                    wpa: vec![3],
+                },
+                ssid: "test2".to_owned(),
+            },
+            WifiScanResultJson {
+                mode: "Master".to_owned(),
+                signal: -50,
+                encryption: WifiScanEncryptionJson {
+                    enabled: true,
+                    wep: Vec::new(),
+                    wpa: vec![1, 2, 3],
+                },
+                ssid: "test3".to_owned(),
+            },
+        ]
+        .into_iter()
+        .map(WifiScanItem::try_from)
+        .collect();
+
+        let entries: Vec<WifiScanItem> = entries
+            .expect("BUG: Error in struct conversion")
+            .into_iter()
+            .filter(OpenwrtWifiManager::filter_unsupported_enc)
+            .collect();
+
+        assert_eq!(1, entries.len());
+    }
 
     #[test]
     fn test_filter_sort_by_strongest_signal() {

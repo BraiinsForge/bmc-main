@@ -112,14 +112,12 @@ impl OpenwrtWifiManager {
         }
     }
 
-    async fn get_wifi_filtered_scan_list(
-        device: &str,
-        unsupported_enc: Vec<EncryptionType>,
-    ) -> Result<Vec<WifiScanItem>> {
+    async fn get_wifi_filtered_scan_list(device: &str) -> Result<Vec<WifiScanItem>> {
         Ok(WifiScanner::wifi_scan(device)
             .await?
             .into_iter()
-            .filter(|result| !unsupported_enc.contains(&result.encryption_type))
+            .filter(Self::filter_unsupported_enc) // TODO: Remove this filter when we support WPA3 - BOS-2753
+            .filter(Self::filter_empty_ssid)
             .collect())
     }
 
@@ -256,13 +254,11 @@ impl OpenwrtWifiManager {
 
     pub async fn scan(&self) -> Result<Vec<WifiScanItem>> {
         let device = WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath).await?;
-        let unsupported_enc = vec![EncryptionType::Wpa3];
-
         self.scan_result_list
             .lock()
             .await
             .cached_or_else(Box::pin(async move {
-                Self::get_wifi_filtered_scan_list(&device, unsupported_enc).await
+                Self::get_wifi_filtered_scan_list(&device).await
             }))
             .await
     }
@@ -293,5 +289,15 @@ impl OpenwrtWifiManager {
         tokio::fs::remove_file(WIRELESS_CONFIG_FILE_PATH).await?;
         WifiCommand::config().await?;
         self.wifi_config_exists().await
+    }
+
+    pub(crate) fn filter_unsupported_enc(scan_result: &WifiScanItem) -> bool {
+        // TODO: Remove this filter when we support WPA3 - BOS-2753
+        let unsupported_enc = [EncryptionType::Wpa3];
+        !unsupported_enc.contains(&scan_result.encryption_type)
+    }
+
+    pub(crate) fn filter_empty_ssid(scan_result: &WifiScanItem) -> bool {
+        !scan_result.ssid.is_empty()
     }
 }
