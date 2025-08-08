@@ -18,24 +18,24 @@ impl Audio {
         file_path: S,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<()> {
-        // Run the command to play the audio file using the `aplay` command line utility in async mode.
+        // Run the command to play the audio file using the `madplay` command line utility in async mode.
         use tokio::process::Command;
-        let mut child = Command::new("aplay")
+        let mut child = Command::new("madplay")
             .arg(file_path)
             .spawn()
-            .map_err(|e| anyhow::anyhow!("Failed to spawn aplay: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to spawn madplay: {}", e))?;
 
         tokio::select! {
             result = child.wait() => {
                 match result {
                     Ok(status) if status.success() => Ok(()),
                     Ok(status) => Err(anyhow::anyhow!("Failed to play audio: {}", status)),
-                    Err(e) => Err(anyhow::anyhow!("Failed to wait on aplay: {}", e)),
+                    Err(e) => Err(anyhow::anyhow!("Failed to wait on madplay: {}", e)),
                 }
             },
             ()  = cancellation_token.cancelled() => {
                 if let Err(e) = child.kill().await {
-                    error!("Warning: failed to kill aplay: {}", e);
+                    error!("Warning: failed to kill madplay: {}", e);
                 }
 
                 let _ = child.wait().await;
