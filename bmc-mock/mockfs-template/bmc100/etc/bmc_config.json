@@ -4,6 +4,7 @@
       "id": "3da7bea3-58e2-4bc4-83ce-21f416c894df",
       "enabled": true,
       "cycle_duration": "5s",
+      "kind": "combined",
       "widgets": [
         {
           "id": "180dcb35-fa30-4245-9e48-6a671627dcb5",
