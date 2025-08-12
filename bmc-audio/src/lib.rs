@@ -1,27 +1,88 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::{ffi::OsStr, time::Duration};
-
+use std::{ffi::OsStr, fmt};
+use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::error;
 
-#[derive(Debug)]
-pub struct Audio;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Volume(u8);
+
+impl Volume {
+    pub fn new(value: u8) -> Result<Self, VolumeError> {
+        if value > Volume::MAX.0 {
+            Err(VolumeError::OutOfRange { value })
+        } else {
+            Ok(Volume(value))
+        }
+    }
+
+    /// Returns decibels in range -40dB to 0dB (100 volume = 0dB).
+    #[must_use]
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn to_decibels(self) -> i8 {
+        // Accurate mapping using float to avoid integer division warning
+        let db = f32::from(self.0) * 0.4 - 40.0;
+        db.round() as i8
+    }
+
+    pub const MAX: Volume = Volume(100);
+    pub const MIN: Volume = Volume(0);
+}
+
+impl TryFrom<u8> for Volume {
+    type Error = VolumeError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<Volume> for u8 {
+    fn from(volume: Volume) -> Self {
+        volume.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VolumeError {
+    OutOfRange { value: u8 },
+}
+
+impl fmt::Display for VolumeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VolumeError::OutOfRange { value } => {
+                write!(f, "Volume value {value} is out of range (0-100)")
+            }
+        }
+    }
+}
+
+impl std::error::Error for VolumeError {}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Audio {
+    volume: Volume,
+}
 
 impl Audio {
-    /// Plays a sound from the given file path.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - A string slice that holds the path to the audio file in wav format.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            volume: Volume::new(50).unwrap(), // Default volume
+        }
+    }
+
     pub async fn play<S: AsRef<OsStr>>(
+        &self,
         file_path: S,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<()> {
-        // Run the command to play the audio file using the `madplay` command line utility in async mode.
-        use tokio::process::Command;
         let mut child = Command::new("madplay")
             .arg(file_path)
+            .arg("-A")
+            .arg(self.volume.to_decibels().to_string())
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn madplay: {}", e))?;
 
@@ -44,30 +105,51 @@ impl Audio {
         }
     }
 
-    pub async fn set_volume(value: u8) -> anyhow::Result<()> {
-        //todo
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        info!("Setting volume to {value}%");
-        Ok(())
+    pub fn set_volume(&mut self, volume: Volume) {
+        self.volume = volume;
+    }
+
+    #[must_use]
+    pub fn volume(&self) -> Volume {
+        self.volume
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use tokio_util::sync::CancellationToken;
+    use super::{Audio, Volume};
 
-    use super::Audio;
+    #[test]
+    fn test_volume_and_audio() {
+        // Test Volume validation and decibels conversion
+        assert!(Volume::new(50).is_ok());
+        assert!(Volume::new(101).is_err());
+        assert_eq!(
+            Volume::new(0)
+                .expect("BUG: Failed to create volume 0")
+                .to_decibels(),
+            -40
+        );
+        assert_eq!(
+            Volume::new(100)
+                .expect("BUG: Failed to create volume 100")
+                .to_decibels(),
+            0
+        );
+        assert_eq!(
+            Volume::new(50)
+                .expect("BUG: Failed to create volume 50")
+                .to_decibels(),
+            -20
+        );
 
-    // Ignore this test if the audio file does not exist.
-    #[ignore]
-    #[tokio::test]
-    async fn test_play_audio() {
-        // This test will only run if an audio file exists at the specified path.
-        // Adjust the path to a valid audio file for your environment.
-        let file_path = "/root/test.wav";
-        let token = CancellationToken::new();
-        Audio::play(file_path, token)
-            .await
-            .expect("BUG: Failed test playing audio");
+        // Test Audio volume functionality
+        let mut audio = Audio::new();
+        assert_eq!(u8::from(audio.volume()), 50); // Default volume
+
+        let new_volume = Volume::new(75).expect("BUG: Failed to create volume 75");
+        audio.set_volume(new_volume);
+        assert_eq!(u8::from(audio.volume()), 75);
+        assert_eq!(audio.volume().to_decibels(), -10);
     }
 }

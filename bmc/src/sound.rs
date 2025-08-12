@@ -5,15 +5,15 @@ use std::{path::PathBuf, sync::Arc};
 use strum::{Display, EnumIter, EnumString};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::error;
 
 use crate::config::ConfigHandle;
-use bmc_audio::Audio;
+use bmc_audio::{Audio, Volume};
 
 #[derive(Clone, Debug)]
 pub(crate) struct SoundController {
     config_handle: Arc<RwLock<ConfigHandle>>,
     sounds_dir: PathBuf,
+    audio: Arc<RwLock<Audio>>,
 }
 
 impl SoundController {
@@ -21,6 +21,7 @@ impl SoundController {
         Self {
             config_handle,
             sounds_dir,
+            audio: Arc::new(RwLock::new(Audio::new())),
         }
     }
 
@@ -38,9 +39,8 @@ impl SoundController {
     }
 
     pub(crate) async fn set_audio_sound_volume(&self, value: u8) -> anyhow::Result<()> {
-        Audio::set_volume(value)
-            .await
-            .inspect_err(|e| error!("Failed to set system sound volume to {value}, error: {e}"))
+        self.audio.write().await.set_volume(Volume::new(value)?);
+        Ok(())
     }
 
     pub(crate) async fn play_sound(
@@ -49,10 +49,8 @@ impl SoundController {
         token: CancellationToken,
     ) -> anyhow::Result<()> {
         let path = self.sounds_dir.join(sound.file_name());
-
-        // NOTE: Spawn `Audio::play` to avoid blocking cancellation;
-        // running it inline would delay dropping the token and prevent cancellation.
-        tokio::spawn(async move { Audio::play(path.as_os_str(), token).await }).await?
+        let audio = self.audio.read().await;
+        audio.play(path.as_os_str(), token).await
     }
 }
 
