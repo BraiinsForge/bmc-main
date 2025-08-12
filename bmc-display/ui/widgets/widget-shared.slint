@@ -14,7 +14,7 @@ export enum FontStyle {
 }
 
 export global WidgetUtilsAdapter {
-  public function font-style-to-font-weight(font-style: FontStyle) -> int {
+  pure public function font-style-to-font-weight(font-style: FontStyle) -> int {
     if font-style == FontStyle.Light {
       return Theme.font.weight.regular;
     } else if font-style == FontStyle.Medium {

@@ -335,20 +335,36 @@ export component WidgetClockDigital inherits Rectangle {
     in property <WidgetClockConfig> config;
     in property <DateTime> datetime;
 
+    property <string> time: datetime.is-24-format
+        ? (config.show-seconds ? datetime.time-sec-24 : datetime.time-24)
+        : (config.show-seconds ? datetime.time-sec-12 : datetime.time-12);
     property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
     width: base-width * (size == WidgetSize.Small ? 1 : (size == WidgetSize.Medium || size == WidgetSize.Large) ? 2 : 4);
     height: base-height * ((size == WidgetSize.Small || size == WidgetSize.Medium) ? 1 : 2);
 
-    VerticalLayout {
-        alignment: space-between;
+    pure function time-fontsize(size: WidgetSize) -> length {
+        if (WidgetSize.Small == size) {
+            return 64px;
+        } else if (WidgetSize.Medium == size) {
+            return 96px;
+        } else if (WidgetSize.Large == size) {
+            return 120px;
+        } else {
+            // WidgetSize.Full
+            return 200px;
+        }
+    }
 
+    if size == WidgetSize.Full: VerticalLayout {
         /// Date + TZ bar
         HorizontalLayout {
             alignment: start;
             padding-left: 32px;
             padding-right: 32px;
+            padding-top: 48px;
             Text {
+                visible: config.show-date;
                 text: root.datetime.weekday + " " + root.datetime.day + ", " + root.datetime.year;
                 font-size: 32px;
                 font-weight: Theme.font.weight.regular;
@@ -358,8 +374,9 @@ export component WidgetClockDigital inherits Rectangle {
             }
 
             Text {
+                visible: config.show-timezone;
                 text: root.datetime.timezone;
-                font-size: 32px;
+                font-size: (size == WidgetSize.Full || size == WidgetSize.Large) ? 32px : 24px;
                 font-weight: Theme.font.weight.regular;
                 color: Palette.gray-60;
                 horizontal-alignment: center;
@@ -367,6 +384,9 @@ export component WidgetClockDigital inherits Rectangle {
             }
 
             Text {
+                // Weather is not yet implemented
+                visible: false;
+                // visible: size == WidgetSize.Full;
                 text: "29°C";
                 font-size: 32px;
                 font-weight: Theme.font.weight.regular;
@@ -375,26 +395,25 @@ export component WidgetClockDigital inherits Rectangle {
                 width: parent.width / 3 - 32px;
             }
         }
+
         /// Time
         HorizontalLayout {
+            alignment: center;
             HorizontalLayout {
                 width: 228px;
             }
-
             HorizontalLayout {
-                alignment: center;
                 Text {
-                    text: root.datetime.is_24_format ? root.datetime.time-sec-24 : root.datetime.time-sec-12;
-                    font-size: 200px;
-                    font-weight: Theme.font.weight.regular;
+                    text: root.time;
+                    font-size: time-fontsize(size);
+                    font-weight: WidgetUtilsAdapter.font-style-to-font-weight(config.numbers-font-style);
                     color: Palette.white;
                 }
             }
-
             HorizontalLayout {
                 width: 228px;
-                Text {
-                    visible: !root.datetime.is_24_format;
+                padding-left: 25px;
+                if !root.datetime.is-24-format: Text {
                     text: root.datetime.is_pm ? "PM" : "AM";
                     font-size: 32px;
                     font-weight: Theme.font.weight.regular;
@@ -403,7 +422,8 @@ export component WidgetClockDigital inherits Rectangle {
                 }
             }
         }
-        /// Alarm / Sun set-rise
+
+        /// Alarm
         HorizontalLayout {
             alignment: center;
             padding-bottom: 32px;
@@ -412,6 +432,40 @@ export component WidgetClockDigital inherits Rectangle {
                 font-size: 40px;
                 font-weight: Theme.font.weight.regular;
                 color: Palette.gray-60;
+            }
+        }
+    }
+
+    if size != WidgetSize.Full: GridLayout {
+        padding-top: size == WidgetSize.Large ? 90px : size == WidgetSize.Medium ? 20px : 31px;
+        padding-bottom: size == WidgetSize.Large ? 90px : size == WidgetSize.Medium ? 20px : 31px;
+        Row {
+            Text {
+                visible: config.show-timezone;
+                text: root.datetime.timezone;
+                font-size: size == WidgetSize.Large ? 32px : 24px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-60;
+                horizontal-alignment: center;
+            }
+        }
+        Row {
+            Text {
+                text: root.time;
+                font-size: time-fontsize(size);
+                font-weight: WidgetUtilsAdapter.font-style-to-font-weight(config.numbers-font-style);
+                color: Palette.white;
+                horizontal-alignment: center;
+            }
+        }
+        Row {
+            Text {
+                visible: !root.datetime.is_24_format;
+                text: root.datetime.is_pm ? "PM" : "AM";
+                font-size: size == WidgetSize.Large ? 32px : 24px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-60;
+                horizontal-alignment: center;
             }
         }
     }

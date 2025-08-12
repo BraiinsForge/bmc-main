@@ -281,6 +281,8 @@ fn to_datetime(
     let weekday = slint::format!("{}", datetime.weekday());
     let time_sec_24 = slint::format!("{hour24:02}:{minute:02}:{second:02}");
     let time_sec_12 = slint::format!("{hour12:02}:{minute:02}:{second:02}");
+    let time_24 = slint::format!("{hour24:02}:{minute:02}");
+    let time_12 = slint::format!("{hour12:02}:{minute:02}");
     let date = slint::format!("{day:02}. {month:02}. {year}");
 
     generated::DateTime {
@@ -296,6 +298,8 @@ fn to_datetime(
         weekday,
         time_sec_24,
         time_sec_12,
+        time_12,
+        time_24,
         date,
         timezone: timezone.into(),
     }
