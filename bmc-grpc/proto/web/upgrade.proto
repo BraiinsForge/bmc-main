@@ -12,6 +12,14 @@ message UpgradeMetadata {
   string description = 4;
 }
 
+enum AutoUpgradeFrequency {
+  AUTO_UPGRADE_FREQUENCY_UNSPECIFIED = 0;
+  AUTO_UPGRADE_FREQUENCY_DAILY = 1;
+  AUTO_UPGRADE_FREQUENCY_WEEKLY = 2;
+  AUTO_UPGRADE_FREQUENCY_BI_WEEKLY = 3;
+  AUTO_UPGRADE_FREQUENCY_MONTHLY = 4;
+}
+
 message ReleaseInfo {
   string version = 1;
   string description = 2;
@@ -46,10 +54,26 @@ message UpgradeRequest {
   string hash = 1;
 }
 
+message SetAutoUpgradeRequest {
+  bool enabled = 1;
+  AutoUpgradeFrequency frequency = 2;
+  optional google.protobuf.Timestamp time_of_day = 3;
+}
+
+message GetAutoUpgradeResponse {
+  bool enabled = 1;
+  AutoUpgradeFrequency frequency = 2;
+  string cron_string = 3;
+}
+
 service UpgradeService {
   rpc CheckForUpgrade(google.protobuf.Empty) returns (CheckForUpgradeResponse);
   // Call with a release hash to donload data and provide user feedback about the progress
   rpc DownloadFirmware(DownloadFirmwareRequest) returns (stream DownloadFirmwareResponse);
   // Called when release has been downloaded
   rpc Upgrade(UpgradeRequest) returns (google.protobuf.Empty);
+  // Allows en/disabling of AutoUpgrade feature
+  rpc SetAutoUpgrade(SetAutoUpgradeRequest) returns (google.protobuf.Empty);
+  // Returns the current AutoUpgrade configuration and status
+  rpc GetAutoUpgrade(google.protobuf.Empty) returns (GetAutoUpgradeResponse);
 }
