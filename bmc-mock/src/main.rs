@@ -17,7 +17,7 @@ use tooling_std::cancel::Cancel;
 #[tokio::main]
 async fn main() -> Result<()> {
     log::init();
-
+    let start_time = std::time::Instant::now();
     let config = cli::Config::parse();
     let system_password = config.system_password.clone();
 
@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
 
     let manager = Manager::new(
         mockfs,
+        start_time,
         MockSessionManager::new(password.clone()),
         password,
         config.hostname.clone(),

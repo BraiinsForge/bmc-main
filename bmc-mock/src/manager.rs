@@ -12,6 +12,7 @@ use bmc_shared_ii_net::wifi::{
 };
 use bmc_shared_time::time::Timezone;
 use rand::Rng;
+use std::time::Instant;
 use std::{
     net::IpAddr,
     path::Path,
@@ -30,6 +31,7 @@ pub enum Error {
 #[derive(Debug)]
 pub struct Manager {
     mockfs: MockFs,
+    start_time: Instant,
     pub session_manager: MockSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     password: Arc<Mutex<Option<String>>>,
@@ -45,8 +47,10 @@ impl Manager {
     const WIFI_SSID: &str = "BMC 5a200d";
 
     #[must_use]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         mockfs: MockFs,
+        start_time: Instant,
         session_manager: MockSessionManager,
         password: Arc<Mutex<Option<String>>>,
         hostname: String,
@@ -57,6 +61,7 @@ impl Manager {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
         Self {
             mockfs,
+            start_time,
             session_manager,
             timezone_sender,
             password,
@@ -77,6 +82,10 @@ impl bmc::BmcManager for Manager {
 
     async fn version(&self) -> BosVersion {
         BosVersion::new(&25, &7)
+    }
+
+    fn start_time(&self) -> Instant {
+        self.start_time
     }
 
     fn platform(&self) -> BmcPlatform {
