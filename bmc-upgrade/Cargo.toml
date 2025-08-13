@@ -7,14 +7,21 @@ authors = ["Braiins <braiins@braiins.com>"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+bmc-grpc.workspace = true
 bmc-platform.workspace = true
+bmc-scheduler.workspace = true
+bmc-shared-time.workspace = true
 bytes.workspace = true
 chrono.workspace = true
+chrono-tz.workspace = true
 data-encoding.workspace = true
+rand.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 ring.workspace = true
+serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true
