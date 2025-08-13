@@ -12,6 +12,7 @@ use bmc_display::data::{
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
+use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
 use chrono::{Local, NaiveTime};
 use indexmap::{IndexMap, indexmap};
 use itertools::Itertools;
@@ -45,6 +46,8 @@ pub struct Config {
     alarms: Option<Vec<AlarmData>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     led_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autoupgrade: Option<AutoUpgradeConfig>,
 }
 
 impl Config {

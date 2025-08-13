@@ -14,7 +14,10 @@ use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
+use crate::manager::BmcManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
+use crate::web::{ServerConfig, WebService};
+use crate::widget_tasks::WidgetTasks;
 use anyhow::Result;
 use bmc_button::Buttons;
 use bmc_display::display_controller::DisplayController;
@@ -25,10 +28,6 @@ use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, watch};
 use tracing::info;
-
-use crate::manager::BmcManager;
-use crate::web::{ServerConfig, WebService};
-use crate::widget_tasks::WidgetTasks;
 
 #[derive(Debug)]
 pub struct App<T, U, V>
@@ -43,7 +42,7 @@ where
     config: Configuration,
     display_tasks: DisplayTasks<T>,
     widget_tasks: WidgetTasks,
-    system_upgrade_service: SystemUpgradeService<V, T>,
+    system_upgrade_service: Arc<SystemUpgradeService<V, T>>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     initial_setup: InitialSetup<T>,
@@ -72,13 +71,6 @@ where
 
         let state_service = StateService::new();
 
-        let system_upgrade_service = SystemUpgradeService::new(
-            firmware_resolver,
-            &config.upgrade_image_path,
-            manager.clone(),
-            state_service.clone(),
-        );
-
         let config_handle = ConfigHandle::init(
             config.config_path.clone(),
             config.default_brightness_pct,
@@ -87,12 +79,23 @@ where
             config.default_night_mode_volume_pct,
         )
         .await;
-
         let display_controller = display_driver.display_controller.clone();
         display_controller.set_scenes(config_handle.scenes.clone());
         display_controller.set_scene_cycling(config_handle.scene_cycling());
 
         let config_handle = Arc::new(RwLock::new(config_handle));
+
+        let scheduler = Arc::new(JobScheduler::init(manager.watch_timezone_updates()).await);
+        let system_upgrade_service = Arc::new(SystemUpgradeService::new(
+            firmware_resolver,
+            &config.upgrade_image_path,
+            manager.clone(),
+            state_service.clone(),
+            config_handle.clone(),
+            scheduler.clone(),
+            manager.start_time(),
+        ));
+        SystemUpgradeService::autoupgrade_init(system_upgrade_service.clone());
 
         let widget_tasks = WidgetTasks::new(
             display_controller.clone(),

@@ -2,30 +2,32 @@
 
 use bmc_grpc::web::{
     CheckForUpgradeResponse, DownloadFinished, DownloadFirmwareRequest, DownloadFirmwareResponse,
-    UpgradeRequest, download_firmware_response,
+    GetAutoUpgradeResponse, SetAutoUpgradeRequest, UpgradeRequest, download_firmware_response,
     upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail, UpgradeMetadata};
 use chrono::NaiveTime;
 use futures::stream::{BoxStream, StreamExt};
 use prost_types::Timestamp;
+use std::sync::Arc;
 use tonic::{Code, Request, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 
+use super::{GrpcError, SystemUpgradeService};
 use crate::{
     BmcManager,
     system_upgrade::{DownloadState, SystemUpgradeError},
 };
+use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-
-use super::{GrpcError, SystemUpgradeService};
 
 pub(crate) struct UpgradeService<T, U>
 where
     T: BmcManager,
     U: FirmwareIndex,
 {
-    system_upgrade_service: SystemUpgradeService<U, T>,
+    manager: Arc<T>,
+    system_upgrade_service: Arc<SystemUpgradeService<U, T>>,
 }
 
 impl<T, U> UpgradeService<T, U>
@@ -33,8 +35,12 @@ where
     T: BmcManager,
     U: FirmwareIndex,
 {
-    pub(crate) fn new(system_upgrade_service: SystemUpgradeService<U, T>) -> Self {
+    pub(crate) fn new(
+        manager: Arc<T>,
+        system_upgrade_service: Arc<SystemUpgradeService<U, T>>,
+    ) -> Self {
         Self {
+            manager,
             system_upgrade_service,
         }
     }
@@ -89,6 +95,43 @@ where
             .map_err(Into::<tonic::Status>::into)?;
 
         Ok(tonic::Response::new(()))
+    }
+
+    async fn set_auto_upgrade(
+        &self,
+        request: Request<SetAutoUpgradeRequest>,
+    ) -> Result<tonic::Response<()>, Status> {
+        let req = request.get_ref();
+        let frequency = req.frequency().into();
+        let timezone = self.manager.timezone();
+        let config = AutoUpgradeConfig::new(
+            req.enabled,
+            frequency,
+            timezone.current_timezone_tz_offset(),
+        );
+
+        self.system_upgrade_service
+            .autoupgrade_update(config)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn get_auto_upgrade(
+        &self,
+        _request: Request<()>,
+    ) -> Result<tonic::Response<GetAutoUpgradeResponse>, Status> {
+        let config_handle = self.system_upgrade_service.config_handle.read().await;
+        let autoupgrade_config = config_handle.autoupgrade.clone().unwrap_or_default();
+
+        let response = GetAutoUpgradeResponse {
+            enabled: autoupgrade_config.enabled,
+            frequency: autoupgrade_config.frequency.into(),
+            cron_string: autoupgrade_config.cron_string,
+        };
+
+        Ok(tonic::Response::new(response))
     }
 }
 

@@ -1,24 +1,30 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::config::ConfigHandle;
+use crate::{BmcManager, storage_checker::StorageChecker};
+use anyhow::anyhow;
+use bmc_scheduler::JobScheduler;
+use bmc_scheduler::jobs::to_boxed;
+use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::{
     downloader::FileDownloader,
     firmware::{
         DownloadEvent, FirmwareDownloadError, FirmwareIndex, FirmwareResolver, UpgradeDetail,
     },
 };
+use croner::Cron;
 use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, sync::LazyLock};
 use thiserror::Error;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch::{self, Receiver};
+use tokio::sync::{Mutex, RwLock};
 use tokio::task;
-use tracing::warn;
-
-use crate::{BmcManager, storage_checker::StorageChecker};
+use tokio::time::interval;
+use tracing::{debug, error, info, warn};
 
 const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(300);
 
@@ -72,6 +78,9 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     upgrade_image_path: PathBuf,
     bmc_manager: Arc<U>,
     client: Client,
+    pub config_handle: Arc<RwLock<ConfigHandle>>,
+    scheduler: Arc<JobScheduler>,
+    autoupgrade: Arc<AutoUpgrade>,
 }
 
 impl<T, U> Clone for SystemUpgradeService<T, U>
@@ -87,6 +96,9 @@ where
             upgrade_image_path: self.upgrade_image_path.clone(),
             bmc_manager: self.bmc_manager.clone(),
             client: self.client.clone(),
+            config_handle: self.config_handle.clone(),
+            scheduler: self.scheduler.clone(),
+            autoupgrade: self.autoupgrade.clone(),
         }
     }
 }
@@ -97,7 +109,12 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         upgrade_image_path: &PathBuf,
         bmc_manager: Arc<U>,
         state_service: StateService,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        scheduler: Arc<JobScheduler>,
+        start_time: Instant,
     ) -> Self {
+        let (autoupgrade_tx, _) = tokio::sync::broadcast::channel(1);
+        let autoupgrade = AutoUpgrade::new(autoupgrade_tx, start_time);
         Self {
             state_service,
             firmware_resolver: Arc::new(Mutex::new(Arc::new(firmware_resolver))),
@@ -105,6 +122,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             upgrade_image_path: upgrade_image_path.to_owned(),
             bmc_manager,
             client: CLIENT.clone(),
+            config_handle,
+            scheduler,
+            autoupgrade: Arc::new(autoupgrade),
         }
     }
 
@@ -298,6 +318,102 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         drop(firmware_guard);
 
         Ok(())
+    }
+
+    pub fn autoupgrade_init(self_clone: Arc<Self>) {
+        let mut rx = self_clone.autoupgrade.sender.subscribe();
+        tokio::task::spawn(async move {
+            loop {
+                if let Ok(()) = rx.recv().await {
+                    let _ = self_clone.autoupgrade_trigger().await;
+                }
+            }
+        });
+    }
+
+    async fn autoupgrade_trigger(&self) -> anyhow::Result<()> {
+        debug!("Autoupgrade trigger");
+        if let Some(upgrade) = self.check_for_upgrade().await? {
+            info!("Upgrade available: {}", upgrade.latest_release.hash);
+            let download_stream = self.download_firmware(upgrade.latest_release.hash.clone());
+
+            if let Some(upgrade_hash) = Self::wait_for_download(download_stream).await {
+                info!("Download complete! : {}", upgrade_hash);
+                self.verify_and_upgrade(&upgrade.latest_release.hash)
+                    .await
+                    .map_err(|e| anyhow!(e))
+            } else {
+                Err(anyhow!("Error while trying to download fw"))
+            }
+        } else {
+            debug!("No upgrade available");
+            Ok(())
+        }
+    }
+
+    pub async fn autoupgrade_update(&self, new_config: AutoUpgradeConfig) -> anyhow::Result<()> {
+        let mut config_handle = self
+            .config_handle
+            .try_write()
+            .expect("BUG: Failed to lock boser config");
+        config_handle.autoupgrade = Some(new_config.clone());
+
+        info!("Autoupgrade config {:?}", config_handle.autoupgrade);
+        config_handle.sync_to_storage().await?;
+        drop(config_handle);
+        info!("Autoupgrade config updated");
+
+        // First, cancel existing jobs if there are any
+        let _ = self
+            .scheduler
+            .cancel_jobs(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME.to_owned())
+            .await
+            .map_err(|e| anyhow!(e));
+
+        if new_config.enabled {
+            let timezone = self.bmc_manager.timezone();
+            let cron = Cron::new(new_config.cron_string.as_str())
+                .with_seconds_required()
+                .parse()?;
+
+            self.scheduler
+                .schedule_task(
+                    cron,
+                    <chrono_tz::Tz as chrono::TimeZone>::from_offset(
+                        &timezone.current_timezone_tz_offset(),
+                    ),
+                    AutoUpgrade::AUTOUPGRADE_SOURCE_NAME.to_owned(),
+                    to_boxed(self.autoupgrade.task.clone()),
+                )
+                .await
+                .map_err(|e| anyhow!(e))
+                .map(|_| ())
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn wait_for_download(mut receiver: UnboundedReceiver<DownloadState>) -> Option<String> {
+        let mut interval = interval(Duration::from_millis(250));
+        while let Some(res) = receiver.recv().await {
+            interval.tick().await;
+            match res {
+                DownloadState::Progress {
+                    downloaded_mb,
+                    total_mb,
+                } => {
+                    debug!("FW Download progress: {downloaded_mb} / {total_mb} MB");
+                }
+                DownloadState::Finished { hash } => {
+                    return Some(hash);
+                }
+                DownloadState::Failed(e) => {
+                    error!("Error while downloading firmware: {e:?}");
+                    return None;
+                }
+            }
+        }
+        None
     }
 }
 
