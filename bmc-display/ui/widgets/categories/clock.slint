@@ -46,6 +46,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             source: Images.clock-dial-round;
         }
         timezone := Text {
+            visible: config.show-timezone;
             text: root.datetime.timezone;
             y: (size == WidgetSize.Full) ? 104px
                 : (size == WidgetSize.Large) ? 112px
@@ -55,7 +56,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             color: Palette.gray-40;
         }
         date-window := Rectangle {
-            visible: (size == WidgetSize.Small || size == WidgetSize.Medium) ? false : true;
+            visible: (size == WidgetSize.Large || size == WidgetSize.Full) && config.show-date;
             width: 60px;
             height: 60px;
             x: parent.width / 2 - self.width / 2;
@@ -196,7 +197,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             x: nine-horizontal-offset(size);
         }
         date := Text {
-            visible: size == WidgetSize.Full;
+            visible: size == WidgetSize.Full && config.show-date;
             text: root.datetime.weekday + " " + root.datetime.day;
             font-size: 40px;
             font-weight: Theme.font.weight.regular;
@@ -205,6 +206,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             x: 870px;
         }
         timezone_element := Text {
+            visible: config.show-timezone;
             text: root.datetime.timezone;
             y: (size == WidgetSize.Full) ? 265px
                 : (size == WidgetSize.Large) ? 270px
