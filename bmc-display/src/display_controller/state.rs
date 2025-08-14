@@ -1,8 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::{Scene, SceneId, Screen, Widget, WidgetId};
+use crate::data::{Scene, SceneCycling, SceneCyclingTransition, SceneId, Screen, Widget, WidgetId};
 use crate::display_controller::DisplayController;
-use crate::generated::{self, ConnectionAdapter, InitSetupWifiAdapter};
+use crate::generated::{self, ConnectionAdapter, InitSetupWifiAdapter, SceneCyclingAdapter};
 use crate::indexmap_model::IndexMapModel;
 use crate::utils;
 use chrono::{Datelike, Timelike};
@@ -35,6 +35,23 @@ impl DisplayController {
     pub fn reset_cycler(&self) {
         self.in_event_loop(|main_window| {
             main_window.set_cycler_scene_index(0);
+        });
+    }
+
+    pub fn set_scene_cycling(&self, scene_cycling: SceneCycling) {
+        self.in_event_loop(move |main_window| {
+            let adapter = SceneCyclingAdapter::get(&main_window);
+            adapter.set_automatic_cycling_enabled(scene_cycling.automatic_cycling_enabled);
+
+            #[expect(clippy::cast_possible_truncation)]
+            let automatic_cycling_default_duration =
+                scene_cycling.automatic_cycling_default_duration.as_millis() as i64;
+            adapter.set_automatic_cycling_default_duration(automatic_cycling_default_duration);
+
+            adapter.set_transition(match scene_cycling.transition {
+                SceneCyclingTransition::Slide => generated::SceneCyclingTransition::Slide,
+                SceneCyclingTransition::Fade => generated::SceneCyclingTransition::Fade,
+            });
         });
     }
 
@@ -77,7 +94,7 @@ impl DisplayController {
         });
     }
 
-    pub fn update_scene(&self, id: SceneId, enabled: bool, cycle_duration: Duration) {
+    pub fn update_scene(&self, id: SceneId, enabled: bool, cycle_duration: Option<Duration>) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
             let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
@@ -85,9 +102,13 @@ impl DisplayController {
             scenes_ref.modify(&id, |scene| {
                 scene.enabled = enabled;
 
-                #[expect(clippy::cast_possible_truncation)]
-                let cycle_duration = cycle_duration.as_millis() as i64;
-                scene.cycle_duration = cycle_duration;
+                // NOTE: value -1 is used as sentinel value to signal that we should use default
+                // value from SceneCyclingAdapter
+                scene.cycle_duration = cycle_duration.map_or(-1, |cycle_duration| {
+                    #[expect(clippy::cast_possible_truncation)]
+                    let cycle_duration = cycle_duration.as_millis() as i64;
+                    cycle_duration
+                });
             });
         });
     }

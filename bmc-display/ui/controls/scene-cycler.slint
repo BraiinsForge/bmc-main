@@ -1,6 +1,17 @@
 import { Scene } from "../widgets/scene.slint";
 import { WidgetBuilder } from "widget-builder.slint";
 
+export enum SceneCyclingTransition {
+    Slide,
+    Fade
+}
+
+export global SceneCyclingAdapter {
+    in property <bool> automatic-cycling-enabled;
+    in property <duration> automatic-cycling-default-duration;
+    in property <SceneCyclingTransition> transition;
+}
+
 component SwipeHandler inherits Rectangle {
     in property <bool> enabled <=> swipe.enabled;
     in property <length> min-swipe-distance: self.width / 4;
@@ -12,6 +23,10 @@ component SwipeHandler inherits Rectangle {
 
     callback swiped_left();
     callback swiped_right();
+
+    public function cancel() {
+        swipe.cancel();
+    }
 
     swipe := SwipeGestureHandler {
         swiped => {
@@ -26,7 +41,7 @@ component SwipeHandler inherits Rectangle {
     }
 }
 
-component SceneCycler {
+component AutomaticSceneCycler {
     in property <bool> enabled: true;
     in property <duration> duration;
     in property <int> scenes-count;
@@ -72,15 +87,14 @@ component SceneCycler {
     }
 }
 
-export component SceneCyclerHorizontal inherits Rectangle {
+component SceneCyclerSlide inherits Rectangle {
     in property <bool> enabled: true;
     in property <[Scene]> scenes;
-    in-out property <int> scene-index <=> cycler.scene-index;
+    in-out property <int> scene-index;
+    out property <bool> user-interacting <=> swipe.swiping;
 
-    cycler := SceneCycler {
-        enabled: root.enabled && !swipe.swiping;
-        duration: root.scenes[root.scene-index].cycle-duration;
-        scenes-count: root.scenes.length;
+    changed scene-index => {
+        swipe.cancel();
     }
 
     swipe := SwipeHandler {
@@ -128,15 +142,14 @@ export component SceneCyclerHorizontal inherits Rectangle {
     }
 }
 
-export component SceneCyclerStacked inherits Rectangle {
+component SceneCyclerFade inherits Rectangle {
     in property <bool> enabled: true;
     in property <[Scene]> scenes;
-    in-out property <int> scene-index <=> cycler.scene-index;
+    in-out property <int> scene-index;
+    out property <bool> user-interacting <=> swipe.swiping;
 
-    cycler := SceneCycler {
-        enabled: root.enabled && !swipe.swiping;
-        duration: root.scenes[root.scene-index].cycle-duration;
-        scenes-count: root.scenes.length;
+    changed scene-index => {
+        swipe.cancel();
     }
 
     swipe := SwipeHandler {
@@ -158,21 +171,68 @@ export component SceneCyclerStacked inherits Rectangle {
             scene_id: scene.id;
             widgets: scene.widgets;
             opacity: 0;
+            visible: false;
 
             states [
                 active when root.scene-index == index: {
+                    visible: true;
                     opacity: 1;
                     in {
-                        animate opacity {
-                            duration: 250ms;
-                            delay: 250ms;
-                        }
+                        animate opacity { duration: 250ms; }
                     }
                     out {
                         animate opacity { duration: 250ms; }
                     }
                 }
             ]
+        }
+    }
+}
+
+export component SceneCycler inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <[Scene]> scenes;
+    in-out property <int> scene-index;
+    property <bool> user-interacting;
+
+    AutomaticSceneCycler {
+        enabled: root.enabled && SceneCyclingAdapter.automatic-cycling-enabled && !root.user-interacting;
+        duration: {
+            if root.scenes[root.scene-index].cycle-duration > 0 {
+                root.scenes[root.scene-index].cycle-duration
+            } else {
+                SceneCyclingAdapter.automatic-cycling-default-duration
+            }
+        };
+        scenes-count: root.scenes.length;
+        scene-index <=> root.scene-index;
+    }
+
+    if SceneCyclingAdapter.transition == SceneCyclingTransition.Slide: SceneCyclerSlide {
+        enabled: root.enabled;
+        scenes: root.scenes;
+        scene-index <=> root.scene-index;
+
+        init => {
+            root.user-interacting = self.user-interacting;
+        }
+
+        changed user-interacting => {
+            root.user-interacting = self.user-interacting;
+        }
+    }
+
+    if SceneCyclingAdapter.transition == SceneCyclingTransition.Fade: SceneCyclerFade {
+        enabled: root.enabled;
+        scenes: root.scenes;
+        scene-index <=> root.scene-index;
+
+        init => {
+            root.user-interacting = self.user-interacting;
+        }
+
+        changed user-interacting => {
+            root.user-interacting = self.user-interacting;
         }
     }
 }

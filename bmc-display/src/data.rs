@@ -16,6 +16,31 @@ use thiserror::Error;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SceneCycling {
+    pub automatic_cycling_enabled: bool,
+    #[serde(with = "humantime_serde")]
+    pub automatic_cycling_default_duration: Duration,
+    pub transition: SceneCyclingTransition,
+}
+
+impl Default for SceneCycling {
+    fn default() -> Self {
+        Self {
+            automatic_cycling_enabled: true,
+            automatic_cycling_default_duration: Duration::from_secs(30),
+            transition: SceneCyclingTransition::Slide,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SceneCyclingTransition {
+    Slide,
+    Fade,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FontStyle {
     Light,
@@ -216,8 +241,12 @@ impl FromStr for SceneId {
 pub struct Scene {
     pub id: SceneId,
     pub enabled: bool,
-    #[serde(with = "humantime_serde")]
-    pub cycle_duration: Duration,
+    #[serde(
+        default,
+        with = "humantime_serde",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cycle_duration: Option<Duration>,
     pub kind: SceneKind,
     #[serde(
         serialize_with = "serialize_widgets",
@@ -228,7 +257,7 @@ pub struct Scene {
 
 impl Scene {
     pub const MIN_CYCLE_DURATION: Duration = Duration::from_secs(1);
-    const DEFAULT_CYCLE_DURATION: Duration = Duration::from_secs(5);
+    const DEFAULT_CYCLE_DURATION: Option<Duration> = None;
     const DEFAULT_ENABLED: bool = true;
 
     #[must_use]
@@ -533,8 +562,13 @@ impl From<ClockWidget> for generated::WidgetClockConfig {
 
 impl From<Scene> for generated::Scene {
     fn from(value: Scene) -> Self {
-        #[expect(clippy::cast_possible_truncation)]
-        let cycle_duration = value.cycle_duration.as_millis() as i64;
+        // NOTE: value -1 is used as sentinel value to signal that we should use default
+        // value from SceneCyclingAdapter
+        let cycle_duration = value.cycle_duration.map_or(-1, |duration| {
+            #[expect(clippy::cast_possible_truncation)]
+            let duration = duration.as_millis() as i64;
+            duration
+        });
 
         let widgets = value
             .widgets

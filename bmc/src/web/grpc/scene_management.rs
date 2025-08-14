@@ -4,14 +4,16 @@ use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
-    AddWidgetError, ClockStyle, ClockWidget, FontStyle, RemoveWidgetError, Scene, SceneId,
-    SceneKind, UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
+    AddWidgetError, ClockStyle, ClockWidget, FontStyle, RemoveWidgetError, Scene, SceneCycling,
+    SceneCyclingTransition, SceneId, SceneKind, UpdateWidgetError, Widget, WidgetId, WidgetKind,
+    WidgetPosition, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
 use bmc_shared_time::time::Timezone;
 use futures::StreamExt;
 use futures::stream::BoxStream;
+use std::fmt::Display;
 use std::panic;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -637,8 +639,8 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                 let new_widget_id = new_widget.id.clone();
 
                 if let Err(err) = temp_config.sync_to_storage().await {
-                    error!("Cannot save display config: {}", err);
-                    return Err(Status::internal("Failed to save widget configuration"));
+                    error!("Cannot save config: {}", err);
+                    return Err(Status::internal("Failed to save configuration"));
                 }
                 *config = temp_config;
 
@@ -729,8 +731,8 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                     })?;
 
                 if let Err(err) = temp_config.sync_to_storage().await {
-                    error!("Cannot save display config: {}", err);
-                    return Err(Status::internal("Failed to save widget configuration"));
+                    error!("Cannot save config: {}", err);
+                    return Err(Status::internal("Failed to save configuration"));
                 }
                 *config = temp_config;
 
@@ -806,8 +808,8 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                 })?;
 
                 if let Err(err) = temp_config.sync_to_storage().await {
-                    error!("Cannot save display config: {}", err);
-                    return Err(Status::internal("Failed to save widget configuration"));
+                    error!("Cannot save config: {}", err);
+                    return Err(Status::internal("Failed to save configuration"));
                 }
                 *config = temp_config;
 
@@ -816,6 +818,73 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                 }
 
                 display_controller.remove_scene_widget(scene_id, widget_id);
+
+                Ok(Response::new(()))
+            }
+        });
+
+        join_handle
+            .await
+            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
+    }
+
+    async fn get_scene_cycling(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<web::GetSceneCyclingResponse>, Status> {
+        let config = self.config_handle.read().await;
+        let scene_cycling = map_scene_cycling_to_proto(config.scene_cycling());
+
+        Ok(Response::new(web::GetSceneCyclingResponse {
+            scene_cycling: Some(scene_cycling),
+        }))
+    }
+
+    async fn set_scene_cycling(
+        &self,
+        request: Request<web::SetSceneCyclingRequest>,
+    ) -> Result<Response<()>, Status> {
+        let request = request.into_inner();
+        let mut all_field_violations = FieldViolations::new();
+
+        let (scene_cycling, field_violations) =
+            parse_scene_cycling("scene_cycling", request.scene_cycling);
+        all_field_violations.extend(field_violations);
+
+        if !all_field_violations.is_empty() {
+            return Err(Status::with_error_details(
+                tonic::Code::InvalidArgument,
+                GrpcError::BadRequest.to_string(),
+                ErrorDetails::with_bad_request(all_field_violations),
+            ));
+        }
+
+        let scene_cycling = scene_cycling.ok_or_else(unchecked_field_violations_status)?;
+
+        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
+        let join_handle = tokio::spawn({
+            let config_handle = self.config_handle.clone();
+            let display_controller = self.display_controller.clone();
+            async move {
+                let mut config = config_handle.write().await;
+                let mut temp_config = config.clone();
+
+                let previously_enabled = temp_config.scene_cycling().automatic_cycling_enabled;
+                let enabled = scene_cycling.automatic_cycling_enabled;
+
+                temp_config.set_scene_cycling(scene_cycling.clone());
+
+                if let Err(err) = temp_config.sync_to_storage().await {
+                    error!("Cannot save config: {}", err);
+                    return Err(Status::internal("Failed to save configuration"));
+                }
+                *config = temp_config;
+
+                display_controller.set_scene_cycling(scene_cycling);
+
+                if enabled != previously_enabled {
+                    display_controller.reset_cycler();
+                }
 
                 Ok(Response::new(()))
             }
@@ -840,8 +909,9 @@ impl FieldViolations {
         self.0.is_empty()
     }
 
-    pub fn push(&mut self, field: impl Into<String>, description: impl Into<String>) {
-        self.0.push(FieldViolation::new(field, description));
+    pub fn push(&mut self, field: impl AsRef<str>, description: impl AsRef<str>) {
+        self.0
+            .push(FieldViolation::new(field.as_ref(), description.as_ref()));
     }
 
     pub fn extend(&mut self, other: Self) {
@@ -859,7 +929,7 @@ fn unchecked_field_violations_status() -> Status {
     Status::internal("Unchecked field violations")
 }
 
-fn parse_scene_id(field: &str, input: &str) -> ParseOutput<SceneId> {
+fn parse_scene_id(field: impl AsRef<str> + Display, input: &str) -> ParseOutput<SceneId> {
     let mut field_violations = FieldViolations::new();
 
     let maybe_id = SceneId::from_str(input).ok().tap_none(|| {
@@ -869,7 +939,7 @@ fn parse_scene_id(field: &str, input: &str) -> ParseOutput<SceneId> {
     (maybe_id, field_violations)
 }
 
-fn parse_widget_id(field: &str, input: &str) -> ParseOutput<WidgetId> {
+fn parse_widget_id(field: impl AsRef<str> + Display, input: &str) -> ParseOutput<WidgetId> {
     let mut field_violations = FieldViolations::new();
 
     let maybe_id = WidgetId::from_str(input).ok().tap_none(|| {
@@ -879,9 +949,15 @@ fn parse_widget_id(field: &str, input: &str) -> ParseOutput<WidgetId> {
     (maybe_id, field_violations)
 }
 
-fn parse_scene_cycle_duration(field: &str, input: u32) -> ParseOutput<Duration> {
+fn parse_scene_cycle_duration(
+    field: impl AsRef<str> + Display,
+    input: Option<u32>,
+) -> ParseOutput<Option<Duration>> {
     let mut field_violations = FieldViolations::new();
 
+    let Some(input) = input else {
+        return (Some(None), field_violations);
+    };
     let cycle_duration = Duration::from_secs(input.into());
 
     if cycle_duration < Scene::MIN_CYCLE_DURATION {
@@ -891,12 +967,12 @@ fn parse_scene_cycle_duration(field: &str, input: u32) -> ParseOutput<Duration> 
         );
         (None, field_violations)
     } else {
-        (Some(cycle_duration), field_violations)
+        (Some(Some(cycle_duration)), field_violations)
     }
 }
 
 fn parse_widget_position(
-    field: &str,
+    field: impl AsRef<str> + Display,
     input: Option<web::WidgetPosition>,
 ) -> ParseOutput<WidgetPosition> {
     let mut field_violations = FieldViolations::new();
@@ -935,7 +1011,10 @@ fn parse_widget_position(
     (maybe_position, field_violations)
 }
 
-fn parse_widget_size(field: &str, input: web::WidgetSize) -> ParseOutput<WidgetSize> {
+fn parse_widget_size(
+    field: impl AsRef<str> + Display,
+    input: web::WidgetSize,
+) -> ParseOutput<WidgetSize> {
     let mut field_violations = FieldViolations::new();
 
     let maybe_size = match input {
@@ -953,7 +1032,7 @@ fn parse_widget_size(field: &str, input: web::WidgetSize) -> ParseOutput<WidgetS
 }
 
 fn parse_widget_kind_with_default_params(
-    field: &str,
+    field: impl AsRef<str> + Display,
     input: Option<web::WidgetKind>,
 ) -> ParseOutput<WidgetKind> {
     let mut field_violations = FieldViolations::new();
@@ -975,7 +1054,10 @@ fn parse_widget_kind_with_default_params(
     (Some(kind), field_violations)
 }
 
-fn parse_widget_kind(field: &str, input: Option<web::WidgetKind>) -> ParseOutput<WidgetKind> {
+fn parse_widget_kind(
+    field: impl AsRef<str> + Display,
+    input: Option<web::WidgetKind>,
+) -> ParseOutput<WidgetKind> {
     let mut all_field_violations = FieldViolations::new();
 
     let Some(input) = input else {
@@ -990,7 +1072,8 @@ fn parse_widget_kind(field: &str, input: Option<web::WidgetKind>) -> ParseOutput
 
     let maybe_kind = match value {
         web::widget_kind::Value::Clock(clock_proto) => {
-            let (maybe_kind, field_violations) = parse_clock_widget_kind("clock", clock_proto);
+            let (maybe_kind, field_violations) =
+                parse_clock_widget_kind(format!("{field}.clock"), clock_proto);
             all_field_violations.extend(field_violations);
             maybe_kind
         }
@@ -999,7 +1082,10 @@ fn parse_widget_kind(field: &str, input: Option<web::WidgetKind>) -> ParseOutput
     (maybe_kind, all_field_violations)
 }
 
-fn parse_clock_widget_kind(field: &str, clock_proto: web::ClockWidget) -> ParseOutput<WidgetKind> {
+fn parse_clock_widget_kind(
+    field: impl AsRef<str> + Display,
+    clock_proto: web::ClockWidget,
+) -> ParseOutput<WidgetKind> {
     use web::FontStyle as FontStyleProto;
     use web::clock_widget::ClockStyle as ClockStyleProto;
 
@@ -1067,8 +1153,11 @@ fn map_scene_to_proto(scene: Scene) -> web::Scene {
         }),
     };
 
-    #[expect(clippy::cast_possible_truncation)]
-    let cycle_duration_sec = scene.cycle_duration.as_secs() as u32;
+    let cycle_duration_sec = scene.cycle_duration.map(|cycle_duration| {
+        #[expect(clippy::cast_possible_truncation)]
+        let cycle_duration_sec = cycle_duration.as_secs() as u32;
+        cycle_duration_sec
+    });
 
     web::Scene {
         id: scene.id.to_string(),
@@ -1124,5 +1213,63 @@ fn map_clock_to_proto(clock: ClockWidget) -> web::WidgetKind {
 
     web::WidgetKind {
         value: Some(web::widget_kind::Value::Clock(proto)),
+    }
+}
+
+fn parse_scene_cycling(
+    field: impl AsRef<str> + Display,
+    input: Option<web::SceneCycling>,
+) -> ParseOutput<SceneCycling> {
+    use web::SceneCyclingTransition as SceneCyclingTransitionProto;
+
+    let mut all_field_violations = FieldViolations::new();
+
+    let Some(input) = input else {
+        all_field_violations.push(field.as_ref(), "Missing value!");
+        return (None, all_field_violations);
+    };
+
+    let (maybe_automatic_cycling_default_duration, field_violations) = parse_scene_cycle_duration(
+        format!("{field}.automatic_cycling_default_duration_sec"),
+        Some(input.automatic_cycling_default_duration_sec),
+    );
+    all_field_violations.extend(field_violations);
+
+    let maybe_transition = match input.transition() {
+        SceneCyclingTransitionProto::Unspecified => {
+            all_field_violations.push(format!("{field}.transition"), "Missing value!");
+            None
+        }
+        SceneCyclingTransitionProto::Slide => Some(SceneCyclingTransition::Slide),
+        SceneCyclingTransitionProto::Fade => Some(SceneCyclingTransition::Fade),
+    };
+
+    let maybe_scene_cycling = maybe_automatic_cycling_default_duration
+        .zip(maybe_transition)
+        .map(
+            |(automatic_cycling_default_duration, transition)| SceneCycling {
+                automatic_cycling_enabled: input.automatic_cycling_enabled,
+                automatic_cycling_default_duration: automatic_cycling_default_duration
+                    .expect("BUG: automatic_cycling_default_duration should be present, since we wrapped input into Some"),
+                transition,
+            },
+        );
+
+    (maybe_scene_cycling, all_field_violations)
+}
+
+#[expect(clippy::needless_pass_by_value)]
+fn map_scene_cycling_to_proto(config: SceneCycling) -> web::SceneCycling {
+    #[expect(clippy::cast_possible_truncation)]
+    let automatic_cycling_default_duration_sec =
+        config.automatic_cycling_default_duration.as_secs() as u32;
+
+    web::SceneCycling {
+        automatic_cycling_enabled: config.automatic_cycling_enabled,
+        automatic_cycling_default_duration_sec,
+        transition: match config.transition {
+            SceneCyclingTransition::Slide => web::SceneCyclingTransition::Slide.into(),
+            SceneCyclingTransition::Fade => web::SceneCyclingTransition::Fade.into(),
+        },
     }
 }

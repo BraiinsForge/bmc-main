@@ -23,6 +23,7 @@ bmc-upgrade.workspace = true
 chrono = { workspace = true }
 futures.workspace = true
 http.workspace = true
+humantime-serde.workspace = true
 hyper.workspace = true
 index-bmc.workspace = true
 index-common.workspace = true

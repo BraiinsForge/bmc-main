@@ -10,8 +10,8 @@ message Scene {
   string id = 1;
   // required
   bool enabled = 2;
-  // required, minimum 1
-  uint32 cycle_duration_sec = 3;
+  // optional, empty value means - use default cycle duration, minimum 1
+  optional uint32 cycle_duration_sec = 3;
   // required
   oneof kind {
     Fullscreen fullscreen = 4;
@@ -44,8 +44,8 @@ message UpdateSceneRequest {
   string id = 1;
   // required
   bool enabled = 2;
-  // required, minimum 1
-  uint32 cycle_duration_sec = 3;
+  // optional, empty value means - use default cycle duration, minimum 1
+  optional uint32 cycle_duration_sec = 3;
 }
 
 message MoveSceneRequest {
@@ -161,6 +161,31 @@ enum FontStyle {
   FONT_STYLE_BOLD = 3;
 }
 
+enum SceneCyclingTransition {
+  SCENE_CYCLING_TRANSITION_UNSPECIFIED = 0;
+  SCENE_CYCLING_TRANSITION_SLIDE = 1;
+  SCENE_CYCLING_TRANSITION_FADE = 2;
+}
+
+message SceneCycling {
+  // required
+  bool automatic_cycling_enabled = 1;
+  // required, minimum 1
+  uint32 automatic_cycling_default_duration_sec = 2;
+  // required
+  SceneCyclingTransition transition = 3;
+}
+
+message GetSceneCyclingResponse {
+  // required
+  SceneCycling scene_cycling = 1;
+}
+
+message SetSceneCyclingRequest {
+  // required
+  SceneCycling scene_cycling = 1;
+}
+
 // Configures scenes & widgets for individual scenes.
 // CQRS pattern, commands only modify state, queries only return state.
 // FE should fetch scene(s) after executing command to get into proper state.
@@ -251,4 +276,8 @@ service SceneManagementService {
   rpc UpdateWidget(UpdateWidgetRequest) returns (google.protobuf.Empty);
   // Remove widget by ID.
   rpc RemoveWidget(RemoveWidgetRequest) returns (google.protobuf.Empty);
+  // Get scene cycling
+  rpc GetSceneCycling(google.protobuf.Empty) returns (GetSceneCyclingResponse);
+  // Set scene cycling
+  rpc SetSceneCycling(SetSceneCyclingRequest) returns (google.protobuf.Empty);
 }

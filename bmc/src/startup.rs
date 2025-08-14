@@ -72,6 +72,7 @@ where
 
         let display_controller = display_driver.display_controller.clone();
         display_controller.set_scenes(config_handle.scenes.clone());
+        display_controller.set_scene_cycling(config_handle.scene_cycling());
 
         let config_handle = Arc::new(RwLock::new(config_handle));
 

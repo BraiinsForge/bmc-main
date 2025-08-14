@@ -3,7 +3,7 @@
 use crate::utils::{NumberFormat, replace_file};
 use anyhow::{Context, Result, bail};
 use bmc_display::data::{
-    Scene, SceneId, SceneKind, WidgetSize, deserialize_scenes, serialize_scenes,
+    Scene, SceneCycling, SceneId, SceneKind, WidgetSize, deserialize_scenes, serialize_scenes,
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem};
 use indexmap::IndexMap;
@@ -21,6 +21,8 @@ pub struct Config {
     )]
     pub scenes: IndexMap<SceneId, Scene>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    scene_cycling: Option<SceneCycling>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     localization: Option<LocalizationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     data_collection: Option<bool>,
@@ -29,6 +31,14 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn scene_cycling(&self) -> SceneCycling {
+        self.scene_cycling.clone().unwrap_or_default()
+    }
+
+    pub fn set_scene_cycling(&mut self, config: SceneCycling) {
+        self.scene_cycling = Some(config);
+    }
+
     pub fn localization_config(&self) -> LocalizationConfig {
         self.localization.clone().unwrap_or_default()
     }
@@ -67,7 +77,10 @@ impl Config {
 
     fn validate_scenes(&self) -> Result<()> {
         for scene in self.scenes.values() {
-            if scene.cycle_duration < Scene::MIN_CYCLE_DURATION {
+            if scene
+                .cycle_duration
+                .is_some_and(|duration| duration < Scene::MIN_CYCLE_DURATION)
+            {
                 bail!("Duration for scene `{}` is too short", scene.id);
             }
 
