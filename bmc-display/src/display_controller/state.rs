@@ -55,6 +55,12 @@ impl DisplayController {
         });
     }
 
+    pub fn set_night_mode(&self, enabled: bool) {
+        self.in_event_loop(move |main_window| {
+            main_window.set_night_mode_enabled(enabled);
+        });
+    }
+
     pub fn set_preview_scene(&self, scene_id: Option<SceneId>) {
         self.in_event_loop(move |main_window| {
             if let Some(scene_id) = scene_id {

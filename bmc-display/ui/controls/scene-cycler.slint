@@ -191,12 +191,13 @@ component SceneCyclerFade inherits Rectangle {
 
 export component SceneCycler inherits Rectangle {
     in property <bool> enabled: true;
+    in property <bool> automatic-enabled: true;
     in property <[Scene]> scenes;
     in-out property <int> scene-index;
     property <bool> user-interacting;
 
     AutomaticSceneCycler {
-        enabled: root.enabled && SceneCyclingAdapter.automatic-cycling-enabled && !root.user-interacting;
+        enabled: root.enabled && root.automatic-enabled && SceneCyclingAdapter.automatic-cycling-enabled && !root.user-interacting;
         duration: {
             if root.scenes[root.scene-index].cycle-duration > 0 {
                 root.scenes[root.scene-index].cycle-duration
