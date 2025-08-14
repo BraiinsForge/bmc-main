@@ -199,6 +199,7 @@ class View extends Component<Props, State> {
             },
             {
                 key: Tab.soundAndLight,
+                disabled: true,
                 label: formatMessage({ defaultMessage: 'Sound & Light' }),
             },
             {

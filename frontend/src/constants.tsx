@@ -21,7 +21,6 @@ export const URLS = {
         notifications: '/notifications',
         network: '/network',
         api: '/api',
-        buyButton: '/buy-button',
     },
 
     external: {

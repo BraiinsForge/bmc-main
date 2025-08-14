@@ -103,7 +103,10 @@ export const abort = {
 
             // If it has a destroy operation,
             // we'll just call the destroy method
-            if ('destroy' in value && typeof value.destroy === 'function') return value.destroy();
+            if ('destroy' in value && typeof value.destroy === 'function') {
+                value.destroy();
+                return;
+            }
 
             // …otherwise, we'll call the abort method
             // and delete the deref ourselves if requested
@@ -118,7 +121,9 @@ export const abort = {
     },
     combine(...inputs: Array<AbortSignal | AbortController>): Aborter {
         const ctrl = new Aborter();
-        inputs.forEach(x => ctrl.attach(x));
+        inputs.forEach(x => {
+            ctrl.attach(x);
+        });
         return ctrl;
     },
 };

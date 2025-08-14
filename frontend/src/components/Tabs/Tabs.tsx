@@ -8,6 +8,7 @@ export type TabsPropsTab<K extends StrNum = string> = {
     key: K;
     label: ReactNode;
     content?: MaybeGetter<ReactNode>;
+    disabled?: boolean;
 
     badge?: MaybeGetter<ReactNode>;
     badgeKind?: null | BadgeKind;
@@ -67,6 +68,7 @@ export function Tabs<K extends StrNum = string>(props: TabsProps<K>) {
     const $tabs: ReactNode[] = tabs.map((tab, index) => {
         const {
             key,
+            disabled,
             // Content
             label,
             content,
@@ -97,13 +99,14 @@ export function Tabs<K extends StrNum = string>(props: TabsProps<K>) {
                     </span>
                 }
                 style={style}
-                className={cn(css.tab, className, isActive && css.active)}
+                className={cn(css.tab, className, isActive && css.active, disabled && css.disabled)}
                 onClick={() => {
                     if (isActive) return;
                     onChange(key);
                     // @ts-expect-error: Missing blur method in DOM api
                     document.activeElement?.blur();
                 }}
+                disabled={disabled}
             />
         );
     });

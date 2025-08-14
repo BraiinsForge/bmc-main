@@ -266,7 +266,9 @@ export class GrpcMockInterceptor {
 
     public printMocks(): void {
         console.groupCollapsed('gRPC: %cMocked methods', 'color: violet; font-weight: bold;');
-        Object.entries(this.#mocks).forEach(([path, mocker]) => console.log(path, mocker));
+        Object.entries(this.#mocks).forEach(([path, mocker]) => {
+            console.log(path, mocker);
+        });
         console.groupEnd();
     }
 }

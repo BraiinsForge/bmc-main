@@ -55,10 +55,18 @@ const defaultConfig = {
 } satisfies Config;
 function getConfig(extra: Pick<HtmlProps, 'additionalTags' | 'additionalAttrs'>): Config {
     const ADD_TAGS: Set<string> = new Set(defaultConfig.ADD_TAGS);
-    if (extra.additionalTags) extra.additionalTags.forEach(x => ADD_TAGS.add(x));
+    if (extra.additionalTags) {
+        extra.additionalTags.forEach(x => {
+            ADD_TAGS.add(x);
+        });
+    }
 
     const ADD_ATTR: Set<string> = new Set(defaultConfig.ADD_ATTR);
-    if (extra.additionalAttrs) extra.additionalAttrs.forEach(x => ADD_TAGS.add(x));
+    if (extra.additionalAttrs) {
+        extra.additionalAttrs.forEach(x => {
+            ADD_TAGS.add(x);
+        });
+    }
 
     return {
         ADD_TAGS: Array.from(ADD_TAGS),

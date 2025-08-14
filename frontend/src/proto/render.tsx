@@ -57,10 +57,13 @@ export const wifiEncryptionTypeOptions: Array<Exclude<pb.EncryptionType, pb.Encr
     pb.EncryptionType.WPA2,
     pb.EncryptionType.WPA2_3,
 ];
-export function wifiEncryptionTypeToString(intl: IntlShape, x: pb.EncryptionType): null | string {
+export function wifiEncryptionTypeToString(intl: IntlShape, x: 0 | null): null;
+export function wifiEncryptionTypeToString(intl: IntlShape, x: Exclude<pb.EncryptionType, 0>): string;
+export function wifiEncryptionTypeToString(intl: IntlShape, x: null | pb.EncryptionType) {
     const { formatMessage } = intl;
 
     switch (x) {
+        case null:
         case undefined:
         case pb.EncryptionType.UNSPECIFIED:
             return null;

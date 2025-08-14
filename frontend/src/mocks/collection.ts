@@ -52,7 +52,9 @@ export function arrayOf<T = number>(length: LengthRange, value?: MaybeGetter<T, 
 
 export function recordOf<K extends PropertyKey = StrNum, V = unknown>(keys: K[], value: (key: K) => V): Record<K, V> {
     const res = {} as Record<K, V>;
-    keys.forEach(k => (res[k] = value(k)));
+    keys.forEach(k => {
+        res[k] = value(k);
+    });
     return res;
 }
 

@@ -70,6 +70,16 @@ interface State {
     isSaving: boolean;
 
     netInfo: pb.NetworkInfoResponse;
+    wifi: {
+        error: null | string;
+        status: null | pb.WifiStatusResponse;
+        savedNets: null | pb.WifiSavedNetworksResponse;
+
+        isScanning: boolean;
+        nets: pb.WifiNetwork[];
+
+        selection: null | pb.WifiNetwork;
+    };
 
     confSaved: Data;
     confTemp: Data;
@@ -83,6 +93,18 @@ const getInitialState = (): State => ({
     isSaving: false,
 
     netInfo: pb.create(pb.NetworkInfoResponseSchema),
+    wifi: {
+        error: null,
+
+        status: null,
+        savedNets: null,
+
+        isScanning: false,
+        nets: [],
+
+        selection: null,
+    },
+
     confSaved: emptyData,
     confTemp: emptyData,
 
@@ -101,6 +123,7 @@ class View extends Component<Props, State> {
     #mount = debounce(() => {
         this.#syncTabs();
         this.#load();
+        this.#wifiScan();
     }, 150);
     #syncTabs = () => {
         const { location } = this.props;
@@ -118,32 +141,110 @@ class View extends Component<Props, State> {
     #load = async (): Promise<void> => {
         try {
             const { signal } = this.loadAbort.replace();
-            const [netInfo, netConfig] = await Promise.all([
-                pb.rpc.net.getNetworkInfo({}, { signal }),
-                pb.rpc.net.getNetworkConfig({}, { signal }),
+            const reqOpt = { signal };
+
+            const [netInfo, netConfig, wifiStatus, wifiSavedNets] = await Promise.all([
+                pb.rpc.net.getNetworkInfo({}, reqOpt),
+                pb.rpc.net.getNetworkConfig({}, reqOpt),
+                pb.rpc.net.getWifiStatus({}, reqOpt),
+                pb.rpc.net.getWifiSavedNetworks({}, reqOpt),
             ]);
 
-            const newState = {
-                ...cloneDeep(this.state),
-                globalErrors: null,
-                confStaticErrors: null,
-            };
-            newState.netInfo = netInfo;
-            newState.confSaved = {
-                case: netConfig.protocol.case ?? 'dhcp',
-                values:
-                    netConfig.protocol.case === 'static'
-                        ? staticConfToLocal(netConfig.protocol.value)
-                        : emptyStaticConf,
-            };
-            newState.confTemp = cloneDeep(newState.confSaved);
+            this.setState(s => {
+                const newState = {
+                    ...cloneDeep(s),
+                    globalErrors: null,
+                    confStaticErrors: null,
+                };
 
-            this.setState(newState);
+                newState.netInfo = netInfo;
+                newState.wifi = {
+                    ...newState.wifi,
+                    status: wifiStatus,
+                    savedNets: wifiSavedNets,
+                    selection:
+                        newState.wifi.selection == null
+                            ? (wifiStatus.status?.network ?? null)
+                            : newState.wifi.selection,
+                };
+
+                newState.confSaved = {
+                    case: netConfig.protocol.case ?? 'dhcp',
+                    values:
+                        netConfig.protocol.case === 'static'
+                            ? staticConfToLocal(netConfig.protocol.value)
+                            : emptyStaticConf,
+                };
+                newState.confTemp = cloneDeep(newState.confSaved);
+
+                return newState;
+            });
         } catch ($) {
             if (pb.abort.is($)) return;
             this.setState({ globalErrors: pb.collectAllErrors($) });
         }
     };
+
+    private wifiScanAbort = pb.abort.get();
+    #wifiScan = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { signal } = this.wifiScanAbort.replace();
+
+        await setState(this, s => ({ wifi: { ...s.wifi, isScanning: true } }));
+
+        try {
+            const response = await pb.rpc.net.scanWifi({}, { signal });
+            this.setState(s => ({
+                wifi: {
+                    ...s.wifi,
+                    isScanning: false,
+                    nets: response.networks,
+                },
+            }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Wifi scan: Unknown error!' });
+            this.setState(s => ({
+                wifi: {
+                    ...s.wifi,
+                    error: msg,
+                    isScanning: false,
+                },
+            }));
+        }
+    };
+
+    #wifiChange = (value: pb.WifiNetwork): void => {
+        this.setState(s => ({
+            wifi: {
+                ...s.wifi,
+                selection: value,
+            },
+        }));
+    };
+    private wifiConnectAbort = pb.abort.get();
+    #wifiConnect = async (ssid: string, encryptionType: pb.EncryptionType, password: string): Promise<boolean> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+        const { signal } = this.wifiConnectAbort.replace();
+
+        try {
+            await pb.rpc.net.setWifi(pb.create(pb.SetWifiRequestSchema, { ssid, encryptionType, password }), {
+                signal,
+            });
+            return true;
+        } catch ($) {
+            if (pb.abort.is($)) return false;
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Wifi connection: Unknown error!' });
+            notify('error', msg);
+            return false;
+        }
+    };
+    #wifiConnectCancel = (): void => this.wifiConnectAbort.abort();
 
     private saveAbort = pb.abort.get();
     #save = async (): Promise<void> => {
@@ -238,6 +339,7 @@ class View extends Component<Props, State> {
             {
                 key: Tab.diagnostics,
                 label: formatMessage({ defaultMessage: 'Diagnostics' }),
+                disabled: true,
             },
         ];
     }
@@ -267,9 +369,10 @@ class View extends Component<Props, State> {
         this.setState(s => ({ confTemp: { ...s.confTemp, case: v } }));
     };
     #confRender = (): ReactNode => {
-        // const { formatMessage } = this.props.intl;
+        const { formatMessage } = this.props.intl;
         const {
             netInfo,
+            wifi,
 
             // Status
             isLoading,
@@ -286,6 +389,14 @@ class View extends Component<Props, State> {
 
         const isDisabled: boolean = isLoading || isSaving;
         const hasUnsavedChanges: boolean = this.#hasUnsavedChanges();
+
+        const wifiNetworks: Map<pb.WifiNetwork['ssid'], pb.WifiNetwork> = new Map(wifi.nets.map(x => [x.ssid, x]));
+        if (wifi.savedNets) {
+            wifi.savedNets.status.forEach(({ network }) => {
+                if (!network) return;
+                wifiNetworks.set(network.ssid, network);
+            });
+        }
 
         return (
             <Fragment>
@@ -340,22 +451,20 @@ class View extends Component<Props, State> {
                     onReset={this.#load}
                     onSave={this.#save}
                     // Wifi
-                    // strings={{ wifiConnect: formatMessage({ defaultMessage: 'Connect' }) }}
-                    // wifiActiveNetwork={{
-                    //     value: null,
-                    //     disabled: false,
-                    //     error: null,
-                    //     onChange: console.log.bind(console),
-                    //     async onConnectionRequest() {
-                    //         return false;
-                    //     },
-                    //     onConnectionRequestCancel: console.log.bind(console),
-                    // }}
-                    // wifiAvailableNetworks={{
-                    //     isLoading: false,
-                    //     onRefresh: console.log.bind(console),
-                    //     options: [],
-                    // }}
+                    strings={{ wifiConnect: formatMessage({ defaultMessage: 'Connect' }) }}
+                    wifiActiveNetwork={{
+                        value: wifi.selection,
+                        disabled: wifi.isScanning,
+                        error: wifi.error,
+                        onChange: this.#wifiChange,
+                        onConnectionRequest: this.#wifiConnect,
+                        onConnectionRequestCancel: this.#wifiConnectCancel,
+                    }}
+                    wifiAvailableNetworks={{
+                        isLoading: wifi.isScanning,
+                        onRefresh: this.#wifiScan,
+                        options: Array.from(wifiNetworks.values()),
+                    }}
                 />
             </Fragment>
         );
@@ -391,7 +500,7 @@ class View extends Component<Props, State> {
     }
 }
 
-export default function () {
+export default function NetworkPage() {
     const intl = useIntl();
     const location = useLocation();
     const hasPassword = useStore(x => x.state.sessionInfo.hasPassword);

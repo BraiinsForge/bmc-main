@@ -6,7 +6,7 @@ import THEME from '../src/styles/theme';
 
 // https://github.com/storybookjs/storybook/pull/24555
 // https://github.com/storybookjs/storybook/issues/22452
-// @ts-ignore: Fugly hack to work around a regression in storybook.
+// @ts-expect-error: Fugly hack to work around a regression in storybook.
 BigInt.prototype.toJSON = function () {
     return this.toString();
 };

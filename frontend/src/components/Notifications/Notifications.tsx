@@ -89,7 +89,9 @@ class NotificationsComponent extends Component<Props> {
 
             if (removed.size) {
                 const tl = gsap.timeline({ paused: true, onComplete: done });
-                removed.forEach(i => tl.add(getRemovalTween(children[i] as HTMLElement), 0));
+                removed.forEach(i => {
+                    tl.add(getRemovalTween(children[i] as HTMLElement), 0);
+                });
                 tl.play(0);
             } else {
                 done();

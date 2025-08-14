@@ -1,5 +1,5 @@
 {
-    "$schema": "https://biomejs.dev/schemas/2.1.4/schema.json",
+    "$schema": "https://biomejs.dev/schemas/2.2.0/schema.json",
 
     "files": {
         "includes": [
@@ -27,7 +27,8 @@
                 "noUnreachableSuper": "off",
                 "noUnusedVariables": { "level": "info", "options": { "ignoreRestSiblings": true } },
                 "noVoidTypeReturn": "off",
-                "useExhaustiveDependencies": "warn"
+                "useExhaustiveDependencies": "warn",
+                "useUniqueElementIds": "off"
             },
 
             "suspicious": {
@@ -82,9 +83,7 @@
                 "noDelete": "off"
             },
 
-            "nursery": {
-                "useUniqueElementIds": "off"
-            }
+            "nursery": {}
         },
         "includes": ["**", "!**/*_pb.ts"]
     },

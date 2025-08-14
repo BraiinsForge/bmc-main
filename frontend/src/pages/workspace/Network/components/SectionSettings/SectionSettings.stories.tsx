@@ -1,13 +1,9 @@
 import { action } from 'storybook/actions';
 import type { Meta } from '@storybook/react';
 import * as gen from '@/mocks';
+import * as pb from '@/proto';
 
-import {
-    SectionSettings as Component,
-    type SectionSettingsProps,
-    // EncryptionType,
-    // SignalStrength,
-} from './SectionSettings';
+import { SectionSettings as Component, type SectionSettingsProps } from './SectionSettings';
 
 function getArg<T>(name: string, value: T) {
     return {
@@ -37,56 +33,57 @@ export default {
         staticDns: getArg('staticDnsServers', '8.8.8.8, 8.8.4.4'),
 
         // Wifi
-        // wifiActiveNetwork: {
-        //     ...getArg('wifiActiveNetwork', {
-        //         signalStrength: SignalStrength.Fair,
-        //         connected: true,
-        //         encryptionType: EncryptionType.Wpa_2,
-        //         ssid: 'MyWifi',
-        //     }),
-        //     async onConnectionRequest(...args: any[]) {
-        //         action('wifiActiveNetwork.onConnectionRequest')(...args);
-        //         return false;
-        //     },
-        //     onConnectionRequestCancel: action('wifiActiveNetwork.onConnectionRequestCancel'),
-        // },
-        // wifiAvailableNetworks: {
-        //     isLoading: false,
-        //     options: [
-        //         {
-        //             signalStrength: SignalStrength.Excellent,
-        //             connected: false,
-        //             encryptionType: EncryptionType.Wpa_2,
-        //             ssid: 'Home_Network_5G',
-        //         },
-        //         {
-        //             signalStrength: SignalStrength.Excellent,
-        //             connected: false,
-        //             encryptionType: EncryptionType.Wpa_2,
-        //             ssid: 'IoT_Network',
-        //         },
-        //         {
-        //             signalStrength: SignalStrength.Fair,
-        //             connected: false,
-        //             encryptionType: EncryptionType.Wpa_2,
-        //             ssid: 'Neighbor_WiFi',
-        //         },
-        //         {
-        //             signalStrength: SignalStrength.Fair,
-        //             connected: false,
-        //             encryptionType: EncryptionType.Wpa_2_3,
-        //             ssid: 'Smart_Home_Net',
-        //         },
-        //         {
-        //             signalStrength: SignalStrength.Low,
-        //             connected: false,
-        //             encryptionType: EncryptionType.None,
-        //             ssid: 'Free_WiFi',
-        //         },
-        //     ],
-        //     onRefresh: action('wifiAvailableNetworks.onRefresh'),
-        // },
-        // strings: { wifiConnect: 'Connect' },
+        wifiActiveNetwork: {
+            ...getArg('wifiActiveNetwork', {
+                $typeName: 'braiins.bmc.web.WifiNetwork',
+                signalStrength: pb.SignalStrength.MODERATE,
+                connected: true,
+                encryptionType: pb.EncryptionType.WPA2,
+                ssid: 'MyWifi',
+            }),
+            async onConnectionRequest(...args: any[]) {
+                action('wifiActiveNetwork.onConnectionRequest')(...args);
+                return false;
+            },
+            onConnectionRequestCancel: action('wifiActiveNetwork.onConnectionRequestCancel'),
+        },
+        wifiAvailableNetworks: {
+            isLoading: false,
+            options: [
+                {
+                    $typeName: 'braiins.bmc.web.WifiNetwork',
+                    signalStrength: pb.SignalStrength.STRONG,
+                    encryptionType: pb.EncryptionType.WPA2,
+                    ssid: 'Home_Network_5G',
+                },
+                {
+                    $typeName: 'braiins.bmc.web.WifiNetwork',
+                    signalStrength: pb.SignalStrength.STRONG,
+                    encryptionType: pb.EncryptionType.WPA2,
+                    ssid: 'IoT_Network',
+                },
+                {
+                    $typeName: 'braiins.bmc.web.WifiNetwork',
+                    signalStrength: pb.SignalStrength.MODERATE,
+                    encryptionType: pb.EncryptionType.WPA2,
+                    ssid: 'Neighbor_WiFi',
+                },
+                {
+                    $typeName: 'braiins.bmc.web.WifiNetwork',
+                    signalStrength: pb.SignalStrength.MODERATE,
+                    encryptionType: pb.EncryptionType.WPA2_3,
+                    ssid: 'Smart_Home_Net',
+                },
+                {
+                    $typeName: 'braiins.bmc.web.WifiNetwork',
+                    signalStrength: pb.SignalStrength.WEAK,
+                    encryptionType: pb.EncryptionType.NONE,
+                    ssid: 'Free_WiFi',
+                },
+            ],
+            onRefresh: action('wifiAvailableNetworks.onRefresh'),
+        },
+        strings: { wifiConnect: 'Connect' },
 
         hasUnsavedChanges: true,
         onSave: action('onSave'),

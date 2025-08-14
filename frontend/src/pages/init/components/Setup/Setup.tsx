@@ -44,14 +44,8 @@ interface Props extends SetupProps {
     intl: IntlShape;
 }
 
-const $ = getID('initial-setup-wifi').get;
+const $ = getID('initial-setup-profile').get;
 class View extends Component<Props> {
-    // #goBack = (): void => this.props.onBack();
-    // #submit = async (data: pb.SetWifiRequest): Promise<void> => {
-    //     const res = await this.props.onSubmit(data);
-    //     if (res) this.setState({ isDone: true });
-    // };
-
     #timezoneRenderElement = (tz: pb.Timezone): ReactElement => {
         return (
             <span className={css.timezoneElement}>

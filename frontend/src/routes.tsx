@@ -20,7 +20,6 @@ import PagePriceAlerts from './pages/workspace/PriceAlerts';
 import PageNotifications from './pages/workspace/Notifications';
 import PageNetwork from './pages/workspace/Network';
 import PageApi from './pages/workspace/Api';
-import PageBuyButton from './pages/workspace/BuyButton';
 
 export default createBrowserRouter([
     // Initial setup (right after wifi is configured)
@@ -55,7 +54,6 @@ export default createBrowserRouter([
                     { path: URLS.pages.notifications, Component: PageNotifications },
                     { path: URLS.pages.network, Component: PageNetwork },
                     { path: URLS.pages.api, Component: PageApi },
-                    { path: URLS.pages.buyButton, Component: PageBuyButton },
                 ],
             },
         ],

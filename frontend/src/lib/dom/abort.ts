@@ -121,7 +121,9 @@ export const abort = {
     },
     combine(...inputs: Array<AbortSignal | AbortController>): Aborter {
         const ctrl = new Aborter();
-        inputs.forEach(x => ctrl.attach(x));
+        inputs.forEach(x => {
+            ctrl.attach(x);
+        });
         return ctrl;
     },
 };

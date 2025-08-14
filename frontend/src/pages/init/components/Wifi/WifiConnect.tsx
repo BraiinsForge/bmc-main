@@ -7,9 +7,8 @@ import * as pb from '@/proto';
 // Components
 import { Layout } from '../Layout';
 import { DoneScene } from './DoneScene';
-import { WifiNetworkLine } from './WifiNetworkLine';
 import { Renew as IconReload } from '@carbon/react/icons';
-import { Button, CombinedLogo } from '@/components';
+import { Button, CombinedLogo, WifiNetworkLine } from '@/components';
 import { Dropdown, Link, ProgressIndicator, ProgressStep, TextInput } from '@carbon/react';
 
 // Styles

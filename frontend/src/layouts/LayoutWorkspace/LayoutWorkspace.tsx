@@ -5,7 +5,7 @@ import { Key } from 'ts-key-enum';
 
 import { URLS } from '@/constants';
 import { store, useStore } from '@/store';
-import { Braiins, Bitcoin } from '@/components';
+import { Braiins } from '@/components';
 
 import {
     Content,
@@ -24,13 +24,13 @@ import {
     type CarbonIconType,
     NotebookReference,
     Logout as IconLogout,
-    Settings as IconSettings,
-    Tag as IconPriceAlerts,
-    Notification as IconNotification,
     Screen as IconScreen,
-    Alarm as IconAlarm,
+    Settings as IconSettings,
     Network_2 as IconNetwork,
-    Api_1 as IconApi,
+    // Tag as IconPriceAlerts,
+    // Notification as IconNotification,
+    // Alarm as IconAlarm,
+    // Api_1 as IconApi,
 } from '@carbon/icons-react';
 
 import css from './LayoutWorkspace.scss';
@@ -76,6 +76,7 @@ class Base extends Component<Props, State> {
                     url={URLS.pages.network}
                     label={formatMessage({ defaultMessage: 'Network Configuration' })}
                 />
+                {/*
                 <SideLink
                     icon={IconAlarm}
                     url={URLS.pages.alarms}
@@ -96,11 +97,7 @@ class Base extends Component<Props, State> {
                     url={URLS.pages.api}
                     label={formatMessage({ defaultMessage: 'API Connections' })}
                 />
-                <SideLink
-                    icon={Bitcoin}
-                    url={URLS.pages.buyButton}
-                    label={formatMessage({ defaultMessage: 'Braiins Buy Button' })}
-                />
+                */}
             </Fragment>
         );
     };

@@ -16,6 +16,7 @@ export * from './Sortable';
 export * from './Tabs';
 export * from './Tick';
 export * from './Tooltip';
+export * from './WifiNetworkLine';
 
 export * from './constants';
 export * from './format';

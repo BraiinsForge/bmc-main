@@ -439,14 +439,14 @@ class View extends Component<Props, State> {
         try {
             // Optimistic update first
             this.setState(s => ({
-                scenes: s.scenes.map(x => (x.id === id ? { ...x, cycleDurationSec: Number.parseInt(value) } : x)),
+                scenes: s.scenes.map(x => (x.id === id ? { ...x, cycleDurationSec: Number.parseInt(value, 10) } : x)),
             }));
 
             pb.rpc.scenes.updateScene(
                 {
                     id,
                     enabled: this.#getScene(id)?.enabled ?? true,
-                    cycleDurationSec: Number.parseInt(value),
+                    cycleDurationSec: Number.parseInt(value, 10),
                 },
                 { signal },
             );
