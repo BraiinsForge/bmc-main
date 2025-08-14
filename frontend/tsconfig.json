@@ -32,5 +32,6 @@
         "noUnusedLocals": true,
         "noUnusedParameters": true
     },
-    "include": ["."]
+    "include": ["."],
+    "exclude": ["./dist", "./node_modules"]
 }
