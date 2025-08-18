@@ -1,5 +1,6 @@
 import type { IntlShape } from 'react-intl';
 import { assertUnreachable } from '@/lib/ts';
+import { formatDuration } from 'date-fns';
 
 import { create } from '@bufbuild/protobuf';
 import * as pb from './pb';
@@ -7,45 +8,6 @@ import * as pb from './pb';
 export function renderTimezone(tz: Maybe<pb.Timezone>): string {
     if (!tz) return 'N/A';
     return `UTC${tz.offset} (${tz.label})`;
-}
-
-export enum SceneCycleEffect {
-    Slide = 'Slide',
-    Fade = 'Fade',
-    Scale = 'Scale',
-    Rotate = 'Rotate',
-    Translate = 'Translate',
-    Morphing = 'Morphing',
-}
-
-export const sceneCycleEffects: SceneCycleEffect[] = [
-    SceneCycleEffect.Slide,
-    SceneCycleEffect.Fade,
-    SceneCycleEffect.Scale,
-    SceneCycleEffect.Rotate,
-    SceneCycleEffect.Translate,
-    SceneCycleEffect.Morphing,
-];
-export function sceneCycleEffectToString(intl: IntlShape, v: Maybe<SceneCycleEffect>): string {
-    if (v == null) return 'N/A';
-
-    switch (v) {
-        case SceneCycleEffect.Slide:
-            return intl.formatMessage({ defaultMessage: 'Slide' });
-        case SceneCycleEffect.Fade:
-            return intl.formatMessage({ defaultMessage: 'Fade' });
-        case SceneCycleEffect.Scale:
-            return intl.formatMessage({ defaultMessage: 'Scale' });
-        case SceneCycleEffect.Rotate:
-            return intl.formatMessage({ defaultMessage: 'Rotate' });
-        case SceneCycleEffect.Translate:
-            return intl.formatMessage({ defaultMessage: 'Translate' });
-        case SceneCycleEffect.Morphing:
-            return intl.formatMessage({ defaultMessage: 'Morphing' });
-
-        default:
-            assertUnreachable(v, 'Scene cycle effect');
-    }
 }
 
 export const wifiEncryptionTypeOptions: Array<Exclude<pb.EncryptionType, pb.EncryptionType.UNSPECIFIED>> = [
@@ -57,9 +19,9 @@ export const wifiEncryptionTypeOptions: Array<Exclude<pb.EncryptionType, pb.Encr
     pb.EncryptionType.WPA2,
     pb.EncryptionType.WPA2_3,
 ];
-export function wifiEncryptionTypeToString(intl: IntlShape, x: 0 | null): null;
+export function wifiEncryptionTypeToString(intl: IntlShape, x?: Maybe<pb.EncryptionType>): null;
 export function wifiEncryptionTypeToString(intl: IntlShape, x: Exclude<pb.EncryptionType, 0>): string;
-export function wifiEncryptionTypeToString(intl: IntlShape, x: null | pb.EncryptionType) {
+export function wifiEncryptionTypeToString(intl: IntlShape, x?: null | pb.EncryptionType) {
     const { formatMessage } = intl;
 
     switch (x) {
@@ -95,6 +57,40 @@ export function wifiEncryptionTypeToString(intl: IntlShape, x: null | pb.Encrypt
         default:
             assertUnreachable(x, 'Wifi encryption type');
     }
+}
+
+export const sceneCyclingEffectOptions: Array<Exclude<pb.SceneCyclingTransition, 0>> = [
+    pb.SceneCyclingTransition.FADE,
+    pb.SceneCyclingTransition.SLIDE,
+];
+export function sceneCyclingEffectToString(intl: IntlShape, x?: Maybe<pb.SceneCyclingTransition>): null;
+export function sceneCyclingEffectToString(intl: IntlShape, x: Exclude<pb.SceneCyclingTransition, 0>): string;
+export function sceneCyclingEffectToString(intl: IntlShape, x?: null | pb.SceneCyclingTransition) {
+    const { formatMessage } = intl;
+
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.SceneCyclingTransition.UNSPECIFIED:
+            return null;
+
+        case pb.SceneCyclingTransition.FADE:
+            return formatMessage({ defaultMessage: 'Fade' });
+
+        case pb.SceneCyclingTransition.SLIDE:
+            return formatMessage({ defaultMessage: 'Slide' });
+
+        default:
+            assertUnreachable(x, 'Scene transition effect');
+    }
+}
+
+export const sceneCycleDurationOptions: number[] = [10, 20, 30, 40, 50, 60, 90, 120];
+export function sceneCycleDurationToString(value: Maybe<number>): string {
+    if (value == null) return 'N/A';
+    const minutes = Math.floor(value / 60);
+    const seconds = Math.floor(value - minutes * 60);
+    return formatDuration({ minutes, seconds }, { format: ['minutes', 'seconds'] });
 }
 
 /**

@@ -247,6 +247,7 @@ function Demo() {
             onDelete={action('onDelete')}
             onToggle={action('onToggle')}
             onDurationChange={action('onDurationChange')}
+            defaultSceneDuration={30}
         />
     );
 }

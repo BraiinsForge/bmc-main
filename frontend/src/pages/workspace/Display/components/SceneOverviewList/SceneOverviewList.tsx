@@ -22,6 +22,8 @@ export interface SceneOverviewListProps {
     onClone(id: string): void;
     onDelete(id: string): void;
     onToggle(id: string, value: boolean): void;
+
+    defaultSceneDuration: number;
     onDurationChange(id: string, value: string): void;
 }
 interface Props extends SceneOverviewListProps {
@@ -35,7 +37,7 @@ class View extends Component<Props> {
     componentWillUnmount = () => pb.abort.all(this);
 
     #renderItem: SortableProps<pb.Scene>['renderItem'] = props => {
-        const { onEdit, onToggle, onClone, onDelete, onDurationChange, intl } = this.props;
+        const { defaultSceneDuration, onEdit, onToggle, onClone, onDelete, onDurationChange, intl } = this.props;
         const { item, state, rootProps, dragHandleProps } = props;
 
         let title: string = 'N/A';
@@ -70,7 +72,7 @@ class View extends Component<Props> {
                 }
                 title={title}
                 description={description}
-                duration={item.cycleDurationSec}
+                duration={item.cycleDurationSec ?? defaultSceneDuration}
                 // Handlers
                 onEdit={onEdit}
                 onClone={onClone}

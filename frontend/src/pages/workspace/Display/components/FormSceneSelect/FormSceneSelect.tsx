@@ -34,7 +34,7 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
         <ModalCustom
             id={$('modal')}
             open={isOpen}
-            size="md"
+            size="sm"
             title={
                 variant === 'scene'
                     ? formatMessage({ defaultMessage: 'Add New Display Scene' })

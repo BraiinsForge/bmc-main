@@ -38,7 +38,6 @@ export class Aborter implements AbortController {
     };
     public destroy(reason?: AbortSignal['reason']): void {
         this.#current?.abort(reason);
-        this.#current = undefined;
     }
 
     #length: number = 1;

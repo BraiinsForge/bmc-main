@@ -347,7 +347,13 @@ class View extends Component<Props, State> {
                             invalid={!!errors?.security}
                             invalidText={errors?.security}
                             children={pb.wifiEncryptionTypeOptions.map(x => {
-                                return <SelectItem key={x} value={x} text={pb.wifiEncryptionTypeToString(intl, x)} />;
+                                return (
+                                    <SelectItem
+                                        key={x}
+                                        value={x}
+                                        text={pb.wifiEncryptionTypeToString(intl, x) ?? 'N/A'}
+                                    />
+                                );
                             })}
                             onChange={e => {
                                 const value = Number.parseInt(e.target.value, 10) as pb.EncryptionType;

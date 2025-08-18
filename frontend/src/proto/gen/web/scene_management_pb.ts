@@ -14,7 +14,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_scene_management: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chp3ZWIvc2NlbmVfbWFuYWdlbWVudC5wcm90bxIPYnJhaWlucy5ibWMud2ViIqMCCgVTY2VuZRIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEhoKEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDRI3CgpmdWxsc2NyZWVuGAQgASgLMiEuYnJhaWlucy5ibWMud2ViLlNjZW5lLkZ1bGxzY3JlZW5IABIzCghjb21iaW5lZBgFIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5TY2VuZS5Db21iaW5lZEgAGjUKCkZ1bGxzY3JlZW4SJwoGd2lkZ2V0GAEgASgLMhcuYnJhaWlucy5ibWMud2ViLldpZGdldBo0CghDb21iaW5lZBIoCgd3aWRnZXRzGAEgAygLMhcuYnJhaWlucy5ibWMud2ViLldpZGdldEIGCgRraW5kIjsKEUdldFNjZW5lc1Jlc3BvbnNlEiYKBnNjZW5lcxgBIAMoCzIWLmJyYWlpbnMuYm1jLndlYi5TY2VuZSJNChlBZGRGdWxsc2NyZWVuU2NlbmVSZXF1ZXN0EjAKC3dpZGdldF9raW5kGAEgASgLMhsuYnJhaWlucy5ibWMud2ViLldpZGdldEtpbmQiTQoSVXBkYXRlU2NlbmVSZXF1ZXN0EgoKAmlkGAEgASgJEg8KB2VuYWJsZWQYAiABKAgSGgoSY3ljbGVfZHVyYXRpb25fc2VjGAMgASgNIi0KEE1vdmVTY2VuZVJlcXVlc3QSCgoCaWQYASABKAkSDQoFaW5kZXgYAiABKA0iNgoNU2NlbmVSZXNwb25zZRIlCgVzY2VuZRgBIAEoCzIWLmJyYWlpbnMuYm1jLndlYi5TY2VuZSIqCg5XaWRnZXRQb3NpdGlvbhILCgNyb3cYASABKA0SCwoDY29sGAIgASgNIp0BCgZXaWRnZXQSCgoCaWQYASABKAkSMQoIcG9zaXRpb24YAiABKAsyHy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0UG9zaXRpb24SKQoEc2l6ZRgDIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRTaXplEikKBGtpbmQYBCABKAsyGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0S2luZCKtAQoQQWRkV2lkZ2V0UmVxdWVzdBIQCghzY2VuZV9pZBgBIAEoCRIxCghwb3NpdGlvbhgCIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRQb3NpdGlvbhIpCgRzaXplGAMgASgOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSKQoEa2luZBgEIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRLaW5kIrwBChNVcGRhdGVXaWRnZXRSZXF1ZXN0EgoKAmlkGAEgASgJEhAKCHNjZW5lX2lkGAIgASgJEjEKCHBvc2l0aW9uGAMgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYBCABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRIpCgRraW5kGAUgASgLMhsuYnJhaWlucy5ibWMud2ViLldpZGdldEtpbmQiMwoTUmVtb3ZlV2lkZ2V0UmVxdWVzdBIKCgJpZBgBIAEoCRIQCghzY2VuZV9pZBgCIAEoCSI5Cg5XaWRnZXRSZXNwb25zZRInCgZ3aWRnZXQYASABKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0IkQKCldpZGdldEtpbmQSLQoFY2xvY2sYASABKAsyHC5icmFpaW5zLmJtYy53ZWIuQ2xvY2tXaWRnZXRIAEIHCgV2YWx1ZSLmAgoLQ2xvY2tXaWRnZXQSPAoLY2xvY2tfc3R5bGUYASABKA4yJy5icmFpaW5zLmJtYy53ZWIuQ2xvY2tXaWRnZXQuQ2xvY2tTdHlsZRI2ChJudW1iZXJzX2ZvbnRfc3R5bGUYAiABKA4yGi5icmFpaW5zLmJtYy53ZWIuRm9udFN0eWxlEhEKCXNob3dfZGF0ZRgDIAEoCBIUCgxzaG93X3NlY29uZHMYBCABKAgSFQoNc2hvd190aW1lem9uZRgFIAEoCBIVCgh0aW1lem9uZRgGIAEoCUgAiAEBIn0KCkNsb2NrU3R5bGUSGwoXQ0xPQ0tfU1RZTEVfVU5TUEVDSUZJRUQQABIcChhDTE9DS19TVFlMRV9BTkFMT0dfUk9VTkQQARIbChdDTE9DS19TVFlMRV9BTkFMT0dfUkVDVBACEhcKE0NMT0NLX1NUWUxFX0RJR0lUQUwQA0ILCglfdGltZXpvbmUqhQEKCldpZGdldFNpemUSGwoXV0lER0VUX1NJWkVfVU5TUEVDSUZJRUQQABIVChFXSURHRVRfU0laRV9TTUFMTBABEhYKEldJREdFVF9TSVpFX01FRElVTRACEhUKEVdJREdFVF9TSVpFX0xBUkdFEAMSFAoQV0lER0VUX1NJWkVfRlVMTBAEKmkKCUZvbnRTdHlsZRIaChZGT05UX1NUWUxFX1VOU1BFQ0lGSUVEEAASFAoQRk9OVF9TVFlMRV9MSUdIVBABEhUKEUZPTlRfU1RZTEVfTUVESVVNEAISEwoPRk9OVF9TVFlMRV9CT0xEEAMyqgcKFlNjZW5lTWFuYWdlbWVudFNlcnZpY2USRwoJR2V0U2NlbmVzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiIuYnJhaWlucy5ibWMud2ViLkdldFNjZW5lc1Jlc3BvbnNlEkgKCEdldFNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGh4uYnJhaWlucy5ibWMud2ViLlNjZW5lUmVzcG9uc2USXgoSQWRkRnVsbHNjcmVlblNjZW5lEiouYnJhaWlucy5ibWMud2ViLkFkZEZ1bGxzY3JlZW5TY2VuZVJlcXVlc3QaHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUSSAoQQWRkQ29tYmluZWRTY2VuZRIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJKCgtVcGRhdGVTY2VuZRIjLmJyYWlpbnMuYm1jLndlYi5VcGRhdGVTY2VuZVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSRgoJTW92ZVNjZW5lEiEuYnJhaWlucy5ibWMud2ViLk1vdmVTY2VuZVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSSAoKQ2xvbmVTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJDCgtSZW1vdmVTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJGCgxQcmV2aWV3U2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaFi5nb29nbGUucHJvdG9idWYuRW1wdHkwARJMCglBZGRXaWRnZXQSIS5icmFpaW5zLmJtYy53ZWIuQWRkV2lkZ2V0UmVxdWVzdBocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJMCgxVcGRhdGVXaWRnZXQSJC5icmFpaW5zLmJtYy53ZWIuVXBkYXRlV2lkZ2V0UmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJMCgxSZW1vdmVXaWRnZXQSJC5icmFpaW5zLmJtYy53ZWIuUmVtb3ZlV2lkZ2V0UmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eWIGcHJvdG8z',
+        'Chp3ZWIvc2NlbmVfbWFuYWdlbWVudC5wcm90bxIPYnJhaWlucy5ibWMud2ViIr8CCgVTY2VuZRIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgBiAEBEjcKCmZ1bGxzY3JlZW4YBCABKAsyIS5icmFpaW5zLmJtYy53ZWIuU2NlbmUuRnVsbHNjcmVlbkgAEjMKCGNvbWJpbmVkGAUgASgLMh8uYnJhaWlucy5ibWMud2ViLlNjZW5lLkNvbWJpbmVkSAAaNQoKRnVsbHNjcmVlbhInCgZ3aWRnZXQYASABKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0GjQKCENvbWJpbmVkEigKB3dpZGdldHMYASADKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0QgYKBGtpbmRCFQoTX2N5Y2xlX2R1cmF0aW9uX3NlYyI7ChFHZXRTY2VuZXNSZXNwb25zZRImCgZzY2VuZXMYASADKAsyFi5icmFpaW5zLmJtYy53ZWIuU2NlbmUiTQoZQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBIwCgt3aWRnZXRfa2luZBgBIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRLaW5kImkKElVwZGF0ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgAiAEBQhUKE19jeWNsZV9kdXJhdGlvbl9zZWMiLQoQTW92ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRINCgVpbmRleBgCIAEoDSI2Cg1TY2VuZVJlc3BvbnNlEiUKBXNjZW5lGAEgASgLMhYuYnJhaWlucy5ibWMud2ViLlNjZW5lIioKDldpZGdldFBvc2l0aW9uEgsKA3JvdxgBIAEoDRILCgNjb2wYAiABKA0inQEKBldpZGdldBIKCgJpZBgBIAEoCRIxCghwb3NpdGlvbhgCIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRQb3NpdGlvbhIpCgRzaXplGAMgASgOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSKQoEa2luZBgEIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRLaW5kIq0BChBBZGRXaWRnZXRSZXF1ZXN0EhAKCHNjZW5lX2lkGAEgASgJEjEKCHBvc2l0aW9uGAIgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYAyABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRIpCgRraW5kGAQgASgLMhsuYnJhaWlucy5ibWMud2ViLldpZGdldEtpbmQivAEKE1VwZGF0ZVdpZGdldFJlcXVlc3QSCgoCaWQYASABKAkSEAoIc2NlbmVfaWQYAiABKAkSMQoIcG9zaXRpb24YAyABKAsyHy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0UG9zaXRpb24SKQoEc2l6ZRgEIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRTaXplEikKBGtpbmQYBSABKAsyGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0S2luZCIzChNSZW1vdmVXaWRnZXRSZXF1ZXN0EgoKAmlkGAEgASgJEhAKCHNjZW5lX2lkGAIgASgJIjkKDldpZGdldFJlc3BvbnNlEicKBndpZGdldBgBIAEoCzIXLmJyYWlpbnMuYm1jLndlYi5XaWRnZXQiRAoKV2lkZ2V0S2luZBItCgVjbG9jaxgBIAEoCzIcLmJyYWlpbnMuYm1jLndlYi5DbG9ja1dpZGdldEgAQgcKBXZhbHVlIuYCCgtDbG9ja1dpZGdldBI8CgtjbG9ja19zdHlsZRgBIAEoDjInLmJyYWlpbnMuYm1jLndlYi5DbG9ja1dpZGdldC5DbG9ja1N0eWxlEjYKEm51bWJlcnNfZm9udF9zdHlsZRgCIAEoDjIaLmJyYWlpbnMuYm1jLndlYi5Gb250U3R5bGUSEQoJc2hvd19kYXRlGAMgASgIEhQKDHNob3dfc2Vjb25kcxgEIAEoCBIVCg1zaG93X3RpbWV6b25lGAUgASgIEhUKCHRpbWV6b25lGAYgASgJSACIAQEifQoKQ2xvY2tTdHlsZRIbChdDTE9DS19TVFlMRV9VTlNQRUNJRklFRBAAEhwKGENMT0NLX1NUWUxFX0FOQUxPR19ST1VORBABEhsKF0NMT0NLX1NUWUxFX0FOQUxPR19SRUNUEAISFwoTQ0xPQ0tfU1RZTEVfRElHSVRBTBADQgsKCV90aW1lem9uZSKeAQoMU2NlbmVDeWNsaW5nEiEKGWF1dG9tYXRpY19jeWNsaW5nX2VuYWJsZWQYASABKAgSLgomYXV0b21hdGljX2N5Y2xpbmdfZGVmYXVsdF9kdXJhdGlvbl9zZWMYAiABKA0SOwoKdHJhbnNpdGlvbhgDIAEoDjInLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmdUcmFuc2l0aW9uIk8KF0dldFNjZW5lQ3ljbGluZ1Jlc3BvbnNlEjQKDXNjZW5lX2N5Y2xpbmcYASABKAsyHS5icmFpaW5zLmJtYy53ZWIuU2NlbmVDeWNsaW5nIk4KFlNldFNjZW5lQ3ljbGluZ1JlcXVlc3QSNAoNc2NlbmVfY3ljbGluZxgBIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmcqhQEKCldpZGdldFNpemUSGwoXV0lER0VUX1NJWkVfVU5TUEVDSUZJRUQQABIVChFXSURHRVRfU0laRV9TTUFMTBABEhYKEldJREdFVF9TSVpFX01FRElVTRACEhUKEVdJREdFVF9TSVpFX0xBUkdFEAMSFAoQV0lER0VUX1NJWkVfRlVMTBAEKmkKCUZvbnRTdHlsZRIaChZGT05UX1NUWUxFX1VOU1BFQ0lGSUVEEAASFAoQRk9OVF9TVFlMRV9MSUdIVBABEhUKEUZPTlRfU1RZTEVfTUVESVVNEAISEwoPRk9OVF9TVFlMRV9CT0xEEAMqiQEKFlNjZW5lQ3ljbGluZ1RyYW5zaXRpb24SKAokU0NFTkVfQ1lDTElOR19UUkFOU0lUSU9OX1VOU1BFQ0lGSUVEEAASIgoeU0NFTkVfQ1lDTElOR19UUkFOU0lUSU9OX1NMSURFEAESIQodU0NFTkVfQ1lDTElOR19UUkFOU0lUSU9OX0ZBREUQAjLTCAoWU2NlbmVNYW5hZ2VtZW50U2VydmljZRJHCglHZXRTY2VuZXMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaIi5icmFpaW5zLmJtYy53ZWIuR2V0U2NlbmVzUmVzcG9uc2USSAoIR2V0U2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaHi5icmFpaW5zLmJtYy53ZWIuU2NlbmVSZXNwb25zZRJeChJBZGRGdWxsc2NyZWVuU2NlbmUSKi5icmFpaW5zLmJtYy53ZWIuQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJIChBBZGRDb21iaW5lZFNjZW5lEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkoKC1VwZGF0ZVNjZW5lEiMuYnJhaWlucy5ibWMud2ViLlVwZGF0ZVNjZW5lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJGCglNb3ZlU2NlbmUSIS5icmFpaW5zLmJtYy53ZWIuTW92ZVNjZW5lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJICgpDbG9uZVNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkMKC1JlbW92ZVNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkYKDFByZXZpZXdTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eTABEkwKCUFkZFdpZGdldBIhLmJyYWlpbnMuYm1jLndlYi5BZGRXaWRnZXRSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkwKDFVwZGF0ZVdpZGdldBIkLmJyYWlpbnMuYm1jLndlYi5VcGRhdGVXaWRnZXRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkwKDFJlbW92ZVdpZGdldBIkLmJyYWlpbnMuYm1jLndlYi5SZW1vdmVXaWRnZXRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElMKD0dldFNjZW5lQ3ljbGluZxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRooLmJyYWlpbnMuYm1jLndlYi5HZXRTY2VuZUN5Y2xpbmdSZXNwb25zZRJSCg9TZXRTY2VuZUN5Y2xpbmcSJy5icmFpaW5zLmJtYy53ZWIuU2V0U2NlbmVDeWNsaW5nUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eWIGcHJvdG8z',
         [file_google_protobuf_empty, file_google_protobuf_wrappers],
     );
 
@@ -37,11 +37,11 @@ export type Scene = Message<'braiins.bmc.web.Scene'> & {
     enabled: boolean;
 
     /**
-     * required, minimum 1
+     * optional, empty value means - use default cycle duration, minimum 1
      *
-     * @generated from field: uint32 cycle_duration_sec = 3;
+     * @generated from field: optional uint32 cycle_duration_sec = 3;
      */
-    cycleDurationSec: number;
+    cycleDurationSec?: number;
 
     /**
      * required
@@ -170,11 +170,11 @@ export type UpdateSceneRequest = Message<'braiins.bmc.web.UpdateSceneRequest'> &
     enabled: boolean;
 
     /**
-     * required, minimum 1
+     * optional, empty value means - use default cycle duration, minimum 1
      *
-     * @generated from field: uint32 cycle_duration_sec = 3;
+     * @generated from field: optional uint32 cycle_duration_sec = 3;
      */
-    cycleDurationSec: number;
+    cycleDurationSec?: number;
 };
 
 /**
@@ -543,6 +543,78 @@ export const ClockWidget_ClockStyleSchema: GenEnum<ClockWidget_ClockStyle> =
     enumDesc(file_web_scene_management, 13, 0);
 
 /**
+ * @generated from message braiins.bmc.web.SceneCycling
+ */
+export type SceneCycling = Message<'braiins.bmc.web.SceneCycling'> & {
+    /**
+     * required
+     *
+     * @generated from field: bool automatic_cycling_enabled = 1;
+     */
+    automaticCyclingEnabled: boolean;
+
+    /**
+     * required, minimum 1
+     *
+     * @generated from field: uint32 automatic_cycling_default_duration_sec = 2;
+     */
+    automaticCyclingDefaultDurationSec: number;
+
+    /**
+     * required
+     *
+     * @generated from field: braiins.bmc.web.SceneCyclingTransition transition = 3;
+     */
+    transition: SceneCyclingTransition;
+};
+
+/**
+ * Describes the message braiins.bmc.web.SceneCycling.
+ * Use `create(SceneCyclingSchema)` to create a new message.
+ */
+export const SceneCyclingSchema: GenMessage<SceneCycling> = /*@__PURE__*/ messageDesc(file_web_scene_management, 14);
+
+/**
+ * @generated from message braiins.bmc.web.GetSceneCyclingResponse
+ */
+export type GetSceneCyclingResponse = Message<'braiins.bmc.web.GetSceneCyclingResponse'> & {
+    /**
+     * required
+     *
+     * @generated from field: braiins.bmc.web.SceneCycling scene_cycling = 1;
+     */
+    sceneCycling?: SceneCycling;
+};
+
+/**
+ * Describes the message braiins.bmc.web.GetSceneCyclingResponse.
+ * Use `create(GetSceneCyclingResponseSchema)` to create a new message.
+ */
+export const GetSceneCyclingResponseSchema: GenMessage<GetSceneCyclingResponse> =
+    /*@__PURE__*/
+    messageDesc(file_web_scene_management, 15);
+
+/**
+ * @generated from message braiins.bmc.web.SetSceneCyclingRequest
+ */
+export type SetSceneCyclingRequest = Message<'braiins.bmc.web.SetSceneCyclingRequest'> & {
+    /**
+     * required
+     *
+     * @generated from field: braiins.bmc.web.SceneCycling scene_cycling = 1;
+     */
+    sceneCycling?: SceneCycling;
+};
+
+/**
+ * Describes the message braiins.bmc.web.SetSceneCyclingRequest.
+ * Use `create(SetSceneCyclingRequestSchema)` to create a new message.
+ */
+export const SetSceneCyclingRequestSchema: GenMessage<SetSceneCyclingRequest> =
+    /*@__PURE__*/
+    messageDesc(file_web_scene_management, 16);
+
+/**
  * @generated from enum braiins.bmc.web.WidgetSize
  */
 export enum WidgetSize {
@@ -608,6 +680,33 @@ export enum FontStyle {
  * Describes the enum braiins.bmc.web.FontStyle.
  */
 export const FontStyleSchema: GenEnum<FontStyle> = /*@__PURE__*/ enumDesc(file_web_scene_management, 1);
+
+/**
+ * @generated from enum braiins.bmc.web.SceneCyclingTransition
+ */
+export enum SceneCyclingTransition {
+    /**
+     * @generated from enum value: SCENE_CYCLING_TRANSITION_UNSPECIFIED = 0;
+     */
+    UNSPECIFIED = 0,
+
+    /**
+     * @generated from enum value: SCENE_CYCLING_TRANSITION_SLIDE = 1;
+     */
+    SLIDE = 1,
+
+    /**
+     * @generated from enum value: SCENE_CYCLING_TRANSITION_FADE = 2;
+     */
+    FADE = 2,
+}
+
+/**
+ * Describes the enum braiins.bmc.web.SceneCyclingTransition.
+ */
+export const SceneCyclingTransitionSchema: GenEnum<SceneCyclingTransition> =
+    /*@__PURE__*/
+    enumDesc(file_web_scene_management, 2);
 
 /**
  * Configures scenes & widgets for individual scenes.
@@ -797,6 +896,26 @@ export const SceneManagementService: GenService<{
     removeWidget: {
         methodKind: 'unary';
         input: typeof RemoveWidgetRequestSchema;
+        output: typeof EmptySchema;
+    };
+    /**
+     * Get scene cycling
+     *
+     * @generated from rpc braiins.bmc.web.SceneManagementService.GetSceneCycling
+     */
+    getSceneCycling: {
+        methodKind: 'unary';
+        input: typeof EmptySchema;
+        output: typeof GetSceneCyclingResponseSchema;
+    };
+    /**
+     * Set scene cycling
+     *
+     * @generated from rpc braiins.bmc.web.SceneManagementService.SetSceneCycling
+     */
+    setSceneCycling: {
+        methodKind: 'unary';
+        input: typeof SetSceneCyclingRequestSchema;
         output: typeof EmptySchema;
     };
 }> = /*@__PURE__*/ serviceDesc(file_web_scene_management, 0);

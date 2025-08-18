@@ -1,6 +1,5 @@
 import { Component, createRef, Fragment } from 'react';
 import { debounce } from 'es-toolkit';
-import { formatDuration } from 'date-fns';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
 import { useNavigate, type NavigateFunction } from 'react-router';
@@ -16,8 +15,8 @@ import { URLS } from '@/constants';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { Button, Modal } from '@/components';
-import { Dropdown, Popover, PopoverContent, Toggle } from '@carbon/react';
+import { Button } from '@/components';
+import { Dropdown, Toggle, OverflowMenu } from '@carbon/react';
 import {
     Add as IconAdd,
     CarouselHorizontal as IconCycle,
@@ -53,7 +52,7 @@ interface State {
         isOpen: boolean;
         isActive: boolean;
         defaultDurationSeconds: number;
-        effect: pb.SceneCycleEffect;
+        effect: pb.SceneCyclingTransition;
     };
 
     openDialog:
@@ -76,8 +75,8 @@ const getInitialState = (): State => ({
     cycle: {
         isOpen: false,
         isActive: true,
-        defaultDurationSeconds: 30,
-        effect: pb.SceneCycleEffect.Slide,
+        defaultDurationSeconds: 0,
+        effect: pb.SceneCyclingTransition.SLIDE,
     },
     openDialog: null,
 });
@@ -95,7 +94,7 @@ class View extends Component<Props, State> {
         if (!clickTarget || !catchTarget) return;
         if (catchTarget.contains(clickTarget)) return;
 
-        this.#cycleOpenToggle();
+        this.#cycleDialogClose();
     };
     #windowClickUnsubscribe = (): void => {};
 
@@ -117,8 +116,21 @@ class View extends Component<Props, State> {
 
         try {
             const { signal } = this.abortLoadMetadata.replace();
-            const { timezones } = await pb.rpc.sys.getTimezoneList({}, { signal });
-            this.setState({ timezones });
+            const reqConf = { signal };
+
+            const [{ timezones }, { sceneCycling }] = await Promise.all([
+                pb.rpc.sys.getTimezoneList({}, reqConf),
+                pb.rpc.scenes.getSceneCycling({}, reqConf),
+            ]);
+            this.setState(s => ({
+                timezones,
+                cycle: {
+                    ...s.cycle,
+                    effect: sceneCycling?.transition ?? s.cycle.effect,
+                    isActive: sceneCycling?.automaticCyclingEnabled ?? s.cycle.isActive,
+                    defaultDurationSeconds: sceneCycling?.automaticCyclingDefaultDurationSec ?? 0,
+                },
+            }));
         } catch ($) {
             if (pb.abort.is($)) return;
             const msg: string =
@@ -151,6 +163,7 @@ class View extends Component<Props, State> {
             on: formatMessage({ defaultMessage: 'On' }),
             off: formatMessage({ defaultMessage: 'Off' }),
             cancel: formatMessage({ defaultMessage: 'Cancel' }),
+            addScene: formatMessage({ defaultMessage: 'Add New Scene' }),
         };
     }
 
@@ -603,132 +616,134 @@ class View extends Component<Props, State> {
     // /Scene list handlers
     //
 
+    //
     // Cycle Settings
-    #cycleOpenToggle = (): void => {
-        this.setState(s => ({ cycle: { ...s.cycle, isOpen: !s.cycle.isOpen } }));
+    //
+
+    #cycleDialogToggle = (open: boolean): void => this.setState(s => ({ cycle: { ...s.cycle, isOpen: open } }));
+    #cycleDialogOpen = (): void => this.#cycleDialogToggle(true);
+    #cycleDialogClose = (): void => this.#cycleDialogToggle(false);
+
+    private abortCycleSubmit = pb.abort.get();
+    #cycleDialogSubmit = async (): Promise<void> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+        const { cycle } = this.state;
+
+        try {
+            const { signal } = this.abortCycleSubmit.replace();
+            await pb.rpc.scenes.setSceneCycling(
+                pb.create(pb.SetSceneCyclingRequestSchema, {
+                    sceneCycling: {
+                        automaticCyclingEnabled: cycle.isActive,
+                        automaticCyclingDefaultDurationSec: cycle.defaultDurationSeconds,
+                        transition: cycle.effect,
+                    },
+                }),
+                { signal },
+            );
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to update scene cycling settings!' });
+            notify('error', msg);
+        } finally {
+            this.#loadScenesDebounced();
+        }
     };
-    #cycleActiveToggle = (): void => {
-        this.setState(s => ({ cycle: { ...s.cycle, isActive: !s.cycle.isActive } }));
+
+    #cycleChangeActive = (): void => {
+        this.setState(s => ({ cycle: { ...s.cycle, isActive: !s.cycle.isActive } }), this.#cycleDialogSubmit);
     };
-    #cycleDurationChange = (value: number): void => {
-        this.setState(s => ({ cycle: { ...s.cycle, defaultDurationSeconds: value } }));
+    #cycleChangeDuration = (value: number): void => {
+        this.setState(s => ({ cycle: { ...s.cycle, defaultDurationSeconds: value } }), this.#cycleDialogSubmit);
     };
-    #cycleEffectChange = (value: pb.SceneCycleEffect): void => {
-        this.setState(s => ({ cycle: { ...s.cycle, effect: value } }));
+    #cycleChangeEffect = (value: pb.SceneCyclingTransition): void => {
+        this.setState(s => ({ cycle: { ...s.cycle, effect: value } }), this.#cycleDialogSubmit);
     };
+
+    //
+    // /Cycle Settings
+    //
 
     #headerRender = (): ReactElement => {
         const { intl } = this.props;
         const { formatMessage } = intl;
 
         const { cycle } = this.state;
-        const { on, off } = this.#txt;
+        const { on, off, addScene } = this.#txt;
 
         const cycleToggleText: string = formatMessage(
             { defaultMessage: 'Screen Cycling: {status}' },
             { status: cycle.isActive ? on : off },
-        );
-        let cycleToggleButton: ReactElement = (
-            <Button
-                key="cycle-toggle-button"
-                kind="secondary"
-                icon={cycle.isOpen ? IconChevronUp : IconChevronDown}
-                onClick={this.#cycleOpenToggle}
-            >
-                <div className={css.screenCycleButtonContent}>
-                    <IconCycle />
-                    <span children={cycleToggleText} />
-                </div>
-            </Button>
-        );
-
-        const addSceneText: string = formatMessage({ defaultMessage: 'Add New Scene' });
-        let addSceneButton: ReactElement = (
-            <Button
-                key="add-scene-button"
-                kind="primary"
-                onClick={this.#openDialogSceneSelect}
-                icon={IconAdd}
-                children={addSceneText}
-            />
         );
 
         return (
             <Sized<HTMLDivElement>
                 render={(ref, size) => {
                     const iconLayout: boolean = !!size && size.width <= 800;
-                    if (iconLayout) {
-                        cycleToggleButton = (
-                            <Button
-                                key="cycle-toggle-button"
-                                kind="secondary"
-                                hasIconOnly
-                                title={cycleToggleText}
-                                tooltipPosition="bottom"
-                                icon={IconCycle}
-                                onClick={this.#cycleOpenToggle}
-                            />
-                        );
-
-                        addSceneButton = (
-                            <Button
-                                key="add-scene-button"
-                                kind="primary"
-                                onClick={this.#openDialogSceneSelect}
-                                icon={IconAdd}
-                                hasIconOnly
-                                title={addSceneText}
-                                tooltipPosition="bottom"
-                            />
-                        );
-                    }
+                    const mobileLayout: boolean = !!size && size.width <= 600;
 
                     return (
                         <div className={css.headerControls} ref={ref}>
-                            <Popover
-                                as="div"
-                                align="bottom-end"
-                                caret={false}
-                                isTabTip
-                                dropShadow
-                                open={cycle.isOpen}
-                                ref={this.#cyclePopOverRef}
-                            >
-                                {cycleToggleButton}
+                            <ScreenCyclingConfigForm
+                                cycle={{ value: cycle.isActive, onChange: this.#cycleChangeActive }}
+                                duration={{
+                                    value: cycle.defaultDurationSeconds,
+                                    onChange: this.#cycleChangeDuration,
+                                }}
+                                transitionEffect={{ value: cycle.effect, onChange: this.#cycleChangeEffect }}
+                                render={x => {
+                                    return (
+                                        <div className={css.screenCycleButtonWrapper}>
+                                            <OverflowMenu
+                                                id={$('cycle-form-menu')}
+                                                menuOptionsClass={css.screenCycleMenu}
+                                                flipped={!mobileLayout}
+                                                focusTrap={false}
+                                                direction="bottom"
+                                                iconDescription={cycleToggleText}
+                                                onOpen={this.#cycleDialogOpen}
+                                                onClose={this.#cycleDialogClose}
+                                                open={cycle.isOpen}
+                                                renderIcon={() => (
+                                                    <div className={css.screenCycleButtonContent}>
+                                                        <IconCycle />
+                                                        {iconLayout && !mobileLayout ? null : (
+                                                            <span children={cycleToggleText} />
+                                                        )}
+                                                        {cycle.isOpen ? <IconChevronUp /> : <IconChevronDown />}
+                                                    </div>
+                                                )}
+                                                selectorPrimaryFocus="input,button,select"
+                                                size="sm"
+                                                children={x.content}
+                                            />
+                                        </div>
+                                    );
+                                }}
+                            />
 
-                                <ScreenCyclingConfigForm
-                                    cycle={{ value: cycle.isActive, onChange: this.#cycleActiveToggle }}
-                                    duration={{
-                                        value: cycle.defaultDurationSeconds,
-                                        onChange: this.#cycleDurationChange,
-                                    }}
-                                    transitionEffect={{ value: cycle.effect, onChange: this.#cycleEffectChange }}
-                                    render={x => {
-                                        if (iconLayout) {
-                                            const toggle = this.#cycleOpenToggle;
-                                            return (
-                                                <Modal
-                                                    id={$('cycle-form-modal')}
-                                                    open={cycle.isOpen}
-                                                    size="sm"
-                                                    modalHeading={x.title}
-                                                    // Submit
-                                                    primaryButtonText={formatMessage({ defaultMessage: 'Save' })}
-                                                    onRequestSubmit={toggle}
-                                                    // Cancel
-                                                    secondaryButtonText={this.#txt.cancel}
-                                                    onSecondarySubmit={toggle}
-                                                    // Close button
-                                                    onRequestClose={toggle}
-                                                    children={x.content}
-                                                />
-                                            );
-                                        }
-                                        return <PopoverContent className={x.className} children={x.content} />;
-                                    }}
+                            {iconLayout && !mobileLayout ? (
+                                <Button
+                                    key="add-scene-button"
+                                    kind="primary"
+                                    onClick={this.#openDialogSceneSelect}
+                                    icon={IconAdd}
+                                    hasIconOnly
+                                    title={addScene}
+                                    tooltipPosition="bottom"
                                 />
-                            </Popover>
-                            {addSceneButton}
+                            ) : (
+                                <Button
+                                    key="add-scene-button"
+                                    kind="primary"
+                                    onClick={this.#openDialogSceneSelect}
+                                    icon={IconAdd}
+                                    children={addScene}
+                                />
+                            )}
                         </div>
                     );
                 }}
@@ -738,7 +753,7 @@ class View extends Component<Props, State> {
 
     render() {
         const { intl } = this.props;
-        const { scenes } = this.state;
+        const { scenes, cycle } = this.state;
 
         return (
             <div>
@@ -764,6 +779,7 @@ class View extends Component<Props, State> {
                         onDelete={this.#sceneListDelete}
                         onToggle={this.#sceneListSetEnabled}
                         onDurationChange={this.#sceneListSetDuration}
+                        defaultSceneDuration={cycle.defaultDurationSeconds}
                     />
                 </main>
 
@@ -776,25 +792,25 @@ class View extends Component<Props, State> {
 interface ScreenCyclingConfigFormProps {
     cycle: iField<boolean>;
     duration: iField<number>;
-    transitionEffect: iField<pb.SceneCycleEffect>;
-    render(x: { title: string; className: string; content: ReactElement }): ReactElement;
+    transitionEffect: iField<pb.SceneCyclingTransition>;
+    render(x: { title: string; content: ReactElement }): ReactElement;
 }
 function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElement {
     const intl = useIntl();
     const { formatMessage } = intl;
     const { cycle, duration, transitionEffect, render } = props;
 
-    const cycleDurationOptions: number[] = [10, 20, 30, 40, 50, 60, 120];
-    const cycleDurationToString = (value: Maybe<number>): string => {
-        if (value == null) return 'N/A';
-        const minutes = Math.floor(value / 60);
-        const seconds = Math.floor(value - minutes * 60);
-        return formatDuration({ minutes, seconds }, { format: ['minutes', 'seconds'] });
+    const txt = {
+        enableCycling: formatMessage({ defaultMessage: 'Enable Screen Cycling' }),
+        on: formatMessage({ defaultMessage: 'On' }),
+        off: formatMessage({ defaultMessage: 'Off' }),
+
+        defaultDuration: formatMessage({ defaultMessage: 'Default Display Duration' }),
+        txEffect: formatMessage({ defaultMessage: 'Transition Effect' }),
     };
 
     return render({
         title: formatMessage({ defaultMessage: 'Screen Cycling' }),
-        className: css.screenCycleContent,
         content: (
             <Form className={css.screenCycleForm}>
                 <Toggle
@@ -802,31 +818,31 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
                     size="md"
                     toggled={!!cycle.value}
                     onToggle={cycle.onChange}
-                    labelText={formatMessage({ defaultMessage: 'Enable Screen Cycling' })}
-                    labelA={formatMessage({ defaultMessage: 'Off' })}
-                    labelB={formatMessage({ defaultMessage: 'On' })}
+                    labelText={txt.enableCycling}
+                    labelA={txt.off}
+                    labelB={txt.on}
                 />
 
                 <Dropdown<number>
                     id={$('cycle-duration')}
-                    label={formatMessage({ defaultMessage: 'Default Display Duration' })}
-                    titleText={formatMessage({ defaultMessage: 'Default Display Duration' })}
-                    items={cycleDurationOptions}
+                    label={txt.defaultDuration}
+                    titleText={txt.defaultDuration}
+                    items={pb.sceneCycleDurationOptions}
                     onChange={x => (x.selectedItem ? duration.onChange(x.selectedItem) : null)}
                     selectedItem={duration.value ?? undefined}
-                    itemToString={cycleDurationToString}
-                    renderSelectedItem={cycleDurationToString}
+                    itemToString={pb.sceneCycleDurationToString}
+                    renderSelectedItem={pb.sceneCycleDurationToString}
                 />
 
-                <Dropdown<pb.SceneCycleEffect>
+                <Dropdown<pb.SceneCyclingTransition>
                     id={$('cycle-effect')}
-                    label={formatMessage({ defaultMessage: 'Transition Effect' })}
-                    titleText={formatMessage({ defaultMessage: 'Transition Effect' })}
-                    items={pb.sceneCycleEffects}
+                    label={txt.txEffect}
+                    titleText={txt.txEffect}
+                    items={pb.sceneCyclingEffectOptions}
                     onChange={x => (x.selectedItem ? transitionEffect.onChange(x.selectedItem) : null)}
                     selectedItem={transitionEffect.value ?? undefined}
-                    itemToString={x => pb.sceneCycleEffectToString(intl, x)}
-                    renderSelectedItem={x => pb.sceneCycleEffectToString(intl, x)}
+                    itemToString={x => pb.sceneCyclingEffectToString(intl, x) ?? 'N/A'}
+                    renderSelectedItem={x => pb.sceneCyclingEffectToString(intl, x) ?? 'N/A'}
                 />
             </Form>
         ),

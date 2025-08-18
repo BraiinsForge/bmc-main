@@ -48,7 +48,7 @@
     {
       "id": "be3df44e-a4d7-4625-9312-cc142aba09a1",
       "enabled": true,
-      "cycle_duration": "5s",
+      "cycle_duration": "7s",
       "kind": "combined",
       "widgets": [
         {
@@ -95,5 +95,10 @@
         }
       ]
     }
-  ]
+  ],
+  "scene_cycling": {
+    "automatic_cycling_enabled": true,
+    "automatic_cycling_default_duration": "1m 30s",
+    "transition": "fade"
+  }
 }
