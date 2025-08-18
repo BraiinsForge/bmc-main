@@ -8,7 +8,7 @@ import * as pb from '@/proto';
 import { Layout } from '../Layout';
 import { DoneScene } from './DoneScene';
 import { Renew as IconReload } from '@carbon/react/icons';
-import { Button, CombinedLogo, WifiNetworkLine } from '@/components';
+import { Button, LogoHeader, WifiNetworkLine } from '@/components';
 import { Dropdown, Link, ProgressIndicator, ProgressStep, TextInput } from '@carbon/react';
 
 // Styles
@@ -281,7 +281,7 @@ class View extends Component<Props, State> {
         } else if (goBackBtn) footer.push(<span key="b" />);
 
         return (
-            <Layout header={<CombinedLogo />} footer={footer}>
+            <Layout header={<LogoHeader width="auto" height={18} style={{ width: 'auto' }} />} footer={footer}>
                 <ProgressIndicator currentIndex={0} className={css.progress}>
                     <ProgressStep label="Wifi Settings" />
                     <ProgressStep label="Initial Setup" className={css.disabledTab} />

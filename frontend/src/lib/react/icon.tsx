@@ -14,6 +14,7 @@ export function carbonizeSvgIcon(
         return <SvgComponent width={size} height={size} style={{ fill }} {...rest} />;
     }) as CarbonIconType;
     res.displayName = displayName;
+
     return res;
 }
 

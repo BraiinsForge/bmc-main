@@ -1,6 +1,0 @@
-@use 'styles/carbon' as *;
-
-.logos {
-    composes: horizontal end from 'styles/layout.scss';
-    gap: mini-units(2);
-}

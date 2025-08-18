@@ -6,7 +6,7 @@ import * as pb from '@/proto';
 
 // Components
 import { Layout } from '../Layout';
-import { ButtonSwitch, FieldSet, Field, CombinedLogo, Tooltip, Button } from '@/components';
+import { ButtonSwitch, FieldSet, Field, LogoHeader, Tooltip, Button } from '@/components';
 import {
     ComboBox,
     type ComboBoxProps,
@@ -87,7 +87,7 @@ class View extends Component<Props> {
 
         return (
             <Layout
-                header={<CombinedLogo />}
+                header={<LogoHeader width="auto" height={18} style={{ width: 'auto' }} />}
                 footer={[
                     <span key="a" />,
                     <Button

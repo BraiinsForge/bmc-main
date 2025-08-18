@@ -14,14 +14,6 @@
         font-weight: normal;
     }
 }
-.headerNameText {
-    white-space: nowrap;
-    overflow: hidden;
-
-    @media (width <= 680px) {
-        display: none;
-    }
-}
 
 .headerAction {
     composes: horizontal center from 'styles/layout.scss';

@@ -1,4 +1,5 @@
 import { Component, createRef } from 'react';
+import { useIntl, type IntlShape } from 'react-intl';
 import { Helmet } from '@dr.pogodin/react-helmet';
 
 import * as pb from '@/proto';
@@ -6,13 +7,18 @@ import { store } from '@/store';
 
 import { Form } from '@/lib/form';
 import { PasswordInput } from '@carbon/react';
-import { Button, InlineNotificationsGroup } from '@/components';
+import { ArrowRight } from '@carbon/react/icons';
+import { Button, InlineNotificationsGroup, LogoHeader } from '@/components';
 
 import css from './Login.scss';
 
 type Data = {
     password: string;
 };
+
+interface Props {
+    intl: IntlShape;
+}
 
 interface State {
     data: Data;
@@ -23,9 +29,13 @@ const getInitialState = (): State => ({
     errors: null,
 });
 
-export default class LoginPage extends Component<any, State> {
+class View extends Component<Props, State> {
     readonly state = getInitialState();
     #ref = createRef<HTMLDivElement>();
+
+    #txt = {
+        login: this.props.intl.formatMessage({ defaultMessage: 'Login' }),
+    };
 
     componentDidMount() {
         this.#ref.current?.querySelector('input')?.select();
@@ -55,15 +65,17 @@ export default class LoginPage extends Component<any, State> {
 
     render() {
         const { data, errors } = this.state;
-        const title = 'Login';
 
         return (
             <div className={css.root} ref={this.#ref}>
-                <Helmet title={title} />
-                <dialog open className={css.modal}>
-                    <header className={css.header} children={title} />
+                <Helmet title={this.#txt.login} />
+
+                <div className={css.containerForm}>
                     <Form className={css.form}>
+                        <LogoHeader width="auto" height={18} className={css.logo} />
+
                         <InlineNotificationsGroup items={errors?.global} theme="inverse" kind="error" stretch />
+
                         <PasswordInput
                             id="login-password"
                             labelText="Password"
@@ -73,12 +85,24 @@ export default class LoginPage extends Component<any, State> {
                             invalidText={pb.renderFieldErrorsAsList(errors?.fields?.password)}
                             onChange={e => this.#set('password', e.target.value)}
                         />
-                        <footer className={css.footer}>
-                            <Button type="submit" children={title} onClick={this.#submit} className={css.submit} />
-                        </footer>
+
+                        <Button
+                            type="submit"
+                            children={this.#txt.login}
+                            onClick={this.#submit}
+                            className={css.submit}
+                            icon={ArrowRight}
+                        />
                     </Form>
-                </dialog>
+                </div>
+
+                <section className={css.containerImage} aria-hidden />
             </div>
         );
     }
+}
+
+export default function LoginPage() {
+    const intl = useIntl();
+    return <View intl={intl} />;
 }

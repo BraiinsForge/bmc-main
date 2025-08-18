@@ -5,7 +5,7 @@ import { Key } from 'ts-key-enum';
 
 import { URLS } from '@/constants';
 import { store, useStore } from '@/store';
-import { Braiins } from '@/components';
+import { LogoHeader } from '@/components';
 
 import {
     Content,
@@ -119,8 +119,7 @@ class Base extends Component<Props, State> {
                     />
 
                     <HeaderName href={URLS.pages.settings} prefix="" className={css.headerName}>
-                        <Braiins width={114} />
-                        <span className={css.headerNameText} children={this.#txt.name} />
+                        <LogoHeader width="auto" height={18} />
                     </HeaderName>
 
                     <HeaderGlobalBar>
