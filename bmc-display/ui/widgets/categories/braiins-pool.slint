@@ -1,4 +1,6 @@
 import { Palette } from "../../style/palette.slint";
+import { Theme } from "../../style/theme.slint";
+import { Images } from "../../style/images.slint";
 import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
 
 export enum BraiinsPoolStyle {
@@ -45,6 +47,276 @@ export struct WidgetBraiinsPoolData {
     pool-payouts: [BraiinsPoolPayouts],
 }
 
+component braiins-pool-icon-box inherits HorizontalLayout {
+    in property <bool> show-account;
+
+    alignment: start;
+    padding-left: 0px;
+    padding-top: 16px;
+    padding-bottom: 16px;
+    spacing: 8px;
+
+    Image {
+        width: 24px;
+        height: 24px;
+        source: Images.braiins-pool-favicon;
+    }
+    Text {
+        text: "Braiins Pool";
+        font-size: 24px;
+        font-weight: Theme.font.weight.semi-bold;
+        color: Palette.white;
+    }
+    if show-account: Text {
+        text: "(user.braiins)";
+        font-size: 24px;
+        font-weight: Theme.font.weight.regular;
+        color: Palette.gray-40;
+    }
+}
+
+component progress-bar inherits Rectangle {
+    in property <percent> progress;
+
+    progress-bar-background := Rectangle {
+        height: 8px;
+        border-radius: 4px;
+        background: Palette.gray-90;
+    }
+    Rectangle {
+        x: progress-bar-background.x;
+        width: progress;
+        height: 8px;
+        border-radius: 4px;
+        background: Palette.green-50;
+    }
+}
+
+component hashrate-box inherits VerticalLayout {
+    in property <WidgetSize> size;
+    in property <string> hashrate;
+    in property <length> hashrate-font-size;
+    in property <bool> show-dot;
+
+    padding-left: 0px;
+    padding-right: 0px;
+    padding-top: 0px;
+    padding-bottom: 0px;
+    alignment: space-between;
+    HorizontalLayout {
+        spacing: 8px;
+        if show-dot: Rectangle {
+            y: 12px;
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            border-width: 4px;
+            border-color: Palette.violet-60;
+        }
+        Text {
+            text: "Hashrate (PH/s)";
+            font-size: 24px;
+            font-weight: Theme.font.weight.regular;
+            color: Palette.gray-40;
+            horizontal-alignment: size == WidgetSize.Small ? center : left;
+        }
+    }
+    Text {
+        text: hashrate;
+        font-size: hashrate-font-size;
+        font-weight: Theme.font.weight.semi-bold;
+        color: Palette.white;
+        horizontal-alignment: size == WidgetSize.Small ? center : left;
+    }
+    Text {
+        text: "5m Average";
+        font-size: 24px;
+        font-weight: Theme.font.weight.regular;
+        color: Palette.gray-40;
+        horizontal-alignment: size == WidgetSize.Small ? center : left;
+    }
+}
+
+component reward-box inherits VerticalLayout {
+    in property <WidgetSize> size;
+    in property <string> reward-btc;
+    in property <string> reward-usd;
+
+    padding-left: 0px;
+    padding-right: 0px;
+    padding-top: 0px;
+    padding-bottom: 0px;
+    alignment: space-between;
+    Text {
+        text: "Today's Reward";
+        font-size: 24px;
+        font-weight: Theme.font.weight.regular;
+        color: Palette.gray-40;
+        horizontal-alignment: left;
+    }
+    Text {
+        text: reward-btc;
+        font-size: 32px;
+        font-weight: Theme.font.weight.semi-bold;
+        color: Palette.white;
+        horizontal-alignment: left;
+    }
+    Text {
+        text: reward-usd;
+        font-size: 24px;
+        font-weight: Theme.font.weight.regular;
+        color: Palette.gray-40;
+        horizontal-alignment: left;
+    }
+}
+
+component payout-box inherits VerticalLayout {
+    in property <percent> progress;
+    in property <string> next-payout;
+    in property <string> last-payout;
+
+    padding-left: 0px;
+    padding-right: 0px;
+    padding-top: 0px;
+    padding-bottom: 0px;
+    HorizontalLayout {
+        alignment: start;
+        Text {
+            text: "Next Payout In ~ ";
+            font-size: 24px;
+            font-weight: Theme.font.weight.regular;
+            color: Palette.gray-40;
+            horizontal-alignment: left;
+        }
+        Text {
+            text: next-payout;
+            font-size: 24px;
+            font-weight: Theme.font.weight.semi-bold;
+            color: Palette.white;
+            horizontal-alignment: left;
+        }
+    }
+    progress-bar {
+        progress: progress;
+    }
+    HorizontalLayout {
+        alignment: start;
+        Text {
+            text: "Last Payout: ";
+            font-size: 24px;
+            font-weight: Theme.font.weight.regular;
+            color: Palette.gray-40;
+            horizontal-alignment: left;
+        }
+        Text {
+            text: last-payout;
+            font-size: 24px;
+            font-weight: Theme.font.weight.regular;
+            color: Palette.white;
+            horizontal-alignment: left;
+        }
+    }
+}
+
+component bordered-box inherits Rectangle {
+    border-width: 1px;
+    border-radius: 8px;
+    border-color: Palette.gray-90;
+    background: Palette.bordered-box-bg;
+}
+
+component workers-box inherits VerticalLayout {
+    in property <bool> show-total;
+    in property <length> rect-width;
+    in property <length> rect-height;
+    in property <length> padding-outer;
+    in property <length> padding-inner;
+    property <length> spacing-workers: 8px;
+
+    in property <int> workers-total;
+    in property <int> workers-active;
+    in property <int> workers-low;
+    in property <int> workers-offline;
+
+    padding: padding-outer;
+    Rectangle {
+        width: rect-width;
+        height: rect-height;
+        border-width: 1px;
+        border-radius: 8px;
+        border-color: Palette.gray-90;
+        background: Palette.bordered-box-bg;
+
+        VerticalLayout {
+            padding: padding-inner;
+            alignment: space-between;
+            Text {
+                text: "Workers";
+                font-size: 24px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-40;
+                vertical-alignment: center;
+            }
+            if show-total: HorizontalLayout {
+                spacing: spacing-workers;
+                    Image {
+                        width: 32px;
+                        source: Images.worker-total;
+                    }
+                Text {
+                    text: workers-total;
+                    font-size: 32px;
+                    font-weight: Theme.font.weight.semi-bold;
+                    color: Palette.white;
+                    vertical-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                spacing: spacing-workers;
+                    Image {
+                        width: 32px;
+                        source: Images.worker-active;
+                    }
+                Text {
+                    text: workers-active;
+                    font-size: 32px;
+                    font-weight: Theme.font.weight.semi-bold;
+                    color: Palette.white;
+                    vertical-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                spacing: spacing-workers;
+                    Image {
+                        width: 32px;
+                        source: Images.worker-low;
+                    }
+                Text {
+                    text: workers-low;
+                    font-size: 32px;
+                    font-weight: Theme.font.weight.semi-bold;
+                    color: Palette.white;
+                    vertical-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                spacing: spacing-workers;
+                    Image {
+                        width: 32px;
+                        source: Images.worker-offline;
+                    }
+                Text {
+                    text: workers-offline;
+                    font-size: 32px;
+                    font-weight: Theme.font.weight.semi-bold;
+                    color: Palette.white;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
 export component WidgetBraiinsPoolOverview inherits Rectangle {
     in property <WidgetSize> size;
     in property <WidgetBraiinsPoolData> data;
@@ -52,6 +324,168 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
     background: Palette.black;
     width: BaseDimensions.widget-width(size);
     height: BaseDimensions.widget-height(size);
+
+    if size == WidgetSize.Full: GridLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-bottom: 16px;
+        spacing: 8px;
+        Row {
+            braiins-pool-icon-box {
+                show-account: true;
+            }
+        }
+        Row {
+            bordered-box {
+                height: 163px;
+                hashrate-box {
+                    padding-left: 32px;
+                    padding-right: 32px;
+                    padding-top: 24px;
+                    padding-bottom: 24px;
+                    size: size;
+                    hashrate: data.current-hashrate-phs;
+                    hashrate-font-size: 32px;
+                    show-dot: true;
+                }
+            }
+            bordered-box {
+                height: 163px;
+                payout-box {
+                    progress: 80%;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    padding-top: 16px;
+                    padding-bottom: 16px;
+                }
+            }
+            bordered-box {
+                height: 163px;
+                reward-box {
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    padding-top: 16px;
+                    padding-bottom: 16px;
+                    size: size;
+                }
+            }
+            workers-box {
+                show-total: true;
+                rowspan: 2;
+                rect-width: 193px;
+                rect-height: 397px;
+                padding-inner: 24px;
+                workers-total: data.worker-status.total;
+                workers-active: data.worker-status.active;
+                workers-low: data.worker-status.low;
+                workers-offline: data.worker-status.offline;
+            }
+        }
+        Row {
+            Rectangle {
+                background: green;
+                colspan: 3;
+            }
+        }
+    }
+    if size == WidgetSize.Large: VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-bottom: 16px;
+        spacing: 8px;
+        braiins-pool-icon-box {
+            padding-left: 0px;
+            show-account: true;
+        }
+        bordered-box {
+            height: 120px;
+            payout-box {
+                progress: 80%;
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 16px;
+                padding-bottom: 16px;
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            bordered-box {
+                height: 143px;
+                hashrate-box {
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    padding-top: 16px;
+                    padding-bottom: 16px;
+                    size: size;
+                    hashrate: data.current-hashrate-phs;
+                    hashrate-font-size: 32px;
+                    show-dot: true;
+                }
+            }
+            bordered-box {
+                height: 143px;
+                reward-box {
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    padding-top: 16px;
+                    padding-bottom: 16px;
+                    size: size;
+                }
+            }
+        }
+        Rectangle {
+            background: green;
+        }
+    }
+    if size == WidgetSize.Medium: HorizontalLayout {
+        VerticalLayout {
+            braiins-pool-icon-box {
+                padding-left: 16px;
+                show-account: true;
+            }
+
+            HorizontalLayout {
+                padding-top: 16px;
+                padding-left: 16px;
+                hashrate-box {
+                    padding-bottom: 31px;
+                    size: size;
+                    hashrate: data.current-hashrate-phs;
+                    hashrate-font-size: 32px;
+                    show-dot: false;
+                }
+                reward-box {
+                    padding-bottom: 31px;
+                    size: size;
+                }
+            }
+        }
+        workers-box {
+            show-total: false;
+            padding-outer: 16px;
+            padding-inner: 16px;
+            rect-width: 149px;
+            rect-height: 206px;
+            workers-total: data.worker-status.total;
+            workers-active: data.worker-status.active;
+            workers-low: data.worker-status.low;
+            workers-offline: data.worker-status.offline;
+        }
+    }
+    if size == WidgetSize.Small: VerticalLayout {
+        braiins-pool-icon-box {
+            padding-left: 16px;
+            show-account: false;
+        }
+
+        hashrate-box {
+            padding-bottom: 31px;
+            size: size;
+            hashrate: data.current-hashrate-phs;
+            hashrate-font-size: 64px;
+            show-dot: false;
+        }
+    }
 }
 
 export component WidgetBraiinsPoolBigChart inherits Rectangle {
