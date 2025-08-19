@@ -1,0 +1,474 @@
+@use 'styles/interaction';
+@use 'styles/carbon' as *;
+
+// The generic color variables used throughout this sheet are collected here
+// to scoped variables to make it easier to change them in the future
+// and to make sense of it all in the midst of all the combinations.
+
+$border-color: $layer-02;
+$tbody-background: $layer-01;
+
+$header-text-color: $table-header-text-color;
+$header-bg-color: $table-header-bg-color;
+
+$row-bg-hover: $layer-hover;
+$row-bg-selected: $background-selected;
+$row-bg-selected-hover: $background-selected-hover;
+
+.root {
+    padding: 0 !important;
+
+    position: relative;
+    // carbon added min-width for god knows why, but we need tables
+    // to be usable on even narrower viewports, so I've removed it.
+    min-width: initial !important;
+    max-width: 100%;
+
+    :global {
+        .cds--data-table td,
+        .cds--data-table tbody th {
+            border-width: 0 !important;
+        }
+
+        // Fix the problem where sticky cells have higher zIndex
+        // than the toolbar making dropdown menus unsable
+        .cds--table-toolbar {
+            position: relative;
+            z-index: 2;
+            border-bottom: 1px solid $border-color;
+        }
+        .cds--data-table-content {
+            position: relative;
+            z-index: 1;
+
+            // Neccessary to prevent chrome rendering
+            // focus outline upon interaction
+            outline: none !important;
+
+            // Nicer scrollbar in the table body
+            overflow: auto;
+
+            @include interaction.scrollbar;
+        }
+    }
+
+    &.overflowVisible :global(.cds--data-table-content) {
+        overflow: visible !important;
+    }
+
+    // Misc resets and overrides
+    > div > table {
+        max-width: 100%;
+
+        // Lighter body cells color & remove background-color
+        > tbody > tr > td {
+            color: $text-primary;
+            background-color: transparent !important;
+        }
+
+        // Supress the default transition for rows and cells.
+        // We this to prevent flaky behavior of the "sticky" cells caused
+        // likely by manipulation of properties that are not animatable.
+        > tbody > tr,
+        > tbody > tr > td {
+            transition: none !important;
+        }
+
+        // Dark headers,
+        // remove last header's extra spacing
+        > thead {
+            // The position + zIndex is here to prevent problem
+            // with "sticky" cell in header covering the tbody outline
+            position: relative;
+            z-index: 1;
+
+            // Widthout duplication here the sticky header cells will have a wonky background
+            // being forced to transparent "background-color" & gradient "background"
+            background: $header-bg-color !important;
+
+            > tr > th {
+                color: $header-text-color;
+                background-color: $header-bg-color !important;
+
+                &:last-of-type {
+                    padding-right: 1rem !important;
+                }
+            }
+        }
+
+        // This is set to "left" in carbon, but we want to be able
+        // to change it by inline style on the cell
+        :global(.cds--table-header-label) {
+            text-align: inherit;
+        }
+        th:last-of-type :global(.cds--table-header-label) {
+            padding-right: 0 !important;
+        }
+
+        :global(td.cds--table-expand) {
+            border-bottom-color: $border-color !important;
+        }
+
+        // Disable mouse interaction with disabled rows
+        > tbody > tr[disabled] {
+            pointer-events: none !important;
+        }
+
+        :global(.cds--child-row-inner-container) {
+            padding-bottom: 1px !important;
+        }
+    }
+}
+
+.toolbar {
+    // Toolbar should always be displayed over the table,
+    // so we'll bump the z-index to prevent table content
+    // leaking over the menus
+    position: relative;
+    z-index: 3;
+
+    background: $layer-01 !important;
+
+    & > * {
+        // Carbon doesn't let us give the node itself classname, so we're wrapping and overwriting
+        // The logic behind this is that we want to reuse the toolbar component for othe content,
+        // but it has a hard-limit on height → I've moved the height to min-height.
+        height: auto !important;
+        min-height: $spacing-09 !important;
+
+        // Disabled buttons look ugly by default, so we'll make
+        // them transparent with a dimmed-out text color
+        button[disabled] {
+            background: transparent !important;
+            border: none !important;
+        }
+    }
+}
+.toolbarChildren {
+    flex-grow: 1;
+    flex-shrink: 0;
+}
+
+.toolbar2 {
+    composes: toolbar;
+    // Toolbar should always be displayed over the table,
+    // so we'll bump the z-index to prevent table content
+    // leaking over the menus
+    position: relative;
+    z-index: 2;
+}
+
+//
+// Table rows with borders
+//
+
+.withRowBorders:not(.hasPlaceholder) {
+    // I coulnd't achieve the border being actually shown in any normal way
+    // known to (this) man without changing `border-collapse` to `separate`.
+    // Since we do not want that, I've resorted to faking it with a pseudo.
+    table > tbody > tr > td {
+        position: relative;
+
+        &::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 1px;
+            background-color: $border-color;
+        }
+    }
+}
+
+//
+// Sticky cells
+//
+
+.stickyCell {
+    --sticky-cell-gradient-color: #{$tbody-background};
+
+    // When this is applied to a cell, it also needs patching of "thead"
+    // to prevent the cell from covering the "tbody" outline.
+    // https://stackoverflow.com/a/56409958/2179323
+    position: sticky !important;
+
+    // zIndex patch is needed to cover other cells' content
+    // should they have a higher zIndex (either implied or explicit),
+    // as they should flow under the checkbox cell.
+    z-index: 10;
+
+    // Background is defined by gradient and we want to see
+    // the other cells underneath the gradient when scrolling
+    background-color: transparent !important;
+
+    &.left {
+        left: 0 !important;
+        background: linear-gradient(90deg, var(--sticky-cell-gradient-color) 80%, transparent 100%) !important;
+        padding-right: 3rem; // double the default padding to make space for the gradient
+    }
+    &.right {
+        right: 0 !important;
+        background: linear-gradient(-90deg, var(--sticky-cell-gradient-color) 80%, transparent 100%) !important;
+        padding-left: 3rem; // double the default padding to make space for the gradient
+    }
+}
+
+// Sticky cell in table header
+.root thead > tr > th {
+    --sticky-cell-gradient-color: #{$header-bg-color};
+}
+// Sticky cell in table body
+.root tbody > tr {
+    // base
+    > .stickyCell {
+        --sticky-cell-gradient-color: #{$tbody-background};
+    }
+
+    // Hover row
+    &:hover {
+        background-color: $row-bg-hover;
+
+        > .stickyCell {
+            --sticky-cell-gradient-color: #{$row-bg-hover};
+        }
+    }
+
+    // selected (+ hover)
+    &.selectedRow > .stickyCell {
+        --sticky-cell-gradient-color: #{$row-bg-selected};
+    }
+
+    &.selectedRow:hover > .stickyCell {
+        --sticky-cell-gradient-color: #{$row-bg-selected-hover} !important;
+    }
+}
+
+//
+// Checkbox cell
+//
+
+// I had to resolve to a specificity hack here,
+// because CDS plays a very hight game here
+.checkboxCell:not(#_) {
+    $w: to-rem(40px);
+    min-width: $w !important;
+    max-width: $w !important;
+
+    text-align: center !important;
+    vertical-align: middle !important;
+    padding-inline: to-rem(8px) 0 !important;
+
+    :global(.cds--checkbox-label) {
+        margin: 0 !important;
+    }
+}
+
+//
+// Selection & hover effects
+//
+
+// NOTE:
+//  This is copied ower from the carbon-components DataTable because I haven't been able
+//  to make it mark a table row as selected "natively" throught their react props! — JKU
+.selectedRow {
+    background-color: $row-bg-selected;
+
+    &:hover {
+        background-color: $row-bg-selected-hover !important;
+    }
+
+    > td {
+        color: $text-primary !important;
+    }
+}
+.expandedRow {
+    // Cancel the hover background of expanded row - it screws up readability of it's content.
+    &:hover {
+        background-color: inherit !important;
+        color: inherit !important;
+    }
+
+    // Cancel deafult padding on the inner cell of expanded row so that the content can cover the whole area.
+    > td {
+        padding: 0 !important;
+    }
+}
+
+//
+// Headers modifications
+//
+
+.header {
+    &.left,
+    &.left > * {
+        text-align: left !important;
+    }
+    &.start,
+    &.start > * {
+        text-align: start !important;
+    }
+
+    &.center,
+    &.center > * {
+        text-align: center !important;
+    }
+
+    &.right,
+    &.right > * {
+        text-align: right !important;
+    }
+    &.end,
+    &.end > * {
+        text-align: end !important;
+    }
+}
+.isMultiHeader > div > table > thead > tr {
+    height: to-rem(32px);
+}
+.headerSelectAllLink {
+    color: $text-primary;
+    cursor: pointer;
+    font-weight: bold;
+    text-decoration: none;
+    border-bottom: 1px solid currentcolor;
+}
+
+.headerTooltipTrigger {
+    composes: inline horizontal center from 'styles/layout.scss';
+    gap: 0.5em;
+
+    .icon {
+        flex-shrink: 0;
+        fill: $icon-secondary;
+    }
+}
+
+//
+// Sorting
+//
+
+.sortableHeader {
+    cursor: pointer;
+    user-select: none;
+
+    &:focus {
+        outline: 1px solid $focus;
+        // Wrapper overflow cuts-off
+        // the top edge of outline
+        outline-offset: -1px;
+    }
+}
+.headerSortingWrapper {
+    position: relative;
+    white-space: nowrap;
+
+    min-width: 100%;
+    min-height: 100%;
+
+    padding: to-rem(4px) 0;
+
+    > .text {
+        display: inline-block;
+        vertical-align: middle;
+
+        max-width: 100%;
+        text-wrap: pretty;
+        white-space: normal;
+    }
+
+    .sortIcon {
+        position: relative;
+        display: inline-block;
+        vertical-align: middle;
+
+        height: 1rem;
+        color: $icon-primary;
+
+        opacity: 0;
+        will-change: opacity;
+        transition: opacity 70ms ease-in-out;
+        margin-inline: 1em 0;
+    }
+
+    &:hover,
+    &.sortActive {
+        .sortIcon {
+            opacity: 1;
+        }
+    }
+}
+
+//
+//
+//
+
+.specialRow:hover {
+    background-color: inherit !important;
+}
+
+// - Intention for this className is to be used on tr/td around the placeholder
+// - ":not" serves as a specificity hack to overwrite the internal
+//   and very high specificity styles for the rows & cells
+.placeholderWrapper:not(#_) {
+    position: absolute;
+
+    // Inconsistent behavior between Chrome & Safari browsers
+    // In case when "top: 0, bottom: 0" - placeholder overlaps table header in Safari
+    top: unset;
+    bottom: unset;
+    width: 100%;
+    height: 100%;
+
+    margin: 0;
+    padding: 0;
+
+    border: none !important;
+    background: transparent !important;
+}
+.placeholder {
+    height: 100%;
+}
+.compact .placeholder {
+    padding-top: mini-units(2);
+    padding-bottom: mini-units(2);
+}
+
+:global {
+    // Replace the default background color of the toolbar
+    // from "active button" to "background"
+    .cds--batch-actions,
+    .cds--batch-summary {
+        background-color: $layer-01 !important;
+    }
+    .cds--batch-summary .cds--batch-summary__para {
+        color: $text-secondary;
+    }
+
+    // Space out the buttons
+    .cds--action-list {
+        // Give the actions a little fake border
+        // to separate them visually
+        & > * {
+            margin-inline-start: 1px !important;
+        }
+
+        // Patch a wrong style of overflow-menu trigger-button.
+        // By default it doesn't get the "primary button" styles.
+        button.cds--toolbar-action.cds--overflow-menu:not([disabled]) {
+            // Base state
+            background-color: $button-primary !important;
+
+            // Hover & active states
+            &:hover,
+            &[aria-expanded='true'] {
+                background-color: $button-primary-hover !important;
+            }
+        }
+    }
+
+    // Remove the left faux-border element from the cancel button
+    .cds--btn--primary.cds--batch-summary__cancel::before {
+        display: none !important;
+    }
+}

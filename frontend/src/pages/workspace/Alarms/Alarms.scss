@@ -1,0 +1,39 @@
+@use 'styles/carbon' as *;
+
+.root {
+    max-width: to-rem(1200px);
+}
+
+//
+// Header
+//
+
+.header {
+    composes: horizontal center justified from 'styles/layout.scss';
+    margin-block-end: mini-units(2);
+    margin-inline-start: mini-units(2);
+}
+
+.labels {
+    composes: vertical start from 'styles/layout.scss';
+    gap: mini-units(1);
+}
+
+.title {
+    composes: heading-06 from 'styles/carbon/typography.scss';
+}
+.description {
+    color: $text-secondary;
+}
+
+.actions {
+    align-self: end;
+}
+
+//
+// Body
+//
+
+.content {
+    position: relative;
+}

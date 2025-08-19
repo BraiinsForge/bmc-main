@@ -1,4 +1,5 @@
-import { carbonizeSvgIcon } from '@/lib/react';
+import BraiinsSVG from './braiins.svg';
+import HeaderSVG from './header.svg';
 
-export const LogoBraiins = carbonizeSvgIcon(require('./braiins.svg'), 'LogoBraiins');
-export const LogoHeader = carbonizeSvgIcon(require('./header.svg'), 'LogoHeader');
+export const LogoBraiins = BraiinsSVG;
+export const LogoHeader = HeaderSVG;

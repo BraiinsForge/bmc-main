@@ -14,7 +14,7 @@ export function Welcome(props: WelcomeProps) {
 
     return (
         <Layout
-            header={<LogoHeader width="auto" height={18} style={{ width: 'auto' }} />}
+            header={<LogoHeader style={{ width: 'auto', height: 18 }} />}
             footer={<Button kind="primary" onClick={onNext} children="Continue" />}
         >
             <img src={image} alt="hero" />

@@ -281,7 +281,7 @@ class View extends Component<Props, State> {
         } else if (goBackBtn) footer.push(<span key="b" />);
 
         return (
-            <Layout header={<LogoHeader width="auto" height={18} style={{ width: 'auto' }} />} footer={footer}>
+            <Layout header={<LogoHeader style={{ width: 'auto', height: 18 }} />} footer={footer}>
                 <ProgressIndicator currentIndex={0} className={css.progress}>
                     <ProgressStep label="Wifi Settings" />
                     <ProgressStep label="Initial Setup" className={css.disabledTab} />

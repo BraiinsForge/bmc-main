@@ -1,0 +1,14 @@
+@use 'styles/carbon' as *;
+
+.root :global(.cds--skeleton__text) {
+    position: relative;
+    display: block;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: var(--skeleton-01);
+    box-shadow: none;
+    pointer-events: none;
+    width: mini-units(10);
+    height: mini-units(2);
+}

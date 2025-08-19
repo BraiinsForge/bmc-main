@@ -72,7 +72,7 @@ class View extends Component<Props, State> {
 
                 <div className={css.containerForm}>
                     <Form className={css.form}>
-                        <LogoHeader width="auto" height={18} className={css.logo} />
+                        <LogoHeader style={{ width: 'auto', height: 18 }} className={css.logo} />
 
                         <InlineNotificationsGroup items={errors?.global} theme="inverse" kind="error" stretch />
 

@@ -352,22 +352,22 @@ class View extends Component<Props, State> {
     // General
     //
 
-    #confStaticChange = (patch: Partial<NetStaticConf>): void => {
-        this.setState(s => ({
-            confTemp: {
-                ...s.confTemp,
-                values: {
-                    ...s.confTemp.values,
-                    ...patch,
-                },
-            },
-            globalErrors: null,
-            confStaticErrors: null,
-        }));
-    };
-    #confCaseChange = (v: Data['case']): void => {
-        this.setState(s => ({ confTemp: { ...s.confTemp, case: v } }));
-    };
+    // #confStaticChange = (patch: Partial<NetStaticConf>): void => {
+    //     this.setState(s => ({
+    //         confTemp: {
+    //             ...s.confTemp,
+    //             values: {
+    //                 ...s.confTemp.values,
+    //                 ...patch,
+    //             },
+    //         },
+    //         globalErrors: null,
+    //         confStaticErrors: null,
+    //     }));
+    // };
+    // #confCaseChange = (v: Data['case']): void => {
+    //     this.setState(s => ({ confTemp: { ...s.confTemp, case: v } }));
+    // };
     #confRender = (): ReactNode => {
         const { formatMessage } = this.props.intl;
         const {
@@ -375,19 +375,19 @@ class View extends Component<Props, State> {
             wifi,
 
             // Status
-            isLoading,
-            isSaving,
+            // isLoading,
+            // isSaving,
 
             // Validation
             globalErrors,
-            confStaticErrors: err,
+            // confStaticErrors: err,
 
             // Fields
-            confSaved,
-            confTemp,
+            // confSaved,
+            // confTemp,
         } = this.state;
 
-        const isDisabled: boolean = isLoading || isSaving;
+        // const isDisabled: boolean = isLoading || isSaving;
         const hasUnsavedChanges: boolean = this.#hasUnsavedChanges();
 
         const wifiNetworks: Map<pb.WifiNetwork['ssid'], pb.WifiNetwork> = new Map(wifi.nets.map(x => [x.ssid, x]));
@@ -416,37 +416,37 @@ class View extends Component<Props, State> {
                     ]}
                     // Currently only shown in the status section
                     hostname={null}
-                    protocol={{
-                        value: confTemp.case,
-                        disabled: isDisabled,
-                        onChange: this.#confCaseChange,
-                    }}
-                    staticAddress={{
-                        value: confTemp.values.address || confSaved.values.address || null,
-                        error: pb.renderFieldErrorsAsList(err?.address),
-                        disabled: isDisabled,
-                        onChange: address => this.#confStaticChange({ address }),
-                    }}
-                    staticGateway={{
-                        value: confTemp.values.gateway || confSaved.values.gateway || null,
-                        error: pb.renderFieldErrorsAsList(err?.gateway),
-                        disabled: isDisabled,
-                        onChange: gateway => this.#confStaticChange({ gateway }),
-                    }}
-                    staticNetmask={{
-                        value: confTemp.values.netmask || confSaved.values.netmask || null,
-                        error: pb.renderFieldErrorsAsList(err?.netmask),
-                        disabled: isDisabled,
-                        onChange: netmask => this.#confStaticChange({ netmask }),
-                    }}
-                    staticDns={{
-                        value: confTemp.values.dnsServers.length
-                            ? confTemp.values.dnsServers
-                            : confSaved.values.dnsServers,
-                        error: pb.renderFieldErrorsAsList(err?.dnsServers),
-                        disabled: isDisabled,
-                        onChange: dnsServers => this.#confStaticChange({ dnsServers }),
-                    }}
+                    // protocol={{
+                    //     value: confTemp.case,
+                    //     disabled: isDisabled,
+                    //     onChange: this.#confCaseChange,
+                    // }}
+                    // staticAddress={{
+                    //     value: confTemp.values.address || confSaved.values.address || null,
+                    //     error: pb.renderFieldErrorsAsList(err?.address),
+                    //     disabled: isDisabled,
+                    //     onChange: address => this.#confStaticChange({ address }),
+                    // }}
+                    // staticGateway={{
+                    //     value: confTemp.values.gateway || confSaved.values.gateway || null,
+                    //     error: pb.renderFieldErrorsAsList(err?.gateway),
+                    //     disabled: isDisabled,
+                    //     onChange: gateway => this.#confStaticChange({ gateway }),
+                    // }}
+                    // staticNetmask={{
+                    //     value: confTemp.values.netmask || confSaved.values.netmask || null,
+                    //     error: pb.renderFieldErrorsAsList(err?.netmask),
+                    //     disabled: isDisabled,
+                    //     onChange: netmask => this.#confStaticChange({ netmask }),
+                    // }}
+                    // staticDns={{
+                    //     value: confTemp.values.dnsServers.length
+                    //         ? confTemp.values.dnsServers
+                    //         : confSaved.values.dnsServers,
+                    //     error: pb.renderFieldErrorsAsList(err?.dnsServers),
+                    //     disabled: isDisabled,
+                    //     onChange: dnsServers => this.#confStaticChange({ dnsServers }),
+                    // }}
                     hasUnsavedChanges={hasUnsavedChanges}
                     onReset={this.#load}
                     onSave={this.#save}

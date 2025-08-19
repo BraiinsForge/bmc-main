@@ -29,7 +29,8 @@
                 "noUnusedVariables": { "level": "info", "options": { "ignoreRestSiblings": true } },
                 "noVoidTypeReturn": "off",
                 "useExhaustiveDependencies": "warn",
-                "useUniqueElementIds": "off"
+                "useUniqueElementIds": "off",
+                "noNestedComponentDefinitions": "off"
             },
 
             "suspicious": {

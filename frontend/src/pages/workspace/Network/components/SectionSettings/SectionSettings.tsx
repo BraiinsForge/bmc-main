@@ -10,25 +10,32 @@ import * as pb from '@/proto';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { Field, FieldSet, ButtonSwitch, Button, Modal, WifiNetworkLine } from '@/components';
+import {
+    Field,
+    FieldSet,
+    Button,
+    Modal,
+    WifiNetworkLine,
+    // ButtonSwitch
+} from '@/components';
 import { TextInput, InlineLoading, Dropdown, Select, SelectItem, PasswordInput } from '@carbon/react';
 import { Renew as IconRefresh } from '@carbon/react/icons';
 
 // Styles
-import cn from 'clsx';
+// import cn from 'clsx';
 import css from './SectionSettings.scss';
 
-type NetProto = NonNullable<pb.NetworkConfig['protocol']['case']>;
+// type NetProto = NonNullable<pb.NetworkConfig['protocol']['case']>;
 
 export interface SectionSettingsProps {
     status: Array<[label: ReactNode, value: ReactNode]>;
 
     hostname: null | iField<string>;
-    protocol: iField<NetProto>;
-    staticAddress: iField<string>;
-    staticNetmask: iField<string>;
-    staticGateway: iField<string>;
-    staticDns: iField<string>;
+    // protocol: iField<NetProto>;
+    // staticAddress: iField<string>;
+    // staticNetmask: iField<string>;
+    // staticGateway: iField<string>;
+    // staticDns: iField<string>;
 
     // Wifi
     // The connected bool attribute is remapped to nullability
@@ -170,42 +177,42 @@ class View extends Component<Props, State> {
             />
         );
     };
-    #renderTextInput = (
-        field: iField<string>,
-        d: {
-            id: string;
-            title: NonNullable<ReactNode>;
-            description?: NonNullable<ReactNode>;
-            placeholder?: string;
-        },
-    ): ReactElement => {
-        const { hasUnsavedChanges } = this.props;
-        const { value, disabled, onChange, error } = field;
-        const $id = $(d.id);
-
-        return (
-            <Field
-                key={$id}
-                title={d.title}
-                description={d.description}
-                disabled={disabled}
-                className={cn(hasUnsavedChanges && css.unsavedField)}
-            >
-                <TextInput
-                    id={$id}
-                    labelText=""
-                    hideLabel
-                    value={value ?? ''}
-                    onFocus={selfSelect}
-                    placeholder={d.placeholder}
-                    onChange={e => onChange(e.target.value)}
-                    disabled={disabled}
-                    invalid={!!error}
-                    invalidText={error}
-                />
-            </Field>
-        );
-    };
+    // #renderTextInput = (
+    //     field: iField<string>,
+    //     d: {
+    //         id: string;
+    //         title: NonNullable<ReactNode>;
+    //         description?: NonNullable<ReactNode>;
+    //         placeholder?: string;
+    //     },
+    // ): ReactElement => {
+    //     const { hasUnsavedChanges } = this.props;
+    //     const { value, disabled, onChange, error } = field;
+    //     const $id = $(d.id);
+    //
+    //     return (
+    //         <Field
+    //             key={$id}
+    //             title={d.title}
+    //             description={d.description}
+    //             disabled={disabled}
+    //             className={cn(hasUnsavedChanges && css.unsavedField)}
+    //         >
+    //             <TextInput
+    //                 id={$id}
+    //                 labelText=""
+    //                 hideLabel
+    //                 value={value ?? ''}
+    //                 onFocus={selfSelect}
+    //                 placeholder={d.placeholder}
+    //                 onChange={e => onChange(e.target.value)}
+    //                 disabled={disabled}
+    //                 invalid={!!error}
+    //                 invalidText={error}
+    //             />
+    //         </Field>
+    //     );
+    // };
 
     //
     // Wifi
@@ -601,16 +608,16 @@ class View extends Component<Props, State> {
 
             // Fields
             hostname,
-            protocol,
-            staticAddress,
-            staticNetmask,
-            staticGateway,
-            staticDns,
+            // protocol,
+            // staticAddress,
+            // staticNetmask,
+            // staticGateway,
+            // staticDns,
 
             // Form
-            hasUnsavedChanges,
-            onSave,
-            onReset,
+            // hasUnsavedChanges,
+            // onSave,
+            // onReset,
         } = this.props;
 
         return (
@@ -636,6 +643,7 @@ class View extends Component<Props, State> {
 
                     <Field title={formatMessage({ defaultMessage: 'Network' })} children={this.#renderWifi()} />
 
+                    {/*
                     <Field
                         className={cn(hasUnsavedChanges && css.unsavedField)}
                         title={formatMessage({ defaultMessage: 'Protocol' })}
@@ -687,6 +695,7 @@ class View extends Component<Props, State> {
                             <Button kind="secondary" children="Reset" onClick={onReset} />
                         </footer>
                     ) : null}
+                    */}
                 </FieldSet>
             </Form>
         );

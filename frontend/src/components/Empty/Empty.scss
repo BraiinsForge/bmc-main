@@ -1,0 +1,47 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical start from 'styles/layout.scss';
+    padding: mini-units(4);
+    background-color: $layer-01;
+}
+.transparent {
+    background-color: transparent !important;
+}
+
+.header {
+    composes: horizontal center from 'styles/layout.scss';
+    margin-bottom: mini-units(2);
+    gap: mini-units(2);
+
+    &:last-child {
+        margin-bottom: 0;
+    }
+}
+
+.info .icon {
+    fill: $braiins-gray-50;
+}
+.error .icon {
+    fill: $support-error;
+}
+
+.title {
+    composes: heading-04 from 'styles/carbon/typography.scss';
+    font-size: to-rem(24px);
+    color: $text-primary;
+}
+
+.message {
+    composes: body-short-02 from 'styles/carbon/typography.scss';
+    max-width: to-rem(600px);
+    color: $text-secondary;
+}
+.fullWidth .message {
+    min-width: 100%;
+    max-width: 100%;
+}
+
+.controls {
+    padding-top: mini-units(3);
+}

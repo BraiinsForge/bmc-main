@@ -27,9 +27,9 @@ import {
     Screen as IconScreen,
     Settings as IconSettings,
     Network_2 as IconNetwork,
+    Alarm as IconAlarm,
     // Tag as IconPriceAlerts,
     // Notification as IconNotification,
-    // Alarm as IconAlarm,
     // Api_1 as IconApi,
 } from '@carbon/icons-react';
 
@@ -76,12 +76,12 @@ class Base extends Component<Props, State> {
                     url={URLS.pages.network}
                     label={formatMessage({ defaultMessage: 'Network Configuration' })}
                 />
-                {/*
                 <SideLink
                     icon={IconAlarm}
                     url={URLS.pages.alarms}
                     label={formatMessage({ defaultMessage: 'Alarms' })}
                 />
+                {/*
                 <SideLink
                     icon={IconPriceAlerts}
                     url={URLS.pages.priceAlerts}
@@ -119,7 +119,7 @@ class Base extends Component<Props, State> {
                     />
 
                     <HeaderName href={URLS.pages.settings} prefix="" className={css.headerName}>
-                        <LogoHeader width="auto" height={18} />
+                        <LogoHeader style={{ width: 'auto', height: 18 }} />
                     </HeaderName>
 
                     <HeaderGlobalBar>

@@ -10,7 +10,7 @@ export function DoneScene() {
     const { formatMessage } = useIntl();
 
     return (
-        <Layout header={<LogoHeader width="auto" height={18} style={{ width: 'auto' }} />}>
+        <Layout header={<LogoHeader style={{ width: 'auto', height: 18 }} />}>
             <div className={css.root}>
                 <Image width={100} />
                 <h1

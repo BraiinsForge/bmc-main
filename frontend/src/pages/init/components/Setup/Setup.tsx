@@ -87,7 +87,7 @@ class View extends Component<Props> {
 
         return (
             <Layout
-                header={<LogoHeader width="auto" height={18} style={{ width: 'auto' }} />}
+                header={<LogoHeader style={{ width: 'auto', height: 18 }} />}
                 footer={[
                     <span key="a" />,
                     <Button

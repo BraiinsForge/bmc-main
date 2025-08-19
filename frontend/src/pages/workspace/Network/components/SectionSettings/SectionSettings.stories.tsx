@@ -26,11 +26,11 @@ export default {
             ['IPv4', '10.34.2.2/24'],
         ],
         hostname: getArg('hostname', gen.hostname(1, 'local')),
-        protocol: getArg('protocol', 'static'),
-        staticAddress: getArg('staticConfig', '192.168.1.100'),
-        staticNetmask: getArg('staticNetmask', '255.255.255.0'),
-        staticGateway: getArg('staticGateway', '192.168.1.1'),
-        staticDns: getArg('staticDnsServers', '8.8.8.8, 8.8.4.4'),
+        // protocol: getArg('protocol', 'static'),
+        // staticAddress: getArg('staticConfig', '192.168.1.100'),
+        // staticNetmask: getArg('staticNetmask', '255.255.255.0'),
+        // staticGateway: getArg('staticGateway', '192.168.1.1'),
+        // staticDns: getArg('staticDnsServers', '8.8.8.8, 8.8.4.4'),
 
         // Wifi
         wifiActiveNetwork: {

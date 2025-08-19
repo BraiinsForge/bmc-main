@@ -1,0 +1,64 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: horizontal start from 'styles/layout.scss';
+
+    &:not(:last-of-type) {
+        margin-inline: 0 1rem;
+    }
+
+    // Radio button element spacing
+    :global(.cds--radio-button__appearance) {
+        margin-inline: 0.125rem 0.5rem;
+    }
+
+    // CDS sets "dir='auto'" on a label wrapper element.
+    // This breaks us in the RTL mode, so we'll revert.
+    > label > [dir='auto'] {
+        direction: unset !important;
+    }
+
+    &.darker :global(.cds--radio-button__appearance) {
+        background-color: $layer-01;
+    }
+
+    &.stretch {
+        width: 100%;
+
+        > label {
+            flex-grow: 1;
+            justify-content: flex-start;
+        }
+    }
+}
+
+.labelWrapper {
+    composes: vertical from 'styles/layout.scss';
+}
+.label {
+    color: $text-primary;
+    font-size: to-rem(14px);
+    line-height: to-rem(18px);
+}
+.description {
+    color: $text-secondary;
+    font-size: to-rem(12px);
+    line-height: to-rem(16px);
+}
+
+fieldset[disabled] .root {
+    .label,
+    .description {
+        color: $text-disabled;
+    }
+}
+
+.addonWrapper {
+    composes: horizontal justified start from 'styles/layout.scss';
+    position: relative;
+    width: 100%;
+}
+.addon {
+    position: relative;
+    margin-inline: auto 0;
+}
