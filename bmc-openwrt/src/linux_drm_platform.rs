@@ -30,7 +30,7 @@ impl Card {
     }
 
     pub fn open_global() -> std::result::Result<Self, std::io::Error> {
-        Self::open("/dev/dri/card0")
+        Self::open("/dev/dri/card1")
     }
 }
 
