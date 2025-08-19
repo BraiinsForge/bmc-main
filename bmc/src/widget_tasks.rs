@@ -7,7 +7,9 @@ use bmc_display::data::{
     PoolChartFrame, PoolStyle, SceneId, TimeFrame, Widget, WidgetId, WidgetKind, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
-use bmc_display::pool_data::{self, CurrentUserHashrate, LatestUserRewards};
+use bmc_display::pool_data::{
+    self, CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards,
+};
 use bmc_shared_time::time::Timezone;
 use chrono::SubsecRound;
 use reqwest::Client;
@@ -253,6 +255,13 @@ impl WidgetTasks {
                 WidgetSize::Full | WidgetSize::Large | WidgetSize::Medium
             )
         );
+        let download_workers_stats = matches!(
+            (pool_style, widget_size),
+            (
+                PoolStyle::BigChart,
+                WidgetSize::Full | WidgetSize::Large | WidgetSize::Medium
+            ) | (PoolStyle::Overview, WidgetSize::Full | WidgetSize::Medium)
+        );
 
         async move {
             let mut interval = interval(Duration::from_secs(60));
@@ -310,6 +319,33 @@ impl WidgetTasks {
                         scene_id.clone(),
                         widget_id.clone(),
                         latest_rewards,
+                    );
+                }
+
+                if download_workers_stats {
+                    debug!("Getting current workers data...");
+                    let workers_stats = if let Ok(response) = client
+                        .get(format!(
+                            "{}{}",
+                            pool_data::POOL_API_URL,
+                            pool_data::USER_WORKERS_CURRENT
+                        ))
+                        .timeout(API_TIMEOUT)
+                        .send()
+                        .await
+                    {
+                        response
+                            .json::<CurrentUserWorkerStats>()
+                            .await
+                            .unwrap_or_default()
+                    } else {
+                        warn!("Failed to get current workers data from API");
+                        CurrentUserWorkerStats::default()
+                    };
+                    display_controller.update_current_workers(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        workers_stats,
                     );
                 }
             }

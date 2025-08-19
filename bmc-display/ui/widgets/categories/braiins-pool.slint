@@ -16,10 +16,10 @@ export enum ChartFrame {
 }
 
 export struct PoolWorkerStatus {
-    total: int,
-    active: int,
-    low: int,
-    offline: int,
+    total: string,
+    active: string,
+    low: string,
+    offline: string,
 }
 
 export enum PoolPayoutType {
@@ -235,10 +235,7 @@ component workers-box inherits VerticalLayout {
     in property <length> padding-inner;
     property <length> spacing-workers: 8px;
 
-    in property <int> workers-total;
-    in property <int> workers-active;
-    in property <int> workers-low;
-    in property <int> workers-offline;
+    in property <PoolWorkerStatus> worker-status;
 
     padding: padding-outer;
     Rectangle {
@@ -266,7 +263,7 @@ component workers-box inherits VerticalLayout {
                         source: Images.worker-total;
                     }
                 Text {
-                    text: workers-total;
+                    text: worker-status.total;
                     font-size: 32px;
                     font-weight: Theme.font.weight.semi-bold;
                     color: Palette.white;
@@ -280,7 +277,7 @@ component workers-box inherits VerticalLayout {
                         source: Images.worker-active;
                     }
                 Text {
-                    text: workers-active;
+                    text: worker-status.active;
                     font-size: 32px;
                     font-weight: Theme.font.weight.semi-bold;
                     color: Palette.white;
@@ -294,7 +291,7 @@ component workers-box inherits VerticalLayout {
                         source: Images.worker-low;
                     }
                 Text {
-                    text: workers-low;
+                    text: worker-status.low;
                     font-size: 32px;
                     font-weight: Theme.font.weight.semi-bold;
                     color: Palette.white;
@@ -308,7 +305,7 @@ component workers-box inherits VerticalLayout {
                         source: Images.worker-offline;
                     }
                 Text {
-                    text: workers-offline;
+                    text: worker-status.offline;
                     font-size: 32px;
                     font-weight: Theme.font.weight.semi-bold;
                     color: Palette.white;
@@ -379,10 +376,7 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
                 rect-width: 193px;
                 rect-height: 397px;
                 padding-inner: 24px;
-                workers-total: data.worker-status.total;
-                workers-active: data.worker-status.active;
-                workers-low: data.worker-status.low;
-                workers-offline: data.worker-status.offline;
+                worker-status: data.worker-status;
             }
         }
         Row {
@@ -474,10 +468,7 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
             padding-inner: 16px;
             rect-width: 149px;
             rect-height: 206px;
-            workers-total: data.worker-status.total;
-            workers-active: data.worker-status.active;
-            workers-low: data.worker-status.low;
-            workers-offline: data.worker-status.offline;
+            worker-status: data.worker-status;
         }
     }
     if size == WidgetSize.Small: VerticalLayout {

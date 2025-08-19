@@ -14,7 +14,7 @@ use crate::generated::{
     ConnectionAdapter, SceneCyclingAdapter, ScreenAdapter, WifiAdapter,
 };
 use crate::indexmap_model::IndexMapModel;
-use crate::pool_data::{CurrentUserHashrate, LatestUserRewards};
+use crate::pool_data::{CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards};
 use crate::utils;
 use bmc_shared_time::time::{DateFormat, Timezone};
 use bmc_shared_utils::number_format::NumberFormat;
@@ -364,6 +364,26 @@ impl DisplayController {
                 widgets_ref.modify(&widget_id, |widget| {
                     widget.braiins_pool.reward_btc = latest_rewards.today_reward_btc();
                     widget.braiins_pool.reward_usd = latest_rewards.today_reward_usd();
+                });
+            }
+        });
+    }
+
+    pub fn update_current_workers(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        workers_stats: CurrentUserWorkerStats,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    widget.braiins_pool.worker_status = workers_stats.worker_stats();
                 });
             }
         });
