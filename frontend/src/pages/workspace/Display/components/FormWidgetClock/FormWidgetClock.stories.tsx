@@ -11,7 +11,7 @@ export default {
 } satisfies Meta<FormWidgetClockProps>;
 
 function Demo() {
-    type StateProps = Exclude<keyof FormWidgetClockProps, 'isOpen' | 'isEdit' | 'onClose' | 'onSubmit'>;
+    type StateProps = Exclude<keyof FormWidgetClockProps, 'isOpen' | 'isEdit' | 'onClose' | 'onSubmit' | 'error'>;
     const handleChange = useCallback(<Key extends StateProps>(key: Key) => {
         return (value: any) => {
             setArgs(prev => ({ ...prev, [key]: { ...prev[key], value } }));
@@ -21,6 +21,7 @@ function Demo() {
         isOpen: true,
         isEdit: false,
         onClose: action('onClose'),
+        error: 'Global error',
 
         widgetSize: {
             value: pb.WidgetSize.MEDIUM,

@@ -198,7 +198,18 @@ class View extends Component<Props, State> {
                 this.setState({
                     openDialog: {
                         key: 'scene-config-clock',
-                        data: null,
+                        data: {
+                            values: {
+                                widgetSize: pb.WidgetSize.FULL,
+                                clockStyle: pb.ClockWidget_ClockStyle.ANALOG_ROUND,
+                                fontStyle: pb.FontStyle.LIGHT,
+                                showDate: true,
+                                showSeconds: true,
+                                showTimezone: true,
+                                timezone: undefined,
+                            },
+                            errors: null,
+                        },
                         isEdit: false,
                         sceneID: response.value,
                     },
@@ -343,6 +354,11 @@ class View extends Component<Props, State> {
                     isOpen={openDialog?.key === 'scene-config-clock'}
                     isEdit={openDialog?.key === 'scene-config-clock' && openDialog.isEdit}
                     onClose={cancel}
+                    error={
+                        openDialog?.key === 'scene-config-clock'
+                            ? pb.renderFieldErrorsAsList(openDialog.data?.errors?.global)
+                            : null
+                    }
                     // No size selector for the fullscreen widgets we operate with here
                     widgetSize={null}
                     clockStyle={{

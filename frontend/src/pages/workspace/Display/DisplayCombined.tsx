@@ -325,7 +325,18 @@ class View extends Component<Props, State> {
                 this.setState({
                     openDialog: {
                         key: 'scene-config-clock',
-                        data: null,
+                        data: {
+                            values: {
+                                widgetSize: pb.WidgetSize.SMALL,
+                                clockStyle: pb.ClockWidget_ClockStyle.ANALOG_ROUND,
+                                fontStyle: pb.FontStyle.LIGHT,
+                                showDate: true,
+                                showSeconds: true,
+                                showTimezone: true,
+                                timezone: undefined,
+                            },
+                            errors: null,
+                        },
                         isEdit: false,
                         widgetID: response.value,
                         position,
@@ -441,8 +452,17 @@ class View extends Component<Props, State> {
             await pb.rpc.scenes.updateWidget(payload);
             notify('success', 'Widget updated!', { id: 'combined-scene-widget-updated', timeoutSeconds: 1.5 });
         } catch ($) {
-            const msg = pb.collectAllErrorsAsFormattedList($) ?? 'Failed to update widget!';
-            notify('error', msg);
+            const formErrors = pb.parseFormErrors($, ['sceneId', 'position', 'size', 'kind']);
+            this.setState(s => {
+                const openDialog = cloneDeep(s.openDialog);
+                if (openDialog?.key !== 'scene-config-clock') return s;
+
+                openDialog.data = {
+                    values: data.values,
+                    errors: formErrors,
+                };
+                return { ...s, openDialog };
+            });
         }
 
         this.#loadSceneDebounced();
@@ -493,6 +513,11 @@ class View extends Component<Props, State> {
                     isOpen={!!clockFormData}
                     isEdit={!!clockFormData?.isEdit}
                     onClose={this.#openDialogCancel}
+                    error={
+                        openDialog?.key === 'scene-config-clock'
+                            ? pb.renderFieldErrorsAsList(openDialog.data?.errors?.global)
+                            : null
+                    }
                     widgetSize={{
                         value: this.#clockGetFieldValue('widgetSize') ?? pb.WidgetSize.SMALL,
                         error: this.#clockGetFieldError('widgetSize'),

@@ -5,7 +5,7 @@ import * as pb from '@/proto';
 import { Form, type iField, getID } from '@/lib/form';
 
 // Components
-import { ModalCustom, Checkbox, ButtonSwitch } from '@/components';
+import { ModalCustom, Checkbox, ButtonSwitch, InlineNotification } from '@/components';
 import { RadioButtonGroup, RadioButton, CheckboxGroup, ComboBox } from '@carbon/react';
 import {
     // Location as IconLocation,
@@ -26,6 +26,7 @@ export interface FormWidgetClockProps {
     isOpen: boolean;
     isEdit: boolean;
     onClose(): void;
+    error: Maybe<string>;
 
     widgetSize: null | (iField<pb.WidgetSize> & { options: Array<Exclude<pb.WidgetSize, 0>> });
 
@@ -51,8 +52,8 @@ class View extends Component<Props> {
     get #clockStyleOptions(): Array<OptionItem<pb.ClockWidget_ClockStyle>> {
         const { formatMessage } = this.props.intl;
         return [
-            { value: pb.ClockWidget_ClockStyle.ANALOG_RECT, label: formatMessage({ defaultMessage: 'Analog 1' }) },
-            { value: pb.ClockWidget_ClockStyle.ANALOG_ROUND, label: formatMessage({ defaultMessage: 'Analog 2' }) },
+            { value: pb.ClockWidget_ClockStyle.ANALOG_ROUND, label: formatMessage({ defaultMessage: 'Analog 1' }) },
+            { value: pb.ClockWidget_ClockStyle.ANALOG_RECT, label: formatMessage({ defaultMessage: 'Analog 2' }) },
             { value: pb.ClockWidget_ClockStyle.DIGITAL, label: formatMessage({ defaultMessage: 'Digital 1' }) },
         ];
     }
@@ -76,6 +77,7 @@ class View extends Component<Props> {
             isOpen,
             isEdit,
             onClose,
+            error,
 
             // Main
             widgetSize,
@@ -186,6 +188,17 @@ class View extends Component<Props> {
                         values={{ b: ch => <strong children={ch} /> }}
                     />
                 </div>
+
+                {error ? (
+                    <InlineNotification
+                        kind="error"
+                        theme="inverse"
+                        stretch
+                        hideCloseButton
+                        title={formatMessage({ defaultMessage: 'Error' })}
+                        children={error}
+                    />
+                ) : null}
             </Form>
         );
 
