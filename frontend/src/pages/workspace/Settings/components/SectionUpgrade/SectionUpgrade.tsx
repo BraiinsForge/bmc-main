@@ -310,7 +310,7 @@ class View extends Component<Props, State> {
                         theme="inverse"
                         hideCloseButton
                         title={formatMessage({ defaultMessage: 'You are up to date' })}
-                        children={formatMessage({ defaultMessage: "You're running the latest version of BMC" })}
+                        children={formatMessage({ defaultMessage: "You're running the latest firmware" })}
                     />,
                     errors?.length ? this.#renderInlineNotificationError(errors, 'error-up-to-date') : null,
                 ];
@@ -342,7 +342,7 @@ class View extends Component<Props, State> {
                         <Button
                             kind="primary"
                             onClick={() => onDownload(hash)}
-                            children={formatMessage({ defaultMessage: 'Download & Upgrade BMC' })}
+                            children={formatMessage({ defaultMessage: 'Download & Upgrade firmware' })}
                             renderIcon={IconUpgrade}
                         />
                         {this.#txt.estDuration}
@@ -399,7 +399,7 @@ class View extends Component<Props, State> {
                                     formatMessage({ defaultMessage: 'Installation Finished' }),
                                     C.alertGreen,
                                     {
-                                        footer: formatMessage({ defaultMessage: 'BMC Upgrade Successfull' }),
+                                        footer: formatMessage({ defaultMessage: 'Upgrade Successfull' }),
                                         error: pb.renderFieldErrorsAsList(errors),
                                         errorTitle,
                                     },
@@ -427,10 +427,7 @@ class View extends Component<Props, State> {
                 // but also in an overlay that blocks the rest of the UI
                 overlayContent = (
                     <div className={css.overlayContent}>
-                        <h1
-                            className={css.title}
-                            children={formatMessage({ defaultMessage: 'Installing BMC Upgrade' })}
-                        />
+                        <h1 className={css.title} children={formatMessage({ defaultMessage: 'Installing Upgrade' })} />
 
                         {this.#renderFacts(versionCurrent, latestVersionCellContent, statusMessage)}
 
@@ -448,7 +445,7 @@ class View extends Component<Props, State> {
                     <div className={css.overlayRestart}>
                         <h1 className={css.title}>
                             <IconRestart className={css.icon} />
-                            <span children={formatMessage({ defaultMessage: 'BMC installion…' })} />
+                            <span children={formatMessage({ defaultMessage: 'Braiins Deck installion…' })} />
                         </h1>
 
                         <p>

@@ -184,7 +184,7 @@ class View extends Component<Props> {
                     <IconScreen size={16} />
                     <FormattedMessage
                         tagName="span"
-                        defaultMessage="<b>Note</b>: Check your BMC screen to see live preview"
+                        defaultMessage="<b>Note</b>: Check your device screen to see live preview"
                         values={{ b: ch => <strong children={ch} /> }}
                     />
                 </div>

@@ -12,7 +12,7 @@ if (rootEl) {
     root.render(
         <StrictMode>
             <HelmetProvider>
-                <Helmet defaultTitle="Braiins BMC-100" titleTemplate="%s | Braiins BMC-100" />
+                <Helmet defaultTitle="Braiins DECK" titleTemplate="%s | Braiins DECK" />
                 <IntlProvider locale="en">
                     <RouterProvider router={router} />
                 </IntlProvider>

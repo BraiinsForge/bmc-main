@@ -49,7 +49,7 @@ const getInitialState = (): State => ({});
 class Base extends Component<Props, State> {
     readonly state = getInitialState();
     #txt = {
-        name: this.props.intl.formatMessage({ defaultMessage: 'BMC 100 - Braiins Deck' }),
+        name: this.props.intl.formatMessage({ defaultMessage: 'Braiins DECK' }),
         sidenav: this.props.intl.formatMessage({ defaultMessage: 'Side navigation' }),
 
         documentation: this.props.intl.formatMessage({ defaultMessage: 'Documentation' }),

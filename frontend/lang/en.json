@@ -1,716 +1,707 @@
 {
-    "+0GHcG": {
-        "defaultMessage": "Morphing"
-    },
-    "+V1JPZ": {
-        "defaultMessage": "Clone"
-    },
-    "+vVZ/G": {
-        "defaultMessage": "Connect"
-    },
-    "+xzXEb": {
-        "defaultMessage": "Upgrades"
-    },
-    "/06iwc": {
-        "defaultMessage": "Large"
-    },
-    "/5JTsO": {
-        "defaultMessage": "Unexpected error: {error}"
-    },
-    "/9nk8W": {
-        "defaultMessage": "Device Setup"
-    },
-    "/TZvjA": {
-        "defaultMessage": "Add Scene"
-    },
-    "/j7GSs": {
-        "defaultMessage": "Remove Widget"
-    },
-    "00EmN7": {
-        "defaultMessage": "WiFi"
-    },
-    "0AXMjj": {
-        "defaultMessage": "24-hour"
-    },
-    "0O2C6W": {
-        "defaultMessage": "WEP Shared"
-    },
-    "0QLzxo": {
-        "defaultMessage": "Protocol"
-    },
-    "0ZlW1M": {
-        "defaultMessage": "Sound & LED notifications when night mode is active."
-    },
-    "0sOHRS": {
-        "defaultMessage": "Fade"
-    },
-    "1FcZU+": {
-        "defaultMessage": "You can choose between types of clocks - Flip, Digital, Analog"
-    },
-    "1QM9Am": {
-        "defaultMessage": "Show Seconds"
-    },
-    "1UlEAX": {
-        "defaultMessage": "Netmask"
-    },
-    "1WwMZP": {
-        "defaultMessage": "Select a Wi-Fi Network…"
-    },
-    "1iEPTM": {
-        "defaultMessage": "General"
-    },
-    "2/nV0r": {
-        "defaultMessage": "Unknown connection error"
-    },
-    "2MN1aB": {
-        "defaultMessage": "Rotate"
-    },
-    "2Rb7Nu": {
-        "defaultMessage": "Enable Screen Cycling"
-    },
-    "2jVWOH": {
-        "defaultMessage": "Screen Brightness"
-    },
-    "2kBrtf": {
-        "defaultMessage": "Passwords must match!"
-    },
-    "2o9y+5": {
-        "defaultMessage": "Failed to load timezones!"
-    },
-    "3/x9lB": {
-        "defaultMessage": "Add New Widget"
-    },
-    "39HhOJ": {
-        "defaultMessage": "Additional Options"
-    },
-    "3aaibf": {
-        "defaultMessage": "Add Widget"
-    },
-    "3cc4Ct": {
-        "defaultMessage": "Light"
-    },
-    "40TKTx": {
-        "defaultMessage": "Save and Continue"
-    },
-    "450Fty": {
-        "defaultMessage": "None"
-    },
-    "47FYwb": {
-        "defaultMessage": "Cancel"
-    },
-    "4ADCb5": {
-        "defaultMessage": "Other…"
-    },
-    "4GbFNA": {
-        "defaultMessage": "Confirm New Password"
-    },
-    "4g30pb": {
-        "defaultMessage": "Hide Older Updates"
-    },
-    "4i9q5a": {
-        "defaultMessage": "Combined scene displaying multiple configurable modules that can be adjusted."
-    },
-    "55k4Tt": {
-        "defaultMessage": "Factory reset"
-    },
-    "56Ld4u": {
-        "defaultMessage": "Change the password used to access device settings."
-    },
-    "5OzDRN": {
-        "defaultMessage": "Enable Night Mode"
-    },
-    "5sg7KC": {
-        "defaultMessage": "Password"
-    },
-    "5smd8Z": {
-        "defaultMessage": "Remove Password"
-    },
-    "64NAin": {
-        "defaultMessage": "Display"
-    },
-    "6BrZqI": {
-        "defaultMessage": "Edit Combined Scene"
-    },
-    "6mw+xc": {
-        "defaultMessage": "Factory Reset"
-    },
-    "7iPNWk": {
-        "defaultMessage": "Latest available version:"
-    },
-    "7nUCu9": {
-        "defaultMessage": "Timezone"
-    },
-    "7rS3q2": {
-        "defaultMessage": "Allow anonymous data collection to improve the product"
-    },
-    "89U3Xm": {
-        "defaultMessage": "Sound & Light"
-    },
-    "8B04tJ": {
-        "defaultMessage": "WPA"
-    },
-    "8GOiJs": {
-        "defaultMessage": "Combined Scene"
-    },
-    "8KdPme": {
-        "defaultMessage": "We couldn't find the page or file you're looking for."
-    },
-    "8gpgar": {
-        "defaultMessage": "12-Hour"
-    },
-    "9DUknc": {
-        "defaultMessage": "Installation failed"
-    },
-    "9Uxyqc": {
-        "defaultMessage": "Enter city or postal code"
-    },
-    "9Xi1jY": {
-        "defaultMessage": "Automatically switch to red light theme after dark to preserve night vision."
-    },
-    "AJ+2S7": {
-        "defaultMessage": "Failed to move scene!"
-    },
-    "AOpaou": {
-        "defaultMessage": "WPA2"
-    },
-    "AniU1R": {
-        "defaultMessage": "Upgrade the System"
-    },
-    "AxkJv1": {
-        "defaultMessage": "Failed to upgrade the system!"
-    },
-    "BPnT3T": {
-        "defaultMessage": "Small"
-    },
-    "BeT3j9": {
-        "defaultMessage": "WPA3"
-    },
-    "BnoW5V": {
-        "defaultMessage": "DNS Servers"
-    },
-    "Bqf0dV": {
-        "defaultMessage": "Style: {style}, font: {font}"
-    },
-    "C81/uG": {
-        "defaultMessage": "Logout"
-    },
-    "CmlT0+": {
-        "defaultMessage": "Whats new in this Upgrade?"
-    },
-    "Cs6TWM": {
-        "defaultMessage": "WPA2 / WPA3"
-    },
-    "D34tus": {
-        "defaultMessage": "Screen Cycling"
-    },
-    "D3idYv": {
-        "defaultMessage": "Settings"
-    },
-    "D9m4k5": {
-        "defaultMessage": "Location is used for Timezone."
-    },
-    "DSSPM8": {
-        "defaultMessage": "BMC Upgrade Successfull"
-    },
-    "Dkkmwm": {
-        "defaultMessage": "Bold"
-    },
-    "EES7Oc": {
-        "defaultMessage": "Detect"
-    },
-    "EP80D3": {
-        "defaultMessage": "Factory reset complete!"
-    },
-    "EoLCST": {
-        "defaultMessage": "Edit Scene"
-    },
-    "EtoqQk": {
-        "defaultMessage": "Timezone changed to {value}"
-    },
-    "Ev6SEF": {
-        "defaultMessage": "New Password"
-    },
-    "F/Yedq": {
-        "defaultMessage": "To remove your password, please enter your current password."
-    },
-    "F5407k": {
-        "defaultMessage": "Sound Volume in Night Mode"
-    },
-    "F87jjw": {
-        "defaultMessage": "You're running the latest version of BMC"
-    },
-    "GbD/jt": {
-        "defaultMessage": "Reset to Defaults"
-    },
-    "GretYf": {
-        "defaultMessage": "Current Password"
-    },
-    "H9AUj0": {
-        "defaultMessage": "Screen Cycling: {status}"
-    },
-    "HcMCsg": {
-        "defaultMessage": "Scanning for networks…"
-    },
-    "I2Z3mI": {
-        "defaultMessage": "Comma separated values"
-    },
-    "I3JhPS": {
-        "defaultMessage": "Network"
-    },
-    "IqBkBl": {
-        "defaultMessage": "DHCP"
-    },
-    "IqlxFb": {
-        "defaultMessage": "Reset to Factory Defaults"
-    },
-    "J1Hzu0": {
-        "defaultMessage": "Close All"
-    },
-    "Jbgu7f": {
-        "defaultMessage": "Upgrade info not available!"
-    },
-    "JeVWXz": {
-        "defaultMessage": "Edit Widget"
-    },
-    "JysiHX": {
-        "defaultMessage": "First Day of the Week"
-    },
-    "K0zjRZ": {
-        "defaultMessage": "Automatically install firmware updates when available."
-    },
-    "K2DDr1": {
-        "defaultMessage": "Fahrenheit"
-    },
-    "KTkiEJ": {
-        "defaultMessage": "<b>Note</b>: Check your BMC screen to see live preview"
-    },
-    "KVajWj": {
-        "defaultMessage": "Numbers Font Style"
-    },
-    "KrJB4V": {
-        "defaultMessage": "Checking for updates…"
-    },
-    "Ky5oIQ": {
-        "defaultMessage": "Show Date"
-    },
-    "LMNOdP": {
-        "defaultMessage": "Time, Date and Regional Settings"
-    },
-    "Lo38iy": {
-        "defaultMessage": "Device Password"
-    },
-    "MVN3kK": {
-        "defaultMessage": "Digital"
-    },
-    "Mirphk": {
-        "defaultMessage": "Network Configuration"
-    },
-    "Mz/gsa": {
-        "defaultMessage": "Page Not Found"
-    },
-    "N2IrpM": {
-        "defaultMessage": "Confirm"
-    },
-    "NOGPqc": {
-        "defaultMessage": "If you forget this password, you'll need to reset the clocks to regain access."
-    },
-    "NuJ+vl": {
-        "defaultMessage": "LED Notification Lights"
-    },
-    "OLVyHL": {
-        "defaultMessage": "WEP"
-    },
-    "OUIFSP": {
-        "defaultMessage": "Automatic Updates"
-    },
-    "OecnYg": {
-        "defaultMessage": "{count, plural, one {+# Older Update} other {+# Older Updates}}"
-    },
-    "Ol7jyf": {
-        "defaultMessage": "Failed to save the brightness!"
-    },
-    "Oly+qT": {
-        "defaultMessage": "SSID (network name)"
-    },
-    "OvzONl": {
-        "defaultMessage": "Off"
-    },
-    "P6PLpi": {
-        "defaultMessage": "Join"
-    },
-    "Py189G": {
-        "defaultMessage": "Security"
-    },
-    "Q4tXfw": {
-        "defaultMessage": "Passwords have to match!"
-    },
-    "QiKKFz": {
-        "defaultMessage": "Change Password"
-    },
-    "QrihTZ": {
-        "defaultMessage": "Friday"
-    },
-    "R9A/SY": {
-        "defaultMessage": "Default Display Duration"
-    },
-    "RVhqZ4": {
-        "defaultMessage": "Download failed"
-    },
-    "Rix4Ma": {
-        "defaultMessage": "Move Widget"
-    },
-    "S3Qscy": {
-        "defaultMessage": "Failed to clone scene!"
-    },
-    "SC8+tL": {
-        "defaultMessage": "Password for {ssid}"
-    },
-    "TFXGCX": {
-        "defaultMessage": "Clock Style"
-    },
-    "TKmub+": {
-        "defaultMessage": "This field is required"
-    },
-    "TQvMXa": {
-        "defaultMessage": "Est. upgrade time: 1 minute"
-    },
-    "UabLFj": {
-        "defaultMessage": "Wifi scan: Unknown error!"
-    },
-    "Uc3eGg": {
-        "defaultMessage": "Analog 1"
-    },
-    "Uctr2V": {
-        "defaultMessage": "Brigthness"
-    },
-    "UqjScD": {
-        "defaultMessage": "Duration (s)"
-    },
-    "V1+/aw": {
-        "defaultMessage": "Find and join a Wi-Fi network"
-    },
-    "V2YDmA": {
-        "defaultMessage": "Invalid system upgrade response!"
-    },
-    "V64AGV": {
-        "defaultMessage": "Diagnostics"
-    },
-    "VctnYW": {
-        "defaultMessage": "Add New Scene"
-    },
-    "Vuh1Db": {
-        "defaultMessage": "24-Hour"
-    },
-    "WMNHPh": {
-        "defaultMessage": "Saturday"
-    },
-    "WZiq0K": {
-        "defaultMessage": "Please wait for the device restart to complete."
-    },
-    "Wca/V/": {
-        "defaultMessage": "Date Format"
-    },
-    "X1D1X+": {
-        "defaultMessage": "BMC 100 - Braiins Deck"
-    },
-    "XGOpYi": {
-        "defaultMessage": "Failed to load initial values!"
-    },
-    "YAgYL6": {
-        "defaultMessage": "Tuesday"
-    },
-    "YE568S": {
-        "defaultMessage": "Installing BMC Upgrade"
-    },
-    "YXurFE": {
-        "defaultMessage": "{time} remaining"
-    },
-    "YeB6C1": {
-        "defaultMessage": "Transition Effect"
-    },
-    "YtxGgO": {
-        "defaultMessage": "Connecting…"
-    },
-    "ZK1d6f": {
-        "defaultMessage": "SSID"
-    },
-    "ZYwC+3": {
-        "defaultMessage": "Wifi connection: Unknown error!"
-    },
-    "Zaws1W": {
-        "defaultMessage": "Add New Display Scene"
-    },
-    "Zh+5A6": {
-        "defaultMessage": "On"
-    },
-    "ZsV0n3": {
-        "defaultMessage": "Download & Upgrade BMC"
-    },
-    "a0eWVo": {
-        "defaultMessage": "WPA / WPA2"
-    },
-    "a7u0UM": {
-        "defaultMessage": "Downloading {progress}…"
-    },
-    "aSAPwR": {
-        "defaultMessage": "Time Format"
-    },
-    "aYefQt": {
-        "defaultMessage": "Failed to update scene duration! Please try again!"
-    },
-    "alnDAS": {
-        "defaultMessage": "Analog 2"
-    },
-    "azMsfM": {
-        "defaultMessage": "Monday"
-    },
-    "b/TkSQ": {
-        "defaultMessage": "Warning: This will delete all your custom configurations and display scenes."
-    },
-    "b0jvOi": {
-        "defaultMessage": "You are up to date"
-    },
-    "c8uKl6": {
-        "defaultMessage": "Wi-Fi"
-    },
-    "cG0Q8M": {
-        "defaultMessage": "Temperature"
-    },
-    "cM3xq/": {
-        "defaultMessage": "Your version:"
-    },
-    "cXBJ7U": {
-        "defaultMessage": "Privacy"
-    },
-    "cyR7Kh": {
-        "defaultMessage": "Back"
-    },
-    "d2tcSn": {
-        "defaultMessage": "Digital 1"
-    },
-    "dAOq4D": {
-        "defaultMessage": "New version available"
-    },
-    "dZjhk7": {
-        "defaultMessage": "Installation Finished"
-    },
-    "eJzJOx": {
-        "defaultMessage": "Please follow up instructions on the BMC screen to continue."
-    },
-    "eLLQBo": {
-        "defaultMessage": "Analog (round)"
-    },
-    "f8BVkP": {
-        "defaultMessage": "Time elapsed: {time}"
-    },
-    "fCu/+n": {
-        "defaultMessage": "Static"
-    },
-    "fL4CRF": {
-        "defaultMessage": "Night Mode"
-    },
-    "fV5Xr4": {
-        "defaultMessage": "Configure essential settings like time, network, and access to prepare your clock for use."
-    },
-    "g1Wnkh": {
-        "defaultMessage": "Do you really want to reset the device to factory settings?"
-    },
-    "gHA1OE": {
-        "defaultMessage": "Failed to update scene state!!"
-    },
-    "gqFz5t": {
-        "defaultMessage": "Use Device Location"
-    },
-    "hYTNfC": {
-        "defaultMessage": "Encryption Type"
-    },
-    "hd07WZ": {
-        "defaultMessage": "{done} of {total}"
-    },
-    "hpnpgA": {
-        "defaultMessage": "Analog (rectangular)"
-    },
-    "ij24tj": {
-        "defaultMessage": "Password is already set!"
-    },
-    "ipb90O": {
-        "defaultMessage": "Password Repeat"
-    },
-    "isGKnz": {
-        "defaultMessage": "Documentation"
-    },
-    "j8vTk/": {
-        "defaultMessage": "Enter your current password and a new password to update your credentials."
-    },
-    "jm/spn": {
-        "defaultMessage": "Reset"
-    },
-    "jvo0vs": {
-        "defaultMessage": "Save"
-    },
-    "kma3lY": {
-        "defaultMessage": "Display Scenes description..."
-    },
-    "lEMUo8": {
-        "defaultMessage": "Regional Settings"
-    },
-    "lxblgl": {
-        "defaultMessage": "Wednesday"
-    },
-    "m7XV0a": {
-        "defaultMessage": "Failed to delete scene!"
-    },
-    "mJR06P": {
-        "defaultMessage": "Sunday"
-    },
-    "mjH2hW": {
-        "defaultMessage": "Usage Data"
-    },
-    "n2LnG7": {
-        "defaultMessage": "Night Mode Brightness"
-    },
-    "ncad+6": {
-        "defaultMessage": "Slide"
-    },
-    "neGa+m": {
-        "defaultMessage": "System Settings"
-    },
-    "o+R+1I": {
-        "defaultMessage": "Clocks"
-    },
-    "olRvTF": {
-        "defaultMessage": "Password must be at least 6 characters long"
-    },
-    "ovJ26C": {
-        "defaultMessage": "Medium"
-    },
-    "owE/Ll": {
-        "defaultMessage": "Allow anonymous usage data collection to improve the product."
-    },
-    "pMcQck": {
-        "defaultMessage": "Gateway"
-    },
-    "pTd/eT": {
-        "defaultMessage": "BMC installion…"
-    },
-    "pXjKUB": {
-        "defaultMessage": "Unknown error!"
-    },
-    "pu+Lcq": {
-        "defaultMessage": "Display preview connection lost!"
-    },
-    "qAhUUO": {
-        "defaultMessage": "Thursday"
-    },
-    "qCyPKf": {
-        "defaultMessage": "Clock"
-    },
-    "qFTxb3": {
-        "defaultMessage": "Scale"
-    },
-    "rELDbB": {
-        "defaultMessage": "Refresh"
-    },
-    "rWD360": {
-        "defaultMessage": "Go to Homepage"
-    },
-    "rXTgTq": {
-        "defaultMessage": "Time & Date"
-    },
-    "rclAAm": {
-        "defaultMessage": "Number Format"
-    },
-    "re9Sas": {
-        "defaultMessage": "Password is not set!"
-    },
-    "rvirM2": {
-        "defaultMessage": "Location"
-    },
-    "sf72yb": {
-        "defaultMessage": "Failed to check for upgrade!"
-    },
-    "sjSEXT": {
-        "defaultMessage": "Side navigation"
-    },
-    "ssL153": {
-        "defaultMessage": "Enable LED Notifications"
-    },
-    "tQUbem": {
-        "defaultMessage": "Notifications in Night Mode"
-    },
-    "tXea4K": {
-        "defaultMessage": "Password (optional)"
-    },
-    "tzMNF3": {
-        "defaultMessage": "Status"
-    },
-    "u/a4pg": {
-        "defaultMessage": "Data Collection"
-    },
-    "uJV0wU": {
-        "defaultMessage": "IP Address"
-    },
-    "uPDgth": {
-        "defaultMessage": "Hostname"
-    },
-    "uiFoFm": {
-        "defaultMessage": "Password is required"
-    },
-    "vR7ekU": {
-        "defaultMessage": "Required field!"
-    },
-    "wCy/Tc": {
-        "defaultMessage": "Translate"
-    },
-    "wEQDC6": {
-        "defaultMessage": "Edit"
-    },
-    "wHoQlH": {
-        "defaultMessage": "Brightness Saved"
-    },
-    "wr+8CD": {
-        "defaultMessage": "Alarm and Notifications Volume"
-    },
-    "wrQGfF": {
-        "defaultMessage": "Use location to determine sunrise and sunset times."
-    },
-    "x+67sP": {
-        "defaultMessage": "Back to Scenes List"
-    },
-    "xQ6aNc": {
-        "defaultMessage": "Create Password"
-    },
-    "xmIogL": {
-        "defaultMessage": "Show Seconds in Status Bar"
-    },
-    "xn0iTh": {
-        "defaultMessage": "12-hour"
-    },
-    "xzSwWX": {
-        "defaultMessage": "Sound Volume"
-    },
-    "y/PhoM": {
-        "defaultMessage": "Celsius"
-    },
-    "y867Vs": {
-        "defaultMessage": "Volume"
-    },
-    "yGW47+": {
-        "defaultMessage": "Check for a new version"
-    },
-    "yrqjxp": {
-        "defaultMessage": "Use LED lights for notifications and alerts"
-    },
-    "zRnAdx": {
-        "defaultMessage": "Display Scenes"
-    },
-    "zeOegL": {
-        "defaultMessage": "Failed to load display settings!"
-    },
-    "zfLljR": {
-        "defaultMessage": "Show Timezone"
-    },
-    "zgw2I8": {
-        "defaultMessage": "Installing…"
-    }
+  "+V1JPZ": {
+    "defaultMessage": "Clone"
+  },
+  "+vVZ/G": {
+    "defaultMessage": "Connect"
+  },
+  "+xzXEb": {
+    "defaultMessage": "Upgrades"
+  },
+  "/06iwc": {
+    "defaultMessage": "Large"
+  },
+  "/5JTsO": {
+    "defaultMessage": "Unexpected error: {error}"
+  },
+  "/9nk8W": {
+    "defaultMessage": "Device Setup"
+  },
+  "/TZvjA": {
+    "defaultMessage": "Add Scene"
+  },
+  "/j7GSs": {
+    "defaultMessage": "Remove Widget"
+  },
+  "0AXMjj": {
+    "defaultMessage": "24-hour"
+  },
+  "0O2C6W": {
+    "defaultMessage": "WEP Shared"
+  },
+  "0QLzxo": {
+    "defaultMessage": "Protocol"
+  },
+  "0ZlW1M": {
+    "defaultMessage": "Sound & LED notifications when night mode is active."
+  },
+  "0sOHRS": {
+    "defaultMessage": "Fade"
+  },
+  "1FcZU+": {
+    "defaultMessage": "You can choose between types of clocks - Flip, Digital, Analog"
+  },
+  "1QM9Am": {
+    "defaultMessage": "Show Seconds"
+  },
+  "1UlEAX": {
+    "defaultMessage": "Netmask"
+  },
+  "1WwMZP": {
+    "defaultMessage": "Select a Wi-Fi Network…"
+  },
+  "1iEPTM": {
+    "defaultMessage": "General"
+  },
+  "2/nV0r": {
+    "defaultMessage": "Unknown connection error"
+  },
+  "2Rb7Nu": {
+    "defaultMessage": "Enable Screen Cycling"
+  },
+  "2jVWOH": {
+    "defaultMessage": "Screen Brightness"
+  },
+  "2kBrtf": {
+    "defaultMessage": "Passwords must match!"
+  },
+  "2o9y+5": {
+    "defaultMessage": "Failed to load timezones!"
+  },
+  "3/x9lB": {
+    "defaultMessage": "Add New Widget"
+  },
+  "39HhOJ": {
+    "defaultMessage": "Additional Options"
+  },
+  "3aaibf": {
+    "defaultMessage": "Add Widget"
+  },
+  "3cc4Ct": {
+    "defaultMessage": "Light"
+  },
+  "40TKTx": {
+    "defaultMessage": "Save and Continue"
+  },
+  "450Fty": {
+    "defaultMessage": "None"
+  },
+  "47FYwb": {
+    "defaultMessage": "Cancel"
+  },
+  "4ADCb5": {
+    "defaultMessage": "Other…"
+  },
+  "4GbFNA": {
+    "defaultMessage": "Confirm New Password"
+  },
+  "4g30pb": {
+    "defaultMessage": "Hide Older Updates"
+  },
+  "4i9q5a": {
+    "defaultMessage": "Combined scene displaying multiple configurable modules that can be adjusted."
+  },
+  "55k4Tt": {
+    "defaultMessage": "Factory reset"
+  },
+  "56Ld4u": {
+    "defaultMessage": "Change the password used to access device settings."
+  },
+  "5OzDRN": {
+    "defaultMessage": "Enable Night Mode"
+  },
+  "5sg7KC": {
+    "defaultMessage": "Password"
+  },
+  "5smd8Z": {
+    "defaultMessage": "Remove Password"
+  },
+  "64NAin": {
+    "defaultMessage": "Display"
+  },
+  "6BrZqI": {
+    "defaultMessage": "Edit Combined Scene"
+  },
+  "6mw+xc": {
+    "defaultMessage": "Factory Reset"
+  },
+  "7iPNWk": {
+    "defaultMessage": "Latest available version:"
+  },
+  "7nUCu9": {
+    "defaultMessage": "Timezone"
+  },
+  "7rS3q2": {
+    "defaultMessage": "Allow anonymous data collection to improve the product"
+  },
+  "89U3Xm": {
+    "defaultMessage": "Sound & Light"
+  },
+  "8B04tJ": {
+    "defaultMessage": "WPA"
+  },
+  "8GOiJs": {
+    "defaultMessage": "Combined Scene"
+  },
+  "8KdPme": {
+    "defaultMessage": "We couldn't find the page or file you're looking for."
+  },
+  "8gpgar": {
+    "defaultMessage": "12-Hour"
+  },
+  "9DUknc": {
+    "defaultMessage": "Installation failed"
+  },
+  "9Uxyqc": {
+    "defaultMessage": "Enter city or postal code"
+  },
+  "9Xi1jY": {
+    "defaultMessage": "Automatically switch to red light theme after dark to preserve night vision."
+  },
+  "AJ+2S7": {
+    "defaultMessage": "Failed to move scene!"
+  },
+  "AOpaou": {
+    "defaultMessage": "WPA2"
+  },
+  "AniU1R": {
+    "defaultMessage": "Upgrade the System"
+  },
+  "AxkJv1": {
+    "defaultMessage": "Failed to upgrade the system!"
+  },
+  "AyGauy": {
+    "defaultMessage": "Login"
+  },
+  "BPnT3T": {
+    "defaultMessage": "Small"
+  },
+  "BeT3j9": {
+    "defaultMessage": "WPA3"
+  },
+  "BnoW5V": {
+    "defaultMessage": "DNS Servers"
+  },
+  "Bqf0dV": {
+    "defaultMessage": "Style: {style}, font: {font}"
+  },
+  "C81/uG": {
+    "defaultMessage": "Logout"
+  },
+  "CmlT0+": {
+    "defaultMessage": "Whats new in this Upgrade?"
+  },
+  "Cs6TWM": {
+    "defaultMessage": "WPA2 / WPA3"
+  },
+  "D34tus": {
+    "defaultMessage": "Screen Cycling"
+  },
+  "D3idYv": {
+    "defaultMessage": "Settings"
+  },
+  "D9m4k5": {
+    "defaultMessage": "Location is used for Timezone."
+  },
+  "Dkkmwm": {
+    "defaultMessage": "Bold"
+  },
+  "EES7Oc": {
+    "defaultMessage": "Detect"
+  },
+  "EP80D3": {
+    "defaultMessage": "Factory reset complete!"
+  },
+  "EoLCST": {
+    "defaultMessage": "Edit Scene"
+  },
+  "EtoqQk": {
+    "defaultMessage": "Timezone changed to {value}"
+  },
+  "Ev6SEF": {
+    "defaultMessage": "New Password"
+  },
+  "F/Yedq": {
+    "defaultMessage": "To remove your password, please enter your current password."
+  },
+  "F5407k": {
+    "defaultMessage": "Sound Volume in Night Mode"
+  },
+  "GbD/jt": {
+    "defaultMessage": "Reset to Defaults"
+  },
+  "GretYf": {
+    "defaultMessage": "Current Password"
+  },
+  "H9AUj0": {
+    "defaultMessage": "Screen Cycling: {status}"
+  },
+  "HcMCsg": {
+    "defaultMessage": "Scanning for networks…"
+  },
+  "I2Z3mI": {
+    "defaultMessage": "Comma separated values"
+  },
+  "I3JhPS": {
+    "defaultMessage": "Network"
+  },
+  "IYhbnZ": {
+    "defaultMessage": "Failed to update scene cycling settings!"
+  },
+  "IqBkBl": {
+    "defaultMessage": "DHCP"
+  },
+  "IqlxFb": {
+    "defaultMessage": "Reset to Factory Defaults"
+  },
+  "J1Hzu0": {
+    "defaultMessage": "Close All"
+  },
+  "Jbgu7f": {
+    "defaultMessage": "Upgrade info not available!"
+  },
+  "JeVWXz": {
+    "defaultMessage": "Edit Widget"
+  },
+  "JysiHX": {
+    "defaultMessage": "First Day of the Week"
+  },
+  "K0zjRZ": {
+    "defaultMessage": "Automatically install firmware updates when available."
+  },
+  "K2DDr1": {
+    "defaultMessage": "Fahrenheit"
+  },
+  "KN7zKn": {
+    "defaultMessage": "Error"
+  },
+  "KVajWj": {
+    "defaultMessage": "Numbers Font Style"
+  },
+  "Knv5mn": {
+    "defaultMessage": "Please follow up instructions on the device screen to continue."
+  },
+  "KrJB4V": {
+    "defaultMessage": "Checking for updates…"
+  },
+  "Ky5oIQ": {
+    "defaultMessage": "Show Date"
+  },
+  "LMNOdP": {
+    "defaultMessage": "Time, Date and Regional Settings"
+  },
+  "Lo38iy": {
+    "defaultMessage": "Device Password"
+  },
+  "MVN3kK": {
+    "defaultMessage": "Digital"
+  },
+  "Mirphk": {
+    "defaultMessage": "Network Configuration"
+  },
+  "Mz/gsa": {
+    "defaultMessage": "Page Not Found"
+  },
+  "N2IrpM": {
+    "defaultMessage": "Confirm"
+  },
+  "NOGPqc": {
+    "defaultMessage": "If you forget this password, you'll need to reset the clocks to regain access."
+  },
+  "NuJ+vl": {
+    "defaultMessage": "LED Notification Lights"
+  },
+  "OLVyHL": {
+    "defaultMessage": "WEP"
+  },
+  "OUIFSP": {
+    "defaultMessage": "Automatic Updates"
+  },
+  "OecnYg": {
+    "defaultMessage": "{count, plural, one {+# Older Update} other {+# Older Updates}}"
+  },
+  "Ol7jyf": {
+    "defaultMessage": "Failed to save the brightness!"
+  },
+  "Oly+qT": {
+    "defaultMessage": "SSID (network name)"
+  },
+  "OsJkGM": {
+    "defaultMessage": "Download & Upgrade firmware"
+  },
+  "OvzONl": {
+    "defaultMessage": "Off"
+  },
+  "P6PLpi": {
+    "defaultMessage": "Join"
+  },
+  "PqimLU": {
+    "defaultMessage": "Braiins Deck installion…"
+  },
+  "Py189G": {
+    "defaultMessage": "Security"
+  },
+  "Q4tXfw": {
+    "defaultMessage": "Passwords have to match!"
+  },
+  "QiKKFz": {
+    "defaultMessage": "Change Password"
+  },
+  "QrihTZ": {
+    "defaultMessage": "Friday"
+  },
+  "R9A/SY": {
+    "defaultMessage": "Default Display Duration"
+  },
+  "RVhqZ4": {
+    "defaultMessage": "Download failed"
+  },
+  "Rix4Ma": {
+    "defaultMessage": "Move Widget"
+  },
+  "S3Qscy": {
+    "defaultMessage": "Failed to clone scene!"
+  },
+  "SC8+tL": {
+    "defaultMessage": "Password for {ssid}"
+  },
+  "Sdyz1Z": {
+    "defaultMessage": "You're running the latest firmware"
+  },
+  "TFXGCX": {
+    "defaultMessage": "Clock Style"
+  },
+  "TKmub+": {
+    "defaultMessage": "This field is required"
+  },
+  "TQvMXa": {
+    "defaultMessage": "Est. upgrade time: 1 minute"
+  },
+  "UabLFj": {
+    "defaultMessage": "Wifi scan: Unknown error!"
+  },
+  "Uc3eGg": {
+    "defaultMessage": "Analog 1"
+  },
+  "Uctr2V": {
+    "defaultMessage": "Brigthness"
+  },
+  "UqjScD": {
+    "defaultMessage": "Duration (s)"
+  },
+  "V1+/aw": {
+    "defaultMessage": "Find and join a Wi-Fi network"
+  },
+  "V2YDmA": {
+    "defaultMessage": "Invalid system upgrade response!"
+  },
+  "V64AGV": {
+    "defaultMessage": "Diagnostics"
+  },
+  "VctnYW": {
+    "defaultMessage": "Add New Scene"
+  },
+  "Vuh1Db": {
+    "defaultMessage": "24-Hour"
+  },
+  "WMNHPh": {
+    "defaultMessage": "Saturday"
+  },
+  "WZiq0K": {
+    "defaultMessage": "Please wait for the device restart to complete."
+  },
+  "Wca/V/": {
+    "defaultMessage": "Date Format"
+  },
+  "XGOpYi": {
+    "defaultMessage": "Failed to load initial values!"
+  },
+  "YAgYL6": {
+    "defaultMessage": "Tuesday"
+  },
+  "YXurFE": {
+    "defaultMessage": "{time} remaining"
+  },
+  "YeB6C1": {
+    "defaultMessage": "Transition Effect"
+  },
+  "YtxGgO": {
+    "defaultMessage": "Connecting…"
+  },
+  "ZK1d6f": {
+    "defaultMessage": "SSID"
+  },
+  "ZYwC+3": {
+    "defaultMessage": "Wifi connection: Unknown error!"
+  },
+  "Zaws1W": {
+    "defaultMessage": "Add New Display Scene"
+  },
+  "Zh+5A6": {
+    "defaultMessage": "On"
+  },
+  "a0eWVo": {
+    "defaultMessage": "WPA / WPA2"
+  },
+  "a7u0UM": {
+    "defaultMessage": "Downloading {progress}…"
+  },
+  "aSAPwR": {
+    "defaultMessage": "Time Format"
+  },
+  "aYefQt": {
+    "defaultMessage": "Failed to update scene duration! Please try again!"
+  },
+  "alnDAS": {
+    "defaultMessage": "Analog 2"
+  },
+  "azMsfM": {
+    "defaultMessage": "Monday"
+  },
+  "b/TkSQ": {
+    "defaultMessage": "Warning: This will delete all your custom configurations and display scenes."
+  },
+  "b0jvOi": {
+    "defaultMessage": "You are up to date"
+  },
+  "c8uKl6": {
+    "defaultMessage": "Wi-Fi"
+  },
+  "cG0Q8M": {
+    "defaultMessage": "Temperature"
+  },
+  "cM3xq/": {
+    "defaultMessage": "Your version:"
+  },
+  "cXBJ7U": {
+    "defaultMessage": "Privacy"
+  },
+  "cyR7Kh": {
+    "defaultMessage": "Back"
+  },
+  "d2tcSn": {
+    "defaultMessage": "Digital 1"
+  },
+  "dAOq4D": {
+    "defaultMessage": "New version available"
+  },
+  "dBpLdl": {
+    "defaultMessage": "Upgrade Successfull"
+  },
+  "dZjhk7": {
+    "defaultMessage": "Installation Finished"
+  },
+  "eLLQBo": {
+    "defaultMessage": "Analog (round)"
+  },
+  "f8BVkP": {
+    "defaultMessage": "Time elapsed: {time}"
+  },
+  "fCu/+n": {
+    "defaultMessage": "Static"
+  },
+  "fL4CRF": {
+    "defaultMessage": "Night Mode"
+  },
+  "fV5Xr4": {
+    "defaultMessage": "Configure essential settings like time, network, and access to prepare your clock for use."
+  },
+  "g1Wnkh": {
+    "defaultMessage": "Do you really want to reset the device to factory settings?"
+  },
+  "gHA1OE": {
+    "defaultMessage": "Failed to update scene state!!"
+  },
+  "gqFz5t": {
+    "defaultMessage": "Use Device Location"
+  },
+  "hYTNfC": {
+    "defaultMessage": "Encryption Type"
+  },
+  "hd07WZ": {
+    "defaultMessage": "{done} of {total}"
+  },
+  "ho+kbz": {
+    "defaultMessage": "<b>Note</b>: Check your device screen to see live preview"
+  },
+  "hpnpgA": {
+    "defaultMessage": "Analog (rectangular)"
+  },
+  "ij24tj": {
+    "defaultMessage": "Password is already set!"
+  },
+  "ipb90O": {
+    "defaultMessage": "Password Repeat"
+  },
+  "isGKnz": {
+    "defaultMessage": "Documentation"
+  },
+  "j8vTk/": {
+    "defaultMessage": "Enter your current password and a new password to update your credentials."
+  },
+  "jm/spn": {
+    "defaultMessage": "Reset"
+  },
+  "kma3lY": {
+    "defaultMessage": "Display Scenes description..."
+  },
+  "lEMUo8": {
+    "defaultMessage": "Regional Settings"
+  },
+  "lxblgl": {
+    "defaultMessage": "Wednesday"
+  },
+  "m7XV0a": {
+    "defaultMessage": "Failed to delete scene!"
+  },
+  "mJR06P": {
+    "defaultMessage": "Sunday"
+  },
+  "mjH2hW": {
+    "defaultMessage": "Usage Data"
+  },
+  "n2LnG7": {
+    "defaultMessage": "Night Mode Brightness"
+  },
+  "ncad+6": {
+    "defaultMessage": "Slide"
+  },
+  "neGa+m": {
+    "defaultMessage": "System Settings"
+  },
+  "o+R+1I": {
+    "defaultMessage": "Clocks"
+  },
+  "olRvTF": {
+    "defaultMessage": "Password must be at least 6 characters long"
+  },
+  "ovJ26C": {
+    "defaultMessage": "Medium"
+  },
+  "owE/Ll": {
+    "defaultMessage": "Allow anonymous usage data collection to improve the product."
+  },
+  "pMcQck": {
+    "defaultMessage": "Gateway"
+  },
+  "pXjKUB": {
+    "defaultMessage": "Unknown error!"
+  },
+  "pe2Bhv": {
+    "defaultMessage": "Installing Upgrade"
+  },
+  "pu+Lcq": {
+    "defaultMessage": "Display preview connection lost!"
+  },
+  "qAhUUO": {
+    "defaultMessage": "Thursday"
+  },
+  "qCyPKf": {
+    "defaultMessage": "Clock"
+  },
+  "rELDbB": {
+    "defaultMessage": "Refresh"
+  },
+  "rWD360": {
+    "defaultMessage": "Go to Homepage"
+  },
+  "rXTgTq": {
+    "defaultMessage": "Time & Date"
+  },
+  "rclAAm": {
+    "defaultMessage": "Number Format"
+  },
+  "re9Sas": {
+    "defaultMessage": "Password is not set!"
+  },
+  "rvirM2": {
+    "defaultMessage": "Location"
+  },
+  "sf72yb": {
+    "defaultMessage": "Failed to check for upgrade!"
+  },
+  "sjSEXT": {
+    "defaultMessage": "Side navigation"
+  },
+  "ssL153": {
+    "defaultMessage": "Enable LED Notifications"
+  },
+  "tC2qpK": {
+    "defaultMessage": "Braiins DECK"
+  },
+  "tQUbem": {
+    "defaultMessage": "Notifications in Night Mode"
+  },
+  "tXea4K": {
+    "defaultMessage": "Password (optional)"
+  },
+  "tzMNF3": {
+    "defaultMessage": "Status"
+  },
+  "u/a4pg": {
+    "defaultMessage": "Data Collection"
+  },
+  "uJV0wU": {
+    "defaultMessage": "IP Address"
+  },
+  "uPDgth": {
+    "defaultMessage": "Hostname"
+  },
+  "uiFoFm": {
+    "defaultMessage": "Password is required"
+  },
+  "vR7ekU": {
+    "defaultMessage": "Required field!"
+  },
+  "wEQDC6": {
+    "defaultMessage": "Edit"
+  },
+  "wHoQlH": {
+    "defaultMessage": "Brightness Saved"
+  },
+  "wr+8CD": {
+    "defaultMessage": "Alarm and Notifications Volume"
+  },
+  "wrQGfF": {
+    "defaultMessage": "Use location to determine sunrise and sunset times."
+  },
+  "x+67sP": {
+    "defaultMessage": "Back to Scenes List"
+  },
+  "xQ6aNc": {
+    "defaultMessage": "Create Password"
+  },
+  "xmIogL": {
+    "defaultMessage": "Show Seconds in Status Bar"
+  },
+  "xn0iTh": {
+    "defaultMessage": "12-hour"
+  },
+  "xzSwWX": {
+    "defaultMessage": "Sound Volume"
+  },
+  "y/PhoM": {
+    "defaultMessage": "Celsius"
+  },
+  "y867Vs": {
+    "defaultMessage": "Volume"
+  },
+  "yGW47+": {
+    "defaultMessage": "Check for a new version"
+  },
+  "yrqjxp": {
+    "defaultMessage": "Use LED lights for notifications and alerts"
+  },
+  "zRnAdx": {
+    "defaultMessage": "Display Scenes"
+  },
+  "zeOegL": {
+    "defaultMessage": "Failed to load display settings!"
+  },
+  "zfLljR": {
+    "defaultMessage": "Show Timezone"
+  },
+  "zgw2I8": {
+    "defaultMessage": "Installing…"
+  }
 }

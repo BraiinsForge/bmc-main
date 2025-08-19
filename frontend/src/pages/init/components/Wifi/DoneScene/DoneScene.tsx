@@ -16,7 +16,7 @@ export function DoneScene() {
                 <h1
                     className={css.title}
                     children={formatMessage({
-                        defaultMessage: 'Please follow up instructions on the BMC screen to continue.',
+                        defaultMessage: 'Please follow up instructions on the device screen to continue.',
                     })}
                 />
             </div>

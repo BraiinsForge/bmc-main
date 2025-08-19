@@ -5,6 +5,7 @@
         "includes": [
             "**",
             "!**/@mockfs",
+            "!**/lang/*.json",
             "!**/package.json",
             "!**/.pnp.cjs",
             "!**/.pnp.loader.mjs",
