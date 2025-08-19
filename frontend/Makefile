@@ -61,7 +61,8 @@ serve:
 		--address="0.0.0.0:6070" \
 		--system-password="root" \
 		--www-path="$(shell realpath ./dist)" \
-		--mockfs-path="$(shell realpath ./@mockfs)" $(EXTRA_ARGS)
+		--sounds-dir="$(shell realpath ./@data/sounds)" \
+		--mockfs-path="$(shell realpath ./@data/mockfs)" $(EXTRA_ARGS)
 
 serve-factory:
 	EXTRA_ARGS='--factory-default' $(MAKE) serve

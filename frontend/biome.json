@@ -4,7 +4,7 @@
     "files": {
         "includes": [
             "**",
-            "!**/@mockfs",
+            "!**/@data",
             "!**/lang/*.json",
             "!**/package.json",
             "!**/.pnp.cjs",

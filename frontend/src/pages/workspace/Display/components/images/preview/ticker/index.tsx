@@ -3,10 +3,12 @@ import type { ImgHTMLAttributes } from 'react';
 // import * as pb from '@/proto';
 
 export interface TickerScenePreviewProps extends ImgHTMLAttributes<HTMLImageElement> {
-    kind: any; // pb.SceneVariantTicker;
+    // kind: pb.SceneVariantTicker;
 }
 
-export function TickerScenePreview(_props: TickerScenePreviewProps) {
+export function TickerScenePreview(props: TickerScenePreviewProps) {
+    return <img {...props} src={require('./ticker-line.png')} alt="Line ticker" />;
+
     // const { kind, ...rest } = props;
     //
     // switch (kind) {
@@ -22,6 +24,6 @@ export function TickerScenePreview(_props: TickerScenePreviewProps) {
     //     default:
     //         assertUnreachable(kind, 'ticker scene preview');
     // }
-
-    return null;
+    //
+    // return null;
 }

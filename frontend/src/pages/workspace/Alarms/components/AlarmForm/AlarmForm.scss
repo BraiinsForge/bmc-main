@@ -1,0 +1,73 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical start from 'styles/layout.scss';
+    gap: mini-units(3);
+    text-align: start;
+}
+
+.dropdown {
+    inline-size: 100%;
+    min-inline-size: to-rem(250px);
+    max-inline-size: unset;
+
+    ul[role='listbox'] {
+        inline-size: 100%;
+    }
+}
+
+.fullWidth {
+    inline-size: 100%;
+}
+
+//
+// Top row
+//
+
+.rowTop {
+    composes: horizontal start from 'styles/layout.scss';
+    inline-size: 100%;
+    gap: mini-units(2);
+}
+.time {
+    flex: 1;
+}
+.name {
+    flex: 1;
+}
+
+//
+// Days
+//
+
+.rowDays {
+    composes: horizontal from 'styles/layout.scss';
+    gap: mini-units(0.5);
+}
+
+//
+// Sound
+//
+
+.soundRow {
+    composes: horizontal start from 'styles/layout.scss';
+    composes: fullWidth;
+    gap: mini-units(1);
+}
+
+.soundDropdown {
+    composes: dropdown;
+
+    // We have our own layouting in the option element
+    :global(.cds--list-box__menu-item__option) {
+        margin: 0;
+        padding: 0;
+        inline-size: 100%;
+
+        // The "selected" checkmark icon is
+        // in the way of the play/stop button
+        > svg {
+            display: none;
+        }
+    }
+}

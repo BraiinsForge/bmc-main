@@ -1,7 +1,7 @@
 @use 'styles/carbon' as *;
 
 .root {
-    composes: flex vertical from 'styles/layout.scss';
+    composes: flex vertical start from 'styles/layout.scss';
     position: relative;
 }
 

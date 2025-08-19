@@ -25,8 +25,3 @@ node_modules
 **/*.scss.d.ts
 *storybook.log
 dist
-
-# Firware runtime artifacts
-@mockfs/tmp/*
-@mockfs/etc/*
-!@mockfs/etc/bmc_config.json

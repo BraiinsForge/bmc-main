@@ -1,0 +1,20 @@
+@use 'styles/carbon' as *;
+
+.root {
+    max-width: to-rem(1200px);
+}
+
+.table td,
+th {
+    white-space: nowrap;
+}
+
+.labelWrapper {
+    display: inline-block;
+    vertical-align: middle;
+    max-inline-size: 250px;
+
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}

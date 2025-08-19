@@ -5,6 +5,7 @@ import { Outlet, useNavigate, type NavigateFunction, useLocation } from 'react-r
 // App
 import { URLS } from '@/constants';
 import { useStore } from '@/store';
+import * as pb from '@/proto';
 import AppContext, {
     getAppContextDefault,
     type AppContextType,
@@ -181,6 +182,21 @@ class View extends Component<Props, State> {
         }
     };
 
+    private abortPlaySound = pb.abort.get();
+    #playSound = async (sound: pb.SoundInfo, signal: AbortSignal): Promise<void> => {
+        const { signal: abortSignal } = this.abortPlaySound.replace().attach(signal);
+
+        try {
+            await pb.rpc.config.playSound({ soundId: sound.id }, { signal: abortSignal });
+        } catch ($) {
+            if (pb.abort.is($)) {
+                console.log('Aborted sound playback', sound);
+                return;
+            }
+            throw $;
+        }
+    };
+
     #appContextValue = Object.assign({}, getAppContextDefault(), {
         notify: Object.assign(((type, message, extra) => this.#notify(type, message, extra)) as NotifyFunction, {
             clear: this.#notificationClearExternal,
@@ -197,7 +213,8 @@ class View extends Component<Props, State> {
                 cancelLabel: conf.cancelLabel,
             });
         }) as AppContextType['confirm'],
-    });
+        device: { playSound: this.#playSound },
+    } satisfies AppContextType);
 
     render() {
         const { notifications } = this.state;

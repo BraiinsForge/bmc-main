@@ -1,0 +1,19 @@
+@use 'styles/carbon' as *;
+
+.composedLoading {
+    pointer-events: none;
+    position: relative;
+
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: center;
+
+    .spinner :global(.cds--loading__svg) {
+        transform: scale(1.7);
+    }
+
+    .icon {
+        position: absolute;
+        inset: 0;
+    }
+}

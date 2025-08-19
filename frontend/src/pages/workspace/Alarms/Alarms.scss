@@ -1,4 +1,5 @@
 @use 'styles/carbon' as *;
+@use 'styles/var/shadows';
 
 .root {
     max-width: to-rem(1200px);
@@ -10,8 +11,21 @@
 
 .header {
     composes: horizontal center justified from 'styles/layout.scss';
+    text-wrap: balance;
+    gap: mini-units(6);
+
     margin-block-end: mini-units(2);
     margin-inline-start: mini-units(2);
+
+    @media (width <= 600px) {
+        flex-flow: column nowrap;
+        justify-content: start;
+        gap: mini-units(2);
+
+        .actions {
+            width: 100%;
+        }
+    }
 }
 
 .labels {
@@ -36,4 +50,32 @@
 
 .content {
     position: relative;
+}
+
+//
+// Edit Dialog
+//
+
+.deleteButtonRow {
+    margin-block-start: mini-units(4);
+}
+
+.deleteConfirmationMessage {
+    table {
+        margin-block-start: mini-units(2);
+
+        td,
+        th {
+            padding-block-start: mini-units(0.5);
+            text-align: start;
+        }
+
+        th {
+            font-weight: normal;
+            padding-inline-end: mini-units(1);
+        }
+        td {
+            font-weight: bold;
+        }
+    }
 }

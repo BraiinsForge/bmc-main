@@ -3,7 +3,7 @@ import { assertUnreachable } from '@/lib/ts';
 import type * as pb from '@/proto';
 
 import { ClockScenePreview } from './clock';
-// import { TickerScenePreview } from './ticker';
+import { TickerScenePreview } from './ticker';
 
 export interface ScenePreviewProps extends ImgHTMLAttributes<HTMLImageElement> {
     kind: Maybe<pb.WidgetKind['value'] | 'combined'>;
@@ -22,8 +22,11 @@ export function ScenePreview(props: ScenePreviewProps) {
         case 'clock':
             return <ClockScenePreview {...rest} kind={kind.value.clockStyle} />;
 
-        // case 'ticker':
-        //      return <TickerScenePreview {...rest} kind={variant as pb.SceneVariantTicker} />;
+        case 'tickerBtc':
+            return <TickerScenePreview {...rest} />;
+
+        case 'blockHeight':
+            return <img {...rest} src={require('./preview-block-height.png')} alt="Preview Block Height" />;
 
         // case 'image':
         //     return (

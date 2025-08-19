@@ -7,6 +7,7 @@ import { useNavigate, type NavigateFunction } from 'react-router';
 // Libs
 import { Sized, setState } from '@/lib/react';
 import { listenDocumentEvent } from '@/lib/dom';
+import { assertUnreachable } from '@/lib/ts.ts';
 import { Form, getID, type iField, type FormPropsToLocalState } from '@/lib/form';
 
 // App
@@ -179,7 +180,7 @@ class View extends Component<Props, State> {
             }
 
             // Full-screen widgets
-            default: {
+            case 'clock': {
                 const response = await pb.rpc.scenes.addFullscreenScene(
                     pb.create(pb.AddFullscreenSceneRequestSchema, {
                         widgetKind: {
@@ -220,6 +221,15 @@ class View extends Component<Props, State> {
                 );
                 break;
             }
+
+            case 'tickerBtc':
+                throw new Error('Not implemented!');
+
+            case 'blockHeight':
+                throw new Error('Not implemented!');
+
+            default:
+                assertUnreachable(kind, 'Invalid scene kind!');
         }
     };
     #openDialogCancel = (): void => {

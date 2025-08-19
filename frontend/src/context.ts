@@ -1,4 +1,5 @@
 import { createContext } from 'react';
+import type * as pb from '@/proto';
 
 export type NotificationType = 'info' | 'warning' | 'error' | 'success';
 export type NotificationMessage = NonNullable<ReactNode>;
@@ -24,11 +25,19 @@ export interface ConfirmationDescriptor {
 export interface AppContextType {
     notify: Notify;
     confirm(d: ConfirmationDescriptor): Promise<boolean>;
+    device: {
+        playSound(sound: pb.SoundInfo, signal: AbortSignal): Promise<void>;
+    };
 }
 
 export const getAppContextDefault = (): AppContextType => ({
     notify: Object.assign(() => {}, { clear() {} }),
     confirm: () => Promise.resolve(false),
+    device: {
+        playSound(): Promise<void> {
+            return Promise.reject(new Error('Not implemented'));
+        },
+    },
 });
 
 export default createContext<AppContextType>(getAppContextDefault());

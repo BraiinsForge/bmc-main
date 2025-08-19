@@ -111,6 +111,13 @@ export default defineConfig({
             '/braiins.bmc': {
                 target: 'http://localhost:6070',
                 changeOrigin: true,
+                followRedirects: true,
+                // Without this the abort singals do not propagate to the server
+                // which we really need, because for example the play sound RPC
+                // needs to stop the playback when the connection is dropped.
+                onProxyReq: (proxyReq, _, res) => {
+                    res.on('close', () => proxyReq.destroy());
+                },
             },
         },
     },

@@ -1,0 +1,35 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: horizontal center justified from 'styles/layout.scss';
+    padding-inline: mini-units(2);
+    gap: mini-units(2);
+    height: 100%;
+
+    .label {
+        color: $text-primary;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .playButton {
+        display: flex;
+        flex-flow: row nowrap;
+        align-items: center;
+        justify-content: center;
+
+        border: none;
+        background: none;
+        appearance: none;
+        cursor: pointer;
+
+        pointer-events: all;
+        color: $icon-primary;
+
+        &:focus,
+        &:hover {
+            color: $link-primary;
+        }
+    }
+}

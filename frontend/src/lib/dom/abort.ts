@@ -40,11 +40,6 @@ export class Aborter implements AbortController {
         this.#current?.abort(reason);
     }
 
-    #length: number = 1;
-    public get length(): number {
-        return this.#length;
-    }
-
     /**
      * Given an AbortSignal, the internal AbortController will be aborted when the abort signal is received.
      *
@@ -68,7 +63,6 @@ export class Aborter implements AbortController {
             this.signal.addEventListener('abort', () => other.abort(this.signal.reason));
         }
 
-        this.#length++;
         return this;
     }
 }

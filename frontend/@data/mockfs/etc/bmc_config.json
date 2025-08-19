@@ -100,5 +100,43 @@
     "automatic_cycling_enabled": true,
     "automatic_cycling_default_duration": "1m 30s",
     "transition": "fade"
-  }
+  },
+  "alarms": [
+    {
+      "id": "0d7df0ca-3495-4529-977e-7643ba761088",
+      "enabled": true,
+      "name": "",
+      "time": "08:00:00",
+      "repeat": [
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+        "Tuesday",
+        "Monday",
+        "Wednesday"
+      ],
+      "sound": "TickTockNextBlock",
+      "snooze_options": {
+        "limit": "ThreeMinutes",
+        "duration": "FiveMinutes"
+      }
+    },
+    {
+      "id": "f211e435-fa1c-40cf-9a17-e5b820b6b7ca",
+      "enabled": true,
+      "name": "asdgadfgadf",
+      "time": "08:00:00",
+      "repeat": [
+        "Friday",
+        "Tuesday",
+        "Sunday"
+      ],
+      "sound": "TickTockNextBlock",
+      "snooze_options": {
+        "limit": "ThreeMinutes",
+        "duration": "FiveMinutes"
+      }
+    }
+  ]
 }

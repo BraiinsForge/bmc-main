@@ -345,6 +345,12 @@ class View extends Component<Props, State> {
                 break;
             }
 
+            case 'tickerBtc':
+                throw new Error('Not implemented');
+
+            case 'blockHeight':
+                throw new Error('Not implemented');
+
             default:
                 assertUnreachable(kind, 'Unknown widget kind!');
         }

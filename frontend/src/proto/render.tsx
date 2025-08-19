@@ -1,6 +1,7 @@
 import type { IntlShape } from 'react-intl';
 import { assertUnreachable } from '@/lib/ts';
 import { formatDuration } from 'date-fns';
+import { isEqual } from 'es-toolkit';
 
 import { create } from '@bufbuild/protobuf';
 import * as pb from './pb';
@@ -10,7 +11,7 @@ export function renderTimezone(tz: Maybe<pb.Timezone>): string {
     return `UTC${tz.offset} (${tz.label})`;
 }
 
-export const wifiEncryptionTypeOptions: Array<Exclude<pb.EncryptionType, pb.EncryptionType.UNSPECIFIED>> = [
+export const wifiEncryptionTypeOptions: Array<Exclude<pb.EncryptionType, 0>> = [
     pb.EncryptionType.NONE,
     pb.EncryptionType.WEP,
     pb.EncryptionType.WEP_SHARED,
@@ -59,6 +60,151 @@ export function wifiEncryptionTypeToString(intl: IntlShape, x?: null | pb.Encryp
     }
 }
 
+export const weekdayOptionsAll: Array<Exclude<pb.Weekday, 0>> = [
+    pb.Weekday.MONDAY,
+    pb.Weekday.TUESDAY,
+    pb.Weekday.WEDNESDAY,
+    pb.Weekday.THURSDAY,
+    pb.Weekday.FRIDAY,
+    pb.Weekday.SATURDAY,
+    pb.Weekday.SUNDAY,
+];
+export const weekdayOptionsWeek: Array<Exclude<pb.Weekday, 0>> = [
+    pb.Weekday.MONDAY,
+    pb.Weekday.TUESDAY,
+    pb.Weekday.WEDNESDAY,
+    pb.Weekday.THURSDAY,
+    pb.Weekday.FRIDAY,
+];
+export const weekdayOptionsWeekend: Array<Exclude<pb.Weekday, 0>> = [pb.Weekday.SATURDAY, pb.Weekday.SUNDAY];
+export function weekdayToString(intl: IntlShape, x?: Maybe<pb.Weekday>): null;
+export function weekdayToString(intl: IntlShape, x: Exclude<pb.Weekday, 0>): string;
+export function weekdayToString(intl: IntlShape, x?: null | pb.Weekday) {
+    const { formatMessage } = intl;
+
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.Weekday.UNSPECIFIED:
+            return null;
+
+        case pb.Weekday.MONDAY:
+            return formatMessage({ defaultMessage: 'Mon' });
+
+        case pb.Weekday.TUESDAY:
+            return formatMessage({ defaultMessage: 'Tue' });
+
+        case pb.Weekday.WEDNESDAY:
+            return formatMessage({ defaultMessage: 'Wed' });
+
+        case pb.Weekday.THURSDAY:
+            return formatMessage({ defaultMessage: 'Thu' });
+
+        case pb.Weekday.FRIDAY:
+            return formatMessage({ defaultMessage: 'Fri' });
+
+        case pb.Weekday.SATURDAY:
+            return formatMessage({ defaultMessage: 'Sat' });
+
+        case pb.Weekday.SUNDAY:
+            return formatMessage({ defaultMessage: 'Sun' });
+
+        default:
+            assertUnreachable(x, 'Scene transition effect');
+    }
+}
+export function weekdayListToString(intl: IntlShape, x: Maybe<pb.Weekday[]>): null | string {
+    if (!x) return null;
+
+    const { formatMessage } = intl;
+    const unique: pb.Weekday[] = Array.from(new Set(x.filter(Boolean))).sort();
+
+    if (isEqual(unique, weekdayOptionsAll)) return formatMessage({ defaultMessage: 'All days' });
+    if (isEqual(unique, weekdayOptionsWeek)) return formatMessage({ defaultMessage: 'Weekdays' });
+    if (isEqual(unique, weekdayOptionsWeekend)) return formatMessage({ defaultMessage: 'Weekends' });
+    return unique
+        .toSorted()
+        .map(x => weekdayToString(intl, x))
+        .join(', ');
+}
+
+export function alarmSnoozeOptionsToString(intl: IntlShape, snoozeOptions: Maybe<pb.SnoozeOptionsWrapper>) {
+    const { formatMessage } = intl;
+    return snoozeOptions?.kind?.case === 'snooze'
+        ? formatMessage(
+              { defaultMessage: 'On, {duration}, {limit}' },
+              {
+                  duration: alarmSnoozeDurationToString(intl, snoozeOptions.kind.value.duration),
+                  limit: alarmSnoozeLimitToString(intl, snoozeOptions.kind.value.limit),
+              },
+          )
+        : formatMessage({ defaultMessage: 'Off' });
+}
+
+export const alarmSnoozeLimitOptions: Array<Exclude<pb.SnoozeLimit, 0>> = [
+    pb.SnoozeLimit.SNOOZE_LIMIT_FOREVER,
+    pb.SnoozeLimit.SNOOZE_LIMIT_3,
+    pb.SnoozeLimit.SNOOZE_LIMIT_5,
+];
+export function alarmSnoozeLimitToString(intl: IntlShape, x?: Maybe<pb.SnoozeLimit>): null;
+export function alarmSnoozeLimitToString(intl: IntlShape, x: Exclude<pb.SnoozeLimit, 0>): string;
+export function alarmSnoozeLimitToString(intl: IntlShape, x?: null | pb.SnoozeLimit) {
+    const { formatMessage } = intl;
+
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.SnoozeLimit.SNOOZE_LIMIT_UNSPECIFIED:
+            return null;
+
+        case pb.SnoozeLimit.SNOOZE_LIMIT_FOREVER:
+            return formatMessage({ defaultMessage: 'Forever' });
+
+        case pb.SnoozeLimit.SNOOZE_LIMIT_3:
+            return formatMessage({ defaultMessage: '3 snoozes' });
+
+        case pb.SnoozeLimit.SNOOZE_LIMIT_5:
+            return formatMessage({ defaultMessage: '5 snoozes' });
+
+        default:
+            assertUnreachable(x, 'alarm snooze limit');
+    }
+}
+
+export const alarmSnoozeDurationOptions: Array<Exclude<pb.SnoozeDuration, 0>> = [
+    pb.SnoozeDuration.SNOOZE_DURATION_5_MINUTES,
+    pb.SnoozeDuration.SNOOZE_DURATION_10_MINUTES,
+    pb.SnoozeDuration.SNOOZE_DURATION_15_MINUTES,
+    pb.SnoozeDuration.SNOOZE_DURATION_30_MINUTES,
+];
+export function alarmSnoozeDurationToString(intl: IntlShape, x?: Maybe<pb.SnoozeDuration>): null;
+export function alarmSnoozeDurationToString(intl: IntlShape, x: Exclude<pb.SnoozeDuration, 0>): string;
+export function alarmSnoozeDurationToString(intl: IntlShape, x?: null | pb.SnoozeDuration) {
+    const { formatMessage } = intl;
+
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.SnoozeDuration.SNOOZE_DURATION_UNSPECIFIED:
+            return null;
+
+        case pb.SnoozeDuration.SNOOZE_DURATION_5_MINUTES:
+            return formatMessage({ defaultMessage: '5 minutes' });
+
+        case pb.SnoozeDuration.SNOOZE_DURATION_10_MINUTES:
+            return formatMessage({ defaultMessage: '10 minutes' });
+
+        case pb.SnoozeDuration.SNOOZE_DURATION_15_MINUTES:
+            return formatMessage({ defaultMessage: '15 minutes' });
+
+        case pb.SnoozeDuration.SNOOZE_DURATION_30_MINUTES:
+            return formatMessage({ defaultMessage: '30 minutes' });
+
+        default:
+            assertUnreachable(x, 'alarm snooze duration');
+    }
+}
+
 export const sceneCyclingEffectOptions: Array<Exclude<pb.SceneCyclingTransition, 0>> = [
     pb.SceneCyclingTransition.FADE,
     pb.SceneCyclingTransition.SLIDE,
@@ -79,6 +225,64 @@ export function sceneCyclingEffectToString(intl: IntlShape, x?: null | pb.SceneC
 
         case pb.SceneCyclingTransition.SLIDE:
             return formatMessage({ defaultMessage: 'Slide' });
+
+        default:
+            assertUnreachable(x, 'Scene transition effect');
+    }
+}
+
+export const tickerTimeFrameOptions: Array<Exclude<pb.TickerBtcWidget_TimeFrame, 0>> = [
+    pb.TickerBtcWidget_TimeFrame.DAY_1,
+    pb.TickerBtcWidget_TimeFrame.WEEK_1,
+    pb.TickerBtcWidget_TimeFrame.WEEK_2,
+    pb.TickerBtcWidget_TimeFrame.MONTH_1,
+    pb.TickerBtcWidget_TimeFrame.MONTH_3,
+    pb.TickerBtcWidget_TimeFrame.MONTH_6,
+    pb.TickerBtcWidget_TimeFrame.YEAR_1,
+    pb.TickerBtcWidget_TimeFrame.YEAR_2,
+    pb.TickerBtcWidget_TimeFrame.YEAR_5,
+    pb.TickerBtcWidget_TimeFrame.ALL,
+];
+export function tickerTimeFrameToString(intl: IntlShape, x?: Maybe<pb.TickerBtcWidget_TimeFrame>): null;
+export function tickerTimeFrameToString(intl: IntlShape, x: Exclude<pb.TickerBtcWidget_TimeFrame, 0>): string;
+export function tickerTimeFrameToString(intl: IntlShape, x?: null | pb.TickerBtcWidget_TimeFrame) {
+    const { formatMessage } = intl;
+
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.TickerBtcWidget_TimeFrame.UNSPECIFIED:
+            return null;
+
+        case pb.TickerBtcWidget_TimeFrame.DAY_1:
+            return formatMessage({ defaultMessage: '1 Day' });
+
+        case pb.TickerBtcWidget_TimeFrame.WEEK_1:
+            return formatMessage({ defaultMessage: '1 Week' });
+
+        case pb.TickerBtcWidget_TimeFrame.WEEK_2:
+            return formatMessage({ defaultMessage: '2 Week' });
+
+        case pb.TickerBtcWidget_TimeFrame.MONTH_1:
+            return formatMessage({ defaultMessage: '1 Month' });
+
+        case pb.TickerBtcWidget_TimeFrame.MONTH_3:
+            return formatMessage({ defaultMessage: '3 Months' });
+
+        case pb.TickerBtcWidget_TimeFrame.MONTH_6:
+            return formatMessage({ defaultMessage: '6 Months' });
+
+        case pb.TickerBtcWidget_TimeFrame.YEAR_1:
+            return formatMessage({ defaultMessage: '1 Year' });
+
+        case pb.TickerBtcWidget_TimeFrame.YEAR_2:
+            return formatMessage({ defaultMessage: '2 Years' });
+
+        case pb.TickerBtcWidget_TimeFrame.YEAR_5:
+            return formatMessage({ defaultMessage: '5 Years' });
+
+        case pb.TickerBtcWidget_TimeFrame.ALL:
+            return formatMessage({ defaultMessage: 'All' });
 
         default:
             assertUnreachable(x, 'Scene transition effect');
@@ -222,12 +426,19 @@ export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.Widget
         case 'clock':
             return intl.formatMessage({ defaultMessage: 'Clock' });
 
+        case 'tickerBtc':
+            return intl.formatMessage({ defaultMessage: 'Bitcoin Ticker' });
+
+        case 'blockHeight':
+            return intl.formatMessage({ defaultMessage: 'Block Height' });
+
         default:
             assertUnreachable(kind);
     }
 }
 
 export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
+    const { formatMessage } = intl;
     const val = data?.value;
     switch (val?.case) {
         case undefined:
@@ -238,6 +449,25 @@ export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
                 { defaultMessage: 'Style: {style}, font: {font}' },
                 {
                     style: clockStyleToString(intl, val.value.clockStyle) || 'N/A',
+                    font: fontStyleToString(intl, val.value.numbersFontStyle) || 'N/A',
+                },
+            );
+
+        case 'tickerBtc':
+            return intl.formatMessage(
+                { defaultMessage: 'Time frame: {timeframe}' },
+                {
+                    timeframe: tickerTimeFrameToString(intl, val.value.timeFrame) || 'N/A',
+                },
+            );
+
+        case 'blockHeight':
+            return intl.formatMessage(
+                { defaultMessage: 'Time & date: {dateTime}, font: {font}' },
+                {
+                    dateTime: val.value.showTimestamp
+                        ? formatMessage({ defaultMessage: 'Yes' })
+                        : formatMessage({ defaultMessage: 'No' }),
                     font: fontStyleToString(intl, val.value.numbersFontStyle) || 'N/A',
                 },
             );

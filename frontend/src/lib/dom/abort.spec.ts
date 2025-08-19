@@ -48,7 +48,6 @@ describe('lib/abort', () => {
                 wrapper.attach(other1);
                 wrapper.attach(other2.signal);
 
-                expect(wrapper).toHaveLength(3);
                 expect(other1.signal.aborted).toBe(false);
                 expect(other2.signal.aborted).toBe(false);
 
@@ -70,7 +69,6 @@ describe('lib/abort', () => {
                 wrapper.attach(other1);
                 wrapper.attach(other2.signal);
 
-                expect(wrapper).toHaveLength(3);
                 expect(other1.signal.aborted).toBe(false);
                 expect(other2.signal.aborted).toBe(false);
 

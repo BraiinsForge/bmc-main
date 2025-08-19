@@ -1,0 +1,3 @@
+mockfs/tmp/*
+mockfs/etc/*
+!mockfs/etc/bmc_config.json

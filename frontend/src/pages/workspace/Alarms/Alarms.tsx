@@ -1,76 +1,491 @@
 import { Component } from 'react';
-import { useIntl, type IntlShape } from 'react-intl';
+import { debounce } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
+import { useIntl, type IntlShape, FormattedMessage } from 'react-intl';
+
+import { getID } from '@/lib/form';
+import { setState } from '@/lib/react';
+
+// App
+import * as pb from '@/proto';
+import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { Button, DataTable, type DataTableHeader, type DataTableRow } from '@/components';
-import { Add as IconAdd } from '@carbon/react/icons';
+import { Add as IconAdd, TrashCan as IconDelete } from '@carbon/react/icons';
+import { AlarmsTable, AlarmForm } from './components';
+import { Button, Modal, InlineNotification } from '@/components';
 
 // Styles
 import css from './Alarms.scss';
-
-type TableCol = 'state' | 'time' | 'label' | 'repeat' | 'sound' | 'snooze' | 'actions';
 
 interface Props {
     intl: IntlShape;
 }
 
-export class View extends Component<Props> {
-    #getTableHeaders = (): Array<DataTableHeader<TableCol>> => {
+type FormValues = Pick<pb.AddAlarmRequest, 'time' | 'name' | 'soundId' | 'repeat'> & {
+    snoozeEnabled: boolean;
+    snoozeLimit: null | pb.SnoozeLimit;
+    snoozeDuration: null | pb.SnoozeDuration;
+};
+type FormState = pb.FormState<FormValues>;
+
+interface State {
+    isLoading: boolean;
+
+    alarms: pb.Alarm[];
+    sounds: pb.SoundInfo[];
+    alarmDefaults: pb.AlarmInfoResponse;
+
+    openDialog: null | {
+        key: 'alarm';
+        editingID: null | pb.Alarm['id'];
+        data: FormState;
+    };
+}
+const getInitialState = (): State => ({
+    isLoading: false,
+
+    alarms: [],
+    sounds: [],
+    alarmDefaults: pb.create(pb.AlarmInfoResponseSchema),
+
+    openDialog: null,
+});
+
+const $ = getID('alarms').get;
+
+export class View extends Component<Props, State> {
+    static contextType = AppContext;
+    declare context: AppContextType;
+
+    readonly state = getInitialState();
+
+    componentDidMount() {
+        this.#load();
+    }
+    componentWillUnmount() {
+        pb.abort.all(this);
+    }
+
+    private abortLoad = pb.abort.get();
+    #load = async () => {
+        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
 
-        return [
-            { key: 'state', header: '', align: 'start', maxWidth: 90 },
-            { key: 'time', header: formatMessage({ defaultMessage: 'Time' }), align: 'end' },
-            { key: 'label', header: formatMessage({ defaultMessage: 'Label' }), align: 'start' },
-            { key: 'repeat', header: formatMessage({ defaultMessage: 'Repeat' }), align: 'start' },
-            { key: 'sound', header: formatMessage({ defaultMessage: 'Alarm Sound' }), align: 'start' },
-            { key: 'snooze', header: formatMessage({ defaultMessage: 'Snooze' }), align: 'start' },
-            { key: 'actions', header: formatMessage({ defaultMessage: 'Actions' }), align: 'start' },
-        ];
+        const { signal } = this.abortLoad.replace();
+        const reqOpts = { signal };
+        await setState(this, { isLoading: true });
+
+        try {
+            const [{ alarms }, { sounds }, alarmDefaults] = await Promise.all([
+                pb.rpc.alarm.listAlarms({}, reqOpts),
+                pb.rpc.config.listSounds({}, reqOpts),
+                pb.rpc.alarm.getAlarmInfo({}, reqOpts),
+            ]);
+            this.setState({ isLoading: false, alarms, sounds, alarmDefaults });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load data for alarms!' });
+
+            notify('error', msg, { id: 'alarms-load-error', timeoutSeconds: 3 });
+        } finally {
+            this.setState({ isLoading: false });
+        }
     };
-    #getTableRows = (): Array<DataTableRow<TableCol>> => {
-        return [];
+    #loadDebounced = debounce(this.#load, 250);
+
+    get #txt() {
+        const { formatMessage } = this.props.intl;
+        return {
+            title: formatMessage({ defaultMessage: 'Alarms' }),
+            blurb: formatMessage({
+                defaultMessage: 'Let’s make sure your alarm wakes you just right – not too loud, not too chill.',
+            }),
+            addNewAlarm: formatMessage({ defaultMessage: 'Add New Alarm' }),
+            editAlarm: formatMessage({ defaultMessage: 'Edit Alarm' }),
+            confirmChanges: formatMessage({ defaultMessage: 'Confirm Changes' }),
+            cancel: formatMessage({ defaultMessage: 'Cancel' }),
+            deleteAlarm: formatMessage({ defaultMessage: 'Delete Alarm' }),
+        };
+    }
+
+    //
+    // Add dialog
+    //
+
+    #alarmDialogOpen = (): void => {
+        this.setState(s => {
+            const d = s.alarmDefaults;
+            const snooze = d.snoozeOptions;
+
+            return {
+                ...s,
+                openDialog: {
+                    key: 'alarm',
+                    editingID: null,
+                    data: {
+                        values: {
+                            time: d.time,
+                            name: d.name,
+                            repeat: d.repeat,
+                            soundId: d.soundId,
+
+                            snoozeEnabled: snooze?.kind.case === 'snooze',
+                            snoozeLimit: snooze?.kind.case === 'snooze' ? snooze?.kind.value.limit : null,
+                            snoozeDuration: snooze?.kind.case === 'snooze' ? snooze?.kind.value.duration : null,
+                        } satisfies FormValues,
+                        errors: null,
+                    },
+                },
+            } satisfies State;
+        });
+    };
+    #alarmDialogClose = () => this.setState({ openDialog: null });
+
+    private abortAddSubmit = pb.abort.get();
+    #alarmDialogSubmit = async (): Promise<void> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+        const { openDialog } = this.state;
+
+        if (openDialog?.key !== 'alarm') {
+            notify(
+                'error',
+                formatMessage({
+                    defaultMessage: "Invalid state, can't create alarm when create dialog is not open!",
+                }),
+            );
+            return;
+        }
+        const { time, name, repeat, soundId, snoozeEnabled, snoozeDuration, snoozeLimit } = openDialog.data.values;
+
+        try {
+            const { signal } = this.abortAddSubmit.replace();
+            await pb.rpc.alarm.addAlarm(
+                pb.create(pb.AddAlarmRequestSchema, {
+                    enabled: true,
+                    time,
+                    name,
+                    repeat,
+                    soundId,
+                    snoozeOptions: pb.create(pb.SnoozeOptionsWrapperSchema, {
+                        kind: snoozeEnabled
+                            ? {
+                                  case: 'snooze',
+                                  value: {
+                                      $typeName: 'braiins.bmc.web.SnoozeOptions',
+                                      limit: snoozeLimit ?? pb.SnoozeLimit.SNOOZE_LIMIT_FOREVER,
+                                      duration: snoozeDuration ?? pb.SnoozeDuration.SNOOZE_DURATION_5_MINUTES,
+                                  },
+                              }
+                            : {
+                                  case: 'off',
+                                  value: { $typeName: 'braiins.bmc.web.Off' },
+                              },
+                    }),
+                }),
+                { signal },
+            );
+            notify('success', formatMessage({ defaultMessage: 'Alarm has been successfully added.' }), {
+                id: 'alarm-add-success',
+                timeoutSeconds: 1.5,
+            });
+            this.#alarmDialogClose();
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            const formErrors = pb.parseFormErrors<pb.AddAlarmRequest>($, [
+                'name',
+                'time',
+                'enabled',
+                'repeat',
+                'soundId',
+                'snoozeOptions',
+            ]);
+            this.setState(s => {
+                const { openDialog } = s;
+                if (openDialog?.key !== 'alarm') return s;
+
+                return {
+                    ...s,
+                    openDialog: {
+                        ...openDialog,
+                        data: {
+                            ...openDialog.data,
+                            errors: formErrors,
+                        },
+                    },
+                };
+            });
+        } finally {
+            this.#loadDebounced();
+        }
+    };
+
+    #alarmDialogGetFieldValue = <Key extends keyof FormValues>(key: Key) => {
+        const { openDialog } = this.state;
+        if (openDialog?.key !== 'alarm') return null;
+        return openDialog.data.values?.[key] ?? null;
+    };
+    #alarmDialogGetFieldError = <Key extends keyof FormValues>(key: Key) => {
+        const { openDialog } = this.state;
+        if (openDialog?.key !== 'alarm') return null;
+
+        const e = openDialog.data.errors?.fields?.[key];
+        // FIXME: Handle special case of the "repeat" field where our type util does not work well
+        const errors = Array.isArray(e) && e.every(x => typeof x === 'string') ? e : null;
+        return pb.renderFieldErrorsAsList(errors);
+    };
+    #alarmDialogGetChangeHandler = <Key extends keyof FormValues>(key: Key) => {
+        return (value: null | FormValues[Key]): void => {
+            this.setState(s => {
+                const { openDialog } = this.state;
+                if (openDialog?.key !== 'alarm') return s;
+
+                return {
+                    ...s,
+                    openDialog: {
+                        ...openDialog,
+                        data: {
+                            values: {
+                                ...openDialog.data.values,
+                                [key]: value,
+                            },
+                            errors: null,
+                        },
+                    },
+                };
+            });
+        };
+    };
+    #alarmDialogGetFieldStruct = <Key extends keyof FormValues>(key: Key) => {
+        return {
+            value: this.#alarmDialogGetFieldValue(key),
+            error: this.#alarmDialogGetFieldError(key),
+            onChange: this.#alarmDialogGetChangeHandler(key),
+        };
+    };
+
+    #addRender = (): ReactElement => {
+        const { formatMessage } = this.props.intl;
+        const { openDialog, sounds } = this.state;
+        const data = openDialog?.key === 'alarm' ? openDialog.data : null;
+
+        const txt = this.#txt;
+
+        const alarmID = openDialog?.editingID;
+        const isEdit = alarmID != null;
+        const labelTitle = isEdit ? txt.editAlarm : txt.addNewAlarm;
+        const labelSubmit = isEdit ? txt.confirmChanges : txt.addNewAlarm;
+
+        return (
+            <Modal
+                id={$('add-dialog')}
+                open={!!data}
+                size="sm"
+                // Labeling & behavior
+                selectorPrimaryFocus="input"
+                modalHeading={labelTitle}
+                // Submit
+                primaryButtonText={labelSubmit}
+                onRequestSubmit={this.#alarmDialogSubmit}
+                // Cancel
+                onRequestClose={this.#alarmDialogClose}
+                secondaryButtonText={txt.cancel}
+                onSecondarySubmit={this.#alarmDialogClose}
+            >
+                {data?.errors?.global ? (
+                    <InlineNotification
+                        kind="error"
+                        stretch
+                        hideCloseButton
+                        children={pb.renderFieldErrorsAsList(data.errors.global)}
+                    />
+                ) : null}
+
+                <AlarmForm
+                    time={this.#alarmDialogGetFieldStruct('time')}
+                    name={this.#alarmDialogGetFieldStruct('name')}
+                    repeat={this.#alarmDialogGetFieldStruct('repeat')}
+                    sound={{ ...this.#alarmDialogGetFieldStruct('soundId'), options: sounds }}
+                    // Snooze
+                    snoozeEnabled={this.#alarmDialogGetFieldStruct('snoozeEnabled')}
+                    snoozeLimit={this.#alarmDialogGetFieldStruct('snoozeLimit')}
+                    snoozeDuration={this.#alarmDialogGetFieldStruct('snoozeDuration')}
+                />
+
+                {alarmID != null ? (
+                    <div className={css.deleteButtonRow}>
+                        <Button
+                            kind="danger"
+                            icon={IconDelete}
+                            children={formatMessage({ defaultMessage: 'Delete Alarm' })}
+                            onClick={() => this.#onDelete(alarmID)}
+                        />
+                    </div>
+                ) : null}
+            </Modal>
+        );
+    };
+
+    //
+    // /Add dialog
+    //
+
+    #onEdit = (id: pb.Alarm['id']): void => {
+        this.setState(s => {
+            const d = s.alarms.find(x => x.id === id);
+            if (!d) return s;
+
+            const snooze = d.snoozeOptions;
+
+            return {
+                ...s,
+                openDialog: {
+                    key: 'alarm',
+                    editingID: id,
+                    data: {
+                        values: {
+                            time: d.time,
+                            name: d.name,
+                            repeat: d.repeat,
+                            soundId: d.sound?.id,
+
+                            snoozeEnabled: snooze?.kind.case === 'snooze',
+                            snoozeLimit: snooze?.kind.case === 'snooze' ? snooze?.kind.value.limit : null,
+                            snoozeDuration: snooze?.kind.case === 'snooze' ? snooze?.kind.value.duration : null,
+                        } satisfies FormValues,
+                        errors: null,
+                    } satisfies FormState,
+                },
+            } satisfies State;
+        });
+    };
+    #onToggle = async (id: pb.Alarm['id'], enabled: boolean): Promise<void> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // First a positive update
+            this.setState(s => ({ alarms: s.alarms.map(x => (x.id === id ? { ...x, enabled } : x)) }));
+
+            // Then submit to API
+            await pb.rpc.alarm.setAlarmEnabled({ id, enabled });
+            notify('success', formatMessage({ defaultMessage: 'Alarm has been successfully toggled.' }), {
+                id: 'alarm-toggle-success',
+                timeoutSeconds: 1.5,
+            });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            notify('error', formatMessage({ defaultMessage: 'Failed to toggle alarm!' }), {
+                id: 'alarm-toggle-error',
+                timeoutSeconds: 3,
+            });
+        } finally {
+            // Always reload data to make sure
+            // we have the latest state
+            this.#loadDebounced();
+        }
+    };
+    #onDelete = async (id: pb.Alarm['id']): Promise<void> => {
+        const { confirm, notify } = this.context;
+        const { intl } = this.props;
+        const { alarms } = this.state;
+
+        const d = alarms.find(x => x.id === id);
+        if (!d) return;
+
+        const confirmed = await confirm({
+            size: 'xs',
+            danger: true,
+            title: intl.formatMessage({ defaultMessage: 'Delete Alarm' }),
+            confirmLabel: intl.formatMessage({ defaultMessage: 'Delete' }),
+            message: (
+                <div className={css.deleteConfirmationMessage}>
+                    <FormattedMessage defaultMessage="Are you sure you want to delete this alarm?" />
+
+                    <table>
+                        <tbody>
+                            <tr>
+                                <FormattedMessage tagName="th" defaultMessage="Time" />
+                                <td children={d.time} />
+                            </tr>
+                            <tr>
+                                <FormattedMessage tagName="th" defaultMessage="Label" />
+                                <td children={d.name ?? '--'} />
+                            </tr>
+                            <tr>
+                                <FormattedMessage tagName="th" defaultMessage="Repeat" />
+                                <td children={pb.weekdayListToString(intl, d.repeat)} />
+                            </tr>
+                            <tr>
+                                <FormattedMessage tagName="th" defaultMessage="Sound" />
+                                <td children={d.sound?.name ?? '--'} />
+                            </tr>
+                            <tr>
+                                <FormattedMessage tagName="th" defaultMessage="Snooze" />
+                                <td children={pb.alarmSnoozeOptionsToString(intl, d.snoozeOptions)} />
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            ),
+        });
+        if (!confirmed) return;
+
+        try {
+            // Positive update first
+            this.setState(s => ({ alarms: s.alarms.filter(x => x.id !== id) }));
+
+            // Then submit to API
+            await pb.rpc.alarm.deleteAlarm({ value: id });
+            notify('success', intl.formatMessage({ defaultMessage: 'Alarm has been deleted.' }), {
+                id: 'alarm-delete-success',
+                timeoutSeconds: 1.5,
+            });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= intl.formatMessage({ defaultMessage: 'Failed to delete alarm!' });
+            notify('error', msg, { id: 'alarm-delete-error', timeoutSeconds: 3 });
+        } finally {
+            // Always reload data to make sure
+            // we have the latest state
+            this.#loadDebounced();
+        }
     };
 
     render() {
-        const { formatMessage } = this.props.intl;
-        const title = formatMessage({ defaultMessage: 'Alarms' });
+        const { /* isLoading, */ alarms } = this.state;
+        const txt = this.#txt;
 
         return (
             <div className={css.root}>
-                <Helmet title={title} />
+                <Helmet title={txt.title} />
+
                 <div className={css.header}>
                     <div className={css.labels}>
-                        <h1 className={css.title} children={title} />
-                        <div
-                            className={css.description}
-                            children={formatMessage({
-                                defaultMessage:
-                                    'Let’s make sure your alarm wakes you just right – not too loud, not too chill."',
-                            })}
-                        />
+                        <h1 className={css.title} children={txt.title} />
+                        <div className={css.description} children={txt.blurb} />
                     </div>
+
                     <div className={css.actions}>
-                        <Button
-                            disabled
-                            renderIcon={IconAdd}
-                            children={formatMessage({ defaultMessage: 'Add New Alarm' })}
-                        />
+                        <Button renderIcon={IconAdd} children={txt.addNewAlarm} onClick={this.#alarmDialogOpen} />
                     </div>
                 </div>
 
                 <div className={css.content}>
-                    <DataTable
-                        headers={this.#getTableHeaders()}
-                        rows={this.#getTableRows()}
-                        placeholder={{
-                            title: formatMessage({ defaultMessage: 'No alarms found' }),
-                            message: formatMessage({ defaultMessage: 'Create your first alarm to get started' }),
-                        }}
-                        skeletonRowsCount={5}
+                    <AlarmsTable
+                        isLoading={false}
+                        data={alarms}
+                        onEdit={this.#onEdit}
+                        onToggle={this.#onToggle}
+                        onDelete={this.#onDelete}
                     />
                 </div>
+
+                {this.#addRender()}
             </div>
         );
     }
