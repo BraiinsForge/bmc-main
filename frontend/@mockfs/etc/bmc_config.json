@@ -2,7 +2,7 @@
   "scenes": [
     {
       "id": "879ad46d-0bd2-4a8f-aaf3-94905570665b",
-      "enabled": false,
+      "enabled": true,
       "cycle_duration": "3s",
       "kind": "fullscreen",
       "widgets": [
@@ -25,7 +25,7 @@
     },
     {
       "id": "e453fd2c-003f-4d6b-9c17-00aabe74c92a",
-      "enabled": false,
+      "enabled": true,
       "cycle_duration": "7s",
       "kind": "fullscreen",
       "widgets": [

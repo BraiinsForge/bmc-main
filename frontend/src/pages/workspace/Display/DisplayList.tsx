@@ -192,28 +192,32 @@ class View extends Component<Props, State> {
                         },
                     }),
                 );
+                const sceneID = response.value;
 
                 await this.#loadScenes();
 
-                this.setState({
-                    openDialog: {
-                        key: 'scene-config-clock',
-                        data: {
-                            values: {
-                                widgetSize: pb.WidgetSize.FULL,
-                                clockStyle: pb.ClockWidget_ClockStyle.ANALOG_ROUND,
-                                fontStyle: pb.FontStyle.LIGHT,
-                                showDate: true,
-                                showSeconds: true,
-                                showTimezone: true,
-                                timezone: undefined,
+                this.setState(
+                    {
+                        openDialog: {
+                            key: 'scene-config-clock',
+                            data: {
+                                values: {
+                                    widgetSize: pb.WidgetSize.FULL,
+                                    clockStyle: pb.ClockWidget_ClockStyle.ANALOG_ROUND,
+                                    fontStyle: pb.FontStyle.LIGHT,
+                                    showDate: true,
+                                    showSeconds: true,
+                                    showTimezone: true,
+                                    timezone: undefined,
+                                },
+                                errors: null,
                             },
-                            errors: null,
+                            isEdit: false,
+                            sceneID,
                         },
-                        isEdit: false,
-                        sceneID: response.value,
                     },
-                });
+                    () => this.#previewOpen(sceneID),
+                );
                 break;
             }
         }

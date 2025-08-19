@@ -349,10 +349,7 @@ class View extends Component<Props, State> {
                 assertUnreachable(kind, 'Unknown widget kind!');
         }
     };
-    #openDialogCancel = (): void => {
-        this.abortPreview.abort();
-        this.setState({ openDialog: null });
-    };
+    #openDialogCancel = (): void => this.setState({ openDialog: null });
 
     #clockGetChangeHandler = <Key extends keyof FormStateClock['values']>(key: Key) => {
         return (value: FormStateClock['values'][Key]) => {
