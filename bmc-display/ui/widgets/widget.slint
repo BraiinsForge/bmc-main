@@ -2,12 +2,14 @@ import { WidgetSize } from "widget-shared.slint";
 import { WidgetClockData } from "./categories/clock.slint";
 import { WidgetBtcData } from "./categories/ticker-btc.slint";
 import { WidgetBlockHeightData } from "./categories/block-height.slint";
+import { WidgetBraiinsPoolData } from "./categories/braiins-pool.slint";
 export { WidgetSize }
 
 export enum WidgetKind {
     Clock,
     TickerBtc,
     BlockHeight,
+    BraiinsPool,
 }
 
 export struct Widget {
@@ -19,4 +21,5 @@ export struct Widget {
     clock: WidgetClockData,
     ticker-btc: WidgetBtcData,
     blockheight: WidgetBlockHeightData,
+    braiins-pool: WidgetBraiinsPoolData,
 }

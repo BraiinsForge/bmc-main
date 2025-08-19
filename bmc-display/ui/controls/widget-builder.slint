@@ -5,6 +5,7 @@ import { Palette } from "../style/palette.slint";
 import { Theme } from "../style/theme.slint";
 import { WidgetBtcGraph } from "../widgets/categories/ticker-btc.slint";
 import { WidgetBlockHeight } from "../widgets/categories/block-height.slint";
+import { WidgetBraiinsPool } from "../widgets/categories/braiins-pool.slint";
 
 component WidgetContainer inherits Rectangle {
     in property <WidgetSize> size;
@@ -59,6 +60,10 @@ export component WidgetBuilder inherits Rectangle {
             if widget.kind == WidgetKind.BlockHeight: WidgetBlockHeight {
                 size: widget.size;
                 data: widget.blockheight;
+            }
+            if widget.kind == WidgetKind.BraiinsPool: WidgetBraiinsPool {
+                size: widget.size;
+                data: widget.braiins-pool;
             }
         }
     }

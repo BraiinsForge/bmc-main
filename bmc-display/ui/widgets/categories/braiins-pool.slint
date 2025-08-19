@@ -1,0 +1,78 @@
+import { Palette } from "../../style/palette.slint";
+import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
+
+export enum BraiinsPoolStyle {
+    Overview,
+    BigChart,
+}
+
+export enum ChartFrame {
+    Hours4,
+    Hours12,
+    Hours24,
+    Days7,
+}
+
+export struct PoolWorkerStatus {
+    total: int,
+    active: int,
+    low: int,
+    offline: int,
+}
+
+export enum PoolPayoutType {
+    Onchain,
+    Lighting,
+}
+
+export struct BraiinsPoolPayouts {
+    payout-time-fraction: percent,
+    payout-type: PoolPayoutType,
+}
+
+export struct WidgetBraiinsPoolConfig {
+    pool-style: BraiinsPoolStyle,
+    chart-frame: ChartFrame,
+    worker-states: bool,
+}
+
+export struct WidgetBraiinsPoolData {
+    config: WidgetBraiinsPoolConfig,
+    current-hashrate-phs: string,
+    hashrate-graph: image,
+    workers-graph: image,
+    worker-status: PoolWorkerStatus,
+    pool-payouts: [BraiinsPoolPayouts],
+}
+
+export component WidgetBraiinsPoolOverview inherits Rectangle {
+    in property <WidgetSize> size;
+    in property <WidgetBraiinsPoolData> data;
+
+    background: Palette.black;
+    width: BaseDimensions.widget-width(size);
+    height: BaseDimensions.widget-height(size);
+}
+
+export component WidgetBraiinsPoolBigChart inherits Rectangle {
+    in property <WidgetSize> size;
+    in property <WidgetBraiinsPoolData> data;
+
+    background: Palette.black;
+    width: BaseDimensions.widget-width(size);
+    height: BaseDimensions.widget-height(size);
+}
+
+export component WidgetBraiinsPool {
+    in property <WidgetSize> size;
+    in property <WidgetBraiinsPoolData> data;
+
+    if data.config.pool-style == BraiinsPoolStyle.Overview: WidgetBraiinsPoolOverview {
+        size: root.size;
+        data: root.data;
+    }
+    if data.config.pool-style == BraiinsPoolStyle.BigChart: WidgetBraiinsPoolBigChart {
+        size: root.size;
+        data: root.data;
+    }
+}
