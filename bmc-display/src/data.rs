@@ -141,12 +141,46 @@ impl Default for BlockHeightWidget {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolStyle {
+    Overview,
+    BigChart,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolChartFrame {
+    Hours4,
+    Hours12,
+    Hours24,
+    Days7,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BraiinsPoolWidget {
+    pub pool_style: PoolStyle,
+    pub chart_frame: PoolChartFrame,
+    pub worker_states: bool,
+}
+
+impl Default for BraiinsPoolWidget {
+    fn default() -> Self {
+        Self {
+            pool_style: PoolStyle::Overview,
+            chart_frame: PoolChartFrame::Hours24,
+            worker_states: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "params")]
 #[serde(rename_all = "snake_case")]
 pub enum WidgetKind {
     Clock(ClockWidget),
     TickerBtc(TickerBtcWidget),
     BlockHeight(BlockHeightWidget),
+    BraiinsPool(BraiinsPoolWidget),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -640,6 +674,13 @@ impl From<Widget> for generated::Widget {
                     config: config.into(),
                 }
             }
+            WidgetKind::BraiinsPool(config) => {
+                slint_widget.kind = generated::WidgetKind::BraiinsPool;
+                slint_widget.braiins_pool = generated::WidgetBraiinsPoolData {
+                    config: config.into(),
+                    ..generated::WidgetBraiinsPoolData::default()
+                }
+            }
         }
 
         slint_widget
@@ -686,6 +727,24 @@ impl From<BlockHeightWidget> for generated::WidgetBlockHeightConfig {
         Self {
             show_timestamp: value.show_timestamp,
             numbers_font_style: font_style(value.numbers_font_style),
+        }
+    }
+}
+
+impl From<BraiinsPoolWidget> for generated::WidgetBraiinsPoolConfig {
+    fn from(value: BraiinsPoolWidget) -> Self {
+        Self {
+            chart_frame: match value.chart_frame {
+                PoolChartFrame::Hours4 => generated::ChartFrame::Hours4,
+                PoolChartFrame::Hours12 => generated::ChartFrame::Hours12,
+                PoolChartFrame::Hours24 => generated::ChartFrame::Hours24,
+                PoolChartFrame::Days7 => generated::ChartFrame::Days7,
+            },
+            pool_style: match value.pool_style {
+                PoolStyle::Overview => generated::BraiinsPoolStyle::Overview,
+                PoolStyle::BigChart => generated::BraiinsPoolStyle::BigChart,
+            },
+            worker_states: value.worker_states,
         }
     }
 }

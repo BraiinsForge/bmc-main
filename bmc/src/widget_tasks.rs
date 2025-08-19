@@ -3,7 +3,7 @@
 use crate::config::ConfigHandle;
 use bmc_display::btc_history_data::BtcHistoryData;
 use bmc_display::clock_data::ClockData;
-use bmc_display::data::{SceneId, TimeFrame, Widget, WidgetId, WidgetKind};
+use bmc_display::data::{PoolChartFrame, SceneId, TimeFrame, Widget, WidgetId, WidgetKind};
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_time::time::Timezone;
 use chrono::SubsecRound;
@@ -88,6 +88,11 @@ impl WidgetTasks {
             ))),
             // BlockHeight widget does not have any widget specific data
             WidgetKind::BlockHeight(_) => None,
+            WidgetKind::BraiinsPool(pool_widget) => Some(spawn(self.make_braiins_pool_task(
+                scene_id.clone(),
+                widget.id.clone(),
+                pool_widget.chart_frame.clone(),
+            ))),
         };
 
         join_handle.map(|handle| TaskHandle {
@@ -223,6 +228,22 @@ impl WidgetTasks {
                     widget_id.clone(),
                     btc_history_data,
                 );
+            }
+        }
+    }
+    fn make_braiins_pool_task(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        chart_frame: PoolChartFrame,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        let display_controller = self.display_controller.clone();
+
+        async move {
+            let mut interval = interval(Duration::from_secs(60));
+
+            loop {
+                interval.tick().await;
             }
         }
     }
