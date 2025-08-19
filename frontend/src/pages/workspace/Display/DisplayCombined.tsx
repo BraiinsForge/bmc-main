@@ -456,7 +456,7 @@ class View extends Component<Props, State> {
         const widgets: pb.Widget[] = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
 
         return (
-            <div>
+            <div className={css.root}>
                 <Helmet title={this.#txt.title} />
                 <header className={css.header}>
                     <div className={css.headerLeft}>

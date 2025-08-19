@@ -1,5 +1,9 @@
 @use 'styles/carbon' as *;
 
+.root {
+    max-width: to-rem(1200px);
+}
+
 .title {
     composes: heading-06 from 'styles/carbon/typography.scss';
     margin-block-end: mini-units(2);

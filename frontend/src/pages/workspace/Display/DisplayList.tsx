@@ -756,7 +756,7 @@ class View extends Component<Props, State> {
         const { scenes, cycle } = this.state;
 
         return (
-            <div>
+            <div className={css.root}>
                 <Helmet title={this.#txt.title} />
                 <header className={css.header}>
                     <div className={css.headerLeft}>

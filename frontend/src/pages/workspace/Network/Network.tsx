@@ -489,7 +489,7 @@ class View extends Component<Props, State> {
         }
 
         return (
-            <div>
+            <div className={css.root}>
                 <Helmet title={title} />
                 <h1 className={css.title} children={title} />
 

@@ -1,6 +1,10 @@
 @use 'styles/carbon' as *;
 @use 'styles/var/shadows';
 
+.root {
+    max-width: to-rem(1200px);
+}
+
 .header {
     composes: horizontal justified from 'styles/layout.scss';
     margin-block-end: mini-units(3);
