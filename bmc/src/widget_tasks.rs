@@ -5,6 +5,7 @@ use bmc_display::btc_history_data::BtcHistoryData;
 use bmc_display::clock_data::ClockData;
 use bmc_display::data::{PoolChartFrame, SceneId, TimeFrame, Widget, WidgetId, WidgetKind};
 use bmc_display::display_controller::DisplayController;
+use bmc_display::pool_data::{self, CurrentUserHashrate};
 use bmc_shared_time::time::Timezone;
 use chrono::SubsecRound;
 use reqwest::Client;
@@ -244,6 +245,32 @@ impl WidgetTasks {
 
             loop {
                 interval.tick().await;
+
+                debug!("Getting user current hashrate data...");
+                let client = Client::new();
+                let current_hashrate = if let Ok(response) = client
+                    .get(format!(
+                        "{}{}",
+                        pool_data::POOL_API_URL,
+                        pool_data::USER_HASHRATE_CURRENT
+                    ))
+                    .timeout(API_TIMEOUT)
+                    .send()
+                    .await
+                {
+                    response
+                        .json::<CurrentUserHashrate>()
+                        .await
+                        .unwrap_or_default()
+                } else {
+                    warn!("Failed to get user current hashrate data from API");
+                    CurrentUserHashrate::default()
+                };
+                display_controller.update_current_user_hashrate(
+                    scene_id.clone(),
+                    widget_id.clone(),
+                    current_hashrate,
+                );
             }
         }
     }
