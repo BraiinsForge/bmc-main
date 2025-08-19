@@ -3,9 +3,11 @@
 use crate::config::ConfigHandle;
 use bmc_display::btc_history_data::BtcHistoryData;
 use bmc_display::clock_data::ClockData;
-use bmc_display::data::{PoolChartFrame, SceneId, TimeFrame, Widget, WidgetId, WidgetKind};
+use bmc_display::data::{
+    PoolChartFrame, PoolStyle, SceneId, TimeFrame, Widget, WidgetId, WidgetKind, WidgetSize,
+};
 use bmc_display::display_controller::DisplayController;
-use bmc_display::pool_data::{self, CurrentUserHashrate};
+use bmc_display::pool_data::{self, CurrentUserHashrate, LatestUserRewards};
 use bmc_shared_time::time::Timezone;
 use chrono::SubsecRound;
 use reqwest::Client;
@@ -92,6 +94,8 @@ impl WidgetTasks {
             WidgetKind::BraiinsPool(pool_widget) => Some(spawn(self.make_braiins_pool_task(
                 scene_id.clone(),
                 widget.id.clone(),
+                widget.size.clone(),
+                pool_widget.pool_style.clone(),
                 pool_widget.chart_frame.clone(),
             ))),
         };
@@ -236,9 +240,19 @@ impl WidgetTasks {
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
+        widget_size: WidgetSize,
+        pool_style: PoolStyle,
         chart_frame: PoolChartFrame,
     ) -> impl Future<Output = ()> + Send + 'static {
         let display_controller = self.display_controller.clone();
+
+        let download_rewards = matches!(
+            (pool_style, widget_size),
+            (
+                PoolStyle::Overview,
+                WidgetSize::Full | WidgetSize::Large | WidgetSize::Medium
+            )
+        );
 
         async move {
             let mut interval = interval(Duration::from_secs(60));
@@ -271,6 +285,33 @@ impl WidgetTasks {
                     widget_id.clone(),
                     current_hashrate,
                 );
+
+                if download_rewards {
+                    debug!("Getting user latest rewards data...");
+                    let latest_rewards = if let Ok(response) = client
+                        .get(format!(
+                            "{}{}",
+                            pool_data::POOL_API_URL,
+                            pool_data::USER_REWARD_LATEST
+                        ))
+                        .timeout(API_TIMEOUT)
+                        .send()
+                        .await
+                    {
+                        response
+                            .json::<LatestUserRewards>()
+                            .await
+                            .unwrap_or_default()
+                    } else {
+                        warn!("Failed to get user latest rewards data from API");
+                        LatestUserRewards::default()
+                    };
+                    display_controller.update_rewards_latest(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        latest_rewards,
+                    );
+                }
             }
         }
     }

@@ -41,6 +41,8 @@ export struct WidgetBraiinsPoolConfig {
 export struct WidgetBraiinsPoolData {
     config: WidgetBraiinsPoolConfig,
     current-hashrate-phs: string,
+    reward-btc: string,
+    reward-usd: string,
     hashrate-graph: image,
     workers-graph: image,
     worker-status: PoolWorkerStatus,
@@ -367,6 +369,8 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
                     padding-top: 16px;
                     padding-bottom: 16px;
                     size: size;
+                    reward-btc: data.reward-btc;
+                    reward-usd: data.reward-usd;
                 }
             }
             workers-box {
@@ -430,6 +434,8 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
                     padding-top: 16px;
                     padding-bottom: 16px;
                     size: size;
+                    reward-btc: data.reward-btc;
+                    reward-usd: data.reward-usd;
                 }
             }
         }
@@ -457,6 +463,8 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
                 reward-box {
                     padding-bottom: 31px;
                     size: size;
+                    reward-btc: data.reward-btc;
+                    reward-usd: data.reward-usd;
                 }
             }
         }
