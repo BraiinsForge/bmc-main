@@ -11,6 +11,7 @@ pub mod clock_data;
 pub mod data;
 pub mod display_controller;
 pub mod display_driver;
+pub mod graph_utils;
 mod indexmap_model;
 pub mod metadata;
 pub mod pool_data;

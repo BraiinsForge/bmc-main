@@ -2,10 +2,9 @@
 
 use crate::generated::{MainWindow, Palette};
 use bmc_shared_utils::number_format::NumberFormat;
+use crate::graph_utils::{self, ColorPalette};
 use serde::Deserialize;
-use slint::{Color, Global, Image, Rgb8Pixel, SharedPixelBuffer, SharedString};
-
-use resvg::{tiny_skia, usvg};
+use slint::{Global, Image, Rgb8Pixel, SharedPixelBuffer};
 use svg::Document;
 use svg::node::element::{Definitions, LinearGradient, Path, Stop};
 
@@ -123,7 +122,7 @@ impl BtcHistoryData {
         commands.push(format!("L {width} {height} L 0 {height}"));
         let command = commands.join(" ");
 
-        let color_palette = ColorPalette::new(palette);
+        let color_palette = ColorPalette::new(&palette);
         let (graph_color, graph_gradient_color, graph_fill_color) =
             if prices.first() <= prices.last() {
                 (
@@ -199,66 +198,12 @@ impl BtcHistoryData {
             return Image::default();
         }
 
-        if let Some(rgb_data) = Self::svg_to_rgb8(&svg_image, width, height) {
+        if let Some(rgb_data) = graph_utils::svg_to_rgb8(&svg_image, width, height) {
             Image::from_rgb8(SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
                 &rgb_data, width, height,
             ))
         } else {
             Image::default()
         }
-    }
-
-    fn svg_to_rgb8(svg_data: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
-        let opt = usvg::Options::default();
-        let rtree = usvg::Tree::from_data(svg_data, &opt).ok()?;
-
-        let mut buffer = vec![0; (width * height * 4) as usize];
-        let mut pixmap = tiny_skia::PixmapMut::from_bytes(&mut buffer, width, height)?;
-
-        resvg::render(&rtree, tiny_skia::Transform::identity(), &mut pixmap);
-
-        let raw_rgba = pixmap.data_mut();
-        // Convert RGBA to RGB by removing the alpha channel
-        let mut rgb_data = Vec::with_capacity((width * height * 3) as usize);
-        for chunk in raw_rgba.chunks(4) {
-            rgb_data.push(chunk[0]); // R
-            rgb_data.push(chunk[1]); // G
-            rgb_data.push(chunk[2]); // B
-        }
-
-        Some(rgb_data)
-    }
-}
-
-struct ColorPalette {
-    pub green_50: String,
-    pub green_60: String,
-    pub green_100: String,
-    pub red_50: String,
-    pub red_60: String,
-    pub red_100: String,
-    pub black: String,
-}
-
-impl ColorPalette {
-    pub fn new(palette: &Palette<'_>) -> Self {
-        Self {
-            green_50: Self::color_to_hex(palette.get_green_50().color()),
-            green_60: Self::color_to_hex(palette.get_green_60().color()),
-            green_100: Self::color_to_hex(palette.get_green_100().color()),
-            red_50: Self::color_to_hex(palette.get_red_50().color()),
-            red_60: Self::color_to_hex(palette.get_red_60().color()),
-            red_100: Self::color_to_hex(palette.get_red_100().color()),
-            black: Self::color_to_hex(palette.get_black().color()),
-        }
-    }
-
-    fn color_to_hex(color: Color) -> String {
-        format!(
-            "#{:02X}{:02X}{:02X}",
-            color.red(),
-            color.green(),
-            color.blue()
-        )
     }
 }
