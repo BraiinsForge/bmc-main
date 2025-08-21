@@ -17,3 +17,12 @@
         block-size: to-rem(40px);
     }
 }
+
+.timeInterval {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(2);
+
+    .divider {
+        color: $text-secondary;
+    }
+}

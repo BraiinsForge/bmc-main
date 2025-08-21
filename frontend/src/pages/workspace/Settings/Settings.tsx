@@ -5,7 +5,7 @@ import { type IntlShape, useIntl } from 'react-intl';
 import { type Location, useLocation } from 'react-router';
 
 // Lib
-import { getTimestamp } from '@/lib/time';
+import { getTimestamp, validateTime } from '@/lib/time';
 import { assertUnreachable } from '@/lib/ts';
 import { unloadGuard, Ping, type PingCallback } from '@/lib/dom';
 
@@ -86,6 +86,9 @@ interface State {
     genTimezone: LeafState<pb.Timezone>;
 
     dspBrightness: LeafState<number>;
+    dspNightmodeEnabled: LeafState<boolean>;
+    dspNightmodeBrightness: LeafState<number>;
+    dspNightmodeInterval: LeafState<pb.TimeInterval>;
 
     soundAndLight: pb.SoundVolumeSettingsResponse;
 
@@ -94,6 +97,10 @@ interface State {
     upgradeFromFeedStatus: UpgradeFromFeedStatus;
     upgradeFromFeedErrors: Maybe<string[]>;
 }
+const defaultNightmodeInterval = pb.create(pb.TimeIntervalSchema, {
+    from: '22:00',
+    to: '07:00',
+});
 const getInitialState = (): State => ({
     activeTab: Tab.general,
     globalErrors: null,
@@ -104,6 +111,9 @@ const getInitialState = (): State => ({
     },
 
     dspBrightness: getEmptyLeafState(),
+    dspNightmodeEnabled: getEmptyLeafState(),
+    dspNightmodeBrightness: getEmptyLeafState(),
+    dspNightmodeInterval: getEmptyLeafState(),
 
     soundAndLight: pb.create(pb.SoundVolumeSettingsResponseSchema),
 
@@ -362,30 +372,249 @@ class View extends Component<Props, State> {
             }));
         }
     }, 600);
+    private displaySetNightmodeEnabledAbort = pb.abort.get();
+    #displaySetNightmodeEnabled = async (newEnabled: Maybe<boolean>): Promise<void> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+        const { display } = this.state.data;
+
+        // Catch the display === null
+        if (!display) {
+            notify('error', formatMessage({ defaultMessage: 'Display settings not loaded yet!' }));
+            return;
+        }
+
+        // Сurrent state snapshot
+        const currentEnabled: boolean | null = display?.nightmodeEnabled ?? null;
+        const currentInterval: pb.TimeInterval | undefined = display?.nightmodeInterval;
+        const hasInterval: boolean = currentInterval != null;
+        const nextInterval: pb.TimeInterval = currentInterval ?? defaultNightmodeInterval;
+
+        // Ignore redundant updates
+        if (newEnabled == null || newEnabled === currentEnabled) return;
+
+        try {
+            const { signal } = this.displaySetNightmodeEnabledAbort.replace();
+            // Optimistic update (clear errors)
+            this.setState(s => ({
+                dspNightmodeEnabled: {
+                    ...s.dspNightmodeEnabled,
+                    value: newEnabled,
+                    isSaving: true,
+                    errors: null,
+                },
+                dspNightmodeInterval: { ...s.dspNightmodeInterval, errors: null },
+                dspNightmodeBrightness: { ...s.dspNightmodeBrightness, errors: null },
+            }));
+
+            // Persist changes
+            if (newEnabled === false || hasInterval) {
+                // Case 1: disable nightmode or reuse existing interval
+                // only update enabled flag
+                await pb.rpc.config.setNightmodeEnabled({ value: newEnabled }, { signal });
+            } else {
+                // Case 2: first-time enable without interval
+                // enable nightmode AND initialize default interval
+                await Promise.all([
+                    pb.rpc.config.setNightmodeEnabled({ value: newEnabled }, { signal }),
+                    pb.rpc.config.setNightmodeInterval(defaultNightmodeInterval, { signal }),
+                ]);
+            }
+
+            // Commit saved values
+
+            const updatedDisplay: pb.DisplaySettingsResponse = { ...display, nightmodeEnabled: newEnabled };
+
+            this.setState(s => ({
+                data: {
+                    ...s.data,
+                    display: updatedDisplay,
+                },
+                dspNightmodeEnabled: {
+                    ...s.dspNightmodeEnabled,
+                    value: newEnabled,
+                    isSaving: false,
+                },
+                dspNightmodeInterval: {
+                    ...s.dspNightmodeInterval,
+                    value: nextInterval,
+                },
+            }));
+
+            notify('success', formatMessage({ defaultMessage: 'Night Mode Saved' }));
+        } catch ($) {
+            // Error handling
+            if (pb.abort.is($)) return;
+            this.setState(s => ({
+                dspNightmodeEnabled: {
+                    ...s.dspNightmodeEnabled,
+                    value: s.data.display?.nightmodeEnabled ?? false,
+                    isSaving: false,
+                    errors: pb.collectAllErrors($) ?? [
+                        formatMessage({ defaultMessage: 'Failed to save the Night Mode!' }),
+                    ],
+                },
+            }));
+        }
+    };
+    private displaySetNightmodeBrightnessAbort = pb.abort.get();
+    #displaySetNightmodeBrightness = debounce(async (value: Maybe<number>): Promise<void> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+
+        // Сurrent state snapshot
+        const currentValue: number | null = this.state.data.display?.brightnessNightmode?.value ?? null;
+        // Ignore redundant updates
+        if (value == null || value === currentValue) return;
+
+        try {
+            // Persist changes
+            const { signal } = this.displaySetNightmodeBrightnessAbort.replace();
+            await pb.rpc.config.setBrightnessNightmode({ value }, { signal });
+            notify('success', formatMessage({ defaultMessage: 'Night mode brightness saved' }));
+        } catch ($) {
+            // Error handling
+            if (pb.abort.is($)) return;
+            this.setState(s => ({
+                dspNightmodeBrightness: {
+                    ...s.dspNightmodeBrightness,
+                    errors: pb.collectAllErrors($) ?? [
+                        formatMessage({ defaultMessage: 'Failed to save the night mode brightness!' }),
+                    ],
+                },
+            }));
+        }
+    }, 600);
+    #handleNightmodeIntervalChange = (value: pb.TimeInterval) => {
+        //Update UI values and clear errors
+        this.setState(s => ({
+            dspNightmodeInterval: {
+                ...s.dspNightmodeInterval,
+                value: { ...s.dspNightmodeInterval.value, ...value },
+                errors: null,
+            },
+        }));
+
+        this.displaySetNightmodeInterval(value);
+    };
+    private displaySetNightmodeIntervalAbort = pb.abort.get();
+    private displaySetNightmodeInterval = debounce(async (value: pb.TimeInterval): Promise<void> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+        const { display } = this.state.data;
+
+        // Catch the display === null
+        if (!display) {
+            notify('error', formatMessage({ defaultMessage: 'Display settings not loaded yet!' }));
+            return;
+        }
+
+        // Сurrent state snapshot
+        const currentValue: pb.TimeInterval | null = display?.nightmodeInterval ?? null;
+        const validationErrors: string[] = [];
+
+        // Set saving state
+        this.setState(s => ({
+            dspNightmodeInterval: {
+                ...s.dspNightmodeInterval,
+                isSaving: true,
+            },
+        }));
+        // Ignore redundant updates or validate time interval
+
+        if (value.from === currentValue?.from && value.to === currentValue?.to) return;
+
+        if (!value.from || !value.to)
+            validationErrors.push(formatMessage({ defaultMessage: 'Time interval must be set!' }));
+
+        if (value.from === value.to)
+            validationErrors.push(formatMessage({ defaultMessage: 'Start and end time cannot be the same!' }));
+
+        if (!validateTime(value.from) || !validateTime(value.to))
+            validationErrors.push(formatMessage({ defaultMessage: 'Time must be in HH:MM format!' }));
+
+        if (validationErrors.length > 0) {
+            this.setState(s => ({
+                dspNightmodeInterval: {
+                    ...s.dspNightmodeInterval,
+                    errors: [...validationErrors],
+                },
+            }));
+            return;
+        }
+
+        try {
+            const { signal } = this.displaySetNightmodeIntervalAbort.replace();
+
+            await pb.rpc.config.setNightmodeInterval(value, { signal });
+
+            const updatedDisplay: pb.DisplaySettingsResponse = { ...display, nightmodeInterval: value };
+
+            this.setState(s => ({
+                data: {
+                    ...s.data,
+                    display: updatedDisplay,
+                },
+                dspNightmodeInterval: {
+                    ...s.dspNightmodeInterval,
+                    isSaving: false,
+                },
+            }));
+
+            notify('success', formatMessage({ defaultMessage: 'Night mode time interval saved' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            this.setState(s => ({
+                dspNightmodeInterval: {
+                    ...s.dspNightmodeInterval,
+                    isSaving: false,
+                    errors: pb.collectAllErrors($) ?? [
+                        formatMessage({ defaultMessage: 'Failed to save the night mode time interval!' }),
+                    ],
+                },
+            }));
+        }
+    }, 800);
     #displayRender = (): ReactNode => {
-        const { dspBrightness, data } = this.state;
+        const { dspBrightness, data, dspNightmodeEnabled, dspNightmodeBrightness, dspNightmodeInterval } = this.state;
+        const { display } = data;
+
+        const brightness: pb.BrightnessInfo | undefined = display?.brightness;
+        const nightmodeEnabled: boolean | undefined = display?.nightmodeEnabled;
+        const brightnessNightmode: pb.BrightnessInfo | undefined = display?.brightnessNightmode;
+        const nightmodeInterval: pb.TimeInterval | undefined = display?.nightmodeInterval;
 
         return (
             <SectionDisplay
                 brightness={{
-                    value: dspBrightness.value ?? data.display?.brightness?.value ?? null,
-                    min: data.display?.brightness?.min,
-                    max: data.display?.brightness?.max,
-                    step: data.display?.brightness?.step,
+                    value: dspBrightness.value ?? brightness?.value ?? null,
+                    min: brightness?.min,
+                    max: brightness?.max,
+                    step: brightness?.step,
                     error: pb.renderFieldErrorsAsList(dspBrightness.errors),
-                    disabled: !data.display?.brightness,
+                    disabled: !brightness,
                     onChange: this.#displaySetBrightness,
                 }}
                 // Night
-                nightBrightness={{
-                    value: 26,
-                    disabled: true,
-                    onChange: this.#noop,
-                }}
                 nightEnabled={{
-                    value: true,
-                    disabled: true,
-                    onChange: this.#noop,
+                    value: dspNightmodeEnabled.value ?? nightmodeEnabled ?? false,
+                    disabled: false,
+                    onChange: this.#displaySetNightmodeEnabled,
+                }}
+                nightBrightness={{
+                    value: dspNightmodeBrightness.value ?? brightnessNightmode?.value ?? null,
+                    min: brightnessNightmode?.min,
+                    max: brightnessNightmode?.max,
+                    step: brightnessNightmode?.step,
+                    error: pb.renderFieldErrorsAsList(dspNightmodeBrightness.errors),
+                    disabled: !(dspNightmodeEnabled.value ?? nightmodeEnabled),
+                    onChange: this.#displaySetNightmodeBrightness,
+                }}
+                nightInterval={{
+                    value: dspNightmodeInterval.value ?? nightmodeInterval ?? null,
+                    error: pb.renderFieldErrorsAsList(dspNightmodeInterval.errors),
+                    disabled: !(dspNightmodeEnabled.value ?? nightmodeEnabled),
+                    onChange: this.#handleNightmodeIntervalChange,
                 }}
                 nightNotify={{
                     value: true,

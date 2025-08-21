@@ -1,6 +1,8 @@
 import { action } from 'storybook/actions';
 import type { Meta } from '@storybook/react';
 import type { iField } from '@/lib/form';
+
+import * as pb from '@/proto';
 import * as gen from '@/mocks';
 
 import { SectionDisplay as Component, type SectionDisplayProps } from './SectionDisplay';
@@ -25,6 +27,7 @@ export default {
         nightLocation: getArg('nightLocation', 'Berlin'),
         onLocationDetect: action('onLocationDetect'),
         nightNotify: getArg('nightNotify', true),
+        nightInterval: getArg('nightInterval', pb.create(pb.TimeIntervalSchema, { from: '01:23', to: '12:34' })),
     } satisfies SectionDisplayProps,
 } satisfies Meta<SectionDisplayProps>;
 

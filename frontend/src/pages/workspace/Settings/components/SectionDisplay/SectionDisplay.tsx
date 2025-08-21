@@ -1,9 +1,11 @@
-import { Component } from 'react';
+import { Component, type ChangeEvent } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { Form, type iField, type iFieldNumber, getID } from '@/lib/form';
 
+import * as pb from '@/proto';
+
 import { CarbonFormField, Field, FieldSet, Button } from '@/components';
-import { Toggle, Slider, TextInput } from '@carbon/react';
+import { Toggle, Slider, TextInput, TimePicker } from '@carbon/react';
 import { Location } from '@carbon/react/icons';
 
 // Styles
@@ -17,6 +19,7 @@ export interface SectionDisplayProps {
     nightLocation: iField<string>;
     onLocationDetect(): void;
     nightNotify: iField<boolean>;
+    nightInterval: iField<pb.TimeInterval>;
 }
 interface Props extends SectionDisplayProps {
     intl: IntlShape;
@@ -25,21 +28,38 @@ interface Props extends SectionDisplayProps {
 const $ = getID('settings', 'general').get;
 
 class View extends Component<Props> {
+    #nightIntervalChange = (field: 'from' | 'to') => (e: ChangeEvent<HTMLInputElement>) => {
+        const { onChange, value } = this.props.nightInterval;
+
+        const newValue = pb.create(pb.TimeIntervalSchema, {
+            from: value?.from,
+            to: value?.to,
+            [field]: e.target.value,
+        });
+
+        onChange?.(newValue);
+    };
+
     render() {
         const {
             intl,
 
             // Fields
             brightness,
-            nightBrightness,
 
             // Night mode
             nightEnabled,
+            nightBrightness,
+            nightInterval,
+
             nightUseLocation,
             nightLocation,
             onLocationDetect,
             nightNotify,
         } = this.props;
+
+        const isNightIntervalDisabled: boolean = nightInterval.disabled || !nightEnabled.value;
+        const isNightBrightnessDisabled: boolean = nightBrightness.disabled || !nightEnabled.value;
 
         return (
             <Form className={css.root}>
@@ -69,28 +89,6 @@ class View extends Component<Props> {
 
                 <FieldSet title={intl.formatMessage({ defaultMessage: 'Night Mode' })}>
                     <Field
-                        title={intl.formatMessage({ defaultMessage: 'Night Mode Brightness' })}
-                        disabled={nightBrightness.disabled}
-                    >
-                        <Slider
-                            id={$('brightness-night')}
-                            hideLabel
-                            labelText=""
-                            // Range
-                            stepMultiplier={10}
-                            min={brightness.min ?? 0}
-                            max={brightness.max ?? 100}
-                            step={brightness.step ?? 1}
-                            // Value
-                            value={nightBrightness.value ?? 0}
-                            disabled={nightBrightness.disabled}
-                            onChange={x => nightBrightness.onChange(x.value)}
-                            invalid={!!nightBrightness.error}
-                            invalidText={nightBrightness.error}
-                        />
-                    </Field>
-
-                    <Field
                         title={intl.formatMessage({ defaultMessage: 'Enable Night Mode' })}
                         description={intl.formatMessage({
                             defaultMessage:
@@ -98,7 +96,7 @@ class View extends Component<Props> {
                         })}
                         disabled={nightEnabled.disabled}
                     >
-                        <CarbonFormField error={nightEnabled.error}>
+                        <CarbonFormField error={nightEnabled.error} style={{ display: 'inline-block' }}>
                             <Toggle
                                 id={$('night', 'enabled')}
                                 size="md"
@@ -110,6 +108,57 @@ class View extends Component<Props> {
                         </CarbonFormField>
                     </Field>
 
+                    <Field
+                        title={intl.formatMessage({ defaultMessage: 'Night Mode Brightness' })}
+                        disabled={isNightBrightnessDisabled}
+                    >
+                        <Slider
+                            id={$('night', 'brightness')}
+                            hideLabel
+                            labelText=""
+                            // Range
+                            stepMultiplier={10}
+                            min={brightness.min ?? 0}
+                            max={brightness.max ?? 100}
+                            step={brightness.step ?? 1}
+                            // Value
+                            value={nightBrightness.value ?? 0}
+                            disabled={isNightBrightnessDisabled}
+                            onChange={x => nightBrightness.onChange(x.value)}
+                            invalid={!!nightBrightness.error}
+                            invalidText={nightBrightness.error}
+                        />
+                    </Field>
+
+                    <Field
+                        title={intl.formatMessage({ defaultMessage: 'Night Mode Time Interval' })}
+                        disabled={isNightIntervalDisabled}
+                    >
+                        <CarbonFormField error={nightInterval.error}>
+                            <div className={css.timeInterval}>
+                                <TimePicker
+                                    id={$('night', 'interval', 'from')}
+                                    placeholder="HH:MM"
+                                    value={nightInterval?.value?.from ?? undefined}
+                                    onChange={this.#nightIntervalChange('from')}
+                                    invalid={!!nightInterval.error}
+                                    disabled={isNightIntervalDisabled}
+                                />
+                                <div className={css.divider}>-</div>
+                                <TimePicker
+                                    id={$('night', 'interval', 'to')}
+                                    placeholder="HH:MM"
+                                    value={nightInterval?.value?.to ?? undefined}
+                                    onChange={this.#nightIntervalChange('to')}
+                                    invalid={!!nightInterval.error}
+                                    disabled={isNightIntervalDisabled}
+                                />
+                            </div>
+                        </CarbonFormField>
+                    </Field>
+                </FieldSet>
+
+                <FieldSet title={null}>
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Use Device Location' })}
                         description={intl.formatMessage({
@@ -165,7 +214,7 @@ class View extends Component<Props> {
                     >
                         <CarbonFormField error={nightNotify.error}>
                             <Toggle
-                                id={$('night', 'enabled')}
+                                id={$('night', 'notifications', 'enabled')}
                                 size="md"
                                 aria-invalid={!!nightNotify.error}
                                 toggled={!!nightNotify.value}

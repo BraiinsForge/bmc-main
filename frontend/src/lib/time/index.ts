@@ -1,5 +1,6 @@
 import { timeFormat } from 'd3-time-format';
 export * from './tz';
+export * from './validateTime';
 
 type GetTimestamp = (offset?: null | number, date?: Date | number) => number;
 export const getTimestampMs: GetTimestamp = (offset, time): number => {
