@@ -106,3 +106,68 @@ async fn test_timezone_change_and_reschedule() -> Result<(), JobSchedulerError> 
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_timezone_change_with_one_shot_job() -> Result<(), JobSchedulerError> {
+    // Create job scheduler with initial America/New_York (a.k.a US/Eastern) timezone
+    let job_scheduler = JobSchedulerLocked::new().await?;
+    let (timezone_sender, timezone_receiver) = tokio::sync::watch::channel(
+        Timezone::list()
+            .iter()
+            .find(|tz| tz.iana() == "America/New_York")
+            .expect("America/New_York timezone not found")
+            .clone(),
+    );
+
+    let scheduler = JobScheduler::new(job_scheduler, timezone_receiver);
+    scheduler.init().await?;
+
+    let job_id = scheduler
+        .submit_job_oneshot::<_, chrono_tz::Tz>(
+            // cron_schedule,
+            Duration::from_secs(10),
+            // Eastern,
+            "test_job".to_owned(),
+            simple_job_callback,
+        )
+        .await?;
+
+    // Wait for job to be registered
+    sleep(Duration::from_millis(100)).await;
+
+    // Get initial job details to verify creation
+    let initial_job = scheduler.get_job(&job_id).await?.unwrap();
+    assert_eq!(initial_job.source, "test_job");
+    assert!(initial_job.schedule.is_none());
+    let initial_next_tick = initial_job.next_tick;
+
+    println!("Initial job next tick: {initial_next_tick:?}");
+
+    // Change timezone to Europe/Prague
+    let new_timezone = Timezone::list()
+        .iter()
+        .find(|tz| tz.iana() == "Europe/Prague")
+        .expect("Europe/Prague timezone not found")
+        .clone();
+
+    timezone_sender.send(new_timezone).unwrap();
+
+    // Wait for timezone change to be processed
+    sleep(Duration::from_millis(200)).await;
+
+    // Get updated job details after timezone change
+    let updated_job = scheduler.get_job(&job_id).await?.unwrap();
+
+    // Validate timezone change worked
+    assert_eq!(updated_job.source, "test_job");
+    assert!(updated_job.schedule.is_none());
+
+    // Validate that the rescheduled time is reflected
+    let updated_next_tick = updated_job.next_tick;
+    println!("Updated job next tick: {updated_next_tick:?}");
+
+    // Verify that the job hasn't been rescheduled (times are same)
+    assert_eq!(initial_next_tick.unwrap(), updated_next_tick.unwrap());
+
+    Ok(())
+}

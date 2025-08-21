@@ -69,7 +69,8 @@ impl JobScheduler {
                     .unwrap_or_else(|_| vec![]);
                 info!("Updating jobs {}", jobs.len());
                 let scheduler = scheduler.clone().lock_owned().await;
-                for mut job_details in jobs {
+                // NOTE: Filter out one-shot jobs without cron schedule
+                for mut job_details in jobs.into_iter().filter(|job| job.schedule.is_some()) {
                     let job_id = job_details.job_id;
                     info!("job_id before update: {:?}", job_id);
                     if let Err(e) = scheduler.remove(&job_id).await {
