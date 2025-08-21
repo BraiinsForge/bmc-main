@@ -1,26 +1,38 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::{Display, Formatter},
+    pin::Pin,
     str::FromStr,
     sync::Arc,
     time::Duration,
 };
 
 use anyhow::anyhow;
-use bmc_scheduler::JobScheduler;
-use chrono::NaiveTime;
+use bmc_display::display_controller::DisplayController;
+use bmc_scheduler::{Cron, JobScheduler, scheduler::Task};
+use chrono::{NaiveTime, Timelike};
 use serde::{Deserialize, Serialize};
+use strum::Display as StrumDisplay;
 use thiserror::Error;
-use tokio::sync::RwLock;
-use tracing::warn;
+use tokio::{
+    sync::{
+        Mutex, RwLock,
+        broadcast::{self},
+    },
+    time::Instant,
+};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::{
     config::ConfigHandle,
     sound::{SoundController, Sounds},
 };
+
+const CHANNEL_CAPACITY: usize = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 #[serde(transparent)]
@@ -182,10 +194,296 @@ impl SnoozeDuration {
     }
 }
 
+#[derive(Clone, Debug)]
+enum AlarmCmd {
+    StopAll,
+    Stop { id: AlarmId },
+    Snooze,
+}
+
+#[derive(Clone, Debug)]
+pub enum AlarmEvent {
+    Stopped { id: AlarmId },
+    Snoozed,
+    Started,
+}
+
+#[derive(Clone, Debug)]
+pub struct AlarmBus {
+    tx_commands: broadcast::Sender<AlarmCmd>,
+    tx_events: broadcast::Sender<AlarmEvent>,
+}
+
+impl AlarmBus {
+    pub fn new() -> Self {
+        let (tx_commands, _rx) = broadcast::channel(CHANNEL_CAPACITY);
+        let (tx_events, _rx) = broadcast::channel(CHANNEL_CAPACITY);
+        Self {
+            tx_commands,
+            tx_events,
+        }
+    }
+
+    pub fn stop_all(&self) {
+        let _ = self.tx_commands.send(AlarmCmd::StopAll);
+    }
+
+    pub fn stop_alarm(&self, id: AlarmId) {
+        let _ = self.tx_commands.send(AlarmCmd::Stop { id });
+    }
+
+    pub fn snooze(&self) {
+        let _ = self.tx_commands.send(AlarmCmd::Snooze);
+    }
+
+    pub fn send_event(&self, event: AlarmEvent) {
+        let _ = self.tx_events.send(event);
+    }
+
+    fn subscribe_commands(&self) -> broadcast::Receiver<AlarmCmd> {
+        self.tx_commands.subscribe()
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<AlarmEvent> {
+        self.tx_events.subscribe()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Alarm {
+    data: AlarmData,
+    sound_controller: SoundController,
+    display_controller: DisplayController,
+}
+
+impl Alarm {
+    const DEFAULT_LABEL: &str = "Alarm";
+
+    fn new(
+        data: AlarmData,
+        sound_controller: SoundController,
+        display_controller: DisplayController,
+    ) -> Self {
+        Self {
+            data,
+            sound_controller,
+            display_controller,
+        }
+    }
+
+    fn start(&self, token: CancellationToken, snoozed_count: u32) {
+        let label = if self.data.name.is_empty() {
+            Self::DEFAULT_LABEL.to_owned()
+        } else {
+            self.data.name.clone()
+        };
+
+        let show_snooze = self.data.snooze_options.as_ref().is_some_and(|options| {
+            options
+                .limit
+                .limit()
+                .is_some_and(|limit| snoozed_count < limit)
+        });
+
+        self.display_controller.set_alarm_data(label, show_snooze);
+
+        self.display_controller
+            .set_screen(bmc_display::data::Screen::Alarm);
+
+        if let Some(sound) = self.data.sound.clone() {
+            _ = tokio::spawn({
+                let sound_controller = self.sound_controller.clone();
+                let token = token.clone();
+                let name = self.data.name.clone();
+                async move {
+                    while !token.is_cancelled() {
+                        debug!("Alarm [{name}] playing sound");
+                        if let Err(e) = sound_controller
+                            .play_sound(sound.clone(), token.clone())
+                            .await
+                        {
+                            warn!("Failed to play sound, err: {e}");
+                            //NOTE: try to play sound in 5 secs. Resource can by busy playing other sounds
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        }
+                    }
+                }
+            });
+
+            _ = tokio::spawn({
+                let display_controller = self.display_controller.clone();
+                async move {
+                    let deadline =
+                        tokio::time::sleep_until(Instant::now() + Duration::from_secs(60 * 10));
+                    tokio::pin!(deadline);
+
+                    tokio::select! {
+                        () = token.cancelled() => {
+                            debug!("Alarm cancelled before timeout");
+                            display_controller
+                            .set_screen(bmc_display::data::Screen::Void);
+
+                        }
+                        () = &mut deadline => {
+                            debug!("Alarm timed out after 10 minutes");
+                            token.cancel();
+                            display_controller
+                            .set_screen(bmc_display::data::Screen::Void);
+
+                        }
+                    }
+                }
+            });
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct AlarmScheduler {
+    scheduler: JobScheduler,
+    active_alarms: Arc<Mutex<HashMap<AlarmId, Uuid>>>,
+    alarm_bus: AlarmBus,
+}
+
+impl AlarmScheduler {
+    fn new(scheduler: JobScheduler, alarm_bus: AlarmBus) -> Self {
+        Self {
+            scheduler,
+            active_alarms: Arc::default(),
+            alarm_bus,
+        }
+    }
+
+    async fn schedule(&self, alarm: Alarm) -> anyhow::Result<()> {
+        let cron = alarm.data.cron()?;
+        let name = alarm.data.name.clone();
+
+        debug!(
+            "Scheduling alarm [{name}] with cron [{cron:?}], sound: [{:?}]",
+            alarm.data.sound
+        );
+
+        let task = {
+            let alarm = alarm.clone();
+            let alarm_bus = self.alarm_bus.clone();
+
+            move || {
+                let alarm = alarm.clone();
+                let name = name.clone();
+                let alarm_bus = alarm_bus.clone();
+
+                Box::pin(async move {
+                    debug!("starting alarm: [{}]", name);
+                    // NOTE: Stop all current running alarm(s). New alarm should "take over" display and sound output
+                    alarm_bus.stop_all();
+
+                    let mut rx = alarm_bus.subscribe_commands();
+
+                    let mut token = CancellationToken::new();
+                    let mut _drop_guard = token.clone().drop_guard();
+
+                    let mut snooze_count = 0_u32;
+                    alarm.start(token.clone(), snooze_count);
+
+                    alarm_bus.send_event(AlarmEvent::Started);
+
+                    loop {
+                        match rx.recv().await {
+                            Ok(msg) => match msg {
+                                AlarmCmd::StopAll => {
+                                    debug!("Alarm stop received. Cancelling alarm [{name}]");
+                                    token.cancel();
+                                    alarm_bus.send_event(AlarmEvent::Stopped {
+                                        id: alarm.data.id.clone(),
+                                    });
+                                    break;
+                                }
+                                AlarmCmd::Stop { id } => {
+                                    if alarm.data.id == id {
+                                        debug!("Alarm stop received. Cancelling alarm [{name}]");
+                                        token.cancel();
+                                        alarm_bus.send_event(AlarmEvent::Stopped {
+                                            id: alarm.data.id.clone(),
+                                        });
+                                        break;
+                                    }
+                                }
+                                AlarmCmd::Snooze => {
+                                    token.cancel();
+                                    alarm_bus.send_event(AlarmEvent::Snoozed);
+
+                                    debug!(
+                                        "Alarm snooze received. Cancelling alarm [{name}], scheduling snooze"
+                                    );
+
+                                    if let Some(snooze) = alarm.data.snooze_options.as_ref() {
+                                        let duration = snooze.duration.duration();
+
+                                        token = CancellationToken::new();
+                                        _drop_guard = token.clone().drop_guard();
+
+                                        snooze_count += 1;
+
+                                        tokio::spawn({
+                                            let token = token.clone();
+                                            let alarm = alarm.clone();
+                                            let alarm_bus = alarm_bus.clone();
+                                            async move {
+                                                debug!("Snooze for {:?}...", duration);
+                                                tokio::time::sleep(duration).await;
+                                                debug!("Starting alarm after snooze");
+                                                alarm.start(token, snooze_count);
+                                                alarm_bus.send_event(AlarmEvent::Started);
+                                            }
+                                        });
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                warn!("Alarm received error: [{:?}]", e);
+
+                                if !token.is_cancelled() {
+                                    token.cancel();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }) as Pin<Box<dyn Future<Output = ()> + Send>>
+            }
+        };
+
+        let id: Uuid = self
+            .scheduler
+            .schedule_cron(cron, Task::Async(Box::new(task)))
+            .await?;
+
+        self.active_alarms.lock().await.insert(alarm.data.id, id);
+
+        Ok(())
+    }
+
+    async fn remove(&self, id: &AlarmId) -> anyhow::Result<()> {
+        if let Some(ref job_id) = self.active_alarms.lock().await.remove(id) {
+            self.alarm_bus.stop_alarm(id.clone());
+
+            self.scheduler
+                .cancel(job_id)
+                .await
+                .map_err(|e| anyhow!("Failed to remove scheduled alarm, err: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AlarmController {
     config_handle: Arc<RwLock<ConfigHandle>>,
+    scheduler: AlarmScheduler,
     sound_controller: SoundController,
+    display_controller: DisplayController,
 }
 
 impl AlarmController {
@@ -193,11 +491,60 @@ impl AlarmController {
         config_handle: Arc<RwLock<ConfigHandle>>,
         scheduler: JobScheduler,
         sound_controller: SoundController,
+        display_controller: DisplayController,
+        alarm_bus: AlarmBus,
     ) -> anyhow::Result<Self> {
-        Ok(Self {
+        let scheduler = AlarmScheduler::new(scheduler, alarm_bus.clone());
+
+        for alarm_data in config_handle
+            .clone()
+            .read()
+            .await
+            .alarms()
+            .iter()
+            .filter(|alarm| alarm.enabled)
+        {
+            let alarm = Alarm::new(
+                alarm_data.clone(),
+                sound_controller.clone(),
+                display_controller.clone(),
+            );
+
+            scheduler.schedule(alarm).await?;
+        }
+
+        let controller = Self {
             config_handle,
+            scheduler,
             sound_controller,
-        })
+            display_controller,
+        };
+
+        let self_ = controller.clone();
+
+        tokio::spawn(async move {
+            let mut rx = alarm_bus.subscribe_events();
+
+            while let Ok(event) = rx.recv().await {
+                match event {
+                    AlarmEvent::Stopped { id } => {
+                        if let Some(alarm) =
+                            self_.alarms().await.iter().find(|alarm| alarm.id == id)
+                        {
+                            if alarm.repeat.is_empty() {
+                                _ = self_.set_enabled(id, false).await;
+                            }
+                        }
+                        // TODO: Turn off LED strip
+                    }
+                    AlarmEvent::Snoozed | AlarmEvent::Started => {
+                        // TODO: Turn off LED strip
+                    }
+                }
+            }
+        });
+
+        Ok(controller)
     }
 
     pub(crate) async fn alarms(&self) -> Vec<AlarmData> {
@@ -219,7 +566,11 @@ impl AlarmController {
         let alarm_id = alarm_data.id.clone();
 
         if alarm_data.enabled {
-            let alarm = Alarm::create(alarm_data.clone(), self.sound_controller.clone());
+            let alarm = Alarm::new(
+                alarm_data.clone(),
+                self.sound_controller.clone(),
+                self.display_controller.clone(),
+            );
 
             self.scheduler.schedule(alarm).await.map_err(|e| {
                 warn!("Failed to schedule alarm, err {e}");
@@ -231,6 +582,12 @@ impl AlarmController {
 
         if let Err(e) = temp_config.sync_to_storage().await {
             warn!("Failed to store alarm, err {e}");
+
+            _ = self
+                .scheduler
+                .remove(&alarm_id)
+                .await
+                .inspect_err(|e| warn!("{:?}", e));
 
             return Err(AlarmError::SyncToStorage);
         }
@@ -266,10 +623,29 @@ impl AlarmController {
             AlarmError::RemoveAlarm
         })?;
 
+        if alarm_data.enabled {
+            let alarm = Alarm::new(
+                alarm_data.clone(),
+                self.sound_controller.clone(),
+                self.display_controller.clone(),
+            );
+
+            self.scheduler.schedule(alarm).await.map_err(|e| {
+                warn!("Failed to schedule alarm, err {e}");
+                AlarmError::ScheduleAlarm
+            })?;
+        }
+
         temp_config.set_alarm(alarm_data);
 
         if let Err(e) = temp_config.sync_to_storage().await {
             warn!("Failed to store alarm, err {e}");
+
+            _ = self
+                .scheduler
+                .remove(&alarm_id)
+                .await
+                .inspect_err(|e| warn!("{:?}", e));
 
             return Err(AlarmError::SyncToStorage);
         }
@@ -286,6 +662,11 @@ impl AlarmController {
         if !config.alarms().iter().any(|alarm| alarm.id == alarm_id) {
             return Err(AlarmError::NotFound);
         }
+
+        self.scheduler.remove(&alarm_id).await.map_err(|e| {
+            warn!("{:?}", e);
+            AlarmError::RemoveAlarm
+        })?;
 
         temp_config.remove_alarm(&alarm_id);
 
@@ -315,10 +696,34 @@ impl AlarmController {
 
         alarm_data.enabled = enabled;
 
+        self.scheduler.remove(&alarm_data.id).await.map_err(|e| {
+            warn!("{:?}", e);
+            AlarmError::RemoveAlarm
+        })?;
+
+        if alarm_data.enabled {
+            let alarm = Alarm::new(
+                alarm_data.clone(),
+                self.sound_controller.clone(),
+                self.display_controller.clone(),
+            );
+
+            self.scheduler.schedule(alarm).await.map_err(|e| {
+                warn!("Failed to schedule alarm, err {e}");
+                AlarmError::ScheduleAlarm
+            })?;
+        }
+
         temp_config.set_alarm(alarm_data);
 
         if let Err(e) = temp_config.sync_to_storage().await {
             warn!("Failed to store alarm, err {e}");
+
+            _ = self
+                .scheduler
+                .remove(&alarm_id)
+                .await
+                .inspect_err(|e| warn!("{:?}", e));
 
             return Err(AlarmError::SyncToStorage);
         }

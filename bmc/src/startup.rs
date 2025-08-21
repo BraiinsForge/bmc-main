@@ -116,6 +116,7 @@ where
             config_handle.clone(),
             scheduler.clone(),
             sound_controller.clone(),
+            display_controller.clone(),
         )
         .await?;
 
