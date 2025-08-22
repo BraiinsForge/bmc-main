@@ -42,41 +42,34 @@ impl UserHashrateHistory {
         main_window: &MainWindow,
         width: u32,
         height: u32,
-        draw_large: bool,
+        draw_extra_line: bool,
     ) -> Image {
         let data: Vec<f32> = self
             .slots
             .into_iter()
             .map(|slot| slot.hashrate_th_per_sec)
             .collect();
-        if data.is_empty() {
-            return Image::default();
-        }
 
         let palette = Palette::get(main_window);
         let palette = ColorPalette::new(&palette);
+        // Align horizontal lines with y axis units
         let height = height - 24;
 
-        let canvas = graph_utils::draw_canvas(width, height, draw_large, &palette.gray_80);
-        let path =
-            graph_utils::create_path(&data, width, height, palette.violet_60).unwrap_or_default();
-
+        let canvas = graph_utils::draw_canvas(width, height, draw_extra_line, &palette.gray_80);
+        let path = graph_utils::create_graph(
+            &data,
+            width,
+            height,
+            &palette.violet_60,
+            // According to design the extra line corresponds to the use of absolute values
+            draw_extra_line,
+            false,
+            None,
+        )
+        .unwrap_or_default();
         let document = canvas.add(path);
 
-        let mut svg_image: Vec<u8> = vec![];
-        if svg::write(&mut svg_image, &document).is_err() {
-            return Image::default();
-        }
-
-        if let Some(rgb_data) = graph_utils::svg_to_rgb8(&svg_image, width, height) {
-            Image::from_rgb8(
-                slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(
-                    &rgb_data, width, height,
-                ),
-            )
-        } else {
-            Image::default()
-        }
+        graph_utils::svg_into_image(document, width, height)
     }
 }
 

@@ -2,18 +2,18 @@
 
 use crate::generated::Palette;
 use resvg::{tiny_skia, usvg};
-use slint::Color;
+use slint::{Color, Image, Rgba8Pixel, SharedPixelBuffer};
 use svg::Document;
 use svg::node::element::{Path, path::Data};
 
 pub(crate) fn draw_canvas(
     width: u32,
     height: u32,
-    draw_large: bool,
+    draw_extra_line: bool,
     stroke_color: &str,
 ) -> Document {
     let stroke_width = 2;
-    let line_division_coef = if draw_large { 3 } else { 2 };
+    let line_division_coef = if draw_extra_line { 3 } else { 2 };
 
     let document = Document::new()
         .set("viewBox", (0, 0, width, height))
@@ -52,7 +52,7 @@ pub(crate) fn draw_canvas(
         .set("stroke-dasharray", "4,4")
         .set("stroke-width", stroke_width);
 
-    let extra_line = if draw_large {
+    let extra_line = if draw_extra_line {
         Path::new()
             .set(
                 "d",
@@ -74,11 +74,14 @@ pub(crate) fn draw_canvas(
         .add(extra_line)
 }
 
-pub(crate) fn create_path(
-    data: &Vec<f32>,
+pub(crate) fn create_graph(
+    data: &[f32],
     width: u32,
     height: u32,
-    stroke_color: String,
+    stroke_color: &str,
+    abs_values: bool,
+    units_integer_round: bool,
+    shift_max: Option<f32>,
 ) -> Option<Path> {
     if data.is_empty() {
         return None;
@@ -100,11 +103,32 @@ pub(crate) fn create_path(
         .min_by(|a, b| a.total_cmp(b))
         .copied()
         .unwrap_or_default();
-    let point_ratio = height / (max_value - min_value);
+    let coef = if abs_values {
+        max_value
+    } else {
+        max_value - min_value
+    };
+
+    let shift_max = shift_max.unwrap_or(1.0);
+    if !(0.0..=1.0).contains(&shift_max) {
+        return None;
+    }
+
+    let point_ratio = if coef == 0.0 { height } else { height / coef };
+    // Shift Max
+    let point_ratio = point_ratio * shift_max;
+    let move_max = height * (1.0 - shift_max);
+
+    // New axis max
+    let axis_max = y_axis_max(max_value, units_integer_round);
+    let new_max_coef = max_value / axis_max;
+    let point_ratio = point_ratio * new_max_coef;
+    let new_max_move = height * (1.0 - new_max_coef) * shift_max;
 
     let point_shift = |index: f32| -> f32 { index * point_width };
-    let point_value =
-        |value: f32| -> f32 { point_ratio * (max_value - value) + vertical_margin / 2.0 };
+    let point_value = |value: f32| -> f32 {
+        point_ratio * (max_value - value) + move_max + new_max_move + vertical_margin / 2.0
+    };
 
     let stroke_width = 3;
     let mut path_data = Data::new();
@@ -124,6 +148,21 @@ pub(crate) fn create_path(
             .set("stroke-width", stroke_width)
             .set("d", path_data),
     )
+}
+
+// Calculates nearest number divisible by 3
+pub(crate) fn y_axis_max(value: f32, integer_round: bool) -> f32 {
+    if value == 0.0 {
+        return 3.0;
+    }
+    let exponent = if integer_round {
+        value.log10().floor()
+    } else {
+        value.log10().floor() - 1.0
+    };
+    let divisor = 3.0 * f32::powf(10.0, exponent);
+    let multiplicator = (value / divisor).ceil();
+    multiplicator * divisor
 }
 
 pub(crate) struct ColorPalette {
@@ -165,7 +204,34 @@ impl ColorPalette {
     }
 }
 
-pub(crate) fn svg_to_rgb8(svg_data: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+pub(crate) fn blend_svg_with_image(
+    svg_document: Document,
+    bg_buffer: SharedPixelBuffer<Rgba8Pixel>,
+    width: u32,
+    height: u32,
+) -> Option<Image> {
+    let mut svg_image: Vec<u8> = vec![];
+    svg::write(&mut svg_image, &svg_document).ok()?;
+
+    let rgba_data = svg_to_rgba8(&svg_image, width, height)?;
+    let fg_buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_data, width, height);
+
+    let fg_pixels = fg_buffer.as_slice();
+    let bg_pixels = bg_buffer.as_slice();
+
+    let blended_pixels: Vec<Rgba8Pixel> = fg_pixels
+        .iter()
+        .zip(bg_pixels.iter())
+        .map(|(&fg, &bg)| if fg.a == 255 { fg } else { bg })
+        .collect();
+    let mut result = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
+    let result_pixels = result.make_mut_slice();
+    result_pixels.copy_from_slice(&blended_pixels);
+
+    Some(Image::from_rgba8(result))
+}
+
+fn svg_to_rgba8(svg_data: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
     let opt = usvg::Options::default();
     let rtree = usvg::Tree::from_data(svg_data, &opt).ok()?;
 
@@ -175,13 +241,28 @@ pub(crate) fn svg_to_rgb8(svg_data: &[u8], width: u32, height: u32) -> Option<Ve
     resvg::render(&rtree, tiny_skia::Transform::identity(), &mut pixmap);
 
     let raw_rgba = pixmap.data_mut();
-    // Convert RGBA to RGB by removing the alpha channel
-    let mut rgb_data = Vec::with_capacity((width * height * 3) as usize);
+    let mut rgba_data = Vec::with_capacity((width * height * 4) as usize);
     for chunk in raw_rgba.chunks(4) {
-        rgb_data.push(chunk[0]); // R
-        rgb_data.push(chunk[1]); // G
-        rgb_data.push(chunk[2]); // B
+        rgba_data.push(chunk[0]); // R
+        rgba_data.push(chunk[1]); // G
+        rgba_data.push(chunk[2]); // B
+        rgba_data.push(chunk[3]); // A
     }
 
-    Some(rgb_data)
+    Some(rgba_data)
+}
+
+pub(crate) fn svg_into_image(svg_document: Document, width: u32, height: u32) -> Image {
+    let mut svg_image: Vec<u8> = vec![];
+    if svg::write(&mut svg_image, &svg_document).is_err() {
+        return Image::default();
+    }
+
+    if let Some(rgba_data) = svg_to_rgba8(&svg_image, width, height) {
+        Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+            &rgba_data, width, height,
+        ))
+    } else {
+        Image::default()
+    }
 }

@@ -4,7 +4,7 @@ use crate::generated::{MainWindow, Palette};
 use bmc_shared_utils::number_format::NumberFormat;
 use crate::graph_utils::{self, ColorPalette};
 use serde::Deserialize;
-use slint::{Global, Image, Rgb8Pixel, SharedPixelBuffer};
+use slint::{Global, Image};
 use svg::Document;
 use svg::node::element::{Definitions, LinearGradient, Path, Stop};
 
@@ -72,7 +72,6 @@ impl BtcHistoryData {
         }
     }
 
-    #[expect(clippy::too_many_lines)]
     fn price_graph_as_image(
         &self,
         width: u32,
@@ -193,17 +192,6 @@ impl BtcHistoryData {
             partial_document.add(path).add(overlay_rect)
         };
 
-        let mut svg_image: Vec<u8> = vec![];
-        if svg::write(&mut svg_image, &document).is_err() {
-            return Image::default();
-        }
-
-        if let Some(rgb_data) = graph_utils::svg_to_rgb8(&svg_image, width, height) {
-            Image::from_rgb8(SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
-                &rgb_data, width, height,
-            ))
-        } else {
-            Image::default()
-        }
+        graph_utils::svg_into_image(document, width, height)
     }
 }
