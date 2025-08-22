@@ -17,6 +17,7 @@ use crate::generated::{
 use crate::indexmap_model::IndexMapModel;
 use crate::pool_data::{
     CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, UserHashrateHistory,
+    UserWorkerHistory,
 };
 use crate::utils;
 use bmc_shared_time::time::{DateFormat, Timezone};
@@ -425,6 +426,48 @@ impl DisplayController {
 
                 widgets_ref.modify(&widget_id, |widget| {
                     widget.braiins_pool.worker_status = workers_stats.worker_stats();
+                });
+            }
+        });
+    }
+
+    pub fn update_worker_history(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        worker_history: UserWorkerHistory,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    let widget_size = widget.size;
+                    let pool_style = widget.braiins_pool.config.pool_style;
+                    let pool_chart_dimensions = PoolChartDimensions::get(&main_window);
+                    let image_dimensions =
+                        pool_chart_dimensions.invoke_get_dimensions(widget_size, pool_style);
+                    let width: u32 = image_dimensions.width.try_into().unwrap_or_default();
+                    let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
+
+                    match (pool_style, widget_size) {
+                        (BraiinsPoolStyle::Overview, WidgetSize::Full) => {
+                            let original_image = &widget.braiins_pool.chart_overview_full;
+                            widget.braiins_pool.chart_overview_full = worker_history
+                                .into_graph_image(
+                                    &main_window,
+                                    width,
+                                    height,
+                                    true,
+                                    original_image,
+                                );
+                        }
+                        (BraiinsPoolStyle::Overview, _) => {}
+                        (BraiinsPoolStyle::BigChart, _) => {}
+                    }
                 });
             }
         });

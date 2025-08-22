@@ -4,12 +4,14 @@ use crate::generated::{MainWindow, Palette, PoolWorkerStatus};
 use crate::graph_utils::{self, ColorPalette};
 use serde::Deserialize;
 use slint::{Global, Image, SharedString};
+use svg::Document;
 
 pub const POOL_API_URL: &str = "https://pool.braiins.com/api/v1";
 pub const USER_HASHRATE_CURRENT: &str = "/user/hashrate/current";
 pub const USER_REWARD_LATEST: &str = "/user/rewards/latest";
 pub const USER_WORKERS_CURRENT: &str = "/user/workers/current";
 pub const USER_HASHRATE_HISTORY: &str = "/user/hashrate/history";
+pub const USER_WORKERS_HISTORY: &str = "/user/workers/history";
 pub const FROM_TIMESTAMP: &str = "from_timestamp";
 pub const TO_TIMESTAMP: &str = "to_timestamp";
 
@@ -70,6 +72,68 @@ impl UserHashrateHistory {
         let document = canvas.add(path);
 
         graph_utils::svg_into_image(document, width, height)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkerSlot {
+    active_workers: u32,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct UserWorkerHistory {
+    slots: Vec<WorkerSlot>,
+}
+
+impl UserWorkerHistory {
+    #[must_use]
+    pub fn into_graph_image(
+        self,
+        main_window: &MainWindow,
+        width: u32,
+        height: u32,
+        draw_extra_line: bool,
+        original_image: &Image,
+    ) -> Image {
+        let data: Vec<f32> = self
+            .slots
+            .into_iter()
+            .map(|slot| slot.active_workers as f32)
+            .collect();
+        let palette = Palette::get(main_window);
+        let palette = ColorPalette::new(&palette);
+        // Align horizontal lines with y axis units
+        let height = height - 24;
+
+        let path = graph_utils::create_graph(
+            &data,
+            width,
+            height,
+            &palette.blue_30,
+            true,
+            true,
+            Some(0.5),
+        )
+        .unwrap_or_default();
+
+        if let Some(bg_buffer) = original_image.to_rgba8() {
+            let document = Document::new()
+                .set("viewBox", (0, 0, width, height))
+                .set("width", width)
+                .set("height", height)
+                .add(path);
+            if let Some(blended_image) =
+                graph_utils::blend_svg_with_image(document, bg_buffer, width, height)
+            {
+                blended_image
+            } else {
+                original_image.clone()
+            }
+        } else {
+            let canvas = graph_utils::draw_canvas(width, height, draw_extra_line, &palette.gray_80);
+            let document = canvas.add(path);
+            graph_utils::svg_into_image(document, width, height)
+        }
     }
 }
 

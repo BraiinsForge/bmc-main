@@ -9,6 +9,7 @@ use bmc_display::data::{
 use bmc_display::display_controller::DisplayController;
 use bmc_display::pool_data::{
     self, CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, UserHashrateHistory,
+    UserWorkerHistory,
 };
 use bmc_shared_time::time::Timezone;
 use chrono::SubsecRound;
@@ -268,6 +269,13 @@ impl WidgetTasks {
                 WidgetSize::Full | WidgetSize::Large | WidgetSize::Medium
             ) | (PoolStyle::Overview, WidgetSize::Full | WidgetSize::Medium)
         );
+        let download_workers_history = matches!(
+            (pool_style, widget_size),
+            (
+                PoolStyle::BigChart,
+                WidgetSize::Full | WidgetSize::Large | WidgetSize::Medium
+            ) | (PoolStyle::Overview, WidgetSize::Full)
+        );
 
         async move {
             let mut interval = interval(Duration::from_secs(60));
@@ -390,6 +398,44 @@ impl WidgetTasks {
                         scene_id.clone(),
                         widget_id.clone(),
                         workers_stats,
+                    );
+                }
+
+                if download_workers_history {
+                    debug!("Getting user worker history data...");
+                    let to_timestamp = chrono::Utc::now();
+                    let from_timestamp = to_timestamp
+                        .checked_sub_signed(chart_frame.clone().into())
+                        // We don't expect this operation will fail
+                        .unwrap_or_default();
+                    let to_timestamp =
+                        to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                    let from_timestamp =
+                        from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                    let worker_history = if let Ok(response) = client
+                        .get(format!(
+                            "{}{}",
+                            pool_data::POOL_API_URL,
+                            pool_data::USER_WORKERS_HISTORY
+                        ))
+                        .query(&[(pool_data::FROM_TIMESTAMP, &from_timestamp)])
+                        .query(&[(pool_data::TO_TIMESTAMP, &to_timestamp)])
+                        .timeout(API_TIMEOUT)
+                        .send()
+                        .await
+                    {
+                        response
+                            .json::<UserWorkerHistory>()
+                            .await
+                            .unwrap_or_default()
+                    } else {
+                        warn!("Failed to get user worker history data from API");
+                        UserWorkerHistory::default()
+                    };
+                    display_controller.update_worker_history(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        worker_history,
                     );
                 }
             }
