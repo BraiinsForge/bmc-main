@@ -4,10 +4,13 @@ import { useNavigate } from 'react-router';
 import lottie from 'lottie-web';
 import { useIntl } from 'react-intl';
 import { Helmet } from '@/lib/react';
+import { getID } from '@/lib/form';
 
 import { LayoutPlain } from '../LayoutPlain';
 import { Html, Button } from '@/components';
 import css from './LayoutStatusPage.scss';
+
+const $ = getID('status-page').get;
 
 export interface StatusPageProps {
     homepageButton?: boolean;
@@ -46,6 +49,7 @@ export function LayoutStatusPage(props: StatusPageProps) {
 
                 {homepageButton ? (
                     <Button
+                        id={$('go-to-homepage')}
                         kind="primary"
                         className={css.button}
                         onClick={() => navigate('/')}

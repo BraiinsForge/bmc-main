@@ -22,7 +22,7 @@ interface Props extends SectionDisplayProps {
     intl: IntlShape;
 }
 
-const $id = getID('settings', 'general');
+const $ = getID('settings', 'general').get;
 
 class View extends Component<Props> {
     render() {
@@ -49,7 +49,7 @@ class View extends Component<Props> {
                         disabled={brightness.disabled}
                     >
                         <Slider
-                            id={$id.get('brightness-day')}
+                            id={$('brightness-day')}
                             hideLabel
                             labelText=""
                             // Range
@@ -73,7 +73,7 @@ class View extends Component<Props> {
                         disabled={nightBrightness.disabled}
                     >
                         <Slider
-                            id={$id.get('brightness-night')}
+                            id={$('brightness-night')}
                             hideLabel
                             labelText=""
                             // Range
@@ -100,7 +100,7 @@ class View extends Component<Props> {
                     >
                         <CarbonFormField error={nightEnabled.error}>
                             <Toggle
-                                id={$id.get('night', 'enabled')}
+                                id={$('night', 'enabled')}
                                 size="md"
                                 aria-invalid={!!nightEnabled.error}
                                 toggled={!!nightEnabled.value}
@@ -119,7 +119,7 @@ class View extends Component<Props> {
                     >
                         <CarbonFormField error={nightUseLocation.error}>
                             <Toggle
-                                id={$id.get('night', 'use', 'location')}
+                                id={$('night', 'use', 'location')}
                                 size="md"
                                 aria-invalid={!!nightUseLocation.error}
                                 toggled={!!nightUseLocation.value}
@@ -136,7 +136,7 @@ class View extends Component<Props> {
                     >
                         <div className={css.locationInputWrapper}>
                             <TextInput
-                                id={$id.get('night', 'location')}
+                                id={$('night', 'location')}
                                 labelText=""
                                 hideLabel
                                 invalid={!!nightLocation.error}
@@ -146,7 +146,7 @@ class View extends Component<Props> {
                                 onChange={e => nightLocation.onChange(e.target.value)}
                             />
                             <Button
-                                id={$id.get('night', 'location', 'detect')}
+                                id={$('night', 'location', 'detect')}
                                 kind="secondary"
                                 size="sm"
                                 icon={Location}
@@ -165,7 +165,7 @@ class View extends Component<Props> {
                     >
                         <CarbonFormField error={nightNotify.error}>
                             <Toggle
-                                id={$id.get('night', 'enabled')}
+                                id={$('night', 'enabled')}
                                 size="md"
                                 aria-invalid={!!nightNotify.error}
                                 toggled={!!nightNotify.value}

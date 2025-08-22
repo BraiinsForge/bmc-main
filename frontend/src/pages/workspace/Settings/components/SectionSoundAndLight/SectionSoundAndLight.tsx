@@ -18,7 +18,7 @@ interface Props extends SectionSoundAndLightProps {
     intl: IntlShape;
 }
 
-const $id = getID('settings', 'general');
+const $ = getID('settings', 'general').get;
 
 class View extends Component<Props> {
     render() {
@@ -40,7 +40,7 @@ class View extends Component<Props> {
                         disabled={soundVolume.disabled}
                     >
                         <Slider
-                            id={$id.get('sound', 'volume', 'day')}
+                            id={$('sound', 'volume', 'day')}
                             hideLabel
                             labelText=""
                             // Range
@@ -62,7 +62,7 @@ class View extends Component<Props> {
                         disabled={soundVolumeNight.disabled}
                     >
                         <Slider
-                            id={$id.get('sound', 'volume', 'night')}
+                            id={$('sound', 'volume', 'night')}
                             hideLabel
                             labelText=""
                             // Range
@@ -84,7 +84,7 @@ class View extends Component<Props> {
                         disabled={alarmAndNotifyVolume.disabled}
                     >
                         <Slider
-                            id={$id.get('alarms', 'notify', 'volume')}
+                            id={$('alarms', 'notify', 'volume')}
                             hideLabel
                             labelText=""
                             // Range
@@ -112,7 +112,7 @@ class View extends Component<Props> {
                     >
                         <CarbonFormField error={ledNotifyEnabled.error}>
                             <Toggle
-                                id={$id.get('led', 'notify', 'enabled')}
+                                id={$('led', 'notify', 'enabled')}
                                 size="md"
                                 aria-invalid={!!ledNotifyEnabled.error}
                                 toggled={!!ledNotifyEnabled.value}

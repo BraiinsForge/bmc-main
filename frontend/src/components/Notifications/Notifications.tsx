@@ -2,6 +2,7 @@ import { Component, createRef, Fragment } from 'react';
 import { injectIntl, type IntlShape } from 'react-intl';
 
 import gsap from 'gsap';
+import { getID } from '@/lib/form';
 import { cloneDeep } from 'es-toolkit';
 import isEqual from 'react-fast-compare';
 
@@ -50,6 +51,7 @@ const getRemovalTween = (node: HTMLElement) => {
     return gsap.to(node, { x, alpha: 0.5, ...tweenConf });
 };
 
+const $ = getID('notifications').get;
 class NotificationsComponent extends Component<Props> {
     #ref = createRef<HTMLDivElement>();
 
@@ -240,6 +242,7 @@ class NotificationsComponent extends Component<Props> {
                 {items}
                 {typeof onClear === 'function' && items.length > 1 ? (
                     <Button
+                        id={$('clear-all')}
                         size="md"
                         kind="secondary"
                         icon={ListChecked}

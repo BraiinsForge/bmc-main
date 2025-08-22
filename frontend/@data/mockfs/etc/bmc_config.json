@@ -94,6 +94,42 @@
           }
         }
       ]
+    },
+    {
+      "id": "854f0120-2214-4d95-b8f9-87bc9d401540",
+      "enabled": true,
+      "cycle_duration": "1s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "750ee40e-7434-4109-b808-9378cd3081f9",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "ticker_btc",
+          "params": {
+            "time_frame": "month1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "4a37b003-92fd-43e8-aae5-1426a866e0e3",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "f92377a2-ad1a-43a7-983c-33f06ff74ef8",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "block_height",
+          "params": {
+            "show_timestamp": true,
+            "numbers_font_style": "medium"
+          }
+        }
+      ]
     }
   ],
   "scene_cycling": {
@@ -108,17 +144,17 @@
       "name": "",
       "time": "08:00:00",
       "repeat": [
-        "Thursday",
         "Friday",
-        "Saturday",
         "Sunday",
+        "Saturday",
         "Tuesday",
         "Monday",
-        "Wednesday"
+        "Wednesday",
+        "Thursday"
       ],
       "sound": "TickTockNextBlock",
       "snooze_options": {
-        "limit": "ThreeMinutes",
+        "limit": "Three",
         "duration": "FiveMinutes"
       }
     },
@@ -134,7 +170,7 @@
       ],
       "sound": "TickTockNextBlock",
       "snooze_options": {
-        "limit": "ThreeMinutes",
+        "limit": "Three",
         "duration": "FiveMinutes"
       }
     }

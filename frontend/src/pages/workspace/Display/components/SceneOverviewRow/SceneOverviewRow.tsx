@@ -122,6 +122,7 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
 
             <div className={css.actions}>
                 <Button
+                    id={$('edit')}
                     size="sm"
                     kind="primary"
                     hasIconOnly
@@ -131,6 +132,7 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
                     onClick={handleEdit}
                 />
                 <Button
+                    id={$('clone')}
                     size="sm"
                     kind="secondary"
                     hasIconOnly
@@ -140,6 +142,7 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
                     onClick={handleClone}
                 />
                 <Button
+                    id={$('delete')}
                     size="sm"
                     kind="secondary"
                     hasIconOnly

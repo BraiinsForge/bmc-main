@@ -93,12 +93,12 @@ const getInitialState = (): State => ({
     isChangelogExpanded: false,
 });
 
+const $ = getID('settings', 'updates').get;
 class View extends Component<Props, State> {
     #milis = {
         installingTick: 150,
         restartingTick: 1e3,
     };
-    #id = getID('settings', 'updates');
     #NA = <span className={css.placeholder} children="N/A" />;
 
     readonly state = getInitialState();
@@ -197,6 +197,7 @@ class View extends Component<Props, State> {
 
             expanderButton = (
                 <Button
+                    id={$('changelog-expander')}
                     kind="tertiary"
                     onClick={this.#toggleChangelog}
                     children={
@@ -316,6 +317,7 @@ class View extends Component<Props, State> {
                 ];
                 control = (
                     <Button
+                        id={$('check-for-updates')}
                         kind="tertiary"
                         onClick={onCheckUpdates}
                         children={formatMessage({ defaultMessage: 'Check for a new version' })}
@@ -340,6 +342,7 @@ class View extends Component<Props, State> {
                 control = (
                     <div className={css.downloadConfirmBar}>
                         <Button
+                            id={$('download-and-upgrade')}
                             kind="primary"
                             onClick={() => onDownload(hash)}
                             children={formatMessage({ defaultMessage: 'Download & Upgrade firmware' })}
@@ -502,7 +505,7 @@ class View extends Component<Props, State> {
                         disabled={automaticUpgrades.disabled}
                     >
                         <Toggle
-                            id={this.#id.get('data-collection')}
+                            id={$('data-collection')}
                             size="md"
                             toggled={!!automaticUpgrades.value}
                             onToggle={automaticUpgrades.onChange}

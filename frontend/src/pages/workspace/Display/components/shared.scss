@@ -1,8 +1,9 @@
 @use 'styles/carbon' as *;
 @use 'styles/var/shadows';
 
-.root {
+.form {
     composes: inline vertical from 'styles/layout.scss';
+    inline-size: 100%;
     gap: mini-units(3);
 }
 

@@ -1,4 +1,5 @@
 import { Button, LogoHeader } from '@/components';
+import { getID } from '@/lib/form.tsx';
 import { Layout } from '../Layout';
 import image from './hero-image.png';
 
@@ -9,13 +10,14 @@ export interface WelcomeProps {
     onNext(): void;
 }
 
+const $ = getID('initial-setup-welcome').get;
 export function Welcome(props: WelcomeProps) {
     const { onNext } = props;
 
     return (
         <Layout
             header={<LogoHeader style={{ width: 'auto', height: 18 }} />}
-            footer={<Button kind="primary" onClick={onNext} children="Continue" />}
+            footer={<Button id={$('continue')} kind="primary" onClick={onNext} children="Continue" />}
         >
             <img src={image} alt="hero" />
             <h1 className={css.title} children="Welcome to Your New Braiins DECK!" />

@@ -99,12 +99,14 @@ class View extends Component<Props> {
                     actions: (
                         <ButtonGroup spaced>
                             <Button
+                                id={$('edit', id)}
                                 size="sm"
                                 kind="primary"
                                 children={formatMessage({ defaultMessage: 'Edit' })}
                                 onClick={() => onEdit(id)}
                             />
                             <Button
+                                id={$('delete', id)}
                                 size="sm"
                                 kind="secondary"
                                 hasIconOnly

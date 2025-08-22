@@ -9,3 +9,4 @@ export const WidgetCombined = carbonizeSvgIcon(require('./widget-combined.svg'),
 export const WidgetManager = carbonizeSvgIcon(require('./widget-manager.svg'), 'WidgetManager');
 export const WidgetPool = carbonizeSvgIcon(require('./widget-pool.svg'), 'WidgetPool');
 export const WidgetTicker = carbonizeSvgIcon(require('./widget-ticker.svg'), 'WidgetTicker');
+export const WidgetBlockHeight = carbonizeSvgIcon(require('./widget-block-height.svg'), 'WidgetBlockHeight');

@@ -1,14 +1,14 @@
 import { Component, createRef, Fragment } from 'react';
-import { debounce } from 'es-toolkit';
+import { cloneDeep, debounce } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
-import { useNavigate, type NavigateFunction } from 'react-router';
+import { type NavigateFunction, useNavigate } from 'react-router';
 
 // Libs
-import { Sized, setState } from '@/lib/react';
+import { setState, Sized } from '@/lib/react';
+import { assertUnreachable } from '@/lib/ts';
 import { listenDocumentEvent } from '@/lib/dom';
-import { assertUnreachable } from '@/lib/ts.ts';
-import { Form, getID, type iField, type FormPropsToLocalState } from '@/lib/form';
+import { Form, type FormPropsToLocalState, getID, type iField } from '@/lib/form';
 
 // App
 import * as pb from '@/proto';
@@ -17,7 +17,7 @@ import AppContext, { type AppContextType } from '@/context';
 
 // Components
 import { Button } from '@/components';
-import { Dropdown, Toggle, OverflowMenu } from '@carbon/react';
+import { Dropdown, OverflowMenu, Toggle } from '@carbon/react';
 import {
     Add as IconAdd,
     CarouselHorizontal as IconCycle,
@@ -25,18 +25,89 @@ import {
     ChevronUp as IconChevronUp,
 } from '@carbon/react/icons';
 import {
+    createBlockHeightWidgetKind,
+    createClockWidgetKind,
+    createTickerWidgetKind,
     FormSceneSelect,
-    SceneOverviewList,
+    FormWidgetBlockHeight,
+    type FormWidgetBlockHeightProps,
     FormWidgetClock,
     type FormWidgetClockProps,
+    FormWidgetTicker,
+    type FormWidgetTickerProps,
     type SceneKind,
+    SceneOverviewList,
 } from './components';
 
 // Styles
 import css from './DisplayList.scss';
 
 const $ = getID('display').get;
+
 type FormStateClock = FormPropsToLocalState<FormWidgetClockProps>;
+type FormStateTicker = FormPropsToLocalState<FormWidgetTickerProps>;
+type FormStateBlockHeight = FormPropsToLocalState<FormWidgetBlockHeightProps>;
+
+// Can be both edit & create dialogs
+type DialogStates = {
+    clock: {
+        data: FormStateClock;
+        isEdit: boolean;
+        sceneID: string;
+    };
+    ticker: {
+        data: FormStateTicker;
+        isEdit: boolean;
+        sceneID: string;
+    };
+    blockHeight: {
+        data: FormStateBlockHeight;
+        isEdit: boolean;
+        sceneID: string;
+    };
+};
+function getInitialDialogStates(): DialogStates {
+    return {
+        clock: {
+            isEdit: false,
+            sceneID: '',
+            data: {
+                errors: null,
+                values: {
+                    widgetSize: pb.WidgetSize.FULL,
+                    clockStyle: pb.ClockWidget_ClockStyle.ANALOG_ROUND,
+                    fontStyle: pb.FontStyle.LIGHT,
+                    showDate: true,
+                    showSeconds: true,
+                    showTimezone: true,
+                    timezone: undefined,
+                },
+            },
+        },
+        ticker: {
+            isEdit: false,
+            sceneID: '',
+            data: {
+                errors: null,
+                values: {
+                    widgetSize: pb.WidgetSize.FULL,
+                    timeFrame: pb.TickerBtcWidget_TimeFrame.DAY_1,
+                },
+            },
+        },
+        blockHeight: {
+            isEdit: false,
+            sceneID: '',
+            data: {
+                errors: null,
+                values: {
+                    showDate: true,
+                    fontStyle: pb.FontStyle.MEDIUM,
+                },
+            },
+        },
+    };
+}
 
 interface Props {
     intl: IntlShape;
@@ -56,16 +127,8 @@ interface State {
         effect: pb.SceneCyclingTransition;
     };
 
-    openDialog:
-        | null
-        | { key: 'scene-select' }
-        // Can be both edit & create dialogs
-        | {
-              key: 'scene-config-clock';
-              data: null | FormStateClock;
-              isEdit: boolean;
-              sceneID: string;
-          };
+    openDialogKind: null | 'scene-select' | keyof DialogStates;
+    dialogStates: DialogStates;
 }
 const getInitialState = (): State => ({
     isLoading: false,
@@ -79,7 +142,9 @@ const getInitialState = (): State => ({
         defaultDurationSeconds: 0,
         effect: pb.SceneCyclingTransition.SLIDE,
     },
-    openDialog: null,
+
+    openDialogKind: null,
+    dialogStates: getInitialDialogStates(),
 });
 
 class View extends Component<Props, State> {
@@ -168,109 +233,135 @@ class View extends Component<Props, State> {
         };
     }
 
-    #openDialogSceneSelect = (): void => this.setState({ openDialog: { key: 'scene-select' } });
+    #openDialogSceneSelect = (): void => this.setState({ openDialogKind: 'scene-select' });
     #sceneAddSelectedKind = async (kind: SceneKind): Promise<void> => {
         const { navigate } = this.props;
+
+        let $kind: pb.WidgetKind['value'];
+        let $openDialogKind: NonNullable<State['openDialogKind']>;
 
         switch (kind) {
             case 'combined': {
                 const response = await pb.rpc.scenes.addCombinedScene({});
                 navigate(URLS.pages.display.combined.getHref(response.value), { replace: false });
-                break;
+                return;
             }
 
             // Full-screen widgets
-            case 'clock': {
-                const response = await pb.rpc.scenes.addFullscreenScene(
-                    pb.create(pb.AddFullscreenSceneRequestSchema, {
-                        widgetKind: {
-                            value: {
-                                case: kind,
-                                // Only the discriminant is important and read,
-                                // so we'll send an emtpy valid object.
-                                value: pb.create(pb.ClockWidgetSchema),
-                            },
-                        },
-                    }),
-                );
-                const sceneID = response.value;
-
-                await this.#loadScenes();
-
-                this.setState(
-                    {
-                        openDialog: {
-                            key: 'scene-config-clock',
-                            data: {
-                                values: {
-                                    widgetSize: pb.WidgetSize.FULL,
-                                    clockStyle: pb.ClockWidget_ClockStyle.ANALOG_ROUND,
-                                    fontStyle: pb.FontStyle.LIGHT,
-                                    showDate: true,
-                                    showSeconds: true,
-                                    showTimezone: true,
-                                    timezone: undefined,
-                                },
-                                errors: null,
-                            },
-                            isEdit: false,
-                            sceneID,
-                        },
-                    },
-                    () => this.#previewOpen(sceneID),
-                );
+            case 'clock':
+                $openDialogKind = 'clock';
+                $kind = { case: 'clock', value: pb.create(pb.ClockWidgetSchema) };
                 break;
-            }
 
             case 'tickerBtc':
-                throw new Error('Not implemented!');
+                $openDialogKind = 'ticker';
+                $kind = { case: 'tickerBtc', value: pb.create(pb.TickerBtcWidgetSchema) };
+                break;
 
             case 'blockHeight':
-                throw new Error('Not implemented!');
+                $openDialogKind = 'blockHeight';
+                $kind = { case: 'blockHeight', value: pb.create(pb.BlockHeightWidgetSchema) };
+                break;
 
             default:
                 assertUnreachable(kind, 'Invalid scene kind!');
         }
+
+        const response = await pb.rpc.scenes.addFullscreenScene({
+            widgetKind: {
+                $typeName: 'braiins.bmc.web.WidgetKind',
+                value: $kind,
+            },
+        });
+        const sceneID = response.value;
+        await this.#loadScenes();
+
+        await setState(this, s => ({
+            openDialogKind: $openDialogKind,
+            dialogStates: {
+                ...s.dialogStates,
+                [$openDialogKind]: {
+                    ...s.dialogStates[$openDialogKind],
+                    sceneID,
+                },
+            },
+        }));
+        this.#previewOpen(sceneID);
     };
+
     #openDialogCancel = (): void => {
         this.abortPreview.abort();
-        this.setState({ openDialog: null });
+        const { openDialogKind, dialogStates } = getInitialState();
+        this.setState({ openDialogKind, dialogStates });
     };
 
-    #clockGetChangeHandler = <Key extends keyof FormStateClock['values']>(key: Key) => {
-        return (value: FormStateClock['values'][Key]) => {
+    #getFormChangeHandler = <
+        const Kind extends keyof DialogStates,
+        const FieldKey extends keyof DialogStates[Kind]['data']['values'],
+    >(
+        widgetKind: Kind,
+        fieldKey: FieldKey,
+    ) => {
+        return (value: DialogStates[Kind]['data']['values'][FieldKey]) => {
             this.setState(s => {
-                const d = s.openDialog;
-                if (d?.key !== 'scene-config-clock') {
-                    this.context.notify('error', 'Invalid state, cannot change clock settings without open dialog!');
-                    return s;
-                }
+                const form = cloneDeep(s.dialogStates[widgetKind]);
+                form.data = {
+                    errors: null,
+                    values: {
+                        ...form.data.values,
+                        [fieldKey]: value,
+                    },
+                };
 
                 return {
-                    ...s,
-                    openDialog: {
-                        ...d,
-                        data: {
-                            errors: null,
-                            values: {
-                                ...d.data?.values,
-                                [key]: value,
-                            },
-                        },
+                    dialogStates: {
+                        ...s.dialogStates,
+                        [widgetKind]: form,
                     },
                 };
             }, this.#sceneFullscreenWidgetSubmit);
         };
     };
-    #clockGetFieldValue = <Key extends keyof FormStateClock['values']>(key: Key) => {
-        const x = this.state.openDialog;
-        if (x?.key !== 'scene-config-clock') return null;
-        return x.data?.values?.[key] ?? null;
+    #getFormFieldValue = <
+        const Kind extends keyof DialogStates,
+        const FieldKey extends keyof DialogStates[Kind]['data']['values'],
+    >(
+        widgetKind: Kind,
+        fieldKey: FieldKey,
+    ) => {
+        const { dialogStates } = this.state;
+
+        const values = dialogStates[widgetKind].data.values as DialogStates[Kind]['data']['values'];
+        return values?.[fieldKey] ?? null;
     };
-    #clockGetFieldError = <Key extends keyof FormStateClock['values']>(key: Key): null | string => {
-        const x = this.state.openDialog;
-        if (x?.key !== 'scene-config-clock') return null;
-        return pb.renderFieldErrorsAsList(x.data?.errors?.fields?.[key]);
+    #getFormFieldError = <
+        const Kind extends keyof DialogStates,
+        const FieldKey extends keyof DialogStates[Kind]['data']['values'],
+    >(
+        widgetKind: Kind,
+        fieldKey: FieldKey,
+    ): null | string => {
+        const { dialogStates } = this.state;
+
+        const errors = dialogStates[widgetKind].data.errors as null | pb.FormErrors<any>;
+        if (!errors) return null;
+
+        const fieldError = errors.fields?.[fieldKey] as null | pb.FieldErrors;
+        return pb.renderFieldErrorsAsList(fieldError);
+    };
+    #getFormFieldStruct = <
+        const Kind extends keyof DialogStates,
+        const FieldKey extends keyof DialogStates[Kind]['data']['values'],
+    >(
+        widgetKind: Kind,
+        fieldKey: FieldKey,
+    ) => {
+        return {
+            value: this.#getFormFieldValue(widgetKind, fieldKey),
+            error: this.#getFormFieldError(widgetKind, fieldKey),
+            onChange: this.#getFormChangeHandler(widgetKind, fieldKey),
+            disabled: false,
+        };
     };
 
     private abortPreview = pb.abort.get();
@@ -292,56 +383,52 @@ class View extends Component<Props, State> {
     #sceneFullscreenWidgetSubmit = async (): Promise<void> => {
         const { notify } = this.context;
 
-        const x = this.state.openDialog;
-        if (x?.key !== 'scene-config-clock') {
-            notify('error', 'Invalid state, cannot submit without open dialog!');
-            return;
-        }
+        const { openDialogKind, dialogStates } = this.state;
+        if (!openDialogKind || !(openDialogKind in dialogStates))
+            return notify('error', 'Invalid state, cannot submit without open dialog!');
 
-        const scene = this.#getScene(x.sceneID);
+        const data = dialogStates[openDialogKind as keyof DialogStates];
+        const scene = this.#getScene(data.sceneID);
+
         if (!scene) {
-            notify('error', 'Scene edit: cannot find the scene data!');
+            notify('error', 'Scene edit: cannot find the scene value!');
             return;
         }
-        if (scene.kind.case !== 'fullscreen') {
-            notify('error', 'Scene edit: not a fullscreen widget, aborting!');
-            return;
+        if (scene.kind.case !== 'fullscreen') return notify('error', 'Scene edit: not a fullscreen widget, aborting!');
+
+        let widgetKind: pb.WidgetKind;
+        switch (openDialogKind) {
+            case 'scene-select':
+                return notify('error', 'Invalid state, cannot submit without open dialog!');
+
+            case 'clock':
+                widgetKind = createClockWidgetKind(dialogStates.clock.data.values);
+                break;
+
+            case 'ticker':
+                widgetKind = createTickerWidgetKind(dialogStates.ticker.data.values);
+                break;
+
+            case 'blockHeight':
+                widgetKind = createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
+                break;
+
+            default:
+                assertUnreachable(openDialogKind, 'Submit: Invalid dialog kind!');
         }
 
         const widget = scene.kind.value.widget;
-        if (!widget) {
-            notify('error', 'Scene edit: no widget data, aborting!');
-            return;
-        }
+        if (!widget) return notify('error', 'Scene edit: no widget value, aborting!');
 
-        const data = x.data?.values;
-        if (!data) {
-            notify('error', 'Scene edit: no data, aborting!');
-            return;
-        }
-
-        const payload = pb.create(pb.UpdateWidgetRequestSchema, {
-            id: widget.id,
-            sceneId: scene.id,
-            kind: pb.create(pb.WidgetKindSchema, {
-                value: {
-                    case: 'clock',
-                    value: pb.create(pb.ClockWidgetSchema, {
-                        clockStyle: data.clockStyle,
-                        numbersFontStyle: data.fontStyle,
-                        showDate: data.showDate,
-                        showSeconds: data.showSeconds,
-
-                        showTimezone: data.showTimezone,
-                        timezone: data.timezone,
-                    }),
-                },
-            }),
-            // These are given for a full-screen widget
-            size: pb.WidgetSize.FULL,
-            position: { row: 0, col: 0 },
-        });
         try {
+            const payload = pb.create(pb.UpdateWidgetRequestSchema, {
+                id: widget.id,
+                sceneId: scene.id,
+                kind: widgetKind,
+                // These are given for a full-screen widget
+                size: pb.WidgetSize.FULL,
+                position: { row: 0, col: 0 },
+            });
             await pb.rpc.scenes.updateWidget(payload);
             notify('success', 'Widget updated!', { id: 'widget-updated', timeoutSeconds: 1.5 });
         } catch ($) {
@@ -352,79 +439,63 @@ class View extends Component<Props, State> {
         this.#loadScenesDebounced();
     };
     #sceneAddRender = (): ReactElement => {
-        const { openDialog, timezones } = this.state;
+        const {
+            openDialogKind,
+            dialogStates: { clock, ticker, blockHeight },
+            timezones,
+        } = this.state;
         const cancel = this.#openDialogCancel;
 
         return (
             <Fragment>
                 <FormSceneSelect
                     variant="scene"
-                    isOpen={openDialog?.key === 'scene-select'}
+                    isOpen={openDialogKind === 'scene-select'}
                     onClose={cancel}
                     onSelection={this.#sceneAddSelectedKind}
                 />
 
                 <FormWidgetClock
-                    isOpen={openDialog?.key === 'scene-config-clock'}
-                    isEdit={openDialog?.key === 'scene-config-clock' && openDialog.isEdit}
+                    isOpen={openDialogKind === 'clock'}
+                    isEdit={openDialogKind === 'clock' && clock.isEdit}
+                    onClose={cancel}
+                    error={openDialogKind === 'clock' ? pb.renderFieldErrorsAsList(clock.data.errors?.global) : null}
+                    // No size selector for the fullscreen widgets we operate with here
+                    widgetSize={null}
+                    clockStyle={this.#getFormFieldStruct('clock', 'clockStyle')}
+                    fontStyle={this.#getFormFieldStruct('clock', 'fontStyle')}
+                    showDate={this.#getFormFieldStruct('clock', 'showDate')}
+                    showSeconds={this.#getFormFieldStruct('clock', 'showSeconds')}
+                    showTimezone={this.#getFormFieldStruct('clock', 'showTimezone')}
+                    timezone={{ ...this.#getFormFieldStruct('clock', 'timezone'), options: timezones }}
+
+                    // showWeather={this.#clockGetFieldStruct('clock', 'showWeather')}
+                    // weatherLocation={this.#clockGetFieldStruct('clock', 'weatherLocation')}
+                />
+
+                <FormWidgetTicker
+                    isOpen={openDialogKind === 'ticker'}
+                    isEdit={openDialogKind === 'ticker' && ticker.isEdit}
+                    onClose={cancel}
+                    error={openDialogKind === 'ticker' ? pb.renderFieldErrorsAsList(ticker.data?.errors?.global) : null}
+                    // No size selector for the fullscreen widgets we operate with here
+                    widgetSize={null}
+                    timeFrame={this.#getFormFieldStruct('ticker', 'timeFrame')}
+                />
+
+                <FormWidgetBlockHeight
+                    isOpen={openDialogKind === 'blockHeight'}
+                    isEdit={openDialogKind === 'blockHeight' && blockHeight.isEdit}
                     onClose={cancel}
                     error={
-                        openDialog?.key === 'scene-config-clock'
-                            ? pb.renderFieldErrorsAsList(openDialog.data?.errors?.global)
+                        openDialogKind === 'blockHeight'
+                            ? pb.renderFieldErrorsAsList(blockHeight.data?.errors?.global)
                             : null
                     }
                     // No size selector for the fullscreen widgets we operate with here
                     widgetSize={null}
-                    clockStyle={{
-                        value: this.#clockGetFieldValue('clockStyle'),
-                        error: this.#clockGetFieldError('clockStyle'),
-                        onChange: this.#clockGetChangeHandler('clockStyle'),
-                        disabled: false,
-                    }}
-                    fontStyle={{
-                        value: this.#clockGetFieldValue('fontStyle'),
-                        error: this.#clockGetFieldError('fontStyle'),
-                        onChange: this.#clockGetChangeHandler('fontStyle'),
-                        disabled: false,
-                    }}
-                    showDate={{
-                        value: this.#clockGetFieldValue('showDate'),
-                        error: this.#clockGetFieldError('showDate'),
-                        onChange: this.#clockGetChangeHandler('showDate'),
-                        disabled: false,
-                    }}
-                    showSeconds={{
-                        value: this.#clockGetFieldValue('showSeconds'),
-                        error: this.#clockGetFieldError('showSeconds'),
-                        onChange: this.#clockGetChangeHandler('showSeconds'),
-                        disabled: false,
-                    }}
-                    showTimezone={{
-                        value: this.#clockGetFieldValue('showTimezone'),
-                        error: this.#clockGetFieldError('showTimezone'),
-                        onChange: this.#clockGetChangeHandler('showTimezone'),
-                        disabled: false,
-                    }}
-                    timezone={{
-                        value: this.#clockGetFieldValue('timezone'),
-                        error: this.#clockGetFieldError('timezone'),
-                        onChange: this.#clockGetChangeHandler('timezone'),
-                        options: timezones,
-                        disabled: false,
-                    }}
-
-                    // showWeather={{
-                    //     value: this.#clockGetFieldValue('showWeather'),
-                    //     error: this.#clockGetFieldError('showWeather'),
-                    //     onChange: this.#clockGetChangeHandler('showWeather'),
-                    //     disabled: false,
-                    // }}
-                    // weatherLocation={{
-                    //     value: this.#clockGetFieldValue('weatherLocation'),
-                    //     error: this.#clockGetFieldError('weatherLocation'),
-                    //     onChange: this.#clockGetChangeHandler('weatherLocation'),
-                    //     disabled: false,
-                    // }}
+                    showDate={this.#getFormFieldStruct('blockHeight', 'showDate')}
+                    fontStyle={this.#getFormFieldStruct('blockHeight', 'fontStyle')}
                 />
             </Fragment>
         );
@@ -609,33 +680,79 @@ class View extends Component<Props, State> {
 
             // fullscreen
             default: {
-                switch (kind?.value.widget?.kind?.value.case) {
+                const widgetKind = kind?.value.widget?.kind?.value;
+                switch (widgetKind?.case) {
+                    case undefined:
+                        break;
+
                     case 'clock': {
-                        const v = kind.value.widget.kind.value.value;
+                        const ds = getInitialDialogStates();
+                        ds.clock.sceneID = id;
+                        ds.clock.isEdit = true;
+
+                        const v = widgetKind.value;
+                        ds.clock.data.values = {
+                            clockStyle: v.clockStyle,
+                            fontStyle: v.numbersFontStyle,
+
+                            showDate: v.showDate,
+                            showSeconds: v.showSeconds,
+                            showTimezone: v.showTimezone,
+
+                            timezone: v.timezone,
+                        };
+
                         this.setState(
-                            {
-                                openDialog: {
-                                    key: 'scene-config-clock',
-                                    data: {
-                                        values: {
-                                            clockStyle: v.clockStyle,
-                                            fontStyle: v.numbersFontStyle,
-
-                                            showDate: v.showDate,
-                                            showSeconds: v.showSeconds,
-                                            showTimezone: v.showTimezone,
-
-                                            timezone: v.timezone,
-                                        },
-                                        errors: null,
-                                    },
-                                    isEdit: true,
-                                    sceneID: id,
-                                },
-                            },
+                            // Set state
+                            { openDialogKind: 'clock', dialogStates: ds },
+                            // ...and open the dialog
                             () => this.#previewOpen(id),
                         );
+
+                        break;
                     }
+
+                    case 'tickerBtc': {
+                        const ds = getInitialDialogStates();
+                        ds.ticker.sceneID = id;
+                        ds.ticker.isEdit = true;
+
+                        const v = widgetKind.value;
+                        ds.ticker.data.values = { timeFrame: v.timeFrame };
+
+                        this.setState(
+                            // Set state
+                            { openDialogKind: 'ticker', dialogStates: ds },
+                            // ...and open the dialog
+                            () => this.#previewOpen(id),
+                        );
+
+                        break;
+                    }
+
+                    case 'blockHeight': {
+                        const ds = getInitialDialogStates();
+                        ds.blockHeight.sceneID = id;
+                        ds.blockHeight.isEdit = true;
+
+                        const v = widgetKind.value;
+                        ds.blockHeight.data.values = {
+                            showDate: v.showTimestamp,
+                            fontStyle: v.numbersFontStyle,
+                        };
+
+                        this.setState(
+                            // Set state
+                            { openDialogKind: 'blockHeight', dialogStates: ds },
+                            // ...and open the dialog
+                            () => this.#previewOpen(id),
+                        );
+
+                        break;
+                    }
+
+                    default:
+                        assertUnreachable(widgetKind);
                 }
                 break;
             }
@@ -757,6 +874,7 @@ class View extends Component<Props, State> {
 
                             {iconLayout && !mobileLayout ? (
                                 <Button
+                                    id={$('add-scene')}
                                     key="add-scene-button"
                                     kind="primary"
                                     onClick={this.#openDialogSceneSelect}
@@ -767,6 +885,7 @@ class View extends Component<Props, State> {
                                 />
                             ) : (
                                 <Button
+                                    id={$('add-scene')}
                                     key="add-scene-button"
                                     kind="primary"
                                     onClick={this.#openDialogSceneSelect}
@@ -839,9 +958,16 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
         txEffect: formatMessage({ defaultMessage: 'Transition Effect' }),
     };
 
-    return render({
-        title: formatMessage({ defaultMessage: 'Screen Cycling' }),
-        content: (
+    const title: string = formatMessage({ defaultMessage: 'Screen Cycling' });
+    /**
+     * CDS expects specific children types in some places and passes down props that they then use in the child.
+     * One example for all is children of menus where they get some handlers.
+     *
+     * Here, it would however produce errors as form passes everthing it does not consume down to the form element.
+     * The extra function wrapper makes sure that no props are passed down to the form element.
+     */
+    const Content = (): ReactElement => {
+        return (
             <Form className={css.screenCycleForm}>
                 <Toggle
                     id={$('cycle-active')}
@@ -875,8 +1001,10 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
                     renderSelectedItem={x => pb.sceneCyclingEffectToString(intl, x) ?? 'N/A'}
                 />
             </Form>
-        ),
-    });
+        );
+    };
+
+    return render({ title, content: <Content /> });
 }
 
 export default function DisplayList() {

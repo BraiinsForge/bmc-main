@@ -58,7 +58,7 @@ const getInitialState = (): State => ({
     },
 });
 
-const $id = getID('settings', 'security');
+const $ = getID('settings', 'security').get;
 
 class View extends Component<Props, State> {
     readonly state = getInitialState();
@@ -323,7 +323,7 @@ class View extends Component<Props, State> {
 
         return (
             <Modal
-                id={$id.get('password-change-dialog')}
+                id={$('password-change-dialog')}
                 size="md"
                 open={openDialog != null}
                 danger={isDanger}
@@ -372,11 +372,13 @@ class View extends Component<Props, State> {
                         {hasPassword ? (
                             <ButtonGroup spaced>
                                 <Button
+                                    id={$('change-password')}
                                     kind="secondary"
                                     children={formatMessage({ defaultMessage: 'Change Password' })}
                                     onClick={this.#passChangeToggle}
                                 />
                                 <Button
+                                    id={$('remove-password')}
                                     kind="tertiary"
                                     children={formatMessage({ defaultMessage: 'Remove Password' })}
                                     onClick={this.#passRemoveToggle}
@@ -384,6 +386,7 @@ class View extends Component<Props, State> {
                             </ButtonGroup>
                         ) : (
                             <Button
+                                id={$('create-password')}
                                 kind="secondary"
                                 children={formatMessage({ defaultMessage: 'Create Password' })}
                                 onClick={this.#passCreateToggle}
@@ -402,7 +405,7 @@ class View extends Component<Props, State> {
                         disabled={dataCollection.disabled}
                     >
                         <Toggle
-                            id={$id.get('data-collection')}
+                            id={$('data-collection')}
                             size="md"
                             toggled={!!dataCollection.value}
                             onToggle={dataCollection.onChange}

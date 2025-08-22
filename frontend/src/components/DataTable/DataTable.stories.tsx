@@ -134,8 +134,14 @@ function Demo(args: Args) {
             key={JSON.stringify(args)}
             toolbar={{
                 tableBatchActions: [
-                    <Button key="edit" icon={IconEdit} children="Edit" onClick={noop} />,
-                    <Button key="deleteSelected" icon={IconTrashcan} children="Delete selected" onClick={noop} />,
+                    <Button id="edit" key="edit" icon={IconEdit} children="Edit" onClick={noop} />,
+                    <Button
+                        id="deleteSelected"
+                        key="deleteSelected"
+                        icon={IconTrashcan}
+                        children="Delete selected"
+                        onClick={noop}
+                    />,
                 ],
                 tableToolbarContent: [
                     <Component.TableToolbarSearch
@@ -159,9 +165,9 @@ function Demo(args: Args) {
                             </Component.TableToolbarMenu>
                         }
                     />,
-                    <Button onClick={noop} children="Labels" key="labels" />,
-                    <Button onClick={noop} children="Refresh" key="refresh" />,
-                    <Button onClick={noop} children="Connect" key="connect" />,
+                    <Button onClick={noop} children="Labels" key="labels" id="labels" />,
+                    <Button onClick={noop} children="Refresh" key="refresh" id="refresh" />,
+                    <Button onClick={noop} children="Connect" key="connect" id="connect" />,
                 ],
             }}
         />

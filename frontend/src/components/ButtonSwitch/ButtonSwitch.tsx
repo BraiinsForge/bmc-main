@@ -104,6 +104,7 @@ export function ButtonSwitch<K = string, V extends StrNum = StrNum>(props: Butto
         return (
             <Button
                 key={i}
+                id={btn.id}
                 kind="secondary"
                 size={size}
                 disabled={disabled === true || btn.disabled === true || (!onClick && !onChange)}

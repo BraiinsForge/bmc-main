@@ -260,6 +260,7 @@ class View extends Component<Props, State> {
         if (goBackBtn) {
             footer.push(
                 <Button
+                    id={$('back')}
                     key="a"
                     kind="secondary"
                     onClick={goBackBtn.onClick}
@@ -271,6 +272,7 @@ class View extends Component<Props, State> {
         if (goNextBtn) {
             footer.push(
                 <Button
+                    id={$('next')}
                     key="b"
                     kind="primary"
                     onClick={goNextBtn.onClick}

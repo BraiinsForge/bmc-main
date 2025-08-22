@@ -261,7 +261,7 @@ export function tickerTimeFrameToString(intl: IntlShape, x?: null | pb.TickerBtc
             return formatMessage({ defaultMessage: '1 Week' });
 
         case pb.TickerBtcWidget_TimeFrame.WEEK_2:
-            return formatMessage({ defaultMessage: '2 Week' });
+            return formatMessage({ defaultMessage: '2 Weeks' });
 
         case pb.TickerBtcWidget_TimeFrame.MONTH_1:
             return formatMessage({ defaultMessage: '1 Month' });
@@ -400,9 +400,21 @@ export function clockStyleToString(intl: IntlShape, style: pb.ClockWidget_ClockS
             assertUnreachable(style, 'clock style');
     }
 }
-export function fontStyleToString(intl: IntlShape, style: pb.FontStyle): null | string {
-    if (!style) return null;
-    switch (style) {
+
+export const fontStyleOptions: Array<Exclude<pb.FontStyle, 0>> = [
+    pb.FontStyle.LIGHT,
+    pb.FontStyle.MEDIUM,
+    pb.FontStyle.BOLD,
+] as const;
+export function fontStyleToString(intl: IntlShape, x?: Maybe<pb.FontStyle>): null;
+export function fontStyleToString(intl: IntlShape, x: Exclude<pb.FontStyle, 0>): string;
+export function fontStyleToString(intl: IntlShape, x?: null | pb.FontStyle) {
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.FontStyle.UNSPECIFIED:
+            return null;
+
         case pb.FontStyle.LIGHT:
             return intl.formatMessage({ defaultMessage: 'Light' });
 
@@ -413,7 +425,7 @@ export function fontStyleToString(intl: IntlShape, style: pb.FontStyle): null | 
             return intl.formatMessage({ defaultMessage: 'Bold' });
 
         default:
-            assertUnreachable(style, 'clock style');
+            assertUnreachable(x, 'clock style');
     }
 }
 

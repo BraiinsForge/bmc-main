@@ -26,5 +26,7 @@ Empty.args = {
             recorded by our monitoring system.
         </span>
     ),
-    controls: <Button icon={QuestionAnswering} children="Connect Workers" onClick={action('onClick')} />,
+    controls: (
+        <Button id="connect-workers" icon={QuestionAnswering} children="Connect Workers" onClick={action('onClick')} />
+    ),
 } as EmptyProps;

@@ -56,6 +56,7 @@ function Demo(args: Props) {
     return (
         <Fragment>
             <Button
+                id="open-btn"
                 children="Open modal"
                 onClick={() => setIsOpen(true)}
                 style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}
@@ -70,9 +71,9 @@ function Demo(args: Props) {
                 footer={
                     <div>
                         <ButtonGroup>
-                            <Button kind="danger" children="You'll break…" />
-                            <Button kind="secondary" children="…like a scabbard…" />
-                            <Button kind="primary" children="…with great justice" />
+                            <Button id="You'll break…" kind="danger" children="You'll break…" />
+                            <Button id="…like a scabbard…" kind="secondary" children="…like a scabbard…" />
+                            <Button id="…with great justice" kind="primary" children="…with great justice" />
                         </ButtonGroup>
                     </div>
                 }

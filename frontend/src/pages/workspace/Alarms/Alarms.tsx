@@ -318,6 +318,7 @@ export class View extends Component<Props, State> {
                 {alarmID != null ? (
                     <div className={css.deleteButtonRow}>
                         <Button
+                            id={$('delete-alarm', alarmID)}
                             kind="danger"
                             icon={IconDelete}
                             children={formatMessage({ defaultMessage: 'Delete Alarm' })}
@@ -471,7 +472,12 @@ export class View extends Component<Props, State> {
                     </div>
 
                     <div className={css.actions}>
-                        <Button renderIcon={IconAdd} children={txt.addNewAlarm} onClick={this.#alarmDialogOpen} />
+                        <Button
+                            id={$('add-alarm')}
+                            renderIcon={IconAdd}
+                            children={txt.addNewAlarm}
+                            onClick={this.#alarmDialogOpen}
+                        />
                     </div>
                 </div>
 

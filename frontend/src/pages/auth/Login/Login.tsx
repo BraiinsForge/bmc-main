@@ -5,7 +5,7 @@ import { Helmet } from '@dr.pogodin/react-helmet';
 import * as pb from '@/proto';
 import { store } from '@/store';
 
-import { Form } from '@/lib/form';
+import { Form, getID } from '@/lib/form';
 import { PasswordInput } from '@carbon/react';
 import { ArrowRight } from '@carbon/react/icons';
 import { Button, InlineNotificationsGroup, LogoHeader } from '@/components';
@@ -29,6 +29,7 @@ const getInitialState = (): State => ({
     errors: null,
 });
 
+const $ = getID('login').get;
 class View extends Component<Props, State> {
     readonly state = getInitialState();
     #ref = createRef<HTMLDivElement>();
@@ -87,6 +88,7 @@ class View extends Component<Props, State> {
                         />
 
                         <Button
+                            id={$('submit')}
                             type="submit"
                             children={this.#txt.login}
                             onClick={this.#submit}

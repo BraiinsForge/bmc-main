@@ -585,6 +585,7 @@ class View extends Component<Props, State> {
                     className={css.wifiNetSelectorRefreshButton}
                 >
                     <Button
+                        id={$('wifi-network-refresh')}
                         kind="secondary"
                         size="md"
                         hasIconOnly

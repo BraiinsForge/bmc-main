@@ -150,6 +150,7 @@ class View extends Component<Props, State> {
                             itemToElement={this.#alarmSoundToElement}
                         />
                         <Button
+                            id={$('play-selected-sound')}
                             kind="secondary"
                             size="md"
                             children={<SoundPlayIcon isPlaying={isPlaying} />}

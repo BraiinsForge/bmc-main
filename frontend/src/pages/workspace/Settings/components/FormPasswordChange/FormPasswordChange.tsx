@@ -15,7 +15,7 @@ export interface FormPasswordChangeProps {
 }
 interface Props extends FormPasswordChangeProps {}
 
-const $id = getID('settings', 'password-change');
+const $ = getID('settings', 'password-change').get;
 
 export function FormPasswordChange(props: Props) {
     const { formatMessage } = useIntl();
@@ -70,7 +70,7 @@ function Field(props: FieldProps) {
 
     return (
         <PasswordInput
-            id={$id.get(name)}
+            id={$(name)}
             autoComplete={autoComplete}
             labelText={label}
             value={field.value ?? ''}

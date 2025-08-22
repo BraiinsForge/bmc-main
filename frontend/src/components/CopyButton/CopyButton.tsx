@@ -8,6 +8,7 @@ import { CopyButton as BaseComponent } from '@carbon/react';
 
 type BaseProps = Omit<ComponentProps<typeof BaseComponent>, keyof LocalProps | 'tooltipAlignment' | 'tooltipPosition'>;
 type LocalProps = {
+    id: string;
     value: Maybe<string>;
     kind?: null | 'transparent' | 'light' | 'input-addon';
 };

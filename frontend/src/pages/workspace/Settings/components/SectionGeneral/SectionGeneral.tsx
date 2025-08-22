@@ -323,6 +323,7 @@ class View extends Component<Props> {
                         })}
                     >
                         <Button
+                            id={$('factory-reset')}
                             kind="secondary"
                             children={formatMessage({ defaultMessage: 'Reset to Defaults' })}
                             onClick={this.#reset}

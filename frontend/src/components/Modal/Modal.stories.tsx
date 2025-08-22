@@ -49,6 +49,7 @@ function Demo(args: Props) {
     return (
         <Fragment>
             <Button
+                id="open-btn"
                 children="Open modal"
                 onClick={() => setIsOpen(true)}
                 style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}

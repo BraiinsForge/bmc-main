@@ -1,8 +1,9 @@
 import { action } from 'storybook/actions';
-
-import { Button as B, type ButtonProps } from './Button';
 import type { Meta } from '@storybook/react';
 import { Home as IconHome } from '@carbon/react/icons';
+
+import { uuid } from '@/mocks';
+import { Button as B, type ButtonProps } from './Button';
 
 const kinds: Array<ButtonProps['kind']> = ['primary', 'secondary', 'tertiary', 'ghost'];
 
@@ -33,12 +34,12 @@ export function Button() {
     const onClick = action('onClick');
 
     // Bound renderer to avoid repetition & unly supply changing props
-    const getBlock = (comment: string, args: ButtonProps) => {
+    const getBlock = (comment: string, args: Omit<ButtonProps, 'id'>) => {
         return (
             <div key={comment} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '0.5rem' }}>
                 <h1 children={comment} />
                 {kinds.map(kind => {
-                    return <B key={kind} kind={kind} title="Button Title" {...args} />;
+                    return <B id={uuid()} key={kind} kind={kind} title="Button Title" {...args} />;
                 })}
             </div>
         );

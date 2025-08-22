@@ -91,6 +91,7 @@ class View extends Component<Props> {
                 footer={[
                     <span key="a" />,
                     <Button
+                        id={$('save-and-continue')}
                         key="b"
                         kind="primary"
                         disabled={submitDisabled}

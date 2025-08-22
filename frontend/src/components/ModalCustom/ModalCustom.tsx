@@ -74,19 +74,49 @@ export class ModalCustom extends Component<CustomModalProps> {
     }
     componentDidMount() {
         // Replace the click handler so that we can create more sensible closing UX
-        if (this.#ref.current?.handleClick) this.#ref.current.handleClick = this.#preventClose;
+        if (this.#refRoot.current?.handleClick) this.#refRoot.current.handleClick = this.#preventClose;
         this.#root.appendChild(this.#mount);
+
+        setTimeout(this.#maybeMoveFocusInside, 30);
     }
     componentWillUnmount() {
         this.#root.removeChild(this.#mount);
     }
     componentDidUpdate(prevProps: CustomModalProps) {
-        if (this.props.isInnerModal && prevProps.open) {
-            document.body.classList.add('cds--body--with-modal-open');
-        }
+        if (this.props.isInnerModal && prevProps.open) document.body.classList.add('cds--body--with-modal-open');
+        if (this.props.open && !prevProps.open) setTimeout(this.#maybeMoveFocusInside, 30);
     }
 
-    #ref = createRef<any>();
+    #maybeMoveFocusInside = () => {
+        const { open, selectorPrimaryFocus } = this.props;
+        const body = this.#refBody.current;
+
+        // Nothing to do if modal is not open
+        // or we don't have a body ref (yet)
+        if (!open || !body) return;
+
+        // Nothing to do if modal has no primary focus
+        const focusedElement = document.activeElement;
+
+        // Focus is already inside the modal body
+        if (body.contains(focusedElement)) return;
+
+        const focusable = body.querySelector<HTMLElement>(selectorPrimaryFocus ?? 'input, button, textarea, select');
+        try {
+            focusable?.focus();
+        } catch (error) {
+            console.groupCollapsed(
+                '%c<ModalCustom /> %cFailed to move focus into the modal body',
+                'color: goldenrod;',
+                'color: unset;',
+            );
+            console.log({ focusable, error });
+            console.groupEnd();
+        }
+    };
+
+    #refRoot = createRef<any>();
+    #refBody = createRef<null | HTMLDivElement>();
     #preventClose = (): void => {
         const { onClose } = this.props;
         const { clickedInside, clickedOutside } = this.state;
@@ -133,6 +163,7 @@ export class ModalCustom extends Component<CustomModalProps> {
             isInnerModal,
             bodyClassName,
             cancelBodyOverflowShadow,
+            selectorPrimaryFocus,
             ...rest
         } = this.props;
 
@@ -141,11 +172,12 @@ export class ModalCustom extends Component<CustomModalProps> {
                 {...rest}
                 id={id}
                 data-cy={id}
-                ref={this.#ref}
+                ref={this.#refRoot}
                 open={open}
                 onSubmit={onSubmit}
                 onClose={onClose ? this.#handleClose : undefined}
                 onMouseDown={this.#handleMouseDown}
+                selectorPrimaryFocus={selectorPrimaryFocus}
             >
                 {!hideHeader && (title != null || typeof onClose === 'function') && (
                     <ModalHeader
@@ -159,6 +191,7 @@ export class ModalCustom extends Component<CustomModalProps> {
                     {...this.#commonClickProps}
                     className={cn(css.body, cancelBodyOverflowShadow && css.cancelBodyOverflowShadow, bodyClassName)}
                     children={children}
+                    ref={this.#refBody}
                 />
 
                 {footer && <ModalFooter {...this.#commonClickProps} className={css.footer} children={footer} />}

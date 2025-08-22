@@ -82,7 +82,7 @@ function Demo() {
         // },
     });
 
-    return <Component {...args} style={{ padding: 18, backgroundColor: 'var(--cds-layer-01' }} />;
+    return <Component {...args} style={{ padding: 18, backgroundColor: 'var(--cds-layer-01)' }} />;
 }
 
 export function FormWidgetClock() {

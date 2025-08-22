@@ -10,6 +10,8 @@ import cn from 'clsx';
 import css from './Button.scss';
 
 export type ButtonProps = Omit<ButtonBaseProps, 'href' | 'target' | 'rel' | 'kind' | 'onClick'> & {
+    id: string;
+
     kind?: ButtonBaseProps['kind'];
     icon?: ComponentType;
     onClick?(e: SyntheticEvent): void;

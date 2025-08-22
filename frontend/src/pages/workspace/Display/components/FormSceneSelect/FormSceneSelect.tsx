@@ -68,21 +68,31 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
                     onClick={() => onSelection('clock')}
                 />
 
-                {/*
                 <Row
                     variant={variant}
                     icon={Icons.WidgetTicker}
                     title={formatMessage({ defaultMessage: 'Ticker' })}
-                    description={formatMessage({ defaultMessage: 'BTC or Stock price adjusted in 5min intervals.  Few types - List, Big Price' })}
-                    onClick={() => onClick('ticker')}
+                    description={formatMessage({ defaultMessage: 'BTC price adjusted in 5min intervals.' })}
+                    onClick={() => onSelection('tickerBtc')}
                 />
 
+                <Row
+                    variant={variant}
+                    icon={Icons.WidgetBlockHeight}
+                    title={formatMessage({ defaultMessage: 'Block Height' })}
+                    description={formatMessage({
+                        defaultMessage: 'Combined scene displaying multiple configurable modules that can be adjusted.',
+                    })}
+                    onClick={() => onSelection('blockHeight')}
+                />
+
+                {/*
                 <Row
                     variant={variant}
                     icon={Icons.WidgetPool}
                     title={formatMessage({ defaultMessage: 'Braiins Pool' })}
                     description={formatMessage({ defaultMessage: 'Combined scene displaying multiple configurable modules that can be adjusted.' })}
-                    onClick={() => onClick('pool')}
+                    onClick={() => onSelection('pool')}
                 />
 
                 <Row
@@ -90,7 +100,7 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
                     icon={Icons.WidgetManager}
                     title={formatMessage({ defaultMessage: 'Braiins Manager' })}
                     description={formatMessage({ defaultMessage: 'Connect your Braiins Manager account and get real-time stats for your mining operation.' })}
-                    onClick={() => onClick('manager')}
+                    onClick={() => onSelection('manager')}
                 />
                 */}
             </section>
@@ -103,7 +113,7 @@ interface RowProps {
 
     icon: CarbonIconType;
     title: string;
-    description: string;
+    description: null | string;
     onClick(): void;
 }
 function Row(props: RowProps) {
@@ -132,6 +142,7 @@ function Row(props: RowProps) {
             <div className={css.rowDescription} children={description} />
             <div className={css.rowAction}>
                 <Button
+                    id={$('add-scene')}
                     kind="primary"
                     icon={IconAdd}
                     size={isMobileLayout ? 'md' : 'lg'}

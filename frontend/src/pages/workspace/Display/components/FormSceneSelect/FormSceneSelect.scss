@@ -47,6 +47,7 @@
 
 .rowDescription {
     composes: body-short-02 from 'styles/carbon/typography.scss';
+    text-wrap: balance;
     grid-area: description;
 }
 
