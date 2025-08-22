@@ -10,11 +10,14 @@ use crate::data::{
 };
 use crate::display_controller::DisplayController;
 use crate::generated::{
-    self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, ClockStyle,
-    ConnectionAdapter, SceneCyclingAdapter, ScreenAdapter, WifiAdapter,
+    self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, BraiinsPoolStyle,
+    ClockStyle, ConnectionAdapter, PoolChartDimensions, SceneCyclingAdapter, ScreenAdapter,
+    WidgetSize, WifiAdapter,
 };
 use crate::indexmap_model::IndexMapModel;
-use crate::pool_data::{CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards};
+use crate::pool_data::{
+    CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, UserHashrateHistory,
+};
 use crate::utils;
 use bmc_shared_time::time::{DateFormat, Timezone};
 use bmc_shared_utils::number_format::NumberFormat;
@@ -364,6 +367,44 @@ impl DisplayController {
                 widgets_ref.modify(&widget_id, |widget| {
                     widget.braiins_pool.reward_btc = latest_rewards.today_reward_btc();
                     widget.braiins_pool.reward_usd = latest_rewards.today_reward_usd();
+                });
+            }
+        });
+    }
+
+    pub fn update_hashrate_history(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        hashrate_history: UserHashrateHistory,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    let widget_size = widget.size;
+                    let pool_style = widget.braiins_pool.config.pool_style;
+                    let pool_chart_dimensions = PoolChartDimensions::get(&main_window);
+                    let image_dimensions =
+                        pool_chart_dimensions.invoke_get_dimensions(widget_size, pool_style);
+                    let width: u32 = image_dimensions.width.try_into().unwrap_or_default();
+                    let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
+
+                    match (pool_style, widget_size) {
+                        (BraiinsPoolStyle::Overview, WidgetSize::Large) => {
+                            widget.braiins_pool.chart_overview_large = hashrate_history
+                                .into_graph_image(&main_window, width, height, false);
+                        }
+                        (BraiinsPoolStyle::Overview, WidgetSize::Full) => {
+                            widget.braiins_pool.chart_overview_full = hashrate_history
+                                .into_graph_image(&main_window, width, height, true);
+                        }
+                        (_, _) => {}
+                    }
                 });
             }
         });

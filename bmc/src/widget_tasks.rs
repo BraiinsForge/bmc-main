@@ -8,7 +8,7 @@ use bmc_display::data::{
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_display::pool_data::{
-    self, CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards,
+    self, CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, UserHashrateHistory,
 };
 use bmc_shared_time::time::Timezone;
 use chrono::SubsecRound;
@@ -96,8 +96,8 @@ impl WidgetTasks {
             WidgetKind::BraiinsPool(pool_widget) => Some(spawn(self.make_braiins_pool_task(
                 scene_id.clone(),
                 widget.id.clone(),
-                widget.size.clone(),
-                pool_widget.pool_style.clone(),
+                &widget.size,
+                &pool_widget.pool_style,
                 pool_widget.chart_frame.clone(),
             ))),
         };
@@ -238,12 +238,14 @@ impl WidgetTasks {
             }
         }
     }
+
+    #[expect(clippy::too_many_lines)]
     fn make_braiins_pool_task(
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
-        widget_size: WidgetSize,
-        pool_style: PoolStyle,
+        widget_size: &WidgetSize,
+        pool_style: &PoolStyle,
         chart_frame: PoolChartFrame,
     ) -> impl Future<Output = ()> + Send + 'static {
         let display_controller = self.display_controller.clone();
@@ -254,6 +256,10 @@ impl WidgetTasks {
                 PoolStyle::Overview,
                 WidgetSize::Full | WidgetSize::Large | WidgetSize::Medium
             )
+        );
+        let download_hashrate_history = matches!(
+            (pool_style, widget_size),
+            (PoolStyle::BigChart, _) | (PoolStyle::Overview, WidgetSize::Full | WidgetSize::Large)
         );
         let download_workers_stats = matches!(
             (pool_style, widget_size),
@@ -319,6 +325,44 @@ impl WidgetTasks {
                         scene_id.clone(),
                         widget_id.clone(),
                         latest_rewards,
+                    );
+                }
+
+                if download_hashrate_history {
+                    debug!("Getting user hashrate history data...");
+                    let to_timestamp = chrono::Utc::now();
+                    let from_timestamp = to_timestamp
+                        .checked_sub_signed(chart_frame.clone().into())
+                        // We don't expect this operation will fail
+                        .unwrap_or_default();
+                    let to_timestamp =
+                        to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                    let from_timestamp =
+                        from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                    let hashrate_history = if let Ok(response) = client
+                        .get(format!(
+                            "{}{}",
+                            pool_data::POOL_API_URL,
+                            pool_data::USER_HASHRATE_HISTORY
+                        ))
+                        .query(&[(pool_data::FROM_TIMESTAMP, &from_timestamp)])
+                        .query(&[(pool_data::TO_TIMESTAMP, &to_timestamp)])
+                        .timeout(API_TIMEOUT)
+                        .send()
+                        .await
+                    {
+                        response
+                            .json::<UserHashrateHistory>()
+                            .await
+                            .unwrap_or_default()
+                    } else {
+                        warn!("Failed to get user hashrate history data from API");
+                        UserHashrateHistory::default()
+                    };
+                    display_controller.update_hashrate_history(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        hashrate_history,
                     );
                 }
 

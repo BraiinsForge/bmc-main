@@ -4,6 +4,7 @@ use crate::generated;
 use crate::indexmap_model::IndexMapModel;
 use anyhow::anyhow;
 use bmc_shared_time::time::Timezone;
+use chrono::TimeDelta;
 use indexmap::{IndexMap, indexmap};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use slint::{ModelRc, ToSharedString};
@@ -154,6 +155,17 @@ pub enum PoolChartFrame {
     Hours12,
     Hours24,
     Days7,
+}
+
+impl From<PoolChartFrame> for TimeDelta {
+    fn from(value: PoolChartFrame) -> Self {
+        match value {
+            PoolChartFrame::Hours4 => TimeDelta::hours(4),
+            PoolChartFrame::Hours12 => TimeDelta::hours(12),
+            PoolChartFrame::Hours24 => TimeDelta::hours(24),
+            PoolChartFrame::Days7 => TimeDelta::days(7),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

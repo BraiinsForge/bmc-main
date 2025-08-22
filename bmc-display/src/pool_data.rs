@@ -1,13 +1,17 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::generated::PoolWorkerStatus;
+use crate::generated::{MainWindow, Palette, PoolWorkerStatus};
+use crate::graph_utils::{self, ColorPalette};
 use serde::Deserialize;
-use slint::SharedString;
+use slint::{Global, Image, SharedString};
 
 pub const POOL_API_URL: &str = "https://pool.braiins.com/api/v1";
 pub const USER_HASHRATE_CURRENT: &str = "/user/hashrate/current";
 pub const USER_REWARD_LATEST: &str = "/user/rewards/latest";
 pub const USER_WORKERS_CURRENT: &str = "/user/workers/current";
+pub const USER_HASHRATE_HISTORY: &str = "/user/hashrate/history";
+pub const FROM_TIMESTAMP: &str = "from_timestamp";
+pub const TO_TIMESTAMP: &str = "to_timestamp";
 
 #[derive(Debug, Default, Deserialize)]
 pub struct CurrentUserHashrate {
@@ -18,6 +22,61 @@ impl CurrentUserHashrate {
     #[must_use]
     pub fn hashrate_as_shared(self) -> SharedString {
         SharedString::from(format!("{:.1}", self.hashrate_th_per_sec))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct HashrateSlot {
+    hashrate_th_per_sec: f32,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct UserHashrateHistory {
+    slots: Vec<HashrateSlot>,
+}
+
+impl UserHashrateHistory {
+    #[must_use]
+    pub fn into_graph_image(
+        self,
+        main_window: &MainWindow,
+        width: u32,
+        height: u32,
+        draw_large: bool,
+    ) -> Image {
+        let data: Vec<f32> = self
+            .slots
+            .into_iter()
+            .map(|slot| slot.hashrate_th_per_sec)
+            .collect();
+        if data.is_empty() {
+            return Image::default();
+        }
+
+        let palette = Palette::get(main_window);
+        let palette = ColorPalette::new(&palette);
+        let height = height - 24;
+
+        let canvas = graph_utils::draw_canvas(width, height, draw_large, &palette.gray_80);
+        let path =
+            graph_utils::create_path(&data, width, height, palette.violet_60).unwrap_or_default();
+
+        let document = canvas.add(path);
+
+        let mut svg_image: Vec<u8> = vec![];
+        if svg::write(&mut svg_image, &document).is_err() {
+            return Image::default();
+        }
+
+        if let Some(rgb_data) = graph_utils::svg_to_rgb8(&svg_image, width, height) {
+            Image::from_rgb8(
+                slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(
+                    &rgb_data, width, height,
+                ),
+            )
+        } else {
+            Image::default()
+        }
     }
 }
 

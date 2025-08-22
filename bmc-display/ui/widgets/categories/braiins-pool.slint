@@ -47,6 +47,59 @@ export struct WidgetBraiinsPoolData {
     workers-graph: image,
     worker-status: PoolWorkerStatus,
     pool-payouts: [BraiinsPoolPayouts],
+    chart-overview-full: image,
+    chart-overview-large: image,
+    hashrate-units: [string],
+    workers-units: [string],
+}
+
+struct ImageDimensions {
+  width: int,
+  height: int,
+}
+
+export global PoolChartDimensions {
+  public pure function get-dimensions(size: WidgetSize, pool-style: BraiinsPoolStyle) -> ImageDimensions {
+    if pool-style == BraiinsPoolStyle.Overview {
+        if size == WidgetSize.Large {
+            return {
+                width: 608,
+                height: 121,
+            };
+        } else if size == WidgetSize.Full {
+            return {
+                width: 927,
+                height: 214,
+            };
+        }
+    } else if pool-style == BraiinsPoolStyle.BigChart {
+        if size == WidgetSize.Small {
+            return {
+                width: 0,
+                height: 0,
+            };
+        } else if size == WidgetSize.Medium {
+            return {
+                width: 0,
+                height: 0,
+            };
+        } else if size == WidgetSize.Large {
+            return {
+                width: 0,
+                height: 0,
+            };
+        } else if size == WidgetSize.Full {
+            return {
+                width: 0,
+                height: 0,
+            };
+        }
+    }
+    return {
+        width: 0,
+        height: 0,
+    };
+  }
 }
 
 component braiins-pool-icon-box inherits HorizontalLayout {
@@ -380,9 +433,37 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
             }
         }
         Row {
-            Rectangle {
-                background: green;
+            HorizontalLayout {
                 colspan: 3;
+                VerticalLayout {
+                    width: 60px;
+                    alignment: space-between;
+                    padding-right: 16px;
+                    for hashrate-unit in data.hashrate-units:
+                    Text {
+                        text: hashrate-unit;
+                        font-size: 24px;
+                        font-weight: Theme.font.weight.regular;
+                        color: Palette.gray-40;
+                        horizontal-alignment: right;
+                    }
+                }
+                Image {
+                    height: PoolChartDimensions.get-dimensions(WidgetSize.Full, BraiinsPoolStyle.Overview).height * 1px;
+                    source: data.chart-overview-full;
+                }
+                VerticalLayout {
+                    width: 60px;
+                    alignment: space-between;
+                    for workers-unit in data.workers-units:
+                    Text {
+                        text: workers-unit;
+                        font-size: 24px;
+                        font-weight: Theme.font.weight.regular;
+                        color: Palette.gray-40;
+                        horizontal-alignment: right;
+                    }
+                }
             }
         }
     }
@@ -434,7 +515,9 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
             }
         }
         Rectangle {
-            background: green;
+            Image {
+                source: data.chart-overview-large;
+            }
         }
     }
     if size == WidgetSize.Medium: HorizontalLayout {
