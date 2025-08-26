@@ -103,7 +103,7 @@ bytesize = { version = "2.0.1", features = ["serde"] }
 chrono = { version = "0.4.40", features = ["serde"] }
 chrono-tz = { version = "0.10.3", default-features = false }
 clap = { version = "4.5.37", features = ["derive", "std"] }
-croner = "2.1.0"
+croner = "3.0.0"
 data-encoding = "2.6.0"
 dialoguer = "0.11.0"
 dirs = "6.0.0"
@@ -168,10 +168,11 @@ syn = { version = "2.0.99", features = ["extra-traits", "full"] }
 sync_wrapper = "1.0.2"
 sysinfo = "0.35.0"
 tap = "1.0.1"
+tempfile = "3.21.0"
 thiserror = "2.0.12"
 time = { version = "0.3.41", default-features = false }
 tokio = { version = "1.47.0", features = ["full"] }
-tokio-cron-scheduler = { version = "0.15.0", registry = "braiins" }
+tokio-cron-scheduler = { version = "0.17.1", registry = "braiins" }
 tokio-stream = { version = "0.1.17", default-features = false }
 tokio-util = "0.7"
 tonic = "0.13.1"

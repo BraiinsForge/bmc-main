@@ -9,10 +9,14 @@ anyhow.workspace = true
 bmc-shared-time.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
-croner.workspace = true
-tokio.workspace = true
+croner = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "test-util", "tokio-macros"] }
 tokio-cron-scheduler = { workspace = true, features = ["english"] }
+tokio-stream = { workspace = true, features = ["io-util"] }
 tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [lints]
 workspace = true

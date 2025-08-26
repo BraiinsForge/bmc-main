@@ -60,6 +60,8 @@ pub struct Timezone {
 pub enum TimezoneError {
     #[error("Couldn't parse timezone")]
     ParseTimezone,
+    #[error("Couldn't parse offset")]
+    Offset,
 }
 
 impl Timezone {
@@ -113,6 +115,13 @@ impl Timezone {
         let offset = self.chrono_offset();
         let offset_duration = offset.base_utc_offset() + offset.dst_offset();
         Offset::new(offset_duration)
+    }
+
+    /// Returns current timezone offset from UTC
+    #[must_use]
+    pub fn current_timezone_tz_offset(&self) -> chrono_tz::TzOffset {
+        let now = chrono::Utc::now().naive_utc();
+        Into::<chrono_tz::Tz>::into(self).offset_from_utc_datetime(&now)
     }
 }
 
