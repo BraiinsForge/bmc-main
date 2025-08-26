@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::JobDetails;
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 pub use croner::Cron;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -14,6 +14,8 @@ const PREFIX_SOURCE: &str = "###";
 const PREFIX_COMMENT: &str = "#";
 const CRON_DEFAULT_PATH: &str = "/etc/crontabs/root";
 pub(crate) const CRON_DUMMY_COMMAND: &str = "true";
+pub(crate) const CRON_SECONDS_PREFIX: &str = "0 ";
+const MIN_CRON_FIELDS: usize = 6;
 
 // Represents a single cron job
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,7 +141,7 @@ fn parse_cron_block(
     let source_parts = source.splitn(2, ' ').collect::<Vec<&str>>();
 
     let parts: Vec<&str> = cron_line.split_whitespace().collect();
-    if parts.len() < 6 {
+    if parts.len() < MIN_CRON_FIELDS {
         bail!("Invalid cron line: too few fields: {cron_line}");
     }
 
@@ -148,8 +150,8 @@ fn parse_cron_block(
 
     // Check if we have a 6-field format (with seconds)
     // Look at the 6th field (index 5) - if it looks like a cron field, we have 6-field format
-    if parts.len() >= 6 && is_cron_field(parts[5]) {
-        command_start_idx = 6; // 6-field format (seconds + min + hour + day + month + dayofweek)
+    if parts.len() >= MIN_CRON_FIELDS && is_cron_field(parts[5]) {
+        command_start_idx = MIN_CRON_FIELDS; // 6-field format (seconds + min + hour + day + month + dayofweek)
     }
 
     let expr = parts[0..command_start_idx].join(" ");
@@ -182,6 +184,18 @@ fn parse_cron_block(
         schedule,
         command,
     })
+}
+
+pub(crate) fn normalize_cron_expression(cron: Cron) -> anyhow::Result<Cron> {
+    let cron_string = cron.pattern.to_string();
+    let parts: Vec<&str> = cron_string.split(' ').collect();
+
+    if parts.len() < MIN_CRON_FIELDS {
+        let normalized = format!("{CRON_SECONDS_PREFIX}{cron_string}");
+        Cron::from_str(&normalized).map_err(|e| anyhow!("Invalid cron expression: {e}"))
+    } else {
+        Ok(cron)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
