@@ -336,7 +336,7 @@ async fn test_upsert_by_source_replace_existing() -> anyhow::Result<()> {
         .entries
         .iter()
         .find(|e| e.source.as_ref().is_some_and(|s| s == "MyApp"))
-        .unwrap();
+        .expect("BUG: Failed to find MyApp entry");
     assert_eq!(myapp_entry.command, "/new/command");
 
     let file_content = read_file_content(temp_file.path()).await?;
