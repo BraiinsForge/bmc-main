@@ -5,6 +5,7 @@ use crate::{BmcManager, storage_checker::StorageChecker};
 use anyhow::anyhow;
 use bmc_scheduler::JobScheduler;
 use bmc_scheduler::jobs::to_boxed;
+use bmc_scheduler::scheduler::{JobConfig, Schedule, Task};
 use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::{
     downloader::FileDownloader,
@@ -12,7 +13,6 @@ use bmc_upgrade::{
         DownloadEvent, FirmwareDownloadError, FirmwareIndex, FirmwareResolver, UpgradeDetail,
     },
 };
-use croner::Cron;
 use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -358,33 +358,22 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             .expect("BUG: Failed to lock boser config");
         config_handle.autoupgrade = Some(new_config.clone());
 
-        info!("Autoupgrade config {:?}", config_handle.autoupgrade);
         config_handle.sync_to_storage().await?;
         drop(config_handle);
-        info!("Autoupgrade config updated");
+        debug!("Autoupgrade config updated");
 
         // First, cancel existing jobs if there are any
-        let _ = self
-            .scheduler
+        self.scheduler
             .cancel_jobs(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME.to_owned())
-            .await
-            .map_err(|e| anyhow!(e));
+            .await;
 
         if new_config.enabled {
-            let timezone = self.bmc_manager.timezone();
-            let cron = Cron::new(new_config.cron_string.as_str())
-                .with_seconds_required()
-                .parse()?;
+            let schedule = Schedule::Cron(new_config.cron);
+            let task = Task::Async(to_boxed(self.autoupgrade.task.clone()));
+            let job_config = JobConfig::new(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME).persist();
 
             self.scheduler
-                .schedule_task(
-                    cron,
-                    <chrono_tz::Tz as chrono::TimeZone>::from_offset(
-                        &timezone.current_timezone_tz_offset(),
-                    ),
-                    AutoUpgrade::AUTOUPGRADE_SOURCE_NAME.to_owned(),
-                    to_boxed(self.autoupgrade.task.clone()),
-                )
+                .schedule(schedule, task, job_config)
                 .await
                 .map_err(|e| anyhow!(e))
                 .map(|_| ())

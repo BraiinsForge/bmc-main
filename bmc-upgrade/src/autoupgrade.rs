@@ -22,10 +22,10 @@
 
 use anyhow::anyhow;
 use bmc_grpc::web::AutoUpgradeFrequency as GrpcAutoUpgradeFrequency;
-use bmc_scheduler::cron::CronBuilder;
 use bmc_scheduler::{Cron, jobs::BoxedTask};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike};
 use chrono_tz::{Tz, TzOffset};
+use croner::parser::{CronParser, Seconds};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::future::Future;
@@ -120,7 +120,7 @@ impl From<AutoUpgradeFrequency> for i32 {
 pub struct AutoUpgradeConfig {
     pub enabled: bool,
     pub frequency: AutoUpgradeFrequency,
-    pub cron_string: String,
+    pub cron: Cron,
 }
 
 impl Default for AutoUpgradeConfig {
@@ -134,7 +134,7 @@ impl Default for AutoUpgradeConfig {
         Self {
             enabled: false,
             frequency,
-            cron_string: create_cron_schedule(frequency, date).to_string(),
+            cron: build_cron_from_frequency_date(frequency, date),
         }
     }
 }
@@ -146,7 +146,7 @@ impl AutoUpgradeConfig {
         Self {
             enabled,
             frequency,
-            cron_string: create_cron_schedule(frequency, date).to_string(),
+            cron: build_cron_from_frequency_date(frequency, date),
         }
     }
 }
@@ -209,30 +209,6 @@ impl AutoUpgrade {
     }
 }
 
-/// Builds a CronBuilder with day, month, and days_of_week fields configured based on frequency
-#[must_use]
-fn cron_builder_with_day_month_dow_fields(
-    builder: CronBuilder,
-    frequency: AutoUpgradeFrequency,
-    date: DateTime<Tz>,
-) -> CronBuilder {
-    match frequency {
-        AutoUpgradeFrequency::Daily => builder.days("*").months("*").days_of_week("*"),
-        AutoUpgradeFrequency::Weekly => {
-            let days_of_week = date.weekday().number_from_monday().to_string();
-            builder.days("*").months("*").days_of_week(&days_of_week)
-        }
-        AutoUpgradeFrequency::BiWeekly => builder
-            .days(CRON_BIWEEKLY_DAYS)
-            .months("*")
-            .days_of_week("*"),
-        AutoUpgradeFrequency::Monthly => {
-            let day = date.day().to_string();
-            builder.days(&day).months("*").days_of_week("*")
-        }
-    }
-}
-
 #[must_use]
 fn get_date_from_frequency(
     frequency: AutoUpgradeFrequency,
@@ -250,24 +226,42 @@ fn get_date_from_frequency(
         divisor
     })
 }
-
-#[must_use]
-fn cron_builder_with_sec_min_hour_fields(
-    cron_builder: CronBuilder,
+fn frequency_to_partial_cron_pattern(
+    frequency: AutoUpgradeFrequency,
     date: DateTime<Tz>,
-) -> CronBuilder {
-    cron_builder
-        .seconds(&date.second().to_string())
-        .minutes(&date.minute().to_string())
-        .hours(&date.hour().to_string())
+) -> String {
+    match frequency {
+        AutoUpgradeFrequency::Daily => "* * *".to_owned(),
+        AutoUpgradeFrequency::Weekly => {
+            let days_of_week = date.weekday().number_from_monday().to_string();
+            format!("* * {days_of_week}")
+        }
+        AutoUpgradeFrequency::BiWeekly => format!("{CRON_BIWEEKLY_DAYS} * *"),
+        AutoUpgradeFrequency::Monthly => {
+            let day = date.day().to_string();
+            format!("{day} * *")
+        }
+    }
 }
 
+/// Builds a CronBuilder with day, month, and days_of_week fields configured based on frequency
 #[must_use]
-fn create_cron_schedule(frequency: AutoUpgradeFrequency, date: DateTime<Tz>) -> Cron {
-    let cron_builder = cron_builder_with_sec_min_hour_fields(CronBuilder::new(), date);
-    let cron_builder = cron_builder_with_day_month_dow_fields(cron_builder, frequency, date);
+fn build_cron_from_frequency_date(frequency: AutoUpgradeFrequency, date: DateTime<Tz>) -> Cron {
+    let cron_parser = CronParser::builder()
+        .seconds(Seconds::Required)
+        .dom_and_dow(true)
+        .build();
+    let pattern = format!(
+        "{} {} {} {}",
+        date.second(),
+        date.minute(),
+        date.hour(),
+        frequency_to_partial_cron_pattern(frequency, date)
+    );
 
-    cron_builder.build().expect("BUG: Invalid date format")
+    cron_parser
+        .parse(&pattern)
+        .expect("BUG: Invalid cron pattern format")
 }
 
 #[cfg(test)]
@@ -286,19 +280,19 @@ mod test {
             .current_timezone_tz_offset();
         let date: DateTime<Tz> = DateTime::from_naive_utc_and_offset(date, tz_offset);
 
-        let cron = create_cron_schedule(AutoUpgradeFrequency::Daily, date);
+        let cron = build_cron_from_frequency_date(AutoUpgradeFrequency::Daily, date);
         assert_eq!(cron.pattern.as_str(), "5 15 19 * * *");
 
-        let cron = create_cron_schedule(AutoUpgradeFrequency::Weekly, date);
+        let cron = build_cron_from_frequency_date(AutoUpgradeFrequency::Weekly, date);
         assert_eq!(cron.pattern.as_str(), "5 15 19 * * 6");
 
-        let cron = create_cron_schedule(AutoUpgradeFrequency::BiWeekly, date);
+        let cron = build_cron_from_frequency_date(AutoUpgradeFrequency::BiWeekly, date);
         assert_eq!(
             cron.pattern.as_str(),
             format!("5 15 19 {CRON_BIWEEKLY_DAYS} * *").as_str()
         );
 
-        let cron = create_cron_schedule(AutoUpgradeFrequency::Monthly, date);
+        let cron = build_cron_from_frequency_date(AutoUpgradeFrequency::Monthly, date);
         assert_eq!(cron.pattern.as_str(), "5 15 19 3 * *");
     }
 }

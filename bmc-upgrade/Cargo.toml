@@ -14,6 +14,7 @@ bmc-shared-time.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
+croner.workspace = true
 data-encoding.workspace = true
 rand.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }

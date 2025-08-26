@@ -85,7 +85,14 @@ where
 
         let config_handle = Arc::new(RwLock::new(config_handle));
 
-        let scheduler = Arc::new(JobScheduler::init(manager.watch_timezone_updates()).await);
+        let scheduler = Arc::new(
+            JobScheduler::init(
+                manager.timezone().into(),
+                manager.watch_timezone_updates(),
+                None,
+            )
+            .await,
+        );
         let system_upgrade_service = Arc::new(SystemUpgradeService::new(
             firmware_resolver,
             &config.upgrade_image_path,

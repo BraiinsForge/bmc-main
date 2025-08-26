@@ -128,7 +128,7 @@ where
         let response = GetAutoUpgradeResponse {
             enabled: autoupgrade_config.enabled,
             frequency: autoupgrade_config.frequency.into(),
-            cron_string: autoupgrade_config.cron_string,
+            cron_string: autoupgrade_config.cron.to_string(),
         };
 
         Ok(tonic::Response::new(response))
