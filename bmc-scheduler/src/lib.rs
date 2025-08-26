@@ -5,6 +5,6 @@ pub mod jobs;
 pub mod scheduler;
 
 pub use cron::Cron;
-pub use jobs::{Job, JobBuilder, JobContext, JobDetails};
-pub use scheduler::{JobScheduler, JobSchedulerLocked};
+pub use jobs::{BoxedTask, Job, JobBuilder, JobContext, JobDetails};
+pub use scheduler::JobScheduler;
 pub use tokio_cron_scheduler::job::JobId;
