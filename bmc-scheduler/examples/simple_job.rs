@@ -2,42 +2,55 @@
 
 // For more examples see: https://github.com/mvniekerk/tokio-cron-scheduler/blob/main/examples/lib.rs
 
-use bmc_scheduler::JobId;
-use bmc_scheduler::{JobScheduler, JobSchedulerLocked};
+use bmc_scheduler::JobScheduler;
+use bmc_scheduler::scheduler::{JobConfig, Schedule, Task};
 use bmc_shared_time::time::Timezone;
 use croner::Cron;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
-use tokio_cron_scheduler::JobSchedulerError;
+use std::str::FromStr;
 
-fn job_callback(
-    _job_id: JobId,
-    _job_scheduler: JobSchedulerLocked,
-) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+fn job_callback() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
     Box::pin(async move {
         println!("I run async every 1 hour");
     })
 }
 
 #[tokio::main]
-async fn main() -> Result<(), JobSchedulerError> {
-    let job_scheduler = JobSchedulerLocked::new().await?;
+async fn main() -> anyhow::Result<()> {
     let (_, rx) = tokio::sync::watch::channel(Timezone::default());
-    let job_scheduler = JobScheduler::new(job_scheduler, rx);
-    job_scheduler.init().await?;
+    let temp_crontab =
+        tempfile::NamedTempFile::new().expect("BUG: Failed to create temporary crontab file");
+
+    let job_scheduler = JobScheduler::init(rx, Some(PathBuf::from(temp_crontab.path()))).await;
+    let cron = Cron::from_str("0 0 * * * *").expect("BUG: Invalid cron expression");
 
     // Actual job definition
-    let cron = Cron::new("0 0 * * * *")
-        .with_seconds_required()
-        .parse()
-        .unwrap();
-    let timezone = chrono_tz::Europe::Prague;
-    let job_id = job_scheduler
-        .submit_job_simple(cron, timezone, "display".to_owned(), job_callback)
-        .await?;
+    let schedule = Schedule::Cron(cron);
+    let task = Task::Async(Box::new(job_callback));
+    let job_config = JobConfig::new("Test job").persist();
+    let job_id = job_scheduler.schedule(schedule, task, job_config).await?;
+    println!("Job id: {job_id}");
+    let job_details = job_scheduler
+        .job(&job_id)
+        .await?
+        .expect("BUG: job not found");
+    assert_eq!(job_details.source, "Test job");
 
-    let job_details = job_scheduler.get_job(&job_id).await?;
-    println!("Job details: {job_details:?}");
+    // Alternative way to schedule a job
+    let job_id = JobScheduler::new_job()
+        .cron(Cron::from_str("* * * * *").expect("BUG: wrong cron expr"))
+        .source("Test job2")
+        .task(job_callback)
+        .schedule(&job_scheduler)
+        .await?;
+    println!("Job id: {job_id}");
+    let job_details = job_scheduler
+        .job(&job_id)
+        .await?
+        .expect("BUG: job not found");
+    assert_eq!(job_details.source, "Test job2");
 
     Ok(())
 }
