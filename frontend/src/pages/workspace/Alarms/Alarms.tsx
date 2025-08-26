@@ -148,7 +148,7 @@ export class View extends Component<Props, State> {
     #alarmDialogSubmit = async (): Promise<void> => {
         const { notify } = this.context;
         const { formatMessage } = this.props.intl;
-        const { openDialog } = this.state;
+        const { openDialog, alarms } = this.state;
 
         if (openDialog?.key !== 'alarm') {
             notify(
@@ -159,39 +159,68 @@ export class View extends Component<Props, State> {
             );
             return;
         }
+
+        const { editingID } = openDialog;
         const { time, name, repeat, soundId, snoozeEnabled, snoozeDuration, snoozeLimit } = openDialog.data.values;
+        const snoozeOptions = pb.create(pb.SnoozeOptionsWrapperSchema, {
+            kind: snoozeEnabled
+                ? {
+                      case: 'snooze',
+                      value: {
+                          $typeName: 'braiins.bmc.web.SnoozeOptions',
+                          limit: snoozeLimit ?? pb.SnoozeLimit.SNOOZE_LIMIT_FOREVER,
+                          duration: snoozeDuration ?? pb.SnoozeDuration.SNOOZE_DURATION_5_MINUTES,
+                      },
+                  }
+                : {
+                      case: 'off',
+                      value: { $typeName: 'braiins.bmc.web.Off' },
+                  },
+        });
+        const enabled: boolean = alarms.find(x => x.id === editingID)?.enabled ?? false;
 
         try {
             const { signal } = this.abortAddSubmit.replace();
-            await pb.rpc.alarm.addAlarm(
-                pb.create(pb.AddAlarmRequestSchema, {
-                    enabled: true,
-                    time,
-                    name,
-                    repeat,
-                    soundId,
-                    snoozeOptions: pb.create(pb.SnoozeOptionsWrapperSchema, {
-                        kind: snoozeEnabled
-                            ? {
-                                  case: 'snooze',
-                                  value: {
-                                      $typeName: 'braiins.bmc.web.SnoozeOptions',
-                                      limit: snoozeLimit ?? pb.SnoozeLimit.SNOOZE_LIMIT_FOREVER,
-                                      duration: snoozeDuration ?? pb.SnoozeDuration.SNOOZE_DURATION_5_MINUTES,
-                                  },
-                              }
-                            : {
-                                  case: 'off',
-                                  value: { $typeName: 'braiins.bmc.web.Off' },
-                              },
+
+            // Edit
+            if (editingID?.length) {
+                await pb.rpc.alarm.setAlarm(
+                    pb.create(pb.SetAlarmRequestSchema, {
+                        id: editingID,
+                        name,
+                        time,
+                        repeat,
+                        soundId,
+                        enabled,
+                        snoozeOptions,
                     }),
-                }),
-                { signal },
-            );
-            notify('success', formatMessage({ defaultMessage: 'Alarm has been successfully added.' }), {
-                id: 'alarm-add-success',
-                timeoutSeconds: 1.5,
-            });
+                    { signal },
+                );
+                notify('success', formatMessage({ defaultMessage: 'Alarm has been updated' }), {
+                    id: 'alarm-add-success',
+                    timeoutSeconds: 1.5,
+                });
+            }
+
+            // Create
+            else {
+                await pb.rpc.alarm.addAlarm(
+                    pb.create(pb.AddAlarmRequestSchema, {
+                        enabled: true,
+                        time,
+                        name,
+                        repeat,
+                        soundId,
+                        snoozeOptions,
+                    }),
+                    { signal },
+                );
+                notify('success', formatMessage({ defaultMessage: 'Alarm has been added' }), {
+                    id: 'alarm-add-success',
+                    timeoutSeconds: 1.5,
+                });
+            }
+
             this.#alarmDialogClose();
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -301,6 +330,7 @@ export class View extends Component<Props, State> {
                         stretch
                         hideCloseButton
                         children={pb.renderFieldErrorsAsList(data.errors.global)}
+                        style={{ marginBottom: '1rem' }}
                     />
                 ) : null}
 

@@ -144,13 +144,13 @@
       "name": "",
       "time": "08:00:00",
       "repeat": [
+        "Monday",
         "Friday",
+        "Thursday",
         "Sunday",
         "Saturday",
-        "Tuesday",
-        "Monday",
         "Wednesday",
-        "Thursday"
+        "Tuesday"
       ],
       "sound": "TickTockNextBlock",
       "snooze_options": {
@@ -162,11 +162,12 @@
       "id": "f211e435-fa1c-40cf-9a17-e5b820b6b7ca",
       "enabled": true,
       "name": "asdgadfgadf",
-      "time": "08:00:00",
+      "time": "08:01:00",
       "repeat": [
-        "Friday",
-        "Tuesday",
-        "Sunday"
+        "Sunday",
+        "Thursday",
+        "Wednesday",
+        "Saturday"
       ],
       "sound": "TickTockNextBlock",
       "snooze_options": {

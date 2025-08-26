@@ -833,11 +833,11 @@ export class DataTableComponent<ColumnID extends string> extends Component<Props
                 const key = `expandable-row-fragment-${row.id}`;
                 return (
                     <Fragment key={key}>
-                        {/* @ts-expect-error: Expects required aria-label, but it is comming in as optional */}
                         <TableExpandRow
                             {...rowProps}
                             children={resCells}
                             onExpand={() => this.#handleExpandToggle(row.id, !isExpanded)}
+                            // @ts-expect-error: Missing method in typing
                             onClick={() => {
                                 // @ts-expect-error: Missing blur method in DOM api typing
                                 document.activeElement?.blur();
