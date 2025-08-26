@@ -43,14 +43,7 @@ async fn main() -> Result<()> {
 
     let firmware_resolver = FirmwareResolver::new(MockIndex);
 
-    let job_scheduler = bmc_scheduler::JobScheduler::new(
-        bmc_scheduler::JobSchedulerLocked::new().await?,
-        manager.watch_timezone_updates(),
-    );
-    job_scheduler
-        .init()
-        .await
-        .map_err(|_| anyhow::anyhow!("Failed to initialize job scheduler"))?;
+    bmc_scheduler::JobScheduler::init(manager.watch_timezone_updates(), None).await;
 
     let main_join_handle = tokio::task::spawn({
         let display_controller = display_driver.display_controller.clone();

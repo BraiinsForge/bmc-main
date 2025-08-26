@@ -57,14 +57,7 @@ async fn main() -> Result<()> {
     );
     manager.init_wifi_ap().await?; // Has check on factory default already
 
-    let job_scheduler = bmc_scheduler::JobScheduler::new(
-        bmc_scheduler::JobSchedulerLocked::new().await?,
-        manager.watch_timezone_updates(),
-    );
-    job_scheduler
-        .init()
-        .await
-        .map_err(|_| anyhow::anyhow!("Failed to initialize job scheduler"))?;
+    bmc_scheduler::JobScheduler::init(manager.watch_timezone_updates(), None).await;
 
     bmc::entry::main(manager, config, display_driver, firmware_resolver).await?;
 
