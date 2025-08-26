@@ -10,6 +10,7 @@ pub use tokio_cron_scheduler::{Context as JobContext, Job, job::JobBuilder, job:
 // for the task
 pub type BoxedTask = Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
+#[must_use]
 pub fn to_boxed(task: Arc<BoxedTask>) -> BoxedTask {
     Box::new(move || (task)())
 }

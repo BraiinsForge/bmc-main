@@ -55,11 +55,11 @@ impl CronEntry {
                 continue;
             }
             if line.starts_with(PREFIX_SOURCE) {
-                source = line.to_string();
+                line.clone_into(&mut source);
             } else if line.starts_with(PREFIX_COMMENT) {
-                comments.push(line.to_string());
+                comments.push(line.to_owned());
             } else {
-                let cron_job = parse_cron_block(&source, &comments, line.to_string().as_str())?;
+                let cron_job = parse_cron_block(&source, &comments, line.to_owned().as_str())?;
                 cron_jobs.push(cron_job);
                 source.clear();
                 comments.clear();
@@ -69,7 +69,7 @@ impl CronEntry {
         Ok(cron_jobs)
     }
 
-    fn to_lines(&self) -> anyhow::Result<Vec<String>> {
+    fn to_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
 
         if let Some(source) = &self.source {
@@ -80,7 +80,7 @@ impl CronEntry {
         if let Some(comment) = &self.comment {
             for comment_line in comment.lines() {
                 if !comment_line.trim().is_empty() {
-                    lines.push(comment_line.to_string());
+                    lines.push(comment_line.to_owned());
                 }
             }
         }
@@ -89,14 +89,13 @@ impl CronEntry {
         let schedule_str = self.schedule.pattern.to_string();
         lines.push(format!("{} {}", schedule_str, self.command));
 
-        Ok(lines)
+        lines
     }
 
     /// Serialize a vector of CronJob back to a crontab-formatted string
+    #[must_use]
     pub fn to_crontab_string(&self) -> String {
-        let mut result = Vec::new();
-        result.push(self.to_lines().unwrap().join("\n"));
-
+        let result = [self.to_lines().join("\n")];
         result.join("\n")
     }
 }
@@ -134,7 +133,7 @@ fn is_cron_field(field: &str) -> bool {
 // Used to parse a single cron line and any optional comments
 fn parse_cron_block(
     source: &str,
-    comment: &Vec<String>,
+    comment: &[String],
     cron_line: &str,
 ) -> anyhow::Result<CronEntry> {
     let source_parts = source.splitn(2, ' ').collect::<Vec<&str>>();
@@ -157,7 +156,7 @@ fn parse_cron_block(
     let command = parts[command_start_idx..].join(" ");
 
     let source = if let Some(source) = source_parts.get(1) {
-        source.to_string().into()
+        (*source).to_owned().into()
     } else {
         None
     };
@@ -180,8 +179,8 @@ fn parse_cron_block(
     Ok(CronEntry {
         source,
         comment,
-        command,
         schedule,
+        command,
     })
 }
 
@@ -202,6 +201,7 @@ impl Default for Crontab {
 }
 
 impl Crontab {
+    #[must_use]
     pub fn new(path: Option<PathBuf>) -> Self {
         let path = path.unwrap_or(
             PathBuf::from_str(CRON_DEFAULT_PATH)
@@ -239,8 +239,9 @@ impl Crontab {
         self.entries.push(entry.clone());
 
         // Append to file
-        let entry_lines = entry.to_lines()?;
-        let entry_string = entry_lines.join("\n") + "\n";
+        let entry_lines = entry.to_lines();
+        let mut entry_string = entry_lines.join("\n");
+        entry_string.push('\n');
 
         tokio::fs::OpenOptions::new()
             .create(true)
@@ -284,7 +285,7 @@ impl Crontab {
 
     /// Remove entries by source name
     pub async fn remove_by_source(&mut self, source: &str) -> anyhow::Result<usize> {
-        self.remove_entries(|entry| entry.source.as_ref().map_or(false, |s| s == source))
+        self.remove_entries(|entry| entry.source.as_ref().is_some_and(|s| s == source))
             .await
     }
 
@@ -341,6 +342,7 @@ impl Crontab {
     }
 
     /// Returns Vec of Cron entries which don't run the default dummy command
+    #[must_use]
     pub fn get_commands(&self) -> Vec<&CronEntry> {
         self.entries
             .iter()
@@ -365,14 +367,14 @@ impl Crontab {
         let buf_reader = BufReader::new(stream);
         let lines_stream = tokio_stream::wrappers::LinesStream::new(buf_reader.lines());
 
-        lines_stream.filter_map(|line_result| line_result.ok())
+        lines_stream.filter_map(std::result::Result::ok)
     }
 }
 
 mod tests {
     #[test]
     fn test_cron_job_parse() {
-        let crontab = r##"### Source
+        let crontab = r"### Source
             # Auxiliary job to run every 5 minutes with no seconds
             # With multiple lines of comments
             * * * * * /path/to/script
@@ -383,10 +385,10 @@ mod tests {
             # comment and no source
             * * * * * * /path/to/script3
             * * * * * * /path/to/script4
-            * * * * * /path/to/script5 --arg1 --arg2"##;
+            * * * * * /path/to/script5 --arg1 --arg2";
 
         let cron_jobs =
-            crate::cron::CronEntry::from_lines(crontab.lines().map(|s| s.to_string()).collect())
+            crate::cron::CronEntry::from_lines(crontab.lines().map(ToOwned::to_owned).collect())
                 .expect("BUG: Failed to parse crontab");
         assert_eq!(cron_jobs.len(), 5);
         assert_eq!(
@@ -401,7 +403,7 @@ mod tests {
             cron_jobs[1].schedule.clone().pattern.to_string().as_str(),
             "5 * * * * *"
         );
-        assert_eq!(cron_jobs[1].source.clone().is_none(), true);
+        assert!(cron_jobs[1].source.clone().is_none());
         assert_eq!(
             cron_jobs[1].schedule.clone().pattern.to_string().as_str(),
             "5 * * * * *"
@@ -409,7 +411,7 @@ mod tests {
 
         let trimmed_crontab = crontab
             .lines()
-            .map(|s| s.trim())
+            .map(str::trim)
             .collect::<Vec<&str>>()
             .join("\n");
 
