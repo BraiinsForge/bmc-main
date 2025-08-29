@@ -47,6 +47,9 @@ export struct WidgetBraiinsPoolData {
     workers-graph: image,
     worker-status: PoolWorkerStatus,
     pool-payouts: [BraiinsPoolPayouts],
+    next-payout-estimate: string,
+    last-payout: string,
+    progress: percent,
     chart-overview-full: image,
     chart-overview-large: image,
     hashrate-units: [string],
@@ -237,7 +240,7 @@ component payout-box inherits VerticalLayout {
     HorizontalLayout {
         alignment: start;
         Text {
-            text: "Next Payout In ~ ";
+            text: "Next Payout In ~";
             font-size: 24px;
             font-weight: Theme.font.weight.regular;
             color: Palette.gray-40;
@@ -404,11 +407,13 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
             bordered-box {
                 height: 163px;
                 payout-box {
-                    progress: 80%;
                     padding-left: 24px;
                     padding-right: 24px;
                     padding-top: 16px;
                     padding-bottom: 16px;
+                    next-payout: data.next-payout-estimate;
+                    last-payout: data.last-payout;
+                    progress: data.progress;
                 }
             }
             bordered-box {
@@ -479,11 +484,13 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
         bordered-box {
             height: 120px;
             payout-box {
-                progress: 80%;
                 padding-left: 24px;
                 padding-right: 24px;
                 padding-top: 16px;
                 padding-bottom: 16px;
+                next-payout: data.next-payout-estimate;
+                last-payout: data.last-payout;
+                progress: data.progress;
             }
         }
         HorizontalLayout {

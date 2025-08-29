@@ -8,8 +8,8 @@ use bmc_display::data::{
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_display::pool_data::{
-    self, CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, UserHashrateHistory,
-    UserWorkerHistory,
+    self, CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, RecentUserPayouts,
+    UserFinancials, UserHashrateHistory, UserWorkerHistory,
 };
 use bmc_shared_time::time::Timezone;
 use chrono::SubsecRound;
@@ -276,6 +276,10 @@ impl WidgetTasks {
                 WidgetSize::Full | WidgetSize::Large | WidgetSize::Medium
             ) | (PoolStyle::Overview, WidgetSize::Full)
         );
+        let download_payout_stats = matches!(
+            (pool_style, widget_size),
+            (PoolStyle::Overview, WidgetSize::Full | WidgetSize::Large)
+        );
 
         async move {
             let mut interval = interval(Duration::from_secs(60));
@@ -436,6 +440,50 @@ impl WidgetTasks {
                         scene_id.clone(),
                         widget_id.clone(),
                         worker_history,
+                    );
+                }
+
+                if download_payout_stats {
+                    debug!("Getting user financials data...");
+                    let user_financials = if let Ok(response) = client
+                        .get(format!(
+                            "{}{}",
+                            pool_data::POOL_API_URL,
+                            pool_data::USER_FINANCIALS
+                        ))
+                        .timeout(API_TIMEOUT)
+                        .send()
+                        .await
+                    {
+                        response.json::<UserFinancials>().await.unwrap_or_default()
+                    } else {
+                        warn!("Failed to get user financials data from API");
+                        UserFinancials::default()
+                    };
+                    debug!("Getting user recent payouts data...");
+                    let recent_payouts = if let Ok(response) = client
+                        .get(format!(
+                            "{}{}",
+                            pool_data::POOL_API_URL,
+                            pool_data::USER_PAYOUTS_RECENT
+                        ))
+                        .timeout(API_TIMEOUT)
+                        .send()
+                        .await
+                    {
+                        response
+                            .json::<RecentUserPayouts>()
+                            .await
+                            .unwrap_or_default()
+                    } else {
+                        warn!("Failed to get user recent payouts data from API");
+                        RecentUserPayouts::default()
+                    };
+                    display_controller.update_payout_stats(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        user_financials,
+                        recent_payouts,
                     );
                 }
             }

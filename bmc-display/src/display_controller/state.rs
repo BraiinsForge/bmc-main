@@ -16,13 +16,13 @@ use crate::generated::{
 };
 use crate::indexmap_model::IndexMapModel;
 use crate::pool_data::{
-    CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, UserHashrateHistory,
-    UserWorkerHistory,
+    CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, RecentUserPayouts,
+    UserFinancials, UserHashrateHistory, UserWorkerHistory,
 };
 use crate::utils;
 use bmc_shared_time::time::{DateFormat, Timezone};
 use bmc_shared_utils::number_format::NumberFormat;
-use chrono::{Datelike, Timelike};
+use chrono::{Datelike, Timelike, Utc};
 use indexmap::IndexMap;
 use slint::{FilterModel, Global, Model, ModelRc, VecModel};
 use std::any::type_name;
@@ -467,6 +467,39 @@ impl DisplayController {
                         }
                         (BraiinsPoolStyle::Overview, _) => {}
                         (BraiinsPoolStyle::BigChart, _) => {}
+                    }
+                });
+            }
+        });
+    }
+
+    pub fn update_payout_stats(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        user_financials: UserFinancials,
+        recent_payouts: RecentUserPayouts,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    widget.braiins_pool.next_payout_estimate =
+                        user_financials.next_payout_estimate_to_shared();
+                    widget.braiins_pool.last_payout = recent_payouts.last_payout_to_shared();
+                    if let (Some(next_payout_estimate), Some(last_payout)) = (
+                        user_financials.next_payout_estimate(),
+                        recent_payouts.last_payout_datetime(),
+                    ) {
+                        let now = Utc::now();
+                        let base = (next_payout_estimate - last_payout).abs().num_seconds();
+                        let until_now = (now - last_payout).abs().num_seconds();
+                        let fraction = 100 * until_now / base;
+                        widget.braiins_pool.progress = fraction as f32;
                     }
                 });
             }

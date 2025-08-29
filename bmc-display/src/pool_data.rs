@@ -2,6 +2,7 @@
 
 use crate::generated::{MainWindow, Palette, PoolWorkerStatus};
 use crate::graph_utils::{self, ColorPalette};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use slint::{Global, Image, SharedString};
 use svg::Document;
@@ -12,6 +13,8 @@ pub const USER_REWARD_LATEST: &str = "/user/rewards/latest";
 pub const USER_WORKERS_CURRENT: &str = "/user/workers/current";
 pub const USER_HASHRATE_HISTORY: &str = "/user/hashrate/history";
 pub const USER_WORKERS_HISTORY: &str = "/user/workers/history";
+pub const USER_FINANCIALS: &str = "/user/financials";
+pub const USER_PAYOUTS_RECENT: &str = "/user/payouts/recent";
 pub const FROM_TIMESTAMP: &str = "from_timestamp";
 pub const TO_TIMESTAMP: &str = "to_timestamp";
 
@@ -160,6 +163,54 @@ impl CurrentUserWorkerStats {
 }
 
 #[derive(Debug, Default, Deserialize)]
+struct FinancialAccount {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_payout_at_estimate: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct UserFinancials {
+    financial_accounts: Vec<FinancialAccount>,
+}
+
+impl UserFinancials {
+    #[must_use]
+    pub fn next_payout_estimate_to_shared(&self) -> SharedString {
+        let now = Utc::now();
+        let next_payout = self
+            .financial_accounts
+            .iter()
+            .filter_map(|account| account.next_payout_at_estimate)
+            .map(|dt| (now - dt).abs().num_minutes())
+            .min();
+
+        next_payout
+            .map(|estimate| {
+                if estimate > 60 {
+                    let hours = estimate.div_euclid(60);
+                    format!(" {} {}", hours, if hours == 1 { "Hour" } else { "Hours" })
+                } else {
+                    format!(
+                        " {} {}",
+                        estimate,
+                        if estimate == 1 { "Minute" } else { "Minutes" }
+                    )
+                }
+            })
+            .map_or(SharedString::default(), SharedString::from)
+    }
+
+    #[must_use]
+    pub fn next_payout_estimate(&self) -> Option<DateTime<Utc>> {
+        let now = Utc::now();
+        self.financial_accounts
+            .iter()
+            .filter_map(|account| account.next_payout_at_estimate)
+            .min_by_key(|dt| (now - dt).abs().num_milliseconds())
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
 pub struct LatestUserRewards {
     todays_reward_estimate_btc: f32,
     todays_reward_estimate_usd: f32,
@@ -174,5 +225,59 @@ impl LatestUserRewards {
     #[must_use]
     pub fn today_reward_usd(&self) -> SharedString {
         SharedString::from(format!("~ {:.1} USD", self.todays_reward_estimate_usd))
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum PayoutType {
+    #[default]
+    Onchain,
+    Lightning,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum PayoutStatus {
+    #[default]
+    Pending,
+    Failed,
+    Completed,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Payout {
+    occurred_at: DateTime<Utc>,
+    amount_btc: f32,
+    r#type: PayoutType,
+    status: PayoutStatus,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RecentUserPayouts {
+    payouts: Vec<Payout>,
+}
+
+impl RecentUserPayouts {
+    #[must_use]
+    pub fn last_payout_to_shared(&self) -> SharedString {
+        let now = Utc::now();
+        self.payouts
+            .iter()
+            .filter(|payout| payout.status == PayoutStatus::Completed)
+            .min_by_key(|payout| (now - payout.occurred_at).abs().num_seconds())
+            .map_or(SharedString::default(), |payout| {
+                SharedString::from(format!("{:.6} BTC", payout.amount_btc))
+            })
+    }
+
+    #[must_use]
+    pub fn last_payout_datetime(&self) -> Option<DateTime<Utc>> {
+        let now = Utc::now();
+        self.payouts
+            .iter()
+            .filter(|payout| payout.status == PayoutStatus::Completed)
+            .min_by_key(|payout| (now - payout.occurred_at).abs().num_seconds())
+            .map(|payout| payout.occurred_at)
     }
 }
