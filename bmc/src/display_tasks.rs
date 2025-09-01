@@ -76,12 +76,6 @@ impl<T: BmcManager> DisplayTasks<T> {
 
         tokio::spawn(Self::run_timezone_listener(timezone_receiver));
 
-        tokio::spawn(Self::run_date_time_update(
-            display_controller.clone(),
-            config_handle.clone(),
-            manager.clone(),
-        ));
-
         tokio::spawn(Self::run_price_update(display_controller.clone()));
 
         tokio::spawn(Self::run_blockheight_update(
@@ -134,32 +128,6 @@ impl<T: BmcManager> DisplayTasks<T> {
         while let Ok(()) = receiver.changed().await {
             let timezone = receiver.borrow_and_update();
             info!(?timezone, "Timezone was changed");
-        }
-    }
-
-    async fn run_date_time_update(
-        display_controller: DisplayController,
-        config_handle: Arc<RwLock<ConfigHandle>>,
-        manager: Arc<T>,
-    ) {
-        let mut interval = interval(Duration::from_millis(250));
-
-        loop {
-            interval.tick().await;
-
-            let timezone = manager.timezone();
-            let now = chrono::Local::now()
-                .with_timezone(timezone.chrono())
-                .fixed_offset();
-
-            let is_24_format = config_handle
-                .read()
-                .await
-                .localization_config()
-                .time_system
-                .is_24();
-
-            display_controller.update_system_datetime(now, timezone.to_string(), is_24_format);
         }
     }
 

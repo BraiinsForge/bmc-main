@@ -29,7 +29,6 @@ export component MainWindow inherits Window {
     height: 480px;
 
     in property <UIScreen> screen-id <=> ScreenAdapter.screen-id;
-    in property <DateTime> system-datetime;
     in property <bool> night-mode-enabled;
 
     // all (enabled & disabled) scenes
@@ -60,65 +59,6 @@ export component MainWindow inherits Window {
     if preview-scene-index >= 0: ScenePreview {
         z: 0.1;
         scene: root.scenes[root.preview-scene-index];
-    }
-
-    // Status Bar
-    Rectangle {
-        width: parent.width;
-        height: 40px;
-        x: 0px;
-        y: 0px;
-        z: 0.2;
-        border-width: 2px;
-        border-color: red;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-
-        HorizontalLayout {
-            spacing: 10px;
-            alignment: end;
-            padding-right: 10px;
-
-            HorizontalLayout {
-                spacing: 5px;
-
-                Text {
-                    text: root.system-datetime.date;
-                    font-size: 16px;
-                    color: Palette.gray-50;
-                    vertical-alignment: center;
-                }
-
-                Text {
-                    text: root.system-datetime.is-24-format ? root.system-datetime.time-sec-24 : root.system-datetime.time-sec-12;
-                    font-size: 16px;
-                    color: Palette.white;
-                    vertical-alignment: center;
-                }
-
-                if !root.system-datetime.is-24-format: Text {
-                    text: root.system-datetime.is-pm ? "PM" : "AM";
-                    font-size: 16px;
-                    color: Palette.white;
-                    vertical-alignment: center;
-                }
-
-                Text {
-                    text: root.system-datetime.timezone;
-                    font-size: 16px;
-                    color: Palette.gray-50;
-                    vertical-alignment: center;
-                }
-            }
-
-            Text {
-                text: "Wifi: Offline";
-                font-size: 16px;
-                color: Palette.red-50;
-                vertical-alignment: center;
-            }
-        }
     }
 
     // Overlay screens

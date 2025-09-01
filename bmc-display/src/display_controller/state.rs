@@ -187,17 +187,6 @@ impl DisplayController {
         });
     }
 
-    pub fn update_system_datetime(
-        &self,
-        datetime: chrono::DateTime<chrono::FixedOffset>,
-        timezone: String,
-        is_24_format: bool,
-    ) {
-        self.in_event_loop(move |main_window| {
-            main_window.set_system_datetime(to_datetime(datetime, timezone, is_24_format));
-        });
-    }
-
     pub fn update_clock_widget(
         &self,
         scene_id: SceneId,
