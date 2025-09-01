@@ -22,11 +22,11 @@ include:
       - ".dependencies.yml"
       - ".check.yml"
 
-verify-tooling-crates:
+verify-shared-crates:
   extends: .nix
   stage: essentials
   script:
-    - nix develop .#fast --command ./scripts/verify_crate_hash.sh tooling
+    - nix-shell -p jq getopt --run "./scripts/verify_crates.sh --summary"
 
 ############################
 ######## Apps Stage ########

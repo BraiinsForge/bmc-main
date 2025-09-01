@@ -53,6 +53,8 @@
           # Frontend specifies it's own formatting rules
           config.exclude = [
             "frontend/*"
+            # Markdown Files can be distorted when formatted
+            "docs/*"
           ];
         };
 
