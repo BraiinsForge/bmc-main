@@ -143,6 +143,22 @@ impl Manager {
             .await
             .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))
     }
+
+    async fn disable_captive_portal(&self) -> Result<(), InitialSetupError> {
+        debug!("Disabling captive portal configuration");
+        call_command(
+            "sh",
+            &[
+                "-c",
+                ". /lib/functions/bos-factory-default.sh && disable_captive_portal && /etc/init.d/dnsmasq restart",
+            ],
+        )
+        .await
+        .map_err(|e| InitialSetupError::UnexpectedFailure(format!("Failed to remove captive portal configuration: {e}")))?;
+
+        debug!("Captive portal configuration disabled");
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -393,6 +409,9 @@ impl BmcManager for Manager {
             .await
             .map_err(|e| InitialSetupError::WifiConnectionFailure(e.to_string()))?;
         debug!("Connection to wifi finished successfully");
+
+        self.disable_captive_portal().await?;
+
         self.update_device_state()
             .await
             .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))
