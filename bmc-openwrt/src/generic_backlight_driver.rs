@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use anyhow::bail;
 use bmc_display::display_driver::DisplayBacklightDriver;
@@ -17,8 +17,7 @@ const CMD_OFF: &str = "4";
 #[derive(Debug, Clone)]
 pub struct GenericBacklightDriver {
     name: String,
-    // FIXME:
-    _driver_path: PathBuf,
+    driver_path: PathBuf,
     max_brightness: u8,
 }
 
@@ -27,21 +26,16 @@ impl GenericBacklightDriver {
     pub fn new(driver_path: &str) -> Self {
         GenericBacklightDriver {
             name: "Generic LCD backlight driver".to_owned(),
-            // FIXME:
-            _driver_path: PathBuf::from(driver_path),
+            driver_path: PathBuf::from(driver_path),
             max_brightness: 0,
         }
     }
 }
 
 impl GenericBacklightDriver {
-    // FIXME:
-    #[expect(clippy::unused_self, clippy::unnecessary_wraps)]
-    fn read_value_from_fs(&self, _file_name: &str) -> Result<String, Error> {
-        // FIXME:
-        // fs::read(self.driver_path.join(file_name))
-        //     .map(|val| String::from_utf8_lossy(&val).trim().to_owned())
-        Ok(0.to_string())
+    fn read_value_from_fs(&self, file_name: &str) -> Result<String, Error> {
+        fs::read(self.driver_path.join(file_name))
+            .map(|val| String::from_utf8_lossy(&val).trim().to_owned())
     }
 }
 
@@ -53,10 +47,9 @@ impl DisplayBacklightDriver for GenericBacklightDriver {
             if enabled { "on" } else { "off" }
         );
 
-        // FIXME:
-        // let cmd = if enabled { CMD_ON } else { CMD_OFF };
-        //
-        // fs::write(self.driver_path.join(BL_POWER), cmd)?;
+        let cmd = if enabled { CMD_ON } else { CMD_OFF };
+
+        fs::write(self.driver_path.join(BL_POWER), cmd)?;
         Ok(())
     }
 
@@ -91,15 +84,14 @@ impl DisplayBacklightDriver for GenericBacklightDriver {
         }
 
         info!("{}: Setting display brightness {}", self.name, value);
-        // FIXME:
-        // fs::write(self.driver_path.join(BRIGHTNESS), value.to_string())?;
+
+        fs::write(self.driver_path.join(BRIGHTNESS), value.to_string())?;
         Ok(())
     }
 
     fn init(&mut self) -> anyhow::Result<()> {
-        // FIXME:
-        // let max_brightness = self.read_value_from_fs(MAX_BRIGHTNESS)?;
-        // self.max_brightness = max_brightness.parse::<u8>()?;
+        let max_brightness = self.read_value_from_fs(MAX_BRIGHTNESS)?;
+        self.max_brightness = max_brightness.parse::<u8>()?;
         Ok(())
     }
 }
