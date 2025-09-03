@@ -2,6 +2,7 @@
 
 use crate::generated::{MainWindow, Palette, PoolWorkerStatus};
 use crate::graph_utils::{self, ColorPalette};
+use bmc_shared_time::time::{DateFormat, Timezone};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use slint::{Global, Image, ModelRc, SharedString, VecModel};
@@ -15,8 +16,14 @@ pub const USER_HASHRATE_HISTORY: &str = "/user/hashrate/history";
 pub const USER_WORKERS_HISTORY: &str = "/user/workers/history";
 pub const USER_FINANCIALS: &str = "/user/financials";
 pub const USER_PAYOUTS_RECENT: &str = "/user/payouts/recent";
+
 pub const FROM_TIMESTAMP: &str = "from_timestamp";
 pub const TO_TIMESTAMP: &str = "to_timestamp";
+pub const PAGE_LIMIT: &str = "page_limit";
+pub const PAGE_LIMIT_MAX: i32 = 1000;
+
+const FORMAT_24H: &str = "%H:%M";
+const FORMAT_12H: &str = "%I:%M %p";
 
 #[derive(Debug, Default, Deserialize)]
 pub struct CurrentUserHashrate {
@@ -37,6 +44,10 @@ struct HashrateSlot {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct UserHashrateHistory {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_timestamp: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to_timestamp: Option<DateTime<Utc>>,
     slots: Vec<HashrateSlot>,
 }
 
@@ -92,6 +103,54 @@ impl UserHashrateHistory {
             [max, 2.0 * max / 3.0, max / 3.0, 0.0]
                 .iter()
                 .map(|unit| SharedString::from(format!("{unit:.1}")))
+                .collect::<Vec<SharedString>>(),
+        ))
+    }
+
+    #[must_use]
+    pub fn timestamps(
+        self,
+        system_timezone: Timezone,
+        is_24_format: bool,
+        date_format: DateFormat,
+    ) -> ModelRc<SharedString> {
+        let Some(from_timestamp) = self.from_timestamp else {
+            return ModelRc::default();
+        };
+        let Some(to_timestamp) = self.to_timestamp else {
+            return ModelRc::default();
+        };
+        let from_timestamp = from_timestamp.with_timezone(system_timezone.chrono());
+        let to_timestamp = to_timestamp.with_timezone(system_timezone.chrono());
+        let time_interval = to_timestamp - from_timestamp;
+
+        let num_days = time_interval.num_days();
+        let (count, str_format) = if num_days > 1 {
+            let display_format = match date_format {
+                DateFormat::DdMmYyyyDot => "%d.%m",
+                DateFormat::DdMmYyyyDash => "%d-%m",
+                DateFormat::DMYyyySlash => "%-d/%-m",
+                DateFormat::DdMmYyyySlash => "%d/%m",
+                DateFormat::MDYyyySlash | DateFormat::YyyyMDSlash => "%-m/%-d",
+                DateFormat::YyyyMmDdDot => "%m.%d",
+                DateFormat::YyyyMmDdDash => "%m-%d",
+            };
+            (1 + num_days as i32, display_format)
+        } else {
+            (5, if is_24_format { FORMAT_24H } else { FORMAT_12H })
+        };
+        let time_increment = time_interval / (count - 1);
+
+        let mut timestamps = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            timestamps.push(from_timestamp + time_increment * i);
+        }
+
+        ModelRc::new(VecModel::from_iter(
+            timestamps
+                .iter()
+                .map(|timestamp| timestamp.format(str_format).to_string())
+                .map(SharedString::from)
                 .collect::<Vec<SharedString>>(),
         ))
     }

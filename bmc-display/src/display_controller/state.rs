@@ -377,6 +377,9 @@ impl DisplayController {
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
+        system_timezone: Timezone,
+        is_24_format: bool,
+        date_format: DateFormat,
         hashrate_history: UserHashrateHistory,
     ) {
         self.in_event_loop(move |main_window| {
@@ -406,7 +409,29 @@ impl DisplayController {
                             widget.braiins_pool.chart_overview_full = hashrate_history
                                 .into_graph_image(&main_window, width, height, true);
                         }
-                        (_, _) => {}
+                        // Other Overview sizes do not have graphs
+                        (BraiinsPoolStyle::Overview, _) => {}
+                        (BraiinsPoolStyle::BigChart, WidgetSize::Small) => {
+                            widget.braiins_pool.chart_bigchart_small = hashrate_history
+                                .into_graph_image(&main_window, width, height, false);
+                        }
+                        (BraiinsPoolStyle::BigChart, WidgetSize::Medium) => {
+                            widget.braiins_pool.chart_bigchart_medium = hashrate_history
+                                .into_graph_image(&main_window, width, height, true);
+                        }
+                        (BraiinsPoolStyle::BigChart, WidgetSize::Large) => {
+                            widget.braiins_pool.chart_bigchart_large = hashrate_history
+                                .into_graph_image(&main_window, width, height, true);
+                        }
+                        (BraiinsPoolStyle::BigChart, WidgetSize::Full) => {
+                            widget.braiins_pool.chart_bigchart_full = hashrate_history
+                                .into_graph_image(&main_window, width, height, true);
+                            widget.braiins_pool.timestamps = hashrate_history.timestamps(
+                                system_timezone,
+                                is_24_format,
+                                date_format,
+                            );
+                        }
                     }
                 });
             }
@@ -469,8 +494,43 @@ impl DisplayController {
                                     original_image,
                                 );
                         }
+                        // Other Overview sizes do not have graphs
                         (BraiinsPoolStyle::Overview, _) => {}
-                        (BraiinsPoolStyle::BigChart, _) => {}
+                        (BraiinsPoolStyle::BigChart, WidgetSize::Medium) => {
+                            let original_image = &widget.braiins_pool.chart_bigchart_medium;
+                            widget.braiins_pool.chart_bigchart_medium = worker_history
+                                .into_graph_image(
+                                    &main_window,
+                                    width,
+                                    height,
+                                    true,
+                                    original_image,
+                                );
+                        }
+                        (BraiinsPoolStyle::BigChart, WidgetSize::Large) => {
+                            let original_image = &widget.braiins_pool.chart_bigchart_large;
+                            widget.braiins_pool.chart_bigchart_large = worker_history
+                                .into_graph_image(
+                                    &main_window,
+                                    width,
+                                    height,
+                                    true,
+                                    original_image,
+                                );
+                        }
+                        (BraiinsPoolStyle::BigChart, WidgetSize::Full) => {
+                            let original_image = &widget.braiins_pool.chart_bigchart_full;
+                            widget.braiins_pool.chart_bigchart_full = worker_history
+                                .into_graph_image(
+                                    &main_window,
+                                    width,
+                                    height,
+                                    true,
+                                    original_image,
+                                );
+                        }
+                        // Big Chart Small widget does not display workers history graph
+                        (BraiinsPoolStyle::BigChart, WidgetSize::Small) => {}
                     }
                 });
             }

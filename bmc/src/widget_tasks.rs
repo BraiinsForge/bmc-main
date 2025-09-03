@@ -98,6 +98,7 @@ impl WidgetTasks {
                 scene_id.clone(),
                 widget.id.clone(),
                 &widget.size,
+                self.config_handle.clone(),
                 &pool_widget.pool_style,
                 pool_widget.chart_frame.clone(),
             ))),
@@ -246,10 +247,12 @@ impl WidgetTasks {
         scene_id: SceneId,
         widget_id: WidgetId,
         widget_size: &WidgetSize,
+        config_handle: Arc<RwLock<ConfigHandle>>,
         pool_style: &PoolStyle,
         chart_frame: PoolChartFrame,
     ) -> impl Future<Output = ()> + Send + 'static {
         let display_controller = self.display_controller.clone();
+        let mut system_timezone_receiver = self.system_timezone_receiver.clone();
 
         let download_rewards = matches!(
             (pool_style, widget_size),
@@ -359,6 +362,7 @@ impl WidgetTasks {
                         ))
                         .query(&[(pool_data::FROM_TIMESTAMP, &from_timestamp)])
                         .query(&[(pool_data::TO_TIMESTAMP, &to_timestamp)])
+                        .query(&[(pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX)])
                         .timeout(API_TIMEOUT)
                         .send()
                         .await
@@ -371,9 +375,20 @@ impl WidgetTasks {
                         warn!("Failed to get user hashrate history data from API");
                         UserHashrateHistory::default()
                     };
+                    let system_timezone = system_timezone_receiver.borrow_and_update().clone();
+                    let is_24_format = config_handle
+                        .read()
+                        .await
+                        .localization_config()
+                        .time_system
+                        .is_24();
+                    let date_format = config_handle.read().await.localization_config().date_format;
                     display_controller.update_hashrate_history(
                         scene_id.clone(),
                         widget_id.clone(),
+                        system_timezone,
+                        is_24_format,
+                        date_format,
                         hashrate_history,
                     );
                 }
@@ -424,6 +439,7 @@ impl WidgetTasks {
                         ))
                         .query(&[(pool_data::FROM_TIMESTAMP, &from_timestamp)])
                         .query(&[(pool_data::TO_TIMESTAMP, &to_timestamp)])
+                        .query(&[(pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX)])
                         .timeout(API_TIMEOUT)
                         .send()
                         .await
@@ -467,6 +483,7 @@ impl WidgetTasks {
                             pool_data::POOL_API_URL,
                             pool_data::USER_PAYOUTS_RECENT
                         ))
+                        .query(&[(pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX)])
                         .timeout(API_TIMEOUT)
                         .send()
                         .await
