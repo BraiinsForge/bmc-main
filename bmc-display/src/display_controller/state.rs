@@ -392,6 +392,13 @@ impl DisplayController {
             main_window.set_system_datetime(to_datetime(datetime, timezone, is_24_format));
         });
     }
+
+    pub fn set_is_wifi_offline(&self, is_offline: bool) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let adapter = generated::StatusOverlayAdapter::get(&main_window);
+            adapter.set_is_wifi_offline(is_offline);
+        });
+    }
 }
 
 #[allow(unused, clippy::allow_attributes)]

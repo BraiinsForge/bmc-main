@@ -10,6 +10,7 @@ use bmc_display::bitcoin_data::BitcoinData;
 use bmc_display::blockheight_data::BlockheightData;
 use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
+use bmc_shared_ii_net::wifi::SignalStrength;
 use bmc_shared_time::time::Timezone;
 use futures::StreamExt;
 use reqwest::Client;
@@ -86,6 +87,11 @@ impl<T: BmcManager> DisplayTasks<T> {
         ));
 
         tokio::spawn(Self::run_timezone_listener(timezone_receiver));
+
+        tokio::spawn(Self::run_wifi_offline_check(
+            display_controller.clone(),
+            manager.clone(),
+        ));
 
         tokio::spawn(Self::run_price_update(display_controller.clone()));
 
@@ -176,6 +182,32 @@ impl<T: BmcManager> DisplayTasks<T> {
         while let Ok(()) = receiver.changed().await {
             let timezone = receiver.borrow_and_update();
             info!(?timezone, "Timezone was changed");
+        }
+    }
+
+    async fn run_wifi_offline_check(display_controller: DisplayController, manager: Arc<T>) {
+        let mut interval = interval(Duration::from_secs(5));
+
+        loop {
+            interval.tick().await;
+
+            let is_offline = match manager.wifi_status().await {
+                Ok(wifi) => {
+                    let signal_strength = wifi
+                        .status
+                        .sta_link_state
+                        .unwrap_or_default()
+                        .signal_strength();
+
+                    signal_strength == SignalStrength::Offline
+                }
+                Err(err) => {
+                    warn!(?err, "Failed to retrieve wifi status");
+                    true
+                }
+            };
+
+            display_controller.set_is_wifi_offline(is_offline);
         }
     }
 

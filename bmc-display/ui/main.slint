@@ -1,6 +1,6 @@
 import { Palette } from "style/palette.slint";
 import { Theme } from "style/theme.slint";
-import { ScreenAdapter, UpgradeDownloadAdapter, NotificationAdapter, BitcoinAdapter, BlockHeightAdapter } from "controls/adapters.slint";
+import { ScreenAdapter, StatusOverlayAdapter, UpgradeDownloadAdapter, NotificationAdapter, BitcoinAdapter, BlockHeightAdapter } from "controls/adapters.slint";
 import { UIScreen, DateTime } from "controls/common.slint";
 import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
     InitStartConnect, InitWifiConnectProgress, InitWifiConnectSuccess, InitWifiConnectFailed, InitSetupSuccess, InitGeneralError, InitDeviceSetupQr, ConnectInfo,
@@ -16,8 +16,9 @@ import { Backend } from "backend.slint";
 import { Notification } from "components/notification.slint";
 import { Images } from "style/images.slint";
 import { WifiAdapter, ConnectionAdapter, AlarmAdapter } from "controls/adapters.slint";
+import { StatusOverlay } from "controls/status-overlay.slint";
 
-export { ScreenAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, UIScreen, DateTime, NotificationAdapter, BitcoinAdapter, BlockHeightAdapter }
+export { ScreenAdapter, StatusOverlayAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, UIScreen, DateTime, NotificationAdapter, BitcoinAdapter, BlockHeightAdapter }
 export { WidgetSize, WidgetKind, Widget }
 export { Backend }
 export { Palette, BaseDimensions }
@@ -58,6 +59,10 @@ export component MainWindow inherits Window {
     if preview-scene-index >= 0: ScenePreview {
         z: 0.1;
         scene: root.scenes[root.preview-scene-index];
+    }
+
+    StatusOverlay {
+        z: 0.2;
     }
 
     // Overlay screens
@@ -165,7 +170,7 @@ export component MainWindow inherits Window {
     WifiConnectProgress {
         z: 0.3;
         visible: root.screen_id == UIScreen.WifiConnectProgress;
-        
+
         // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
         TouchArea { }
     }

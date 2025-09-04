@@ -10,6 +10,11 @@ export global ScreenAdapter {
     in property <UIScreen> screen-id: UIScreen.Void;
 }
 
+export global StatusOverlayAdapter {
+    in property <bool> has_unread_notification;
+    in property <bool> is_wifi_offline;
+}
+
 export global NotificationAdapter {
     in property <string> label: "LABEL";
     in property <string> message: "MESSAGE";
