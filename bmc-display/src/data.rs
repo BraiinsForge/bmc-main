@@ -547,6 +547,7 @@ pub enum Screen {
     ConnectInfo,
     WifiConnectProgress,
     WifiConnectFailed,
+    Alarm,
 }
 
 impl From<Screen> for generated::UIScreen {
@@ -567,6 +568,7 @@ impl From<Screen> for generated::UIScreen {
             Screen::ConnectInfo => Self::ConnectInfo,
             Screen::WifiConnectProgress => Self::WifiConnectProgress,
             Screen::WifiConnectFailed => Self::WifiConnectFailed,
+            Screen::Alarm => Self::Alarm,
         }
     }
 }

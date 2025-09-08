@@ -4,7 +4,7 @@ import { ScreenAdapter, UpgradeDownloadAdapter, NotificationAdapter, BitcoinAdap
 import { UIScreen, DateTime } from "controls/common.slint";
 import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
     InitStartConnect, InitWifiConnectProgress, InitWifiConnectSuccess, InitWifiConnectFailed, InitSetupSuccess, InitGeneralError, InitDeviceSetupQr, ConnectInfo,
-    WifiConnectFailed, WifiConnectProgress
+    WifiConnectFailed, WifiConnectProgress, Alarm
 } from "screens/screens.slint";
 import { WidgetSize, WidgetKind, Widget } from "widgets/widget.slint";
 import { BaseDimensions } from "widgets/widget-shared.slint";
@@ -15,13 +15,13 @@ import { ScenePreview } from "controls/scene-preview.slint";
 import { Backend } from "backend.slint";
 import { Notification } from "components/notification.slint";
 import { Images } from "style/images.slint";
-import { WifiAdapter, ConnectionAdapter } from "controls/adapters.slint";
+import { WifiAdapter, ConnectionAdapter, AlarmAdapter } from "controls/adapters.slint";
 
 export { ScreenAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, UIScreen, DateTime, NotificationAdapter, BitcoinAdapter, BlockHeightAdapter }
 export { WidgetSize, WidgetKind, Widget }
 export { Backend }
 export { Palette, BaseDimensions }
-export { WifiAdapter, ConnectionAdapter }
+export { WifiAdapter, ConnectionAdapter, AlarmAdapter }
 
 export component MainWindow inherits Window {
     default-font-family: "Braiins Sans";
@@ -159,14 +159,20 @@ export component MainWindow inherits Window {
     WifiConnectFailed {
         z: 0.3;
         visible: root.screen_id == UIScreen.WifiConnectFailed;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
     }
 
     WifiConnectProgress {
         z: 0.3;
         visible: root.screen_id == UIScreen.WifiConnectProgress;
+        
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
+    }
+
+    Alarm {
+        z: 0.4;
+        visible: root.screen_id == UIScreen.Alarm;
+        datetime: root.system-datetime;
 
         // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
         TouchArea { }

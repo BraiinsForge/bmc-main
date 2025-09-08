@@ -6,7 +6,7 @@ use crate::btc_history_data::BtcHistoryData;
 use crate::data::{Scene, SceneCycling, SceneCyclingTransition, SceneId, Screen, Widget, WidgetId};
 use crate::display_controller::DisplayController;
 use crate::generated::{
-    self, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, ConnectionAdapter,
+    self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, ConnectionAdapter,
     SceneCyclingAdapter, WifiAdapter,
 };
 use crate::indexmap_model::IndexMapModel;
@@ -315,6 +315,15 @@ impl DisplayController {
             if let Some(ip_address) = ip {
                 connection_adapter.set_ip(ip_address.to_string().into());
             }
+        });
+    }
+
+    pub fn set_alarm_data(&self, label: String, show_snooze: bool) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let alarm_adapter = AlarmAdapter::get(&main_window);
+
+            alarm_adapter.set_label(slint::SharedString::from(label));
+            alarm_adapter.set_snooze_visible(show_snooze);
         });
     }
 }
