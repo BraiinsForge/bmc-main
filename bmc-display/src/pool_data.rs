@@ -4,7 +4,7 @@ use crate::generated::{MainWindow, Palette, PoolWorkerStatus};
 use crate::graph_utils::{self, ColorPalette};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use slint::{Global, Image, SharedString};
+use slint::{Global, Image, ModelRc, SharedString, VecModel};
 use svg::Document;
 
 pub const POOL_API_URL: &str = "https://pool.braiins.com/api/v1";
@@ -43,7 +43,7 @@ pub struct UserHashrateHistory {
 impl UserHashrateHistory {
     #[must_use]
     pub fn into_graph_image(
-        self,
+        &self,
         main_window: &MainWindow,
         width: u32,
         height: u32,
@@ -51,7 +51,7 @@ impl UserHashrateHistory {
     ) -> Image {
         let data: Vec<f32> = self
             .slots
-            .into_iter()
+            .iter()
             .map(|slot| slot.hashrate_th_per_sec)
             .collect();
 
@@ -75,6 +75,25 @@ impl UserHashrateHistory {
         let document = canvas.add(path);
 
         graph_utils::svg_into_image(document, width, height)
+    }
+
+    #[must_use]
+    pub fn graph_units(&self) -> ModelRc<SharedString> {
+        let max = self
+            .slots
+            .iter()
+            .map(|slot| slot.hashrate_th_per_sec)
+            .filter(|x| !x.is_nan())
+            .max_by(f32::total_cmp)
+            .unwrap_or(3.0);
+
+        let max = graph_utils::y_axis_max(max, false);
+        ModelRc::new(VecModel::from_iter(
+            [max, 2.0 * max / 3.0, max / 3.0, 0.0]
+                .iter()
+                .map(|unit| SharedString::from(format!("{unit:.1}")))
+                .collect::<Vec<SharedString>>(),
+        ))
     }
 }
 
@@ -137,6 +156,36 @@ impl UserWorkerHistory {
             let document = canvas.add(path);
             graph_utils::svg_into_image(document, width, height)
         }
+    }
+
+    #[must_use]
+    pub fn graph_units(&self) -> ModelRc<SharedString> {
+        let max = self
+            .slots
+            .iter()
+            .map(|slot| slot.active_workers)
+            .max()
+            .unwrap_or(0)
+            .max(3); // Default unit max
+
+        // Shift max
+        let max = 2 * graph_utils::y_axis_max(max as f32, true) as u32;
+
+        let units: Vec<SharedString> = if max > 3000 {
+            [max / 1000, 2 * max / 3000, max / 3000, 0]
+                .map(|unit| SharedString::from(format!("{unit}k")))
+                .to_vec()
+        } else if max >= 3 {
+            [max, 2 * max / 3, max / 3, 0]
+                .map(|unit| SharedString::from(format!("{unit}")))
+                .to_vec()
+        } else {
+            [max, 0]
+                .map(|unit| SharedString::from(format!("{unit}")))
+                .to_vec()
+        };
+
+        ModelRc::new(VecModel::from_iter(units))
     }
 }
 
@@ -281,3 +330,4 @@ impl RecentUserPayouts {
             .map(|payout| payout.occurred_at)
     }
 }
+

@@ -395,6 +395,8 @@ impl DisplayController {
                     let width: u32 = image_dimensions.width.try_into().unwrap_or_default();
                     let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
 
+                    widget.braiins_pool.hashrate_units = hashrate_history.graph_units();
+
                     match (pool_style, widget_size) {
                         (BraiinsPoolStyle::Overview, WidgetSize::Large) => {
                             widget.braiins_pool.chart_overview_large = hashrate_history
@@ -452,6 +454,8 @@ impl DisplayController {
                         pool_chart_dimensions.invoke_get_dimensions(widget_size, pool_style);
                     let width: u32 = image_dimensions.width.try_into().unwrap_or_default();
                     let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
+
+                    widget.braiins_pool.workers_units = worker_history.graph_units();
 
                     match (pool_style, widget_size) {
                         (BraiinsPoolStyle::Overview, WidgetSize::Full) => {
