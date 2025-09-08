@@ -1,6 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::utils::{NumberFormat, replace_file};
+use crate::{
+    alarm::{AlarmData, AlarmId},
+    utils::{NumberFormat, replace_file},
+};
 use anyhow::{Context, Result, bail};
 use bmc_display::data::{
     Scene, SceneCycling, SceneId, SceneKind, WidgetSize, deserialize_scenes, serialize_scenes,
@@ -33,6 +36,8 @@ pub struct Config {
     night_mode: Option<NightModeConfigData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sound_volume_pct: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alarms: Option<Vec<AlarmData>>,
 }
 
 impl Config {
@@ -237,6 +242,36 @@ impl ConfigHandle {
     pub fn sound_volume_pct(&self) -> u8 {
         self.sound_volume_pct
             .unwrap_or(self.default_sound_volume_pct)
+    }
+
+    pub fn alarms(&self) -> Vec<AlarmData> {
+        self.alarms.clone().unwrap_or_default()
+    }
+
+    pub fn add_alarm(&mut self, alarm: AlarmData) {
+        self.alarms.get_or_insert_default().push(alarm);
+    }
+
+    pub fn remove_alarm(&mut self, id: &AlarmId) {
+        if let Some(pos) = self
+            .alarms
+            .as_ref()
+            .and_then(|alarms| alarms.iter().position(|x| x.id == *id))
+        {
+            if let Some(alarms) = self.alarms.as_mut() {
+                alarms.remove(pos);
+            }
+        }
+    }
+
+    pub fn set_alarm(&mut self, alarm: AlarmData) {
+        if let Some(item) = self
+            .alarms
+            .as_mut()
+            .and_then(|alarms| alarms.iter_mut().find(|x| x.id == alarm.id))
+        {
+            *item = alarm;
+        }
     }
 }
 
