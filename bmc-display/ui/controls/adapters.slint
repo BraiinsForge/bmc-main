@@ -39,4 +39,6 @@ export global BlockHeightAdapter {
 export global AlarmAdapter {
     in property <string> label;
     in property <bool> snooze-visible;
+    callback stop_alarm;
+    callback snooze_alarm;
 }

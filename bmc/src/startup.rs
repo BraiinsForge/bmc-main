@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::alarm::AlarmController;
+use crate::alarm::{AlarmBus, AlarmController};
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
@@ -112,11 +112,14 @@ where
         let sound_controller =
             SoundController::new(config_handle.clone(), config.sounds_dir.clone());
 
+        let alarm_bus = AlarmBus::new();
+
         let alarm_controller = AlarmController::init(
             config_handle.clone(),
             scheduler.clone(),
             sound_controller.clone(),
             display_controller.clone(),
+            alarm_bus.clone(),
         )
         .await?;
 
@@ -137,6 +140,7 @@ where
             initial_setup.subscribe(),
             manager.clone(),
             config_handle.clone(),
+            alarm_bus,
         );
 
         Ok(Self {

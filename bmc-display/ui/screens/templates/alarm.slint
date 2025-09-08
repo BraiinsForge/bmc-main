@@ -93,39 +93,59 @@ export component Alarm inherits Rectangle {
                     HorizontalLayout {
                         alignment: center;
                         spacing: 32px;
-                        Rectangle {
-                            background: Palette.orange-50;
+
+                        // Stop Alarm
+                        TouchArea {
+                            clicked => {
+                                AlarmAdapter.stop_alarm();
+                            }
                             width: 218px;
-                            HorizontalLayout {
-                                padding-left: 48px;
-                                padding-right: 48px;
-                                padding-top: 15px;
-                                padding-bottom: 15px;
-                                alignment: center;
-                                Text {
-                                    text: "Stop Alarm";
-                                    color: Palette.white;
-                                    font-size: 24px;
+                            height: 68px;
+                            Rectangle {
+                                width: 218px;
+                                height: 68px;
+                                background: Palette.orange-50;
+
+                                HorizontalLayout {
+                                    padding-left: 48px;
+                                    padding-right: 48px;
+                                    padding-top: 17px;
+                                    padding-bottom: 15px;
+                                    alignment: center;
+                                    Text {
+                                        text: "Stop Alarm";
+                                        color: Palette.white;
+                                        font-size: 24px;
+                                    }
                                 }
                             }
                         }
 
-                        if show_snooze:  Rectangle {
-                            background: Palette.black;
-                            border-width: 1px;
-                            border-color: Palette.white;
+                        // Snooze Alarm
+                        if show_snooze: TouchArea {
+                            clicked => {
+                                AlarmAdapter.snooze_alarm();
+                            }
                             width: 218px;
+                            height: 68px;
+                            Rectangle {
+                                background: Palette.black;
+                                border-width: 1px;
+                                border-color: Palette.white;
+                                width: 218px;
+                                height: 68px;
 
-                            HorizontalLayout {
-                                padding-left: 48px;
-                                padding-right: 48px;
-                                padding-top: 15px;
-                                padding-bottom: 15px;
-                                alignment: center;
-                                Text {
-                                    text: "Snooze";
-                                    color: Palette.white;
-                                    font-size: 24px;
+                                HorizontalLayout {
+                                    padding-left: 48px;
+                                    padding-right: 48px;
+                                    padding-top: 17px;
+                                    padding-bottom: 15px;
+                                    alignment: center;
+                                    Text {
+                                        text: "Snooze";
+                                        color: Palette.white;
+                                        font-size: 24px;
+                                    }
                                 }
                             }
                         }

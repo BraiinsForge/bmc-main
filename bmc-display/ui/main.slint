@@ -173,8 +173,5 @@ export component MainWindow inherits Window {
         z: 0.4;
         visible: root.screen_id == UIScreen.Alarm;
         datetime: root.system-datetime;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
     }
 }

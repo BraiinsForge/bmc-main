@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::BmcManager;
+use crate::alarm::AlarmBus;
 use crate::initial_setup::InitSetupState;
 use crate::system_upgrade::SystemUpgradeState;
 
@@ -10,6 +11,7 @@ use bmc_display::blockheight_data::BlockheightData;
 use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_time::time::Timezone;
+use futures::StreamExt;
 use reqwest::Client;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -38,6 +40,7 @@ pub(crate) struct DisplayTasks<T: BmcManager> {
     initial_setup_receiver: watch::Receiver<Option<InitSetupState>>,
     manager: Arc<T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    alarm_bus: AlarmBus,
 }
 
 impl<T: BmcManager> DisplayTasks<T> {
@@ -48,6 +51,7 @@ impl<T: BmcManager> DisplayTasks<T> {
         initial_setup_receiver: watch::Receiver<Option<InitSetupState>>,
         manager: Arc<T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
+        alarm_bus: AlarmBus,
     ) -> Self {
         Self {
             display_controller,
@@ -56,6 +60,7 @@ impl<T: BmcManager> DisplayTasks<T> {
             initial_setup_receiver,
             manager,
             config_handle,
+            alarm_bus,
         }
     }
 
@@ -67,6 +72,7 @@ impl<T: BmcManager> DisplayTasks<T> {
             initial_setup_receiver,
             manager,
             config_handle,
+            alarm_bus,
         } = self;
 
         tokio::spawn(Self::run_init_display_screen(
@@ -90,9 +96,14 @@ impl<T: BmcManager> DisplayTasks<T> {
         ));
 
         tokio::spawn(Self::run_initial_setup_listener(
-            display_controller,
+            display_controller.clone(),
             manager,
             initial_setup_receiver,
+        ));
+
+        tokio::spawn(Self::run_alarm_event_listener(
+            display_controller,
+            alarm_bus,
         ));
     }
 
@@ -325,6 +336,17 @@ impl<T: BmcManager> DisplayTasks<T> {
                 is_24_format,
                 date_format,
             );
+        }
+    }
+
+    async fn run_alarm_event_listener(display_controller: DisplayController, alarm_bus: AlarmBus) {
+        let mut alarm_receiver = display_controller.on_alarm_events();
+        while let Some(event) = alarm_receiver.next().await {
+            debug!("Alarm event received [{:?}], sending to AlarmBus", event);
+            match event {
+                bmc_display::display_controller::callback::AlarmEvent::Stop => alarm_bus.stop_all(),
+                bmc_display::display_controller::callback::AlarmEvent::Snooze => alarm_bus.snooze(),
+            }
         }
     }
 }
