@@ -41,11 +41,8 @@ export component MainWindow inherits Window {
     if preview-scene-index < 0: Rectangle {
         z: 0.1;
 
-        if root.cycler-scenes.length == 0: Text {
-            text: "You don't have any scenes or all scenes are disabled";
-            color: Palette.white;
-            font-size: Theme.font.size.common.default;
-            font-weight: Theme.font.weight.regular;
+        if root.cycler-scenes.length == 0: Image {
+            source: Images.logo;
         }
 
         if root.cycler-scenes.length > 0: SceneCycler {
