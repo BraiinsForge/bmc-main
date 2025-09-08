@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { useIntl } from 'react-intl';
 
 import * as pb from '@/proto';
-import { Form, type iField, getID, type FormPropsToValuesRec } from '@/lib/form';
+import { getID } from '../const';
+import { Form, type iField, type FormPropsToValuesRec } from '@/lib/form';
 
 // Components
 import { ModalCustom, InlineNotification } from '@/components';
@@ -17,7 +18,7 @@ import {
 // styles
 import css from '../shared.scss';
 
-const $ = getID('settings', 'blockHeight', 'scene').get;
+const $ = getID('block-height-form').get;
 
 export interface FormWidgetBlockHeightProps {
     isOpen: boolean;

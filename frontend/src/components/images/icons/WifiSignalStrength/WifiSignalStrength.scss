@@ -4,7 +4,7 @@
 $off-slit-opacity: 0.4;
 
 .svg * {
-    transition: all 400ms transition.$transition-timing-ease-in-out;
+    transition: all 400ms transition.$ease-in-out;
 }
 
 .offline {

@@ -1,4 +1,5 @@
 @use 'styles/carbon' as *;
+@use 'styles/var/transition';
 
 $row-height: to-rem(68px);
 $ctrl-height: to-rem(40px);
@@ -154,8 +155,18 @@ $ctrl-height: to-rem(40px);
     text-wrap: balance;
 
     .title {
+        display: flex;
+        flex-flow: row nowrap;
+        align-items: center;
+
+        line-height: 0;
+        gap: mini-units(1);
+
         @include type-style(heading-02);
-        line-height: 1.37;
+
+        .tag {
+            transform: translateY(-1px);
+        }
     }
 
     .details {
@@ -209,5 +220,84 @@ $ctrl-height: to-rem(40px);
     .duration {
         color: $text-secondary;
         opacity: 0.5;
+    }
+}
+
+//
+// Skeleton
+//
+
+.skeletonsGroup {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(1);
+    container-type: inline-size;
+}
+
+.skeleton {
+    padding-block: mini-units(1);
+    padding-inline: mini-units(2);
+
+    display: inline-grid;
+    gap: mini-units(1);
+
+    grid-template-columns: auto 1fr auto auto;
+    grid-template-rows: 1fr 1fr;
+
+    grid-template-areas:
+        'a b1 c d'
+        'a b2 c d';
+
+    background-color: $layer-01;
+    min-block-size: to-rem(57px);
+
+    > * {
+        background-color: $layer-02;
+        margin-block: auto;
+        transition: all 150ms transition.$ease-in-out;
+    }
+
+    @container (width <= 400px) {
+        display: flex !important;
+        flex-flow: row nowrap;
+
+        > * {
+            block-size: 100%;
+            inline-size: unset;
+            aspect-ratio: unset !important;
+            flex: 1;
+        }
+
+        .b1,
+        .b2 {
+            display: none;
+        }
+    }
+
+    .a {
+        grid-area: a;
+        height: to-rem(48px);
+        aspect-ratio: 2 / 1;
+    }
+    .b1 {
+        grid-area: b1;
+        block-size: mini-units(2);
+        inline-size: 80%;
+        margin-block-start: mini-units(1);
+    }
+    .b2 {
+        grid-area: b2;
+        block-size: mini-units(1.5);
+        inline-size: 40%;
+        margin-block-end: mini-units(1);
+    }
+    .c {
+        grid-area: c;
+        height: to-rem(40px);
+        aspect-ratio: 2 / 1;
+    }
+    .d {
+        grid-area: d;
+        height: to-rem(40px);
+        aspect-ratio: 2 / 1;
     }
 }

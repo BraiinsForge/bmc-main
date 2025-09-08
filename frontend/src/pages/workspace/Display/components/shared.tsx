@@ -84,6 +84,7 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
     return (
         <ComboBox<OptionItem<T>>
             id={id}
+            autoAlign
             className={css.comboBox}
             onChange={x => {
                 const v = x.selectedItem?.value;

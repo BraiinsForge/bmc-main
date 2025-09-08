@@ -1,9 +1,10 @@
 import { useRef } from 'react';
 import { useIntl } from 'react-intl';
-import { getID } from '@/lib/form';
+
 import { type CarbonIconType, useSizeSelector } from '@/lib/react';
 
 // App
+import { getID } from '../const';
 import type * as pb from '@/proto';
 
 // Components
@@ -25,7 +26,7 @@ export interface FormSceneSelectProps {
     onSelection(kind: SceneKind): void;
 }
 
-const $ = getID('display', 'scene-select-kind').get;
+const $ = getID('scene-select-kind').get;
 export function FormSceneSelect(props: FormSceneSelectProps) {
     const { formatMessage } = useIntl();
     const { onSelection, isOpen, onClose, variant } = props;

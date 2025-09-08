@@ -12,12 +12,6 @@
         border-block-end: 1px solid $border-subtle;
         padding-block: mini-units(2);
     }
-    .cds--list-box__menu {
-        position: fixed;
-        inline-size: unset;
-        inset-inline: mini-units(2);
-        box-shadow: shadows.$elevation-8dp;
-    }
 }
 
 .comboBox {

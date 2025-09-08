@@ -2,7 +2,8 @@ import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 
 import * as pb from '@/proto';
-import { Form, type iField, getID, type FormPropsToValuesRec } from '@/lib/form';
+import { getID } from '../const';
+import { Form, type iField, type FormPropsToValuesRec } from '@/lib/form';
 
 // Components
 import { WidgetSizeSelector, type WidgetSizeSelectorProps, CheckYourScreenForPreview } from '../shared';
@@ -12,7 +13,7 @@ import { Dropdown } from '@carbon/react';
 // styles
 import css from '../shared.scss';
 
-const $ = getID('settings', 'ticker', 'scene').get;
+const $ = getID('ticker-form').get;
 
 export interface FormWidgetTickerProps {
     isOpen: boolean;

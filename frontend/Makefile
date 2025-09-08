@@ -95,8 +95,6 @@ minify-images: minify-png minify-svg
 intl-extract:
 	yarn run formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json
 
-.PHONY: nix-build
-nix-build:
-	# Builds the frontend through nix, verifying the integrity.
-	# Usefull for update of the nix-files hash.
-	cd ..; nix build -L '.#frontend'
+PHONY: nix-update-hash
+nix-update-hash:
+	./bin/nix-update-hash.ts

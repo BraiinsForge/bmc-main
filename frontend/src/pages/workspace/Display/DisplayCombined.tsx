@@ -6,9 +6,10 @@ import { useParams, useNavigate, type NavigateFunction } from 'react-router';
 
 // Libs
 import * as fn from './fn';
+import { getID } from './const.ts';
 import { setState } from '@/lib/react';
 import { assertUnreachable } from '@/lib/ts.ts';
-import { type FormPropsToLocalState, getID } from '@/lib/form';
+import type { FormPropsToLocalState } from '@/lib/form';
 
 // App
 import * as pb from '@/proto';
@@ -122,7 +123,7 @@ const getInitialState = (): State => ({
     dialogStates: getInitialDialogStates(),
 });
 
-const $ = getID('display-combined').get;
+const $ = getID('combined').get;
 class View extends Component<Props, State> {
     readonly state = getInitialState();
     static contextType = AppContext;

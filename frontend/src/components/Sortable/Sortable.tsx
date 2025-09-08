@@ -33,6 +33,7 @@ interface Datum {
     id: string | number;
 }
 export interface RenderSortableListItemProps<D extends Datum> {
+    index: number;
     item: D;
     state: {
         isOver: boolean;
@@ -46,10 +47,11 @@ export interface RenderSortableListItemProps<D extends Datum> {
 }
 
 export type Item<D extends Datum> = {
+    index: number;
     data: D;
     render(props: RenderSortableListItemProps<D>): ReactElement;
 };
-function Item<D extends Datum>({ data, render }: Item<D>) {
+function Item<D extends Datum>({ index, data, render }: Item<D>) {
     const { attributes, listeners, setNodeRef, transform, transition, isOver, isDragging } = useSortable({
         id: data.id,
         transition: { duration: 150, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
@@ -60,6 +62,7 @@ function Item<D extends Datum>({ data, render }: Item<D>) {
 
     type RenderProps = RenderSortableListItemProps<D>;
     return render({
+        index,
         item: data,
         state: { isOver, isDragging },
         rootProps: {
@@ -114,7 +117,7 @@ export function Sortable<D extends Datum>(props: SortableProps<D>) {
                 <SortableContext
                     items={items}
                     strategy={verticalListSortingStrategy}
-                    children={items.map(d => <Item data={d} key={d.id} render={renderItem} />)}
+                    children={items.map((d, i) => <Item index={i} data={d} key={d.id} render={renderItem} />)}
                 />
             </DndContext>
         </div>

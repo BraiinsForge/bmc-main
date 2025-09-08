@@ -5,10 +5,11 @@ import { type IntlShape, useIntl } from 'react-intl';
 import { type NavigateFunction, useNavigate } from 'react-router';
 
 // Libs
+import { getID } from './const';
 import { setState, Sized } from '@/lib/react';
 import { assertUnreachable } from '@/lib/ts';
 import { listenDocumentEvent } from '@/lib/dom';
-import { Form, type FormPropsToLocalState, getID, type iField } from '@/lib/form';
+import { Form, type FormPropsToLocalState, type iField } from '@/lib/form';
 
 // App
 import * as pb from '@/proto';
@@ -42,7 +43,7 @@ import {
 // Styles
 import css from './DisplayList.scss';
 
-const $ = getID('display').get;
+const $ = getID('list').get;
 
 type FormStateClock = FormPropsToLocalState<FormWidgetClockProps>;
 type FormStateTicker = FormPropsToLocalState<FormWidgetTickerProps>;
@@ -551,16 +552,18 @@ class View extends Component<Props, State> {
         const { signal } = this.abortSceneSetDuration.replace();
 
         try {
+            const cycleDurationSec: undefined | number = value === '' ? undefined : Number.parseInt(value, 10);
+
             // Optimistic update first
-            this.setState(s => ({
-                scenes: s.scenes.map(x => (x.id === id ? { ...x, cycleDurationSec: Number.parseInt(value, 10) } : x)),
+            await setState(this, s => ({
+                scenes: s.scenes.map(x => (x.id === id ? { ...x, cycleDurationSec } : x)),
             }));
 
             pb.rpc.scenes.updateScene(
                 {
                     id,
                     enabled: this.#getScene(id)?.enabled ?? true,
-                    cycleDurationSec: Number.parseInt(value, 10),
+                    cycleDurationSec,
                 },
                 { signal },
             );
@@ -922,6 +925,7 @@ class View extends Component<Props, State> {
                 <main>
                     <SceneOverviewList
                         scenes={scenes}
+                        onAdd={this.#openDialogSceneSelect}
                         onMove={this.#sceneListMove}
                         onEdit={this.#sceneListEdit}
                         onClone={this.#sceneListClone}

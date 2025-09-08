@@ -13,7 +13,7 @@
     user-select: none;
     cursor: pointer;
 
-    transition: background 150ms transition.$transition-timing-ease-in-out;
+    transition: background 150ms transition.$ease-in-out;
 
     &.interactive {
         &:hover,

@@ -1,9 +1,14 @@
 import type { Meta } from '@storybook/react';
 import { action } from 'storybook/actions';
+import colors from '@/styles/colors';
 
 import * as pb from '@/proto';
 import { ScenePreview } from '../images/preview';
-import { SceneOverviewRow as Component, type SceneOverviewRowProps } from './SceneOverviewRow';
+import {
+    SceneOverviewRow as Component,
+    type SceneOverviewRowProps,
+    SceneOverviewRowSkeleton,
+} from './SceneOverviewRow';
 
 export default {
     title: 'display/components/SceneOverviewRow',
@@ -14,7 +19,8 @@ export default {
         enabled: true,
         onToggle: action('onToggle'),
 
-        duration: '10',
+        duration: 10,
+        durationDefault: 11,
         onDurationChange: action('onDurationChange'),
 
         onEdit: action('onEdit'),
@@ -34,6 +40,14 @@ export function SceneOverviewRow(args: SceneOverviewRowProps) {
                 {...args}
                 preview={<ScenePreview kind="combined" />}
                 title="Combined Scene"
+                tag={{
+                    type: 'blue',
+                    text: 'Night Mode',
+                    style: {
+                        color: colors.blue20,
+                        backgroundColor: colors.blue90,
+                    },
+                }}
                 description="Clock, Clock, Weather, Ticker (BTC-USD)"
             />
             {/* <Component {...args} preview={<ScenePreview kind={pb.SceneKind.image} />} title="Image" description="Your Image" />*/}
@@ -55,6 +69,15 @@ export function SceneOverviewRow(args: SceneOverviewRowProps) {
             {/* <Component {...args} preview={<ScenePreview kind={pb.SceneKind.ticker} variant={pb.SceneVariantTicker.candle} />} title="Ticker: Big Price" description="BTC-USD" /> */}
             {/* <Component {...args} preview={<ScenePreview kind={pb.SceneKind.pool} />} title="Braiins Pool Stats" description="account.name" /> */}
             {/* <Component {...args} enabled={false} preview={<ScenePreview kind={pb.SceneKind.clock} variant={pb.SceneVariantClock.digital_flip} />} title="Clock – Flip" description="Flip-style digital clock with adjustable font weight" /> */}
+        </div>
+    );
+}
+SceneOverviewRow.storyName = 'SceneOverviewRow';
+
+export function Skeleton() {
+    return (
+        <div style={{ backgroundColor: 'var(--cds-background)' }}>
+            <SceneOverviewRowSkeleton rowCount={6} />
         </div>
     );
 }

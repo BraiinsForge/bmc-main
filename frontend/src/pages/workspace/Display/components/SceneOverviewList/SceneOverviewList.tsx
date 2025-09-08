@@ -7,16 +7,20 @@ import * as pb from '@/proto';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { Sortable, type SortableProps } from '@/components';
-import { SceneOverviewRow } from '../SceneOverviewRow';
+import { getID } from '../../const';
 import { ScenePreview } from '../images';
+import { Button, Sortable, type SortableProps } from '@/components';
+import { Add as IconAdd } from '@carbon/react/icons';
+import { SceneOverviewRow, SceneOverviewRowSkeleton } from '../SceneOverviewRow';
 
 // Styles
 import cn from 'clsx';
+import colors from '@/styles/colors';
 import css from './SceneOverviewList.scss';
 
 export interface SceneOverviewListProps {
     scenes: pb.Scene[];
+    onAdd(): void;
     onMove(scenes: pb.Scene[], move: { id: string; from: number; into: number }): void;
     onEdit(id: string): void;
     onClone(id: string): void;
@@ -30,6 +34,7 @@ interface Props extends SceneOverviewListProps {
     intl: IntlShape;
 }
 
+const $ = getID('scenes').get;
 class View extends Component<Props> {
     static contextType = AppContext;
     declare context: AppContextType;
@@ -38,7 +43,7 @@ class View extends Component<Props> {
 
     #renderItem: SortableProps<pb.Scene>['renderItem'] = props => {
         const { defaultSceneDuration, onEdit, onToggle, onClone, onDelete, onDurationChange, intl } = this.props;
-        const { item, state, rootProps, dragHandleProps } = props;
+        const { index, item, state, rootProps, dragHandleProps } = props;
 
         let title: string = 'N/A';
         let description: string = '';
@@ -71,8 +76,21 @@ class View extends Component<Props> {
                     />
                 }
                 title={title}
+                tag={
+                    index === 0
+                        ? {
+                              type: 'blue',
+                              text: 'Night Mode',
+                              style: {
+                                  color: colors.blue20,
+                                  backgroundColor: colors.blue90,
+                              },
+                          }
+                        : null
+                }
                 description={description}
-                duration={item.cycleDurationSec ?? defaultSceneDuration}
+                duration={item.cycleDurationSec}
+                durationDefault={defaultSceneDuration}
                 // Handlers
                 onEdit={onEdit}
                 onClone={onClone}
@@ -87,7 +105,31 @@ class View extends Component<Props> {
     };
 
     render() {
-        const { scenes, onMove } = this.props;
+        const { scenes, onMove, onAdd, intl } = this.props;
+
+        if (!scenes.length) {
+            return (
+                <div className={css.placeholder}>
+                    <SceneOverviewRowSkeleton rowCount={3} className={css.skeleton} />
+                    <h1
+                        className={css.title}
+                        children={intl.formatMessage({ defaultMessage: 'No “Display Scene” yet' })}
+                    />
+                    <h1
+                        className={css.subtitle}
+                        children={intl.formatMessage({ defaultMessage: 'Display Scenes description…' })}
+                    />
+                    <Button
+                        id={$('add-new-scene')}
+                        className={css.button}
+                        kind="primary"
+                        onClick={onAdd}
+                        icon={IconAdd}
+                        children={intl.formatMessage({ defaultMessage: 'Add New Scene' })}
+                    />
+                </div>
+            );
+        }
 
         return (
             <Sortable<pb.Scene> className={css.list} items={scenes} onChange={onMove} renderItem={this.#renderItem} />

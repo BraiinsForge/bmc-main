@@ -2,7 +2,8 @@ import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 
 import * as pb from '@/proto';
-import { Form, type iField, getID, type FormPropsToValuesRec } from '@/lib/form';
+import { getID } from '../const';
+import { Form, type iField, type FormPropsToValuesRec } from '@/lib/form';
 
 // Components
 import {
@@ -21,7 +22,7 @@ import { Earth as IconEarth } from '@carbon/react/icons';
 // styles
 import css from '../shared.scss';
 
-const $ = getID('settings', 'clock', 'scene').get;
+const $ = getID('clock-form').get;
 
 export interface FormWidgetClockProps {
     isOpen: boolean;

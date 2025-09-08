@@ -15,7 +15,7 @@
         "@dnd-kit/modifiers": "9.0.0",
         "@dnd-kit/sortable": "10.0.0",
         "@dnd-kit/utilities": "3.2.2",
-        "@dr.pogodin/react-helmet": "3.0.3",
+        "@dr.pogodin/react-helmet": "3.0.4",
         "@formatjs/intl-locale": "4.2.11",
         "@formatjs/intl-pluralrules": "5.4.4",
         "@formatjs/intl-relativetimeformat": "11.4.11",
@@ -46,21 +46,21 @@
         "react-router": "7.8.2",
         "regenerator-runtime": "0.14.1",
         "ts-key-enum": "2.0.13",
-        "uuid": "12.0.0"
+        "uuid": "13.0.0"
     },
     "devDependencies": {
-        "@biomejs/biome": "2.2.2",
+        "@biomejs/biome": "2.2.4",
         "@bufbuild/buf": "1.57.0",
         "@bufbuild/protoc-gen-es": "2.7.0",
         "@emotion/react": "11.14.0",
         "@emotion/styled": "11.14.1",
         "@formatjs/cli": "6.7.2",
-        "@rsbuild/core": "1.5.4",
+        "@rsbuild/core": "1.5.6",
         "@rsbuild/plugin-react": "1.4.0",
         "@rsbuild/plugin-sass": "1.4.0",
         "@rsbuild/plugin-svgr": "1.2.2",
         "@rsbuild/plugin-typed-css-modules": "1.1.0",
-        "@rstest/core": "0.3.2",
+        "@rstest/core": "0.3.4",
         "@storybook/react": "9.1.5",
         "@swc/plugin-emotion": "11.1.0",
         "@swc/plugin-formatjs": "6.1.0",
@@ -99,15 +99,17 @@
         "stylelint-config-standard": "39.0.0",
         "stylelint-config-standard-scss": "15.0.1",
         "svgo": "4.0.0",
+        "tsx": "4.20.5",
         "type-fest": "4.41.0",
-        "typescript": "5.9.2"
+        "typescript": "5.9.2",
+        "zx": "8.8.1"
     },
     "resolutions": {
         "react": "19.1.1",
         "react-dom": "19.1.1",
         "react-is": "npm:19.1.1",
-        "core-js": "3.45.0",
-        "sass-embedded": "1.90.0"
+        "core-js": "3.45.1",
+        "sass-embedded": "1.92.1"
     },
     "volta": {
         "node": "24.6.0"

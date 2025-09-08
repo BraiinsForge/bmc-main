@@ -2,7 +2,7 @@
 @use 'styles/var/shadows';
 @use 'styles/var/transition';
 
-$transition: all 150ms transition.$transition-timing-ease-in-out;
+$transition: all 150ms transition.$ease-in-out;
 
 .root {
     position: relative;

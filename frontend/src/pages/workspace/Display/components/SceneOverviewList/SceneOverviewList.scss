@@ -12,7 +12,7 @@
     // We have to be specific about the transitioned property here
     // because this node is being moved by javascript to follow
     // the mouse and animating that screws up the responsivity.
-    transition-timing-function: transition.$transition-timing-ease-in-out;
+    transition-timing-function: transition.$ease-in-out;
     transition-property: opacity, box-shadow;
     transition-duration: 150ms;
 
@@ -20,5 +20,36 @@
         z-index: 1000;
         opacity: 0.85;
         box-shadow: shadows.$elevation-16dp;
+    }
+}
+
+.placeholder {
+    composes: vertical center from 'styles/layout.scss';
+    padding-inline: mini-units(3);
+    padding-block: mini-units(6);
+    background-color: $layer-01;
+
+    .skeleton {
+        width: 100%;
+        margin-inline: auto;
+        max-inline-size: to-rem(860px);
+
+        [role='listitem'] {
+            background-color: $text-inverse;
+        }
+    }
+
+    .title {
+        @include type-style(heading-03);
+        margin-block: mini-units(4) 0;
+        color: $text-primary;
+    }
+    .subtitle {
+        @include type-style(heading-02);
+        margin-block: mini-units(1) 0;
+        color: $text-secondary;
+    }
+    .button {
+        margin-block-start: mini-units(3);
     }
 }
