@@ -28,7 +28,8 @@ use tracing::debug;
 pub mod authentication;
 mod metadata;
 mod system;
-use super::SystemUpgradeService;
+use super::{AlarmController, SystemUpgradeService};
+mod alarm;
 mod configuration_service;
 mod initial_setup;
 mod network;
@@ -73,6 +74,7 @@ pub(crate) struct GrpcWeb<
     initial_setup: InitialSetup<T>,
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
+    alarm_controller: AlarmController,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -89,6 +91,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         initial_setup: InitialSetup<T>,
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
+        alarm_controller: AlarmController,
     ) -> Self {
         Self {
             manager,
@@ -100,6 +103,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             initial_setup,
             system_manager,
             sound_controller,
+            alarm_controller,
         }
     }
 
@@ -156,6 +160,10 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 ),
             );
 
+        let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
+            alarm::AlarmService::new(self.config_handle, self.alarm_controller),
+        );
+
         // GrpcWebLayer is badly named, it's not a "layer", it's re-wrapper for other Services
         // All services requiring authentication have to be wrapped in GrpcWebLayer and use "InterceptorFor"
         Routes::new(GrpcWebLayer::new().layer(reflection_service))
@@ -182,6 +190,10 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 auth_interceptor.clone(),
             )))
             .add_service(GrpcWebLayer::new().layer(initial_setup_service))
+            .add_service(
+                GrpcWebLayer::new()
+                    .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
+            )
     }
 }
 

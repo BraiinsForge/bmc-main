@@ -6,6 +6,7 @@ mod http_server;
 mod no_password;
 mod session;
 
+use crate::alarm::AlarmController;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::session::Manager as SessionManager;
@@ -44,6 +45,7 @@ pub(crate) struct WebService<
     initial_setup: InitialSetup<T>,
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
+    alarm_controller: AlarmController,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -61,6 +63,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         initial_setup: InitialSetup<T>,
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
+        alarm_controller: AlarmController,
     ) -> Self {
         Self {
             manager,
@@ -73,6 +76,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             initial_setup,
             system_manager,
             sound_controller,
+            alarm_controller,
         }
     }
 
@@ -88,6 +92,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.initial_setup,
             self.system_manager,
             self.sound_controller,
+            self.alarm_controller,
         )
         .build()
         .into_axum_router()

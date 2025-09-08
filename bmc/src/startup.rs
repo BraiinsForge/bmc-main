@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use crate::alarm::AlarmController;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
@@ -44,6 +45,7 @@ where
     initial_setup: InitialSetup<T>,
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
+    alarm_controller: AlarmController,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -110,6 +112,12 @@ where
         let sound_controller =
             SoundController::new(config_handle.clone(), config.sounds_dir.clone());
 
+        let alarm_controller = AlarmController::new(
+            config_handle.clone(),
+            scheduler.clone(),
+            sound_controller.clone(),
+        );
+
         let system_manager = SystemManager::init(
             config_handle.clone(),
             manager.watch_timezone_updates(),
@@ -142,6 +150,7 @@ where
             initial_setup,
             system_manager,
             sound_controller,
+            alarm_controller,
         })
     }
 
@@ -162,6 +171,7 @@ where
             self.initial_setup,
             self.system_manager,
             self.sound_controller,
+            self.alarm_controller,
         )
         .run(self.listener)
         .await?;
