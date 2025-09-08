@@ -16,6 +16,7 @@ bmc-shared-ii-net-drv.workspace = true
 bmc-shared-time.workspace = true
 bmc-upgrade.workspace = true
 drm.workspace = true
+evdev.workspace = true
 flume.workspace = true
 get_if_addrs.workspace = true
 iana-time-zone.workspace = true

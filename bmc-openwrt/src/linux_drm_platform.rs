@@ -6,8 +6,11 @@ use drm::Device;
 use drm::buffer::{Buffer, DrmFourcc};
 use drm::control::Device as ControlDevice;
 use drm::control::{self, AtomicCommitFlags, atomic, connector, crtc, property};
+use evdev::{AbsoluteAxisCode, EventSummary, KeyCode, SynchronizationCode};
+use slint::LogicalPosition;
 use slint::platform::software_renderer::{RenderingRotation, Rgb565Pixel};
 use slint::platform::{EventLoopProxy, Platform, software_renderer::MinimalSoftwareWindow};
+use slint::platform::{PointerEventButton, WindowEvent};
 use std::iter;
 use std::rc::Rc;
 use tracing::{info, trace};
@@ -252,6 +255,10 @@ impl Platform for LinuxDrmPlatform {
 
         let mut in_memory_buffer = frame_buffer.to_vec();
 
+        let mut touch = evdev::Device::open("/dev/input/event0")
+            .map_err(|e| slint::PlatformError::OtherError(Box::new(e)))?;
+        touch.set_nonblocking(true).ok();
+
         // Event loop is inspired by official `linuxkms` implementation.
         // https://github.com/slint-ui/slint/blob/b80d5a23042c866fbc6d82d00c633bfda9057dd2/internal/backends/linuxkms/calloop_backend.rs#L249
         // Steps:
@@ -263,6 +270,10 @@ impl Platform for LinuxDrmPlatform {
         //   - timeout on the closest timer tick
 
         let mut saved_proxy_event: Option<ProxyEvent> = None;
+
+        let mut pos = (0.0, 0.0);
+        let mut pressed = false;
+        let mut was_pressed = false; // track edge transitions
 
         // This loop condition is just a double check, in case sender is dropped before
         // sending ProxyEvent::Quit
@@ -282,6 +293,49 @@ impl Platform for LinuxDrmPlatform {
                 match proxy_event {
                     ProxyEvent::Event(event) => event(),
                     ProxyEvent::Quit => break 'outer,
+                }
+            }
+
+            if let Ok(events) = touch.fetch_events() {
+                for ev in events {
+                    #[expect(clippy::wildcard_enum_match_arm)]
+                    match ev.destructure() {
+                        EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_X, value) => {
+                            #[expect(clippy::cast_precision_loss)]
+                            let value = value as f32;
+                            pos.0 = value;
+                        }
+                        EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_Y, value) => {
+                            #[expect(clippy::cast_precision_loss)]
+                            let value = value as f32;
+                            pos.1 = value;
+                        }
+                        EventSummary::Key(_, KeyCode::BTN_TOUCH, value) => {
+                            pressed = value == 1;
+                        }
+                        EventSummary::Synchronization(_, SynchronizationCode::SYN_REPORT, _) => {
+                            let logical_pos = LogicalPosition::new(pos.0, pos.1);
+
+                            self.window.dispatch_event(WindowEvent::PointerMoved {
+                                position: logical_pos,
+                            });
+
+                            if pressed && !was_pressed {
+                                self.window.dispatch_event(WindowEvent::PointerPressed {
+                                    position: logical_pos,
+                                    button: PointerEventButton::Left,
+                                });
+                            } else if !pressed && was_pressed {
+                                self.window.dispatch_event(WindowEvent::PointerReleased {
+                                    position: logical_pos,
+                                    button: PointerEventButton::Left,
+                                });
+                            }
+
+                            was_pressed = pressed;
+                        }
+                        _ => {}
+                    }
                 }
             }
 
