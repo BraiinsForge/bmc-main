@@ -40,7 +40,8 @@ export struct WidgetBraiinsPoolConfig {
 
 export struct WidgetBraiinsPoolData {
     config: WidgetBraiinsPoolConfig,
-    current-hashrate-phs: string,
+    current-hashrate: string,
+    current-hashrate-unit: string,
     reward-btc: string,
     reward-usd: string,
     hashrate-graph: image,
@@ -57,6 +58,7 @@ export struct WidgetBraiinsPoolData {
     chart-bigchart-medium: image,
     chart-bigchart-small: image,
     hashrate-units: [string],
+    hashrate-unit-label: string,
     workers-units: [string],
     timestamps: [string],
 }
@@ -160,6 +162,7 @@ component progress-bar inherits Rectangle {
 component hashrate-box inherits VerticalLayout {
     in property <WidgetSize> size;
     in property <string> hashrate;
+    in property <string> hashrate-unit;
     in property <length> hashrate-font-size;
     in property <bool> show-dot;
 
@@ -179,7 +182,7 @@ component hashrate-box inherits VerticalLayout {
             border-color: Palette.violet-60;
         }
         Text {
-            text: "Hashrate (PH/s)";
+            text: "Hashrate " + "(" + hashrate-unit + ")";
             font-size: 24px;
             font-weight: Theme.font.weight.regular;
             color: Palette.gray-40;
@@ -406,7 +409,8 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
                     padding-top: 24px;
                     padding-bottom: 24px;
                     size: size;
-                    hashrate: data.current-hashrate-phs;
+                    hashrate: data.current-hashrate;
+                    hashrate-unit: data.current-hashrate-unit;
                     hashrate-font-size: 32px;
                     show-dot: true;
                 }
@@ -510,7 +514,8 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
                     padding-top: 16px;
                     padding-bottom: 16px;
                     size: size;
-                    hashrate: data.current-hashrate-phs;
+                    hashrate: data.current-hashrate;
+                    hashrate-unit: data.current-hashrate-unit;
                     hashrate-font-size: 32px;
                     show-dot: true;
                 }
@@ -547,7 +552,8 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
                 hashrate-box {
                     padding-bottom: 31px;
                     size: size;
-                    hashrate: data.current-hashrate-phs;
+                    hashrate: data.current-hashrate;
+                    hashrate-unit: data.current-hashrate-unit;
                     hashrate-font-size: 32px;
                     show-dot: false;
                 }
@@ -577,7 +583,8 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
         hashrate-box {
             padding-bottom: 31px;
             size: size;
-            hashrate: data.current-hashrate-phs;
+            hashrate: data.current-hashrate;
+            hashrate-unit: data.current-hashrate-unit;
             hashrate-font-size: 64px;
             show-dot: false;
         }
@@ -605,13 +612,13 @@ export component WidgetBraiinsPoolBigChart inherits Rectangle {
                 spacing: 8px;
                 padding-top: 16px;
                 Text {
-                    text: "5m HR (TH/s):";
+                    text: "5m HR " + "(" + data.current-hashrate-unit + "):";
                     font-size: 24px;
                     font-weight: Theme.font.weight.regular;
                     color: Palette.gray-40;
                 }
                 Text {
-                    text: data.current-hashrate-phs;
+                    text: data.current-hashrate;
                     font-size: 24px;
                     font-weight: Theme.font.weight.bold;
                     color: Palette.violet-60;
@@ -641,7 +648,7 @@ export component WidgetBraiinsPoolBigChart inherits Rectangle {
                 padding-right: 22px;
                 for hashrate-unit in data.hashrate-units:
                 Text {
-                    text: hashrate-unit + " TH/s";
+                    text: hashrate-unit + " " + data.hashrate-unit-label;
                     font-size: 24px;
                     font-weight: Theme.font.weight.regular;
                     color: Palette.gray-40;
@@ -695,13 +702,13 @@ export component WidgetBraiinsPoolBigChart inherits Rectangle {
             HorizontalLayout {
                 spacing: 8px;
                 Text {
-                    text: "5m HR (TH/s):";
+                    text: "5m HR " + "(" + data.current-hashrate-unit + "):";
                     font-size: 24px;
                     font-weight: Theme.font.weight.regular;
                     color: Palette.gray-40;
                 }
                 Text {
-                    text: data.current-hashrate-phs;
+                    text: data.current-hashrate;
                     font-size: 24px;
                     font-weight: Theme.font.weight.bold;
                     color: Palette.violet-60;
@@ -773,13 +780,13 @@ export component WidgetBraiinsPoolBigChart inherits Rectangle {
                 HorizontalLayout {
                     spacing: 5px;
                     Text {
-                        text: data.current-hashrate-phs;
+                        text: data.current-hashrate;
                         font-size: 24px;
                         font-weight: Theme.font.weight.bold;
                         color: Palette.violet-60;
                     }
                     Text {
-                        text: "TH/s";
+                        text: data.current-hashrate-unit;
                         font-size: 24px;
                         font-weight: Theme.font.weight.regular;
                         color: Palette.gray-40;
@@ -844,13 +851,13 @@ export component WidgetBraiinsPoolBigChart inherits Rectangle {
             padding-left: 16px;
             alignment: start;
             Text {
-                text: "5m HR (TH/s):";
+                text: "5m HR " + "(" + data.current-hashrate-unit + "):";
                 font-size: 24px;
                 font-weight: Theme.font.weight.regular;
                 color: Palette.gray-40;
             }
             Text {
-                text: data.current-hashrate-phs;
+                text: data.current-hashrate;
                 font-size: 24px;
                 font-weight: Theme.font.weight.bold;
                 color: Palette.violet-60;

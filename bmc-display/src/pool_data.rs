@@ -32,8 +32,22 @@ pub struct CurrentUserHashrate {
 
 impl CurrentUserHashrate {
     #[must_use]
-    pub fn hashrate_as_shared(self) -> SharedString {
-        SharedString::from(format!("{:.1}", self.hashrate_th_per_sec))
+    pub fn hashrate_as_shared(&self) -> SharedString {
+        let hashrate_per_sec = if self.hashrate_th_per_sec > 1000.0 {
+            self.hashrate_th_per_sec / 1000.0
+        } else {
+            self.hashrate_th_per_sec
+        };
+        SharedString::from(format!("{hashrate_per_sec:.1}"))
+    }
+
+    #[must_use]
+    pub fn hashrate_units(&self) -> SharedString {
+        if self.hashrate_th_per_sec > 1000.0 {
+            SharedString::from("PH/s")
+        } else {
+            SharedString::from("TH/s")
+        }
     }
 }
 
@@ -99,12 +113,31 @@ impl UserHashrateHistory {
             .unwrap_or(3.0);
 
         let max = graph_utils::y_axis_max(max, false);
+        // TH/s -> PH/s
+        let max = if max > 1000.0 { max / 1000.0 } else { max };
         ModelRc::new(VecModel::from_iter(
             [max, 2.0 * max / 3.0, max / 3.0, 0.0]
                 .iter()
                 .map(|unit| SharedString::from(format!("{unit:.1}")))
                 .collect::<Vec<SharedString>>(),
         ))
+    }
+
+    #[must_use]
+    pub fn hashrate_units(&self) -> SharedString {
+        let max = self
+            .slots
+            .iter()
+            .map(|slot| slot.hashrate_th_per_sec)
+            .filter(|x| !x.is_nan())
+            .max_by(f32::total_cmp)
+            .unwrap_or(3.0);
+
+        if max > 1000.0 {
+            SharedString::from("PH/s")
+        } else {
+            SharedString::from("TH/s")
+        }
     }
 
     #[must_use]

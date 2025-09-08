@@ -345,8 +345,10 @@ impl DisplayController {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
                 widgets_ref.modify(&widget_id, |widget| {
-                    widget.braiins_pool.current_hashrate_phs =
+                    widget.braiins_pool.current_hashrate =
                         current_user_hashrate.hashrate_as_shared();
+                    widget.braiins_pool.current_hashrate_unit =
+                        current_user_hashrate.hashrate_units();
                 });
             }
         });
@@ -426,6 +428,8 @@ impl DisplayController {
                         (BraiinsPoolStyle::BigChart, WidgetSize::Full) => {
                             widget.braiins_pool.chart_bigchart_full = hashrate_history
                                 .into_graph_image(&main_window, width, height, true);
+                            widget.braiins_pool.hashrate_unit_label =
+                                hashrate_history.hashrate_units();
                             widget.braiins_pool.timestamps = hashrate_history.timestamps(
                                 system_timezone,
                                 is_24_format,
