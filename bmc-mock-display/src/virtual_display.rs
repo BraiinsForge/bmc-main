@@ -10,8 +10,10 @@ use bmc_display::{
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
 };
 use minifb;
+use slint::LogicalPosition;
 use slint::platform::software_renderer::PremultipliedRgbaColor;
 use slint::platform::{EventLoopProxy, Platform, software_renderer::MinimalSoftwareWindow};
+use slint::platform::{PointerEventButton, WindowEvent};
 use std::cell::RefCell;
 use std::iter;
 use std::rc::Rc;
@@ -84,6 +86,7 @@ impl Platform for VirtualDisplayPlatform {
     fn run_event_loop(&self) -> std::result::Result<(), slint::PlatformError> {
         info!("Running virtual display event loop");
         let mut saved_proxy_event: Option<ProxyEvent> = None;
+        let mut was_pressed = false;
 
         'outer: while !self.event_receiver.is_disconnected() {
             // Update timers and animations
@@ -112,6 +115,33 @@ impl Platform for VirtualDisplayPlatform {
 
                 if !minifb.is_open() {
                     break 'outer;
+                }
+
+                // inside your event loop:
+                if let Some((x, y)) = minifb.get_mouse_pos(minifb::MouseMode::Discard) {
+                    let pos = LogicalPosition::new(x, y);
+
+                    let pressed = minifb.get_mouse_down(minifb::MouseButton::Left);
+
+                    // always send move (Slint uses this for drags)
+                    self.window
+                        .dispatch_event(WindowEvent::PointerMoved { position: pos });
+
+                    if pressed && !was_pressed {
+                        // just pressed
+                        self.window.dispatch_event(WindowEvent::PointerPressed {
+                            position: pos,
+                            button: PointerEventButton::Left,
+                        });
+                    } else if !pressed && was_pressed {
+                        // just released
+                        self.window.dispatch_event(WindowEvent::PointerReleased {
+                            position: pos,
+                            button: PointerEventButton::Left,
+                        });
+                    }
+
+                    was_pressed = pressed;
                 }
             }
 
