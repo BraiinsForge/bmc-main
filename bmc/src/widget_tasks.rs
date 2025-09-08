@@ -354,27 +354,49 @@ impl WidgetTasks {
                         to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
                     let from_timestamp =
                         from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                    let hashrate_history = if let Ok(response) = client
-                        .get(format!(
-                            "{}{}",
-                            pool_data::POOL_API_URL,
-                            pool_data::USER_HASHRATE_HISTORY
-                        ))
-                        .query(&[(pool_data::FROM_TIMESTAMP, &from_timestamp)])
-                        .query(&[(pool_data::TO_TIMESTAMP, &to_timestamp)])
-                        .query(&[(pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX)])
-                        .timeout(API_TIMEOUT)
-                        .send()
-                        .await
-                    {
-                        response
-                            .json::<UserHashrateHistory>()
+                    let mut hashrate_history = UserHashrateHistory::default();
+                    let mut next_cursor: Option<String> = None;
+                    let url = format!(
+                        "{}{}",
+                        pool_data::POOL_API_URL,
+                        pool_data::USER_HASHRATE_HISTORY
+                    );
+                    loop {
+                        let mut query_params = vec![
+                            (pool_data::FROM_TIMESTAMP, from_timestamp.as_str()),
+                            (pool_data::TO_TIMESTAMP, to_timestamp.as_str()),
+                            (pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX),
+                        ];
+
+                        if let Some(cursor) = &next_cursor {
+                            query_params.push((pool_data::CURSOR, cursor));
+                        }
+
+                        let hashrate_history_partial = match client
+                            .get(&url)
+                            .query(&query_params)
+                            .timeout(API_TIMEOUT)
+                            .send()
                             .await
-                            .unwrap_or_default()
-                    } else {
-                        warn!("Failed to get user hashrate history data from API");
-                        UserHashrateHistory::default()
-                    };
+                        {
+                            Ok(response) => match response.json::<UserHashrateHistory>().await {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    warn!("Failed to parse user hashrate history JSON: {e}");
+                                    break;
+                                }
+                            },
+                            Err(e) => {
+                                warn!("Failed to get user hashrate history data from API: {e}");
+                                break;
+                            }
+                        };
+                        hashrate_history.merge_and_sort(&hashrate_history_partial);
+                        next_cursor = hashrate_history_partial.next_cursor();
+                        if next_cursor.is_none() {
+                            break;
+                        }
+                    }
                     let system_timezone = system_timezone_receiver.borrow_and_update().clone();
                     let is_24_format = config_handle
                         .read()
@@ -431,27 +453,49 @@ impl WidgetTasks {
                         to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
                     let from_timestamp =
                         from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                    let worker_history = if let Ok(response) = client
-                        .get(format!(
-                            "{}{}",
-                            pool_data::POOL_API_URL,
-                            pool_data::USER_WORKERS_HISTORY
-                        ))
-                        .query(&[(pool_data::FROM_TIMESTAMP, &from_timestamp)])
-                        .query(&[(pool_data::TO_TIMESTAMP, &to_timestamp)])
-                        .query(&[(pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX)])
-                        .timeout(API_TIMEOUT)
-                        .send()
-                        .await
-                    {
-                        response
-                            .json::<UserWorkerHistory>()
+                    let mut worker_history = UserWorkerHistory::default();
+                    let mut next_cursor: Option<String> = None;
+                    let url = format!(
+                        "{}{}",
+                        pool_data::POOL_API_URL,
+                        pool_data::USER_WORKERS_HISTORY
+                    );
+                    loop {
+                        let mut query_params = vec![
+                            (pool_data::FROM_TIMESTAMP, from_timestamp.as_str()),
+                            (pool_data::TO_TIMESTAMP, to_timestamp.as_str()),
+                            (pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX),
+                        ];
+
+                        if let Some(cursor) = &next_cursor {
+                            query_params.push((pool_data::CURSOR, cursor));
+                        }
+
+                        let worker_history_partial = match client
+                            .get(&url)
+                            .query(&query_params)
+                            .timeout(API_TIMEOUT)
+                            .send()
                             .await
-                            .unwrap_or_default()
-                    } else {
-                        warn!("Failed to get user worker history data from API");
-                        UserWorkerHistory::default()
-                    };
+                        {
+                            Ok(response) => match response.json::<UserWorkerHistory>().await {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    warn!("Failed to parse user worker history JSON: {e}");
+                                    break;
+                                }
+                            },
+                            Err(e) => {
+                                warn!("Failed to get user worker history data from API: {e}");
+                                break;
+                            }
+                        };
+                        worker_history.merge_and_sort(&worker_history_partial);
+                        next_cursor = worker_history_partial.next_cursor();
+                        if next_cursor.is_none() {
+                            break;
+                        }
+                    }
                     display_controller.update_worker_history(
                         scene_id.clone(),
                         widget_id.clone(),

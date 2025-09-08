@@ -20,7 +20,8 @@ pub const USER_PAYOUTS_RECENT: &str = "/user/payouts/recent";
 pub const FROM_TIMESTAMP: &str = "from_timestamp";
 pub const TO_TIMESTAMP: &str = "to_timestamp";
 pub const PAGE_LIMIT: &str = "page_limit";
-pub const PAGE_LIMIT_MAX: i32 = 1000;
+pub const PAGE_LIMIT_MAX: &str = "1000";
+pub const CURSOR: &str = "page_cursor";
 
 const FORMAT_24H: &str = "%H:%M";
 const FORMAT_12H: &str = "%I:%M %p";
@@ -51,9 +52,18 @@ impl CurrentUserHashrate {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct HashrateSlot {
+    slot_start: DateTime<Utc>,
     hashrate_th_per_sec: f32,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PaginationMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    has_next: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -63,6 +73,7 @@ pub struct UserHashrateHistory {
     #[serde(skip_serializing_if = "Option::is_none")]
     to_timestamp: Option<DateTime<Utc>>,
     slots: Vec<HashrateSlot>,
+    pagination: PaginationMetadata,
 }
 
 impl UserHashrateHistory {
@@ -187,16 +198,46 @@ impl UserHashrateHistory {
                 .collect::<Vec<SharedString>>(),
         ))
     }
+
+    #[must_use]
+    pub fn next_cursor(&self) -> Option<String> {
+        self.pagination
+            .has_next
+            .and(self.pagination.next_cursor.clone())
+    }
+
+    pub fn merge_and_sort(&mut self, other: &Self) {
+        self.from_timestamp = match (self.from_timestamp, other.from_timestamp) {
+            (Some(self_time), Some(other_time)) => Some(self_time.min(other_time)),
+            (Some(self_time), None) => Some(self_time),
+            (None, Some(other_time)) => Some(other_time),
+            (None, None) => None,
+        };
+        self.to_timestamp = match (self.to_timestamp, other.to_timestamp) {
+            (Some(self_time), Some(other_time)) => Some(self_time.max(other_time)),
+            (Some(self_time), None) => Some(self_time),
+            (None, Some(other_time)) => Some(other_time),
+            (None, None) => None,
+        };
+        self.slots.extend(other.slots.clone());
+        self.slots.sort_by_key(|slot| slot.slot_start);
+    }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct WorkerSlot {
+    slot_start: DateTime<Utc>,
     active_workers: u32,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct UserWorkerHistory {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_timestamp: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to_timestamp: Option<DateTime<Utc>>,
     slots: Vec<WorkerSlot>,
+    pagination: PaginationMetadata,
 }
 
 impl UserWorkerHistory {
@@ -278,6 +319,30 @@ impl UserWorkerHistory {
         };
 
         ModelRc::new(VecModel::from_iter(units))
+    }
+
+    #[must_use]
+    pub fn next_cursor(&self) -> Option<String> {
+        self.pagination
+            .has_next
+            .and(self.pagination.next_cursor.clone())
+    }
+
+    pub fn merge_and_sort(&mut self, other: &Self) {
+        self.from_timestamp = match (self.from_timestamp, other.from_timestamp) {
+            (Some(self_time), Some(other_time)) => Some(self_time.min(other_time)),
+            (Some(self_time), None) => Some(self_time),
+            (None, Some(other_time)) => Some(other_time),
+            (None, None) => None,
+        };
+        self.to_timestamp = match (self.to_timestamp, other.to_timestamp) {
+            (Some(self_time), Some(other_time)) => Some(self_time.max(other_time)),
+            (Some(self_time), None) => Some(self_time),
+            (None, Some(other_time)) => Some(other_time),
+            (None, None) => None,
+        };
+        self.slots.extend(other.slots.clone());
+        self.slots.sort_by_key(|slot| slot.slot_start);
     }
 }
 
