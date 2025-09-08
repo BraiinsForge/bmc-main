@@ -41,9 +41,9 @@ export global WidgetUtilsAdapter {
 export global BaseDimensions {
   public pure function widget-width-int(size: WidgetSize) -> int {
     if (size == WidgetSize.Small) {
-      return 320;
+      return 306;
     } else if (size == WidgetSize.Medium || size == WidgetSize.Large) {
-      return 640;
+      return 620;
     } else {
       // WidgetSize.Full
       return 1280;
@@ -56,9 +56,11 @@ export global BaseDimensions {
 
   public pure function widget-height-int(size: WidgetSize) -> int {
     if (size == WidgetSize.Small || size == WidgetSize.Medium) {
-      return 240;
+      return 220;
+    } else if (size == WidgetSize.Large) {
+      return 448;
     } else {
-      // WidgetSize.Large || WidgetSize.Full
+      // WidgetSize.Full
       return 480;
     }
   }

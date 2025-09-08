@@ -11,66 +11,57 @@ component WidgetContainer inherits Rectangle {
     in property <int> position-row;
     in property <int> position-col;
 
-    x: self.position-col * BaseDimensions.widget-width(WidgetSize.Small);
-    y: self.position-row * BaseDimensions.widget-height(WidgetSize.Small);
+    property <length> gap-x: position-col == 0 ? 0px : 8px;
+    property <length> gap-y: position-row == 0 ? 0px : 8px;
+
+    x: self.position-col * (BaseDimensions.widget-width(WidgetSize.Small) + self.gap-x);
+    y: self.position-row * (BaseDimensions.widget-height(WidgetSize.Small) + self.gap-y);
     width: BaseDimensions.widget-width(size);
     height: BaseDimensions.widget-height(size);
+    background: Palette.black;
 }
 
 export component WidgetBuilder inherits Rectangle {
     in property <string> scene_id;
     in property <[Widget]> widgets;
 
-    if widgets.length == 0: Rectangle {
-        property <[{row: int, col: int, size: WidgetSize, text: string}]> examples: [
-            { row: 0, col: 0, size: WidgetSize.Small, text: "Small size" },
-            { row: 0, col: 1, size: WidgetSize.Small, text: "Small size" },
-            { row: 0, col: 2, size: WidgetSize.Large, text: "Large size" },
-            { row: 1, col: 0, size: WidgetSize.Medium, text: "Medium size" },
-        ];
+    background: Palette.gray-90;
 
-        for example in examples: WidgetContainer {
-            size: example.size;
-            position-row: example.row;
-            position-col: example.col;
+    property <bool> fullscreen: widgets.length == 1 && widgets[0].size == WidgetSize.Full;
 
-            border-color: Palette.gray-90;
-            border-width: 1px;
+    HorizontalLayout {
+        padding: fullscreen ? 0px : 16px;
 
-            Text {
-                text: example.text;
-                color: Palette.gray-80;
-                font-size: Theme.font.size.common.default;
-                font-weight: Theme.font.weight.regular;
+        Rectangle {
+            // background grid with empty placeholders
+            if !fullscreen: Rectangle {
+                for row in 2: Rectangle {
+                    for col in 4: WidgetContainer {
+                        size: WidgetSize.Small;
+                        position-row: row;
+                        position-col: col;
+                    }
+                }
             }
-        }
 
-        Text {
-            text: "This scene is empty. Use web interface to add some widgets.";
-            color: Palette.white;
-            font-size: Theme.font.size.common.default;
-            font-weight: Theme.font.weight.regular;
-        }
-    }
+            for widget[index] in widgets: WidgetContainer {
+                size: widget.size;
+                position-row: widget.row;
+                position-col: widget.col;
 
-    if widgets.length > 0: Rectangle {
-        for widget[index] in widgets: WidgetContainer {
-            size: widget.size;
-            position-row: widget.row;
-            position-col: widget.col;
-
-            if widget.kind == WidgetKind.Clock: WidgetClock {
-                size: widget.size;
-                config: widget.clock.config;
-                datetime: widget.clock.datetime;
-            }
-            if widget.kind == WidgetKind.TickerBtc: WidgetBtcGraph {
-                size: widget.size;
-                data: widget.ticker-btc;
-            }
-            if widget.kind == WidgetKind.BlockHeight: WidgetBlockHeight {
-                size: widget.size;
-                data: widget.blockheight;
+                if widget.kind == WidgetKind.Clock: WidgetClock {
+                    size: widget.size;
+                    config: widget.clock.config;
+                    datetime: widget.clock.datetime;
+                }
+                if widget.kind == WidgetKind.TickerBtc: WidgetBtcGraph {
+                    size: widget.size;
+                    data: widget.ticker-btc;
+                }
+                if widget.kind == WidgetKind.BlockHeight: WidgetBlockHeight {
+                    size: widget.size;
+                    data: widget.blockheight;
+                }
             }
         }
     }
