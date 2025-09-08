@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -54,7 +55,7 @@ impl SoundController {
     }
 }
 
-#[derive(Debug, Clone, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Display, EnumIter, EnumString, Serialize, Deserialize)]
 #[strum(serialize_all = "PascalCase")]
 pub(crate) enum Sounds {
     GreenCandleMorning,
