@@ -408,7 +408,7 @@ impl DisplayController {
                                 .into_graph_image(&main_window, width, height, false);
                         }
                         (BraiinsPoolStyle::Overview, WidgetSize::Full) => {
-                            widget.braiins_pool.chart_overview_full = hashrate_history
+                            widget.braiins_pool.chart_overview_full_tmp = hashrate_history
                                 .into_graph_image(&main_window, width, height, true);
                         }
                         // Other Overview sizes do not have graphs
@@ -418,15 +418,15 @@ impl DisplayController {
                                 .into_graph_image(&main_window, width, height, false);
                         }
                         (BraiinsPoolStyle::BigChart, WidgetSize::Medium) => {
-                            widget.braiins_pool.chart_bigchart_medium = hashrate_history
+                            widget.braiins_pool.chart_bigchart_medium_tmp = hashrate_history
                                 .into_graph_image(&main_window, width, height, true);
                         }
                         (BraiinsPoolStyle::BigChart, WidgetSize::Large) => {
-                            widget.braiins_pool.chart_bigchart_large = hashrate_history
+                            widget.braiins_pool.chart_bigchart_large_tmp = hashrate_history
                                 .into_graph_image(&main_window, width, height, true);
                         }
                         (BraiinsPoolStyle::BigChart, WidgetSize::Full) => {
-                            widget.braiins_pool.chart_bigchart_full = hashrate_history
+                            widget.braiins_pool.chart_bigchart_full_tmp = hashrate_history
                                 .into_graph_image(&main_window, width, height, true);
                             widget.braiins_pool.hashrate_unit_label =
                                 hashrate_history.hashrate_units();
@@ -488,7 +488,7 @@ impl DisplayController {
 
                     match (pool_style, widget_size) {
                         (BraiinsPoolStyle::Overview, WidgetSize::Full) => {
-                            let original_image = &widget.braiins_pool.chart_overview_full;
+                            let original_image = &widget.braiins_pool.chart_overview_full_tmp;
                             widget.braiins_pool.chart_overview_full = worker_history
                                 .into_graph_image(
                                     &main_window,
@@ -501,7 +501,7 @@ impl DisplayController {
                         // Other Overview sizes do not have graphs
                         (BraiinsPoolStyle::Overview, _) => {}
                         (BraiinsPoolStyle::BigChart, WidgetSize::Medium) => {
-                            let original_image = &widget.braiins_pool.chart_bigchart_medium;
+                            let original_image = &widget.braiins_pool.chart_bigchart_medium_tmp;
                             widget.braiins_pool.chart_bigchart_medium = worker_history
                                 .into_graph_image(
                                     &main_window,
@@ -512,7 +512,7 @@ impl DisplayController {
                                 );
                         }
                         (BraiinsPoolStyle::BigChart, WidgetSize::Large) => {
-                            let original_image = &widget.braiins_pool.chart_bigchart_large;
+                            let original_image = &widget.braiins_pool.chart_bigchart_large_tmp;
                             widget.braiins_pool.chart_bigchart_large = worker_history
                                 .into_graph_image(
                                     &main_window,
@@ -523,7 +523,7 @@ impl DisplayController {
                                 );
                         }
                         (BraiinsPoolStyle::BigChart, WidgetSize::Full) => {
-                            let original_image = &widget.braiins_pool.chart_bigchart_full;
+                            let original_image = &widget.braiins_pool.chart_bigchart_full_tmp;
                             widget.braiins_pool.chart_bigchart_full = worker_history
                                 .into_graph_image(
                                     &main_window,
