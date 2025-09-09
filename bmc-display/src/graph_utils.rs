@@ -4,7 +4,7 @@ use crate::generated::Palette;
 use resvg::{tiny_skia, usvg};
 use slint::{Color, Image, Rgba8Pixel, SharedPixelBuffer};
 use svg::Document;
-use svg::node::element::{Path, path::Data};
+use svg::node::element::{Definitions, LinearGradient, Path, Stop, path::Data};
 
 pub(crate) fn draw_canvas(
     width: u32,
@@ -148,6 +148,135 @@ pub(crate) fn create_graph(
             .set("stroke-width", stroke_width)
             .set("d", path_data),
     )
+}
+
+pub(crate) fn create_graph_fill(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    palette: &Palette<'_>,
+    use_gradient: bool,
+) -> Image {
+    if data.is_empty() {
+        return Image::default();
+    }
+
+    #[expect(clippy::cast_precision_loss)]
+    let point_width = width as f32 / (data.len() - 1) as f32;
+    let max_value = data
+        .iter()
+        .max_by(|a, b| a.total_cmp(b))
+        .copied()
+        .unwrap_or_default();
+    let min_value = data
+        .iter()
+        .min_by(|a, b| a.total_cmp(b))
+        .copied()
+        .unwrap_or_default();
+
+    let coef = max_value - min_value;
+    let height_f32 = height as f32;
+    let point_ratio = if coef == 0.0 {
+        height_f32
+    } else {
+        height_f32 / coef
+    };
+    let point_shift = |index: f32| -> f32 { index * point_width };
+    let point_value = |value: f32| -> f32 { point_ratio * (max_value - value) };
+
+    let border_command = Data::new()
+        .move_to((0, 0))
+        .move_to((width, 0))
+        .move_to((width, height))
+        .move_to((0, height));
+
+    let mut path_data = border_command;
+    for (index, &value) in data.iter().enumerate() {
+        if index == 0 {
+            path_data = path_data.move_to((0, point_value(value)));
+        } else {
+            path_data = path_data.line_to((point_shift(index as f32), point_value(value)));
+        }
+    }
+
+    path_data = path_data.line_to((width, height)).line_to((0, height));
+
+    let color_palette = ColorPalette::new(&palette);
+    let (graph_color, graph_gradient_color, graph_fill_color) = if data.first() <= data.last() {
+        (
+            color_palette.green_50,
+            color_palette.green_60,
+            color_palette.green_100,
+        )
+    } else {
+        (
+            color_palette.red_50,
+            color_palette.red_60,
+            color_palette.red_100,
+        )
+    };
+    let background_color = color_palette.black.clone();
+
+    let stop1 = Stop::new()
+        .set("offset", "0%")
+        .set("stop-color", graph_gradient_color);
+
+    let stop2 = Stop::new()
+        .set("offset", "100%")
+        .set("stop-color", background_color.clone());
+
+    let gradient = LinearGradient::new()
+        .set("id", "Gradient")
+        .set("x1", "0%")
+        .set("y1", "0%")
+        .set("x2", "0%")
+        .set("y2", "100%")
+        .add(stop1)
+        .add(stop2);
+
+    let defs = Definitions::new().add(gradient);
+
+    let stroke_width = 2;
+
+    let partial_path = Path::new()
+        .set("stroke", graph_color)
+        .set("stroke-width", stroke_width)
+        .set("d", path_data);
+    let path = if use_gradient {
+        partial_path.set("fill", "url(#Gradient)")
+    } else {
+        partial_path.set("fill", graph_fill_color)
+    };
+
+    // Rectangle placed under the graph to match the background color
+    let rect_command = Data::new()
+        .move_to((0, 0))
+        .line_to((width, 0))
+        .line_to((width, height))
+        .line_to((0, height))
+        .close();
+    let background_rect = Path::new()
+        .set("fill", background_color.clone())
+        .set("stroke", background_color.clone())
+        .set("stroke-width", stroke_width)
+        .set("d", rect_command.clone());
+    let overlay_rect = Path::new()
+        .set("fill-opacity", 0.0)
+        .set("stroke", color_palette.black)
+        .set("stroke-width", stroke_width)
+        .set("d", rect_command);
+
+    let partial_document = Document::new()
+        .set("width", width)
+        .set("height", height)
+        .set("viewBox", (0, 0, width, height));
+    let document = if use_gradient {
+        partial_document.add(background_rect).add(defs).add(path)
+    } else {
+        partial_document.add(path).add(overlay_rect)
+    };
+
+    svg_into_image(document, width, height)
 }
 
 // Calculates nearest number divisible by 3
