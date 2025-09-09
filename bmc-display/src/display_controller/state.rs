@@ -326,6 +326,17 @@ impl DisplayController {
             alarm_adapter.set_snooze_visible(show_snooze);
         });
     }
+
+    pub fn update_system_datetime(
+        &self,
+        datetime: chrono::DateTime<chrono::FixedOffset>,
+        timezone: String,
+        is_24_format: bool,
+    ) {
+        self.in_event_loop(move |main_window| {
+            main_window.set_system_datetime(to_datetime(datetime, timezone, is_24_format));
+        });
+    }
 }
 
 #[allow(unused, clippy::allow_attributes)]

@@ -95,6 +95,12 @@ impl<T: BmcManager> DisplayTasks<T> {
             manager.clone(),
         ));
 
+        tokio::spawn(Self::run_date_time_update(
+            display_controller.clone(),
+            config_handle.clone(),
+            manager.clone(),
+        ));
+
         tokio::spawn(Self::run_initial_setup_listener(
             display_controller.clone(),
             manager,
@@ -105,6 +111,32 @@ impl<T: BmcManager> DisplayTasks<T> {
             display_controller,
             alarm_bus,
         ));
+    }
+
+    async fn run_date_time_update(
+        display_controller: DisplayController,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        manager: Arc<T>,
+    ) {
+        let mut interval = interval(Duration::from_millis(250));
+
+        loop {
+            interval.tick().await;
+
+            let timezone = manager.timezone();
+            let now = chrono::Local::now()
+                .with_timezone(timezone.chrono())
+                .fixed_offset();
+
+            let is_24_format = config_handle
+                .read()
+                .await
+                .localization_config()
+                .time_system
+                .is_24();
+
+            display_controller.update_system_datetime(now, timezone.to_string(), is_24_format);
+        }
     }
 
     async fn run_system_upgrade_listener(

@@ -31,6 +31,7 @@ export component MainWindow inherits Window {
 
     in property <UIScreen> screen-id <=> ScreenAdapter.screen-id;
     in property <bool> night-mode-enabled;
+    in property <DateTime> system-datetime;
 
     // all (enabled & disabled) scenes
     in property <[Scene]> scenes;

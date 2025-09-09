@@ -8,12 +8,15 @@ use anyhow::Result;
 use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
 use bmc_mock_display::VirtualDisplay;
+use bmc_shared_time::time::Timezone;
+use std::str::FromStr;
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::time::{interval, sleep};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let (window_handle, display_driver) = VirtualDisplay::create()?;
+    spawn_date_time_task(display_driver.display_controller.clone());
 
     let scene = Scene::new(display_driver.display_controller);
 
@@ -29,6 +32,24 @@ fn run_scene(_scene: Scene) {
 
         // NOTE: Uncomment to run specific sequence of display scenes
         // scene.run_upgrade_failure_scene().await;
+    });
+}
+
+fn spawn_date_time_task(display_controller: DisplayController) {
+    let timezone = Timezone::from_str("Europe/Prague").expect("BUG: incorrect timezone");
+    let is_24_format = true;
+
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_millis(250));
+        loop {
+            interval.tick().await;
+
+            let now = chrono::Local::now()
+                .with_timezone(timezone.chrono())
+                .fixed_offset();
+
+            display_controller.update_system_datetime(now, timezone.to_string(), is_24_format);
+        }
     });
 }
 
