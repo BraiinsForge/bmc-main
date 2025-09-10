@@ -61,6 +61,9 @@ async fn main() -> Result<()> {
     );
     manager.init_wifi_ap().await?; // Has check on factory default already
 
+    let scheduler = bmc_scheduler::JobScheduler::init(manager.watch_timezone_updates(), None).await;
+    let _ = scheduler.sync_with_crontab().await;
+
     bmc::entry::main(
         manager,
         config,

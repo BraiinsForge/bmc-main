@@ -158,7 +158,6 @@ impl Debug for JobScheduler {
 }
 
 impl JobScheduler {
-    // Keep existing init method but simplified
     pub async fn init(
         timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
         crontab_path: Option<PathBuf>,
@@ -453,7 +452,6 @@ impl JobScheduler {
         result
     }
 
-    // Keep existing methods but potentially simplify signatures
     async fn add_job(
         &self,
         job: Job,
@@ -463,6 +461,7 @@ impl JobScheduler {
     ) -> Result<Uuid> {
         let job_id = self.inner.lock().await.add(job.clone()).await?;
         let next_tick = self.inner.lock().await.next_tick_for_job(job_id).await?;
+        debug!(">>> Job from '{source}' added: job_id: {job_id}, next_tick: {next_tick:?}");
         let job_details = JobDetails {
             job_id,
             job,
