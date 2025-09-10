@@ -5,8 +5,8 @@ use anyhow::{Context, Result, bail};
 use bmc_display::data::{
     Scene, SceneCycling, SceneId, SceneKind, WidgetSize, deserialize_scenes, serialize_scenes,
 };
-use bmc_shared_time::time::{DateFormat, TimeSystem};
-use chrono::NaiveTime;
+use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
+use chrono::{Local, NaiveTime};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -257,6 +257,24 @@ pub struct NightModeConfig {
     pub from: NaiveTime,
     pub to: NaiveTime,
     pub brightness_pct: u8,
+}
+
+impl NightModeConfig {
+    pub fn is_active(&self, timezone: &Timezone) -> bool {
+        let now = Local::now().with_timezone(timezone.chrono()).time();
+
+        self.enabled && Self::is_time_in_range(self.from, self.to, now)
+    }
+
+    /// Checks whether `now` (in local time) is in the [from, to) range.
+    /// Handles ranges that cross midnight.
+    fn is_time_in_range(from: NaiveTime, to: NaiveTime, now: NaiveTime) -> bool {
+        if from <= to {
+            now >= from && now < to
+        } else {
+            now >= from || now < to
+        }
+    }
 }
 
 impl NightModeConfigData {

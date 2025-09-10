@@ -9,7 +9,7 @@ use bmc_scheduler::scheduler::JobConfig;
 use bmc_scheduler::scheduler::Schedule;
 use bmc_scheduler::scheduler::Task;
 use bmc_shared_time::time::Timezone;
-use chrono::{Local, NaiveTime};
+use chrono::NaiveTime;
 use tokio::sync::{RwLock, watch};
 use tracing::debug;
 
@@ -143,20 +143,7 @@ impl NightModeController {
     }
 
     pub(crate) fn is_night_mode(&self, night_mode: &NightModeConfig) -> bool {
-        let timezone: chrono_tz::Tz = (&self.timezone_receiver.borrow().clone()).into();
-        let now = Local::now().with_timezone(&timezone).time();
-
-        night_mode.enabled && Self::is_time_in_range(night_mode.from, night_mode.to, now)
-    }
-
-    /// Checks whether `now` (in local time) is in the [from, to) range.
-    /// Handles ranges that cross midnight.
-    fn is_time_in_range(from: NaiveTime, to: NaiveTime, now: NaiveTime) -> bool {
-        if from <= to {
-            now >= from && now < to
-        } else {
-            now >= from || now < to
-        }
+        night_mode.is_active(&self.timezone_receiver.borrow())
     }
 }
 
