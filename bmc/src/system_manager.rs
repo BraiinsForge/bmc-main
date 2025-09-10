@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 use crate::{
     backlight::DisplayBacklightController,
     config::{ConfigHandle, NightModeConfig},
-    night_mode::{self, NightModeController},
+    night_mode::NightModeController,
 };
 
 #[derive(Debug, Clone)]
@@ -88,8 +88,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
     }
 
     pub(crate) async fn init(&self) -> anyhow::Result<()> {
-        let config: night_mode::NightModeConfig =
-            self.night_mode_controller.night_mode_config().await.into();
+        let config = self.night_mode_controller.night_mode_config().await;
         self.set_current_brightness(config.clone()).await?;
         self.night_mode_controller.init(config).await?;
 
@@ -107,7 +106,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
 
     async fn run_timezone_listener(&self, mut receiver: watch::Receiver<Timezone>) {
         while let Ok(()) = receiver.changed().await {
-            let night_mode = self.night_mode_controller.night_mode_config().await.into();
+            let night_mode = self.night_mode_controller.night_mode_config().await;
 
             if let Err(e) = self.set_current_brightness(night_mode).await {
                 warn!("Failed to set brightness on timezone change. Err: {e}");
@@ -126,10 +125,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         })
     }
 
-    async fn set_current_brightness(
-        &self,
-        config: night_mode::NightModeConfig,
-    ) -> anyhow::Result<()> {
+    async fn set_current_brightness(&self, config: NightModeConfig) -> anyhow::Result<()> {
         let value = if self.night_mode_controller.is_night_mode(&config) {
             self.brightness_night_mode_pct.load(Ordering::Acquire)
         } else {
@@ -192,8 +188,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             .set_config_brightness(value_pct)
             .await?;
 
-        let config: night_mode::NightModeConfig =
-            self.night_mode_controller.night_mode_config().await.into();
+        let config = self.night_mode_controller.night_mode_config().await;
 
         self.brightness_pct.store(value_pct, Ordering::Release);
 

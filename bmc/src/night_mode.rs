@@ -13,25 +13,7 @@ use chrono::{Local, NaiveTime};
 use tokio::sync::{RwLock, watch};
 use tracing::debug;
 
-use crate::config::ConfigHandle;
-use crate::config::NightModeConfig as NightModeConfiguration;
-
-#[derive(Debug, Clone)]
-pub(crate) struct NightModeConfig {
-    pub(crate) from: NaiveTime,
-    pub(crate) to: NaiveTime,
-    pub(crate) enabled: bool,
-}
-
-impl From<NightModeConfiguration> for NightModeConfig {
-    fn from(value: NightModeConfiguration) -> Self {
-        Self {
-            enabled: value.enabled,
-            from: value.from,
-            to: value.to,
-        }
-    }
-}
+use crate::config::{ConfigHandle, NightModeConfig};
 
 #[derive(Clone)]
 pub(crate) struct NightModeController {
@@ -43,7 +25,7 @@ pub(crate) struct NightModeController {
 }
 
 impl NightModeController {
-    const NIGHT_MODE_SCHEDULER_SOURCE: &str = "NightMode";
+    const NIGHT_MODE_SCHEDULER_SOURCE: &'static str = "NightMode";
 
     pub(crate) fn new(
         config_handle: Arc<RwLock<ConfigHandle>>,
@@ -69,7 +51,7 @@ impl NightModeController {
         Ok(())
     }
 
-    pub(crate) async fn night_mode_config(&self) -> NightModeConfiguration {
+    pub(crate) async fn night_mode_config(&self) -> NightModeConfig {
         self.config_handle.read().await.night_mode()
     }
 
@@ -80,7 +62,7 @@ impl NightModeController {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_enabled(enabled);
 
-        let config: NightModeConfig = config_handle.night_mode().into();
+        let config = config_handle.night_mode();
         self.enable_disable_night_mode_service(config.clone())
             .await?;
 
@@ -97,7 +79,7 @@ impl NightModeController {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_interval(from, to);
 
-        let config: NightModeConfig = config_handle.night_mode().into();
+        let config = config_handle.night_mode();
         self.enable_disable_night_mode_service(config.clone())
             .await?;
 
@@ -113,7 +95,7 @@ impl NightModeController {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_brightness(value_pct);
 
-        let config: NightModeConfig = config_handle.night_mode().into();
+        let config = config_handle.night_mode();
 
         config_handle.sync_to_storage().await?;
 
