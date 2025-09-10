@@ -24,7 +24,7 @@ use tracing::{debug, warn};
 
 const BTC_HISTORY_API_URL: &str = "https://public-api.braiins.com/v1/price-history";
 const BTC_HISTORY_TIMEFRAME_API_PARAM: &str = "timeframe";
-const API_TIMEOUT: Duration = Duration::from_secs(5);
+const API_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 struct TaskHandle {
@@ -216,7 +216,7 @@ impl WidgetTasks {
 
                 debug!("Getting bitcoin history data...");
                 let client = Client::new();
-                let btc_history_data = if let Ok(response) = client
+                let btc_history_data = match client
                     .get(BTC_HISTORY_API_URL)
                     .query(&[(
                         BTC_HISTORY_TIMEFRAME_API_PARAM,
@@ -226,10 +226,15 @@ impl WidgetTasks {
                     .send()
                     .await
                 {
-                    response.json::<BtcHistoryData>().await.unwrap_or_default()
-                } else {
-                    warn!("Failed to get btc history data from API");
-                    BtcHistoryData::default()
+                    Ok(response) => response
+                        .json::<BtcHistoryData>()
+                        .await
+                        .map_err(|e| warn!("Failed to parse btc history JSON: {e}"))
+                        .unwrap_or_default(),
+                    Err(e) => {
+                        warn!("Failed to get btc history data from API: {e}");
+                        BtcHistoryData::default()
+                    }
                 };
 
                 display_controller.update_btc_graph(
@@ -296,7 +301,7 @@ impl WidgetTasks {
 
                 debug!("Getting user current hashrate data...");
                 let client = Client::new();
-                let current_hashrate = if let Ok(response) = client
+                let current_hashrate = match client
                     .get(format!(
                         "{}{}",
                         pool_data::POOL_API_URL,
@@ -306,13 +311,15 @@ impl WidgetTasks {
                     .send()
                     .await
                 {
-                    response
+                    Ok(response) => response
                         .json::<CurrentUserHashrate>()
                         .await
-                        .unwrap_or_default()
-                } else {
-                    warn!("Failed to get user current hashrate data from API");
-                    CurrentUserHashrate::default()
+                        .map_err(|e| warn!("Failed to parse user current hashrate JSON: {e}"))
+                        .unwrap_or_default(),
+                    Err(e) => {
+                        warn!("Failed to get user current hashrate data from API: {e}");
+                        CurrentUserHashrate::default()
+                    }
                 };
                 display_controller.update_current_user_hashrate(
                     scene_id.clone(),
@@ -322,7 +329,7 @@ impl WidgetTasks {
 
                 if download_rewards {
                     debug!("Getting user latest rewards data...");
-                    let latest_rewards = if let Ok(response) = client
+                    let latest_rewards = match client
                         .get(format!(
                             "{}{}",
                             pool_data::POOL_API_URL,
@@ -332,13 +339,15 @@ impl WidgetTasks {
                         .send()
                         .await
                     {
-                        response
+                        Ok(response) => response
                             .json::<LatestUserRewards>()
                             .await
-                            .unwrap_or_default()
-                    } else {
-                        warn!("Failed to get user latest rewards data from API");
-                        LatestUserRewards::default()
+                            .map_err(|e| warn!("Failed to parse user latest rewards JSON: {e}"))
+                            .unwrap_or_default(),
+                        Err(e) => {
+                            warn!("Failed to get user latest rewards data from API: {e}");
+                            LatestUserRewards::default()
+                        }
                     };
                     display_controller.update_rewards_latest(
                         scene_id.clone(),
@@ -421,7 +430,7 @@ impl WidgetTasks {
 
                 if download_workers_stats {
                     debug!("Getting current workers data...");
-                    let workers_stats = if let Ok(response) = client
+                    let workers_stats = match client
                         .get(format!(
                             "{}{}",
                             pool_data::POOL_API_URL,
@@ -431,13 +440,15 @@ impl WidgetTasks {
                         .send()
                         .await
                     {
-                        response
+                        Ok(response) => response
                             .json::<CurrentUserWorkerStats>()
                             .await
-                            .unwrap_or_default()
-                    } else {
-                        warn!("Failed to get current workers data from API");
-                        CurrentUserWorkerStats::default()
+                            .map_err(|e| warn!("Failed to parse current workers JSON: {e}"))
+                            .unwrap_or_default(),
+                        Err(e) => {
+                            warn!("Failed to get current workers data from API: {e}");
+                            CurrentUserWorkerStats::default()
+                        }
                     };
                     display_controller.update_current_workers(
                         scene_id.clone(),
@@ -509,7 +520,7 @@ impl WidgetTasks {
 
                 if download_payout_stats {
                     debug!("Getting user financials data...");
-                    let user_financials = if let Ok(response) = client
+                    let user_financials = match client
                         .get(format!(
                             "{}{}",
                             pool_data::POOL_API_URL,
@@ -519,13 +530,18 @@ impl WidgetTasks {
                         .send()
                         .await
                     {
-                        response.json::<UserFinancials>().await.unwrap_or_default()
-                    } else {
-                        warn!("Failed to get user financials data from API");
-                        UserFinancials::default()
+                        Ok(response) => response
+                            .json::<UserFinancials>()
+                            .await
+                            .map_err(|e| warn!("Failed to parse user financials JSON: {e}"))
+                            .unwrap_or_default(),
+                        Err(e) => {
+                            warn!("Failed to get user financials data from API: {e}");
+                            UserFinancials::default()
+                        }
                     };
                     debug!("Getting user recent payouts data...");
-                    let recent_payouts = if let Ok(response) = client
+                    let recent_payouts = match client
                         .get(format!(
                             "{}{}",
                             pool_data::POOL_API_URL,
@@ -536,13 +552,15 @@ impl WidgetTasks {
                         .send()
                         .await
                     {
-                        response
+                        Ok(response) => response
                             .json::<RecentUserPayouts>()
                             .await
-                            .unwrap_or_default()
-                    } else {
-                        warn!("Failed to get user recent payouts data from API");
-                        RecentUserPayouts::default()
+                            .map_err(|e| warn!("Failed to parse user recent payouts JSON: {e}"))
+                            .unwrap_or_default(),
+                        Err(e) => {
+                            warn!("Failed to get user recent payouts data from API: {e}");
+                            RecentUserPayouts::default()
+                        }
                     };
                     display_controller.update_payout_stats(
                         scene_id.clone(),

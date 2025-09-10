@@ -371,13 +371,17 @@ impl<T: BmcManager> DisplayTasks<T> {
 
             debug!("Getting bitcoin data...");
             let client = Client::new();
-            let btc_price_data =
-                if let Ok(response) = client.get(PRICE_API_URL).timeout(API_TIMEOUT).send().await {
-                    response.json::<BitcoinData>().await.unwrap_or_default()
-                } else {
-                    warn!("Failed to get bitcoin data from API");
+            let btc_price_data = match client.get(PRICE_API_URL).timeout(API_TIMEOUT).send().await {
+                Ok(response) => response
+                    .json::<BitcoinData>()
+                    .await
+                    .map_err(|e| warn!("Failed to parse bitcoin price JSON: {e}"))
+                    .unwrap_or_default(),
+                Err(e) => {
+                    warn!("Failed to get bitcoin price from API: {e}");
                     BitcoinData::default()
-                };
+                }
+            };
 
             let number_format = config_handle
                 .read()
@@ -400,7 +404,7 @@ impl<T: BmcManager> DisplayTasks<T> {
 
             debug!("Getting blockheight data...");
             let client = Client::new();
-            let blockheight_data = if let Ok(response) = client
+            let blockheight_data = match client
                 .get(BLOCK_HEIGHT_API_URL)
                 .query(&[
                     (BLOCK_HEIGHT_LIMIT_API_PARAM, "1"),
@@ -410,16 +414,18 @@ impl<T: BmcManager> DisplayTasks<T> {
                 .send()
                 .await
             {
-                response
+                Ok(response) => response
                     .json::<Vec<BlockheightData>>()
                     .await
+                    .map_err(|e| warn!("Failed to parse blockheight JSON: {e}"))
                     .unwrap_or_default()
                     .first()
                     .cloned()
-                    .unwrap_or_default()
-            } else {
-                warn!("Failed to get blockheight data from API");
-                BlockheightData::default()
+                    .unwrap_or_default(),
+                Err(e) => {
+                    warn!("Failed to get blockheight data from API: {e}");
+                    BlockheightData::default()
+                }
             };
 
             let timezone = manager.timezone();
