@@ -19,9 +19,20 @@ export struct WidgetClockConfig {
     show-timezone: bool,
 }
 
+// Analog clock fix
+export struct AnalogClockHands {
+    second-hand-round: image,
+    minute-hand-round: image,
+    hour-hand-round: image,
+    second-hand-rect: image,
+    minute-hand-rect: image,
+    hour-hand-rect: image,
+}
+
 export struct WidgetClockData {
     config: WidgetClockConfig,
     datetime: DateTime,
+    analog-clock-hands: AnalogClockHands,
 }
 
 export component WidgetClockAnalogRound inherits Rectangle {
@@ -30,6 +41,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
     in property <WidgetSize> size;
     in property <WidgetClockConfig> config;
     in property <DateTime> datetime;
+    in property <WidgetClockData> data;
 
     property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
@@ -77,17 +89,19 @@ export component WidgetClockAnalogRound inherits Rectangle {
             width: Images.hour-hand-width * relative-size;
             height: Images.hour-hand-height * relative-size;
             y: 74px * relative-size;
-            rotation-angle: hour-angle();
-            rotation-origin-y: 121px * relative-size;
-            source: Images.hand-hour;
+            // rotation-angle: hour-angle();
+            // rotation-origin-y: 121px * relative-size;
+            // source: Images.hand-hour;
+            source: data.analog-clock-hands.hour-hand-round;
         }
         minute := Image {
             width: Images.minute-hand-width * relative-size;
             height: Images.minute-hand-height * relative-size;
-            y: 0px;
-            rotation-angle: minute-angle();
-            rotation-origin-y: 195px * relative-size;
-            source: Images.hand-minute;
+            // y: 0px;
+            // rotation-angle: minute-angle();
+            // rotation-origin-y: 195px * relative-size;
+            // source: Images.hand-minute;
+            source: data.analog-clock-hands.minute-hand-round;
         }
         Image {
             width: Images.circle-white-width * relative-size;
@@ -99,10 +113,11 @@ export component WidgetClockAnalogRound inherits Rectangle {
         second := Image {
             width: Images.second-hand-width * relative-size;
             height: Images.second-hand-height * relative-size;
-            y: 5px * relative-size;
-            rotation-angle: second-angle();
-            rotation-origin-y: 190px * relative-size;
-            source: Images.hand-second;
+            // y: 5px * relative-size;
+            // rotation-angle: second-angle();
+            // rotation-origin-y: 190px * relative-size;
+            // source: Images.hand-second;
+            source: data.analog-clock-hands.second-hand-round;
         }
         Image {
             width: Images.circle-orange-width * relative-size;
@@ -145,6 +160,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
     in property <WidgetSize> size;
     in property <WidgetClockConfig> config;
     in property <DateTime> datetime;
+    in property <WidgetClockData> data;
 
     property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
     property <percent> relative-width: (size == WidgetSize.Full) ? 100% : (size == WidgetSize.Small) ? 25% : 50%;
@@ -217,20 +233,26 @@ export component WidgetClockAnalogRect inherits Rectangle {
             color: Palette.gray-40;
         }
         hour := Image {
-            width: 0.9 * Images.hour-hand-rect-width * relative-size;
-            height: 0.9 * Images.hour-hand-rect-height * relative-size;
+            // width: 0.9 * Images.hour-hand-rect-width * relative-size;
+            // height: 0.9 * Images.hour-hand-rect-height * relative-size;
+            width: Images.hour-hand-rect-width * relative-size;
+            height: Images.hour-hand-rect-height * relative-size;
             y: 95px * relative-size;
-            rotation-angle: hour-angle(size);
-            rotation-origin-y: 123px * relative-size;
-            source: Images.hand-hour-rect;
+            // rotation-angle: hour-angle();
+            // rotation-origin-y: 123px * relative-size;
+            // source: Images.hand-hour-rect;
+            source: data.analog-clock-hands.hour-hand-rect;
         }
         minute := Image {
-            width: 0.9 * Images.minute-hand-rect-width * relative-size;
-            height: 0.9 * Images.minute-hand-rect-height * relative-size;
+            // width: 0.9 * Images.minute-hand-rect-width * relative-size;
+            // height: 0.9 * Images.minute-hand-rect-height * relative-size;
+            width: Images.minute-hand-rect-width * relative-size;
+            height: Images.minute-hand-rect-height * relative-size;
             y: 2px;
-            rotation-angle: minute-angle(size);
-            rotation-origin-y: 217px * relative-size;
-            source: Images.hand-minute-rect;
+            // rotation-angle: minute-angle();
+            // rotation-origin-y: 217px * relative-size;
+            // source: Images.hand-minute-rect;
+            source: data.analog-clock-hands.minute-hand-rect;
         }
         Image {
             width: Images.circle-white-width * relative-size;
@@ -240,12 +262,15 @@ export component WidgetClockAnalogRect inherits Rectangle {
             source: Images.center-circle-white;
         }
         second := Image {
-            width: 0.9 * Images.second-hand-rect-width * relative-size;
-            height: 0.9 * Images.second-hand-rect-height * relative-size;
+            // width: 0.9 * Images.second-hand-rect-width * relative-size;
+            // height: 0.9 * Images.second-hand-rect-height * relative-size;
+            width: Images.second-hand-rect-width * relative-size;
+            height: Images.second-hand-rect-height * relative-size;
             y: 4px * relative-size;
-            rotation-angle: second-angle(size);
-            rotation-origin-y: 215px * relative-size;
-            source: Images.hand-second-rect;
+            // rotation-angle: second-angle();
+            // rotation-origin-y: 215px * relative-size;
+            // source: Images.hand-second-rect;
+            source: data.analog-clock-hands.second-hand-rect;
         }
         Image {
             width: Images.circle-orange-width * relative-size;
@@ -477,16 +502,19 @@ export component WidgetClock {
     in property <WidgetSize> size;
     in property <WidgetClockConfig> config;
     in property <DateTime> datetime;
+    in property <WidgetClockData> data;
 
     if config.clock-style == ClockStyle.AnalogRound: WidgetClockAnalogRound {
         size: root.size;
         config: root.config;
         datetime: root.datetime;
+        data: root.data;
     }
     if config.clock-style == ClockStyle.AnalogRect: WidgetClockAnalogRect {
         size: root.size;
         config: root.config;
         datetime: root.datetime;
+        data: root.data;
     }
     if config.clock-style == ClockStyle.Digital: WidgetClockDigital {
         size: root.size;

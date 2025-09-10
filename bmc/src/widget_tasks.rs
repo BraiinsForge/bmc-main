@@ -2,6 +2,7 @@
 
 use crate::config::ConfigHandle;
 use bmc_display::btc_history_data::BtcHistoryData;
+use bmc_display::clock_data::ClockData;
 use bmc_display::data::{SceneId, TimeFrame, Widget, WidgetId, WidgetKind};
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_time::time::Timezone;
@@ -164,12 +165,15 @@ impl WidgetTasks {
                     .time_system
                     .is_24();
 
+                let clock_data = ClockData::new(now);
+
                 display_controller.update_clock_widget(
                     scene_id.clone(),
                     widget_id.clone(),
                     now,
                     timezone.to_string(),
                     is_24_format,
+                    clock_data,
                 );
             }
         }

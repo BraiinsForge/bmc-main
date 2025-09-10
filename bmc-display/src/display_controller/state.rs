@@ -3,6 +3,7 @@
 use crate::bitcoin_data::BitcoinData;
 use crate::blockheight_data::BlockheightData;
 use crate::btc_history_data::BtcHistoryData;
+use crate::clock_data::ClockData;
 use crate::data::{Scene, SceneCycling, SceneCyclingTransition, SceneId, Screen, Widget, WidgetId};
 use crate::display_controller::DisplayController;
 use crate::generated::{
@@ -194,6 +195,7 @@ impl DisplayController {
         datetime: chrono::DateTime<chrono::FixedOffset>,
         timezone: String,
         is_24_format: bool,
+        clock_data: ClockData,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -204,6 +206,7 @@ impl DisplayController {
 
                 widgets_ref.modify(&widget_id, |widget| {
                     widget.clock.datetime = to_datetime(datetime, timezone, is_24_format);
+                    widget.clock.analog_clock_hands = clock_data.into_clock_hand_images();
                 });
             }
         });

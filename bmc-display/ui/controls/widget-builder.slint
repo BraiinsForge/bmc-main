@@ -50,6 +50,7 @@ export component WidgetBuilder inherits Rectangle {
                 size: widget.size;
                 config: widget.clock.config;
                 datetime: widget.clock.datetime;
+                data: widget.clock;
             }
             if widget.kind == WidgetKind.TickerBtc: WidgetBtcGraph {
                 size: widget.size;
