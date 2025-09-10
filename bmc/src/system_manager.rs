@@ -89,8 +89,8 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
 
     pub(crate) async fn init(&self) -> anyhow::Result<()> {
         let config = self.night_mode_controller.night_mode_config().await;
-        self.set_current_brightness(config.clone()).await?;
-        self.night_mode_controller.init(config).await?;
+        self.set_current_brightness(&config).await?;
+        self.night_mode_controller.init(&config).await?;
 
         tokio::spawn({
             let self_clone = self.clone();
@@ -108,7 +108,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         while let Ok(()) = receiver.changed().await {
             let night_mode = self.night_mode_controller.night_mode_config().await;
 
-            if let Err(e) = self.set_current_brightness(night_mode).await {
+            if let Err(e) = self.set_current_brightness(&night_mode).await {
                 warn!("Failed to set brightness on timezone change. Err: {e}");
             }
         }
@@ -125,8 +125,8 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         })
     }
 
-    async fn set_current_brightness(&self, config: NightModeConfig) -> anyhow::Result<()> {
-        let value = if self.night_mode_controller.is_night_mode(&config) {
+    async fn set_current_brightness(&self, config: &NightModeConfig) -> anyhow::Result<()> {
+        let value = if self.night_mode_controller.is_night_mode(config) {
             self.brightness_night_mode_pct.load(Ordering::Acquire)
         } else {
             self.brightness_pct.load(Ordering::Acquire)
@@ -145,7 +145,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             .set_night_mode_enabled(enabled)
             .await?;
 
-        self.set_current_brightness(config).await
+        self.set_current_brightness(&config).await
     }
 
     pub(crate) async fn set_night_mode_interval(
@@ -158,7 +158,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             .set_night_mode_interval(from, to)
             .await?;
 
-        self.set_current_brightness(config).await
+        self.set_current_brightness(&config).await
     }
 
     pub(crate) async fn set_night_mode_brightness(&self, value_pct: u8) -> anyhow::Result<()> {
@@ -170,7 +170,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         self.brightness_night_mode_pct
             .store(value_pct, Ordering::Release);
 
-        self.set_current_brightness(config).await
+        self.set_current_brightness(&config).await
     }
 
     pub(crate) async fn display_settings(&self) -> DisplaySettings {
@@ -192,6 +192,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
 
         self.brightness_pct.store(value_pct, Ordering::Release);
 
-        self.set_current_brightness(config).await
+        self.set_current_brightness(&config).await
     }
 }

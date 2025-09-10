@@ -43,7 +43,7 @@ impl NightModeController {
         }
     }
 
-    pub(crate) async fn init(&self, night_mode: NightModeConfig) -> anyhow::Result<()> {
+    pub(crate) async fn init(&self, night_mode: &NightModeConfig) -> anyhow::Result<()> {
         if night_mode.enabled {
             let _ = self.enable_disable_night_mode_service(night_mode).await;
         }
@@ -63,8 +63,7 @@ impl NightModeController {
         config_handle.set_night_mode_enabled(enabled);
 
         let config = config_handle.night_mode();
-        self.enable_disable_night_mode_service(config.clone())
-            .await?;
+        self.enable_disable_night_mode_service(&config).await?;
 
         config_handle.sync_to_storage().await?;
 
@@ -80,8 +79,7 @@ impl NightModeController {
         config_handle.set_night_mode_interval(from, to);
 
         let config = config_handle.night_mode();
-        self.enable_disable_night_mode_service(config.clone())
-            .await?;
+        self.enable_disable_night_mode_service(&config).await?;
 
         config_handle.sync_to_storage().await?;
 
@@ -104,7 +102,7 @@ impl NightModeController {
 
     async fn enable_disable_night_mode_service(
         &self,
-        config: NightModeConfig,
+        config: &NightModeConfig,
     ) -> anyhow::Result<()> {
         self.cancel_scheduled_night_mode().await;
 
