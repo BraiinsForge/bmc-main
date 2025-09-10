@@ -11,8 +11,8 @@ component WidgetContainer inherits Rectangle {
     in property <int> position-row;
     in property <int> position-col;
 
-    property <length> gap-x: position-col == 0 ? 0px : 8px;
-    property <length> gap-y: position-row == 0 ? 0px : 8px;
+    property <length> gap-x: position-col == 0 ? 0px : 4px;
+    property <length> gap-y: position-row == 0 ? 0px : 4px;
 
     x: self.position-col * (BaseDimensions.widget-width(WidgetSize.Small) + self.gap-x);
     y: self.position-row * (BaseDimensions.widget-height(WidgetSize.Small) + self.gap-y);
@@ -29,39 +29,35 @@ export component WidgetBuilder inherits Rectangle {
 
     property <bool> fullscreen: widgets.length == 1 && widgets[0].size == WidgetSize.Full;
 
-    HorizontalLayout {
-        padding: fullscreen ? 0px : 16px;
-
-        Rectangle {
-            // background grid with empty placeholders
-            if !fullscreen: Rectangle {
-                for row in 2: Rectangle {
-                    for col in 4: WidgetContainer {
-                        size: WidgetSize.Small;
-                        position-row: row;
-                        position-col: col;
-                    }
+    Rectangle {
+        // background grid with empty placeholders
+        if !fullscreen: Rectangle {
+            for row in 2: Rectangle {
+                for col in 4: WidgetContainer {
+                    size: WidgetSize.Small;
+                    position-row: row;
+                    position-col: col;
                 }
             }
+        }
 
-            for widget[index] in widgets: WidgetContainer {
+        for widget[index] in widgets: WidgetContainer {
+            size: widget.size;
+            position-row: widget.row;
+            position-col: widget.col;
+
+            if widget.kind == WidgetKind.Clock: WidgetClock {
                 size: widget.size;
-                position-row: widget.row;
-                position-col: widget.col;
-
-                if widget.kind == WidgetKind.Clock: WidgetClock {
-                    size: widget.size;
-                    config: widget.clock.config;
-                    datetime: widget.clock.datetime;
-                }
-                if widget.kind == WidgetKind.TickerBtc: WidgetBtcGraph {
-                    size: widget.size;
-                    data: widget.ticker-btc;
-                }
-                if widget.kind == WidgetKind.BlockHeight: WidgetBlockHeight {
-                    size: widget.size;
-                    data: widget.blockheight;
-                }
+                config: widget.clock.config;
+                datetime: widget.clock.datetime;
+            }
+            if widget.kind == WidgetKind.TickerBtc: WidgetBtcGraph {
+                size: widget.size;
+                data: widget.ticker-btc;
+            }
+            if widget.kind == WidgetKind.BlockHeight: WidgetBlockHeight {
+                size: widget.size;
+                data: widget.blockheight;
             }
         }
     }
