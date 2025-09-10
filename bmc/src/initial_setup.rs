@@ -1,5 +1,19 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::system_upgrade::SystemUpgradeService;
+use crate::{
+    BmcManager,
+    config::ConfigHandle,
+    manager::{InitialSetupError, WifiNetworkConfig},
+    utils::NumberFormat,
+};
+use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
+use bmc_upgrade::autoupgrade::{
+    AutoUpgradeConfig, AutoUpgradeFrequency, SECONDS_DEVICE_SETUP_DELAY,
+};
+use bmc_upgrade::firmware::FirmwareIndex;
+use chrono::{TimeDelta, Utc};
+use std::ops::Add;
 use std::{
     sync::{
         Arc,
@@ -56,24 +70,27 @@ impl StateService {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct InitialSetup<T: BmcManager> {
+pub(crate) struct InitialSetup<T: BmcManager, F: FirmwareIndex> {
     manager: Arc<T>,
     in_progress: Arc<AtomicBool>,
     state_service: StateService,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    system_upgrade_service: Arc<SystemUpgradeService<F, T>>,
 }
 
-impl<T: BmcManager> InitialSetup<T> {
+impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
     pub(crate) fn new(
         manager: Arc<T>,
         in_progress: Arc<AtomicBool>,
         config_handle: Arc<RwLock<ConfigHandle>>,
+        system_upgrade_service: Arc<SystemUpgradeService<F, T>>,
     ) -> Self {
         Self {
             manager,
             in_progress,
             state_service: StateService::new(),
             config_handle,
+            system_upgrade_service,
         }
     }
 
@@ -138,13 +155,15 @@ impl<T: BmcManager> InitialSetup<T> {
         &self,
         config: DeviceSetupConfig,
     ) -> Result<(), DeviceSetupError> {
+        let timezone = config.timezone;
+
         let mut config_guard = self
             .config_handle
             .try_write()
             .map_err(|_| DeviceSetupError::InProgress)?;
 
         self.manager
-            .set_timezone(config.timezone)
+            .set_timezone(timezone.clone())
             .await
             .map_err(DeviceSetupError::SetTimezone)?;
 
@@ -163,6 +182,7 @@ impl<T: BmcManager> InitialSetup<T> {
             .save()
             .await
             .map_err(DeviceSetupError::SyncConfigData)?;
+        drop(config_guard); // Necessary to allow autoupgrade
 
         self.manager
             .update_device_state()
@@ -171,6 +191,22 @@ impl<T: BmcManager> InitialSetup<T> {
 
         self.state_service
             .notify(InitSetupState::DeviceSetupSuccess);
+
+        let tz = timezone.chrono();
+        let time_of_day = Utc::now()
+            .with_timezone(tz)
+            .time()
+            .add(TimeDelta::seconds(SECONDS_DEVICE_SETUP_DELAY));
+        let autoupgrade_config = AutoUpgradeConfig::new(
+            true,
+            AutoUpgradeFrequency::default(),
+            Some(time_of_day),
+            timezone.chrono_offset(),
+        );
+        self.system_upgrade_service
+            .autoupgrade_update(autoupgrade_config)
+            .await
+            .map_err(DeviceSetupError::EnableAutoUpgrade)?;
 
         Ok(())
     }
@@ -194,6 +230,8 @@ pub(crate) enum DeviceSetupError {
     SyncConfigData(#[source] anyhow::Error),
     #[error("Failed to update device state, error: {0}")]
     UpdateDeviceState(#[source] anyhow::Error),
+    #[error("Failed to enable AutoUpgrade, error: {0}")]
+    EnableAutoUpgrade(#[source] anyhow::Error),
 }
 
 #[derive(PartialEq, Debug, Clone)]

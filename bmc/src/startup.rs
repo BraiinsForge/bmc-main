@@ -45,7 +45,7 @@ where
     system_upgrade_service: Arc<SystemUpgradeService<V, T>>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
-    initial_setup: InitialSetup<T>,
+    initial_setup: InitialSetup<T, V>,
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
     alarm_controller: AlarmController,
@@ -85,14 +85,7 @@ where
 
         let config_handle = Arc::new(RwLock::new(config_handle));
 
-        let scheduler = Arc::new(
-            JobScheduler::init(
-                manager.timezone().into(),
-                manager.watch_timezone_updates(),
-                None,
-            )
-            .await,
-        );
+        let scheduler = Arc::new(JobScheduler::init(manager.watch_timezone_updates(), None).await);
         let system_upgrade_service = Arc::new(SystemUpgradeService::new(
             firmware_resolver,
             &config.upgrade_image_path,
@@ -122,6 +115,7 @@ where
             manager.clone(),
             Arc::new(AtomicBool::new(false)),
             config_handle.clone(),
+            system_upgrade_service.clone(),
         );
 
         let scheduler = JobScheduler::init(manager.watch_timezone_updates(), None).await;

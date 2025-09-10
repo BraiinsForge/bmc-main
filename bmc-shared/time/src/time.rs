@@ -116,13 +116,6 @@ impl Timezone {
         let offset_duration = offset.base_utc_offset() + offset.dst_offset();
         Offset::new(offset_duration)
     }
-
-    /// Returns current timezone offset from UTC
-    #[must_use]
-    pub fn current_timezone_tz_offset(&self) -> chrono_tz::TzOffset {
-        let now = chrono::Utc::now().naive_utc();
-        Into::<chrono_tz::Tz>::into(self).offset_from_utc_datetime(&now)
-    }
 }
 
 impl FromStr for Timezone {

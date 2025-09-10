@@ -6,9 +6,10 @@ use bmc_grpc::web::{
     upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail, UpgradeMetadata};
-use chrono::NaiveTime;
+use chrono::{NaiveTime, TimeDelta};
 use futures::stream::{BoxStream, StreamExt};
 use prost_types::Timestamp;
+use std::ops::Add;
 use std::sync::Arc;
 use tonic::{Code, Request, Status};
 use tonic_types::{ErrorDetails, StatusExt};
@@ -104,10 +105,12 @@ where
         let req = request.get_ref();
         let frequency = req.frequency().into();
         let timezone = self.manager.timezone();
+        let time_of_day = req.time_of_day.map(map_timestamp_to_naive_time);
         let config = AutoUpgradeConfig::new(
             req.enabled,
             frequency,
-            timezone.current_timezone_tz_offset(),
+            time_of_day,
+            timezone.chrono_offset(),
         );
 
         self.system_upgrade_service
@@ -208,4 +211,10 @@ impl From<SystemUpgradeError> for Status {
             SystemUpgradeError::NotEnoughSpace => Status::failed_precondition(value.to_string()),
         }
     }
+}
+
+fn map_timestamp_to_naive_time(value: prost_types::Timestamp) -> NaiveTime {
+    NaiveTime::default()
+        .add(TimeDelta::seconds(value.seconds))
+        .add(TimeDelta::nanoseconds(i64::from(value.nanos)))
 }

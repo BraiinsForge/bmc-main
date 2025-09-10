@@ -1,11 +1,20 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use super::{GrpcError, system::into_grpc_timezone};
+use crate::initial_setup::{DeviceSetupError, WifiSetupError};
+use crate::web::grpc::network::{scan_wifi_response, try_into_wifi_network_config};
+use crate::{
+    BmcManager,
+    initial_setup::{DeviceSetupConfig, InitialSetup},
+    manager::BmcState,
+};
 use bmc_grpc::web::{
     DateFormat, NumberFormat, ScanWifiResponse, SetWifiRequest, SettingsDataResponse,
     SettingsRequest, TimeFormat,
     initial_setup_service_server::InitialSetupService as GrpcInitialSetupService,
 };
 use bmc_shared_time::time::{TimeSystem, Timezone};
+use bmc_upgrade::firmware::FirmwareIndex;
 use std::{str::FromStr, sync::Arc};
 use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
@@ -22,19 +31,21 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub(crate) struct InitialSetupService<T>
+pub(crate) struct InitialSetupService<T, F>
 where
     T: BmcManager,
+    F: FirmwareIndex,
 {
     manager: Arc<T>,
-    initial_setup: InitialSetup<T>,
+    initial_setup: InitialSetup<T, F>,
 }
 
-impl<T> InitialSetupService<T>
+impl<T, F> InitialSetupService<T, F>
 where
     T: BmcManager,
+    F: FirmwareIndex,
 {
-    pub(crate) fn new(manager: Arc<T>, initial_setup: InitialSetup<T>) -> Self {
+    pub(crate) fn new(manager: Arc<T>, initial_setup: InitialSetup<T, F>) -> Self {
         Self {
             manager,
             initial_setup,
@@ -53,9 +64,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<T> GrpcInitialSetupService for InitialSetupService<T>
+impl<T, F> GrpcInitialSetupService for InitialSetupService<T, F>
 where
     T: BmcManager,
+    F: FirmwareIndex,
 {
     async fn set_wifi(&self, request: Request<SetWifiRequest>) -> Result<Response<()>, Status> {
         self.check_precondition(BmcState::FactoryDefault).await?;
@@ -121,7 +133,8 @@ where
                 DeviceSetupError::SetTimezone(..)
                 | DeviceSetupError::SetPassword
                 | DeviceSetupError::SyncConfigData(..)
-                | DeviceSetupError::UpdateDeviceState(..) => {
+                | DeviceSetupError::UpdateDeviceState(..)
+                | DeviceSetupError::EnableAutoUpgrade(..) => {
                     Status::internal("Error while saving device settings")
                 }
             })?;

@@ -41,6 +41,7 @@ const SECONDS_IN_DAY: u64 = 60 * 60 * 24; // 86,400 seconds
 const SECONDS_IN_WEEK: u64 = SECONDS_IN_DAY * 7; // 604,800 seconds
 const SECONDS_IN_TWO_WEEKS: u64 = SECONDS_IN_WEEK * 2; // 1,209,600 seconds
 const SECONDS_IN_MONTH: u64 = SECONDS_IN_WEEK * 4; // 2,592,000 seconds
+pub const SECONDS_DEVICE_SETUP_DELAY: i64 = 5;
 const CRON_BIWEEKLY_DAYS: &str = "1,15";
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, Eq, PartialEq)]
@@ -128,7 +129,7 @@ impl Default for AutoUpgradeConfig {
         let frequency = AutoUpgradeFrequency::default();
         let date = get_date_from_frequency(
             frequency,
-            true,
+            None,
             Tz::UTC.offset_from_utc_date(&NaiveDate::default()),
         );
         Self {
@@ -141,8 +142,13 @@ impl Default for AutoUpgradeConfig {
 
 impl AutoUpgradeConfig {
     #[must_use]
-    pub fn new(enabled: bool, frequency: AutoUpgradeFrequency, timezone_offset: TzOffset) -> Self {
-        let date = get_date_from_frequency(frequency, true, timezone_offset);
+    pub fn new(
+        enabled: bool,
+        frequency: AutoUpgradeFrequency,
+        time_of_day: Option<NaiveTime>,
+        timezone_offset: TzOffset,
+    ) -> Self {
+        let date = get_date_from_frequency(frequency, time_of_day, timezone_offset);
         Self {
             enabled,
             frequency,
@@ -209,22 +215,24 @@ impl AutoUpgrade {
     }
 }
 
+/// When specified, time_of_day is used as the time of day for the first run.
+/// Otherwise, a random time of day is used.
 #[must_use]
 fn get_date_from_frequency(
     frequency: AutoUpgradeFrequency,
-    random_time_of_day: bool,
+    time_of_day: Option<NaiveTime>,
     tz_offset: TzOffset,
 ) -> DateTime<Tz> {
     let divisor = frequency.to_seconds();
-    let now: DateTime<Tz> = DateTime::from_naive_utc_and_offset(
-        NaiveDateTime::new(NaiveDate::default(), NaiveTime::default()),
+    DateTime::from_naive_utc_and_offset(
+        NaiveDateTime::new(
+            NaiveDate::default(),
+            time_of_day.unwrap_or(
+                NaiveTime::default() + Duration::from_secs(rand::random::<u64>() % divisor),
+            ),
+        ),
         tz_offset,
-    );
-    now + Duration::from_secs(if random_time_of_day {
-        rand::random::<u64>() % divisor
-    } else {
-        divisor
-    })
+    )
 }
 fn frequency_to_partial_cron_pattern(
     frequency: AutoUpgradeFrequency,
@@ -277,7 +285,7 @@ mod test {
         let date = NaiveDateTime::new(d, t);
         let tz_offset = Timezone::from_str(Tz::Etc__GMT.name())
             .expect("BUG: Invalid timezone")
-            .current_timezone_tz_offset();
+            .chrono_offset();
         let date: DateTime<Tz> = DateTime::from_naive_utc_and_offset(date, tz_offset);
 
         let cron = build_cron_from_frequency_date(AutoUpgradeFrequency::Daily, date);
