@@ -23,8 +23,6 @@ const MIN_CRON_FIELDS: usize = 6;
 pub struct CronEntry {
     /// The source system above the record, usually should be a first line (e.g., "### <Source>")
     pub source: Option<String>,
-    /// The comment above the record (e.g., "# <Source> Job to schedule <thing>")
-    pub comment: Option<String>,
     /// The parsed schedule for evaluation (using Croner)
     pub schedule: Cron,
     /// The command to execute (e.g., "/path/to/script")
@@ -39,7 +37,6 @@ impl From<JobDetails> for CronEntry {
         let command = job_details.command.unwrap_or(CRON_DUMMY_COMMAND.to_owned());
         Self {
             source: Some(job_details.source),
-            comment: None,
             command,
             schedule,
         }
@@ -50,7 +47,6 @@ impl CronEntry {
     /// Parse any number of lines
     fn from_lines(lines: Vec<String>) -> anyhow::Result<Vec<Self>> {
         let mut source = String::new();
-        let mut comments = Vec::new();
         let mut cron_jobs = Vec::new();
         for line in lines {
             let line = line.trim();
@@ -60,12 +56,12 @@ impl CronEntry {
             if line.starts_with(PREFIX_SOURCE) {
                 line.clone_into(&mut source);
             } else if line.starts_with(PREFIX_COMMENT) {
-                comments.push(line.to_owned());
+                // Ignore comments
+                continue;
             } else {
-                let cron_job = parse_cron_block(&source, &comments, line.to_owned().as_str())?;
+                let cron_job = parse_cron_block(&source, line.to_owned().as_str())?;
                 cron_jobs.push(cron_job);
                 source.clear();
-                comments.clear();
             }
         }
 
@@ -77,15 +73,6 @@ impl CronEntry {
 
         if let Some(source) = &self.source {
             lines.push(format!("{PREFIX_SOURCE} {source}"));
-        }
-
-        // Add comments if present
-        if let Some(comment) = &self.comment {
-            for comment_line in comment.lines() {
-                if !comment_line.trim().is_empty() {
-                    lines.push(comment_line.to_owned());
-                }
-            }
         }
 
         // Add the cron line (schedule + command)
@@ -134,11 +121,7 @@ fn is_cron_field(field: &str) -> bool {
 }
 
 // Used to parse a single cron line and any optional comments
-fn parse_cron_block(
-    source: &str,
-    comment: &[String],
-    cron_line: &str,
-) -> anyhow::Result<CronEntry> {
+fn parse_cron_block(source: &str, cron_line: &str) -> anyhow::Result<CronEntry> {
     let source_parts = source.splitn(2, ' ').collect::<Vec<&str>>();
 
     let parts: Vec<&str> = cron_line.split_whitespace().collect();
@@ -163,11 +146,6 @@ fn parse_cron_block(
     } else {
         None
     };
-    let comment = if comment.is_empty() {
-        None
-    } else {
-        Some(comment.join("\n"))
-    };
 
     // Try to parse the expression, with fallback to secondless version
     let schedule = match Cron::from_str(&expr) {
@@ -181,7 +159,6 @@ fn parse_cron_block(
 
     Ok(CronEntry {
         source,
-        comment,
         schedule,
         command,
     })
@@ -398,8 +375,6 @@ mod tests {
     #[test]
     fn test_cron_job_parse() {
         let crontab = r"### Source
-            # Auxiliary job to run every 5 minutes with no seconds
-            # With multiple lines of comments
             * * * * * /path/to/script
             # Another comment and indented line with seconds specified
                 5 * * * * * /path/to/script2
@@ -431,19 +406,5 @@ mod tests {
             cron_jobs[1].schedule.clone().pattern.to_string().as_str(),
             "5 * * * * *"
         );
-
-        let trimmed_crontab = crontab
-            .lines()
-            .map(str::trim)
-            .collect::<Vec<&str>>()
-            .join("\n");
-
-        let cron_jobs = cron_jobs
-            .iter()
-            .map(crate::cron::CronEntry::to_crontab_string)
-            .collect::<Vec<String>>()
-            .join("\n");
-
-        assert_eq!(cron_jobs, trimmed_crontab);
     }
 }

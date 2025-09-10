@@ -402,7 +402,6 @@ impl JobScheduler {
             schedule: cron,
             command: command.to_owned(),
             source: Some(config.source.clone()),
-            comment: None,
         };
         crontab.add_entry(entry).await
     }

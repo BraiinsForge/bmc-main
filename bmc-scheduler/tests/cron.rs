@@ -6,15 +6,9 @@ use tempfile::NamedTempFile;
 use tokio::io::AsyncReadExt;
 
 // Helper function to create a test CronEntry
-fn create_test_entry(
-    source: Option<&str>,
-    comment: Option<&str>,
-    schedule: &str,
-    command: &str,
-) -> CronEntry {
+fn create_test_entry(source: Option<&str>, schedule: &str, command: &str) -> CronEntry {
     CronEntry {
         source: source.map(ToOwned::to_owned),
-        comment: comment.map(ToOwned::to_owned),
         schedule: Cron::from_str(schedule).expect("BUG: Failed to parse schedule"),
         command: command.to_owned(),
     }
@@ -66,10 +60,8 @@ async fn test_load_nonexistent_file() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_load_existing_crontab() -> anyhow::Result<()> {
     let content = r"### MyApp
-# Daily job
 0 2 * * * /path/to/daily.sh
 ### AnotherApp
-# Hourly job
 0 * * * * /path/to/hourly.sh";
 
     let (mut crontab, _temp_file) = create_temp_crontab_with_content(content).await?;
@@ -87,12 +79,7 @@ async fn test_add_entry_to_empty_file() -> anyhow::Result<()> {
     tokio::fs::write(temp_file.path(), "").await?;
 
     let mut crontab = Crontab::new(Some(temp_file.path().to_path_buf()));
-    let entry = create_test_entry(
-        Some("TestApp"),
-        Some("# Test job"),
-        "0 1 * * *",
-        "/test/command",
-    );
+    let entry = create_test_entry(Some("TestApp"), "0 1 * * *", "/test/command");
 
     crontab.add_entry(entry).await?;
 
@@ -100,7 +87,6 @@ async fn test_add_entry_to_empty_file() -> anyhow::Result<()> {
 
     let file_content = read_file_content(temp_file.path()).await?;
     assert!(file_content.contains("### TestApp"));
-    assert!(file_content.contains("# Test job"));
     assert!(file_content.contains("0 1 * * * /test/command"));
     Ok(())
 }
@@ -108,17 +94,11 @@ async fn test_add_entry_to_empty_file() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_add_entry_to_existing_file() -> anyhow::Result<()> {
     let initial_content = r"### ExistingApp
-# Existing job
 0 2 * * * /existing/command";
 
     let (mut crontab, temp_file) = create_temp_crontab_with_content(initial_content).await?;
 
-    let new_entry = create_test_entry(
-        Some("NewApp"),
-        Some("# New job"),
-        "0 3 * * *",
-        "/new/command",
-    );
+    let new_entry = create_test_entry(Some("NewApp"), "0 3 * * *", "/new/command");
 
     crontab.add_entry(new_entry).await?;
 
@@ -135,13 +115,10 @@ async fn test_add_entry_to_existing_file() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_remove_entries_with_predicate() -> anyhow::Result<()> {
     let content = r"### App1
-# Job 1
 0 1 * * * /app1/command1
 ### App2
-# Job 2
 0 2 * * * /app2/command2
 ### App1
-# Job 3
 0 3 * * * /app1/command3";
 
     let (mut crontab, temp_file) = create_temp_crontab_with_content(content).await?;
@@ -295,8 +272,7 @@ async fn test_entry_exists() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_entry_exists_no_source() -> anyhow::Result<()> {
-    let content = r"# Job without source
-0 1 * * * /no/source/command";
+    let content = r"0 1 * * * /no/source/command";
 
     let (mut crontab, _temp_file) = create_temp_crontab_with_content(content).await?;
 
@@ -312,19 +288,13 @@ async fn test_entry_exists_no_source() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_upsert_by_source_replace_existing() -> anyhow::Result<()> {
     let content = r"### MyApp
-# Old job
 0 1 * * * /old/command
 ### OtherApp
 0 2 * * * /other/command";
 
     let (mut crontab, temp_file) = create_temp_crontab_with_content(content).await?;
 
-    let new_entry = create_test_entry(
-        Some("MyApp"),
-        Some("# New job"),
-        "0 3 * * *",
-        "/new/command",
-    );
+    let new_entry = create_test_entry(Some("MyApp"), "0 3 * * *", "/new/command");
 
     let was_replaced = crontab.upsert_by_source(new_entry).await?;
 
@@ -342,7 +312,6 @@ async fn test_upsert_by_source_replace_existing() -> anyhow::Result<()> {
     let file_content = read_file_content(temp_file.path()).await?;
     assert!(!file_content.contains("/old/command"));
     assert!(file_content.contains("/new/command"));
-    assert!(file_content.contains("# New job"));
     Ok(())
 }
 
@@ -353,12 +322,7 @@ async fn test_upsert_by_source_add_new() -> anyhow::Result<()> {
 
     let (mut crontab, temp_file) = create_temp_crontab_with_content(content).await?;
 
-    let new_entry = create_test_entry(
-        Some("NewApp"),
-        Some("# New app job"),
-        "0 2 * * *",
-        "/new/command",
-    );
+    let new_entry = create_test_entry(Some("NewApp"), "0 2 * * *", "/new/command");
 
     let was_replaced = crontab.upsert_by_source(new_entry).await?;
 
@@ -377,8 +341,8 @@ async fn test_upsert_by_source_add_new() -> anyhow::Result<()> {
 async fn test_save_backward_compatibility() -> anyhow::Result<()> {
     let temp_file = NamedTempFile::new()?;
 
-    let entry1 = create_test_entry(Some("App1"), Some("# Job 1"), "0 1 * * *", "/command1");
-    let entry2 = create_test_entry(Some("App2"), Some("# Job 2"), "0 2 * * *", "/command2");
+    let entry1 = create_test_entry(Some("App1"), "0 1 * * *", "/command1");
+    let entry2 = create_test_entry(Some("App2"), "0 2 * * *", "/command2");
 
     let crontab = Crontab {
         entries: vec![entry1, entry2],
