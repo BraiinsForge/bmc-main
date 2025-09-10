@@ -45,6 +45,10 @@ export component WidgetClockAnalogRound inherits Rectangle {
 
     property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
+    property <image> clock-dial: (size == WidgetSize.Full || size == WidgetSize.Large) ? Images.clock-dial-round : Images.clock-dial-round-small;
+    property <length> clock-dial-width: clock-dial.width * 1px;
+    property <length> clock-dial-height: clock-dial.height * 1px;
+
     width: base-width * (size == WidgetSize.Small ? 1 : (size == WidgetSize.Medium || size == WidgetSize.Large) ? 2 : 4);
     height: base-height * ((size == WidgetSize.Small || size == WidgetSize.Medium) ? 1 : 2);
 
@@ -53,9 +57,11 @@ export component WidgetClockAnalogRound inherits Rectangle {
         height: 390px * relative-size;
 
         dial := Image {
-            width: parent.width;
-            height: parent.height;
-            source: Images.clock-dial-round;
+            // width: parent.width;
+            // height: parent.height;
+            width: clock-dial-width;
+            height: clock-dial-height;
+            source: clock-dial;
         }
         timezone := Text {
             visible: config.show-timezone;
@@ -166,6 +172,11 @@ export component WidgetClockAnalogRect inherits Rectangle {
     property <percent> relative-width: (size == WidgetSize.Full) ? 100% : (size == WidgetSize.Small) ? 25% : 50%;
     property <percent> relative-height: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
+    property <image> clock-dial: (size == WidgetSize.Full) ? Images.clock-dial-rect-full : (size == WidgetSize.Large)
+        ? Images.clock-dial-rect-large: (size == WidgetSize.Medium) ? Images.clock-dial-rect-medium : Images.clock-dial-rect-small;
+    property <length> clock-dial-width: clock-dial.width * 1px;
+    property <length> clock-dial-height: clock-dial.height * 1px;
+
     property <length> hour-font-size: (size == WidgetSize.Full) ? 64px
         : (size == WidgetSize.Large) ? 40px
         : (size == WidgetSize.Medium) ? 24px
@@ -175,14 +186,13 @@ export component WidgetClockAnalogRect inherits Rectangle {
     width: base-width * (size == WidgetSize.Small ? 1 : (size == WidgetSize.Medium || size == WidgetSize.Large) ? 2 : 4);
     height: base-height * ((size == WidgetSize.Small || size == WidgetSize.Medium) ? 1 : 2);
 
-    property <[int]> clock-angles: [0, 15, 28, 40, 48, 54, 59, 63, 66, 69, 71, 73, 76, 80, 85, 90, 95, 100, 104, 107, 109, 111, 114, 117, 121, 126, 132, 140, 152, 165];
-    property <[int]> hour-hand-difference-angles: [54, 17, 19, 19, 17];
-
     Rectangle {
         dial := Image {
-            width: parent.width;
-            height: parent.height;
-            source: Images.clock-dial-rect;
+            // width: parent.width;
+            // height: parent.height;
+            width: clock-dial-width;
+            height: clock-dial-height;
+            source: clock-dial;
         }
         twelve := Text {
             text: "12";
@@ -294,31 +304,15 @@ export component WidgetClockAnalogRect inherits Rectangle {
             source: Images.center-circle-stroke;
         }
 
-        function second-angle(w-size: WidgetSize) -> angle {
-            if (w-size == WidgetSize.Small || w-size == WidgetSize.Large) {
-                return root.datetime.second * 6deg;
-            }
-            // Medium || Full Screen
-            return (clock-angles[mod(root.datetime.second, 30)] + (floor(root.datetime.second / 30) * 180)) * 1deg;
+        function second-angle() -> angle {
+            return root.datetime.second * 6deg;
         }
-        function minute-angle(w-size: WidgetSize) -> angle {
-            if (w-size == WidgetSize.Small || w-size == WidgetSize.Large) {
-                return root.datetime.minute * 6deg;
-            }
-            // Medium || Full Screen
-            return (clock-angles[mod(root.datetime.minute, 30)] + (floor(root.datetime.minute / 30) * 180)) * 1deg;
+        function minute-angle() -> angle {
+            return root.datetime.minute * 6deg;
         }
 
-        function hour-angle(w-size: WidgetSize) -> angle {
-            if (w-size == WidgetSize.Small || w-size == WidgetSize.Large) {
-                return (root.datetime.hour12 * 30deg) + (root.datetime.minute * 30deg / 60);
-            }
-            // Medium || Full Screen
-            return (
-                clock-angles[5 * root.datetime.hour12]
-                + (floor(root.datetime.hour12 / 6) * 180)
-                + (hour-hand-difference-angles[mod(root.datetime.hour12, 5)] * (root.datetime.minute / 60))
-                ) * 1deg;
+        function hour-angle() -> angle {
+            return (root.datetime.hour12 * 30deg) + (root.datetime.minute * 30deg / 60);
         }
 
         function twelve-vertical-offset(w-size: WidgetSize) -> length {
