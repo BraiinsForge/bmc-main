@@ -202,42 +202,17 @@ impl ConfigHandle {
     }
 
     pub fn set_night_mode_enabled(&mut self, enabled: bool) {
-        if let Some(ref mut night_mode) = self.night_mode {
-            night_mode.enabled = enabled;
-        } else {
-            let night_mode = NightModeConfigData {
-                enabled,
-                ..Default::default()
-            };
-            self.night_mode = Some(night_mode);
-        }
+        self.night_mode.get_or_insert_default().enabled = enabled;
     }
 
     pub fn set_night_mode_brightness(&mut self, brightness_pct: u8) {
-        if let Some(ref mut night_mode) = self.night_mode {
-            night_mode.brightness_pct = Some(brightness_pct);
-        } else {
-            let night_mode = NightModeConfigData {
-                brightness_pct: Some(brightness_pct),
-                ..Default::default()
-            };
-            self.night_mode = Some(night_mode);
-        }
+        self.night_mode.get_or_insert_default().brightness_pct = Some(brightness_pct);
     }
 
     pub fn set_night_mode_interval(&mut self, from: NaiveTime, to: NaiveTime) {
-        if let Some(ref mut night_mode) = self.night_mode {
-            night_mode.from = from;
-            night_mode.to = to;
-        } else {
-            let night_mode = NightModeConfigData {
-                from,
-                to,
-                ..Default::default()
-            };
-
-            self.night_mode = Some(night_mode);
-        }
+        let night_mode = self.night_mode.get_or_insert_default();
+        night_mode.from = from;
+        night_mode.to = to;
     }
 }
 
