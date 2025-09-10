@@ -11,6 +11,7 @@ use bmc_display::data::Screen;
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_time::time::Timezone;
 use reqwest::Client;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, watch};
@@ -24,6 +25,10 @@ const BLOCK_HEIGHT_API_URL: &str = "https://public-api.braiins.com/v2/blocks";
 const BLOCK_HEIGHT_LIMIT_API_PARAM: &str = "limit";
 const CURRENCY_API_PARAM: &str = "currency";
 const API_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_INFO_SCREEN_DURATION: Duration = Duration::from_secs(10);
+const ERROR_SCREEN_DURATION: Duration = Duration::from_secs(5);
+const CHECK_IP_ATTEMPTS: u8 = 10;
+const CHECK_IP_WAIT_DURATION: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub(crate) struct DisplayTasks<T: BmcManager> {
@@ -173,11 +178,6 @@ impl<T: BmcManager> DisplayTasks<T> {
     }
 
     async fn run_init_display_screen(display_controller: DisplayController, manager: Arc<T>) {
-        if manager.check_and_remove_upgrade_marker().await {
-            display_controller.set_screen(Screen::UpgradeSuccess);
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        }
-
         let state = manager.device_state().await;
 
         match state {
@@ -185,19 +185,73 @@ impl<T: BmcManager> DisplayTasks<T> {
                 let ssid = manager.wifi_ssid();
                 display_controller.set_wifi_ssid(ssid);
                 display_controller.set_screen(Screen::InitialSetupStart);
+
+                // NOTE: Remove upgrade flag when device hasn't been set up yet
+                manager.check_and_remove_upgrade_marker().await;
             }
             crate::manager::BmcState::SetupPending => {
-                let ip = manager.ip_address().await;
-                display_controller.set_connect_ip_qr_code(ip);
-                display_controller.set_screen(Screen::InitialSetupConnectInfo);
+                let ip = Self::show_wifi_connect_screen(&display_controller, manager.clone()).await;
+
+                if ip.is_some() {
+                    display_controller.set_connect_ip_qr_code(ip);
+                    display_controller.set_screen(Screen::InitialSetupConnectInfo);
+                } else {
+                    display_controller.set_screen(Screen::InitialSetupGeneralError);
+                    _ = manager.factory_reset(false).await;
+                }
             }
             crate::manager::BmcState::Operational => {
-                let ip = manager.ip_address().await;
-                display_controller.set_connect_ip_qr_code(ip);
-                display_controller.set_screen(Screen::ConnectInfo);
-                tokio::time::sleep(Duration::from_secs(10)).await;
+                if manager.check_and_remove_upgrade_marker().await {
+                    display_controller.set_screen(Screen::UpgradeSuccess);
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+
+                let ip = Self::show_wifi_connect_screen(&display_controller, manager.clone()).await;
+
+                let duration = if ip.is_some() {
+                    display_controller.set_connect_ip_qr_code(ip);
+                    display_controller.set_screen(Screen::ConnectInfo);
+                    CONNECT_INFO_SCREEN_DURATION
+                } else {
+                    display_controller.set_screen(Screen::WifiConnectFailed);
+                    ERROR_SCREEN_DURATION
+                };
+
+                tokio::time::sleep(duration).await;
                 display_controller.set_screen(Screen::Void);
             }
+        }
+    }
+
+    async fn show_wifi_connect_screen(
+        display_controller: &DisplayController,
+        manager: Arc<T>,
+    ) -> Option<IpAddr> {
+        display_controller.set_screen(Screen::WifiConnectProgress);
+
+        let ssid = manager
+            .wifi_saved_networks()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .find(|wifi| wifi.enabled)
+            .and_then(|wifi| wifi.configuration)
+            .map(|config| config.ssid);
+
+        if let Some(ssid) = ssid {
+            display_controller.set_wifi_ssid(ssid);
+        }
+
+        let mut i = 0;
+        loop {
+            let ip = manager.ip_address().await;
+
+            if ip.is_some() || i >= CHECK_IP_ATTEMPTS {
+                return ip;
+            }
+
+            tokio::time::sleep(CHECK_IP_WAIT_DURATION).await;
+            i += 1;
         }
     }
 
