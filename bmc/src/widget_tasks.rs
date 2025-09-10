@@ -283,6 +283,10 @@ impl WidgetTasks {
             (pool_style, widget_size),
             (PoolStyle::Overview, WidgetSize::Full | WidgetSize::Large)
         );
+        let download_recent_payouts = matches!(
+            (pool_style, widget_size),
+            (PoolStyle::BigChart, WidgetSize::Full)
+        );
 
         async move {
             let mut interval = interval(Duration::from_secs(60));
@@ -544,6 +548,68 @@ impl WidgetTasks {
                         scene_id.clone(),
                         widget_id.clone(),
                         user_financials,
+                        recent_payouts,
+                    );
+                }
+
+                if download_recent_payouts {
+                    debug!("Getting user recent payouts data...");
+                    let to_timestamp = chrono::Utc::now();
+                    let from_timestamp = to_timestamp
+                        .checked_sub_signed(chart_frame.clone().into())
+                        // We don't expect this operation will fail
+                        .unwrap_or_default();
+                    let to_timestamp =
+                        to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                    let from_timestamp =
+                        from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                    let mut recent_payouts = RecentUserPayouts::default();
+                    let mut next_cursor: Option<String> = None;
+                    let url = format!(
+                        "{}{}",
+                        pool_data::POOL_API_URL,
+                        pool_data::USER_PAYOUTS_RECENT
+                    );
+                    loop {
+                        let mut query_params = vec![
+                            (pool_data::FROM_TIMESTAMP, from_timestamp.as_str()),
+                            (pool_data::TO_TIMESTAMP, to_timestamp.as_str()),
+                            (pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX),
+                        ];
+
+                        if let Some(cursor) = &next_cursor {
+                            query_params.push((pool_data::CURSOR, cursor));
+                        }
+
+                        let recent_payouts_partial = match client
+                            .get(&url)
+                            .query(&query_params)
+                            .timeout(API_TIMEOUT)
+                            .send()
+                            .await
+                        {
+                            Ok(response) => match response.json::<RecentUserPayouts>().await {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    warn!("Failed to parse user recent payouts JSON: {e}");
+                                    break;
+                                }
+                            },
+                            Err(e) => {
+                                warn!("Failed to get user recent payouts data from API: {e}");
+                                break;
+                            }
+                        };
+                        recent_payouts.merge_and_sort(&recent_payouts_partial);
+                        next_cursor = recent_payouts_partial.next_cursor();
+                        if next_cursor.is_none() {
+                            break;
+                        }
+                    }
+                    // println!("{recent_payouts:#?}");
+                    display_controller.update_recent_payouts(
+                        scene_id.clone(),
+                        widget_id.clone(),
                         recent_payouts,
                     );
                 }

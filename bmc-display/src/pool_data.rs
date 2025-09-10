@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::generated::{MainWindow, Palette, PoolWorkerStatus};
+use crate::generated::{BraiinsPoolPayouts, MainWindow, Palette, PoolPayoutType, PoolWorkerStatus};
 use crate::graph_utils::{self, ColorPalette};
 use bmc_shared_time::time::{DateFormat, Timezone};
 use chrono::{DateTime, Utc};
@@ -442,7 +442,7 @@ enum PayoutType {
     Lightning,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum PayoutStatus {
     #[default]
@@ -451,7 +451,7 @@ enum PayoutStatus {
     Completed,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 struct Payout {
     occurred_at: DateTime<Utc>,
     amount_btc: f32,
@@ -461,7 +461,12 @@ struct Payout {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct RecentUserPayouts {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_timestamp: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to_timestamp: Option<DateTime<Utc>>,
     payouts: Vec<Payout>,
+    pagination: PaginationMetadata,
 }
 
 impl RecentUserPayouts {
@@ -486,5 +491,64 @@ impl RecentUserPayouts {
             .min_by_key(|payout| (now - payout.occurred_at).abs().num_seconds())
             .map(|payout| payout.occurred_at)
     }
+
+    #[must_use]
+    pub fn payouts(self) -> ModelRc<BraiinsPoolPayouts> {
+        let Some(from_timestamp) = self.from_timestamp else {
+            return ModelRc::default();
+        };
+        let Some(to_timestamp) = self.to_timestamp else {
+            return ModelRc::default();
+        };
+        let total_interval = to_timestamp - from_timestamp;
+
+        let braiins_pool_payouts: Vec<BraiinsPoolPayouts> = self
+            .payouts
+            .iter()
+            .filter(|payout| payout.status == PayoutStatus::Completed)
+            .map(|payout| BraiinsPoolPayouts {
+                payout_time_fraction: {
+                    let payout_interval = payout.occurred_at - from_timestamp;
+                    100.0 * payout_interval.num_seconds() as f32
+                        / total_interval.num_seconds() as f32
+                },
+                payout_type: payout.r#type.into(),
+            })
+            .collect();
+
+        ModelRc::new(VecModel::from(braiins_pool_payouts))
+    }
+
+    #[must_use]
+    pub fn next_cursor(&self) -> Option<String> {
+        self.pagination
+            .has_next
+            .and(self.pagination.next_cursor.clone())
+    }
+
+    pub fn merge_and_sort(&mut self, other: &Self) {
+        self.from_timestamp = match (self.from_timestamp, other.from_timestamp) {
+            (Some(self_time), Some(other_time)) => Some(self_time.min(other_time)),
+            (Some(self_time), None) => Some(self_time),
+            (None, Some(other_time)) => Some(other_time),
+            (None, None) => None,
+        };
+        self.to_timestamp = match (self.to_timestamp, other.to_timestamp) {
+            (Some(self_time), Some(other_time)) => Some(self_time.max(other_time)),
+            (Some(self_time), None) => Some(self_time),
+            (None, Some(other_time)) => Some(other_time),
+            (None, None) => None,
+        };
+        self.payouts.extend(other.payouts.clone());
+        self.payouts.sort_by_key(|payout| payout.occurred_at);
+    }
 }
 
+impl From<PayoutType> for PoolPayoutType {
+    fn from(value: PayoutType) -> Self {
+        match value {
+            PayoutType::Onchain => PoolPayoutType::Onchain,
+            PayoutType::Lightning => PoolPayoutType::Lighting,
+        }
+    }
+}

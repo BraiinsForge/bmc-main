@@ -659,9 +659,18 @@ export component WidgetBraiinsPoolBigChart inherits Rectangle {
                     horizontal-alignment: right;
                 }
             }
-            Image {
+            Rectangle {
+                width: PoolChartDimensions.get-dimensions(WidgetSize.Full, BraiinsPoolStyle.BigChart).width * 1px;
                 height: PoolChartDimensions.get-dimensions(WidgetSize.Full, BraiinsPoolStyle.BigChart).height * 1px;
-                source: data.chart-bigchart-full;
+                Image {
+                    source: data.chart-bigchart-full;
+                }
+                for payout in data.pool-payouts:
+                Image {
+                    x: payout.payout-time-fraction * parent.width;
+                    y: 0.915 * parent.height;
+                    source: payout.payout-type == PoolPayoutType.Onchain ? Images.payout-btc : Images.payout-ln;
+                }
             }
             VerticalLayout {
                 width: 74px;

@@ -574,6 +574,26 @@ impl DisplayController {
         });
     }
 
+    pub fn update_recent_payouts(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        recent_payouts: RecentUserPayouts,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    widget.braiins_pool.pool_payouts = recent_payouts.payouts();
+                });
+            }
+        });
+    }
+
     pub fn update_download_firmware_progress(&self, downloaded_mb: f32, total_mb: f32) {
         fn round_to_one_decimal(value: f32) -> f32 {
             (value * 10.0).round() / 10.0
