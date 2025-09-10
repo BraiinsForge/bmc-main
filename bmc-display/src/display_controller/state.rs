@@ -7,7 +7,7 @@ use crate::data::{Scene, SceneCycling, SceneCyclingTransition, SceneId, Screen, 
 use crate::display_controller::DisplayController;
 use crate::generated::{
     self, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, ConnectionAdapter,
-    InitSetupWifiAdapter, SceneCyclingAdapter,
+    SceneCyclingAdapter, WifiAdapter,
 };
 use crate::indexmap_model::IndexMapModel;
 use crate::utils;
@@ -301,7 +301,7 @@ impl DisplayController {
 
     pub fn set_wifi_ssid(&self, wifi_ssid: String) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
-            let init_setup_wifi_adapter = InitSetupWifiAdapter::get(&main_window);
+            let init_setup_wifi_adapter = WifiAdapter::get(&main_window);
             init_setup_wifi_adapter.set_ssid(wifi_ssid.into());
         });
     }

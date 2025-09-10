@@ -545,6 +545,8 @@ pub enum Screen {
     InitialSetupConnectInfo,
     InitialSetupCompleted,
     ConnectInfo,
+    WifiConnectProgress,
+    WifiConnectFailed,
 }
 
 impl From<Screen> for generated::UIScreen {
@@ -563,6 +565,8 @@ impl From<Screen> for generated::UIScreen {
             Screen::InitialSetupConnectInfo => Self::InitDeviceSetupQr,
             Screen::InitialSetupCompleted => Self::InitSetupSuccess,
             Screen::ConnectInfo => Self::ConnectInfo,
+            Screen::WifiConnectProgress => Self::WifiConnectProgress,
+            Screen::WifiConnectFailed => Self::WifiConnectFailed,
         }
     }
 }

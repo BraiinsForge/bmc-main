@@ -2,11 +2,14 @@ import { InitSetupTemplate } from "../templates/init_setup.slint";
 import { Images } from "../../style/images.slint";
 import { WifiAdapter } from "../../controls/adapters.slint";
 
-export component InitWifiConnectSuccess inherits InitSetupTemplate {
-    icon_text_header_title: "Initial Setup";
-    icon_text_title: "You're connected";
+export component WifiConnectFailed inherits InitSetupTemplate {
+    in property <string> header_title;
+    in property <string> main_title: "Problem with connection.";
+
+    icon_text_header_title: self.header_title;
+    icon_text_title: self.main_title;
     icon_text_content: "WiFi SSID";
     icon_text_subtitle: WifiAdapter.ssid;
     icon_text_image_visible: true;
-    icon_text_image: Images.wifi;
+    icon_text_image: Images.wifi-error;
 }
