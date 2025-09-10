@@ -7,6 +7,7 @@ use crate::{
     config::{ConfigHandle, NightModeConfig},
     night_mode::NightModeController,
 };
+use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_scheduler::JobScheduler;
 use bmc_shared_time::time::Timezone;
@@ -34,6 +35,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         timezone_receiver: watch::Receiver<Timezone>,
         backlight_driver: Arc<Mutex<T>>,
         scheduler: JobScheduler,
+        display_controller: DisplayController,
     ) -> anyhow::Result<Self> {
         let backlight_controller =
             DisplayBacklightController::new(config_handle.clone(), backlight_driver);
@@ -47,6 +49,11 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             backlight_controller.clone(),
             night_mode_controller.clone(),
             brightness_modified.clone(),
+        ));
+
+        tokio::spawn(Self::set_night_mode_flag_in_slint(
+            display_controller,
+            night_mode_controller.clone(),
         ));
 
         Ok(Self {
@@ -86,6 +93,25 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                     }
                 },
                 () = brightness_modified.notified() => {},
+            }
+        }
+    }
+
+    async fn set_night_mode_flag_in_slint(
+        display_controller: DisplayController,
+        night_mode_controller: NightModeController,
+    ) {
+        let mut night_mode_receiver = night_mode_controller.subscribe();
+        loop {
+            let night_mode_is_active = *night_mode_receiver.borrow_and_update();
+
+            if night_mode_is_active {
+                display_controller.reset_cycler();
+            }
+            display_controller.set_night_mode(night_mode_is_active);
+
+            if night_mode_receiver.changed().await.is_err() {
+                break;
             }
         }
     }

@@ -108,6 +108,7 @@ where
             manager.watch_timezone_updates(),
             display_driver.backlight_driver,
             scheduler,
+            display_controller.clone(),
         )
         .await?;
 
