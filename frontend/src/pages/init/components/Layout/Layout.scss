@@ -2,7 +2,6 @@
 
 .root {
     composes: vertical from 'styles/layout.scss';
-
     position: relative;
 
     inline-size: to-rem(512px);
@@ -16,12 +15,14 @@
 
 .header {
     composes: horizontal center from 'styles/layout.scss';
-    position: relative;
-    z-index: 1;
+    position: sticky;
+    z-index: 10;
+    top: 0;
 
     flex-shrink: 0;
     block-size: to-rem(58px);
 
+    background-color: $layer-01;
     border-bottom: 2px solid $border-subtle;
     padding-inline: mini-units(2);
 }
@@ -35,7 +36,7 @@
     z-index: 2;
 
     composes: scrollbar from 'styles/interaction.scss';
-    max-height: 75vh;
+    height: 75vh;
 
     padding: mini-units(2) mini-units(2) mini-units(5);
 }
@@ -46,7 +47,10 @@
     flex-shrink: 0;
 
     position: sticky;
+    z-index: 10;
     bottom: 0;
+
+    background-color: $layer-01;
 
     > * {
         min-inline-size: 50%;

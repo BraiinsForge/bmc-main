@@ -4,7 +4,9 @@
     position: absolute;
     inline-size: 100vw;
     block-size: 100vh;
+    overflow-x: hidden;
 
+    composes: scrollbar from 'styles/interaction.scss';
     composes: vertical center from 'styles/layout.scss';
     padding-block-start: mini-units(8);
     gap: mini-units(2);
@@ -21,4 +23,15 @@
 .innerSetup {
     composes: inner;
     inline-size: to-rem(703px);
+}
+
+@media (width <= 800px) {
+    .root {
+        margin: 0;
+        padding: 0;
+    }
+
+    main {
+        block-size: 100% !important;
+    }
 }
