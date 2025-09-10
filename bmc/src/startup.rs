@@ -79,9 +79,6 @@ where
         display_controller.set_scenes(config_handle.scenes.clone());
         display_controller.set_scene_cycling(config_handle.scene_cycling());
 
-        let night_mode_config = config_handle.night_mode();
-        let brightness_pct = config_handle.brightness_pct();
-
         let config_handle = Arc::new(RwLock::new(config_handle));
 
         let widget_tasks = WidgetTasks::new(
@@ -106,16 +103,13 @@ where
 
         let scheduler = JobScheduler::init(manager.watch_timezone_updates(), None).await;
 
-        let system_manager = SystemManager::new(
+        let system_manager = SystemManager::init(
             config_handle.clone(),
-            brightness_pct,
-            night_mode_config.brightness_pct,
             manager.watch_timezone_updates(),
             display_driver.backlight_driver,
             scheduler,
-        );
-
-        system_manager.init().await?;
+        )
+        .await?;
 
         let display_tasks = DisplayTasks::new(
             display_controller.clone(),
