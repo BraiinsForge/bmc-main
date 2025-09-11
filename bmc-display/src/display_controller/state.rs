@@ -7,8 +7,8 @@ use crate::clock_data::ClockData;
 use crate::data::{Scene, SceneCycling, SceneCyclingTransition, SceneId, Screen, Widget, WidgetId};
 use crate::display_controller::DisplayController;
 use crate::generated::{
-    self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, ConnectionAdapter,
-    SceneCyclingAdapter, WifiAdapter,
+    self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, ClockStyle,
+    ConnectionAdapter, SceneCyclingAdapter, WifiAdapter,
 };
 use crate::indexmap_model::IndexMapModel;
 use crate::utils;
@@ -204,9 +204,61 @@ impl DisplayController {
             if let Some(scene) = scenes_ref.get(&scene_id) {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
+                let new_datetime = to_datetime(datetime, timezone, is_24_format);
+
+                // NOTE: `modify` always marks row as changed, even if we make no changes inside the closure
+                let datetime_changed = widgets_ref
+                    .get(&widget_id)
+                    .is_some_and(|widget| widget.clock.datetime != new_datetime);
+
+                if !datetime_changed {
+                    return;
+                }
+
                 widgets_ref.modify(&widget_id, |widget| {
-                    widget.clock.datetime = to_datetime(datetime, timezone, is_24_format);
-                    widget.clock.analog_clock_hands = clock_data.into_clock_hand_images();
+                    let config = &widget.clock.config;
+                    let datetime = &mut widget.clock.datetime;
+                    let analog_hands = &mut widget.clock.analog_clock_hands;
+
+                    // NOTE: this is optimization for analog hands, because we need to avoid image
+                    // re-creation each time
+                    if datetime.hour24 != new_datetime.hour24 {
+                        match config.clock_style {
+                            ClockStyle::AnalogRound => {
+                                analog_hands.hour_hand_round = clock_data.hour_hand_round();
+                            }
+                            ClockStyle::AnalogRect => {
+                                analog_hands.hour_hand_rect = clock_data.hour_hand_rect();
+                            }
+                            ClockStyle::Digital => {}
+                        }
+                    }
+
+                    if datetime.minute != new_datetime.minute {
+                        match config.clock_style {
+                            ClockStyle::AnalogRound => {
+                                analog_hands.minute_hand_round = clock_data.minute_hand_round();
+                            }
+                            ClockStyle::AnalogRect => {
+                                analog_hands.minute_hand_rect = clock_data.minute_hand_rect();
+                            }
+                            ClockStyle::Digital => {}
+                        }
+                    }
+
+                    if datetime.second != new_datetime.second {
+                        match config.clock_style {
+                            ClockStyle::AnalogRound => {
+                                analog_hands.second_hand_round = clock_data.second_hand_round();
+                            }
+                            ClockStyle::AnalogRect => {
+                                analog_hands.second_hand_rect = clock_data.second_hand_rect();
+                            }
+                            ClockStyle::Digital => {}
+                        }
+                    }
+
+                    *datetime = new_datetime;
                 });
             }
         });

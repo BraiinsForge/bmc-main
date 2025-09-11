@@ -1,6 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::generated::AnalogClockHands;
 use chrono::{DateTime, FixedOffset, Timelike};
 use slint::Image;
 use svg::Document;
@@ -34,33 +33,80 @@ impl ClockData {
     }
 
     #[must_use]
-    pub fn into_clock_hand_images(self) -> AnalogClockHands {
-        let second = self.now.second();
-        let minute = self.now.minute();
+    #[inline]
+    pub fn hour_hand_round(&self) -> Image {
+        let rotation_angle = self.hour_hand_angle();
+
+        rotate_svg(HOUR_HAND_ROUND, rotation_angle, 31, 121)
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn hour_hand_rect(&self) -> Image {
+        let rotation_angle = self.hour_hand_angle();
+
+        rotate_svg(HOUR_HAND_RECT, rotation_angle, 27, 138)
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn minute_hand_round(&self) -> Image {
+        let rotation_angle = self.minute_hand_angle();
+
+        rotate_svg(MINUTE_HAND_ROUND, rotation_angle, 25, 200)
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn minute_hand_rect(&self) -> Image {
+        let rotation_angle = self.minute_hand_angle();
+
+        rotate_svg(MINUTE_HAND_RECT, rotation_angle, 27, 242)
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn second_hand_round(&self) -> Image {
+        let rotation_angle = self.second_hand_angle();
+
+        rotate_svg(SECOND_HAND_ROUND, rotation_angle, 2, 198)
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn second_hand_rect(&self) -> Image {
+        let rotation_angle = self.second_hand_angle();
+
+        rotate_svg(SECOND_HAND_RECT, rotation_angle, 2, 239)
+    }
+
+    #[must_use]
+    #[inline]
+    fn hour_hand_angle(&self) -> i32 {
         let hour = self.now.hour();
 
-        let rotation_angle_sec = i32::try_from(second).unwrap_or_default() * 6;
-        let rotation_angle_min = i32::try_from(minute).unwrap_or_default() * 6;
+        let rotation_angle_min = self.minute_hand_angle();
         #[expect(clippy::integer_division)]
         let rotation_angle_hour =
             i32::try_from(hour).unwrap_or_default() * 30 + rotation_angle_min / 12;
 
-        let second_hand_round = rotate_svg(SECOND_HAND_ROUND, rotation_angle_sec, 2, 198);
-        let second_hand_rect = rotate_svg(SECOND_HAND_RECT, rotation_angle_sec, 2, 239);
+        rotation_angle_hour
+    }
 
-        let minute_hand_round = rotate_svg(MINUTE_HAND_ROUND, rotation_angle_min, 25, 200);
-        let hour_hand_round = rotate_svg(HOUR_HAND_ROUND, rotation_angle_hour, 31, 121);
-        let minute_hand_rect = rotate_svg(MINUTE_HAND_RECT, rotation_angle_min, 27, 242);
-        let hour_hand_rect = rotate_svg(HOUR_HAND_RECT, rotation_angle_hour, 27, 138);
+    #[must_use]
+    #[inline]
+    fn minute_hand_angle(&self) -> i32 {
+        let minute = self.now.minute();
 
-        AnalogClockHands {
-            second_hand_round,
-            minute_hand_round,
-            hour_hand_round,
-            second_hand_rect,
-            minute_hand_rect,
-            hour_hand_rect,
-        }
+        i32::try_from(minute).unwrap_or_default() * 6
+    }
+
+    #[must_use]
+    #[inline]
+    fn second_hand_angle(&self) -> i32 {
+        let second = self.now.second();
+
+        i32::try_from(second).unwrap_or_default() * 6
     }
 }
 
