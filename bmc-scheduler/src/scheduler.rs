@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::JobDetails;
-use crate::cron::{CRON_DUMMY_COMMAND, CronEntry, Crontab, normalize_cron_expression};
+use crate::cron::{CRON_DUMMY_COMMAND, CronEntry, CrontabManager, normalize_cron_expression};
 use anyhow::{Result, anyhow};
 use bmc_shared_time::time::Timezone;
 use chrono_tz::Tz;
@@ -147,7 +147,7 @@ fn spawn_timezone_listener(
 pub struct JobScheduler {
     inner: Arc<Mutex<JobSchedulerLocked>>,
     storage: Arc<RwLock<BTreeMap<JobId, JobDetails>>>,
-    crontab: Arc<RwLock<Crontab>>,
+    crontab_manager: Arc<RwLock<CrontabManager>>,
     timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
 }
 
@@ -174,18 +174,22 @@ impl JobScheduler {
 
         let inner = Arc::new(Mutex::new(job_scheduler));
         let storage = Arc::new(RwLock::new(BTreeMap::new()));
-        let mut crontab = Crontab::new(crontab_path);
-        let _ = crontab
-            .load_from_path()
+        let mut crontab_manager = CrontabManager::new(crontab_path);
+        let _ = crontab_manager
+            .load_all()
             .await
-            .map_err(|_| warn!("Failed to load crontab at {}", crontab.path.display()));
-        let crontab = Arc::new(RwLock::new(crontab));
+            .map_err(|e| warn!("Failed to load crontabs: {}", e));
+        let _ = crontab_manager
+            .ensure_scheduler_disclaimer()
+            .await
+            .map_err(|e| warn!("Failed to ensure scheduler crontab disclaimer: {}", e));
+        let crontab_manager = Arc::new(RwLock::new(crontab_manager));
 
         spawn_timezone_listener(timezone_receiver.clone(), inner.clone(), storage.clone());
         Self {
             inner,
             storage,
-            crontab,
+            crontab_manager,
             timezone_receiver,
         }
     }
@@ -255,8 +259,12 @@ impl JobScheduler {
     }
 
     pub async fn cron_entries(&self) -> Vec<CronEntry> {
-        let crontab = self.crontab.read().await;
-        crontab.entries.clone()
+        let crontab_manager = self.crontab_manager.read().await;
+        crontab_manager
+            .get_all_entries()
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     pub async fn jobs(&self) -> Result<Vec<JobDetails>> {
@@ -306,8 +314,8 @@ impl JobScheduler {
 
     // CRONTAB MANAGEMENT
     pub async fn sync_with_crontab(&self) -> Result<Vec<Uuid>> {
-        let crontab = self.crontab.read().await;
-        let entries = crontab.get_commands();
+        let crontab_manager = self.crontab_manager.read().await;
+        let entries = crontab_manager.get_all_command_entries();
         let mut job_ids = Vec::new();
 
         for entry in entries {
@@ -404,25 +412,45 @@ impl JobScheduler {
     }
 
     async fn save_to_crontab(&self, cron: Cron, command: &str, config: &JobConfig) -> Result<()> {
-        let mut crontab = self.crontab.write().await;
+        let mut crontab_manager = self.crontab_manager.write().await;
         let entry = CronEntry {
             schedule: cron,
             command: command.to_owned(),
             source: Some(config.source.clone()),
         };
-        crontab.upsert_by_source(entry).await.map(|_| ())
+        crontab_manager
+            .scheduler_crontab_mut()
+            .upsert_by_source(entry)
+            .await?;
+        // Ensure disclaimer is maintained after saving
+        crontab_manager
+            .ensure_scheduler_disclaimer()
+            .await
+            .map_err(|e| anyhow!("Failed to ensure disclaimer: {}", e))?;
+        Ok(())
     }
 
     async fn remove_from_crontab(&self, source: String, command: Option<String>) -> Result<usize> {
-        let mut crontab = self.crontab.write().await;
-        if let Some(command) = command {
-            crontab.remove_by_command(&command).await
+        let mut crontab_manager = self.crontab_manager.write().await;
+        let scheduler_crontab = crontab_manager.scheduler_crontab_mut();
+        let result = if let Some(command) = command {
+            scheduler_crontab.remove_by_command(&command).await
         } else if !source.is_empty() {
-            crontab.remove_by_source(&source).await
+            scheduler_crontab.remove_by_source(&source).await
         } else {
             warn!("No source or command specified to remove from crontab");
             Ok(0)
+        };
+
+        // Ensure disclaimer is maintained after removal
+        if result.is_ok() && result.as_ref().unwrap() > &0 {
+            let _ = crontab_manager
+                .ensure_scheduler_disclaimer()
+                .await
+                .map_err(|e| warn!("Failed to ensure disclaimer after removal: {}", e));
         }
+
+        result
     }
 
     // Keep existing methods but potentially simplify signatures

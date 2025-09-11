@@ -18,6 +18,8 @@ const CRON_DEFAULT_DIR: &str = "/etc/crontabs";
 pub(crate) const CRON_DUMMY_COMMAND: &str = "true";
 pub(crate) const CRON_SECONDS_PREFIX: &str = "0 ";
 const MIN_CRON_FIELDS: usize = 6;
+const SCHEDULER_CRONTAB_DISCLAIMER: &str =
+    "# This file is automatically managed by the scheduler - DO NOT EDIT MANUALLY";
 
 // Represents a single cron job
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,37 +257,21 @@ impl Crontab {
         Ok(())
     }
 
-    /// Load crontab entries from disk, preserving all entries
-    /// Always loads from the entire /etc/crontabs/ directory AND the configured path (if different)
-    /// The configured path (self.path) only affects where new entries are saved
+    /// Load the current crontab from disk, preserving all entries
+    /// Only loads from the specific file path configured for this Crontab instance
     pub async fn load_from_path(&mut self) -> anyhow::Result<()> {
-        let mut all_entries = Vec::new();
-
-        // Always load from the standard /etc/crontabs/ directory
-        let mut temp_crontab = Crontab::default(); // Uses /etc/crontabs/ by default
-        if let Ok(()) = temp_crontab.load_from_directory().await {
-            all_entries.append(&mut temp_crontab.entries);
+        if !self.path.exists() {
+            // Create directories
+            let parent_dir = self.path.parent().expect("BUG: Failed to parse parent dir");
+            tokio::fs::create_dir_all(parent_dir).await?;
+            // If file doesn't exist, create it empty
+            tokio::fs::write(&self.path, "").await?;
+            self.entries = Vec::new();
+            return Ok(());
         }
 
-        // If configured path is different from default, also load from it
-        let default_path = PathBuf::from(CRON_DEFAULT_PATH);
-        if self.path != default_path && !self.path.to_string_lossy().starts_with(CRON_DEFAULT_DIR) {
-            if self.path.exists() {
-                // Load from the custom path as well
-                let file = tokio::fs::File::open(&self.path).await?;
-                if let Ok(mut entries) = Self::read_full_crontab(file).await {
-                    all_entries.append(&mut entries);
-                }
-            } else {
-                // Create directories
-                let parent_dir = self.path.parent().expect("BUG: Failed to parse parent dir");
-                tokio::fs::create_dir_all(parent_dir).await?;
-                // If file doesn't exist, create it empty
-                tokio::fs::write(&self.path, "").await?;
-            }
-        }
-
-        self.entries = all_entries;
+        let file = tokio::fs::File::open(&self.path).await?;
+        self.entries = Self::read_full_crontab(file).await?;
         Ok(())
     }
 
@@ -338,12 +324,12 @@ impl Crontab {
                 .map(CronEntry::to_crontab_string)
                 .collect::<Vec<String>>()
                 .join("\n\n");
-            
+
             // Ensure the file ends with a newline
             if !crontab_content.ends_with('\n') {
                 crontab_content.push('\n');
             }
-            
+
             tokio::fs::write(&self.path, crontab_content).await?;
         }
 
@@ -404,12 +390,12 @@ impl Crontab {
             .map(CronEntry::to_crontab_string)
             .collect::<Vec<String>>()
             .join("\n\n");
-        
+
         // Ensure the file ends with a newline
         if !crontab_content.ends_with('\n') {
             crontab_content.push('\n');
         }
-        
+
         tokio::fs::write(&self.path, crontab_content).await?;
         Ok(())
     }
@@ -442,6 +428,172 @@ impl Crontab {
 
         lines_stream.filter_map(std::result::Result::ok)
     }
+
+    /// Ensure the crontab has the disclaimer comment at the top
+    /// This should only be called on the scheduler's own crontab
+    pub async fn ensure_disclaimer(&mut self) -> anyhow::Result<()> {
+        // Load current entries
+        self.load_from_path().await?;
+
+        // Check if disclaimer is already present at the beginning
+        let needs_disclaimer = if self.entries.is_empty() {
+            true
+        } else {
+            // Check if the file starts with our disclaimer when we read it raw
+            if self.path.exists() {
+                let content = tokio::fs::read_to_string(&self.path).await?;
+                !content
+                    .trim_start()
+                    .starts_with(SCHEDULER_CRONTAB_DISCLAIMER)
+            } else {
+                true
+            }
+        };
+
+        if needs_disclaimer {
+            // Rewrite the entire file with disclaimer at the top
+            let mut content = format!("{SCHEDULER_CRONTAB_DISCLAIMER}\n");
+
+            if !self.entries.is_empty() {
+                content.push('\n'); // Extra newline after disclaimer
+                content.push_str(
+                    &self
+                        .entries
+                        .iter()
+                        .map(CronEntry::to_crontab_string)
+                        .collect::<Vec<String>>()
+                        .join("\n\n"),
+                );
+            }
+
+            // Ensure the file ends with a newline
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+
+            tokio::fs::write(&self.path, content).await?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Manages multiple separate crontab files without mixing them together
+///
+/// This design ensures:
+/// - Each crontab file in `/etc/crontabs/` remains separate and independent
+/// - The scheduler has its own dedicated crontab file for its jobs (including Async tasks)
+/// - System crontabs are read-only from the scheduler's perspective
+#[derive(Debug, Clone)]
+pub struct CrontabManager {
+    /// The main crontab used by the scheduler for its own jobs (read/write)
+    pub scheduler_crontab: Crontab,
+    /// Other crontabs from the /etc/crontabs/ directory (read-only for the scheduler)
+    pub system_crontabs: Vec<Crontab>,
+}
+
+impl CrontabManager {
+    #[must_use]
+    pub fn new(scheduler_crontab_path: Option<PathBuf>) -> Self {
+        Self {
+            scheduler_crontab: Crontab::new(scheduler_crontab_path),
+            system_crontabs: Vec::new(),
+        }
+    }
+
+    /// Load all crontabs: the scheduler's own crontab and all system crontabs
+    pub async fn load_all(&mut self) -> anyhow::Result<()> {
+        // Load the scheduler's own crontab
+        self.scheduler_crontab.load_from_path().await?;
+
+        // Load all system crontabs from /etc/crontabs/
+        self.load_system_crontabs().await?;
+
+        Ok(())
+    }
+
+    /// Load all crontabs from /etc/crontabs/ directory (except the scheduler's own if it's there)
+    async fn load_system_crontabs(&mut self) -> anyhow::Result<()> {
+        let crontabs_dir = PathBuf::from(CRON_DEFAULT_DIR);
+        self.system_crontabs.clear();
+
+        if !crontabs_dir.exists() {
+            return Ok(()); // No system crontabs directory
+        }
+
+        let mut dir_entries = tokio::fs::read_dir(&crontabs_dir).await?;
+
+        while let Some(entry) = dir_entries.next_entry().await? {
+            let entry_path = entry.path();
+
+            // Skip if it's not a regular file
+            if !entry_path.is_file() {
+                continue;
+            }
+
+            // Skip hidden files and backup files
+            if let Some(filename) = entry_path.file_name() {
+                let filename_str = filename.to_string_lossy();
+                if filename_str.starts_with('.') || filename_str.ends_with('~') {
+                    continue;
+                }
+            }
+
+            // Skip if this is the scheduler's own crontab file
+            if entry_path == self.scheduler_crontab.path {
+                continue;
+            }
+
+            // Create a separate Crontab instance for this file
+            let mut system_crontab = Crontab::new(Some(entry_path));
+            if let Err(e) = system_crontab.load_from_path().await {
+                warn!(
+                    "Failed to load system crontab file {:?}: {}",
+                    system_crontab.path, e
+                );
+                continue;
+            }
+
+            self.system_crontabs.push(system_crontab);
+        }
+
+        Ok(())
+    }
+
+    /// Get all cron entries from all crontabs (scheduler + system) for read operations
+    #[must_use]
+    pub fn get_all_entries(&self) -> Vec<&CronEntry> {
+        let mut all_entries = Vec::new();
+
+        // Add entries from scheduler's crontab
+        all_entries.extend(self.scheduler_crontab.entries.iter());
+
+        // Add entries from all system crontabs
+        for system_crontab in &self.system_crontabs {
+            all_entries.extend(system_crontab.entries.iter());
+        }
+
+        all_entries
+    }
+
+    /// Get all command entries (non-dummy) from all crontabs for sync operations
+    #[must_use]
+    pub fn get_all_command_entries(&self) -> Vec<&CronEntry> {
+        self.get_all_entries()
+            .into_iter()
+            .filter(|entry| entry.command.as_str() != CRON_DUMMY_COMMAND)
+            .collect()
+    }
+
+    /// Access to the scheduler's own crontab for write operations
+    pub fn scheduler_crontab_mut(&mut self) -> &mut Crontab {
+        &mut self.scheduler_crontab
+    }
+
+    /// Ensure the scheduler's crontab has the disclaimer at the top
+    pub async fn ensure_scheduler_disclaimer(&mut self) -> anyhow::Result<()> {
+        self.scheduler_crontab.ensure_disclaimer().await
+    }
 }
 
 pub fn from_naive_time(time: NaiveTime) -> anyhow::Result<Cron> {
@@ -453,6 +605,89 @@ pub fn from_naive_time(time: NaiveTime) -> anyhow::Result<Cron> {
 }
 
 mod tests {
+    #[tokio::test]
+    async fn test_scheduler_disclaimer() {
+        use std::str::FromStr;
+        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+        let crontab_path = temp_dir.path().join("test_scheduler_crontab");
+
+        let mut crontab = crate::cron::Crontab::new(Some(crontab_path.clone()));
+
+        // First, add an entry using the proper method (upsert_by_source)
+        let test_entry = crate::cron::CronEntry {
+            source: Some("test".to_owned()),
+            schedule: crate::cron::Cron::from_str("0 0 * * *").expect("Valid cron"),
+            command: "echo test".to_owned(),
+        };
+        crontab
+            .upsert_by_source(test_entry)
+            .await
+            .expect("Should add entry");
+
+        // Now ensure disclaimer is added
+        crontab
+            .ensure_disclaimer()
+            .await
+            .expect("Should add disclaimer");
+
+        // Read the file and verify disclaimer is at the top
+        let content = tokio::fs::read_to_string(&crontab_path)
+            .await
+            .expect("Should read file");
+
+        // Verify disclaimer is present at the start
+        assert!(
+            content
+                .trim_start()
+                .starts_with(crate::cron::SCHEDULER_CRONTAB_DISCLAIMER)
+        );
+
+        // Verify the entry is also present
+        assert!(content.contains("### test"));
+        assert!(content.contains("0 0 * * * echo test"));
+
+        // Test that calling ensure_disclaimer again doesn't duplicate
+        crontab
+            .ensure_disclaimer()
+            .await
+            .expect("Should not fail on second call");
+        let content2 = tokio::fs::read_to_string(&crontab_path)
+            .await
+            .expect("Should read file again");
+
+        // Content should be identical (no duplicate disclaimer)
+        assert_eq!(content, content2);
+
+        // Count occurrences of disclaimer to ensure no duplication
+        let disclaimer_count = content
+            .matches(crate::cron::SCHEDULER_CRONTAB_DISCLAIMER)
+            .count();
+        assert_eq!(disclaimer_count, 1, "Should have exactly one disclaimer");
+    }
+
+    #[tokio::test]
+    async fn test_disclaimer_with_empty_crontab() {
+        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+        let crontab_path = temp_dir.path().join("test_empty_crontab");
+
+        let mut crontab = crate::cron::Crontab::new(Some(crontab_path.clone()));
+
+        // Ensure disclaimer on empty crontab
+        crontab
+            .ensure_disclaimer()
+            .await
+            .expect("Should add disclaimer to empty crontab");
+
+        let content = tokio::fs::read_to_string(&crontab_path)
+            .await
+            .expect("Should read file");
+
+        // Should only contain disclaimer and proper newlines
+        let disclaimer = crate::cron::SCHEDULER_CRONTAB_DISCLAIMER;
+        let expected = format!("{disclaimer}\n");
+        assert_eq!(content, expected);
+    }
+
     #[test]
     fn test_cron_job_parse() {
         let crontab = r"### Source
