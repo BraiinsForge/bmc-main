@@ -110,7 +110,7 @@ impl UserHashrateHistory {
         .unwrap_or_default();
         let document = canvas.add(path);
 
-        graph_utils::svg_into_image(document, width, height)
+        graph_utils::svg_into_image(&document, width, height)
     }
 
     #[must_use]
@@ -154,7 +154,7 @@ impl UserHashrateHistory {
     #[must_use]
     pub fn timestamps(
         self,
-        system_timezone: Timezone,
+        system_timezone: &Timezone,
         is_24_format: bool,
         date_format: DateFormat,
     ) -> ModelRc<SharedString> {
@@ -179,12 +179,14 @@ impl UserHashrateHistory {
                 DateFormat::YyyyMmDdDot => "%m.%d",
                 DateFormat::YyyyMmDdDash => "%m-%d",
             };
+            #[expect(clippy::cast_possible_truncation)]
             (1 + num_days as i32, display_format)
         } else {
             (5, if is_24_format { FORMAT_24H } else { FORMAT_12H })
         };
         let time_increment = time_interval / (count - 1);
 
+        #[expect(clippy::cast_sign_loss)]
         let mut timestamps = Vec::with_capacity(count as usize);
         for i in 0..count {
             timestamps.push(from_timestamp + time_increment * i);
@@ -253,8 +255,13 @@ impl UserWorkerHistory {
         let data: Vec<f32> = self
             .slots
             .into_iter()
-            .map(|slot| slot.active_workers as f32)
+            .map(|slot| {
+                #[expect(clippy::cast_precision_loss)]
+                let active_workers = slot.active_workers as f32;
+                active_workers
+            })
             .collect();
+
         let palette = Palette::get(main_window);
         let palette = ColorPalette::new(&palette);
         // Align horizontal lines with y axis units
@@ -278,7 +285,7 @@ impl UserWorkerHistory {
                 .set("height", height)
                 .add(path);
             if let Some(blended_image) =
-                graph_utils::blend_svg_with_image(document, bg_buffer, width, height)
+                graph_utils::blend_svg_with_image(&document, &bg_buffer, width, height)
             {
                 blended_image
             } else {
@@ -287,7 +294,7 @@ impl UserWorkerHistory {
         } else {
             let canvas = graph_utils::draw_canvas(width, height, draw_extra_line, &palette.gray_80);
             let document = canvas.add(path);
-            graph_utils::svg_into_image(document, width, height)
+            graph_utils::svg_into_image(&document, width, height)
         }
     }
 
@@ -302,13 +309,20 @@ impl UserWorkerHistory {
             .max(3); // Default unit max
 
         // Shift max
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let max = 2 * graph_utils::y_axis_max(max as f32, true) as u32;
 
         let units: Vec<SharedString> = if max > 3000 {
+            #[expect(clippy::integer_division)]
             [max / 1000, 2 * max / 3000, max / 3000, 0]
                 .map(|unit| SharedString::from(format!("{unit}k")))
                 .to_vec()
         } else if max >= 3 {
+            #[expect(clippy::integer_division)]
             [max, 2 * max / 3, max / 3, 0]
                 .map(|unit| SharedString::from(format!("{unit}")))
                 .to_vec()
@@ -506,13 +520,19 @@ impl RecentUserPayouts {
             .payouts
             .iter()
             .filter(|payout| payout.status == PayoutStatus::Completed)
-            .map(|payout| BraiinsPoolPayouts {
-                payout_time_fraction: {
-                    let payout_interval = payout.occurred_at - from_timestamp;
-                    100.0 * payout_interval.num_seconds() as f32
-                        / total_interval.num_seconds() as f32
-                },
-                payout_type: payout.r#type.into(),
+            .filter_map(|payout| {
+                let payout_interval = payout.occurred_at - from_timestamp;
+                if payout_interval.num_seconds() >= 0 {
+                    #[expect(clippy::cast_precision_loss)]
+                    let fraction = 100.0 * payout_interval.num_seconds() as f32
+                        / total_interval.num_seconds() as f32;
+                    Some(BraiinsPoolPayouts {
+                        payout_time_fraction: fraction,
+                        payout_type: payout.r#type.into(),
+                    })
+                } else {
+                    None
+                }
             })
             .collect();
 

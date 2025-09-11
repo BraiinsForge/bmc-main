@@ -41,6 +41,7 @@ pub(crate) fn draw_canvas(
         .set("stroke-dasharray", "4,4")
         .set("stroke-width", stroke_width);
 
+    #[expect(clippy::integer_division)]
     let mid_line = Path::new()
         .set(
             "d",
@@ -52,6 +53,7 @@ pub(crate) fn draw_canvas(
         .set("stroke-dasharray", "4,4")
         .set("stroke-width", stroke_width);
 
+    #[expect(clippy::integer_division)]
     let extra_line = if draw_extra_line {
         Path::new()
             .set(
@@ -137,7 +139,9 @@ pub(crate) fn create_graph(
         if index == 0 {
             path_data = path_data.move_to((0, point_value(value)));
         } else {
-            path_data = path_data.line_to((point_shift(index as f32), point_value(value)));
+            #[expect(clippy::cast_precision_loss)]
+            let index = index as f32;
+            path_data = path_data.line_to((point_shift(index), point_value(value)));
         }
     }
 
@@ -150,6 +154,7 @@ pub(crate) fn create_graph(
     )
 }
 
+#[expect(clippy::too_many_lines)]
 pub(crate) fn create_graph_fill(
     data: &[f32],
     width: u32,
@@ -175,6 +180,7 @@ pub(crate) fn create_graph_fill(
         .unwrap_or_default();
 
     let coef = max_value - min_value;
+    #[expect(clippy::cast_precision_loss)]
     let height_f32 = height as f32;
     let point_ratio = if coef == 0.0 {
         height_f32
@@ -195,13 +201,15 @@ pub(crate) fn create_graph_fill(
         if index == 0 {
             path_data = path_data.move_to((0, point_value(value)));
         } else {
-            path_data = path_data.line_to((point_shift(index as f32), point_value(value)));
+            #[expect(clippy::cast_precision_loss)]
+            let index = index as f32;
+            path_data = path_data.line_to((point_shift(index), point_value(value)));
         }
     }
 
     path_data = path_data.line_to((width, height)).line_to((0, height));
 
-    let color_palette = ColorPalette::new(&palette);
+    let color_palette = ColorPalette::new(palette);
     let (graph_color, graph_gradient_color, graph_fill_color) = if data.first() <= data.last() {
         (
             color_palette.green_50,
@@ -276,7 +284,7 @@ pub(crate) fn create_graph_fill(
         partial_document.add(path).add(overlay_rect)
     };
 
-    svg_into_image(document, width, height)
+    svg_into_image(&document, width, height)
 }
 
 // Calculates nearest number divisible by 3
@@ -334,13 +342,13 @@ impl ColorPalette {
 }
 
 pub(crate) fn blend_svg_with_image(
-    svg_document: Document,
-    bg_buffer: SharedPixelBuffer<Rgba8Pixel>,
+    svg_document: &Document,
+    bg_buffer: &SharedPixelBuffer<Rgba8Pixel>,
     width: u32,
     height: u32,
 ) -> Option<Image> {
     let mut svg_image: Vec<u8> = vec![];
-    svg::write(&mut svg_image, &svg_document).ok()?;
+    svg::write(&mut svg_image, svg_document).ok()?;
 
     let rgba_data = svg_to_rgba8(&svg_image, width, height)?;
     let fg_buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_data, width, height);
@@ -381,9 +389,9 @@ fn svg_to_rgba8(svg_data: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
     Some(rgba_data)
 }
 
-pub(crate) fn svg_into_image(svg_document: Document, width: u32, height: u32) -> Image {
+pub(crate) fn svg_into_image(svg_document: &Document, width: u32, height: u32) -> Image {
     let mut svg_image: Vec<u8> = vec![];
-    if svg::write(&mut svg_image, &svg_document).is_err() {
+    if svg::write(&mut svg_image, svg_document).is_err() {
         return Image::default();
     }
 

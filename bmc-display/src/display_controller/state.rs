@@ -431,7 +431,7 @@ impl DisplayController {
                             widget.braiins_pool.hashrate_unit_label =
                                 hashrate_history.hashrate_units();
                             widget.braiins_pool.timestamps = hashrate_history.timestamps(
-                                system_timezone,
+                                &system_timezone,
                                 is_24_format,
                                 date_format,
                             );
@@ -498,8 +498,6 @@ impl DisplayController {
                                     original_image,
                                 );
                         }
-                        // Other Overview sizes do not have graphs
-                        (BraiinsPoolStyle::Overview, _) => {}
                         (BraiinsPoolStyle::BigChart, WidgetSize::Medium) => {
                             let original_image = &widget.braiins_pool.chart_bigchart_medium_tmp;
                             widget.braiins_pool.chart_bigchart_medium = worker_history
@@ -533,8 +531,10 @@ impl DisplayController {
                                     original_image,
                                 );
                         }
+                        // Other Overview sizes do not have graphs
                         // Big Chart Small widget does not display workers history graph
-                        (BraiinsPoolStyle::BigChart, WidgetSize::Small) => {}
+                        (BraiinsPoolStyle::BigChart, WidgetSize::Small)
+                        | (BraiinsPoolStyle::Overview, _) => {}
                     }
                 });
             }
@@ -566,8 +566,9 @@ impl DisplayController {
                         let now = Utc::now();
                         let base = (next_payout_estimate - last_payout).abs().num_seconds();
                         let until_now = (now - last_payout).abs().num_seconds();
-                        let fraction = 100 * until_now / base;
-                        widget.braiins_pool.progress = fraction as f32;
+                        #[expect(clippy::integer_division, clippy::cast_precision_loss)]
+                        let fraction = (100 * until_now / base) as f32;
+                        widget.braiins_pool.progress = fraction;
                     }
                 });
             }
