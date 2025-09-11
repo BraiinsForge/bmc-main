@@ -130,6 +130,7 @@ message WidgetKind {
     ClockWidget clock = 1;
     TickerBtcWidget ticker_btc = 2;
     BlockHeightWidget block_height = 3;
+    BraiinsPoolWidget braiins_pool = 4;
   }
 }
 
@@ -179,6 +180,27 @@ message BlockHeightWidget {
   bool show_timestamp = 1;
   // required
   FontStyle numbers_font_style = 2;
+}
+
+message BraiinsPoolWidget {
+  // required
+  BraiinsPoolStyle braiins_pool_style = 1;
+  //required
+  TimeFrame time_frame = 2;
+
+  enum BraiinsPoolStyle {
+    BRAIINS_POOL_STYLE_UNSPECIFIED = 0;
+    BRAIINS_POOL_STYLE_OVERVIEW = 1;
+    BRAIINS_POOL_STYLE_BIGCHART = 2;
+  }
+
+  enum TimeFrame {
+    TIME_FRAME_UNSPECIFIED = 0;
+    TIME_FRAME_HOUR_4 = 1;
+    TIME_FRAME_HOUR_12 = 2;
+    TIME_FRAME_HOUR_24 = 3;
+    TIME_FRAME_DAY_7 = 4;
+  }
 }
 
 // Font style

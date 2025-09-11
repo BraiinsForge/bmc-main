@@ -4,9 +4,10 @@ use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
-    AddWidgetError, BlockHeightWidget, ClockStyle, ClockWidget, FontStyle, RemoveWidgetError,
-    Scene, SceneCycling, SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget, TimeFrame,
-    UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
+    AddWidgetError, BlockHeightWidget, BraiinsPoolWidget, ClockStyle, ClockWidget, FontStyle,
+    PoolChartTimeFrame, PoolStyle, RemoveWidgetError, Scene, SceneCycling, SceneCyclingTransition,
+    SceneId, SceneKind, TickerBtcWidget, TickerTimeFrame, UpdateWidgetError, Widget, WidgetId,
+    WidgetKind, WidgetPosition, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
@@ -1053,6 +1054,9 @@ fn parse_widget_kind_with_default_params(
         web::widget_kind::Value::BlockHeight(_) => {
             WidgetKind::BlockHeight(BlockHeightWidget::default())
         }
+        web::widget_kind::Value::BraiinsPool(_) => {
+            WidgetKind::BraiinsPool(BraiinsPoolWidget::default())
+        }
     };
 
     (Some(kind), field_violations)
@@ -1090,6 +1094,12 @@ fn parse_widget_kind(
         web::widget_kind::Value::BlockHeight(block_height_proto) => {
             let (maybe_kind, field_violations) =
                 parse_block_height_widget_kind("block_height", block_height_proto);
+            all_field_violations.extend(field_violations);
+            maybe_kind
+        }
+        web::widget_kind::Value::BraiinsPool(braiins_pool_proto) => {
+            let (maybe_kind, field_violations) =
+                parse_braiins_pool_widget_kind("braiins_pool", braiins_pool_proto);
             all_field_violations.extend(field_violations);
             maybe_kind
         }
@@ -1164,16 +1174,16 @@ fn parse_ticker_btc_widget_kind(
             field_violations.push(format!("{field}.time_frame"), "Missing value!");
             None
         }
-        TimeFrameProto::Day1 => Some(TimeFrame::Day1),
-        TimeFrameProto::Week1 => Some(TimeFrame::Week1),
-        TimeFrameProto::Week2 => Some(TimeFrame::Week2),
-        TimeFrameProto::Month1 => Some(TimeFrame::Month1),
-        TimeFrameProto::Month3 => Some(TimeFrame::Month3),
-        TimeFrameProto::Month6 => Some(TimeFrame::Month6),
-        TimeFrameProto::Year1 => Some(TimeFrame::Year1),
-        TimeFrameProto::Year2 => Some(TimeFrame::Year2),
-        TimeFrameProto::Year5 => Some(TimeFrame::Year5),
-        TimeFrameProto::All => Some(TimeFrame::All),
+        TimeFrameProto::Day1 => Some(TickerTimeFrame::Day1),
+        TimeFrameProto::Week1 => Some(TickerTimeFrame::Week1),
+        TimeFrameProto::Week2 => Some(TickerTimeFrame::Week2),
+        TimeFrameProto::Month1 => Some(TickerTimeFrame::Month1),
+        TimeFrameProto::Month3 => Some(TickerTimeFrame::Month3),
+        TimeFrameProto::Month6 => Some(TickerTimeFrame::Month6),
+        TimeFrameProto::Year1 => Some(TickerTimeFrame::Year1),
+        TimeFrameProto::Year2 => Some(TickerTimeFrame::Year2),
+        TimeFrameProto::Year5 => Some(TickerTimeFrame::Year5),
+        TimeFrameProto::All => Some(TickerTimeFrame::All),
     };
 
     let maybe_kind =
@@ -1206,6 +1216,47 @@ fn parse_block_height_widget_kind(
             numbers_font_style,
         })
     });
+
+    (maybe_kind, field_violations)
+}
+
+fn parse_braiins_pool_widget_kind(
+    field: &str,
+    braiins_pool_proto: web::BraiinsPoolWidget,
+) -> ParseOutput<WidgetKind> {
+    use web::braiins_pool_widget::BraiinsPoolStyle as PoolStyleProto;
+    use web::braiins_pool_widget::TimeFrame as TimeFrameProto;
+
+    let mut field_violations = FieldViolations::new();
+
+    let maybe_scene_style = match braiins_pool_proto.braiins_pool_style() {
+        PoolStyleProto::Unspecified => {
+            field_violations.push(format!("{field}.pool_style"), "Missing value!");
+            None
+        }
+        PoolStyleProto::Overview => Some(PoolStyle::Overview),
+        PoolStyleProto::Bigchart => Some(PoolStyle::BigChart),
+    };
+
+    let maybe_time_frame = match braiins_pool_proto.time_frame() {
+        TimeFrameProto::Unspecified => {
+            field_violations.push(format!("{field}.time_frame"), "Missing value!");
+            None
+        }
+        TimeFrameProto::Hour4 => Some(PoolChartTimeFrame::Hours4),
+        TimeFrameProto::Hour12 => Some(PoolChartTimeFrame::Hours12),
+        TimeFrameProto::Hour24 => Some(PoolChartTimeFrame::Hours24),
+        TimeFrameProto::Day7 => Some(PoolChartTimeFrame::Days7),
+    };
+
+    let maybe_kind = maybe_scene_style
+        .zip(maybe_time_frame)
+        .map(|(pool_style, chart_frame)| {
+            WidgetKind::BraiinsPool(BraiinsPoolWidget {
+                pool_style,
+                chart_frame,
+            })
+        });
 
     (maybe_kind, field_violations)
 }
@@ -1247,6 +1298,7 @@ fn map_widget_to_proto(widget: Widget) -> web::Widget {
         WidgetKind::Clock(clock) => map_clock_to_proto(clock),
         WidgetKind::TickerBtc(ticker_btc) => map_ticker_btc_to_proto(&ticker_btc),
         WidgetKind::BlockHeight(block_height) => map_block_height_to_proto(&block_height),
+        WidgetKind::BraiinsPool(braiins_pool) => map_braiins_pool_to_proto(&braiins_pool),
     };
 
     web::Widget {
@@ -1356,16 +1408,16 @@ fn map_ticker_btc_to_proto(ticker_btc: &TickerBtcWidget) -> web::WidgetKind {
 
     let proto = web::TickerBtcWidget {
         time_frame: match ticker_btc.time_frame {
-            TimeFrame::Day1 => TimeFrameProto::Day1,
-            TimeFrame::Week1 => TimeFrameProto::Week1,
-            TimeFrame::Week2 => TimeFrameProto::Week2,
-            TimeFrame::Month1 => TimeFrameProto::Month1,
-            TimeFrame::Month3 => TimeFrameProto::Month3,
-            TimeFrame::Month6 => TimeFrameProto::Month6,
-            TimeFrame::Year1 => TimeFrameProto::Year1,
-            TimeFrame::Year2 => TimeFrameProto::Year2,
-            TimeFrame::Year5 => TimeFrameProto::Year5,
-            TimeFrame::All => TimeFrameProto::All,
+            TickerTimeFrame::Day1 => TimeFrameProto::Day1,
+            TickerTimeFrame::Week1 => TimeFrameProto::Week1,
+            TickerTimeFrame::Week2 => TimeFrameProto::Week2,
+            TickerTimeFrame::Month1 => TimeFrameProto::Month1,
+            TickerTimeFrame::Month3 => TimeFrameProto::Month3,
+            TickerTimeFrame::Month6 => TimeFrameProto::Month6,
+            TickerTimeFrame::Year1 => TimeFrameProto::Year1,
+            TickerTimeFrame::Year2 => TimeFrameProto::Year2,
+            TickerTimeFrame::Year5 => TimeFrameProto::Year5,
+            TickerTimeFrame::All => TimeFrameProto::All,
         }
         .into(),
     };
@@ -1390,5 +1442,29 @@ fn map_block_height_to_proto(block_height: &BlockHeightWidget) -> web::WidgetKin
 
     web::WidgetKind {
         value: Some(web::widget_kind::Value::BlockHeight(proto)),
+    }
+}
+
+fn map_braiins_pool_to_proto(braiins_pool: &BraiinsPoolWidget) -> web::WidgetKind {
+    use web::braiins_pool_widget::BraiinsPoolStyle as PoolStyleProto;
+    use web::braiins_pool_widget::TimeFrame as TimeFrameProto;
+
+    let proto = web::BraiinsPoolWidget {
+        braiins_pool_style: match braiins_pool.pool_style {
+            PoolStyle::Overview => PoolStyleProto::Overview,
+            PoolStyle::BigChart => PoolStyleProto::Bigchart,
+        }
+        .into(),
+        time_frame: match braiins_pool.chart_frame {
+            PoolChartTimeFrame::Hours4 => TimeFrameProto::Hour4,
+            PoolChartTimeFrame::Hours12 => TimeFrameProto::Hour12,
+            PoolChartTimeFrame::Hours24 => TimeFrameProto::Hour24,
+            PoolChartTimeFrame::Days7 => TimeFrameProto::Day7,
+        }
+        .into(),
+    };
+
+    web::WidgetKind {
+        value: Some(web::widget_kind::Value::BraiinsPool(proto)),
     }
 }
