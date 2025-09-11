@@ -6,13 +6,14 @@ use bmc_display::clock_data::ClockData;
 use bmc_display::data::{SceneId, TimeFrame, Widget, WidgetId, WidgetKind};
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_time::time::Timezone;
+use chrono::SubsecRound;
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::spawn;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
-use tokio::time::interval;
+use tokio::time::{interval, sleep};
 use tracing::{debug, warn};
 
 const BTC_HISTORY_API_URL: &str = "https://public-api.braiins.com/v1/price-history";
@@ -145,10 +146,8 @@ impl WidgetTasks {
         let mut system_timezone_receiver = self.system_timezone_receiver.clone();
 
         async move {
-            let mut interval = interval(Duration::from_millis(250));
-
             loop {
-                interval.tick().await;
+                let current_tick = chrono::Local::now();
 
                 let timezone = timezone
                     .clone()
@@ -175,6 +174,14 @@ impl WidgetTasks {
                     is_24_format,
                     clock_data,
                 );
+
+                // NOTE: we want to schedule next tick at next wall clock second
+                let next_tick = current_tick.trunc_subsecs(0) + Duration::from_secs(1);
+                let duration_to_next_tick = (next_tick - current_tick)
+                    .to_std()
+                    .expect("BUG: negative duration");
+
+                sleep(duration_to_next_tick).await;
             }
         }
     }
