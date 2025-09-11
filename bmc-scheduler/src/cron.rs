@@ -14,6 +14,7 @@ use tracing::warn;
 const PREFIX_SOURCE: &str = "###";
 const PREFIX_COMMENT: &str = "#";
 const CRON_DEFAULT_PATH: &str = "/etc/crontabs/root";
+const CRON_DEFAULT_DIR: &str = "/etc/crontabs";
 pub(crate) const CRON_DUMMY_COMMAND: &str = "true";
 pub(crate) const CRON_SECONDS_PREFIX: &str = "0 ";
 const MIN_CRON_FIELDS: usize = 6;
@@ -85,8 +86,7 @@ impl CronEntry {
     /// Serialize a vector of CronJob back to a crontab-formatted string
     #[must_use]
     pub fn to_crontab_string(&self) -> String {
-        let result = [self.to_lines().join("\n")];
-        result.join("\n")
+        self.to_lines().join("\n")
     }
 }
 
@@ -205,24 +205,93 @@ impl Crontab {
         }
     }
 
-    /// Load the current crontab from disk, preserving all entries
-    pub async fn load_from_path(&mut self) -> anyhow::Result<()> {
-        if !self.path.exists() {
-            // Create directories
-            let parent_dir = self.path.parent().expect("BUG: Failed to parse parent dir");
-            tokio::fs::create_dir_all(parent_dir).await?;
-            // If file doesn't exist, create it empty
-            tokio::fs::write(&self.path, "").await?;
+    /// Load crontabs from all files in the /etc/crontabs/ directory
+    pub async fn load_from_directory(&mut self) -> anyhow::Result<()> {
+        let crontabs_dir = PathBuf::from(CRON_DEFAULT_DIR);
+
+        // Ensure directory exists
+        if !crontabs_dir.exists() {
+            tokio::fs::create_dir_all(&crontabs_dir).await?;
             self.entries = Vec::new();
             return Ok(());
         }
 
-        let file = tokio::fs::File::open(&self.path).await?;
-        self.entries = Self::read_full_crontab(file).await?;
+        let mut all_entries = Vec::new();
+        let mut dir_entries = tokio::fs::read_dir(&crontabs_dir).await?;
+
+        while let Some(entry) = dir_entries.next_entry().await? {
+            let entry_path = entry.path();
+
+            // Skip if it's not a regular file
+            if !entry_path.is_file() {
+                continue;
+            }
+
+            // Skip hidden files and backup files
+            if let Some(filename) = entry_path.file_name() {
+                let filename_str = filename.to_string_lossy();
+                if filename_str.starts_with('.') || filename_str.ends_with('~') {
+                    continue;
+                }
+            }
+
+            // Try to read and parse the file
+            match tokio::fs::File::open(&entry_path).await {
+                Ok(file) => match Self::read_full_crontab(file).await {
+                    Ok(mut entries) => {
+                        all_entries.append(&mut entries);
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse crontab file {:?}: {}", entry_path, e);
+                    }
+                },
+                Err(e) => {
+                    warn!("Failed to open crontab file {:?}: {}", entry_path, e);
+                }
+            }
+        }
+
+        self.entries = all_entries;
         Ok(())
     }
 
-    /// Add a new cron entry by appending to the file
+    /// Load crontab entries from disk, preserving all entries
+    /// Always loads from the entire /etc/crontabs/ directory AND the configured path (if different)
+    /// The configured path (self.path) only affects where new entries are saved
+    pub async fn load_from_path(&mut self) -> anyhow::Result<()> {
+        let mut all_entries = Vec::new();
+
+        // Always load from the standard /etc/crontabs/ directory
+        let mut temp_crontab = Crontab::default(); // Uses /etc/crontabs/ by default
+        if let Ok(()) = temp_crontab.load_from_directory().await {
+            all_entries.append(&mut temp_crontab.entries);
+        }
+
+        // If configured path is different from default, also load from it
+        let default_path = PathBuf::from(CRON_DEFAULT_PATH);
+        if self.path != default_path && !self.path.to_string_lossy().starts_with(CRON_DEFAULT_DIR) {
+            if self.path.exists() {
+                // Load from the custom path as well
+                let file = tokio::fs::File::open(&self.path).await?;
+                if let Ok(mut entries) = Self::read_full_crontab(file).await {
+                    all_entries.append(&mut entries);
+                }
+            } else {
+                // Create directories
+                let parent_dir = self.path.parent().expect("BUG: Failed to parse parent dir");
+                tokio::fs::create_dir_all(parent_dir).await?;
+                // If file doesn't exist, create it empty
+                tokio::fs::write(&self.path, "").await?;
+            }
+        }
+
+        self.entries = all_entries;
+        Ok(())
+    }
+
+    /// Add a new cron entry by appending to the root file
+    /// Note: Loading reads from all files in /etc/crontabs/, but saving always goes to the root file only
+    /// or to the specified path when Scheduler/Cron is initialized
     pub async fn add_entry(&mut self, entry: CronEntry) -> anyhow::Result<()> {
         // First load current state to keep our in-memory representation in sync
         self.load_from_path().await?;
@@ -261,15 +330,21 @@ impl Crontab {
 
         let removed_count = original_count - self.entries.len();
 
-        // If any entries were removed, rewrite the entire file
+        // If any entries were removed, rewrite the entire crontab file
         if removed_count > 0 {
-            let crontab_string = &self
+            let mut crontab_content = self
                 .entries
                 .iter()
                 .map(CronEntry::to_crontab_string)
                 .collect::<Vec<String>>()
                 .join("\n\n");
-            tokio::fs::write(&self.path, crontab_string).await?;
+            
+            // Ensure the file ends with a newline
+            if !crontab_content.ends_with('\n') {
+                crontab_content.push('\n');
+            }
+            
+            tokio::fs::write(&self.path, crontab_content).await?;
         }
 
         Ok(removed_count)
@@ -323,13 +398,19 @@ impl Crontab {
         warn!(
             "save() overwrites entire crontab - consider using add_entry() or remove_entries() instead"
         );
-        let crontab_string = self
+        let mut crontab_content = self
             .entries
             .iter()
             .map(CronEntry::to_crontab_string)
             .collect::<Vec<String>>()
             .join("\n\n");
-        tokio::fs::write(&self.path, crontab_string).await?;
+        
+        // Ensure the file ends with a newline
+        if !crontab_content.ends_with('\n') {
+            crontab_content.push('\n');
+        }
+        
+        tokio::fs::write(&self.path, crontab_content).await?;
         Ok(())
     }
 
