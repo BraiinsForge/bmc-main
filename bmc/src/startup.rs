@@ -11,8 +11,8 @@ use crate::button_manager::ButtonManager;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
-use crate::manager::BmcManager;
 use crate::led::LedController;
+use crate::manager::BmcManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
@@ -59,6 +59,7 @@ where
     U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
+    #[expect(clippy::too_many_lines)]
     pub async fn init(
         config: Configuration,
         manager: Arc<T>,
@@ -94,7 +95,6 @@ where
             state_service.clone(),
             config_handle.clone(),
             scheduler.clone(),
-            manager.start_time(),
         ));
         SystemUpgradeService::autoupgrade_init(system_upgrade_service.clone());
         if let Some(autoupgrade_cron) = scheduler

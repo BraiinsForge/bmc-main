@@ -111,10 +111,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         state_service: StateService,
         config_handle: Arc<RwLock<ConfigHandle>>,
         scheduler: Arc<JobScheduler>,
-        start_time: Instant,
     ) -> Self {
         let (autoupgrade_tx, _) = tokio::sync::broadcast::channel(1);
-        let autoupgrade = AutoUpgrade::new(autoupgrade_tx, start_time);
+        let autoupgrade = AutoUpgrade::new(autoupgrade_tx, None);
         Self {
             state_service,
             firmware_resolver: Arc::new(Mutex::new(Arc::new(firmware_resolver))),

@@ -44,6 +44,39 @@ const SECONDS_IN_MONTH: u64 = SECONDS_IN_WEEK * 4; // 2,592,000 seconds
 pub const SECONDS_DEVICE_SETUP_DELAY: i64 = 5;
 const CRON_BIWEEKLY_DAYS: &str = "1,15";
 
+pub trait UpgradeCondition {
+    fn check(&self) -> anyhow::Result<()>;
+}
+
+#[derive(Debug)]
+pub struct UptimeCondition {
+    start_time: Instant,
+    minimum_uptime: Duration,
+}
+
+impl UptimeCondition {
+    #[must_use]
+    pub fn new(start_time: Instant, minimum_uptime: Duration) -> Self {
+        Self {
+            start_time,
+            minimum_uptime,
+        }
+    }
+}
+
+impl UpgradeCondition for UptimeCondition {
+    fn check(&self) -> anyhow::Result<()> {
+        let uptime = self.start_time.elapsed();
+        if uptime.as_secs() < self.minimum_uptime.as_secs() {
+            return Err(anyhow!(
+                "Cannot upgrade: uptime is insufficient ({} seconds required).",
+                self.minimum_uptime.as_secs()
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, Eq, PartialEq)]
 pub enum UpgradeStatus {
     NotStarted,
@@ -209,8 +242,10 @@ impl Debug for AutoUpgrade {
 
 impl AutoUpgrade {
     pub const AUTOUPGRADE_SOURCE_NAME: &str = "autoupgrade";
+    /// When supplied, the start time is used to determine if the upgrade should be performed.
+    /// Otherwise, the upgrade is performed immediately, when available
     #[must_use]
-    pub fn new(sender: Sender<()>, start_time: Instant) -> Self {
+    pub fn new(sender: Sender<()>, start_time: Option<Instant>) -> Self {
         let task = {
             let sender_clone = sender.clone();
             move || Self::autoupgrade_task(sender_clone.clone(), start_time)
@@ -224,10 +259,20 @@ impl AutoUpgrade {
 
     fn autoupgrade_task(
         sender: Sender<()>,
-        start_time: Instant,
+        start_time: Option<Instant>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
-            if let Err(e) = AutoUpgrade::can_upgrade(start_time) {
+            let mut conditions: Vec<&dyn UpgradeCondition> = vec![];
+            // Due to using dyn UpgradeCondition, we need to create a vector of pointers to the conditions
+            let uptime_condition = UptimeCondition::new(
+                start_time.unwrap_or(Instant::now()),
+                AUTOUPGRADE_MINIMUM_UPTIME,
+            );
+            if start_time.is_some() {
+                conditions.push(&uptime_condition);
+            }
+
+            if let Err(e) = can_upgrade(&conditions) {
                 debug!("{e}");
                 return;
             }
@@ -237,18 +282,13 @@ impl AutoUpgrade {
             }
         })
     }
+}
 
-    fn can_upgrade(start_time: Instant) -> anyhow::Result<()> {
-        let uptime = start_time.elapsed();
-        if uptime.as_secs() < AUTOUPGRADE_MINIMUM_UPTIME.as_secs() {
-            return Err(anyhow!(
-                "Cannot upgrade: uptime is insufficient ({} seconds required).",
-                AUTOUPGRADE_MINIMUM_UPTIME.as_secs()
-            ));
-        }
-
-        Ok(())
+fn can_upgrade(conditions: &[&dyn UpgradeCondition]) -> anyhow::Result<()> {
+    for condition in conditions {
+        condition.check()?;
     }
+    Ok(())
 }
 
 /// When specified, time_of_day is used as the time of day for the first run.
