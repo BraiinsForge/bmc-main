@@ -11,10 +11,10 @@ use crate::button_manager::ButtonManager;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
+use crate::manager::BmcManager;
 use crate::led::LedController;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
-use crate::manager::BmcManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
 use crate::widget_tasks::WidgetTasks;
@@ -24,6 +24,7 @@ use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use bmc_led::led_driver::LedDriver;
 use bmc_scheduler::JobScheduler;
+use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, watch};
@@ -96,6 +97,19 @@ where
             manager.start_time(),
         ));
         SystemUpgradeService::autoupgrade_init(system_upgrade_service.clone());
+        if let Some(autoupgrade_cron) = scheduler
+            .cron_entries()
+            .await
+            .iter()
+            .find(|e| e.source == Some(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME.to_owned()))
+        {
+            system_upgrade_service
+                .autoupgrade_update(AutoUpgradeConfig {
+                    enabled: true,
+                    cron: autoupgrade_cron.schedule.clone(),
+                })
+                .await?;
+        }
 
         let widget_tasks = WidgetTasks::new(
             display_controller.clone(),
