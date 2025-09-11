@@ -19,7 +19,7 @@ use crate::{
     BmcManager,
     system_upgrade::{DownloadState, SystemUpgradeError},
 };
-use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
+use bmc_upgrade::autoupgrade::{AutoUpgradeConfig, AutoUpgradeFrequency};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 pub(crate) struct UpgradeService<T, U>
@@ -130,7 +130,7 @@ where
 
         let response = GetAutoUpgradeResponse {
             enabled: autoupgrade_config.enabled,
-            frequency: autoupgrade_config.frequency.into(),
+            frequency: AutoUpgradeFrequency::from(autoupgrade_config.cron.clone()).into(),
             cron_string: autoupgrade_config.cron.to_string(),
         };
 

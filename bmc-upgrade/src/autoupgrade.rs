@@ -117,10 +117,48 @@ impl From<AutoUpgradeFrequency> for i32 {
     }
 }
 
+impl From<Cron> for AutoUpgradeFrequency {
+    fn from(value: Cron) -> Self {
+        let pattern = value.pattern.as_str();
+
+        // Check for biweekly pattern (contains "1,15")
+        if pattern.contains(CRON_BIWEEKLY_DAYS) {
+            return Self::BiWeekly;
+        }
+
+        // Split pattern to analyze day/month/weekday parts
+        let parts: Vec<&str> = pattern.split_whitespace().collect();
+        if parts.len() < 6 {
+            return Self::default();
+        }
+
+        let day = parts[3];
+        let month = parts[4];
+        let weekday = parts[5];
+
+        // Daily: "* * *" for day/month/weekday
+        if day == "*" && month == "*" && weekday == "*" {
+            return Self::Daily;
+        }
+
+        // Weekly: specific weekday (0-7), wildcard day and month
+        if day == "*" && month == "*" && weekday != "*" {
+            return Self::Weekly;
+        }
+
+        // Monthly: specific day, wildcard month and weekday
+        if day != "*" && month == "*" && weekday == "*" {
+            return Self::Monthly;
+        }
+
+        // Default fallback
+        Self::default()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct AutoUpgradeConfig {
     pub enabled: bool,
-    pub frequency: AutoUpgradeFrequency,
     pub cron: Cron,
 }
 
@@ -134,7 +172,6 @@ impl Default for AutoUpgradeConfig {
         );
         Self {
             enabled: false,
-            frequency,
             cron: build_cron_from_frequency_date(frequency, date),
         }
     }
@@ -151,7 +188,6 @@ impl AutoUpgradeConfig {
         let date = get_date_from_frequency(frequency, time_of_day, timezone_offset);
         Self {
             enabled,
-            frequency,
             cron: build_cron_from_frequency_date(frequency, date),
         }
     }
