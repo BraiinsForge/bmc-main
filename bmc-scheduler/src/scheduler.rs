@@ -247,12 +247,16 @@ impl JobScheduler {
 
         // Remove from crontab if it was persisted
         if let Some(details) = job_details {
-            if let Some(command) = details.command {
-                self.remove_from_crontab(&command).await?;
-            }
+            self.remove_from_crontab(details.source, details.command)
+                .await?;
         }
 
         Ok(())
+    }
+
+    pub async fn cron_entries(&self) -> Vec<CronEntry> {
+        let crontab = self.crontab.read().await;
+        crontab.entries.clone()
     }
 
     pub async fn jobs(&self) -> Result<Vec<JobDetails>> {
@@ -307,6 +311,9 @@ impl JobScheduler {
         let mut job_ids = Vec::new();
 
         for entry in entries {
+            if entry.command == CRON_DUMMY_COMMAND {
+                continue; // Skip Async tasks, those have to be added manually
+            }
             let config =
                 JobConfig::new(entry.source.clone().unwrap_or_else(|| "crontab".to_owned()));
             let job_id = self
@@ -403,12 +410,19 @@ impl JobScheduler {
             command: command.to_owned(),
             source: Some(config.source.clone()),
         };
-        crontab.add_entry(entry).await
+        crontab.upsert_by_source(entry).await.map(|_| ())
     }
 
-    async fn remove_from_crontab(&self, command: &str) -> Result<usize> {
+    async fn remove_from_crontab(&self, source: String, command: Option<String>) -> Result<usize> {
         let mut crontab = self.crontab.write().await;
-        crontab.remove_by_command(command).await
+        if let Some(command) = command {
+            crontab.remove_by_command(&command).await
+        } else if !source.is_empty() {
+            crontab.remove_by_source(&source).await
+        } else {
+            warn!("No source or command specified to remove from crontab");
+            Ok(0)
+        }
     }
 
     // Keep existing methods but potentially simplify signatures
