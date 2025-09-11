@@ -115,6 +115,14 @@ impl NightModeController {
         Ok(())
     }
 
+    pub(crate) async fn set_sound_volume(&self, sound_volume_pct: u8) -> anyhow::Result<()> {
+        let mut config_handle = self.config_handle.write().await;
+        config_handle.set_night_mode_sound_volume(sound_volume_pct);
+        config_handle.sync_to_storage().await?;
+
+        Ok(())
+    }
+
     async fn schedule_jobs(&self, night_mode: &NightModeConfig) -> anyhow::Result<()> {
         debug!("cancel scheduled nightmode jobs");
 
