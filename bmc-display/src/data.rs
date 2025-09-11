@@ -83,7 +83,7 @@ impl Default for ClockWidget {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TimeFrame {
+pub enum TickerTimeFrame {
     Day1,
     Week1,
     Week2,
@@ -96,32 +96,32 @@ pub enum TimeFrame {
     All,
 }
 
-impl From<TimeFrame> for String {
-    fn from(value: TimeFrame) -> Self {
+impl From<TickerTimeFrame> for String {
+    fn from(value: TickerTimeFrame) -> Self {
         match value {
-            TimeFrame::Day1 => "1d".into(),
-            TimeFrame::Week1 => "1w".into(),
-            TimeFrame::Week2 => "2w".into(),
-            TimeFrame::Month1 => "1m".into(),
-            TimeFrame::Month3 => "3m".into(),
-            TimeFrame::Month6 => "6m".into(),
-            TimeFrame::Year1 => "1y".into(),
-            TimeFrame::Year2 => "2y".into(),
-            TimeFrame::Year5 => "5y".into(),
-            TimeFrame::All => "all".into(),
+            TickerTimeFrame::Day1 => "1d".into(),
+            TickerTimeFrame::Week1 => "1w".into(),
+            TickerTimeFrame::Week2 => "2w".into(),
+            TickerTimeFrame::Month1 => "1m".into(),
+            TickerTimeFrame::Month3 => "3m".into(),
+            TickerTimeFrame::Month6 => "6m".into(),
+            TickerTimeFrame::Year1 => "1y".into(),
+            TickerTimeFrame::Year2 => "2y".into(),
+            TickerTimeFrame::Year5 => "5y".into(),
+            TickerTimeFrame::All => "all".into(),
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TickerBtcWidget {
-    pub time_frame: TimeFrame,
+    pub time_frame: TickerTimeFrame,
 }
 
 impl Default for TickerBtcWidget {
     fn default() -> Self {
         Self {
-            time_frame: TimeFrame::Day1,
+            time_frame: TickerTimeFrame::Day1,
         }
     }
 }
@@ -150,20 +150,20 @@ pub enum PoolStyle {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PoolChartFrame {
+pub enum PoolChartTimeFrame {
     Hours4,
     Hours12,
     Hours24,
     Days7,
 }
 
-impl From<PoolChartFrame> for TimeDelta {
-    fn from(value: PoolChartFrame) -> Self {
+impl From<PoolChartTimeFrame> for TimeDelta {
+    fn from(value: PoolChartTimeFrame) -> Self {
         match value {
-            PoolChartFrame::Hours4 => TimeDelta::hours(4),
-            PoolChartFrame::Hours12 => TimeDelta::hours(12),
-            PoolChartFrame::Hours24 => TimeDelta::hours(24),
-            PoolChartFrame::Days7 => TimeDelta::days(7),
+            PoolChartTimeFrame::Hours4 => TimeDelta::hours(4),
+            PoolChartTimeFrame::Hours12 => TimeDelta::hours(12),
+            PoolChartTimeFrame::Hours24 => TimeDelta::hours(24),
+            PoolChartTimeFrame::Days7 => TimeDelta::days(7),
         }
     }
 }
@@ -171,16 +171,16 @@ impl From<PoolChartFrame> for TimeDelta {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BraiinsPoolWidget {
     pub pool_style: PoolStyle,
-    pub chart_frame: PoolChartFrame,
-    pub worker_states: bool,
+    pub chart_frame: PoolChartTimeFrame,
+    // pub worker_states: bool,
 }
 
 impl Default for BraiinsPoolWidget {
     fn default() -> Self {
         Self {
             pool_style: PoolStyle::Overview,
-            chart_frame: PoolChartFrame::Hours24,
-            worker_states: true,
+            chart_frame: PoolChartTimeFrame::Hours24,
+            // worker_states: true,
         }
     }
 }
@@ -719,16 +719,16 @@ impl From<TickerBtcWidget> for generated::WidgetBtcConfig {
     fn from(value: TickerBtcWidget) -> Self {
         Self {
             time_frame: match value.time_frame {
-                TimeFrame::Day1 => generated::TimeFrame::Day1,
-                TimeFrame::Week1 => generated::TimeFrame::Week1,
-                TimeFrame::Week2 => generated::TimeFrame::Week2,
-                TimeFrame::Month1 => generated::TimeFrame::Month1,
-                TimeFrame::Month3 => generated::TimeFrame::Month3,
-                TimeFrame::Month6 => generated::TimeFrame::Month6,
-                TimeFrame::Year1 => generated::TimeFrame::Year1,
-                TimeFrame::Year2 => generated::TimeFrame::Year2,
-                TimeFrame::Year5 => generated::TimeFrame::Year5,
-                TimeFrame::All => generated::TimeFrame::All,
+                TickerTimeFrame::Day1 => generated::TickerTimeFrame::Day1,
+                TickerTimeFrame::Week1 => generated::TickerTimeFrame::Week1,
+                TickerTimeFrame::Week2 => generated::TickerTimeFrame::Week2,
+                TickerTimeFrame::Month1 => generated::TickerTimeFrame::Month1,
+                TickerTimeFrame::Month3 => generated::TickerTimeFrame::Month3,
+                TickerTimeFrame::Month6 => generated::TickerTimeFrame::Month6,
+                TickerTimeFrame::Year1 => generated::TickerTimeFrame::Year1,
+                TickerTimeFrame::Year2 => generated::TickerTimeFrame::Year2,
+                TickerTimeFrame::Year5 => generated::TickerTimeFrame::Year5,
+                TickerTimeFrame::All => generated::TickerTimeFrame::All,
             },
         }
     }
@@ -747,16 +747,16 @@ impl From<BraiinsPoolWidget> for generated::WidgetBraiinsPoolConfig {
     fn from(value: BraiinsPoolWidget) -> Self {
         Self {
             chart_frame: match value.chart_frame {
-                PoolChartFrame::Hours4 => generated::ChartFrame::Hours4,
-                PoolChartFrame::Hours12 => generated::ChartFrame::Hours12,
-                PoolChartFrame::Hours24 => generated::ChartFrame::Hours24,
-                PoolChartFrame::Days7 => generated::ChartFrame::Days7,
+                PoolChartTimeFrame::Hours4 => generated::ChartFrame::Hours4,
+                PoolChartTimeFrame::Hours12 => generated::ChartFrame::Hours12,
+                PoolChartTimeFrame::Hours24 => generated::ChartFrame::Hours24,
+                PoolChartTimeFrame::Days7 => generated::ChartFrame::Days7,
             },
             pool_style: match value.pool_style {
                 PoolStyle::Overview => generated::BraiinsPoolStyle::Overview,
                 PoolStyle::BigChart => generated::BraiinsPoolStyle::BigChart,
             },
-            worker_states: value.worker_states,
+            // worker_states: value.worker_states,
         }
     }
 }

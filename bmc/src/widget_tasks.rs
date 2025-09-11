@@ -4,7 +4,8 @@ use crate::config::ConfigHandle;
 use bmc_display::btc_history_data::BtcHistoryData;
 use bmc_display::clock_data::ClockData;
 use bmc_display::data::{
-    PoolChartFrame, PoolStyle, SceneId, TimeFrame, Widget, WidgetId, WidgetKind, WidgetSize,
+    PoolChartTimeFrame, PoolStyle, SceneId, TickerTimeFrame, Widget, WidgetId, WidgetKind,
+    WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_display::pool_data::{
@@ -204,7 +205,7 @@ impl WidgetTasks {
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
-        timeframe: TimeFrame,
+        timeframe: TickerTimeFrame,
     ) -> impl Future<Output = ()> + Send + 'static {
         let display_controller = self.display_controller.clone();
 
@@ -254,7 +255,7 @@ impl WidgetTasks {
         widget_size: &WidgetSize,
         config_handle: Arc<RwLock<ConfigHandle>>,
         pool_style: &PoolStyle,
-        chart_frame: PoolChartFrame,
+        chart_frame: PoolChartTimeFrame,
     ) -> impl Future<Output = ()> + Send + 'static {
         let display_controller = self.display_controller.clone();
         let mut system_timezone_receiver = self.system_timezone_receiver.clone();
