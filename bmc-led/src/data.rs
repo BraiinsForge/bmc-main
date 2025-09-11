@@ -1,6 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-#[derive(Debug, Copy, Clone, Default)]
+use std::time::Duration;
+
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
 pub struct Rgb {
     pub r: u8,
     pub g: u8,
@@ -10,40 +12,53 @@ pub struct Rgb {
 impl Rgb {
     #[must_use]
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
-        Rgb { r, g, b }
+        Self { r, g, b }
     }
 }
 
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
 pub enum LedEffect {
-    None,
-    Chase,
     #[default]
-    Fireflies,
-    KnightRider,
-    Scan,
-    Snake,
+    None,
+    Chase(Rgb),
+    KnightRider(Rgb),
+    Scan(Rgb),
+    Snake(Rgb),
+    Breathe(Rgb),
+    Solid(Rgb),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedEventPersistence {
+    Temporary(Duration),
+    Persistent,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum LedEvent {
+    DeviceInitializing, // Knight Rider
+    DeviceReady,
+    WifiConnecting, // Knight Rider
+    WifiConnected,  // Success
+    WifiNone,       // None
+    WifiError,      // Error
+    PriceUp,        // Breathe
+    PriceUpEnded,
+    PriceDown, // Breathe
+    PriceDownEnded,
+    ClockAlarm, // Breathe
+    ClockAlarmEnded,
+    DownloadOrUpgradeStarted, // Knight Rider
+    DownloadOrUpgradeSuccess, // Success
+    DownloadOrUpgradeError,   // Error
+    Disable,
+    Enable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LedCommand {
     Disable,
     Enable,
     SetBrightness(f32),
-    SetColor(Rgb),
-    SetPersistentEffect(LedEffect, Rgb),
-    // SetTemporaryEffect(LedEffect, Rgb), // TODO: Implement temporary effects once we decide how to handle temporary states #BOS-3299
-}
-
-#[derive(Debug)]
-pub enum LedEvent {
-    Alarm,
-    Disable,
-    DownloadFinished,
-    DownloadProgress,
-    DownloadStarted,
-    Enable,
-    Failed,
-    Idle,
-    UpgradeStarted,
+    SetEffect(LedEffect, LedEventPersistence, Duration),
 }

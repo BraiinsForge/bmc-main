@@ -43,8 +43,6 @@ where
     config: Configuration,
     display_tasks: DisplayTasks<T>,
     widget_tasks: WidgetTasks,
-    _led_driver: LedDriver,
-    _led_controller: LedController,
     system_upgrade_service: SystemUpgradeService<V, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
@@ -142,7 +140,7 @@ where
         )
         .await?;
 
-        let display_tasks = DisplayTasks::new(
+        let (display_tasks, last_price_change_24h_receiver) = DisplayTasks::new(
             display_controller.clone(),
             state_service.subscribe(),
             manager.watch_timezone_updates(),
@@ -152,8 +150,13 @@ where
             alarm_bus,
         );
 
-        let led_controller = LedController::new(&state_service);
+        let mut led_controller = LedController::new(
+            &state_service,
+            manager.clone(),
+            last_price_change_24h_receiver.clone(),
+        );
         led_controller.init(led_driver.command_sender.clone());
+        led_controller.push_event(bmc_led::data::LedEvent::DeviceReady);
 
         let button_manager = ButtonManager::new(buttons, manager.clone());
 
@@ -164,8 +167,6 @@ where
             config,
             display_tasks,
             widget_tasks,
-            _led_driver: led_driver,
-            _led_controller: led_controller,
             system_upgrade_service,
             config_handle,
             display_controller,

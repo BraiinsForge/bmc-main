@@ -4,23 +4,9 @@
 
 use crate::led_driver::config::{LED_FRACTION_MAX, LED_MIN_FACTOR, LED_PHASE_MULTIPLIER, RGB_MAX};
 
-use super::config;
 use apa102_spi::{Apa102Pixel, SmartLedsWrite};
-use bmc_led::{config::LED_MAX_BRIGHTNESS, data::Rgb};
-use rand::Rng;
+use bmc_led::data::Rgb;
 use ux::u5;
-
-#[derive(Debug)]
-pub struct Firefly {
-    pos: u16,
-    bright: f32,
-    grow: bool,
-}
-
-#[derive(Debug, Default)]
-pub struct FirefliesState {
-    flies: Vec<Firefly>,
-}
 
 #[inline]
 #[expect(clippy::cast_possible_truncation)]
@@ -145,85 +131,6 @@ where
     }));
 }
 
-// Fireflies effect
-#[expect(clippy::cast_sign_loss)]
-pub fn update_fireflies<W>(
-    state: &mut FirefliesState,
-    _phase: f32,
-    max_flies: u8,
-    brightness: u8,
-    color: Rgb,
-    strip: &mut W,
-) where
-    W: SmartLedsWrite<Color = Apa102Pixel>,
-{
-    let led_count = bmc_led::config::LED_COUNT;
-    #[expect(clippy::cast_possible_truncation)]
-    let radius = ((f32::from(led_count)) * config::FIREFLY_SHINE_RADIUS).ceil() as i16;
-    let spawn_probability = config::FIREFLY_SPAWN_PROBABILITY;
-    let mut rng = rand::thread_rng();
-
-    state.flies.retain_mut(|firefly| {
-        if firefly.grow {
-            firefly.bright += config::FIREFLY_STEP_SPEED;
-
-            if firefly.bright >= LED_MAX_BRIGHTNESS {
-                firefly.bright = LED_MAX_BRIGHTNESS;
-                firefly.grow = false;
-            }
-        } else {
-            firefly.bright -= config::FIREFLY_STEP_SPEED;
-        }
-        firefly.bright > config::FIREFLY_MIN_BRIGHTNESS
-    });
-
-    if state.flies.len() < max_flies as usize && rng.gen_bool(spawn_probability) {
-        let mut attempts = 0;
-        while attempts < config::FIREFLY_SPAWN_ATTEMPTS {
-            let position = rng.gen_range(0..u16::from(led_count));
-            if state.flies.iter().all(|firefly| firefly.pos != position) {
-                state.flies.push(Firefly {
-                    pos: position,
-                    bright: config::FIREFLY_MIN_BRIGHTNESS,
-                    grow: true,
-                });
-                break;
-            }
-            attempts += 1;
-        }
-    }
-
-    let mut frame = vec![0.0_f32; led_count as usize];
-
-    for fly in &state.flies {
-        let position = i32::from(fly.pos);
-        for distance in -radius..=radius {
-            let index = position + i32::from(distance);
-            if index < 0 || index >= i32::from(led_count) {
-                continue;
-            }
-            let abs_distance = f32::from(distance.unsigned_abs());
-            let weight = 1.0 - abs_distance / f32::from(radius);
-            if weight > 0.0 {
-                frame[index as usize] += (fly.bright - config::FIREFLY_MIN_BRIGHTNESS) * weight;
-            }
-        }
-    }
-
-    // Convert frame to pixels and write to strip
-    let pixels = frame.into_iter().map(|value| {
-        let final_brightness = (value + config::FIREFLY_MIN_BRIGHTNESS).min(LED_MAX_BRIGHTNESS);
-        Apa102Pixel {
-            red: scale(color.r, final_brightness),
-            green: scale(color.g, final_brightness),
-            blue: scale(color.b, final_brightness),
-            brightness: u5::new(brightness),
-        }
-    });
-
-    let _ = strip.write(pixels);
-}
-
 pub fn update_knight_rider<W>(
     phase: f32,
     core_size: u8,
@@ -277,4 +184,29 @@ where
     W: SmartLedsWrite<Color = Apa102Pixel>,
 {
     let _ = strip.write((0..bmc_led::config::LED_COUNT).map(|_| Apa102Pixel::default()));
+}
+
+pub fn update_solid<W>(brightness: u8, color: Rgb, strip: &mut W)
+where
+    W: SmartLedsWrite<Color = Apa102Pixel>,
+{
+    let _ = strip.write((0..bmc_led::config::LED_COUNT).map(|_| Apa102Pixel {
+        red: color.r,
+        green: color.g,
+        blue: color.b,
+        brightness: u5::new(brightness),
+    }));
+}
+
+pub fn update_breathe<W>(phase: f32, brightness: u8, color: Rgb, strip: &mut W)
+where
+    W: SmartLedsWrite<Color = Apa102Pixel>,
+{
+    let factor = (phase * std::f32::consts::PI * 2.0).sin() * 0.5 + 0.5;
+    let _ = strip.write((0..bmc_led::config::LED_COUNT).map(|_| Apa102Pixel {
+        red: scale(color.r, factor),
+        green: scale(color.g, factor),
+        blue: scale(color.b, factor),
+        brightness: u5::new(brightness),
+    }));
 }

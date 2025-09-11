@@ -11,6 +11,7 @@ slint-embed-files = ["bmc-display/slint-embed-files"]
 [dependencies]
 anyhow.workspace = true
 bmc-display.workspace = true
+bmc-led = { workspace = true }
 bmc-shared-time.workspace = true
 chrono.workspace = true
 flume.workspace = true

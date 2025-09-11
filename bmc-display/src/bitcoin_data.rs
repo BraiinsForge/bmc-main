@@ -27,6 +27,11 @@ impl BitcoinData {
     }
 
     #[must_use]
+    pub fn price_change_24h(self) -> Option<f32> {
+        self.percent_change_24h
+    }
+
+    #[must_use]
     pub fn increasing_trend(&self) -> bool {
         self.percent_change_24h
             .is_some_and(|percent_change_24h| percent_change_24h >= 0.0)
