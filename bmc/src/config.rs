@@ -227,16 +227,7 @@ impl ConfigHandle {
     }
 
     pub fn set_night_mode_sound_volume(&mut self, sound_volume_pct: u8) {
-        if let Some(ref mut night_mode) = self.night_mode {
-            night_mode.sound_volume_pct = Some(sound_volume_pct);
-        } else {
-            let night_mode = NightModeConfigData {
-                sound_volume_pct: Some(sound_volume_pct),
-                ..Default::default()
-            };
-
-            self.night_mode = Some(night_mode);
-        }
+        self.night_mode.get_or_insert_default().sound_volume_pct = Some(sound_volume_pct);
     }
 
     pub fn set_sound_volume(&mut self, sound_volume_pct: u8) {
