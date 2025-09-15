@@ -187,6 +187,8 @@ message BraiinsPoolWidget {
   BraiinsPoolStyle braiins_pool_style = 1;
   //required
   TimeFrame time_frame = 2;
+  //optional
+  optional string account_id = 3;
 
   enum BraiinsPoolStyle {
     BRAIINS_POOL_STYLE_UNSPECIFIED = 0;
@@ -299,7 +301,7 @@ service SceneManagementService {
   rpc GetScene(google.protobuf.StringValue) returns (SceneResponse);
   // Add fullscreen scene. It contains single fullscreen widget at position (0,0).
   // It will use default values for widget kind specific params.
-  // Returns ID of thew new scene.
+  // Returns ID of the new scene.
   rpc AddFullscreenScene(AddFullscreenSceneRequest) returns (google.protobuf.StringValue);
   // Add combined screen without any widget in it.
   // Returns ID of thew new scene.

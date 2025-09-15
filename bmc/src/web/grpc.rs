@@ -26,6 +26,7 @@ use tonic_web::GrpcWebLayer;
 use tower::Layer;
 use tracing::debug;
 
+mod account_management;
 pub mod authentication;
 mod metadata;
 mod system;
@@ -165,10 +166,15 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         let scene_management_service =
             web::scene_management_service_server::SceneManagementServiceServer::new(
                 scene_management::SceneManagementService::new(
-                    self.config_handle,
+                    self.config_handle.clone(),
                     self.display_controller,
                     self.widget_tasks,
                 ),
+            );
+
+        let account_management_service =
+            web::account_management_service_server::AccountManagementServiceServer::new(
+                account_management::AccountManagementService::new(self.config_handle),
             );
 
         let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
@@ -186,6 +192,10 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             )))
             .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
                 scene_management_service,
+                auth_interceptor.clone(),
+            )))
+            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                account_management_service,
                 auth_interceptor.clone(),
             )))
             .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(

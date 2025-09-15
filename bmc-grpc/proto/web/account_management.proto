@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+message AddAccountResponse {
+  AccountType default_account_type = 1;
+}
+
+message GetAllAccountsResponse {
+  repeated Account accounts = 1;
+}
+
+message EditAccountRequest {
+  string id = 1;
+  string account_name = 2;
+  Authentication authentication = 3;
+}
+
+message ConnectAppRequest {
+  AccountType account_type = 1;
+  string account_name = 2;
+  Authentication authentication = 3;
+}
+
+enum AccountType {
+  ACCOUNT_TYPE_UNSPECIFIED = 0;
+  // default
+  ACCOUNT_TYPE_BRAIINSPOOL = 1;
+}
+
+message Account {
+  string id = 1;
+  AccountType account_type = 2;
+  string account_name = 3;
+  Authentication authentication = 4;
+  google.protobuf.Timestamp created_at = 5;
+  repeated string connected_widgets = 6;
+}
+
+message Authentication {
+  oneof value {
+    string api_key = 1;
+  }
+}
+
+// Manages accounts creation, edit and removal
+//
+// add account
+// - call `AddAccount`
+// - call `ConnectApp`
+//
+// edit account
+// - call `GetAllAccounts`
+// - call `EditAccount`
+//
+// remove account
+// - call `GetAllAccounts`
+// - call `RemoveAccount`
+service AccountManagementService {
+  // Add new account
+  // Returns available types of accounts
+  rpc AddAccount(google.protobuf.Empty) returns (AddAccountResponse);
+  // Remove account by ID
+  rpc RemoveAccount(google.protobuf.StringValue) returns (google.protobuf.Empty);
+  // Edit existing account
+  rpc EditAccount(EditAccountRequest) returns (google.protobuf.Empty);
+  // Get all accounts
+  rpc GetAllAccounts(google.protobuf.Empty) returns (GetAllAccountsResponse);
+  // Connect the app to the account
+  // Returns new account ID
+  rpc ConnectApp(ConnectAppRequest) returns (google.protobuf.StringValue);
+}

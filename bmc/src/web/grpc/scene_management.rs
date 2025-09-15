@@ -4,10 +4,10 @@ use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
-    AddWidgetError, BlockHeightWidget, BraiinsPoolWidget, ClockStyle, ClockWidget, FontStyle,
-    PoolChartTimeFrame, PoolStyle, RemoveWidgetError, Scene, SceneCycling, SceneCyclingTransition,
-    SceneId, SceneKind, TickerBtcWidget, TickerTimeFrame, UpdateWidgetError, Widget, WidgetId,
-    WidgetKind, WidgetPosition, WidgetSize,
+    AccountId, AddWidgetError, BlockHeightWidget, BraiinsPoolWidget, ClockStyle, ClockWidget,
+    FontStyle, PoolChartTimeFrame, PoolStyle, RemoveWidgetError, Scene, SceneCycling,
+    SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget, TickerTimeFrame,
+    UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
@@ -1249,12 +1249,21 @@ fn parse_braiins_pool_widget_kind(
         TimeFrameProto::Day7 => Some(PoolChartTimeFrame::Days7),
     };
 
+    let maybe_account_id = braiins_pool_proto
+        .account_id
+        .map(|account_id| AccountId::from_str(&account_id))
+        .transpose()
+        .tap_err(|_| field_violations.push(format!("{field}.account_id"), "Missing value!"))
+        .ok();
+
     let maybe_kind = maybe_scene_style
         .zip(maybe_time_frame)
-        .map(|(pool_style, chart_frame)| {
+        .zip(maybe_account_id)
+        .map(|((pool_style, chart_frame), account_id)| {
             WidgetKind::BraiinsPool(BraiinsPoolWidget {
                 pool_style,
                 chart_frame,
+                account_id,
             })
         });
 
@@ -1298,7 +1307,7 @@ fn map_widget_to_proto(widget: Widget) -> web::Widget {
         WidgetKind::Clock(clock) => map_clock_to_proto(clock),
         WidgetKind::TickerBtc(ticker_btc) => map_ticker_btc_to_proto(&ticker_btc),
         WidgetKind::BlockHeight(block_height) => map_block_height_to_proto(&block_height),
-        WidgetKind::BraiinsPool(braiins_pool) => map_braiins_pool_to_proto(&braiins_pool),
+        WidgetKind::BraiinsPool(braiins_pool) => map_braiins_pool_to_proto(braiins_pool),
     };
 
     web::Widget {
@@ -1445,7 +1454,7 @@ fn map_block_height_to_proto(block_height: &BlockHeightWidget) -> web::WidgetKin
     }
 }
 
-fn map_braiins_pool_to_proto(braiins_pool: &BraiinsPoolWidget) -> web::WidgetKind {
+fn map_braiins_pool_to_proto(braiins_pool: BraiinsPoolWidget) -> web::WidgetKind {
     use web::braiins_pool_widget::BraiinsPoolStyle as PoolStyleProto;
     use web::braiins_pool_widget::TimeFrame as TimeFrameProto;
 
@@ -1462,6 +1471,9 @@ fn map_braiins_pool_to_proto(braiins_pool: &BraiinsPoolWidget) -> web::WidgetKin
             PoolChartTimeFrame::Days7 => TimeFrameProto::Day7,
         }
         .into(),
+        account_id: braiins_pool
+            .account_id
+            .map(|account_id| account_id.to_string()),
     };
 
     web::WidgetKind {

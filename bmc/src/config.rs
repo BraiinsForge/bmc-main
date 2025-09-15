@@ -6,9 +6,9 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use bmc_display::data::{
-    BlockHeightWidget, ClockStyle, ClockWidget, Scene, SceneCycling, SceneId, SceneKind,
-    TickerBtcWidget, Widget, WidgetKind, WidgetPosition, WidgetSize, deserialize_scenes,
-    serialize_scenes,
+    Account, AccountId, BlockHeightWidget, ClockStyle, ClockWidget, Scene, SceneCycling, SceneId,
+    SceneKind, TickerBtcWidget, Widget, WidgetKind, WidgetPosition, WidgetSize,
+    deserialize_accounts, deserialize_scenes, serialize_accounts, serialize_scenes,
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
@@ -48,6 +48,12 @@ pub struct Config {
     led_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     autoupgrade: Option<AutoUpgradeConfig>,
+    #[serde(
+        default,
+        serialize_with = "serialize_accounts",
+        deserialize_with = "deserialize_accounts"
+    )]
+    pub accounts: IndexMap<AccountId, Account>,
 }
 
 impl Config {
@@ -270,6 +276,7 @@ impl Default for Config {
             alarms: None,
             led_enabled: None,
             autoupgrade: None,
+            accounts: indexmap! {},
         }
     }
 }
