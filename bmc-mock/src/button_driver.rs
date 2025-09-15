@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 use bmc_button::{ButtonEventStream, ButtonId, Buttons, Edge};
+use futures::StreamExt;
+use futures::stream::empty;
 use std::sync::Arc;
 
 const BMC_RESET_BUTTON_NUMBER: u64 = 0;
@@ -20,7 +22,7 @@ pub struct GeneralButtons {
 
 impl Buttons for GeneralButtons {
     fn to_stream(&self) -> Result<ButtonEventStream> {
-        unimplemented!() // Does not need to be implemented for mock
+        Ok(empty().boxed())
     }
 }
 

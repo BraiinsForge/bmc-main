@@ -24,6 +24,7 @@ bmc-upgrade.workspace = true
 chrono.workspace = true
 clap.workspace = true
 dirs.workspace = true
+futures = { workspace = true }
 rand = { workspace = true, features = ["thread_rng"] }
 reqwest.workspace = true
 thiserror.workspace = true
