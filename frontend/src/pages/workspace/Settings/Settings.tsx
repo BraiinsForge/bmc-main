@@ -43,6 +43,7 @@ enum Tab {
     security = 'security',
     updates = 'updates',
 }
+const validTabs: string[] = Object.values(Tab);
 
 interface LeafState<T> {
     value: null | T;
@@ -86,6 +87,8 @@ interface State {
 
     dspBrightness: LeafState<number>;
 
+    soundAndLight: pb.SoundVolumeSettingsResponse;
+
     secAllowDataCollection: LeafState<boolean>;
 
     upgradeFromFeedStatus: UpgradeFromFeedStatus;
@@ -101,6 +104,8 @@ const getInitialState = (): State => ({
     },
 
     dspBrightness: getEmptyLeafState(),
+
+    soundAndLight: pb.create(pb.SoundVolumeSettingsResponseSchema),
 
     genTimezone: getEmptyLeafState(),
     secAllowDataCollection: getEmptyLeafState(),
@@ -153,12 +158,13 @@ class View extends Component<Props, State> {
         const { location } = this.props;
         const maybeTabHash = location.hash.slice(1);
         if (!maybeTabHash) this.#tabChange(Tab.general);
-        else if (Object.hasOwn(Tab, maybeTabHash)) this.#tabChange(maybeTabHash as Tab);
+        else if (validTabs.includes(maybeTabHash)) this.#tabChange(maybeTabHash as Tab);
     };
 
     #noop = () => {};
     #fetchData = async (): Promise<void> => {
-        await Promise.allSettled([this.#upgradesFeedCheck(), this.#fetchSystemInfo(), this.#displayFetch()]);
+        const q = [this.#upgradesFeedCheck(), this.#fetchSystemInfo(), this.#displayFetch(), this.#soundLightFetch()];
+        await Promise.allSettled(q);
     };
 
     private fetchSystemInfoAbort = pb.abort.get();
@@ -199,7 +205,6 @@ class View extends Component<Props, State> {
             },
             {
                 key: Tab.soundAndLight,
-                disabled: true,
                 label: formatMessage({ defaultMessage: 'Sound & Light' }),
             },
             {
@@ -213,6 +218,7 @@ class View extends Component<Props, State> {
         ];
     }
     #tabChange = (tab: Tab): void => {
+        if (this.state.activeTab === tab) return;
         this.setState({ activeTab: tab });
         window.history.replaceState(null, '', `#${tab}`);
     };
@@ -407,24 +413,123 @@ class View extends Component<Props, State> {
     // Sound & Light
     //
 
+    private soundLightFetcDataAbort = pb.abort.get();
+    #soundLightFetch = async (): Promise<void> => {
+        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.soundLightFetcDataAbort.replace();
+            const soundAndLight = await pb.rpc.config.getSoundVolumeSettings({}, { signal });
+            this.setState({ soundAndLight });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load sound settings!' });
+            notify('error', msg);
+        }
+    };
+    #soundLightSetVolume = debounce(async (value: number): Promise<void> => {
+        if (value === this.state.soundAndLight.volume?.value) return;
+
+        const { formatMessage } = this.props.intl;
+        const { notify } = this.context;
+
+        try {
+            // Positive update
+            this.setState(s => ({
+                soundAndLight: {
+                    ...s.soundAndLight,
+                    volume: pb.create(pb.SoundVolumeSchema, {
+                        min: s.soundAndLight.volume?.min,
+                        max: s.soundAndLight.volume?.max,
+                        step: s.soundAndLight.volume?.step,
+                        value,
+                    }),
+                },
+            }));
+
+            // Submit
+            await pb.rpc.config.setSoundVolume({ value });
+            notify('success', formatMessage({ defaultMessage: 'Sound volume saved' }), {
+                id: 'sound-volume-save-success',
+                timeoutSeconds: 3,
+            });
+        } catch ($) {
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
+            notify('error', msg, { id: 'sound-volume-save-error', timeoutSeconds: 3 });
+        } finally {
+            await this.#soundLightFetch();
+        }
+    }, 200);
+    #soundLightSetVolumeNight = debounce(async (value: number): Promise<void> => {
+        if (value === this.state.soundAndLight.volumeNightmode?.value) return;
+
+        const { formatMessage } = this.props.intl;
+        const { notify } = this.context;
+
+        try {
+            // Positive update
+            this.setState(s => ({
+                soundAndLight: {
+                    ...s.soundAndLight,
+                    volumeNightmode: pb.create(pb.SoundVolumeSchema, {
+                        min: s.soundAndLight.volumeNightmode?.min,
+                        max: s.soundAndLight.volumeNightmode?.max,
+                        step: s.soundAndLight.volumeNightmode?.step,
+                        value,
+                    }),
+                },
+            }));
+
+            // Submit
+            await pb.rpc.config.setSoundVolumeNightmode({ value });
+            notify('success', formatMessage({ defaultMessage: 'Night mode sound volume saved' }), {
+                id: 'sound-volume-night-save-success',
+                timeoutSeconds: 3,
+            });
+        } catch ($) {
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to save the night mode sound volume!' });
+            notify('error', msg, { id: 'sound-volume-save-error', timeoutSeconds: 3 });
+        } finally {
+            await this.#soundLightFetch();
+        }
+    }, 200);
+    // #soundLightSetNotificationLightsEnabled = debounce(async (value: boolean): Promise<void> => {
+    //     const { formatMessage } = this.props.intl;
+    //     const { notify } = this.context;
+    //
+    //     try {
+    //         await pb.rpc.config;
+    //     } catch ($) {
+    //         let msg = pb.collectAllErrorsAsFormattedList($);
+    //         msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
+    //         notify('error', msg, { id: 'sound-volume-save-error', timeoutSeconds: 3 });
+    //     }
+    // }, 200);
     #soundLightRender = (): ReactNode => {
+        const { volume, volumeNightmode } = this.state.soundAndLight;
+
         return (
             <SectionSoundAndLight
                 soundVolume={{
-                    value: 84,
-                    disabled: true,
-                    onChange: this.#noop,
+                    min: volume?.min ?? 0,
+                    max: volume?.max ?? 100,
+                    step: volume?.step ?? 1,
+                    value: volume?.value ?? 0,
+                    onChange: this.#soundLightSetVolume,
                 }}
                 soundVolumeNight={{
-                    value: 21,
-                    disabled: true,
-                    onChange: this.#noop,
+                    min: volumeNightmode?.min ?? 0,
+                    max: volumeNightmode?.max ?? 100,
+                    step: volumeNightmode?.step ?? 1,
+                    value: volumeNightmode?.value ?? 0,
+                    onChange: this.#soundLightSetVolumeNight,
                 }}
-                alarmAndNotifyVolume={{
-                    value: 65,
-                    disabled: true,
-                    onChange: this.#noop,
-                }}
+                // alarmAndNotifyVolume={{ value: 65, onChange: this.#noop }}
                 ledNotifyEnabled={{
                     value: true,
                     disabled: true,

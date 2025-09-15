@@ -137,6 +137,13 @@
     "automatic_cycling_default_duration": "1m 30s",
     "transition": "fade"
   },
+  "night_mode": {
+    "enabled": false,
+    "from": "22:30:00",
+    "to": "06:30:00",
+    "sound_volume_pct": 14
+  },
+  "sound_volume_pct": 83,
   "alarms": [
     {
       "id": "0d7df0ca-3495-4529-977e-7643ba761088",
@@ -144,13 +151,13 @@
       "name": "",
       "time": "08:00:00",
       "repeat": [
-        "Monday",
-        "Friday",
         "Thursday",
+        "Tuesday",
         "Sunday",
         "Saturday",
         "Wednesday",
-        "Tuesday"
+        "Friday",
+        "Monday"
       ],
       "sound": "TickTockNextBlock",
       "snooze_options": {
@@ -164,10 +171,10 @@
       "name": "asdgadfgadf",
       "time": "08:01:00",
       "repeat": [
-        "Sunday",
         "Thursday",
-        "Wednesday",
-        "Saturday"
+        "Sunday",
+        "Saturday",
+        "Wednesday"
       ],
       "sound": "TickTockNextBlock",
       "snooze_options": {

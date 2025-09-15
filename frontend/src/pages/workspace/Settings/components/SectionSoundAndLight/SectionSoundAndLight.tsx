@@ -8,10 +8,15 @@ import { Toggle, Slider } from '@carbon/react';
 // Styles
 import css from './SectionSoundAndLight.scss';
 
+interface SteppedNumberMeta {
+    min: number;
+    max: number;
+    step: number;
+}
 export interface SectionSoundAndLightProps {
-    soundVolume: iField<Integer<0, 100>>;
-    soundVolumeNight: iField<Integer<0, 100>>;
-    alarmAndNotifyVolume: iField<Integer<0, 100>>;
+    soundVolume: iField<Integer<0, 100>> & SteppedNumberMeta;
+    soundVolumeNight: iField<Integer<0, 100>> & SteppedNumberMeta;
+    // alarmAndNotifyVolume: iField<Integer<0, 100>>;
     ledNotifyEnabled: iField<boolean>;
 }
 interface Props extends SectionSoundAndLightProps {
@@ -28,7 +33,7 @@ class View extends Component<Props> {
             // Fields
             soundVolume,
             soundVolumeNight,
-            alarmAndNotifyVolume,
+            // alarmAndNotifyVolume,
             ledNotifyEnabled,
         } = this.props;
 
@@ -79,7 +84,7 @@ class View extends Component<Props> {
                         />
                     </Field>
 
-                    <Field
+                    {/* <Field
                         title={intl.formatMessage({ defaultMessage: 'Alarm and Notifications Volume' })}
                         disabled={alarmAndNotifyVolume.disabled}
                     >
@@ -99,7 +104,7 @@ class View extends Component<Props> {
                             invalid={!!alarmAndNotifyVolume.error}
                             invalidText={alarmAndNotifyVolume.error}
                         />
-                    </Field>
+                    </Field> */}
                 </FieldSet>
 
                 <FieldSet title={intl.formatMessage({ defaultMessage: 'LED Notification Lights' })}>
