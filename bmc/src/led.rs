@@ -134,6 +134,8 @@ where
         });
     }
 
+    // TODO: Price alerts
+    #[expect(dead_code)]
     fn run_price_task(&mut self, led_event_tx: Sender<LedEvent>) {
         let mut receiver = self.last_price_change_24h_receiver.clone();
         task::spawn(async move {
@@ -180,7 +182,8 @@ where
 
         self.run_wifi_task(led_event_tx.clone());
         self.run_sysupgrade_task(led_event_tx.clone());
-        self.run_price_task(led_event_tx);
+        // TODO: Price alerts
+        // self.run_price_task(led_event_tx);
     }
 
     pub fn push_event(&mut self, event: LedEvent) {
