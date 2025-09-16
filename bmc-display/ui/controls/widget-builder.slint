@@ -7,6 +7,7 @@ import { WidgetBtcGraph } from "../widgets/categories/ticker-btc.slint";
 import { WidgetBlockHeight } from "../widgets/categories/block-height.slint";
 import { WidgetBraiinsPool } from "../widgets/categories/braiins-pool.slint";
 import { WidgetRemoteImage } from "../widgets/categories/remote-image.slint";
+import { WidgetBlockchainData } from "../widgets/categories/blockchain-data.slint";
 
 component WidgetContainer inherits Rectangle {
     in property <WidgetSize> size;
@@ -69,6 +70,9 @@ export component WidgetBuilder inherits Rectangle {
             if widget.kind == WidgetKind.RemoteImage: WidgetRemoteImage {
                 size: widget.size;
                 data: widget.remote-image;
+            }
+            if widget.kind == WidgetKind.BlockchainData: WidgetBlockchainData {
+                size: widget.size;
             }
         }
     }

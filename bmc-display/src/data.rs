@@ -212,6 +212,7 @@ pub enum WidgetKind {
     BlockHeight(BlockHeightWidget),
     BraiinsPool(BraiinsPoolWidget),
     RemoteImage(RemoteImageWidget),
+    BlockchainData,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -743,6 +744,9 @@ impl From<Widget> for generated::Widget {
             WidgetKind::RemoteImage(_config) => {
                 slint_widget.kind = generated::WidgetKind::RemoteImage;
                 slint_widget.remote_image = generated::WidgetRemoteImageData::default();
+            }
+            WidgetKind::BlockchainData => {
+                slint_widget.kind = generated::WidgetKind::BlockchainData;
             }
         }
 

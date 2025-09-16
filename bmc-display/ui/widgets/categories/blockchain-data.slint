@@ -1,0 +1,21 @@
+import { Palette } from "../../style/palette.slint";
+import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
+
+export component WidgetBlockchainData inherits Rectangle {
+    background: Palette.black;
+
+    in property <WidgetSize> size;
+
+    width: BaseDimensions.widget-width(size);
+    height: BaseDimensions.widget-height(size);
+
+    // TODO: Blockchain data design
+    VerticalLayout {
+        Rectangle {
+            Text {
+                text: "Bitcoin Data";
+                color: Palette.white;
+            }
+        }
+    }
+}
