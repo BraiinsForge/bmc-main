@@ -1,5 +1,5 @@
 import { Button, LogoHeader } from '@/components';
-import { getID } from '@/lib/form.tsx';
+import { getID } from '@/lib/form';
 import { Layout } from '../Layout';
 import image from './hero-image.png';
 

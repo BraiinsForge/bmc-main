@@ -14,7 +14,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_scene_management: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chp3ZWIvc2NlbmVfbWFuYWdlbWVudC5wcm90bxIPYnJhaWlucy5ibWMud2ViIr8CCgVTY2VuZRIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgBiAEBEjcKCmZ1bGxzY3JlZW4YBCABKAsyIS5icmFpaW5zLmJtYy53ZWIuU2NlbmUuRnVsbHNjcmVlbkgAEjMKCGNvbWJpbmVkGAUgASgLMh8uYnJhaWlucy5ibWMud2ViLlNjZW5lLkNvbWJpbmVkSAAaNQoKRnVsbHNjcmVlbhInCgZ3aWRnZXQYASABKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0GjQKCENvbWJpbmVkEigKB3dpZGdldHMYASADKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0QgYKBGtpbmRCFQoTX2N5Y2xlX2R1cmF0aW9uX3NlYyI7ChFHZXRTY2VuZXNSZXNwb25zZRImCgZzY2VuZXMYASADKAsyFi5icmFpaW5zLmJtYy53ZWIuU2NlbmUiTQoZQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBIwCgt3aWRnZXRfa2luZBgBIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRLaW5kImkKElVwZGF0ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgAiAEBQhUKE19jeWNsZV9kdXJhdGlvbl9zZWMiLQoQTW92ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRINCgVpbmRleBgCIAEoDSI2Cg1TY2VuZVJlc3BvbnNlEiUKBXNjZW5lGAEgASgLMhYuYnJhaWlucy5ibWMud2ViLlNjZW5lIioKDldpZGdldFBvc2l0aW9uEgsKA3JvdxgBIAEoDRILCgNjb2wYAiABKA0inQEKBldpZGdldBIKCgJpZBgBIAEoCRIxCghwb3NpdGlvbhgCIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRQb3NpdGlvbhIpCgRzaXplGAMgASgOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSKQoEa2luZBgEIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRLaW5kIq0BChBBZGRXaWRnZXRSZXF1ZXN0EhAKCHNjZW5lX2lkGAEgASgJEjEKCHBvc2l0aW9uGAIgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYAyABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRIpCgRraW5kGAQgASgLMhsuYnJhaWlucy5ibWMud2ViLldpZGdldEtpbmQivAEKE1VwZGF0ZVdpZGdldFJlcXVlc3QSCgoCaWQYASABKAkSEAoIc2NlbmVfaWQYAiABKAkSMQoIcG9zaXRpb24YAyABKAsyHy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0UG9zaXRpb24SKQoEc2l6ZRgEIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRTaXplEikKBGtpbmQYBSABKAsyGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0S2luZCIzChNSZW1vdmVXaWRnZXRSZXF1ZXN0EgoKAmlkGAEgASgJEhAKCHNjZW5lX2lkGAIgASgJIjkKDldpZGdldFJlc3BvbnNlEicKBndpZGdldBgBIAEoCzIXLmJyYWlpbnMuYm1jLndlYi5XaWRnZXQiuAEKCldpZGdldEtpbmQSLQoFY2xvY2sYASABKAsyHC5icmFpaW5zLmJtYy53ZWIuQ2xvY2tXaWRnZXRIABI2Cgp0aWNrZXJfYnRjGAIgASgLMiAuYnJhaWlucy5ibWMud2ViLlRpY2tlckJ0Y1dpZGdldEgAEjoKDGJsb2NrX2hlaWdodBgDIAEoCzIiLmJyYWlpbnMuYm1jLndlYi5CbG9ja0hlaWdodFdpZGdldEgAQgcKBXZhbHVlIuYCCgtDbG9ja1dpZGdldBI8CgtjbG9ja19zdHlsZRgBIAEoDjInLmJyYWlpbnMuYm1jLndlYi5DbG9ja1dpZGdldC5DbG9ja1N0eWxlEjYKEm51bWJlcnNfZm9udF9zdHlsZRgCIAEoDjIaLmJyYWlpbnMuYm1jLndlYi5Gb250U3R5bGUSEQoJc2hvd19kYXRlGAMgASgIEhQKDHNob3dfc2Vjb25kcxgEIAEoCBIVCg1zaG93X3RpbWV6b25lGAUgASgIEhUKCHRpbWV6b25lGAYgASgJSACIAQEifQoKQ2xvY2tTdHlsZRIbChdDTE9DS19TVFlMRV9VTlNQRUNJRklFRBAAEhwKGENMT0NLX1NUWUxFX0FOQUxPR19ST1VORBABEhsKF0NMT0NLX1NUWUxFX0FOQUxPR19SRUNUEAISFwoTQ0xPQ0tfU1RZTEVfRElHSVRBTBADQgsKCV90aW1lem9uZSLgAgoPVGlja2VyQnRjV2lkZ2V0Ej4KCnRpbWVfZnJhbWUYASABKA4yKi5icmFpaW5zLmJtYy53ZWIuVGlja2VyQnRjV2lkZ2V0LlRpbWVGcmFtZSKMAgoJVGltZUZyYW1lEhoKFlRJTUVfRlJBTUVfVU5TUEVDSUZJRUQQABIUChBUSU1FX0ZSQU1FX0RBWV8xEAESFQoRVElNRV9GUkFNRV9XRUVLXzEQAhIVChFUSU1FX0ZSQU1FX1dFRUtfMhADEhYKElRJTUVfRlJBTUVfTU9OVEhfMRAEEhYKElRJTUVfRlJBTUVfTU9OVEhfMxAFEhYKElRJTUVfRlJBTUVfTU9OVEhfNhAGEhUKEVRJTUVfRlJBTUVfWUVBUl8xEAcSFQoRVElNRV9GUkFNRV9ZRUFSXzIQCBIVChFUSU1FX0ZSQU1FX1lFQVJfNRAJEhIKDlRJTUVfRlJBTUVfQUxMEAoiYwoRQmxvY2tIZWlnaHRXaWRnZXQSFgoOc2hvd190aW1lc3RhbXAYASABKAgSNgoSbnVtYmVyc19mb250X3N0eWxlGAIgASgOMhouYnJhaWlucy5ibWMud2ViLkZvbnRTdHlsZSKeAQoMU2NlbmVDeWNsaW5nEiEKGWF1dG9tYXRpY19jeWNsaW5nX2VuYWJsZWQYASABKAgSLgomYXV0b21hdGljX2N5Y2xpbmdfZGVmYXVsdF9kdXJhdGlvbl9zZWMYAiABKA0SOwoKdHJhbnNpdGlvbhgDIAEoDjInLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmdUcmFuc2l0aW9uIk8KF0dldFNjZW5lQ3ljbGluZ1Jlc3BvbnNlEjQKDXNjZW5lX2N5Y2xpbmcYASABKAsyHS5icmFpaW5zLmJtYy53ZWIuU2NlbmVDeWNsaW5nIk4KFlNldFNjZW5lQ3ljbGluZ1JlcXVlc3QSNAoNc2NlbmVfY3ljbGluZxgBIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmcqhQEKCldpZGdldFNpemUSGwoXV0lER0VUX1NJWkVfVU5TUEVDSUZJRUQQABIVChFXSURHRVRfU0laRV9TTUFMTBABEhYKEldJREdFVF9TSVpFX01FRElVTRACEhUKEVdJREdFVF9TSVpFX0xBUkdFEAMSFAoQV0lER0VUX1NJWkVfRlVMTBAEKmkKCUZvbnRTdHlsZRIaChZGT05UX1NUWUxFX1VOU1BFQ0lGSUVEEAASFAoQRk9OVF9TVFlMRV9MSUdIVBABEhUKEUZPTlRfU1RZTEVfTUVESVVNEAISEwoPRk9OVF9TVFlMRV9CT0xEEAMqiQEKFlNjZW5lQ3ljbGluZ1RyYW5zaXRpb24SKAokU0NFTkVfQ1lDTElOR19UUkFOU0lUSU9OX1VOU1BFQ0lGSUVEEAASIgoeU0NFTkVfQ1lDTElOR19UUkFOU0lUSU9OX1NMSURFEAESIQodU0NFTkVfQ1lDTElOR19UUkFOU0lUSU9OX0ZBREUQAjLTCAoWU2NlbmVNYW5hZ2VtZW50U2VydmljZRJHCglHZXRTY2VuZXMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaIi5icmFpaW5zLmJtYy53ZWIuR2V0U2NlbmVzUmVzcG9uc2USSAoIR2V0U2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaHi5icmFpaW5zLmJtYy53ZWIuU2NlbmVSZXNwb25zZRJeChJBZGRGdWxsc2NyZWVuU2NlbmUSKi5icmFpaW5zLmJtYy53ZWIuQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJIChBBZGRDb21iaW5lZFNjZW5lEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkoKC1VwZGF0ZVNjZW5lEiMuYnJhaWlucy5ibWMud2ViLlVwZGF0ZVNjZW5lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJGCglNb3ZlU2NlbmUSIS5icmFpaW5zLmJtYy53ZWIuTW92ZVNjZW5lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJICgpDbG9uZVNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkMKC1JlbW92ZVNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkYKDFByZXZpZXdTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eTABEkwKCUFkZFdpZGdldBIhLmJyYWlpbnMuYm1jLndlYi5BZGRXaWRnZXRSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkwKDFVwZGF0ZVdpZGdldBIkLmJyYWlpbnMuYm1jLndlYi5VcGRhdGVXaWRnZXRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkwKDFJlbW92ZVdpZGdldBIkLmJyYWlpbnMuYm1jLndlYi5SZW1vdmVXaWRnZXRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElMKD0dldFNjZW5lQ3ljbGluZxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRooLmJyYWlpbnMuYm1jLndlYi5HZXRTY2VuZUN5Y2xpbmdSZXNwb25zZRJSCg9TZXRTY2VuZUN5Y2xpbmcSJy5icmFpaW5zLmJtYy53ZWIuU2V0U2NlbmVDeWNsaW5nUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eWIGcHJvdG8z',
+        'Chp3ZWIvc2NlbmVfbWFuYWdlbWVudC5wcm90bxIPYnJhaWlucy5ibWMud2ViIr8CCgVTY2VuZRIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgBiAEBEjcKCmZ1bGxzY3JlZW4YBCABKAsyIS5icmFpaW5zLmJtYy53ZWIuU2NlbmUuRnVsbHNjcmVlbkgAEjMKCGNvbWJpbmVkGAUgASgLMh8uYnJhaWlucy5ibWMud2ViLlNjZW5lLkNvbWJpbmVkSAAaNQoKRnVsbHNjcmVlbhInCgZ3aWRnZXQYASABKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0GjQKCENvbWJpbmVkEigKB3dpZGdldHMYASADKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0QgYKBGtpbmRCFQoTX2N5Y2xlX2R1cmF0aW9uX3NlYyI7ChFHZXRTY2VuZXNSZXNwb25zZRImCgZzY2VuZXMYASADKAsyFi5icmFpaW5zLmJtYy53ZWIuU2NlbmUiTQoZQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBIwCgt3aWRnZXRfa2luZBgBIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRLaW5kImkKElVwZGF0ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgAiAEBQhUKE19jeWNsZV9kdXJhdGlvbl9zZWMiLQoQTW92ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRINCgVpbmRleBgCIAEoDSI2Cg1TY2VuZVJlc3BvbnNlEiUKBXNjZW5lGAEgASgLMhYuYnJhaWlucy5ibWMud2ViLlNjZW5lIioKDldpZGdldFBvc2l0aW9uEgsKA3JvdxgBIAEoDRILCgNjb2wYAiABKA0inQEKBldpZGdldBIKCgJpZBgBIAEoCRIxCghwb3NpdGlvbhgCIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRQb3NpdGlvbhIpCgRzaXplGAMgASgOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSKQoEa2luZBgEIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRLaW5kIq0BChBBZGRXaWRnZXRSZXF1ZXN0EhAKCHNjZW5lX2lkGAEgASgJEjEKCHBvc2l0aW9uGAIgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYAyABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRIpCgRraW5kGAQgASgLMhsuYnJhaWlucy5ibWMud2ViLldpZGdldEtpbmQivAEKE1VwZGF0ZVdpZGdldFJlcXVlc3QSCgoCaWQYASABKAkSEAoIc2NlbmVfaWQYAiABKAkSMQoIcG9zaXRpb24YAyABKAsyHy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0UG9zaXRpb24SKQoEc2l6ZRgEIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRTaXplEikKBGtpbmQYBSABKAsyGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0S2luZCIzChNSZW1vdmVXaWRnZXRSZXF1ZXN0EgoKAmlkGAEgASgJEhAKCHNjZW5lX2lkGAIgASgJIjkKDldpZGdldFJlc3BvbnNlEicKBndpZGdldBgBIAEoCzIXLmJyYWlpbnMuYm1jLndlYi5XaWRnZXQi9AEKCldpZGdldEtpbmQSLQoFY2xvY2sYASABKAsyHC5icmFpaW5zLmJtYy53ZWIuQ2xvY2tXaWRnZXRIABI2Cgp0aWNrZXJfYnRjGAIgASgLMiAuYnJhaWlucy5ibWMud2ViLlRpY2tlckJ0Y1dpZGdldEgAEjoKDGJsb2NrX2hlaWdodBgDIAEoCzIiLmJyYWlpbnMuYm1jLndlYi5CbG9ja0hlaWdodFdpZGdldEgAEjoKDGJyYWlpbnNfcG9vbBgEIAEoCzIiLmJyYWlpbnMuYm1jLndlYi5CcmFpaW5zUG9vbFdpZGdldEgAQgcKBXZhbHVlIuYCCgtDbG9ja1dpZGdldBI8CgtjbG9ja19zdHlsZRgBIAEoDjInLmJyYWlpbnMuYm1jLndlYi5DbG9ja1dpZGdldC5DbG9ja1N0eWxlEjYKEm51bWJlcnNfZm9udF9zdHlsZRgCIAEoDjIaLmJyYWlpbnMuYm1jLndlYi5Gb250U3R5bGUSEQoJc2hvd19kYXRlGAMgASgIEhQKDHNob3dfc2Vjb25kcxgEIAEoCBIVCg1zaG93X3RpbWV6b25lGAUgASgIEhUKCHRpbWV6b25lGAYgASgJSACIAQEifQoKQ2xvY2tTdHlsZRIbChdDTE9DS19TVFlMRV9VTlNQRUNJRklFRBAAEhwKGENMT0NLX1NUWUxFX0FOQUxPR19ST1VORBABEhsKF0NMT0NLX1NUWUxFX0FOQUxPR19SRUNUEAISFwoTQ0xPQ0tfU1RZTEVfRElHSVRBTBADQgsKCV90aW1lem9uZSLgAgoPVGlja2VyQnRjV2lkZ2V0Ej4KCnRpbWVfZnJhbWUYASABKA4yKi5icmFpaW5zLmJtYy53ZWIuVGlja2VyQnRjV2lkZ2V0LlRpbWVGcmFtZSKMAgoJVGltZUZyYW1lEhoKFlRJTUVfRlJBTUVfVU5TUEVDSUZJRUQQABIUChBUSU1FX0ZSQU1FX0RBWV8xEAESFQoRVElNRV9GUkFNRV9XRUVLXzEQAhIVChFUSU1FX0ZSQU1FX1dFRUtfMhADEhYKElRJTUVfRlJBTUVfTU9OVEhfMRAEEhYKElRJTUVfRlJBTUVfTU9OVEhfMxAFEhYKElRJTUVfRlJBTUVfTU9OVEhfNhAGEhUKEVRJTUVfRlJBTUVfWUVBUl8xEAcSFQoRVElNRV9GUkFNRV9ZRUFSXzIQCBIVChFUSU1FX0ZSQU1FX1lFQVJfNRAJEhIKDlRJTUVfRlJBTUVfQUxMEAoiYwoRQmxvY2tIZWlnaHRXaWRnZXQSFgoOc2hvd190aW1lc3RhbXAYASABKAgSNgoSbnVtYmVyc19mb250X3N0eWxlGAIgASgOMhouYnJhaWlucy5ibWMud2ViLkZvbnRTdHlsZSK7AwoRQnJhaWluc1Bvb2xXaWRnZXQSTwoSYnJhaWluc19wb29sX3N0eWxlGAEgASgOMjMuYnJhaWlucy5ibWMud2ViLkJyYWlpbnNQb29sV2lkZ2V0LkJyYWlpbnNQb29sU3R5bGUSQAoKdGltZV9mcmFtZRgCIAEoDjIsLmJyYWlpbnMuYm1jLndlYi5CcmFpaW5zUG9vbFdpZGdldC5UaW1lRnJhbWUSEgoKYWNjb3VudF9pZBgDIAEoCSJ4ChBCcmFpaW5zUG9vbFN0eWxlEiIKHkJSQUlJTlNfUE9PTF9TVFlMRV9VTlNQRUNJRklFRBAAEh8KG0JSQUlJTlNfUE9PTF9TVFlMRV9PVkVSVklFVxABEh8KG0JSQUlJTlNfUE9PTF9TVFlMRV9CSUdDSEFSVBACIoQBCglUaW1lRnJhbWUSGgoWVElNRV9GUkFNRV9VTlNQRUNJRklFRBAAEhUKEVRJTUVfRlJBTUVfSE9VUl80EAESFgoSVElNRV9GUkFNRV9IT1VSXzEyEAISFgoSVElNRV9GUkFNRV9IT1VSXzI0EAMSFAoQVElNRV9GUkFNRV9EQVlfNxAEIp4BCgxTY2VuZUN5Y2xpbmcSIQoZYXV0b21hdGljX2N5Y2xpbmdfZW5hYmxlZBgBIAEoCBIuCiZhdXRvbWF0aWNfY3ljbGluZ19kZWZhdWx0X2R1cmF0aW9uX3NlYxgCIAEoDRI7Cgp0cmFuc2l0aW9uGAMgASgOMicuYnJhaWlucy5ibWMud2ViLlNjZW5lQ3ljbGluZ1RyYW5zaXRpb24iTwoXR2V0U2NlbmVDeWNsaW5nUmVzcG9uc2USNAoNc2NlbmVfY3ljbGluZxgBIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmciTgoWU2V0U2NlbmVDeWNsaW5nUmVxdWVzdBI0Cg1zY2VuZV9jeWNsaW5nGAEgASgLMh0uYnJhaWlucy5ibWMud2ViLlNjZW5lQ3ljbGluZyqFAQoKV2lkZ2V0U2l6ZRIbChdXSURHRVRfU0laRV9VTlNQRUNJRklFRBAAEhUKEVdJREdFVF9TSVpFX1NNQUxMEAESFgoSV0lER0VUX1NJWkVfTUVESVVNEAISFQoRV0lER0VUX1NJWkVfTEFSR0UQAxIUChBXSURHRVRfU0laRV9GVUxMEAQqaQoJRm9udFN0eWxlEhoKFkZPTlRfU1RZTEVfVU5TUEVDSUZJRUQQABIUChBGT05UX1NUWUxFX0xJR0hUEAESFQoRRk9OVF9TVFlMRV9NRURJVU0QAhITCg9GT05UX1NUWUxFX0JPTEQQAyqJAQoWU2NlbmVDeWNsaW5nVHJhbnNpdGlvbhIoCiRTQ0VORV9DWUNMSU5HX1RSQU5TSVRJT05fVU5TUEVDSUZJRUQQABIiCh5TQ0VORV9DWUNMSU5HX1RSQU5TSVRJT05fU0xJREUQARIhCh1TQ0VORV9DWUNMSU5HX1RSQU5TSVRJT05fRkFERRACMtMIChZTY2VuZU1hbmFnZW1lbnRTZXJ2aWNlEkcKCUdldFNjZW5lcxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRoiLmJyYWlpbnMuYm1jLndlYi5HZXRTY2VuZXNSZXNwb25zZRJICghHZXRTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoeLmJyYWlpbnMuYm1jLndlYi5TY2VuZVJlc3BvbnNlEl4KEkFkZEZ1bGxzY3JlZW5TY2VuZRIqLmJyYWlpbnMuYm1jLndlYi5BZGRGdWxsc2NyZWVuU2NlbmVSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkgKEEFkZENvbWJpbmVkU2NlbmUSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUSSgoLVXBkYXRlU2NlbmUSIy5icmFpaW5zLmJtYy53ZWIuVXBkYXRlU2NlbmVSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkYKCU1vdmVTY2VuZRIhLmJyYWlpbnMuYm1jLndlYi5Nb3ZlU2NlbmVSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkgKCkNsb25lU2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUSQwoLUmVtb3ZlU2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSRgoMUHJldmlld1NjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5MAESTAoJQWRkV2lkZ2V0EiEuYnJhaWlucy5ibWMud2ViLkFkZFdpZGdldFJlcXVlc3QaHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUSTAoMVXBkYXRlV2lkZ2V0EiQuYnJhaWlucy5ibWMud2ViLlVwZGF0ZVdpZGdldFJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSTAoMUmVtb3ZlV2lkZ2V0EiQuYnJhaWlucy5ibWMud2ViLlJlbW92ZVdpZGdldFJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUwoPR2V0U2NlbmVDeWNsaW5nEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiguYnJhaWlucy5ibWMud2ViLkdldFNjZW5lQ3ljbGluZ1Jlc3BvbnNlElIKD1NldFNjZW5lQ3ljbGluZxInLmJyYWlpbnMuYm1jLndlYi5TZXRTY2VuZUN5Y2xpbmdSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5YgZwcm90bzM',
         [file_google_protobuf_empty, file_google_protobuf_wrappers],
     );
 
@@ -462,6 +462,13 @@ export type WidgetKind = Message<'braiins.bmc.web.WidgetKind'> & {
               value: BlockHeightWidget;
               case: 'blockHeight';
           }
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.BraiinsPoolWidget braiins_pool = 4;
+               */
+              value: BraiinsPoolWidget;
+              case: 'braiinsPool';
+          }
         | { case: undefined; value?: undefined };
 };
 
@@ -671,6 +678,104 @@ export const BlockHeightWidgetSchema: GenMessage<BlockHeightWidget> =
     messageDesc(file_web_scene_management, 15);
 
 /**
+ * @generated from message braiins.bmc.web.BraiinsPoolWidget
+ */
+export type BraiinsPoolWidget = Message<'braiins.bmc.web.BraiinsPoolWidget'> & {
+    /**
+     * required
+     *
+     * @generated from field: braiins.bmc.web.BraiinsPoolWidget.BraiinsPoolStyle braiins_pool_style = 1;
+     */
+    braiinsPoolStyle: BraiinsPoolWidget_BraiinsPoolStyle;
+
+    /**
+     * required
+     *
+     * @generated from field: braiins.bmc.web.BraiinsPoolWidget.TimeFrame time_frame = 2;
+     */
+    timeFrame: BraiinsPoolWidget_TimeFrame;
+
+    /**
+     * required
+     *
+     * @generated from field: string account_id = 3;
+     */
+    accountId: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.BraiinsPoolWidget.
+ * Use `create(BraiinsPoolWidgetSchema)` to create a new message.
+ */
+export const BraiinsPoolWidgetSchema: GenMessage<BraiinsPoolWidget> =
+    /*@__PURE__*/
+    messageDesc(file_web_scene_management, 16);
+
+/**
+ * @generated from enum braiins.bmc.web.BraiinsPoolWidget.BraiinsPoolStyle
+ */
+export enum BraiinsPoolWidget_BraiinsPoolStyle {
+    /**
+     * @generated from enum value: BRAIINS_POOL_STYLE_UNSPECIFIED = 0;
+     */
+    UNSPECIFIED = 0,
+
+    /**
+     * @generated from enum value: BRAIINS_POOL_STYLE_OVERVIEW = 1;
+     */
+    OVERVIEW = 1,
+
+    /**
+     * @generated from enum value: BRAIINS_POOL_STYLE_BIGCHART = 2;
+     */
+    BIGCHART = 2,
+}
+
+/**
+ * Describes the enum braiins.bmc.web.BraiinsPoolWidget.BraiinsPoolStyle.
+ */
+export const BraiinsPoolWidget_BraiinsPoolStyleSchema: GenEnum<BraiinsPoolWidget_BraiinsPoolStyle> =
+    /*@__PURE__*/
+    enumDesc(file_web_scene_management, 16, 0);
+
+/**
+ * @generated from enum braiins.bmc.web.BraiinsPoolWidget.TimeFrame
+ */
+export enum BraiinsPoolWidget_TimeFrame {
+    /**
+     * @generated from enum value: TIME_FRAME_UNSPECIFIED = 0;
+     */
+    UNSPECIFIED = 0,
+
+    /**
+     * @generated from enum value: TIME_FRAME_HOUR_4 = 1;
+     */
+    HOUR_4 = 1,
+
+    /**
+     * @generated from enum value: TIME_FRAME_HOUR_12 = 2;
+     */
+    HOUR_12 = 2,
+
+    /**
+     * @generated from enum value: TIME_FRAME_HOUR_24 = 3;
+     */
+    HOUR_24 = 3,
+
+    /**
+     * @generated from enum value: TIME_FRAME_DAY_7 = 4;
+     */
+    DAY_7 = 4,
+}
+
+/**
+ * Describes the enum braiins.bmc.web.BraiinsPoolWidget.TimeFrame.
+ */
+export const BraiinsPoolWidget_TimeFrameSchema: GenEnum<BraiinsPoolWidget_TimeFrame> =
+    /*@__PURE__*/
+    enumDesc(file_web_scene_management, 16, 1);
+
+/**
  * @generated from message braiins.bmc.web.SceneCycling
  */
 export type SceneCycling = Message<'braiins.bmc.web.SceneCycling'> & {
@@ -700,7 +805,7 @@ export type SceneCycling = Message<'braiins.bmc.web.SceneCycling'> & {
  * Describes the message braiins.bmc.web.SceneCycling.
  * Use `create(SceneCyclingSchema)` to create a new message.
  */
-export const SceneCyclingSchema: GenMessage<SceneCycling> = /*@__PURE__*/ messageDesc(file_web_scene_management, 16);
+export const SceneCyclingSchema: GenMessage<SceneCycling> = /*@__PURE__*/ messageDesc(file_web_scene_management, 17);
 
 /**
  * @generated from message braiins.bmc.web.GetSceneCyclingResponse
@@ -720,7 +825,7 @@ export type GetSceneCyclingResponse = Message<'braiins.bmc.web.GetSceneCyclingRe
  */
 export const GetSceneCyclingResponseSchema: GenMessage<GetSceneCyclingResponse> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 17);
+    messageDesc(file_web_scene_management, 18);
 
 /**
  * @generated from message braiins.bmc.web.SetSceneCyclingRequest
@@ -740,7 +845,7 @@ export type SetSceneCyclingRequest = Message<'braiins.bmc.web.SetSceneCyclingReq
  */
 export const SetSceneCyclingRequestSchema: GenMessage<SetSceneCyclingRequest> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 18);
+    messageDesc(file_web_scene_management, 19);
 
 /**
  * @generated from enum braiins.bmc.web.WidgetSize
@@ -920,7 +1025,7 @@ export const SceneManagementService: GenService<{
     /**
      * Add fullscreen scene. It contains single fullscreen widget at position (0,0).
      * It will use default values for widget kind specific params.
-     * Returns ID of thew new scene.
+     * Returns ID of the new scene.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.AddFullscreenScene
      */

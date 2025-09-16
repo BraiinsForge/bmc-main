@@ -44,6 +44,7 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
             selectorPrimaryFocus="input"
             onClose={onClose}
             cancelBodyOverflowShadow
+            bodyClassName={css.dialogBody}
         >
             {/* Mitigation for unwanted and otherwise seamingly unpreventable focus first button. */}
             <input type="hidden" />
@@ -89,14 +90,17 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
                     onClick={() => onSelection('blockHeight')}
                 />
 
-                {/*
                 <Row
                     variant={variant}
                     icon={Icons.WidgetPool}
                     title={formatMessage({ defaultMessage: 'Braiins Pool' })}
-                    description={formatMessage({ defaultMessage: 'Combined scene displaying multiple configurable modules that can be adjusted.' })}
-                    onClick={() => onSelection('pool')}
+                    description={formatMessage({
+                        defaultMessage: 'Combined scene displaying multiple configurable modules that can be adjusted.',
+                    })}
+                    onClick={() => onSelection('braiinsPool')}
                 />
+
+                {/*
 
                 <Row
                     variant={variant}

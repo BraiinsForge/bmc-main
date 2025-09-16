@@ -20,10 +20,13 @@ export const URLS = {
         priceAlerts: '/price-alerts',
         notifications: '/notifications',
         network: '/network',
-        api: '/api',
+        accounts: '/accounts',
     },
 
     external: {
         academy: 'https://academy.braiins.com/',
+        pool: {
+            accessProfiles: 'https://pool.braiins.com/settings/access',
+        },
     },
 } as const;

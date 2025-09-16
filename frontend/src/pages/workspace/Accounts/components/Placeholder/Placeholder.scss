@@ -1,0 +1,29 @@
+@use 'styles/carbon' as *;
+
+$bg: $table-header-bg-color;
+
+.table {
+    tr {
+        background-color: $bg;
+    }
+
+    th,
+    td {
+        vertical-align: middle;
+        padding-inline: mini-units(2);
+        text-align: start;
+    }
+
+    th {
+        height: to-rem(32px);
+    }
+
+    td {
+        height: to-rem(48px);
+    }
+}
+
+.box {
+    display: inline-block;
+    background-color: $skeleton-background;
+}

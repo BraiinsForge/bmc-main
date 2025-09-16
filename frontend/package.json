@@ -55,7 +55,7 @@
         "@emotion/react": "11.14.0",
         "@emotion/styled": "11.14.1",
         "@formatjs/cli": "6.7.2",
-        "@rsbuild/core": "1.5.12",
+        "@rsbuild/core": "1.5.13",
         "@rsbuild/plugin-react": "1.4.1",
         "@rsbuild/plugin-sass": "1.4.0",
         "@rsbuild/plugin-svgr": "1.2.2",

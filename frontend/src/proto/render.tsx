@@ -1,10 +1,12 @@
 import { type CarbonIconType, TemperatureCelsius, TemperatureFahrenheit } from '@carbon/react/icons';
 
+// Libs
 import type { IntlShape } from 'react-intl';
 import { assertUnreachable } from '@/lib/ts';
 import { formatDuration } from 'date-fns';
 import { isEqual } from 'es-toolkit';
 
+// Proto
 import { create } from '@bufbuild/protobuf';
 import * as pb from './pb';
 
@@ -460,6 +462,84 @@ export function fontStyleToString(intl: IntlShape, x?: null | pb.FontStyle) {
     }
 }
 
+export const accountTypeOptions: Array<Exclude<pb.AccountType, 0>> = [pb.AccountType.BRAIINSPOOL];
+export function accountTypeToString(intl: IntlShape, x?: Maybe<pb.AccountType>): null;
+export function accountTypeToString(intl: IntlShape, x: Exclude<pb.AccountType, 0>): string;
+export function accountTypeToString(intl: IntlShape, x?: null | pb.AccountType) {
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.AccountType.UNSPECIFIED:
+            return null;
+
+        case pb.AccountType.BRAIINSPOOL:
+            return intl.formatMessage({ defaultMessage: 'Braiins Pool' });
+
+        default:
+            assertUnreachable(x, 'clock style');
+    }
+}
+
+type BraiinsPoolStyle = pb.BraiinsPoolWidget_BraiinsPoolStyle;
+export const braiinsPoolStyleOptions: Array<Exclude<BraiinsPoolStyle, 0>> = [
+    pb.BraiinsPoolWidget_BraiinsPoolStyle.OVERVIEW,
+    pb.BraiinsPoolWidget_BraiinsPoolStyle.BIGCHART,
+];
+export function braiinsPoolStyleToString(intl: IntlShape, x?: Maybe<BraiinsPoolStyle>): null;
+export function braiinsPoolStyleToString(intl: IntlShape, x: Exclude<BraiinsPoolStyle, 0>): string;
+export function braiinsPoolStyleToString(intl: IntlShape, x?: null | BraiinsPoolStyle) {
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.BraiinsPoolWidget_BraiinsPoolStyle.UNSPECIFIED:
+            return null;
+
+        case pb.BraiinsPoolWidget_BraiinsPoolStyle.OVERVIEW:
+            return intl.formatMessage({ defaultMessage: 'Overview' });
+
+        case pb.BraiinsPoolWidget_BraiinsPoolStyle.BIGCHART:
+            return intl.formatMessage({ defaultMessage: 'Big Chart' });
+
+        default:
+            assertUnreachable(x, 'view style');
+    }
+}
+
+type BraiinsPoolTimeFrame = pb.BraiinsPoolWidget_TimeFrame;
+export const braiinsPoolTimeFrameOptions: Array<Exclude<BraiinsPoolTimeFrame, 0>> = [
+    pb.BraiinsPoolWidget_TimeFrame.HOUR_4,
+    pb.BraiinsPoolWidget_TimeFrame.HOUR_12,
+    pb.BraiinsPoolWidget_TimeFrame.HOUR_24,
+    pb.BraiinsPoolWidget_TimeFrame.DAY_7,
+];
+export function braiinsPoolTimeFrameToString(intl: IntlShape, x?: Maybe<BraiinsPoolTimeFrame>): null;
+export function braiinsPoolTimeFrameToString(intl: IntlShape, x: Exclude<BraiinsPoolTimeFrame, 0>): string;
+export function braiinsPoolTimeFrameToString(intl: IntlShape, x?: null | BraiinsPoolTimeFrame) {
+    const { formatMessage } = intl;
+
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.BraiinsPoolWidget_TimeFrame.UNSPECIFIED:
+            return null;
+
+        case pb.BraiinsPoolWidget_TimeFrame.HOUR_4:
+            return formatMessage({ defaultMessage: '4 Hours' });
+
+        case pb.BraiinsPoolWidget_TimeFrame.HOUR_12:
+            return formatMessage({ defaultMessage: '12 Hours' });
+
+        case pb.BraiinsPoolWidget_TimeFrame.HOUR_24:
+            return formatMessage({ defaultMessage: '24 Hours' });
+
+        case pb.BraiinsPoolWidget_TimeFrame.DAY_7:
+            return formatMessage({ defaultMessage: '7 Days' });
+
+        default:
+            assertUnreachable(x, 'Scene transition effect');
+    }
+}
+
 export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.WidgetKind['value']>>): null | string {
     switch (kind) {
         case null:
@@ -474,6 +554,9 @@ export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.Widget
 
         case 'blockHeight':
             return intl.formatMessage({ defaultMessage: 'Block Height' });
+
+        case 'braiinsPool':
+            return intl.formatMessage({ defaultMessage: 'Braiins Pool' });
 
         default:
             assertUnreachable(kind);
@@ -514,6 +597,16 @@ export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
                     font: fontStyleToString(intl, val.value.numbersFontStyle) || 'N/A',
                 },
             );
+
+        case 'braiinsPool': {
+            const d = val.value satisfies pb.BraiinsPoolWidget;
+            return intl.formatMessage(
+                { defaultMessage: 'Time frame: {timeframe}' },
+                {
+                    timeframe: braiinsPoolTimeFrameToString(intl, d.timeFrame) || 'N/A',
+                },
+            );
+        }
 
         default:
             assertUnreachable(val, 'fullscreen widget kind');

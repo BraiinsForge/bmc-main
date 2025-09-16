@@ -1,0 +1,21 @@
+@use 'styles/carbon' as *;
+
+.root {
+    table {
+        th,
+        td {
+            white-space: nowrap;
+        }
+    }
+}
+
+.typeColContent {
+    composes: inline horizontal center from 'styles/layout.scss';
+    gap: mini-units(2);
+}
+
+.apiToken {
+    composes: code-01 from 'styles/carbon/typography.scss';
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(1);
+}

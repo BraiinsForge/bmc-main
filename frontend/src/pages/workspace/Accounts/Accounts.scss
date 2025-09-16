@@ -1,0 +1,70 @@
+@use 'styles/carbon' as *;
+
+.root {
+    max-width: to-rem(1200px);
+}
+
+//
+// Header
+//
+
+.header {
+    composes: horizontal justified from 'styles/layout.scss';
+    margin-block-end: mini-units(3);
+
+    container-type: inline-size;
+    width: 100%;
+
+    @media (width <= 600px) {
+        flex-flow: column nowrap;
+        justify-content: start;
+        row-gap: mini-units(2);
+
+        .headerControls {
+            justify-content: start;
+            flex-flow: row wrap;
+        }
+    }
+}
+
+.headerLeft {
+    position: relative;
+}
+.title {
+    composes: heading-06 from 'styles/carbon/typography.scss';
+}
+.subtitle {
+    margin-top: mini-units(2);
+    color: $text-secondary;
+}
+
+.headerControls {
+    composes: flex horizontal center endJustified from 'styles/layout.scss';
+    position: relative;
+    gap: mini-units(2);
+}
+
+//
+// Main
+//
+
+.main {
+    position: relative;
+    background-color: $layer-01;
+}
+
+.emptyViewWrapper {
+    composes: vertical center from 'styles/layout.scss';
+    padding-block: mini-units(8);
+    padding-inline: mini-units(4);
+
+    .placeholderTable {
+        width: 100%;
+        max-width: to-rem(862px);
+    }
+
+    .heading {
+        @include type-style(heading-04);
+        margin-block: mini-units(4) mini-units(3);
+    }
+}

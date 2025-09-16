@@ -1,5 +1,5 @@
 import { Component } from 'react';
-import { assertUnreachable } from '@/lib/ts.ts';
+import { assertUnreachable } from '@/lib/ts';
 import { useIntl, type IntlShape } from 'react-intl';
 
 // App

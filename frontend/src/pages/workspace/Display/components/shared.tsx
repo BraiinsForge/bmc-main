@@ -1,13 +1,18 @@
-import css from './shared.scss';
+import { useMemo } from 'react';
+import { useIntl } from 'react-intl';
 import { FormattedMessage } from 'react-intl';
 
+// App
 import * as pb from '@/proto';
 import type { iField } from '@/lib/form';
 
-import { useIntl } from 'react-intl';
+// Components
 import { ButtonSwitch, Checkbox } from '@/components';
-import { RadioButtonGroup, RadioButton, ComboBox, Toggle } from '@carbon/react';
+import { RadioButtonGroup, RadioButton, Toggle, ComboBox, Dropdown } from '@carbon/react';
 import { Screen as IconScreen } from '@carbon/react/icons';
+
+// Styles
+import css from './shared.scss';
 
 export interface WidgetSizeSelectorProps {
     field: null | (iField<pb.WidgetSize> & { options: Array<Exclude<pb.WidgetSize, 0>> });
@@ -71,6 +76,7 @@ export interface OptionItem<T extends string | number> {
     value: T;
     label: number | string;
 }
+
 export interface BoundComboBoxProps<T extends string | number> extends iField<T> {
     id: string;
     labelText: string;
@@ -80,6 +86,11 @@ export interface BoundComboBoxProps<T extends string | number> extends iField<T>
 }
 export function BoundComboBox<T extends string | number>(props: BoundComboBoxProps<T>) {
     const { id, labelText, helperText, decorator, value, items, onChange, disabled, error } = props;
+
+    const selectedItemStruct = useMemo<undefined | OptionItem<T>>(() => {
+        const x = items.find(x => x.value === value);
+        return x ? { value: x.value, label: x.label } : undefined;
+    }, [value, items]);
 
     return (
         <ComboBox<OptionItem<T>>
@@ -92,8 +103,66 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
             }}
             itemToString={x => (x?.label ? String(x.label) : 'N/A')}
             items={items}
-            selectedItem={value ? { label: value, value } : undefined}
+            selectedItem={selectedItemStruct}
             titleText={labelText}
+            decorator={decorator}
+            helperText={helperText}
+            invalid={!!error}
+            invalidText={error}
+            disabled={disabled}
+        />
+    );
+}
+
+export interface BoundDropdownProps<T> extends iField<T> {
+    id: string;
+    labelText: string;
+    placeholderText: string;
+    decorator?: ReactNode;
+    helperText?: ReactNode;
+
+    items: T[];
+    itemToString(item: null | T): string;
+    itemToElement?(item: T): ReactNode;
+}
+export function BoundDropdown<T>(props: BoundDropdownProps<T>) {
+    const {
+        id,
+
+        // Labels
+        labelText,
+        placeholderText,
+        helperText,
+        decorator,
+
+        // Value
+        value,
+        items,
+        onChange,
+        itemToString,
+        itemToElement,
+
+        // State
+        disabled,
+        error,
+    } = props;
+
+    return (
+        <Dropdown<T>
+            id={id}
+            autoAlign
+            // className={css.dropdown}
+            onChange={x => {
+                const v = x.selectedItem;
+                if (v != null) onChange(v);
+            }}
+            itemToString={itemToString}
+            itemToElement={itemToElement}
+            renderSelectedItem={itemToElement}
+            items={items}
+            selectedItem={value ?? undefined}
+            titleText={labelText}
+            label={placeholderText}
             decorator={decorator}
             helperText={helperText}
             invalid={!!error}

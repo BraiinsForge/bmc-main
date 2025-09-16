@@ -28,9 +28,9 @@ import {
     Settings as IconSettings,
     Network_2 as IconNetwork,
     Alarm as IconAlarm,
+    Api_1 as IconApi,
     // Tag as IconPriceAlerts,
     // Notification as IconNotification,
-    // Api_1 as IconApi,
 } from '@carbon/icons-react';
 
 import css from './LayoutWorkspace.scss';
@@ -77,26 +77,18 @@ class Base extends Component<Props, State> {
                     label={formatMessage({ defaultMessage: 'Network Configuration' })}
                 />
                 <SideLink
+                    icon={IconApi}
+                    url={URLS.pages.accounts}
+                    label={formatMessage({ defaultMessage: 'Connected Accounts' })}
+                />
+                <SideLink
                     icon={IconAlarm}
                     url={URLS.pages.alarms}
                     label={formatMessage({ defaultMessage: 'Alarms' })}
                 />
                 {/*
-                <SideLink
-                    icon={IconPriceAlerts}
-                    url={URLS.pages.priceAlerts}
-                    label={formatMessage({ defaultMessage: 'Price Alerts' })}
-                />
-                <SideLink
-                    icon={IconNotification}
-                    url={URLS.pages.notifications}
-                    label={formatMessage({ defaultMessage: 'Notifications' })}
-                />
-                <SideLink
-                    icon={IconApi}
-                    url={URLS.pages.api}
-                    label={formatMessage({ defaultMessage: 'API Connections' })}
-                />
+                <SideLink icon={IconPriceAlerts} url={URLS.pages.priceAlerts} label={formatMessage({ defaultMessage: 'Price Alerts' })} />
+                <SideLink icon={IconNotification} url={URLS.pages.notifications} label={formatMessage({ defaultMessage: 'Notifications' })} />
                 */}
             </Fragment>
         );

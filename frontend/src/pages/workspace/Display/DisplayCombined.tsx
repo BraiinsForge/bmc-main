@@ -6,10 +6,10 @@ import { useParams, useNavigate, type NavigateFunction } from 'react-router';
 
 // Libs
 import * as fn from './fn';
-import { getID } from './const.ts';
+import { getID } from './const';
 import { setState } from '@/lib/react';
-import { assertUnreachable } from '@/lib/ts.ts';
 import type { FormPropsToLocalState } from '@/lib/form';
+import { assertUnreachable, assertUndefined } from '@/lib/ts';
 
 // App
 import * as pb from '@/proto';
@@ -27,6 +27,7 @@ import css from './DisplayCombined.scss';
 type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
 type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProps>;
+type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
 
 // Can be both edit & create dialogs
 type FormDialogState<Data> = {
@@ -35,54 +36,29 @@ type FormDialogState<Data> = {
     widgetID: string;
     position: pb.WidgetPosition;
 };
+
 type DialogStates = {
     clock: FormDialogState<FormStateClock>;
     ticker: FormDialogState<FormStateTicker>;
     blockHeight: FormDialogState<FormStateBlockHeight>;
+    braiinsPool: FormDialogState<FormStateBraiinsPool>;
 };
 function getInitialDialogStates(): DialogStates {
-    const position = pb.create(pb.WidgetPositionSchema);
-    const sharedBase = { isEdit: false, widgetID: '', position } as const;
-    const widgetSize = pb.WidgetSize.SMALL;
-    const fontStyle = pb.FontStyle.LIGHT;
+    const getForm = () => ({
+        isEdit: false,
+        widgetID: '',
+        position: pb.create(pb.WidgetPositionSchema),
+        data: {
+            errors: null,
+            values: {},
+        },
+    });
 
     return {
-        clock: {
-            ...sharedBase,
-            data: {
-                errors: null,
-                values: {
-                    widgetSize,
-                    fontStyle,
-                    clockStyle: pb.ClockWidget_ClockStyle.ANALOG_ROUND,
-                    showDate: true,
-                    showSeconds: true,
-                    showTimezone: true,
-                    timezone: undefined,
-                },
-            },
-        },
-        ticker: {
-            ...sharedBase,
-            data: {
-                errors: null,
-                values: {
-                    widgetSize,
-                    timeFrame: pb.TickerBtcWidget_TimeFrame.DAY_1,
-                },
-            },
-        },
-        blockHeight: {
-            ...sharedBase,
-            data: {
-                errors: null,
-                values: {
-                    showDate: true,
-                    fontStyle,
-                    widgetSize,
-                },
-            },
-        },
+        clock: getForm(),
+        ticker: getForm(),
+        blockHeight: getForm(),
+        braiinsPool: getForm(),
     };
 }
 
@@ -95,6 +71,7 @@ interface Props {
 interface State {
     isLoading: boolean;
 
+    accounts: pb.Account[];
     timezones: pb.Timezone[];
     scene: null | pb.Scene;
 
@@ -105,6 +82,7 @@ interface State {
 const getInitialState = (): State => ({
     isLoading: false,
 
+    accounts: [],
     timezones: [],
     scene: null,
 
@@ -145,8 +123,11 @@ class View extends Component<Props, State> {
 
         try {
             const { signal } = this.abortLoadMetadata.replace();
-            const { timezones } = await pb.rpc.sys.getTimezoneList({}, { signal });
-            this.setState({ timezones });
+            const [{ timezones }, { accounts }] = await Promise.all([
+                pb.rpc.sys.getTimezoneList({}, { signal }),
+                pb.rpc.accounts.getAllAccounts({}, { signal }),
+            ]);
+            this.setState({ timezones, accounts });
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -270,36 +251,24 @@ class View extends Component<Props, State> {
         const position = widget.position;
         if (!position) return this.#notifyError('Cannot continute editing, widget has no position!', tag);
 
-        const value = widget.kind?.value;
-        switch (value?.case) {
+        const wkind = widget.kind;
+        switch (wkind?.value?.case) {
             case undefined:
                 break;
 
             case 'clock': {
-                const w = value.value;
                 this.setState(s => ({
                     openDialogKind: 'clock',
                     dialogStates: {
                         ...s.dialogStates,
                         clock: {
-                            data: {
-                                values: {
-                                    widgetSize: widget.size,
-
-                                    clockStyle: w.clockStyle,
-                                    fontStyle: w.numbersFontStyle,
-
-                                    showDate: w.showDate,
-                                    showSeconds: w.showSeconds,
-
-                                    showTimezone: w.showTimezone,
-                                    timezone: w.timezone,
-                                },
-                                errors: null,
-                            },
                             isEdit: true,
                             widgetID: id,
                             position,
+                            data: {
+                                errors: null,
+                                values: Comp.unpackClockWidgetKind(wkind, widget.size),
+                            },
                         },
                     },
                 }));
@@ -307,22 +276,18 @@ class View extends Component<Props, State> {
             }
 
             case 'tickerBtc': {
-                const w = value.value;
                 this.setState(s => ({
                     openDialogKind: 'ticker',
                     dialogStates: {
                         ...s.dialogStates,
                         ticker: {
-                            data: {
-                                errors: null,
-                                values: {
-                                    widgetSize: widget.size,
-                                    timeFrame: w.timeFrame,
-                                },
-                            },
                             isEdit: true,
                             widgetID: id,
                             position,
+                            data: {
+                                errors: null,
+                                values: Comp.unpackTicketWidgetKind(wkind, widget.size),
+                            },
                         },
                     },
                 }));
@@ -330,23 +295,37 @@ class View extends Component<Props, State> {
             }
 
             case 'blockHeight': {
-                const w = value.value;
                 this.setState(s => ({
                     openDialogKind: 'blockHeight',
                     dialogStates: {
                         ...s.dialogStates,
                         blockHeight: {
-                            data: {
-                                errors: null,
-                                values: {
-                                    widgetSize: widget.size,
-                                    showDate: w.showTimestamp,
-                                    fontStyle: w.numbersFontStyle,
-                                },
-                            },
                             isEdit: true,
                             widgetID: id,
                             position,
+                            data: {
+                                errors: null,
+                                values: Comp.unpackBlockHeightWidgetKind(wkind, widget.size),
+                            },
+                        },
+                    },
+                }));
+                break;
+            }
+
+            case 'braiinsPool': {
+                this.setState(s => ({
+                    openDialogKind: 'braiinsPool',
+                    dialogStates: {
+                        ...s.dialogStates,
+                        braiinsPool: {
+                            isEdit: true,
+                            widgetID: id,
+                            position,
+                            data: {
+                                errors: null,
+                                values: Comp.unpackBraiinsPoolWidgetKind(wkind, widget.size),
+                            },
                         },
                     },
                 }));
@@ -354,7 +333,7 @@ class View extends Component<Props, State> {
             }
 
             default:
-                assertUnreachable(value, 'Unknown widget kind!');
+                assertUndefined(wkind?.value, 'Unknown widget kind!');
         }
     };
     #handleRemove: Comp.CombinedSceneViewProps['onWidgetRemove'] = async (widgetId: string): Promise<void> => {
@@ -417,6 +396,11 @@ class View extends Component<Props, State> {
                 $widgetKind = { case: 'blockHeight', value: pb.create(pb.BlockHeightWidgetSchema) };
                 break;
 
+            case 'braiinsPool':
+                $openDialogKind = 'braiinsPool';
+                $widgetKind = { case: 'braiinsPool', value: pb.create(pb.BraiinsPoolWidgetSchema) };
+                break;
+
             default:
                 assertUnreachable(kind, 'Unknown widget kind!');
         }
@@ -461,6 +445,13 @@ class View extends Component<Props, State> {
                     dialogStates.blockHeight.data = {
                         errors: null,
                         values: Comp.unpackBlockHeightWidgetKind(widgetKind, size),
+                    };
+                    break;
+
+                case 'braiinsPool':
+                    dialogStates.braiinsPool.data = {
+                        errors: null,
+                        values: Comp.unpackBraiinsPoolWidgetKind(widgetKind, size),
                     };
                     break;
 
@@ -586,6 +577,13 @@ class View extends Component<Props, State> {
                 kind = Comp.createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
                 break;
 
+            case 'braiinsPool':
+                id = dialogStates.braiinsPool.widgetID;
+                size = dialogStates.braiinsPool.data.values.widgetSize ?? size;
+                position = dialogStates.braiinsPool.position;
+                kind = Comp.createBraiinsPoolWidgetKind(dialogStates.braiinsPool.data.values);
+                break;
+
             default:
                 assertUnreachable(openDialogKind, 'Unknown open dialog kind!');
         }
@@ -623,9 +621,10 @@ class View extends Component<Props, State> {
         const { intl } = this.props;
         const {
             scene,
+            accounts,
             timezones,
             openDialogKind,
-            dialogStates: { clock, ticker, blockHeight },
+            dialogStates: { clock, ticker, blockHeight, braiinsPool },
         } = this.state;
 
         const widgets: pb.Widget[] = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
@@ -722,6 +721,30 @@ class View extends Component<Props, State> {
                     }}
                     fontStyle={this.#getFieldStruct('blockHeight', 'fontStyle')}
                     showDate={this.#getFieldStruct('blockHeight', 'showDate')}
+                />
+                <Comp.FormWidgetBraiinsPool
+                    isOpen={openDialogKind === 'braiinsPool'}
+                    isEdit={braiinsPool.isEdit}
+                    onClose={this.#openDialogCancel}
+                    error={
+                        openDialogKind === 'braiinsPool'
+                            ? pb.renderFieldErrorsAsList(braiinsPool.data?.errors?.global)
+                            : null
+                    }
+                    // Fields
+                    widgetSize={{
+                        ...this.#getFieldStruct('braiinsPool', 'widgetSize'),
+                        options: fn.getValidWidgetSizes(widgets, {
+                            id: braiinsPool.widgetID,
+                            position: braiinsPool.position,
+                        }),
+                    }}
+                    accountId={{
+                        ...this.#getFieldStruct('braiinsPool', 'accountId'),
+                        options: accounts,
+                    }}
+                    sceneStyle={this.#getFieldStruct('braiinsPool', 'sceneStyle')}
+                    timeFrame={this.#getFieldStruct('braiinsPool', 'timeFrame')}
                 />
             </div>
         );

@@ -7,11 +7,9 @@
     gap: mini-units(3);
 }
 
-.modal :global {
-    .cds--modal-header {
-        border-block-end: 1px solid $border-subtle;
-        padding-block: mini-units(2);
-    }
+.modal :global(.cds--modal-header) {
+    border-block-end: 1px solid $border-subtle;
+    padding-block: mini-units(2);
 }
 
 .comboBox {
@@ -34,5 +32,27 @@
 .note {
     composes: horizontal from 'styles/layout.scss';
     gap: mini-units(1);
+    color: $text-secondary;
+}
+
+//
+// Account
+//
+
+.withIcon {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(1);
+}
+
+.accountElement {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(2);
+}
+.accountElementName {
+    composes: withIcon;
+    color: $text-primary;
+}
+.accountElementDate {
+    composes: withIcon;
     color: $text-secondary;
 }

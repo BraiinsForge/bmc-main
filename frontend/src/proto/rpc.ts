@@ -1,6 +1,7 @@
 import { getClient } from './transport';
 
 import {
+    AccountManagementService,
     AlarmService,
     AuthenticationService,
     ConfigurationService,
@@ -16,6 +17,7 @@ import {
 export const rpc = {
     init: getClient(InitialSetupService),
 
+    accounts: getClient(AccountManagementService),
     auth: getClient(AuthenticationService),
     alarm: getClient(AlarmService),
     config: getClient(ConfigurationService),
@@ -28,6 +30,7 @@ export const rpc = {
 
 // Export services
 export const services = {
+    AccountManagementService,
     AuthenticationService,
     InitialSetupService,
     MetadataService,

@@ -1,9 +1,9 @@
 import { addons } from 'storybook/manager-api';
-import { create } from 'storybook/theming/create';
+import { create as createTheme } from 'storybook/theming/create';
 
 /** @see https://storybook.js.org/docs/7.0/react/configure/features-and-behavior */
 addons.setConfig({
-    theme: create({
+    theme: createTheme({
         base: 'dark',
         brandTitle: 'Braiins',
         brandUrl: 'https://braiins.com',
@@ -19,6 +19,16 @@ addons.setConfig({
 
     sidebar: {
         showRoots: true,
-        collapsedRoots: ['components'],
+        collapsedRoots: [
+            //
+            'components',
+            'layouts',
+            'init',
+            'accounts',
+            'alarms',
+            'display',
+            'network',
+            'settings',
+        ],
     },
 });

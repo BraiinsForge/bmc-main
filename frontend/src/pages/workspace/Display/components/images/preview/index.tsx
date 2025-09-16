@@ -33,6 +33,10 @@ export function ScenePreview(props: ScenePreviewProps) {
             // return <img {...rest} src={require('./preview-block-height.png')} alt="Preview Block Height" />;
             return <Icons.WidgetBlockHeight size={40} />;
 
+        case 'braiinsPool':
+            // return <img {...rest} src={require('./preview-pool.png')} alt="Preview for Braiins Pool" />;
+            return <Icons.WidgetPool size={40} />;
+
         // case 'image':
         //     return (
         //         <img
@@ -42,9 +46,6 @@ export function ScenePreview(props: ScenePreviewProps) {
         //             alt="Preview Image"
         //         />
         //     );
-
-        // case 'pool':
-        //     return <img {...rest} src={require('./preview-pool.png')} alt="Preview Pool"/>;
 
         // case 'manager':
         //     return <img {...rest} src={require('./preview-manager.png')} alt="Preview Manager" />;

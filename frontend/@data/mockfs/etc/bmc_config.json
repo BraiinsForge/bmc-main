@@ -1,198 +1,154 @@
 {
   "scenes": [
     {
-      "id": "879ad46d-0bd2-4a8f-aaf3-94905570665b",
+      "id": "b5df16ef-c429-4ae8-98f0-4aac592df80e",
       "enabled": true,
-      "cycle_duration": "3s",
       "kind": "fullscreen",
       "widgets": [
         {
-          "id": "9375dedb-97f4-4414-a49a-c0321807afb9",
+          "id": "08ece2a9-e517-4687-bfb0-64b81790cc73",
           "row": 0,
           "col": 0,
           "size": "full",
           "kind": "clock",
           "params": {
             "clock_style": "digital",
-            "numbers_font_style": "bold",
-            "show_date": false,
-            "show_seconds": false,
-            "show_timezone": false,
-            "timezone": "Europe/Prague"
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
           }
         }
       ]
     },
     {
-      "id": "e453fd2c-003f-4d6b-9c17-00aabe74c92a",
+      "id": "810b7ca2-531b-42b7-95f2-9a0fd0a7e19d",
       "enabled": true,
-      "cycle_duration": "7s",
       "kind": "fullscreen",
       "widgets": [
         {
-          "id": "011416ee-c8aa-4c02-be94-acda7ccd7243",
-          "row": 0,
-          "col": 0,
-          "size": "full",
-          "kind": "clock",
-          "params": {
-            "clock_style": "analog_rect",
-            "numbers_font_style": "light",
-            "show_date": true,
-            "show_seconds": true,
-            "show_timezone": true
-          }
-        }
-      ]
-    },
-    {
-      "id": "be3df44e-a4d7-4625-9312-cc142aba09a1",
-      "enabled": true,
-      "cycle_duration": "7s",
-      "kind": "combined",
-      "widgets": [
-        {
-          "id": "3262d3e7-3733-4216-a0ec-7b7bd5ccccd1",
-          "row": 1,
-          "col": 3,
-          "size": "small",
-          "kind": "clock",
-          "params": {
-            "clock_style": "digital",
-            "numbers_font_style": "medium",
-            "show_date": true,
-            "show_seconds": true,
-            "show_timezone": true
-          }
-        },
-        {
-          "id": "f8e6106d-3d2c-4f25-b498-173dcdafe206",
-          "row": 0,
-          "col": 1,
-          "size": "large",
-          "kind": "clock",
-          "params": {
-            "clock_style": "analog_rect",
-            "numbers_font_style": "medium",
-            "show_date": true,
-            "show_seconds": true,
-            "show_timezone": true
-          }
-        },
-        {
-          "id": "e519cca3-5624-4bdf-a054-458a1ea0ac7b",
-          "row": 0,
-          "col": 3,
-          "size": "small",
-          "kind": "clock",
-          "params": {
-            "clock_style": "digital",
-            "numbers_font_style": "medium",
-            "show_date": true,
-            "show_seconds": true,
-            "show_timezone": true
-          }
-        }
-      ]
-    },
-    {
-      "id": "854f0120-2214-4d95-b8f9-87bc9d401540",
-      "enabled": true,
-      "cycle_duration": "1s",
-      "kind": "fullscreen",
-      "widgets": [
-        {
-          "id": "750ee40e-7434-4109-b808-9378cd3081f9",
+          "id": "264db375-e0de-4f79-a662-dfe5bb588dea",
           "row": 0,
           "col": 0,
           "size": "full",
           "kind": "ticker_btc",
           "params": {
-            "time_frame": "month1"
+            "time_frame": "day1"
           }
         }
       ]
     },
     {
-      "id": "4a37b003-92fd-43e8-aae5-1426a866e0e3",
+      "id": "e4184c8f-2579-4342-98de-7a04956e1630",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "d6120242-54ef-466d-8b0d-2bc79bbc3b7a",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "751af8b1-1f7e-4958-a6b6-7d729e5a9e76",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "block_height",
+          "params": {
+            "show_timestamp": true,
+            "numbers_font_style": "bold"
+          }
+        },
+        {
+          "id": "68d76413-4330-401f-8317-902043337783",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "ticker_btc",
+          "params": {
+            "time_frame": "day1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "03834fb7-a4fb-4375-b29f-f8f9e86567f0",
       "enabled": true,
       "kind": "fullscreen",
       "widgets": [
         {
-          "id": "f92377a2-ad1a-43a7-983c-33f06ff74ef8",
+          "id": "0e7aad03-22e4-4da6-b51c-200753bbf637",
           "row": 0,
           "col": 0,
           "size": "full",
-          "kind": "block_height",
+          "kind": "braiins_pool",
           "params": {
-            "show_timestamp": true,
-            "numbers_font_style": "medium"
+            "pool_style": "overview",
+            "chart_frame": "days7",
+            "account_id": "8b13f327-6107-4f2e-a5d2-a3d6fc2e38ed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "44dd7fad-8ef1-4584-9011-ecb34a5af1f5",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "f7e69d8d-33eb-4ee4-b1f7-28a0d7a2b806",
+          "row": 0,
+          "col": 0,
+          "size": "small",
+          "kind": "braiins_pool",
+          "params": {
+            "pool_style": "overview",
+            "chart_frame": "hours24",
+            "account_id": "cb0ce845-4b89-436e-9dd3-116c7e936faa"
+          }
+        },
+        {
+          "id": "a16641e3-9c0d-4e89-8645-dc1ef06ff27f",
+          "row": 0,
+          "col": 1,
+          "size": "large",
+          "kind": "braiins_pool",
+          "params": {
+            "pool_style": "overview",
+            "chart_frame": "hours24",
+            "account_id": "8b13f327-6107-4f2e-a5d2-a3d6fc2e38ed"
           }
         }
       ]
     }
   ],
-  "scene_cycling": {
-    "automatic_cycling_enabled": true,
-    "automatic_cycling_default_duration": "1m 30s",
-    "transition": "fade"
-  },
-  "localization": {
-    "time_system": "Hour12",
-    "number_format": "DotGroupCommaDecimal",
-    "date_format": "DdMmYyyyDash",
-    "first_day_of_week": "Tuesday",
-    "show_seconds_in_status_bar": false,
-    "temperature_unit": "Fahrenheit"
-  },
-  "data_collection": true,
-  "brightness_pct": 70,
-  "night_mode": {
-    "enabled": true,
-    "from": "22:45:00",
-    "to": "06:50:00",
-    "brightness_pct": 65,
-    "sound_volume_pct": 0
-  },
-  "sound_volume_pct": 0,
-  "alarms": [
+  "accounts": [
     {
-      "id": "0d7df0ca-3495-4529-977e-7643ba761088",
-      "enabled": true,
-      "name": "",
-      "time": "08:00:00",
-      "repeat": [
-        "Thursday",
-        "Wednesday",
-        "Tuesday",
-        "Monday",
-        "Friday",
-        "Sunday",
-        "Saturday"
-      ],
-      "sound": "TickTockNextBlock",
-      "snooze_options": {
-        "limit": "Three",
-        "duration": "FiveMinutes"
-      }
+      "id": "8b13f327-6107-4f2e-a5d2-a3d6fc2e38ed",
+      "type": "braiins_pool",
+      "name": "kubijo",
+      "authentication": {
+        "api_key": "hNeYJI92S2JK6qNB"
+      },
+      "created_at": "2025-09-28T12:41:51.914420461Z"
     },
     {
-      "id": "f211e435-fa1c-40cf-9a17-e5b820b6b7ca",
-      "enabled": true,
-      "name": "asdgadfgadf",
-      "time": "08:01:00",
-      "repeat": [
-        "Saturday",
-        "Sunday",
-        "Wednesday",
-        "Thursday"
-      ],
-      "sound": "TickTockNextBlock",
-      "snooze_options": {
-        "limit": "Three",
-        "duration": "FiveMinutes"
-      }
+      "id": "cb0ce845-4b89-436e-9dd3-116c7e936faa",
+      "type": "braiins_pool",
+      "name": "bmc-testing@kubijo",
+      "authentication": {
+        "api_key": "hNeYJI92S2JK6qNB"
+      },
+      "created_at": "2025-09-28T12:42:50.232550210Z"
     }
-  ],
-  "led_enabled": true
+  ]
 }

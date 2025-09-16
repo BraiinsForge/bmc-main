@@ -13,13 +13,13 @@ import PageLogin from './pages/auth/Login';
 import PageSettings from './pages/workspace/Settings';
 
 import PageDisplayList from './pages/workspace/Display/DisplayList';
-import PageDisplayCombined from './pages/workspace/Display/DisplayCombined.tsx';
+import PageDisplayCombined from './pages/workspace/Display/DisplayCombined';
 
 import PageAlarms from './pages/workspace/Alarms';
 import PagePriceAlerts from './pages/workspace/PriceAlerts';
 import PageNotifications from './pages/workspace/Notifications';
 import PageNetwork from './pages/workspace/Network';
-import PageApi from './pages/workspace/Api';
+import PageAccounts from './pages/workspace/Accounts';
 
 export default createBrowserRouter([
     // Initial setup (right after wifi is configured)
@@ -53,7 +53,7 @@ export default createBrowserRouter([
                     { path: URLS.pages.priceAlerts, Component: PagePriceAlerts },
                     { path: URLS.pages.notifications, Component: PageNotifications },
                     { path: URLS.pages.network, Component: PageNetwork },
-                    { path: URLS.pages.api, Component: PageApi },
+                    { path: URLS.pages.accounts, Component: PageAccounts },
                 ],
             },
         ],

@@ -822,7 +822,7 @@ export class DataTableComponent<ColumnID extends string> extends Component<Props
 
             // Our added props for each row
             const rowProps = {
-                // We don't want to spread td attributes here
+                // This being a TR, we don't want to spread TD attributes here
                 ...(!('children' in row) ? row.props : {}),
                 isExpanded,
                 className: cn(isSelected && css.selectedRow, row.props?.className),
@@ -984,8 +984,6 @@ export class DataTableComponent<ColumnID extends string> extends Component<Props
     }
 }
 
-type Side = 'left' | 'right';
-
 // Hacky way to keep the type-generic-ness of the component
 // while wrapping in HOC, but I haven't found a better way…
 type RealComponentType = {
@@ -993,7 +991,6 @@ type RealComponentType = {
     TableToolbarSearch: typeof TableToolbarSearch;
     TableToolbarMenu: typeof TableToolbarMenu;
     TableToolbarAction: typeof TableToolbarAction;
-    align: { left: Side; right: Side };
 };
 
 const isRTL = (): boolean => document.documentElement.getAttribute('dir') === 'rtl';
@@ -1001,14 +998,6 @@ export const DataTable = Object.assign(injectIntl(DataTableComponent), {
     TableToolbarSearch,
     TableToolbarMenu,
     TableToolbarAction,
-    align: {
-        get left(): Side {
-            return isRTL() ? 'right' : 'left';
-        },
-        get right(): Side {
-            return isRTL() ? 'left' : 'right';
-        },
-    },
 }) as RealComponentType;
 
 export interface DataTableSkeletonProps {

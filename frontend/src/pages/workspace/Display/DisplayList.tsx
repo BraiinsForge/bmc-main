@@ -7,7 +7,7 @@ import { type NavigateFunction, useNavigate } from 'react-router';
 // Libs
 import { getID } from './const';
 import { setState, Sized } from '@/lib/react';
-import { assertUnreachable } from '@/lib/ts';
+import { assertUnreachable, assertUndefined } from '@/lib/ts';
 import { listenDocumentEvent } from '@/lib/dom';
 import { Form, type FormPropsToLocalState, type iField } from '@/lib/form';
 
@@ -35,6 +35,7 @@ const $ = getID('list').get;
 type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
 type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProps>;
+type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
 
 // Can be both edit & create dialogs
 type DialogStates = {
@@ -53,47 +54,27 @@ type DialogStates = {
         isEdit: boolean;
         sceneID: string;
     };
+    braiinsPool: {
+        data: FormStateBraiinsPool;
+        isEdit: boolean;
+        sceneID: string;
+    };
 };
 function getInitialDialogStates(): DialogStates {
+    const getForm = () => ({
+        isEdit: false,
+        sceneID: '',
+        data: {
+            errors: null,
+            values: {},
+        },
+    });
+
     return {
-        clock: {
-            isEdit: false,
-            sceneID: '',
-            data: {
-                errors: null,
-                values: {
-                    widgetSize: pb.WidgetSize.FULL,
-                    clockStyle: pb.ClockWidget_ClockStyle.ANALOG_ROUND,
-                    fontStyle: pb.FontStyle.LIGHT,
-                    showDate: true,
-                    showSeconds: true,
-                    showTimezone: true,
-                    timezone: undefined,
-                },
-            },
-        },
-        ticker: {
-            isEdit: false,
-            sceneID: '',
-            data: {
-                errors: null,
-                values: {
-                    widgetSize: pb.WidgetSize.FULL,
-                    timeFrame: pb.TickerBtcWidget_TimeFrame.DAY_1,
-                },
-            },
-        },
-        blockHeight: {
-            isEdit: false,
-            sceneID: '',
-            data: {
-                errors: null,
-                values: {
-                    showDate: true,
-                    fontStyle: pb.FontStyle.MEDIUM,
-                },
-            },
-        },
+        clock: getForm(),
+        ticker: getForm(),
+        blockHeight: getForm(),
+        braiinsPool: getForm(),
     };
 }
 
@@ -105,8 +86,9 @@ interface Props {
 interface State {
     isLoading: boolean;
 
-    timezones: pb.Timezone[];
     scenes: pb.Scene[];
+    accounts: pb.Account[];
+    timezones: pb.Timezone[];
 
     cycle: {
         isOpen: boolean;
@@ -121,8 +103,9 @@ interface State {
 const getInitialState = (): State => ({
     isLoading: false,
 
-    timezones: [],
     scenes: [],
+    accounts: [],
+    timezones: [],
 
     cycle: {
         isOpen: false,
@@ -163,20 +146,29 @@ class View extends Component<Props, State> {
         pb.abort.all(this);
     }
 
+    #notifyError = (message: string, tag: string): void => {
+        this.context.notify('error', message, { id: tag, timeoutSeconds: 3 });
+    };
+    #notifySuccess = (message: string): void => {
+        this.context.notify('success', message, { timeoutSeconds: 3, id: 'display-success' });
+    };
+
     private abortLoadMetadata = pb.abort.get();
     #loadMetadata = async (): Promise<void> => {
-        const { notify } = this.context;
-        const { intl } = this.props;
+        const { formatMessage } = this.props.intl;
+        const tag = 'display-metadata-load';
 
         try {
             const { signal } = this.abortLoadMetadata.replace();
             const reqConf = { signal };
 
-            const [{ timezones }, { sceneCycling }] = await Promise.all([
+            const [{ timezones }, { sceneCycling }, { accounts }] = await Promise.all([
                 pb.rpc.sys.getTimezoneList({}, reqConf),
                 pb.rpc.scenes.getSceneCycling({}, reqConf),
+                pb.rpc.accounts.getAllAccounts({}, reqConf),
             ]);
             this.setState(s => ({
+                accounts,
                 timezones,
                 cycle: {
                     ...s.cycle,
@@ -187,10 +179,9 @@ class View extends Component<Props, State> {
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            const msg: string =
-                pb.collectAllErrorsAsFormattedList($) ??
-                intl.formatMessage({ defaultMessage: 'Failed to load timezones!' });
-            notify('error', msg);
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load timezones!' });
+            this.#notifyError(msg, tag);
         }
     };
 
@@ -254,6 +245,11 @@ class View extends Component<Props, State> {
                 $kind = { case: 'blockHeight', value: pb.create(pb.BlockHeightWidgetSchema) };
                 break;
 
+            case 'braiinsPool':
+                $openDialogKind = 'braiinsPool';
+                $kind = { case: 'braiinsPool', value: pb.create(pb.BraiinsPoolWidgetSchema) };
+                break;
+
             default:
                 assertUnreachable(kind, 'Invalid scene kind!');
         }
@@ -296,6 +292,13 @@ class View extends Component<Props, State> {
                     dialogStates.blockHeight.data = {
                         errors: null,
                         values: Comp.unpackBlockHeightWidgetKind(widgetKind, size),
+                    };
+                    break;
+
+                case 'braiinsPool':
+                    dialogStates.braiinsPool.data = {
+                        errors: null,
+                        values: Comp.unpackBraiinsPoolWidgetKind(widgetKind, size),
                     };
                     break;
 
@@ -386,8 +389,8 @@ class View extends Component<Props, State> {
 
     private abortPreview = pb.abort.get();
     #previewOpen = async (sceneId: string): Promise<void> => {
-        const { intl } = this.props;
-        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+        const tag = 'display-preview-lost';
 
         try {
             const { signal } = this.abortPreview.replace();
@@ -395,31 +398,45 @@ class View extends Component<Props, State> {
             for await (const _ of stream) console.log('💗 Scene preview ping');
         } catch ($) {
             if (pb.abort.is($)) return;
-            const msg: string = intl.formatMessage({ defaultMessage: 'Display preview connection lost!' });
-            notify('warning', msg, { id: 'display-preview-lost', timeoutSeconds: 2 });
+            const msg: string = formatMessage({ defaultMessage: 'Display preview connection lost!' });
+            this.#notifyError(msg, tag);
         }
     };
 
     #sceneFullscreenWidgetSubmit = async (): Promise<void> => {
-        const { notify } = this.context;
+        const { formatMessage } = this.props.intl;
+        const tag = 'scene-fullscreen-widget-submit';
 
         const { openDialogKind, dialogStates } = this.state;
-        if (!openDialogKind || !(openDialogKind in dialogStates))
-            return notify('error', 'Invalid state, cannot submit without open dialog!');
+        if (!openDialogKind || !(openDialogKind in dialogStates)) {
+            this.#notifyError(
+                formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }),
+                tag,
+            );
+            return;
+        }
 
         const data = dialogStates[openDialogKind as keyof DialogStates];
         const scene = this.#getScene(data.sceneID);
 
         if (!scene) {
-            notify('error', 'Scene edit: cannot find the scene value!');
+            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: cannot find the scene value!' }), tag);
             return;
         }
-        if (scene.kind.case !== 'fullscreen') return notify('error', 'Scene edit: not a fullscreen widget, aborting!');
+        if (scene.kind.case !== 'fullscreen') {
+            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: not a fullscreen widget, aborting!' }), tag);
+            return;
+        }
 
         let widgetKind: pb.WidgetKind;
         switch (openDialogKind) {
-            case 'scene-select':
-                return notify('error', 'Invalid state, cannot submit without open dialog!');
+            case 'scene-select': {
+                this.#notifyError(
+                    formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }),
+                    tag,
+                );
+                return;
+            }
 
             case 'clock':
                 widgetKind = Comp.createClockWidgetKind(dialogStates.clock.data.values);
@@ -433,12 +450,19 @@ class View extends Component<Props, State> {
                 widgetKind = Comp.createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
                 break;
 
+            case 'braiinsPool':
+                widgetKind = Comp.createBraiinsPoolWidgetKind(dialogStates.braiinsPool.data.values);
+                break;
+
             default:
                 assertUnreachable(openDialogKind, 'Submit: Invalid dialog kind!');
         }
 
         const widget = scene.kind.value.widget;
-        if (!widget) return notify('error', 'Scene edit: no widget value, aborting!');
+        if (!widget) {
+            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: no widget value, aborting!' }), tag);
+            return;
+        }
 
         try {
             const payload = pb.create(pb.UpdateWidgetRequestSchema, {
@@ -450,10 +474,24 @@ class View extends Component<Props, State> {
                 position: { row: 0, col: 0 },
             });
             await pb.rpc.scenes.updateWidget(payload);
-            notify('success', 'Widget updated!', { id: 'widget-updated', timeoutSeconds: 1.5 });
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Widget updated!' }));
         } catch ($) {
-            const msg = pb.collectAllErrorsAsFormattedList($) ?? 'Failed to update widget!';
-            notify('error', msg);
+            // Parse out form specific errors
+            const { global, fields } = pb.parseFormErrors($);
+
+            const res = this.state.dialogStates;
+            (Object.keys(dialogStates) as Array<keyof DialogStates>).forEach(key => {
+                if (!Object.hasOwn(fields, key)) return;
+                console.log('fields', fields[key]);
+                res[key].data.errors = { fields: fields[key] };
+            });
+            this.setState({ dialogStates: res });
+
+            if (global.length) {
+                let msg = pb.renderFieldErrorsAsList(global);
+                msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
+                this.#notifyError(msg, tag);
+            }
         }
 
         this.#loadScenesDebounced();
@@ -461,8 +499,9 @@ class View extends Component<Props, State> {
     #sceneAddRender = (): ReactElement => {
         const {
             openDialogKind,
-            dialogStates: { clock, ticker, blockHeight },
+            dialogStates: { clock, ticker, blockHeight, braiinsPool },
             timezones,
+            accounts,
         } = this.state;
         const cancel = this.#openDialogCancel;
 
@@ -517,6 +556,25 @@ class View extends Component<Props, State> {
                     showDate={this.#getFormFieldStruct('blockHeight', 'showDate')}
                     fontStyle={this.#getFormFieldStruct('blockHeight', 'fontStyle')}
                 />
+
+                <Comp.FormWidgetBraiinsPool
+                    isOpen={openDialogKind === 'braiinsPool'}
+                    isEdit={openDialogKind === 'braiinsPool' && braiinsPool.isEdit}
+                    onClose={cancel}
+                    error={
+                        openDialogKind === 'braiinsPool'
+                            ? pb.renderFieldErrorsAsList(braiinsPool.data?.errors?.global)
+                            : null
+                    }
+                    // No size selector for the fullscreen widgets we operate with here
+                    widgetSize={null}
+                    accountId={{
+                        ...this.#getFormFieldStruct('braiinsPool', 'accountId'),
+                        options: accounts,
+                    }}
+                    sceneStyle={this.#getFormFieldStruct('braiinsPool', 'sceneStyle')}
+                    timeFrame={this.#getFormFieldStruct('braiinsPool', 'timeFrame')}
+                />
             </Fragment>
         );
     };
@@ -538,9 +596,9 @@ class View extends Component<Props, State> {
             into: number;
         },
     ): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneMove.replace();
+        const tag = 'scene-move';
 
         try {
             // Optimistic update first
@@ -553,12 +611,13 @@ class View extends Component<Props, State> {
                 }),
                 { signal },
             );
-            notify('success', 'Scene moved!', { id: 'scene-move', timeoutSeconds: 1.5 });
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene moved!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            const message =
-                pb.collectAllErrorsAsFormattedList($) || formatMessage({ defaultMessage: 'Failed to move scene!' });
-            notify('error', message);
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to move scene!' });
+            this.#notifyError(msg, tag);
         }
 
         this.#loadScenesDebounced();
@@ -566,9 +625,9 @@ class View extends Component<Props, State> {
 
     private abortSceneSetDuration = pb.abort.get();
     #sceneListSetDuration = async (id: string, value: string): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneSetDuration.replace();
+        const tag = 'scene-set-duration';
 
         try {
             const cycleDurationSec: undefined | number = value === '' ? undefined : Number.parseInt(value, 10);
@@ -586,14 +645,13 @@ class View extends Component<Props, State> {
                 },
                 { signal },
             );
-            notify('success', 'Scene duration updated!', { id: 'scene-duration-updated', timeoutSeconds: 1.5 });
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene duration updated!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const message =
-                pb.collectAllErrorsAsFormattedList($) ||
-                formatMessage({ defaultMessage: 'Failed to update scene duration! Please try again!' });
-            notify('error', message);
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to update scene duration! Please try again!' });
+            this.#notifyError(msg, tag);
         }
 
         this.#loadScenesDebounced();
@@ -601,9 +659,9 @@ class View extends Component<Props, State> {
 
     private abortSceneSetEnabled = pb.abort.get();
     #sceneListSetEnabled = async (id: string, value: boolean): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneSetEnabled.replace();
+        const tag = 'scene-set-enabled';
 
         try {
             // Optimistic update first
@@ -622,13 +680,13 @@ class View extends Component<Props, State> {
                 },
                 { signal },
             );
-            notify('success', 'Scene state updated!', { id: 'scene-state-updated', timeoutSeconds: 1.5 });
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene state updated!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            const message =
-                pb.collectAllErrorsAsFormattedList($) ||
-                formatMessage({ defaultMessage: 'Failed to update scene state!!' });
-            notify('error', message);
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to update scene state!!' });
+            this.#notifyError(msg, tag);
         }
 
         this.#loadScenesDebounced();
@@ -636,21 +694,22 @@ class View extends Component<Props, State> {
 
     private abortSceneDelete = pb.abort.get();
     #sceneListDelete = async (id: string): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneDelete.replace();
+        const tag = 'scene-delete';
 
         try {
             // Optimistic update first
             this.setState(s => ({ scenes: s.scenes.filter(x => x.id !== id) }));
 
             pb.rpc.scenes.removeScene({ value: id }, { signal });
-            notify('success', 'Scene deleted!', { id: 'scene-delete', timeoutSeconds: 1.5 });
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene deleted!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            const message =
-                pb.collectAllErrorsAsFormattedList($) || formatMessage({ defaultMessage: 'Failed to delete scene!' });
-            notify('error', message);
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to delete scene!' });
+            this.#notifyError(msg, tag);
         }
 
         this.#loadScenesDebounced();
@@ -658,9 +717,9 @@ class View extends Component<Props, State> {
 
     private abortSceneClone = pb.abort.get();
     #sceneListClone = async (id: string): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneClone.replace();
+        const tag = 'scene-clone';
 
         try {
             // Optimistic update first
@@ -677,12 +736,13 @@ class View extends Component<Props, State> {
             });
 
             pb.rpc.scenes.cloneScene({ value: id }, { signal });
-            notify('success', 'Scene cloned!', { id: 'scene-clone', timeoutSeconds: 1.5 });
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene cloned!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            const message =
-                pb.collectAllErrorsAsFormattedList($) || formatMessage({ defaultMessage: 'Failed to clone scene!' });
-            notify('error', message);
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to clone scene!' });
+            this.#notifyError(msg, tag);
         }
 
         this.#loadScenesDebounced();
@@ -705,8 +765,8 @@ class View extends Component<Props, State> {
 
             // fullscreen
             default: {
-                const widgetKind = kind?.value.widget?.kind?.value;
-                switch (widgetKind?.case) {
+                const widgetKind = kind?.value.widget?.kind;
+                switch (widgetKind?.value.case) {
                     case undefined:
                         break;
 
@@ -714,18 +774,7 @@ class View extends Component<Props, State> {
                         const ds = getInitialDialogStates();
                         ds.clock.sceneID = id;
                         ds.clock.isEdit = true;
-
-                        const v = widgetKind.value;
-                        ds.clock.data.values = {
-                            clockStyle: v.clockStyle,
-                            fontStyle: v.numbersFontStyle,
-
-                            showDate: v.showDate,
-                            showSeconds: v.showSeconds,
-                            showTimezone: v.showTimezone,
-
-                            timezone: v.timezone,
-                        };
+                        ds.clock.data.values = Comp.unpackClockWidgetKind(widgetKind, pb.WidgetSize.FULL);
 
                         this.setState(
                             // Set state
@@ -741,9 +790,7 @@ class View extends Component<Props, State> {
                         const ds = getInitialDialogStates();
                         ds.ticker.sceneID = id;
                         ds.ticker.isEdit = true;
-
-                        const v = widgetKind.value;
-                        ds.ticker.data.values = { timeFrame: v.timeFrame };
+                        ds.ticker.data.values = Comp.unpackTicketWidgetKind(widgetKind, pb.WidgetSize.FULL);
 
                         this.setState(
                             // Set state
@@ -759,12 +806,7 @@ class View extends Component<Props, State> {
                         const ds = getInitialDialogStates();
                         ds.blockHeight.sceneID = id;
                         ds.blockHeight.isEdit = true;
-
-                        const v = widgetKind.value;
-                        ds.blockHeight.data.values = {
-                            showDate: v.showTimestamp,
-                            fontStyle: v.numbersFontStyle,
-                        };
+                        ds.blockHeight.data.values = Comp.unpackBlockHeightWidgetKind(widgetKind, pb.WidgetSize.FULL);
 
                         this.setState(
                             // Set state
@@ -776,8 +818,25 @@ class View extends Component<Props, State> {
                         break;
                     }
 
-                    default:
-                        assertUnreachable(widgetKind);
+                    case 'braiinsPool': {
+                        const ds = getInitialDialogStates();
+                        ds.braiinsPool.sceneID = id;
+                        ds.braiinsPool.isEdit = true;
+                        ds.braiinsPool.data.values = Comp.unpackBraiinsPoolWidgetKind(widgetKind, pb.WidgetSize.FULL);
+
+                        this.setState(
+                            // Set state
+                            { openDialogKind: 'braiinsPool', dialogStates: ds },
+                            // ...and open the dialog
+                            () => this.#previewOpen(id),
+                        );
+
+                        break;
+                    }
+
+                    default: {
+                        assertUndefined(widgetKind?.value, 'Invalid widget kind!');
+                    }
                 }
                 break;
             }
@@ -798,9 +857,9 @@ class View extends Component<Props, State> {
 
     private abortCycleSubmit = pb.abort.get();
     #cycleDialogSubmit = async (): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
         const { cycle } = this.state;
+        const tag = 'cycle-dialog-submit';
 
         try {
             const { signal } = this.abortCycleSubmit.replace();
@@ -814,12 +873,13 @@ class View extends Component<Props, State> {
                 }),
                 { signal },
             );
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene cycling settings updated!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to update scene cycling settings!' });
-            notify('error', msg);
+            this.#notifyError(msg, tag);
         } finally {
             this.#loadScenesDebounced();
         }
