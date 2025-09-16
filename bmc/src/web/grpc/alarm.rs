@@ -56,7 +56,7 @@ impl GrpcAlarmService for AlarmService {
                 Weekday::Sunday.into(),
             ],
             name: String::new(),
-            time: "08:00".to_owned(),
+            time: String::new(),
             sound_id: Sounds::TickTockNextBlock.to_string(),
             snooze_options: Some(SnoozeOptionsWrapper {
                 kind: Some(SnoozeKind::Snooze(bmc_grpc::web::SnoozeOptions {
