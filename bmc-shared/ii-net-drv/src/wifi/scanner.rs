@@ -86,10 +86,7 @@ impl WifiScanner {
         if let Err(e) = CommandUtils::call_ifconfig_cmd(&[device, "up"]).await {
             warn!("Cannot put {device} interface up: {e}");
         }
-        // ubus iwinfo scan uses some kind of cache which is not refreshed frequently so we intentionally flush the kernel cache here first
-        if let Err(e) = CommandUtils::call_iw_cmd(&["dev", device, "scan", "flush"]).await {
-            warn!("Cannot flush wifi scan results for device {device}: {e}");
-        }
+
         let scan_result =
             CommandUtils::call_ubus_cmd(&["call", "iwinfo", "scan", &device_ubus_param]).await?;
 
