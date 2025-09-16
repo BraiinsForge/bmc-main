@@ -145,9 +145,7 @@ impl TryFrom<SettingsRequest> for DeviceSetupConfig {
         let date_format = try_from_date_time(value.date_format())
             .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
 
-        let number_format = value
-            .number_format()
-            .try_into()
+        let number_format = try_from_number_format(value.number_format())
             .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
 
         let err = Status::with_error_details(
@@ -204,27 +202,25 @@ fn try_from_date_time(
     }
 }
 
-impl TryFrom<NumberFormat> for crate::utils::NumberFormat {
-    type Error = FieldViolation;
-
-    fn try_from(value: NumberFormat) -> Result<Self, Self::Error> {
-        match value {
-            NumberFormat::Unspecified => Err(FieldViolation::new(
-                "number_format",
-                "number_format cannot be unspecified",
-            )),
-            NumberFormat::SpaceGroupCommaDecimal => {
-                Ok(crate::utils::NumberFormat::SpaceGroupCommaDecimal)
-            }
-            NumberFormat::CommaGroupDotDecimal => {
-                Ok(crate::utils::NumberFormat::CommaGroupDotDecimal)
-            }
-            NumberFormat::DotGroupCommaDecimal => {
-                Ok(crate::utils::NumberFormat::DotGroupCommaDecimal)
-            }
-            NumberFormat::SpaceGroupDotDecimal => {
-                Ok(crate::utils::NumberFormat::SpaceGroupDotDecimal)
-            }
+fn try_from_number_format(
+    value: NumberFormat,
+) -> Result<bmc_shared_utils::number_format::NumberFormat, FieldViolation> {
+    match value {
+        NumberFormat::Unspecified => Err(FieldViolation::new(
+            "number_format",
+            "number_format cannot be unspecified",
+        )),
+        NumberFormat::SpaceGroupCommaDecimal => {
+            Ok(bmc_shared_utils::number_format::NumberFormat::SpaceGroupCommaDecimal)
+        }
+        NumberFormat::CommaGroupDotDecimal => {
+            Ok(bmc_shared_utils::number_format::NumberFormat::CommaGroupDotDecimal)
+        }
+        NumberFormat::DotGroupCommaDecimal => {
+            Ok(bmc_shared_utils::number_format::NumberFormat::DotGroupCommaDecimal)
+        }
+        NumberFormat::SpaceGroupDotDecimal => {
+            Ok(bmc_shared_utils::number_format::NumberFormat::SpaceGroupDotDecimal)
         }
     }
 }

@@ -9,6 +9,7 @@ use std::{
 };
 
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
+use bmc_shared_utils::number_format::NumberFormat;
 use thiserror::Error;
 use tokio::sync::{
     RwLock,
@@ -20,7 +21,6 @@ use crate::{
     BmcManager,
     config::ConfigHandle,
     manager::{InitialSetupError, WifiNetworkConfig},
-    utils::NumberFormat,
 };
 
 const REBOOT_SLEEP_DURATION: Duration = Duration::from_secs(10);

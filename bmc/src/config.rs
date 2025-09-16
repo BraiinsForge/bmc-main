@@ -2,7 +2,7 @@
 
 use crate::{
     alarm::{AlarmData, AlarmId},
-    utils::{NumberFormat, replace_file},
+    utils::replace_file,
 };
 use anyhow::{Context, Result, bail};
 use bmc_display::data::{
@@ -11,6 +11,7 @@ use bmc_display::data::{
     serialize_scenes,
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
+use bmc_shared_utils::number_format::NumberFormat;
 use chrono::{Local, NaiveTime};
 use indexmap::{IndexMap, indexmap};
 use itertools::Itertools;

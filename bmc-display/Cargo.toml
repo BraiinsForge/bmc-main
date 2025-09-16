@@ -12,6 +12,7 @@ slint-embed-files = []
 anyhow.workspace = true
 async-trait.workspace = true
 bmc-shared-time.workspace = true
+bmc-shared-utils.workspace = true
 chrono.workspace = true
 flume.workspace = true
 humantime-serde.workspace = true

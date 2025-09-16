@@ -106,6 +106,7 @@ bmc-shared-esp32 = { path = "bmc-shared/esp32" }
 bmc-shared-ii-net = { package = "ii-net", path = "bmc-shared/ii-net" }
 bmc-shared-ii-net-drv = { package = "ii-net-drv", path = "bmc-shared/ii-net-drv" }
 bmc-shared-time = { path = "bmc-shared/time" }
+bmc-shared-utils = { path = "bmc-shared/utils" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bstr = "1.11.3"
 bytes = { version = "1.6.0", default-features = false }

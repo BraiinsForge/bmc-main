@@ -767,6 +767,7 @@ dependencies = [
  "bmc-platform",
  "bmc-scheduler",
  "bmc-shared-time",
+ "bmc-shared-utils",
  "bmc-upgrade",
  "chrono",
  "chrono-tz",
@@ -833,6 +834,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bmc-shared-time",
+ "bmc-shared-utils",
  "chrono",
  "flume",
  "humantime-serde",
@@ -1032,6 +1034,13 @@ dependencies = [
  "strum",
  "strum_macros",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "bmc-shared-utils"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
