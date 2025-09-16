@@ -287,8 +287,7 @@ impl Alarm {
 
         self.display_controller.set_alarm_data(label, show_snooze);
 
-        self.display_controller
-            .set_screen(bmc_display::data::Screen::Alarm);
+        self.display_controller.set_clock_alarm_screen(true);
 
         if let Some(sound) = self.data.sound.clone() {
             _ = tokio::spawn({
@@ -320,16 +319,12 @@ impl Alarm {
                     tokio::select! {
                         () = token.cancelled() => {
                             debug!("Alarm cancelled before timeout");
-                            display_controller
-                            .set_screen(bmc_display::data::Screen::Void);
-
+                            display_controller.set_clock_alarm_screen(false);
                         }
                         () = &mut deadline => {
                             debug!("Alarm timed out after 10 minutes");
                             token.cancel();
-                            display_controller
-                            .set_screen(bmc_display::data::Screen::Void);
-
+                            display_controller.set_clock_alarm_screen(false);
                         }
                     }
                 }

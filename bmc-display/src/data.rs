@@ -531,44 +531,65 @@ pub enum InvalidWidgetPlacementError {
 }
 
 #[derive(Debug)]
-pub enum Screen {
-    Void,
+pub enum InitScreen {
+    SetupStart,
+    SetupWifiConnecting,
+    SetupWifiConnected,
+    SetupWifiError,
+    SetupGeneralError,
+    SetupConnectInfo,
+    SetupCompleted,
+}
+
+impl From<Option<InitScreen>> for generated::InitScreen {
+    fn from(value: Option<InitScreen>) -> Self {
+        match value {
+            None => Self::None,
+            Some(InitScreen::SetupStart) => Self::StartConnect,
+            Some(InitScreen::SetupWifiConnecting) => Self::WifiConnectProgress,
+            Some(InitScreen::SetupWifiConnected) => Self::WifiConnectSuccess,
+            Some(InitScreen::SetupWifiError) => Self::WifiConnectFailed,
+            Some(InitScreen::SetupGeneralError) => Self::GeneralError,
+            Some(InitScreen::SetupConnectInfo) => Self::DeviceSetupQr,
+            Some(InitScreen::SetupCompleted) => Self::SetupSuccess,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ConnectInfoScreen {
+    ConnectInfo,
+    WifiConnectProgress,
+    WifiConnectFailed,
+}
+
+impl From<Option<ConnectInfoScreen>> for generated::ConnectInfoScreen {
+    fn from(value: Option<ConnectInfoScreen>) -> Self {
+        match value {
+            None => Self::None,
+            Some(ConnectInfoScreen::ConnectInfo) => Self::ConnectInfo,
+            Some(ConnectInfoScreen::WifiConnectProgress) => Self::WifiConnectProgress,
+            Some(ConnectInfoScreen::WifiConnectFailed) => Self::WifiConnectFailed,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum UpgradeScreen {
     DownloadFirmware,
     Upgrade,
     UpgradeFailed,
     UpgradeSuccess,
-    InitialSetupStart,
-    InitialSetupWifiConnecting,
-    InitialSetupWifiConnected,
-    InitialSetupWifiError,
-    InitialSetupGeneralError,
-    InitialSetupConnectInfo,
-    InitialSetupCompleted,
-    ConnectInfo,
-    WifiConnectProgress,
-    WifiConnectFailed,
-    Alarm,
 }
 
-impl From<Screen> for generated::UIScreen {
-    fn from(value: Screen) -> Self {
+impl From<Option<UpgradeScreen>> for generated::UpgradeScreen {
+    fn from(value: Option<UpgradeScreen>) -> Self {
         match value {
-            Screen::Void => Self::Void,
-            Screen::DownloadFirmware => Self::UpgradeDownload,
-            Screen::Upgrade => Self::UpgradeProgress,
-            Screen::UpgradeFailed => Self::UpgradeFailed,
-            Screen::UpgradeSuccess => Self::UpgradeSuccess,
-            Screen::InitialSetupStart => Self::InitStartConnect,
-            Screen::InitialSetupWifiConnecting => Self::InitWifiConnectProgress,
-            Screen::InitialSetupWifiConnected => Self::InitWifiConnectSuccess,
-            Screen::InitialSetupWifiError => Self::InitWifiConnectFailed,
-            Screen::InitialSetupGeneralError => Self::InitGeneralError,
-            Screen::InitialSetupConnectInfo => Self::InitDeviceSetupQr,
-            Screen::InitialSetupCompleted => Self::InitSetupSuccess,
-            Screen::ConnectInfo => Self::ConnectInfo,
-            Screen::WifiConnectProgress => Self::WifiConnectProgress,
-            Screen::WifiConnectFailed => Self::WifiConnectFailed,
-            Screen::Alarm => Self::Alarm,
+            None => Self::None,
+            Some(UpgradeScreen::DownloadFirmware) => Self::Download,
+            Some(UpgradeScreen::Upgrade) => Self::Progress,
+            Some(UpgradeScreen::UpgradeFailed) => Self::Failed,
+            Some(UpgradeScreen::UpgradeSuccess) => Self::Success,
         }
     }
 }

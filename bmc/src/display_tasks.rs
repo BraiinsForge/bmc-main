@@ -8,7 +8,7 @@ use crate::system_upgrade::SystemUpgradeState;
 use crate::config::ConfigHandle;
 use bmc_display::bitcoin_data::BitcoinData;
 use bmc_display::blockheight_data::BlockheightData;
-use bmc_display::data::Screen;
+use bmc_display::data::{ConnectInfoScreen, InitScreen, UpgradeScreen};
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_ii_net::wifi::SignalStrength;
 use bmc_shared_time::time::Timezone;
@@ -161,29 +161,32 @@ impl<T: BmcManager> DisplayTasks<T> {
         mut receiver: watch::Receiver<Option<SystemUpgradeState>>,
     ) {
         while let Ok(()) = receiver.changed().await {
-            let Some(upgrade_state) = &*receiver.borrow_and_update() else {
+            let Some(upgrade_state) = receiver.borrow_and_update().clone() else {
                 continue;
             };
 
             match upgrade_state {
                 SystemUpgradeState::DownloadStarted { total_mb } => {
-                    display_controller.update_download_firmware_progress(0.0, *total_mb);
-                    display_controller.set_screen(Screen::DownloadFirmware);
+                    display_controller.update_download_firmware_progress(0.0, total_mb);
+                    display_controller.set_upgrade_screen(Some(UpgradeScreen::DownloadFirmware));
                 }
                 SystemUpgradeState::DownloadProgress {
                     downloaded_mb,
                     total_mb,
                 } => {
-                    display_controller.update_download_firmware_progress(*downloaded_mb, *total_mb);
+                    display_controller.update_download_firmware_progress(downloaded_mb, total_mb);
                 }
                 SystemUpgradeState::DownloadFinished { total_mb, .. } => {
-                    display_controller.update_download_firmware_progress(*total_mb, *total_mb);
+                    display_controller.update_download_firmware_progress(total_mb, total_mb);
                 }
                 SystemUpgradeState::UpgradeStarted => {
-                    display_controller.set_screen(Screen::Upgrade);
+                    display_controller.set_upgrade_screen(Some(UpgradeScreen::Upgrade));
+                    // NOTE: upgrade_screen will be turned off in `run_init_display_screen` (operational case)
                 }
                 SystemUpgradeState::Failed => {
-                    display_controller.set_screen(Screen::UpgradeFailed);
+                    display_controller.set_upgrade_screen(Some(UpgradeScreen::UpgradeFailed));
+                    tokio::time::sleep(SCREEN_DURATION).await;
+                    display_controller.set_upgrade_screen(None);
                 }
             }
         }
@@ -234,29 +237,29 @@ impl<T: BmcManager> DisplayTasks<T> {
                 match initial_setup_state {
                     InitSetupState::ConnectingToWifi { wifi_ssid } => {
                         display_controller.set_wifi_ssid(wifi_ssid);
-                        display_controller.set_screen(Screen::InitialSetupWifiConnecting);
+                        display_controller.set_init_screen(Some(InitScreen::SetupWifiConnecting));
                     }
                     InitSetupState::WifiConnectionSuccess => {
-                        display_controller.set_screen(Screen::InitialSetupWifiConnected);
+                        display_controller.set_init_screen(Some(InitScreen::SetupWifiConnected));
                         tokio::time::sleep(SCREEN_DURATION).await;
                         let ip = manager.ip_address().await;
                         display_controller.set_connect_ip_qr_code(ip);
-                        display_controller.set_screen(Screen::InitialSetupConnectInfo);
+                        display_controller.set_init_screen(Some(InitScreen::SetupConnectInfo));
                     }
                     InitSetupState::WifiConnectionFailed => {
-                        display_controller.set_screen(Screen::InitialSetupWifiError);
+                        display_controller.set_init_screen(Some(InitScreen::SetupWifiError));
                         tokio::time::sleep(SCREEN_DURATION).await;
                         let ssid = manager.wifi_ssid();
                         display_controller.set_wifi_ssid(ssid);
-                        display_controller.set_screen(Screen::InitialSetupStart);
+                        display_controller.set_init_screen(Some(InitScreen::SetupStart));
                     }
                     InitSetupState::UnexpectedError => {
-                        display_controller.set_screen(Screen::InitialSetupGeneralError);
+                        display_controller.set_init_screen(Some(InitScreen::SetupGeneralError));
                     }
                     InitSetupState::DeviceSetupSuccess => {
-                        display_controller.set_screen(Screen::InitialSetupCompleted);
+                        display_controller.set_init_screen(Some(InitScreen::SetupCompleted));
                         tokio::time::sleep(SCREEN_DURATION).await;
-                        display_controller.set_screen(Screen::Void);
+                        display_controller.set_init_screen(None);
                     }
                 }
             }
@@ -270,41 +273,50 @@ impl<T: BmcManager> DisplayTasks<T> {
             crate::manager::BmcState::FactoryDefault => {
                 let ssid = manager.wifi_ssid();
                 display_controller.set_wifi_ssid(ssid);
-                display_controller.set_screen(Screen::InitialSetupStart);
+                display_controller.set_init_screen(Some(InitScreen::SetupStart));
+                // NOTE: init_screen will be turned off in `run_initial_setup_listener`
 
                 // NOTE: Remove upgrade flag when device hasn't been set up yet
                 manager.check_and_remove_upgrade_marker().await;
             }
             crate::manager::BmcState::SetupPending => {
-                let ip = Self::show_wifi_connect_screen(&display_controller, manager.clone()).await;
+                let ip = Self::show_wifi_connect_screen(&display_controller, manager.clone(), true)
+                    .await;
 
                 if ip.is_some() {
                     display_controller.set_connect_ip_qr_code(ip);
-                    display_controller.set_screen(Screen::InitialSetupConnectInfo);
+                    display_controller.set_init_screen(Some(InitScreen::SetupConnectInfo));
+                    // NOTE: init_screen will be turned off in `run_initial_setup_listener`
                 } else {
-                    display_controller.set_screen(Screen::InitialSetupGeneralError);
+                    display_controller.set_init_screen(Some(InitScreen::SetupGeneralError));
                     _ = manager.factory_reset(false).await;
                 }
             }
             crate::manager::BmcState::Operational => {
                 if manager.check_and_remove_upgrade_marker().await {
-                    display_controller.set_screen(Screen::UpgradeSuccess);
+                    display_controller.set_upgrade_screen(Some(UpgradeScreen::UpgradeSuccess));
                     tokio::time::sleep(Duration::from_secs(5)).await;
+                    display_controller.set_upgrade_screen(None);
                 }
 
-                let ip = Self::show_wifi_connect_screen(&display_controller, manager.clone()).await;
+                let ip =
+                    Self::show_wifi_connect_screen(&display_controller, manager.clone(), false)
+                        .await;
 
                 let duration = if ip.is_some() {
                     display_controller.set_connect_ip_qr_code(ip);
-                    display_controller.set_screen(Screen::ConnectInfo);
+                    display_controller
+                        .set_connect_info_screen(Some(ConnectInfoScreen::ConnectInfo));
                     CONNECT_INFO_SCREEN_DURATION
                 } else {
-                    display_controller.set_screen(Screen::WifiConnectFailed);
+                    display_controller
+                        .set_connect_info_screen(Some(ConnectInfoScreen::WifiConnectFailed));
                     ERROR_SCREEN_DURATION
                 };
 
                 tokio::time::sleep(duration).await;
-                display_controller.set_screen(Screen::Void);
+                display_controller.set_scene_cycler_screen(true);
+                display_controller.set_connect_info_screen(None);
             }
         }
     }
@@ -312,8 +324,14 @@ impl<T: BmcManager> DisplayTasks<T> {
     async fn show_wifi_connect_screen(
         display_controller: &DisplayController,
         manager: Arc<T>,
+        initial: bool,
     ) -> Option<IpAddr> {
-        display_controller.set_screen(Screen::WifiConnectProgress);
+        if initial {
+            display_controller.set_init_screen(Some(InitScreen::SetupWifiConnecting));
+        } else {
+            display_controller
+                .set_connect_info_screen(Some(ConnectInfoScreen::WifiConnectProgress));
+        }
 
         let ssid = manager
             .wifi_saved_networks()

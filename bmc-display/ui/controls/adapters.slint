@@ -1,4 +1,4 @@
-import { UIScreen } from "common.slint";
+import { InitScreen, ConnectInfoScreen, UpgradeScreen } from "common.slint";
 
 export global UpgradeDownloadAdapter {
     in property <float> progress: 0.0;
@@ -7,7 +7,11 @@ export global UpgradeDownloadAdapter {
 }
 
 export global ScreenAdapter {
-    in property <UIScreen> screen-id: UIScreen.Void;
+    in property <bool> scene-cycler;
+    in property <UpgradeScreen> upgrade;
+    in property <ConnectInfoScreen> connect-info;
+    in property <bool> clock-alarm;
+    in property <InitScreen> init;
 }
 
 export global StatusOverlayAdapter {

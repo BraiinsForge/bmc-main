@@ -4,11 +4,14 @@ use crate::bitcoin_data::BitcoinData;
 use crate::blockheight_data::BlockheightData;
 use crate::btc_history_data::BtcHistoryData;
 use crate::clock_data::ClockData;
-use crate::data::{Scene, SceneCycling, SceneCyclingTransition, SceneId, Screen, Widget, WidgetId};
+use crate::data::{
+    ConnectInfoScreen, InitScreen, Scene, SceneCycling, SceneCyclingTransition, SceneId,
+    UpgradeScreen, Widget, WidgetId,
+};
 use crate::display_controller::DisplayController;
 use crate::generated::{
     self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, ClockStyle,
-    ConnectionAdapter, SceneCyclingAdapter, WifiAdapter,
+    ConnectionAdapter, SceneCyclingAdapter, ScreenAdapter, WifiAdapter,
 };
 use crate::indexmap_model::IndexMapModel;
 use crate::utils;
@@ -348,9 +351,38 @@ impl DisplayController {
         });
     }
 
-    pub fn set_screen(&self, screen: Screen) {
+    pub fn set_scene_cycler_screen(&self, enabled: bool) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
-            main_window.set_screen_id(screen.into());
+            let adapter = ScreenAdapter::get(&main_window);
+            adapter.set_scene_cycler(enabled);
+        });
+    }
+
+    pub fn set_clock_alarm_screen(&self, enabled: bool) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let adapter = ScreenAdapter::get(&main_window);
+            adapter.set_clock_alarm(enabled);
+        });
+    }
+
+    pub fn set_init_screen(&self, screen: Option<InitScreen>) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let adapter = ScreenAdapter::get(&main_window);
+            adapter.set_init(screen.into());
+        });
+    }
+
+    pub fn set_connect_info_screen(&self, screen: Option<ConnectInfoScreen>) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let adapter = ScreenAdapter::get(&main_window);
+            adapter.set_connect_info(screen.into());
+        });
+    }
+
+    pub fn set_upgrade_screen(&self, screen: Option<UpgradeScreen>) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let adapter = ScreenAdapter::get(&main_window);
+            adapter.set_upgrade(screen.into());
         });
     }
 

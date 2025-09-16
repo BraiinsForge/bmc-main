@@ -1,5 +1,28 @@
-export enum UIScreen { Void, UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
-InitStartConnect, InitWifiConnectProgress, InitWifiConnectSuccess, InitWifiConnectFailed, InitSetupSuccess, InitGeneralError, InitDeviceSetupQr, ConnectInfo, WifiConnectProgress, WifiConnectFailed, Alarm }
+export enum InitScreen {
+    None,
+    StartConnect,
+    WifiConnectProgress,
+    WifiConnectSuccess,
+    WifiConnectFailed,
+    SetupSuccess,
+    GeneralError,
+    DeviceSetupQr,
+}
+
+export enum ConnectInfoScreen {
+    None,
+    ConnectInfo,
+    WifiConnectProgress,
+    WifiConnectFailed
+}
+
+export enum UpgradeScreen {
+    None,
+    Download,
+    Progress,
+    Success,
+    Failed
+}
 
 export struct DateTime {
     is-24-format: bool,

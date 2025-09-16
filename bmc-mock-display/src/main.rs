@@ -5,7 +5,7 @@
 use slint as _;
 
 use anyhow::Result;
-use bmc_display::data::Screen;
+use bmc_display::data::UpgradeScreen;
 use bmc_display::display_controller::DisplayController;
 use bmc_mock_display::VirtualDisplay;
 use bmc_shared_time::time::Timezone;
@@ -66,19 +66,25 @@ impl Scene {
     }
 
     pub async fn run_successful_upgrade_scene(&self) {
-        self.display_controller.set_screen(Screen::DownloadFirmware);
+        self.display_controller
+            .set_upgrade_screen(Some(UpgradeScreen::DownloadFirmware));
         self.simulate_download_progress().await;
-        self.display_controller.set_screen(Screen::Upgrade);
+        self.display_controller
+            .set_upgrade_screen(Some(UpgradeScreen::Upgrade));
         sleep(Self::FIVE_SEC_DURATION).await;
-        self.display_controller.set_screen(Screen::UpgradeSuccess);
+        self.display_controller
+            .set_upgrade_screen(Some(UpgradeScreen::UpgradeSuccess));
     }
 
     pub async fn run_upgrade_failure_scene(&self) {
-        self.display_controller.set_screen(Screen::DownloadFirmware);
+        self.display_controller
+            .set_upgrade_screen(Some(UpgradeScreen::DownloadFirmware));
         self.simulate_download_progress().await;
-        self.display_controller.set_screen(Screen::Upgrade);
+        self.display_controller
+            .set_upgrade_screen(Some(UpgradeScreen::Upgrade));
         sleep(Self::FIVE_SEC_DURATION).await;
-        self.display_controller.set_screen(Screen::UpgradeFailed);
+        self.display_controller
+            .set_upgrade_screen(Some(UpgradeScreen::UpgradeFailed));
     }
 
     async fn simulate_download_progress(&self) {
