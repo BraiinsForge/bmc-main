@@ -57,7 +57,7 @@ impl GrpcAlarmService for AlarmService {
             ],
             name: String::new(),
             time: String::new(),
-            sound_id: Sounds::TickTockNextBlock.to_string(),
+            sound_id: Sounds::GreenCandleMorning.to_string(),
             snooze_options: Some(SnoozeOptionsWrapper {
                 kind: Some(SnoozeKind::Snooze(bmc_grpc::web::SnoozeOptions {
                     duration: SnoozeDurationProto::SnoozeDuration5Minutes as i32,
