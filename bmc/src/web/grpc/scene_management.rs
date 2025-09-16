@@ -1072,6 +1072,7 @@ fn parse_widget_kind_with_default_params(
         web::widget_kind::Value::RemoteImage(_) => {
             WidgetKind::RemoteImage(RemoteImageWidget::default())
         }
+        web::widget_kind::Value::BlockchainData(_) => WidgetKind::BlockchainData,
     };
 
     (Some(kind), field_violations)
@@ -1124,6 +1125,7 @@ fn parse_widget_kind(
             all_field_violations.extend(field_violations);
             maybe_kind
         }
+        web::widget_kind::Value::BlockchainData(_) => Some(WidgetKind::BlockchainData),
     };
 
     (maybe_kind, all_field_violations)
@@ -1357,6 +1359,7 @@ fn map_widget_to_proto(widget: Widget) -> web::Widget {
         WidgetKind::BlockHeight(block_height) => map_block_height_to_proto(&block_height),
         WidgetKind::BraiinsPool(braiins_pool) => map_braiins_pool_to_proto(braiins_pool),
         WidgetKind::RemoteImage(remote_image) => map_remote_image_to_proto(remote_image),
+        WidgetKind::BlockchainData => map_blockchain_data_to_proto(),
     };
 
     web::Widget {
@@ -1543,5 +1546,13 @@ fn map_remote_image_to_proto(remote_image: RemoteImageWidget) -> web::WidgetKind
 
     web::WidgetKind {
         value: Some(web::widget_kind::Value::RemoteImage(proto)),
+    }
+}
+
+fn map_blockchain_data_to_proto() -> web::WidgetKind {
+    web::WidgetKind {
+        value: Some(web::widget_kind::Value::BlockchainData(
+            web::BlockchainDataWidget {},
+        )),
     }
 }

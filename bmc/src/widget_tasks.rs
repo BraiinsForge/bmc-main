@@ -100,8 +100,8 @@ impl WidgetTasks {
                 widget.id.clone(),
                 ticker_widget.time_frame.clone(),
             ))),
-            // BlockHeight widget does not have any widget specific data
-            WidgetKind::BlockHeight(_) => None,
+            // BlockHeight and BlockchainData widgets do not have any widget specific data
+            WidgetKind::BlockHeight(_) | WidgetKind::BlockchainData => None,
             WidgetKind::BraiinsPool(pool_widget) => Some(spawn(self.make_braiins_pool_task(
                 scene_id.clone(),
                 widget.id.clone(),

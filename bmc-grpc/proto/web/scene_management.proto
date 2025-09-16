@@ -132,6 +132,7 @@ message WidgetKind {
     BlockHeightWidget block_height = 3;
     BraiinsPoolWidget braiins_pool = 4;
     RemoteImageWidget remote_image = 5;
+    BlockchainDataWidget blockchain_data = 6;
   }
 }
 
@@ -245,6 +246,8 @@ message SetSceneCyclingRequest {
   // required
   SceneCycling scene_cycling = 1;
 }
+
+message BlockchainDataWidget {}
 
 // Configures scenes & widgets for individual scenes.
 // CQRS pattern, commands only modify state, queries only return state.
