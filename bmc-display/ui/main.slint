@@ -41,143 +41,73 @@ export component MainWindow inherits Window {
     in property <[Scene]> cycler-scenes;
     in-out property <int> cycler-scene-index;
 
-    if preview-scene-index < 0: Rectangle {
-        z: 0.1;
+    // default background when other layers/screens are disabled
+    Image {
+        z: 1;
+        source: Images.logo;
+    }
 
-        if root.cycler-scenes.length == 0: Image {
-            source: Images.logo;
-        }
-
-        if root.cycler-scenes.length > 0: SceneCycler {
-            scenes: root.cycler-scenes;
-            scene-index <=> root.cycler-scene-index;
-            enabled: ScreenAdapter.scene-cycler;
-            automatic-enabled: !root.night-mode-enabled;
-        }
+    // NOTE: only one of (scene cycler, scene preview) can be rendered to avoid performance issues + therefore they share same z-index
+    if ScreenAdapter.scene-cycler && root.cycler-scenes.length > 0 && root.preview-scene-index < 0: SceneCycler {
+        z: 2;
+        scenes: root.cycler-scenes;
+        scene-index <=> root.cycler-scene-index;
+        enabled: true;
+        automatic-enabled: !root.night-mode-enabled;
     }
 
     if preview-scene-index >= 0: ScenePreview {
-        z: 0.1;
+        z: 2;
         scene: root.scenes[root.preview-scene-index];
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
+    }
+
+    if ScreenAdapter.upgrade != UpgradeScreen.None: Rectangle {
+        z: 3;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
+
+        if ScreenAdapter.upgrade == UpgradeScreen.Progress: UpgradeProgress { }
+        if ScreenAdapter.upgrade == UpgradeScreen.Download: UpgradeDownload { }
+        if ScreenAdapter.upgrade == UpgradeScreen.Success: UpgradeSuccess { }
+        if ScreenAdapter.upgrade == UpgradeScreen.Failed: UpgradeFailed { }
+    }
+
+    if ScreenAdapter.connect-info != ConnectInfoScreen.None: Rectangle {
+        z: 4;
+
+        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
+        TouchArea { }
+
+        if ScreenAdapter.connect-info == ConnectInfoScreen.ConnectInfo: ConnectInfo { }
+        if ScreenAdapter.connect-info == ConnectInfoScreen.WifiConnectFailed: WifiConnectFailed { }
+        if ScreenAdapter.connect-info == ConnectInfoScreen.WifiConnectProgress: WifiConnectProgress { }
+    }
+
+    if ScreenAdapter.clock-alarm: Alarm {
+        z: 6;
+        datetime: root.system-datetime;
     }
 
     StatusOverlay {
-        z: 0.2;
+        z: 7;
     }
 
-    // Overlay screens
-    UpgradeProgress {
-        z: 0.3;
-        visible: ScreenAdapter.upgrade == UpgradeScreen.Progress;
+    if ScreenAdapter.init != InitScreen.None: Rectangle {
+        z: 8;
 
         // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
         TouchArea { }
-    }
 
-    UpgradeDownload {
-        z: 0.3;
-        visible: ScreenAdapter.upgrade == UpgradeScreen.Download;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    UpgradeSuccess {
-        z: 0.3;
-        visible: ScreenAdapter.upgrade == UpgradeScreen.Success;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    UpgradeFailed {
-        z: 0.3;
-        visible: ScreenAdapter.upgrade == UpgradeScreen.Failed;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    InitStartConnect {
-        z: 0.3;
-        visible: ScreenAdapter.init == InitScreen.StartConnect;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    InitWifiConnectProgress {
-        z: 0.3;
-        visible: ScreenAdapter.init == InitScreen.WifiConnectProgress;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    InitWifiConnectSuccess {
-        z: 0.3;
-        visible: ScreenAdapter.init == InitScreen.WifiConnectSuccess;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    InitWifiConnectFailed {
-        z: 0.3;
-        visible: ScreenAdapter.init == InitScreen.WifiConnectFailed;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    InitSetupSuccess {
-        z: 0.3;
-        visible: ScreenAdapter.init == InitScreen.SetupSuccess;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    InitGeneralError {
-        z: 0.3;
-        visible: ScreenAdapter.init == InitScreen.GeneralError;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    InitDeviceSetupQr {
-        z: 0.3;
-        visible: ScreenAdapter.init == InitScreen.DeviceSetupQr;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    ConnectInfo {
-        z: 0.3;
-        visible: ScreenAdapter.connect-info == ConnectInfoScreen.ConnectInfo;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    WifiConnectFailed {
-        z: 0.3;
-        visible: ScreenAdapter.connect-info == ConnectInfoScreen.WifiConnectFailed;
-    }
-
-    WifiConnectProgress {
-        z: 0.3;
-        visible: ScreenAdapter.connect-info == ConnectInfoScreen.WifiConnectProgress;
-
-        // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
-        TouchArea { }
-    }
-
-    Alarm {
-        z: 0.4;
-        visible: ScreenAdapter.clock-alarm;
-        datetime: root.system-datetime;
+        if ScreenAdapter.init == InitScreen.StartConnect: InitStartConnect { }
+        if ScreenAdapter.init == InitScreen.WifiConnectProgress: InitWifiConnectProgress { }
+        if ScreenAdapter.init == InitScreen.WifiConnectSuccess: InitWifiConnectSuccess { }
+        if ScreenAdapter.init == InitScreen.WifiConnectFailed: InitWifiConnectFailed { }
+        if ScreenAdapter.init == InitScreen.SetupSuccess: InitSetupSuccess { }
+        if ScreenAdapter.init == InitScreen.GeneralError: InitGeneralError { }
+        if ScreenAdapter.init == InitScreen.DeviceSetupQr: InitDeviceSetupQr { }
     }
 }
