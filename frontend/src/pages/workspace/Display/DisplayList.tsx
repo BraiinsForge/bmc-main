@@ -592,11 +592,14 @@ class View extends Component<Props, State> {
                 scenes: s.scenes.map(x => (x.id === id ? { ...x, enabled: value } : x)),
             }));
 
-            pb.rpc.scenes.updateScene(
+            // Submit to backend
+            await pb.rpc.scenes.updateScene(
                 {
                     id,
                     enabled: value,
-                    cycleDurationSec: this.#getScene(id)?.cycleDurationSec ?? 1,
+                    // This has to be sent since the RPC does not accept partial updates.
+                    // If it's undefined, it means that the default value will be used.
+                    cycleDurationSec: this.#getScene(id)?.cycleDurationSec,
                 },
                 { signal },
             );
