@@ -110,4 +110,12 @@ export component MainWindow inherits Window {
         if ScreenAdapter.init == InitScreen.GeneralError: InitGeneralError { }
         if ScreenAdapter.init == InitScreen.DeviceSetupQr: InitDeviceSetupQr { }
     }
+
+    // TODO: remove after proper solution for `BOS-3392` is implemented (this is only workaround)
+    Text {
+        height: 0px;
+        width: 0px;
+        visible: false;
+        text: "ěščřžýďťňáíéóůúĚŠČŘŽÝĎŤŇÁÍÉÓŮÚ{}€";
+    }
 }
