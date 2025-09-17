@@ -45,6 +45,40 @@ message PlaySoundRequest {
   string sound_id = 1;
 }
 
+message GeneralSettingsDataResponse {
+  braiins.bmc.web.TimeFormat time_format = 1;
+  braiins.bmc.web.DateFormat date_format = 2;
+  braiins.bmc.web.NumberFormat number_format = 3;
+  google.protobuf.BoolValue data_collection = 4;
+  google.protobuf.BoolValue show_seconds_status_bar = 5;
+  braiins.bmc.web.Weekday first_day_of_week = 6;
+  braiins.bmc.web.TemperatureUnit temperature_unit = 7;
+}
+
+message SetTimeFormatRequest {
+  braiins.bmc.web.TimeFormat time_format = 1;
+}
+
+message SetDateFormatRequest {
+  braiins.bmc.web.DateFormat date_format = 1;
+}
+
+message SetNumberFormatRequest {
+  braiins.bmc.web.NumberFormat number_format = 1;
+}
+
+message SetTemperatureUnitRequest {
+  braiins.bmc.web.TemperatureUnit temperature_unit = 1;
+}
+
+message SetFirstDayOfWeekRequest {
+  braiins.bmc.web.Weekday first_day_of_week = 1;
+}
+
+message LedSettingsResponse {
+  bool led_enabled = 1;
+}
+
 service ConfigurationService {
   rpc SetBrightness(google.protobuf.UInt32Value) returns (google.protobuf.Empty);
   rpc GetDisplaySettings(google.protobuf.Empty) returns (DisplaySettingsResponse);
@@ -56,4 +90,14 @@ service ConfigurationService {
   rpc SetSoundVolumeNightmode(google.protobuf.UInt32Value) returns (google.protobuf.Empty);
   rpc ListSounds(google.protobuf.Empty) returns (ListSoundsResponse);
   rpc PlaySound(PlaySoundRequest) returns (google.protobuf.Empty);
+  rpc GetGeneralSettingsData(google.protobuf.Empty) returns (GeneralSettingsDataResponse);
+  rpc SetTimeFormat(SetTimeFormatRequest) returns (google.protobuf.Empty);
+  rpc SetDateFormat(SetDateFormatRequest) returns (google.protobuf.Empty);
+  rpc SetNumberFormat(SetNumberFormatRequest) returns (google.protobuf.Empty);
+  rpc SetDataCollection(google.protobuf.BoolValue) returns (google.protobuf.Empty);
+  rpc ShowSecondsInStatusBar(google.protobuf.BoolValue) returns (google.protobuf.Empty);
+  rpc SetFirstDayOfWeek(SetFirstDayOfWeekRequest) returns (google.protobuf.Empty);
+  rpc SetTemperatureUnit(SetTemperatureUnitRequest) returns (google.protobuf.Empty);
+  rpc GetLedSettings(google.protobuf.Empty) returns (LedSettingsResponse);
+  rpc SetLedEnabled(google.protobuf.BoolValue) returns (google.protobuf.Empty);
 }
