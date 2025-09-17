@@ -43,15 +43,18 @@ type DialogStates = {
 function getInitialDialogStates(): DialogStates {
     const position = pb.create(pb.WidgetPositionSchema);
     const sharedBase = { isEdit: false, widgetID: '', position } as const;
+    const widgetSize = pb.WidgetSize.SMALL;
+    const fontStyle = pb.FontStyle.LIGHT;
+
     return {
         clock: {
             ...sharedBase,
             data: {
                 errors: null,
                 values: {
-                    widgetSize: pb.WidgetSize.FULL,
+                    widgetSize,
+                    fontStyle,
                     clockStyle: pb.ClockWidget_ClockStyle.ANALOG_ROUND,
-                    fontStyle: pb.FontStyle.LIGHT,
                     showDate: true,
                     showSeconds: true,
                     showTimezone: true,
@@ -64,7 +67,7 @@ function getInitialDialogStates(): DialogStates {
             data: {
                 errors: null,
                 values: {
-                    widgetSize: pb.WidgetSize.FULL,
+                    widgetSize,
                     timeFrame: pb.TickerBtcWidget_TimeFrame.DAY_1,
                 },
             },
@@ -75,7 +78,8 @@ function getInitialDialogStates(): DialogStates {
                 errors: null,
                 values: {
                     showDate: true,
-                    fontStyle: pb.FontStyle.MEDIUM,
+                    fontStyle,
+                    widgetSize,
                 },
             },
         },
@@ -395,6 +399,7 @@ class View extends Component<Props, State> {
 
         let $openDialogKind: keyof DialogStates;
         let $widgetKind: pb.WidgetKind['value'];
+        const $size = pb.WidgetSize.SMALL;
         switch (kind) {
             case 'clock':
                 $openDialogKind = 'clock';
@@ -418,8 +423,8 @@ class View extends Component<Props, State> {
         const response = await pb.rpc.scenes.addWidget(
             pb.create(pb.AddWidgetRequestSchema, {
                 sceneId,
+                size: $size,
                 position: addPosition,
-                size: pb.WidgetSize.SMALL,
                 kind: { value: $widgetKind },
             }),
         );
@@ -516,16 +521,11 @@ class View extends Component<Props, State> {
         const { sceneId } = this.props;
         const { scene, openDialogKind, dialogStates } = this.state;
 
-        if (scene?.kind.case !== 'combined') {
-            notify('error', 'Invalid state, cannot submit without combined scene!');
-            return;
-        }
+        if (scene?.kind.case !== 'combined')
+            return notify('error', 'Invalid state, cannot submit without combined scene!');
 
         const widgets = scene.kind.value.widgets;
-        if (!widgets) {
-            notify('error', 'Scene edit: no widget data, aborting!');
-            return;
-        }
+        if (!widgets) return notify('error', 'Scene edit: no widget data, aborting!');
 
         let id: pb.Widget['id'];
         let size: pb.WidgetSize = pb.WidgetSize.SMALL;
@@ -561,15 +561,8 @@ class View extends Component<Props, State> {
                 assertUnreachable(openDialogKind, 'Unknown open dialog kind!');
         }
 
-        const canonicalInsertPosition = fn.getWidgetInsertionSlot(widgets, {
-            id: id,
-            size: size,
-            position: position,
-        });
-        if (!canonicalInsertPosition) {
-            notify('error', 'Invalid state, widget seems not to fit!');
-            return;
-        }
+        const canonicalInsertPosition = fn.getWidgetInsertionSlot(widgets, { id, size, position });
+        if (!canonicalInsertPosition) return notify('error', 'Invalid state, widget seems not to fit!');
 
         const payload = pb.create(pb.UpdateWidgetRequestSchema, {
             id,
