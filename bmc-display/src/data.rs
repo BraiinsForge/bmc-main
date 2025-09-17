@@ -229,6 +229,16 @@ pub struct Widget {
 
 impl Widget {
     #[must_use]
+    pub fn new(kind: WidgetKind, position: WidgetPosition, size: WidgetSize) -> Self {
+        Self {
+            id: WidgetId::generate(),
+            kind,
+            position,
+            size,
+        }
+    }
+
+    #[must_use]
     pub fn clone_with_new_id(&self) -> Self {
         let mut cloned = self.clone();
         cloned.id = WidgetId::generate();
@@ -330,15 +340,14 @@ impl Scene {
             cycle_duration: Self::DEFAULT_CYCLE_DURATION,
             kind: SceneKind::Fullscreen,
             widgets: {
-                let id = WidgetId::generate();
+                let widget = Widget::new(
+                    widget_kind,
+                    WidgetPosition { row: 0, col: 0 },
+                    WidgetSize::Full,
+                );
 
                 indexmap! {
-                    id.clone() => Widget {
-                        id,
-                        position: WidgetPosition { row: 0, col: 0 },
-                        size: WidgetSize::Full,
-                        kind: widget_kind,
-                    }
+                    widget.id.clone() => widget
                 }
             },
         }
@@ -388,12 +397,7 @@ impl Scene {
             }
         }
 
-        let new_widget = Widget {
-            id: WidgetId::generate(),
-            position,
-            size,
-            kind,
-        };
+        let new_widget = Widget::new(kind, position, size);
 
         Self::validate_widget_placement(&new_widget, self.widgets.values())
             .map_err(AddWidgetError::InvalidWidgetPlacement)?;
@@ -844,12 +848,11 @@ mod validate_widget_placement_tests {
 
     #[test]
     fn in_bounds() {
-        let widget = Widget {
-            id: WidgetId::generate(),
-            position: WidgetPosition { row: 1, col: 3 },
-            size: WidgetSize::Small,
-            kind: WidgetKind::Clock(ClockWidget::default()),
-        };
+        let widget = Widget::new(
+            WidgetKind::Clock(ClockWidget::default()),
+            WidgetPosition { row: 1, col: 3 },
+            WidgetSize::Small,
+        );
 
         let result = Scene::validate_widget_placement(&widget, &[]);
         assert!(result.is_ok());
@@ -857,12 +860,11 @@ mod validate_widget_placement_tests {
 
     #[test]
     fn out_of_bounds_row_full() {
-        let widget = Widget {
-            id: WidgetId::generate(),
-            position: WidgetPosition { row: 2, col: 0 },
-            size: WidgetSize::Small,
-            kind: WidgetKind::Clock(ClockWidget::default()),
-        };
+        let widget = Widget::new(
+            WidgetKind::Clock(ClockWidget::default()),
+            WidgetPosition { row: 2, col: 0 },
+            WidgetSize::Small,
+        );
 
         let result = Scene::validate_widget_placement(&widget, &[]);
         assert!(matches!(
@@ -873,12 +875,11 @@ mod validate_widget_placement_tests {
 
     #[test]
     fn out_of_bounds_row_partial() {
-        let widget = Widget {
-            id: WidgetId::generate(),
-            position: WidgetPosition { row: 1, col: 0 },
-            size: WidgetSize::Large,
-            kind: WidgetKind::Clock(ClockWidget::default()),
-        };
+        let widget = Widget::new(
+            WidgetKind::Clock(ClockWidget::default()),
+            WidgetPosition { row: 1, col: 0 },
+            WidgetSize::Large,
+        );
 
         let result = Scene::validate_widget_placement(&widget, &[]);
         assert!(matches!(
@@ -889,12 +890,11 @@ mod validate_widget_placement_tests {
 
     #[test]
     fn out_of_bounds_col_full() {
-        let widget = Widget {
-            id: WidgetId::generate(),
-            position: WidgetPosition { row: 0, col: 4 },
-            size: WidgetSize::Small,
-            kind: WidgetKind::Clock(ClockWidget::default()),
-        };
+        let widget = Widget::new(
+            WidgetKind::Clock(ClockWidget::default()),
+            WidgetPosition { row: 0, col: 4 },
+            WidgetSize::Small,
+        );
 
         let result = Scene::validate_widget_placement(&widget, &[]);
         assert!(matches!(
@@ -905,12 +905,11 @@ mod validate_widget_placement_tests {
 
     #[test]
     fn out_of_bounds_col_partial() {
-        let widget = Widget {
-            id: WidgetId::generate(),
-            position: WidgetPosition { row: 0, col: 3 },
-            size: WidgetSize::Medium,
-            kind: WidgetKind::Clock(ClockWidget::default()),
-        };
+        let widget = Widget::new(
+            WidgetKind::Clock(ClockWidget::default()),
+            WidgetPosition { row: 0, col: 3 },
+            WidgetSize::Medium,
+        );
 
         let result = Scene::validate_widget_placement(&widget, &[]);
         assert!(matches!(
@@ -921,12 +920,11 @@ mod validate_widget_placement_tests {
 
     #[test]
     fn no_overlap() {
-        let widget = Widget {
-            id: WidgetId::generate(),
-            position: WidgetPosition { row: 0, col: 0 },
-            size: WidgetSize::Small,
-            kind: WidgetKind::Clock(ClockWidget::default()),
-        };
+        let widget = Widget::new(
+            WidgetKind::Clock(ClockWidget::default()),
+            WidgetPosition { row: 0, col: 0 },
+            WidgetSize::Small,
+        );
 
         let mut other_widget = widget.clone();
         other_widget.position.col = 1;
@@ -937,12 +935,11 @@ mod validate_widget_placement_tests {
 
     #[test]
     fn overlap() {
-        let widget = Widget {
-            id: WidgetId::generate(),
-            position: WidgetPosition { row: 0, col: 0 },
-            size: WidgetSize::Small,
-            kind: WidgetKind::Clock(ClockWidget::default()),
-        };
+        let widget = Widget::new(
+            WidgetKind::Clock(ClockWidget::default()),
+            WidgetPosition { row: 0, col: 0 },
+            WidgetSize::Small,
+        );
 
         let other_widget = widget.clone();
 
@@ -960,12 +957,11 @@ mod widget_overlaps_tests {
 
     #[test]
     fn no_overlap() {
-        let widget = Widget {
-            id: WidgetId::generate(),
-            position: WidgetPosition { row: 1, col: 1 }, // intentional
-            size: WidgetSize::Small,                     // intentional
-            kind: WidgetKind::Clock(ClockWidget::default()),
-        };
+        let widget = Widget::new(
+            WidgetKind::Clock(ClockWidget::default()),
+            WidgetPosition { row: 1, col: 1 }, // intentional
+            WidgetSize::Small,                 // intentional
+        );
 
         for row_offset in -1..=1_i8 {
             for col_offset in -1..=1_i8 {
@@ -999,12 +995,11 @@ mod widget_overlaps_tests {
 
     #[test]
     fn overlap() {
-        let widget = Widget {
-            id: WidgetId::generate(),
-            position: WidgetPosition { row: 1, col: 1 }, // intentional
-            size: WidgetSize::Large,                     // intentional
-            kind: WidgetKind::Clock(ClockWidget::default()),
-        };
+        let widget = Widget::new(
+            WidgetKind::Clock(ClockWidget::default()),
+            WidgetPosition { row: 1, col: 1 }, // intentional
+            WidgetSize::Large,                 // intentional
+        );
 
         for row_offset in -1..=1_i8 {
             for col_offset in -1..=1_i8 {
