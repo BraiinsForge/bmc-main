@@ -1,0 +1,19 @@
+@use 'styles/carbon' as *;
+
+.root,
+.root[role='button'] {
+    color: $link-primary !important;
+    font-weight: normal;
+    border: none;
+    font-size: inherit;
+
+    &:hover *,
+    &:focus * {
+        text-decoration: underline;
+    }
+}
+
+.spaced {
+    composes: inline horizontal center from 'styles/layout.scss';
+    gap: 0.4em;
+}

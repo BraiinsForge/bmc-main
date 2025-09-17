@@ -162,6 +162,9 @@ class View extends Component<Props, State> {
     };
 
     #noop = () => {};
+    #notifySuccess = (message: string): void => {
+        this.context.notify('success', message, { id: 'settings-saved', timeoutSeconds: 3 });
+    };
     #fetchData = async (): Promise<void> => {
         const q = [this.#upgradesFeedCheck(), this.#fetchSystemInfo(), this.#displayFetch(), this.#soundLightFetch()];
         await Promise.allSettled(q);
@@ -261,7 +264,7 @@ class View extends Component<Props, State> {
 
         try {
             await pb.rpc.sys.factoryReset({});
-            notify('success', formatMessage({ defaultMessage: 'Factory reset complete!' }));
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Factory reset complete!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
             notify(
@@ -342,7 +345,6 @@ class View extends Component<Props, State> {
     };
     private displaySetBrightnessAbort = pb.abort.get();
     #displaySetBrightness = debounce(async (value: Maybe<number>): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
         const currentValue = this.state.data.display?.brightness?.value ?? null;
         if (value == null || value === currentValue) return;
@@ -350,7 +352,7 @@ class View extends Component<Props, State> {
         try {
             const { signal } = this.displaySetBrightnessAbort.replace();
             await pb.rpc.config.setBrightness({ value }, { signal });
-            notify('success', formatMessage({ defaultMessage: 'Brightness Saved' }));
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Brightness Saved' }));
         } catch ($) {
             if (pb.abort.is($)) return;
             this.setState(s => ({
@@ -452,10 +454,7 @@ class View extends Component<Props, State> {
 
             // Submit
             await pb.rpc.config.setSoundVolume({ value });
-            notify('success', formatMessage({ defaultMessage: 'Sound volume saved' }), {
-                id: 'sound-volume-save-success',
-                timeoutSeconds: 3,
-            });
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Sound volume saved' }));
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
@@ -486,10 +485,7 @@ class View extends Component<Props, State> {
 
             // Submit
             await pb.rpc.config.setSoundVolumeNightmode({ value });
-            notify('success', formatMessage({ defaultMessage: 'Night mode sound volume saved' }), {
-                id: 'sound-volume-night-save-success',
-                timeoutSeconds: 3,
-            });
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Night mode sound volume saved' }));
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the night mode sound volume!' });

@@ -19,28 +19,14 @@ import AppContext, { type AppContextType } from '@/context';
 // Components
 import { Button } from '@/components';
 import { ChevronLeft as IconChevronLeft } from '@carbon/react/icons';
-import {
-    CombinedSceneView,
-    type CombinedSceneViewProps,
-    FormSceneSelect,
-    FormWidgetClock,
-    type FormWidgetClockProps,
-    createClockWidgetKind,
-    FormWidgetTicker,
-    type FormWidgetTickerProps,
-    createTickerWidgetKind,
-    FormWidgetBlockHeight,
-    type FormWidgetBlockHeightProps,
-    createBlockHeightWidgetKind,
-    type SceneKind,
-} from './components';
+import * as Comp from './components';
 
 // Styles
 import css from './DisplayCombined.scss';
 
-type FormStateClock = FormPropsToLocalState<FormWidgetClockProps>;
-type FormStateTicker = FormPropsToLocalState<FormWidgetTickerProps>;
-type FormStateBlockHeight = FormPropsToLocalState<FormWidgetBlockHeightProps>;
+type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
+type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
+type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProps>;
 
 // Can be both edit & create dialogs
 type FormDialogState<Data> = {
@@ -191,7 +177,7 @@ class View extends Component<Props, State> {
         }
     };
 
-    #handleMove: CombinedSceneViewProps['onWidgetMove'] = async (
+    #handleMove: Comp.CombinedSceneViewProps['onWidgetMove'] = async (
         source: pb.Widget,
         target: pb.Widget,
     ): Promise<void> => {
@@ -260,7 +246,7 @@ class View extends Component<Props, State> {
     #handleAdd = (position: pb.WidgetPosition): void => {
         this.setState({ openDialogKind: 'scene-select', addPosition: position });
     };
-    #handleEdit: CombinedSceneViewProps['onWidgetEdit'] = (id: string): void => {
+    #handleEdit: Comp.CombinedSceneViewProps['onWidgetEdit'] = (id: string): void => {
         const { notify } = this.context;
 
         const scene = this.state.scene;
@@ -368,7 +354,7 @@ class View extends Component<Props, State> {
                 assertUnreachable(value, 'Unknown widget kind!');
         }
     };
-    #handleRemove: CombinedSceneViewProps['onWidgetRemove'] = async (widgetId: string): Promise<void> => {
+    #handleRemove: Comp.CombinedSceneViewProps['onWidgetRemove'] = async (widgetId: string): Promise<void> => {
         const { sceneId } = this.props;
 
         try {
@@ -398,7 +384,7 @@ class View extends Component<Props, State> {
     #goBack = (): void => {
         this.props.navigate(URLS.pages.display.list);
     };
-    #handleWidgetAdd = async (kind: SceneKind): Promise<void> => {
+    #handleWidgetAdd = async (kind: Comp.SceneKind): Promise<void> => {
         const { notify } = this.context;
         const { sceneId } = this.props;
         const { openDialogKind, addPosition } = this.state;
@@ -554,21 +540,21 @@ class View extends Component<Props, State> {
                 id = dialogStates.clock.widgetID;
                 size = dialogStates.clock.data.values.widgetSize ?? size;
                 position = dialogStates.clock.position;
-                kind = createClockWidgetKind(dialogStates.clock.data.values);
+                kind = Comp.createClockWidgetKind(dialogStates.clock.data.values);
                 break;
 
             case 'ticker':
                 id = dialogStates.ticker.widgetID;
                 size = dialogStates.ticker.data.values.widgetSize ?? size;
                 position = dialogStates.ticker.position;
-                kind = createTickerWidgetKind(dialogStates.ticker.data.values);
+                kind = Comp.createTickerWidgetKind(dialogStates.ticker.data.values);
                 break;
 
             case 'blockHeight':
                 id = dialogStates.blockHeight.widgetID;
                 size = dialogStates.blockHeight.data.values.widgetSize ?? size;
                 position = dialogStates.blockHeight.position;
-                kind = createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
+                kind = Comp.createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
                 break;
 
             default:
@@ -642,7 +628,7 @@ class View extends Component<Props, State> {
                     </div>
                 </header>
 
-                <CombinedSceneView
+                <Comp.CombinedSceneView
                     widgets={widgets}
                     onWidgetMove={this.#handleMove}
                     onWidgetAdd={this.#handleAdd}
@@ -650,14 +636,14 @@ class View extends Component<Props, State> {
                     onWidgetRemove={this.#handleRemove}
                 />
 
-                <FormSceneSelect
+                <Comp.FormSceneSelect
                     variant="widget"
                     isOpen={openDialogKind === 'scene-select'}
                     onClose={this.#openDialogCancel}
                     onSelection={this.#handleWidgetAdd}
                 />
 
-                <FormWidgetClock
+                <Comp.FormWidgetClock
                     isOpen={openDialogKind === 'clock'}
                     isEdit={clock.isEdit}
                     onClose={this.#openDialogCancel}
@@ -680,7 +666,7 @@ class View extends Component<Props, State> {
                     // showWeather={this.#getFormFieldStruct('clock', 'showWeather')}
                     // weatherLocation={this.#getFormFieldStruct('clock', 'weatherLocation')}
                 />
-                <FormWidgetTicker
+                <Comp.FormWidgetTicker
                     isOpen={openDialogKind === 'ticker'}
                     isEdit={ticker.isEdit}
                     onClose={this.#openDialogCancel}
@@ -695,7 +681,7 @@ class View extends Component<Props, State> {
                     }}
                     timeFrame={this.#getFormFieldStruct('ticker', 'timeFrame')}
                 />
-                <FormWidgetBlockHeight
+                <Comp.FormWidgetBlockHeight
                     isOpen={openDialogKind === 'blockHeight'}
                     isEdit={blockHeight.isEdit}
                     onClose={this.#openDialogCancel}

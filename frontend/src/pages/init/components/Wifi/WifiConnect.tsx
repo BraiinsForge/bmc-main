@@ -49,6 +49,8 @@ class View extends Component<Props, State> {
     get #txt() {
         const { formatMessage } = this.props.intl;
         return {
+            enterDetailsManually: formatMessage({ defaultMessage: 'Enter Wifi details manually' }),
+
             ssidNetName: formatMessage({ defaultMessage: 'SSID (network name)' }),
             encryptionType: formatMessage({ defaultMessage: 'Encryption Type' }),
             password: formatMessage({ defaultMessage: 'Password' }),
@@ -145,7 +147,7 @@ class View extends Component<Props, State> {
 
             content = (
                 <Fragment>
-                    <h1 className={css.title} children="Enter Wifi details manually" />
+                    <h1 className={css.title} children={txt.enterDetailsManually} />
 
                     <Form className={css.manualForm}>
                         <TextInput
@@ -156,6 +158,7 @@ class View extends Component<Props, State> {
                         />
                         <Dropdown<Security>
                             id={$('manual-encryption-type')}
+                            autoAlign
                             items={pb.wifiEncryptionTypeOptions}
                             selectedItem={manualEntryData.encryptionType || pb.EncryptionType.NONE}
                             label={txt.encryptionType}
@@ -197,11 +200,12 @@ class View extends Component<Props, State> {
 
             content = (
                 <Fragment>
-                    <h1 className={css.title} children="Enter Wifi details manually" />
+                    <h1 className={css.title} children={txt.enterDetailsManually} />
 
                     <Form className={css.manualForm}>
                         <Dropdown<pb.WifiNetwork>
                             id={$('selected-network-dropdown')}
+                            autoAlign
                             className={css.netDropdownWrapper}
                             items={networks}
                             selectedItem={selectedNetwork}

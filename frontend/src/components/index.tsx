@@ -9,6 +9,7 @@ export * from './Empty';
 export * from './InlineLoading';
 export * from './InlineNotification';
 export * from './InlineNotificationsGroup';
+export * from './Link';
 export * from './Loading';
 export * from './Modal';
 export * from './ModalCustom';

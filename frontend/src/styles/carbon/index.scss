@@ -54,66 +54,6 @@ $table-header-text-color: var(--table-header-text-color);
 
 $shell-border-color: var(--shell-border-color);
 
-// prettier-ignore
-$tag-colors: (
-    // red
-    'tag-background-red': (fallback: $braiins-red-60, values: ()),
-    'tag-color-red':      (fallback: $braiins-red-10, values: ()),
-    'tag-hover-red':      (fallback: $braiins-red-70, values: ()),
-    // magenta
-    'tag-background-magenta': (fallback: $braiins-magenta-40, values: ()),
-    'tag-color-magenta':      (fallback: $braiins-magenta-90, values: ()),
-    'tag-hover-magenta':      (fallback: $braiins-magenta-50, values: ()),
-    // purple
-    'tag-background-purple': (fallback: $braiins-purple-40, values: ()),
-    'tag-color-purple':      (fallback: $braiins-purple-90, values: ()),
-    'tag-hover-purple':      (fallback: $braiins-purple-50, values: ()),
-    // blue
-    'tag-background-blue':  (fallback: $braiins-blue-60, values: ()),
-    'tag-color-blue':       (fallback: $braiins-blue-10, values: ()),
-    'tag-hover-blue':       (fallback: $braiins-blue-70, values: ()),
-    // cyan
-    'tag-background-cyan':  (fallback: $braiins-lime-20, values: ()),
-    'tag-color-cyan':       (fallback: $braiins-lime-70, values: ()),
-    'tag-hover-cyan':       (fallback: $braiins-lime-30, values: ()),
-    // teal
-    'tag-background-teal':  (fallback: $braiins-teal-30, values: ()),
-    'tag-color-teal':       (fallback: $braiins-teal-80, values: ()),
-    'tag-hover-teal':       (fallback: $braiins-teal-40, values: ()),
-    // green
-    'tag-background-green': (fallback: $braiins-green-60, values: ()),
-    'tag-color-green':      (fallback: $braiins-green-10, values: ()),
-    'tag-hover-green':      (fallback: $braiins-green-70, values: ()),
-    // gray (we only use one, so all of them are the same)
-    'tag-background-cool-gray': (fallback: $braiins-gray-30, values: ()),
-    'tag-color-cool-gray':      (fallback: $braiins-gray-80, values: ()),
-    'tag-hover-cool-gray':      (fallback: $braiins-gray-40, values: ()),
-
-    'tag-background-gray':      (fallback: $braiins-gray-30, values: ()),
-    'tag-color-gray':           (fallback: $braiins-gray-80, values: ()),
-    'tag-hover-gray':           (fallback: $braiins-gray-40, values: ()),
-
-    'tag-background-warm-gray': (fallback: $braiins-gray-30, values: ()),
-    'tag-color-warm-gray':      (fallback: $braiins-gray-80, values: ()),
-    'tag-hover-warm-gray':      (fallback: $braiins-gray-40, values: ()),
-);
-
-//
-// Our customisations
-// TODO: Ideally, there should not be any of these,
-//  so if there is a way to get rid of them, that would be great
-//
-
-$shell-menu-width: to-rem(260px);
-$shell-content-max-width: to-rem(1584px);
-
-$shell-header-links-height: to-rem(36px);
-$shell-footer-links-height: to-rem(48px);
-$shell-header-navbar-height: to-rem(48px);
-$shell-footer-slim-height: to-rem(55px);
-
-$workers-table-toolbar-height: to-rem(48px);
-
 //
 // Themes mixins
 //

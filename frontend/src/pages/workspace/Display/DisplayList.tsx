@@ -18,7 +18,7 @@ import AppContext, { type AppContextType } from '@/context';
 
 // Components
 import { Button } from '@/components';
-import { Dropdown, OverflowMenu, Toggle } from '@carbon/react';
+import { Dropdown, OverflowMenu, Toggle, Layer } from '@carbon/react';
 import {
     Add as IconAdd,
     CarouselHorizontal as IconCycle,
@@ -868,8 +868,9 @@ class View extends Component<Props, State> {
                                                 )}
                                                 selectorPrimaryFocus="input,button,select"
                                                 size="sm"
-                                                children={x.content}
-                                            />
+                                            >
+                                                <Layer level={1} children={x.content} />
+                                            </OverflowMenu>
                                         </div>
                                     );
                                 }}

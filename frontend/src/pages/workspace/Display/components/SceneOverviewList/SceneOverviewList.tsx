@@ -9,8 +9,8 @@ import AppContext, { type AppContextType } from '@/context';
 // Components
 import { getID } from '../../const';
 import { ScenePreview } from '../images';
-import { Button, Sortable, type SortableProps } from '@/components';
 import { Add as IconAdd } from '@carbon/react/icons';
+import { Button, type RenderSortableListItemProps, Sortable } from '@/components';
 import { SceneOverviewRow, SceneOverviewRowSkeleton } from '../SceneOverviewRow';
 
 // Styles
@@ -41,9 +41,9 @@ class View extends Component<Props> {
 
     componentWillUnmount = () => pb.abort.all(this);
 
-    #renderItem: SortableProps<pb.Scene>['renderItem'] = props => {
+    #renderItem = (props: RenderSortableListItemProps<pb.Scene>, firstEnabledSceneID: Maybe<pb.Scene['id']>) => {
         const { defaultSceneDuration, onEdit, onToggle, onClone, onDelete, onDurationChange, intl } = this.props;
-        const { index, item, state, rootProps, dragHandleProps } = props;
+        const { item, state, rootProps, dragHandleProps } = props;
 
         let title: string = 'N/A';
         let description: string = '';
@@ -77,7 +77,7 @@ class View extends Component<Props> {
                 }
                 title={title}
                 tag={
-                    index === 0
+                    firstEnabledSceneID === item.id
                         ? {
                               type: 'blue',
                               text: 'Night Mode',
@@ -107,6 +107,7 @@ class View extends Component<Props> {
     render() {
         const { scenes, onMove, onAdd, intl } = this.props;
 
+        const firstEnabledSceneID = scenes.find(x => x.enabled)?.id;
         if (!scenes.length) {
             return (
                 <div className={css.placeholder}>
@@ -132,7 +133,12 @@ class View extends Component<Props> {
         }
 
         return (
-            <Sortable<pb.Scene> className={css.list} items={scenes} onChange={onMove} renderItem={this.#renderItem} />
+            <Sortable<pb.Scene>
+                className={css.list}
+                items={scenes}
+                onChange={onMove}
+                renderItem={x => this.#renderItem(x, firstEnabledSceneID)}
+            />
         );
     }
 }

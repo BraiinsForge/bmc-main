@@ -41,10 +41,12 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
                     ? formatMessage({ defaultMessage: 'Add New Display Scene' })
                     : formatMessage({ defaultMessage: 'Add New Widget' })
             }
-            selectorPrimaryFocus="[role=list] [role=button]"
+            selectorPrimaryFocus="input"
             onClose={onClose}
             cancelBodyOverflowShadow
         >
+            {/* Mitigation for unwanted and otherwise seamingly unpreventable focus first button. */}
+            <input type="hidden" />
             <section role="list" className={css.root}>
                 {variant === 'scene' ? (
                     <Row

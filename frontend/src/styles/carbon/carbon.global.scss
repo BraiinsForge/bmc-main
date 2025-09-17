@@ -122,7 +122,7 @@ header.cds--header {
     .cds--header__action {
         width: auto;
         min-width: 3rem;
-        height: $shell-header-navbar-height;
+        height: to-rem(48px);
         padding: 13px;
     }
 

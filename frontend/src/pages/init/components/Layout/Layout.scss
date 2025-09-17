@@ -6,9 +6,7 @@
 
     inline-size: to-rem(512px);
     max-inline-size: 100%;
-
     max-block-size: 100%;
-    block-size: auto;
 
     background-color: $layer-01;
 }
@@ -28,17 +26,12 @@
 }
 
 .main {
-    display: flex;
-    flex-flow: column nowrap;
-    flex: 1 1 auto;
+    composes: scrollbar from 'styles/interaction.scss';
+    composes: vertical flex from 'styles/layout.scss';
+    padding: mini-units(2) mini-units(2) mini-units(5);
 
     position: relative;
     z-index: 2;
-
-    composes: scrollbar from 'styles/interaction.scss';
-    height: 75vh;
-
-    padding: mini-units(2) mini-units(2) mini-units(5);
 }
 
 .footer {
@@ -47,7 +40,6 @@
     flex-shrink: 0;
 
     position: sticky;
-    z-index: 10;
     bottom: 0;
 
     background-color: $layer-01;
@@ -61,5 +53,14 @@
         max-block-size: unset;
 
         padding-block: mini-units(2) mini-units(4) !important;
+    }
+}
+
+@media (width <= 800px) or (height <= 800px) {
+    .root {
+        block-size: 100% !important;
+    }
+    .main {
+        block-size: 100% !important;
     }
 }

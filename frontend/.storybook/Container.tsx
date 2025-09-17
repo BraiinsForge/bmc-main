@@ -6,6 +6,7 @@ import { Component, type ReactNode, StrictMode } from 'react';
 
 // Hoc
 import { IntlProvider } from 'react-intl';
+import { MemoryRouter } from 'react-router';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
 
 // Styles
@@ -78,9 +79,11 @@ export default class Container extends Component<Props> {
             <StrictMode>
                 <HelmetProvider>
                     <IntlProvider key={locale} defaultLocale={locale} locale={locale} messages={msg} onError={noop}>
-                        <div role="main" className={className}>
-                            {story()}
-                        </div>
+                        <MemoryRouter>
+                            <div role="main" className={className}>
+                                {story()}
+                            </div>
+                        </MemoryRouter>
                     </IntlProvider>
                 </HelmetProvider>
             </StrictMode>
