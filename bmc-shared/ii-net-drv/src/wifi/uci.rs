@@ -167,6 +167,11 @@ impl UciCommand {
     }
 }
 
+#[derive(Display, EnumString)]
+pub enum HtMode {
+    #[strum(serialize = "NOHT")]
+    NoHt,
+}
 pub struct UciHelper {
     wifi_device_syspath: String,
 }
@@ -241,6 +246,29 @@ impl UciHelper {
         let disabled = if enabled { "0" } else { "1" };
 
         UciCommand::set(radio.name, json!({"disabled": disabled})).await
+    }
+
+    pub async fn wifi_radio_configure_beacon_int(&self, beacon_int: u32) -> Result<()> {
+        let radio = self.get_radio().await?;
+        UciCommand::set(radio.name, json!({"beacon_int": beacon_int.to_string()})).await
+    }
+
+    pub async fn wifi_radio_configure_ht_mode(&self, ht_mode: HtMode) -> Result<()> {
+        let radio = self.get_radio().await?;
+        UciCommand::set(radio.name, json!({"htmode": ht_mode.to_string()})).await
+    }
+
+    pub async fn wifi_radio_configure_ap_channel(&self, channel: u32) -> Result<()> {
+        let max_2g_channel = 14;
+        let radio = self.get_radio().await?;
+        let band = if channel <= max_2g_channel {
+            "2g"
+        } else {
+            "5g"
+        };
+
+        UciCommand::set(radio.name.clone(), json!({"channel": channel.to_string()})).await?;
+        UciCommand::set(radio.name, json!({"band": band.to_string()})).await
     }
 
     pub async fn wifi_iface_configure(

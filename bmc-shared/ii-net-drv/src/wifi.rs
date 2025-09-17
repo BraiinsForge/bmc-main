@@ -49,6 +49,10 @@ const IP_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const WIRELESS_CONFIG_WAIT_INTERVAL: Duration = Duration::from_secs(1);
 const WIRELESS_CONFIG_GET_ATTEMPTS: u8 = 20;
 const WIRELESS_CONFIG_MIN_SIZE: u64 = 300;
+const WIFI_AP_CHANNEL: u32 = 1;
+// Default beaconing interval in hostapd is 100, but that's too short which leads
+// to clients being disconnected during wifi scanning in APSTA mode.
+const WIFI_AP_BEACON_INTERVAL: u32 = 500;
 
 pub type AsyncUpdate<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
@@ -133,6 +137,15 @@ impl OpenwrtWifiManager {
         uci.wifi_iface_configure(mode, ssid, encryption, password.unwrap_or_default())
             .await?;
 
+        uci.save_changes().await
+    }
+
+    async fn configure_radio_for_ap(&self) -> Result<(), anyhow::Error> {
+        let uci = UciHelper::new(&self.wlan_dev_syspath);
+        uci.wifi_radio_configure_ap_channel(WIFI_AP_CHANNEL).await?;
+        uci.wifi_radio_configure_beacon_int(WIFI_AP_BEACON_INTERVAL)
+            .await?;
+        uci.wifi_radio_configure_ht_mode(uci::HtMode::NoHt).await?;
         uci.save_changes().await
     }
 
@@ -223,6 +236,7 @@ impl OpenwrtWifiManager {
         password: Option<String>,
         encryption: EncryptionType,
     ) -> Result<()> {
+        self.configure_radio_for_ap().await?;
         self.configure_wifi_iface(WifiMode::Ap, ssid, password, encryption)
             .await
     }
