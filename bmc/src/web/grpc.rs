@@ -149,6 +149,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 configuration_service::ConfigurationService::new(
                     self.system_manager,
                     self.sound_controller,
+                    self.config_handle.clone(),
                 ),
             );
 

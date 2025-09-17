@@ -11,6 +11,7 @@ use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
 use tracing::warn;
 
+use super::shared::try_from_number_format;
 use super::{GrpcError, system::into_grpc_timezone};
 use crate::initial_setup::{DeviceSetupError, WifiSetupError};
 use crate::web::grpc::network::{scan_wifi_response, try_into_wifi_network_config};
@@ -170,7 +171,7 @@ impl TryFrom<SettingsRequest> for DeviceSetupConfig {
     }
 }
 
-fn try_from_time_format(
+pub(crate) fn try_from_time_format(
     value: TimeFormat,
 ) -> Result<bmc_shared_time::time::TimeSystem, FieldViolation> {
     match value {
@@ -183,7 +184,7 @@ fn try_from_time_format(
     }
 }
 
-fn try_from_date_time(
+pub(crate) fn try_from_date_time(
     value: DateFormat,
 ) -> Result<bmc_shared_time::time::DateFormat, FieldViolation> {
     match value {
@@ -199,28 +200,5 @@ fn try_from_date_time(
         DateFormat::YyyyMDSlash => Ok(bmc_shared_time::time::DateFormat::YyyyMDSlash),
         DateFormat::YyyyMmDdDot => Ok(bmc_shared_time::time::DateFormat::YyyyMmDdDot),
         DateFormat::YyyyMmDdDash => Ok(bmc_shared_time::time::DateFormat::YyyyMmDdDash),
-    }
-}
-
-fn try_from_number_format(
-    value: NumberFormat,
-) -> Result<bmc_shared_utils::number_format::NumberFormat, FieldViolation> {
-    match value {
-        NumberFormat::Unspecified => Err(FieldViolation::new(
-            "number_format",
-            "number_format cannot be unspecified",
-        )),
-        NumberFormat::SpaceGroupCommaDecimal => {
-            Ok(bmc_shared_utils::number_format::NumberFormat::SpaceGroupCommaDecimal)
-        }
-        NumberFormat::CommaGroupDotDecimal => {
-            Ok(bmc_shared_utils::number_format::NumberFormat::CommaGroupDotDecimal)
-        }
-        NumberFormat::DotGroupCommaDecimal => {
-            Ok(bmc_shared_utils::number_format::NumberFormat::DotGroupCommaDecimal)
-        }
-        NumberFormat::SpaceGroupDotDecimal => {
-            Ok(bmc_shared_utils::number_format::NumberFormat::SpaceGroupDotDecimal)
-        }
     }
 }

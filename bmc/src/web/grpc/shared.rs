@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use bmc_grpc::web::NumberFormat;
 use chrono::NaiveTime;
 use tonic::Status;
 use tonic_types::FieldViolation;
@@ -47,4 +48,27 @@ pub fn parse_hhmm_to_naive_time(input: &str) -> Result<NaiveTime, Status> {
         warn!("Failed to parse Time in format HH:MM, error: {}", e);
         Status::invalid_argument("Invalid time format")
     })
+}
+
+pub(crate) fn try_from_number_format(
+    value: NumberFormat,
+) -> Result<bmc_shared_utils::number_format::NumberFormat, FieldViolation> {
+    match value {
+        NumberFormat::Unspecified => Err(FieldViolation::new(
+            "number_format",
+            "number_format cannot be unspecified",
+        )),
+        NumberFormat::SpaceGroupCommaDecimal => {
+            Ok(bmc_shared_utils::number_format::NumberFormat::SpaceGroupCommaDecimal)
+        }
+        NumberFormat::CommaGroupDotDecimal => {
+            Ok(bmc_shared_utils::number_format::NumberFormat::CommaGroupDotDecimal)
+        }
+        NumberFormat::DotGroupCommaDecimal => {
+            Ok(bmc_shared_utils::number_format::NumberFormat::DotGroupCommaDecimal)
+        }
+        NumberFormat::SpaceGroupDotDecimal => {
+            Ok(bmc_shared_utils::number_format::NumberFormat::SpaceGroupDotDecimal)
+        }
+    }
 }

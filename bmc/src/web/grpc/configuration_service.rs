@@ -1,22 +1,34 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::config::{ConfigHandle, TemperatureUnit};
 use crate::sound::Sounds;
 use crate::system_manager::SystemManager;
 
 use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_grpc::web::{
+    self, GeneralSettingsDataResponse, LedSettingsResponse, ListSoundsResponse, PlaySoundRequest,
+    SetDateFormatRequest, SetFirstDayOfWeekRequest, SetNumberFormatRequest,
+    SetTemperatureUnitRequest, SetTimeFormatRequest, SoundInfo, SoundVolume,
+};
+use bmc_grpc::web::{
     BrightnessInfo, DisplaySettingsResponse, SoundVolumeSettingsResponse, TimeInterval,
     configuration_service_server::ConfigurationService as GrpcConfigurationService,
 };
-use bmc_grpc::web::{ListSoundsResponse, PlaySoundRequest, SoundInfo, SoundVolume};
+use bmc_shared_time::time::{DateFormat, TimeSystem};
+use bmc_shared_utils::number_format::NumberFormat;
 use std::str::FromStr;
+use std::sync::Arc;
 use strum::IntoEnumIterator;
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
+use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
 
-use super::SoundController;
-use super::shared::{naive_time_to_hhmm, parse_hhmm_to_naive_time};
+use super::alarm::{map_weekday_from_proto, map_weekday_to_proto};
+use super::initial_setup::{try_from_date_time, try_from_time_format};
+use super::shared::{naive_time_to_hhmm, parse_hhmm_to_naive_time, try_from_number_format};
+use super::{GrpcError, SoundController};
 
 const API_BRIGHTNESS_MIN: u32 = 0;
 const API_BRIGHTNESS_MAX: u32 = 100;
@@ -29,13 +41,19 @@ const API_SOUND_VOLUME_STEP: u32 = 1;
 pub(crate) struct ConfigurationService<T: DisplayBacklightDriver> {
     system_manager: SystemManager<T>,
     sound_controller: SoundController,
+    config_handle: Arc<RwLock<ConfigHandle>>,
 }
 
 impl<T: DisplayBacklightDriver> ConfigurationService<T> {
-    pub(crate) fn new(system_manager: SystemManager<T>, sound_controller: SoundController) -> Self {
+    pub(crate) fn new(
+        system_manager: SystemManager<T>,
+        sound_controller: SoundController,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+    ) -> Self {
         Self {
             system_manager,
             sound_controller,
+            config_handle,
         }
     }
 }
@@ -240,6 +258,207 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         Ok(Response::new(()))
     }
+
+    async fn get_general_settings_data(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<GeneralSettingsDataResponse>, Status> {
+        let (localization, data_collection) = {
+            let config = self.config_handle.read().await;
+            let localization = config.localization_config();
+
+            let data_collection = config.data_collection();
+            (localization, data_collection)
+        };
+
+        Ok(Response::new(GeneralSettingsDataResponse {
+            data_collection: Some(data_collection),
+            time_format: map_time_system_to_proto(&localization.time_system).into(),
+            date_format: map_date_format_to_proto(localization.date_format).into(),
+            number_format: map_number_format_to_proto(&localization.number_format).into(),
+            first_day_of_week: map_weekday_to_proto(localization.first_day_of_week).into(),
+            temperature_unit: map_temperature_unit_to_proto(&localization.temperature_unit).into(),
+            show_seconds_status_bar: Some(localization.show_seconds_in_status_bar),
+        }))
+    }
+
+    async fn set_time_format(
+        &self,
+        request: Request<SetTimeFormatRequest>,
+    ) -> Result<Response<()>, Status> {
+        let time_system = try_from_time_format(request.into_inner().time_format()).map_err(
+            |field_violation| {
+                Status::with_error_details(
+                    Code::InvalidArgument,
+                    GrpcError::BadRequest.to_string(),
+                    ErrorDetails::with_bad_request([field_violation]),
+                )
+            },
+        )?;
+
+        let mut config = self.config_handle.write().await;
+
+        config.set_time_system(time_system);
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save time_system, error {e}");
+            Status::internal("Failed to save time_system")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn set_number_format(
+        &self,
+        request: Request<SetNumberFormatRequest>,
+    ) -> Result<Response<()>, Status> {
+        let number_format = try_from_number_format(request.into_inner().number_format()).map_err(
+            |field_violation| {
+                Status::with_error_details(
+                    Code::InvalidArgument,
+                    GrpcError::BadRequest.to_string(),
+                    ErrorDetails::with_bad_request([field_violation]),
+                )
+            },
+        )?;
+
+        let mut config = self.config_handle.write().await;
+        config.set_number_format(number_format);
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save number_format, error {e}");
+            Status::internal("Failed to save number_format")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn set_date_format(
+        &self,
+        request: Request<SetDateFormatRequest>,
+    ) -> Result<Response<()>, Status> {
+        let date_format =
+            try_from_date_time(request.into_inner().date_format()).map_err(|field_violation| {
+                Status::with_error_details(
+                    Code::InvalidArgument,
+                    GrpcError::BadRequest.to_string(),
+                    ErrorDetails::with_bad_request([field_violation]),
+                )
+            })?;
+
+        let mut config = self.config_handle.write().await;
+        config.set_date_format(date_format);
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save date_format, error {e}");
+            Status::internal("Failed to save date_format")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn set_data_collection(&self, request: Request<bool>) -> Result<Response<()>, Status> {
+        let mut config = self.config_handle.write().await;
+        config.set_data_collection(request.into_inner());
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save data_collection, error {e}");
+            Status::internal("Failed to save data_collection")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn set_first_day_of_week(
+        &self,
+        request: Request<SetFirstDayOfWeekRequest>,
+    ) -> Result<Response<()>, Status> {
+        let weekday =
+            map_weekday_from_proto(request.into_inner().first_day_of_week()).ok_or_else(|| {
+                Status::with_error_details(
+                    tonic::Code::InvalidArgument,
+                    GrpcError::BadRequest.to_string(),
+                    ErrorDetails::with_bad_request_violation(
+                        "first_day_of_week",
+                        "value cannot be unspecified",
+                    ),
+                )
+            })?;
+
+        let mut config = self.config_handle.write().await;
+        config.set_first_day_of_week(weekday);
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save first_day_of_week, error {e}");
+            Status::internal("Failed to save first_day_of_week")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn set_temperature_unit(
+        &self,
+        request: Request<SetTemperatureUnitRequest>,
+    ) -> Result<Response<()>, Status> {
+        let weekday = map_temperature_unit_from_proto(request.into_inner().temperature_unit())
+            .ok_or_else(|| {
+                Status::with_error_details(
+                    tonic::Code::InvalidArgument,
+                    GrpcError::BadRequest.to_string(),
+                    ErrorDetails::with_bad_request_violation(
+                        "temperature_unit",
+                        "value cannot be unspecified",
+                    ),
+                )
+            })?;
+
+        let mut config = self.config_handle.write().await;
+        config.set_temperature_unit(weekday);
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save temperature_unit, error {e}");
+            Status::internal("Failed to save temperature_unit")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn show_seconds_in_status_bar(
+        &self,
+        request: Request<bool>,
+    ) -> Result<Response<()>, Status> {
+        let mut config = self.config_handle.write().await;
+        config.show_seconds_in_status_bar(request.into_inner());
+
+        config.save().await.map_err(|e| {
+            error!("Failed to show/hide seconds in status bar, error {e}");
+            Status::internal("Failed to show/hide seconds in status bar")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn get_led_settings(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<LedSettingsResponse>, Status> {
+        let led_enabled = self.config_handle.read().await.led_enabled();
+
+        Ok(Response::new(LedSettingsResponse { led_enabled }))
+    }
+
+    async fn set_led_enabled(&self, request: Request<bool>) -> Result<Response<()>, Status> {
+        let mut config = self.config_handle.write().await;
+        config.set_led_enabled(request.into_inner());
+
+        // TODO: enable disable led controller
+        config.save().await.map_err(|e| {
+            error!("Failed to save led enabled, error {e}");
+            Status::internal("Failed to save led_enabled")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
 }
 
 fn validate_brightness(value: u32) -> Result<(), Status> {
@@ -266,5 +485,49 @@ impl From<Sounds> for SoundInfo {
             id: value.to_string(),
             name: value.name().to_owned(),
         }
+    }
+}
+
+fn map_time_system_to_proto(value: &TimeSystem) -> web::TimeFormat {
+    match value {
+        TimeSystem::Hour12 => web::TimeFormat::TimeFormat12Hour,
+        TimeSystem::Hour24 => web::TimeFormat::TimeFormat24Hour,
+    }
+}
+
+fn map_date_format_to_proto(value: DateFormat) -> web::DateFormat {
+    match value {
+        DateFormat::DdMmYyyyDot => web::DateFormat::DdMmYyyyDot,
+        DateFormat::DdMmYyyySlash => web::DateFormat::DdMmYyyySlash,
+        DateFormat::DMYyyySlash => web::DateFormat::DMYyyySlash,
+        DateFormat::MDYyyySlash => web::DateFormat::MDYyyySlash,
+        DateFormat::DdMmYyyyDash => web::DateFormat::DdMmYyyyDash,
+        DateFormat::YyyyMDSlash => web::DateFormat::YyyyMDSlash,
+        DateFormat::YyyyMmDdDot => web::DateFormat::YyyyMmDdDot,
+        DateFormat::YyyyMmDdDash => web::DateFormat::YyyyMmDdDash,
+    }
+}
+
+fn map_number_format_to_proto(value: &NumberFormat) -> web::NumberFormat {
+    match value {
+        NumberFormat::SpaceGroupCommaDecimal => web::NumberFormat::SpaceGroupCommaDecimal,
+        NumberFormat::CommaGroupDotDecimal => web::NumberFormat::CommaGroupDotDecimal,
+        NumberFormat::DotGroupCommaDecimal => web::NumberFormat::DotGroupCommaDecimal,
+        NumberFormat::SpaceGroupDotDecimal => web::NumberFormat::SpaceGroupDotDecimal,
+    }
+}
+
+fn map_temperature_unit_to_proto(value: &TemperatureUnit) -> web::TemperatureUnit {
+    match value {
+        TemperatureUnit::Celsius => web::TemperatureUnit::Celsius,
+        TemperatureUnit::Fahrenheit => web::TemperatureUnit::Fahrenheit,
+    }
+}
+
+fn map_temperature_unit_from_proto(value: web::TemperatureUnit) -> Option<TemperatureUnit> {
+    match value {
+        web::TemperatureUnit::Unspecified => None,
+        web::TemperatureUnit::Celsius => Some(TemperatureUnit::Celsius),
+        web::TemperatureUnit::Fahrenheit => Some(TemperatureUnit::Fahrenheit),
     }
 }

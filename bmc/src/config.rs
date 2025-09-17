@@ -10,7 +10,7 @@ use bmc_display::data::{
     TickerBtcWidget, Widget, WidgetKind, WidgetPosition, WidgetSize, deserialize_scenes,
     serialize_scenes,
 };
-use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
+use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
 use chrono::{Local, NaiveTime};
 use indexmap::{IndexMap, indexmap};
@@ -43,6 +43,8 @@ pub struct Config {
     sound_volume_pct: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     alarms: Option<Vec<AlarmData>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    led_enabled: Option<bool>,
 }
 
 impl Config {
@@ -70,16 +72,34 @@ impl Config {
         self.localization.get_or_insert_default().date_format = date_format;
     }
 
-    #[expect(
-        dead_code,
-        reason = "data_collection will be used in system settings page"
-    )]
     pub fn data_collection(&self) -> bool {
         self.data_collection.unwrap_or_default()
     }
 
     pub fn set_data_collection(&mut self, data_collection: bool) {
         self.data_collection = Some(data_collection);
+    }
+
+    pub fn set_first_day_of_week(&mut self, day: WeekDay) {
+        self.localization.get_or_insert_default().first_day_of_week = day;
+    }
+
+    pub fn set_temperature_unit(&mut self, temperature_unit: TemperatureUnit) {
+        self.localization.get_or_insert_default().temperature_unit = temperature_unit;
+    }
+
+    pub fn show_seconds_in_status_bar(&mut self, show: bool) {
+        self.localization
+            .get_or_insert_default()
+            .show_seconds_in_status_bar = show;
+    }
+
+    pub fn led_enabled(&self) -> bool {
+        self.led_enabled.unwrap_or(true)
+    }
+
+    pub fn set_led_enabled(&mut self, led_enabled: bool) {
+        self.led_enabled = Some(led_enabled);
     }
 
     fn validate(&self) -> Result<()> {
@@ -237,6 +257,7 @@ impl Default for Config {
             night_mode: None,
             sound_volume_pct: None,
             alarms: None,
+            led_enabled: None,
         }
     }
 }
@@ -246,6 +267,9 @@ pub struct LocalizationConfig {
     pub time_system: TimeSystem,
     pub number_format: NumberFormat,
     pub date_format: DateFormat,
+    pub first_day_of_week: WeekDay,
+    pub show_seconds_in_status_bar: bool,
+    pub temperature_unit: TemperatureUnit,
 }
 
 #[derive(Clone, Debug)]
@@ -469,4 +493,11 @@ impl Default for NightModeConfigData {
             sound_volume_pct: None,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum TemperatureUnit {
+    #[default]
+    Celsius,
+    Fahrenheit,
 }
