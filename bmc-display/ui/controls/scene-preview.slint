@@ -8,27 +8,4 @@ export component ScenePreview inherits Rectangle {
         scene_id: root.scene.id;
         widgets: root.scene.widgets;
     }
-
-    highlight := Rectangle {
-        border-width: 2px;
-        border-color: colors[current];
-
-        animate border-color { duration: 200ms; }
-
-        property <[color]> colors: [Colors.yellow, Colors.red];
-        property <int> current;
-
-        public function toggle() {
-            current = Math.mod(current + 1, colors.length);
-        }
-    }
-
-    Timer {
-        running: true;
-        interval: 500ms;
-
-        triggered() => {
-            highlight.toggle();
-        }
-    }
 }
