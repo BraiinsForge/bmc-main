@@ -6,11 +6,13 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use bmc_display::data::{
-    Scene, SceneCycling, SceneId, SceneKind, WidgetSize, deserialize_scenes, serialize_scenes,
+    BlockHeightWidget, ClockStyle, ClockWidget, Scene, SceneCycling, SceneId, SceneKind,
+    TickerBtcWidget, Widget, WidgetKind, WidgetPosition, WidgetSize, deserialize_scenes,
+    serialize_scenes,
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
 use chrono::{Local, NaiveTime};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, indexmap};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
@@ -180,8 +182,53 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let clock_fullscreen_scene = Scene::fullscreen(WidgetKind::Clock(ClockWidget::default()));
+        let ticker_btc_fullscreen_scene =
+            Scene::fullscreen(WidgetKind::TickerBtc(TickerBtcWidget::default()));
+
+        let combined_scene = {
+            let mut scene = Scene::combined();
+
+            let clock_widget = Widget::new(
+                WidgetKind::Clock({
+                    ClockWidget {
+                        clock_style: ClockStyle::AnalogRect,
+                        ..ClockWidget::default()
+                    }
+                }),
+                WidgetPosition { row: 0, col: 0 },
+                WidgetSize::Medium,
+            );
+
+            let block_height_widget = Widget::new(
+                WidgetKind::BlockHeight(BlockHeightWidget::default()),
+                WidgetPosition { row: 1, col: 0 },
+                WidgetSize::Medium,
+            );
+
+            let ticker_btc_widget = Widget::new(
+                WidgetKind::TickerBtc(TickerBtcWidget::default()),
+                WidgetPosition { row: 0, col: 2 },
+                WidgetSize::Large,
+            );
+
+            scene.widgets = indexmap! {
+                clock_widget.id.clone() => clock_widget,
+                block_height_widget.id.clone() => block_height_widget,
+                ticker_btc_widget.id.clone() => ticker_btc_widget,
+            };
+
+            scene
+        };
+
+        let scenes = indexmap! {
+            clock_fullscreen_scene.id.clone() => clock_fullscreen_scene,
+            ticker_btc_fullscreen_scene.id.clone() => ticker_btc_fullscreen_scene,
+            combined_scene.id.clone() => combined_scene,
+        };
+
         Self {
-            scenes: IndexMap::new(),
+            scenes,
             scene_cycling: None,
             localization: None,
             data_collection: None,
