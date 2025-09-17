@@ -17,11 +17,17 @@ const sounds: pb.SoundInfo[] = get.arrayOf<pb.SoundInfo>(5, () =>
 const appContextValue: AppContextType = {
     ...getAppContextDefault(),
     device: {
-        async playSound(sound: pb.SoundInfo, signal: AbortSignal): Promise<void> {
-            console.log('play', sound, signal);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            console.log('play done', sound, signal);
-            return Promise.resolve();
+        sound: {
+            currentlyPlaying: null,
+            async play(sound: pb.SoundInfo, signal: AbortSignal): Promise<void> {
+                console.log('play', sound, signal);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                console.log('play done', sound, signal);
+                return Promise.resolve();
+            },
+            stop(): void {
+                console.log('stop');
+            },
         },
     },
 };

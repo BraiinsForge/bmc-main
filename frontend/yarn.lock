@@ -1927,9 +1927,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@rsbuild/core@npm:1.5.8":
-  version: 1.5.8
-  resolution: "@rsbuild/core@npm:1.5.8"
+"@rsbuild/core@npm:1.5.9":
+  version: 1.5.9
+  resolution: "@rsbuild/core@npm:1.5.9"
   dependencies:
     "@rspack/core": "npm:1.5.5"
     "@rspack/lite-tapable": "npm:~1.0.1"
@@ -1938,7 +1938,7 @@ __metadata:
     jiti: "npm:^2.5.1"
   bin:
     rsbuild: bin/rsbuild.js
-  checksum: 10c0/b76083caeccd7d0a4b41dfab46acf8e4341d4853a6f6a20123986cdc64c9cc99cff3db672c2db37c0ef9c2dba42a10977df80b67459646a9998a8e6b040e2857
+  checksum: 10c0/b4a94ca36a97dfbf77bfbcdd30984236658afab200928a27c6b2d2d8ff8a21737726b20feb9c4ef97d9c6e3854762dfe71703d7f023b842e84a0fc48344b7922
   languageName: node
   linkType: hard
 
@@ -2830,12 +2830,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:24.5.1":
-  version: 24.5.1
-  resolution: "@types/node@npm:24.5.1"
+"@types/node@npm:24.5.2":
+  version: 24.5.2
+  resolution: "@types/node@npm:24.5.2"
   dependencies:
     undici-types: "npm:~7.12.0"
-  checksum: 10c0/5f0cb038be789b58170e616452ba1f8ebb85bf2fbce58a7e32b1eb08391f64f5e31a9cdbccefbfcd9e6d73b66b564b5e037a1d678ab20213559a32e1d7b6ce17
+  checksum: 10c0/96baaca6564d39c6f7f6eddd73ce41e2a7594ef37225cd52df3be36fad31712af8ae178387a72d0b80f2e2799e7fd30c014bc0ae9eb9f962d9079b691be00c48
   languageName: node
   linkType: hard
 
@@ -3222,7 +3222,7 @@ __metadata:
     "@formatjs/intl-pluralrules": "npm:5.4.4"
     "@formatjs/intl-relativetimeformat": "npm:11.4.11"
     "@react-hook/resize-observer": "npm:2.0.2"
-    "@rsbuild/core": "npm:1.5.8"
+    "@rsbuild/core": "npm:1.5.9"
     "@rsbuild/plugin-react": "npm:1.4.0"
     "@rsbuild/plugin-sass": "npm:1.4.0"
     "@rsbuild/plugin-svgr": "npm:1.2.2"
@@ -3239,7 +3239,7 @@ __metadata:
     "@types/js-cookie": "npm:3.0.6"
     "@types/knuth-shuffle": "npm:1.0.2"
     "@types/markdown-it": "npm:14.1.2"
-    "@types/node": "npm:24.5.1"
+    "@types/node": "npm:24.5.2"
     "@types/prismjs": "npm:1.26.5"
     "@types/react": "npm:19.1.13"
     "@types/react-dom": "npm:19.1.9"
@@ -3254,7 +3254,7 @@ __metadata:
     d3-format: "npm:3.1.0"
     d3-time-format: "npm:4.1.0"
     date-fns: "npm:4.1.0"
-    dompurify: "npm:3.2.6"
+    dompurify: "npm:3.2.7"
     es-toolkit: "npm:1.39.10"
     fast-check: "npm:4.3.0"
     gsap: "npm:3.13.0"
@@ -4082,15 +4082,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"dompurify@npm:3.2.6":
-  version: 3.2.6
-  resolution: "dompurify@npm:3.2.6"
+"dompurify@npm:3.2.7":
+  version: 3.2.7
+  resolution: "dompurify@npm:3.2.7"
   dependencies:
     "@types/trusted-types": "npm:^2.0.7"
   dependenciesMeta:
     "@types/trusted-types":
       optional: true
-  checksum: 10c0/c8f8e5b0879a0d93c84a2e5e78649a47d0c057ed0f7850ca3d573d2cca64b84fb1ff85bd4b20980ade69c4e5b80ae73011340f1c2ff375c7ef98bb8268e1d13a
+  checksum: 10c0/d41bb31a72f1acdf9b84c56723c549924b05d92a39a15bd8c40bec9007ff80d5fccf844bc53ee12af5b69044f9a7ce24a1e71c267a4f49cf38711379ed8c1363
   languageName: node
   linkType: hard
 

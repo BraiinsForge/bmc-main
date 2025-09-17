@@ -32,14 +32,34 @@ export interface Props extends AlarmFormProps {
 interface State {
     isPlaying: boolean;
 }
-const getInitialState = (): State => ({ isPlaying: false });
 
 const $ = getID('alarm-form').get;
 class View extends Component<Props, State> {
     static contextType = AppContext;
     declare context: AppContextType;
 
-    readonly state = getInitialState();
+    constructor(props: Props, context: AppContextType) {
+        super(props);
+        const { currentlyPlaying } = context.device.sound;
+        this.state = { isPlaying: currentlyPlaying?.id === props.sound.value };
+    }
+    componentDidUpdate(prevProps: Props) {
+        const { sound } = this.props;
+        const { isPlaying } = this.state;
+        const { currentlyPlaying } = this.context.device.sound;
+
+        console.log(JSON.stringify({ currentlyPlaying, sound: sound.value, isPlaying }, null, 4));
+
+        // Something outside played a sound, but we are not marked as playing
+        if (currentlyPlaying?.id === sound.value && !isPlaying) this.setState({ isPlaying: true });
+        // We think we are playing a sound, but context says otherwise
+        else if (isPlaying && !currentlyPlaying) this.setState({ isPlaying: false });
+        // Sound changed and we are playing → switch
+        else if (sound.value !== prevProps.sound.value && isPlaying) this.#playSelectedSound();
+    }
+    componentWillUnmount() {
+        pb.abort.all(this);
+    }
 
     #toggleDay = (day: pb.Weekday) => {
         const { value, onChange } = this.props.repeat;
@@ -50,18 +70,14 @@ class View extends Component<Props, State> {
     };
 
     private abortPlaying = pb.abort.get();
-    #onSoundPreviewClick = async (): Promise<void> => {
+    #playSelectedSound = async (): Promise<void> => {
         const { notify, device } = this.context;
         const { sound, intl } = this.props;
-        const { isPlaying } = this.state;
 
         // In both play and stop case, we need to
         // first abort previous play request.
+        // device.sound.stop();
         const { signal } = this.abortPlaying.replace();
-
-        // If we were already playing,
-        // signal that we stopped and exit early.
-        if (isPlaying) return this.setState({ isPlaying: false });
 
         // If we don't have a sound selected,
         // there is nothing to do from here on.
@@ -73,7 +89,7 @@ class View extends Component<Props, State> {
         this.setState({ isPlaying: true });
 
         try {
-            await device.playSound(selectedSoundObject, signal);
+            await device.sound.play(selectedSoundObject, signal);
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to play the sound!' });
@@ -83,7 +99,12 @@ class View extends Component<Props, State> {
 
         this.setState({ isPlaying: false });
     };
+    #stopPlaying = () => this.abortPlaying.replace();
 
+    #alarmSoundChange = (x: { selectedItem: null | pb.SoundInfo }): void => {
+        const { sound } = this.props;
+        sound.onChange(x.selectedItem?.id ?? null);
+    };
     #alarmSoundToString = (value: null | pb.SoundInfo): string => value?.name ?? '--';
     #alarmSoundToElement = (value: pb.SoundInfo) => <SoundOption sound={value} />;
 
@@ -145,7 +166,7 @@ class View extends Component<Props, State> {
                             label={formatMessage({ defaultMessage: 'Select a sound…' })}
                             items={sound.options}
                             selectedItem={sound.options.find(x => x.id === sound.value)}
-                            onChange={x => sound.onChange(x.selectedItem?.id ?? null)}
+                            onChange={this.#alarmSoundChange}
                             itemToString={this.#alarmSoundToString}
                             itemToElement={this.#alarmSoundToElement}
                         />
@@ -154,7 +175,7 @@ class View extends Component<Props, State> {
                             kind="secondary"
                             size="md"
                             children={<SoundPlayIcon isPlaying={isPlaying} />}
-                            onClick={this.#onSoundPreviewClick}
+                            onClick={isPlaying ? this.#stopPlaying : this.#playSelectedSound}
                             disabled={!sound.value}
                         />
                     </div>

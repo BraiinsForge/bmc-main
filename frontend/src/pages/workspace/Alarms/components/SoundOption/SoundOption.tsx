@@ -28,13 +28,27 @@ interface Props extends SoundOptionProps {
 interface State {
     isPlaying: boolean;
 }
-const getInitialState = (): State => ({ isPlaying: false });
 
 class View extends Component<Props, State> {
     static contextType = AppContext;
     declare context: AppContextType;
 
-    readonly state = getInitialState();
+    constructor(props: Props, context: AppContextType) {
+        super(props);
+
+        const { currentlyPlaying } = context.device.sound;
+        this.state = { isPlaying: currentlyPlaying?.id === props.sound.id };
+    }
+    componentDidUpdate() {
+        const { sound } = this.props;
+        const { isPlaying } = this.state;
+        const { currentlyPlaying } = this.context.device.sound;
+
+        // Something outside played a sound, but we are not marked as playing
+        if (currentlyPlaying?.id === sound.id && !isPlaying) this.setState({ isPlaying: true });
+        // We think we are playing a sound, but context says otherwise
+        else if (isPlaying && !currentlyPlaying) this.setState({ isPlaying: false });
+    }
     componentWillUnmount = () => abort.all(this);
 
     private abortPlaying = abort.get();
@@ -46,7 +60,7 @@ class View extends Component<Props, State> {
 
         try {
             await setState(this, { isPlaying: true });
-            await device.playSound(sound, signal);
+            await device.sound.play(sound, signal);
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: `Failed to play the sound ${sound.name}` });

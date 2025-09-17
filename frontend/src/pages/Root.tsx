@@ -2,10 +2,13 @@ import { Component } from 'react';
 import { debounce } from 'es-toolkit';
 import { Outlet, useNavigate, type NavigateFunction, useLocation } from 'react-router';
 
+// Libs
+import { setState } from '@/lib/react';
+
 // App
+import * as pb from '@/proto';
 import { URLS } from '@/constants';
 import { useStore } from '@/store';
-import * as pb from '@/proto';
 import AppContext, {
     getAppContextDefault,
     type AppContextType,
@@ -41,15 +44,44 @@ interface Notification {
 interface State {
     notifications: Notification[];
     confirmation: null | Confirmation;
+    appContextValue: AppContextType;
 }
-const getInitialState = (): State => ({
-    notifications: [],
-    confirmation: null,
-});
 
 class View extends Component<Props, State> {
-    readonly state = getInitialState();
+    constructor(props: Props) {
+        super(props);
+        this.state = {
+            notifications: [],
+            confirmation: null,
+            appContextValue: Object.assign({}, getAppContextDefault(), {
+                notify: Object.assign(
+                    ((type, message, extra) => this.#notify(type, message, extra)) as NotifyFunction,
+                    {
+                        clear: this.#notificationClearExternal,
+                    },
+                ) as AppContextType['notify'],
+                confirm: (conf => {
+                    return this.#confirm({
+                        size: conf.size,
+                        danger: conf.danger,
 
+                        title: conf.title,
+                        message: conf.message,
+
+                        confirmLabel: conf.confirmLabel,
+                        cancelLabel: conf.cancelLabel,
+                    });
+                }) as AppContextType['confirm'],
+                device: {
+                    sound: {
+                        currentlyPlaying: null,
+                        play: this.#soundPlay,
+                        stop: this.#soundStop,
+                    },
+                },
+            } satisfies AppContextType),
+        };
+    }
     componentDidMount = () => this.#mount();
     componentDidUpdate(prevProps: Readonly<Props>) {
         const { isRootPath, isAuthenticated } = this.props;
@@ -182,45 +214,52 @@ class View extends Component<Props, State> {
         }
     };
 
-    private abortPlaySound = pb.abort.get();
-    #playSound = async (sound: pb.SoundInfo, signal: AbortSignal): Promise<void> => {
-        const { signal: abortSignal } = this.abortPlaySound.replace().attach(signal);
+    private soundPlayAbort = pb.abort.get();
+    #soundSetPlaying = (sound: null | pb.SoundInfo): Promise<void> => {
+        return setState(this, s => ({
+            appContextValue: {
+                ...s.appContextValue,
+                device: {
+                    ...s.appContextValue.device,
+                    sound: {
+                        ...s.appContextValue.device.sound,
+                        currentlyPlaying: sound,
+                    },
+                },
+            },
+        }));
+    };
+    #soundPlay = async (sound: pb.SoundInfo, signal: AbortSignal): Promise<void> => {
+        const { signal: abortSignal } = this.soundPlayAbort.replace().attach(signal);
+        await this.#soundSetPlaying(sound);
 
         try {
             await pb.rpc.config.playSound({ soundId: sound.id }, { signal: abortSignal });
         } catch ($) {
-            if (pb.abort.is($)) {
-                console.log('Aborted sound playback', sound);
-                return;
-            }
+            // Abort error is swallowed here, rest is propagated down to the caller
+            if (pb.abort.is($)) return console.log('Aborted sound playback', sound);
             throw $;
+        } finally {
+            /**
+             * To prevent a race condition in setting the currently playing sound,
+             * we have to check whether we are reseting a known state that we have set.
+             *
+             * This is because the finally block runs asynchronously
+             * AFTER the new triggers the abort signal and save the sound info.
+             */
+            const { currentlyPlaying } = this.state.appContextValue.device.sound;
+            if (currentlyPlaying?.id === sound.id) this.#soundSetPlaying(null);
         }
     };
-
-    #appContextValue = Object.assign({}, getAppContextDefault(), {
-        notify: Object.assign(((type, message, extra) => this.#notify(type, message, extra)) as NotifyFunction, {
-            clear: this.#notificationClearExternal,
-        }) as AppContextType['notify'],
-        confirm: (conf => {
-            return this.#confirm({
-                size: conf.size,
-                danger: conf.danger,
-
-                title: conf.title,
-                message: conf.message,
-
-                confirmLabel: conf.confirmLabel,
-                cancelLabel: conf.cancelLabel,
-            });
-        }) as AppContextType['confirm'],
-        device: { playSound: this.#playSound },
-    } satisfies AppContextType);
+    #soundStop = async (): Promise<void> => {
+        this.soundPlayAbort.replace();
+    };
 
     render() {
-        const { notifications } = this.state;
+        const { notifications, appContextValue } = this.state;
 
         return (
-            <AppContext value={this.#appContextValue}>
+            <AppContext value={appContextValue}>
                 <Notifications
                     top={12}
                     items={notifications.map(x => x.data)}

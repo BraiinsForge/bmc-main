@@ -26,7 +26,11 @@ export interface AppContextType {
     notify: Notify;
     confirm(d: ConfirmationDescriptor): Promise<boolean>;
     device: {
-        playSound(sound: pb.SoundInfo, signal: AbortSignal): Promise<void>;
+        sound: {
+            play(sound: pb.SoundInfo, signal: AbortSignal): Promise<void>;
+            stop(): void;
+            currentlyPlaying: null | pb.SoundInfo;
+        };
     };
 }
 
@@ -34,8 +38,12 @@ export const getAppContextDefault = (): AppContextType => ({
     notify: Object.assign(() => {}, { clear() {} }),
     confirm: () => Promise.resolve(false),
     device: {
-        playSound(): Promise<void> {
-            return Promise.reject(new Error('Not implemented'));
+        sound: {
+            currentlyPlaying: null,
+            stop() {},
+            play(): Promise<void> {
+                return Promise.reject(new Error('Not implemented'));
+            },
         },
     },
 });
