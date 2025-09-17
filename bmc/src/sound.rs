@@ -34,7 +34,7 @@ impl SoundController {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_sound_volume(value);
 
-        config_handle.sync_to_storage().await?;
+        config_handle.save().await?;
 
         Ok(())
     }

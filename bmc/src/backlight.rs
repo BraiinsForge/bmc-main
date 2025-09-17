@@ -32,7 +32,7 @@ impl<T: DisplayBacklightDriver> DisplayBacklightController<T> {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_brightness(value_pct);
 
-        config_handle.sync_to_storage().await?;
+        config_handle.save().await?;
 
         Ok(())
     }

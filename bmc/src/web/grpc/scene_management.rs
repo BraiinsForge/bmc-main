@@ -131,7 +131,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                     .insert(new_scene_id.clone(), new_scene.clone());
                 debug_assert!(replaced_scene.is_none());
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }
@@ -172,7 +172,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                     .insert(new_scene_id.clone(), new_scene.clone());
                 debug_assert!(replaced_scene.is_none());
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }
@@ -241,7 +241,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                 scene.enabled = enabled;
                 scene.cycle_duration = cycle_duration;
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }
@@ -318,7 +318,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                 }
                 temp_config.scenes.move_index(from_index, to_index);
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }
@@ -382,7 +382,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                 );
                 debug_assert!(replaced_scene.is_none());
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }
@@ -454,7 +454,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                     .shift_remove(&id)
                     .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }
@@ -638,7 +638,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
 
                 let new_widget_id = new_widget.id.clone();
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }
@@ -730,7 +730,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                         }
                     })?;
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }
@@ -807,7 +807,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                     }
                 })?;
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }
@@ -874,7 +874,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
 
                 temp_config.set_scene_cycling(scene_cycling.clone());
 
-                if let Err(err) = temp_config.sync_to_storage().await {
+                if let Err(err) = temp_config.save().await {
                     error!("Cannot save config: {}", err);
                     return Err(Status::internal("Failed to save configuration"));
                 }

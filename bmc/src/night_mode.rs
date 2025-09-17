@@ -76,7 +76,7 @@ impl NightModeController {
     pub(crate) async fn set_enabled(&self, enabled: bool) -> anyhow::Result<()> {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_enabled(enabled);
-        config_handle.sync_to_storage().await?;
+        config_handle.save().await?;
 
         let night_mode = config_handle.night_mode();
         drop(config_handle);
@@ -93,7 +93,7 @@ impl NightModeController {
     pub(crate) async fn set_interval(&self, from: NaiveTime, to: NaiveTime) -> anyhow::Result<()> {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_interval(from, to);
-        config_handle.sync_to_storage().await?;
+        config_handle.save().await?;
 
         let night_mode = config_handle.night_mode();
         drop(config_handle);
@@ -110,7 +110,7 @@ impl NightModeController {
     pub(crate) async fn set_brightness(&self, value_pct: u8) -> anyhow::Result<()> {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_brightness(value_pct);
-        config_handle.sync_to_storage().await?;
+        config_handle.save().await?;
 
         Ok(())
     }
@@ -118,7 +118,7 @@ impl NightModeController {
     pub(crate) async fn set_sound_volume(&self, sound_volume_pct: u8) -> anyhow::Result<()> {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_sound_volume(sound_volume_pct);
-        config_handle.sync_to_storage().await?;
+        config_handle.save().await?;
 
         Ok(())
     }

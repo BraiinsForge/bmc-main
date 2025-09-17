@@ -575,7 +575,7 @@ impl AlarmController {
 
         temp_config.add_alarm(alarm_data);
 
-        if let Err(e) = temp_config.sync_to_storage().await {
+        if let Err(e) = temp_config.save().await {
             warn!("Failed to store alarm, err {e}");
 
             _ = self
@@ -633,7 +633,7 @@ impl AlarmController {
 
         temp_config.set_alarm(alarm_data);
 
-        if let Err(e) = temp_config.sync_to_storage().await {
+        if let Err(e) = temp_config.save().await {
             warn!("Failed to store alarm, err {e}");
 
             _ = self
@@ -665,7 +665,7 @@ impl AlarmController {
 
         temp_config.remove_alarm(&alarm_id);
 
-        temp_config.sync_to_storage().await.map_err(|e| {
+        temp_config.save().await.map_err(|e| {
             warn!("Failed to store alarm, err {e}");
             AlarmError::SyncToStorage
         })?;
@@ -711,7 +711,7 @@ impl AlarmController {
 
         temp_config.set_alarm(alarm_data);
 
-        if let Err(e) = temp_config.sync_to_storage().await {
+        if let Err(e) = temp_config.save().await {
             warn!("Failed to store alarm, err {e}");
 
             _ = self

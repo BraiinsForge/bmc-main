@@ -160,7 +160,7 @@ impl<T: BmcManager> InitialSetup<T> {
         config_guard.set_time_system(config.time_system);
         config_guard.set_data_collection(config.data_collection);
         config_guard
-            .sync_to_storage()
+            .save()
             .await
             .map_err(DeviceSetupError::SyncConfigData)?;
 

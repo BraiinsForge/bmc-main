@@ -290,7 +290,7 @@ impl ConfigHandle {
         }
     }
 
-    pub async fn sync_to_storage(&mut self) -> Result<()> {
+    pub async fn save(&mut self) -> Result<()> {
         self.config.save(&self.path).await
     }
 
