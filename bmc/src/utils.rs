@@ -22,10 +22,13 @@ pub async fn get_modified_from_path(path: &Path) -> Option<SystemTime> {
         .ok()
 }
 
-pub async fn replace_file(path: &Path, data: &[u8]) -> Result<Option<SystemTime>, std::io::Error> {
+pub async fn replace_file(
+    path: impl AsRef<Path>,
+    data: &[u8],
+) -> Result<Option<SystemTime>, std::io::Error> {
     // at first, store data into temporary file and then move it to the final path
     // this prevents interference with other external processes
-    let mut tmp_path = PathBuf::from(path);
+    let mut tmp_path = PathBuf::from(path.as_ref());
     tmp_path.set_extension(TMP_FILE_EXTENSION);
     {
         let mut file = fs::File::create(&tmp_path).await?;

@@ -86,7 +86,7 @@ where
             config.default_volume_pct,
             config.default_night_mode_volume_pct,
         )
-        .await?;
+        .await;
 
         let display_controller = display_driver.display_controller.clone();
         display_controller.set_scenes(config_handle.scenes.clone());

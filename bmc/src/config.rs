@@ -14,14 +14,16 @@ use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
+use tracing::warn;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     #[serde(
         serialize_with = "serialize_scenes",
-        deserialize_with = "deserialize_scenes"
+        deserialize_with = "deserialize_scenes",
+        default
     )]
     pub scenes: IndexMap<SceneId, Scene>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -150,6 +152,45 @@ impl Config {
 
         Ok(())
     }
+
+    async fn load(path: impl AsRef<Path>) -> Result<Self> {
+        let config_data = fs::read_to_string(path)
+            .await
+            .context("Failed to read config file")?;
+
+        let config: Self =
+            serde_json::from_str(config_data.as_str()).context("Failed to deserialize config")?;
+
+        config.validate().context("Config validation failed")?;
+
+        Ok(config)
+    }
+
+    async fn save(&mut self, path: impl AsRef<Path>) -> Result<()> {
+        let config_data =
+            serde_json::to_string_pretty(&self).context("Failed to serialize config")?;
+
+        replace_file(path, config_data.as_bytes())
+            .await
+            .context("Failed to replace config file")?;
+
+        Ok(())
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            scenes: IndexMap::new(),
+            scene_cycling: None,
+            localization: None,
+            data_collection: None,
+            brightness_pct: None,
+            night_mode: None,
+            sound_volume_pct: None,
+            alarms: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -176,27 +217,34 @@ impl ConfigHandle {
         default_night_mode_brightness_pct: u8,
         default_sound_volume_pct: u8,
         default_night_mode_sound_volume_pct: u8,
-    ) -> Result<Self> {
-        let config_data = fs::read_to_string(&path).await?;
-        let config: Config = serde_json::from_str(config_data.as_str())?;
+    ) -> Self {
+        let config = match Config::load(&path).await {
+            Ok(config) => config,
+            Err(err) => {
+                warn!(?err, "Failed to load config. Replacing with default config");
 
-        config.validate().context("Config validation failed")?;
+                let mut default_config = Config::default();
 
-        Ok(Self {
+                if let Err(err) = default_config.save(&path).await {
+                    warn!(?err, "Failed to save default config");
+                }
+
+                default_config
+            }
+        };
+
+        Self {
             path,
             config,
             default_brightness_pct,
             default_night_mode_brightness_pct,
             default_sound_volume_pct,
             default_night_mode_sound_volume_pct,
-        })
+        }
     }
 
     pub async fn sync_to_storage(&mut self) -> Result<()> {
-        let config_data = serde_json::to_string_pretty(&self.config)?;
-        replace_file(&self.path, config_data.as_bytes()).await?;
-
-        Ok(())
+        self.config.save(&self.path).await
     }
 
     pub fn set_brightness(&mut self, brightness_pct: u8) {
