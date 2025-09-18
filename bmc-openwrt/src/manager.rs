@@ -15,7 +15,7 @@ use bmc::{
 };
 use bmc_platform::{BmcInfo, BmcPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
-use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
+use bmc_shared_ii_net::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_ii_net_drv::{NetworkInterface, get_primary_interface};
 use bmc_shared_time::time::Timezone;
@@ -153,8 +153,8 @@ impl Manager {
                 ". /lib/functions/bos-factory-default.sh && disable_captive_portal && /etc/init.d/dnsmasq restart",
             ],
         )
-        .await
-        .map_err(|e| InitialSetupError::UnexpectedFailure(format!("Failed to remove captive portal configuration: {e}")))?;
+            .await
+            .map_err(|e| InitialSetupError::UnexpectedFailure(format!("Failed to remove captive portal configuration: {e}")))?;
 
         debug!("Captive portal configuration disabled");
         Ok(())
@@ -517,7 +517,18 @@ impl BmcManager for Manager {
     }
 
     async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>> {
-        self.wifi_manager.status_all().await
+        Ok(self
+            .wifi_manager
+            .status_all()
+            .await?
+            .into_iter()
+            .filter(|status| {
+                status
+                    .clone()
+                    .configuration
+                    .is_some_and(|conf| conf.mode == WifiMode::Station)
+            })
+            .collect::<Vec<WifiStatus>>())
     }
 }
 
