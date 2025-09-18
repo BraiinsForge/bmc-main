@@ -123,8 +123,10 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
             // eg.: example: `value === min` and minus button is pressed
             if (value === String(duration)) return;
 
+            // Keyboard input
+            if (event.nativeEvent instanceof InputEvent) onDurationChange(id, value);
             // Removing the value (number => '')
-            if (!!duration && value === '') onDurationChange(id, '');
+            else if (!!duration && value === '') onDurationChange(id, '');
             //
             // Empty value (default used) and something got triggered
             // => use defaultValue and apply the reported operation to it
