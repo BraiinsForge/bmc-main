@@ -171,6 +171,8 @@ impl JobScheduler {
             .await
             .expect("BUG: Failed to start scheduler");
 
+        job_scheduler.set_minimum_system_year(2024).await;
+
         let inner = Arc::new(Mutex::new(job_scheduler));
         let storage = Arc::new(RwLock::new(BTreeMap::new()));
         let mut crontab_manager = CrontabManager::new(crontab_path);
