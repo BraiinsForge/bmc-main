@@ -1,5 +1,6 @@
 import { useIntl } from 'react-intl';
-import { Form, type iField, getID } from '@/lib/form';
+import { getID } from '../../const';
+import { Form, type iField } from '@/lib/form';
 
 // Components
 import { PasswordInput } from '@carbon/react';
@@ -15,7 +16,7 @@ export interface FormPasswordChangeProps {
 }
 interface Props extends FormPasswordChangeProps {}
 
-const $ = getID('settings', 'password-change').get;
+const $ = getID('password-change').get;
 
 export function FormPasswordChange(props: Props) {
     const { formatMessage } = useIntl();

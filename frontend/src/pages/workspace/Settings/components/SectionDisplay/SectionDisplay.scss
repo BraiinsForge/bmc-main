@@ -20,7 +20,7 @@
 
 .timeInterval {
     composes: horizontal center from 'styles/layout.scss';
-    gap: mini-units(2);
+    gap: mini-units(1);
 
     .divider {
         color: $text-secondary;

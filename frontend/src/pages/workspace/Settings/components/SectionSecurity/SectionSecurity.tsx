@@ -1,12 +1,11 @@
 import { Component, Fragment } from 'react';
-import { type iField, getID } from '@/lib/form';
 import { useIntl, type IntlShape } from 'react-intl';
+import { getID } from '../../const';
 
 import * as pb from '@/proto';
 
 import { FormPasswordChange } from '../FormPasswordChange';
 import { Modal, Button, ButtonGroup, InlineNotificationsGroup, Field, FieldSet } from '@/components';
-import { Toggle } from '@carbon/react';
 
 // Styles
 import css from './SectionSecurity.scss';
@@ -19,8 +18,6 @@ export interface SectionSecurityProps {
         onPasswordRemove(d: pb.RemovePasswordRequest): Promise<void>;
         onPasswordCreate(d: pb.CreatePasswordRequest): Promise<void>;
     };
-
-    dataCollection: iField<boolean>;
 }
 interface Props extends SectionSecurityProps {
     intl: IntlShape;
@@ -58,7 +55,7 @@ const getInitialState = (): State => ({
     },
 });
 
-const $ = getID('settings', 'security').get;
+const $ = getID('security').get;
 
 class View extends Component<Props, State> {
     readonly state = getInitialState();
@@ -354,9 +351,6 @@ class View extends Component<Props, State> {
             intl: { formatMessage },
             hasPassword,
             actions,
-
-            // Privacy
-            dataCollection,
         } = this.props;
 
         return (
@@ -395,26 +389,6 @@ class View extends Component<Props, State> {
                     </Field>
                 </FieldSet>
                 {this.#passDialogRender()}
-
-                <FieldSet title={formatMessage({ defaultMessage: 'Privacy' })}>
-                    <Field
-                        title={formatMessage({ defaultMessage: 'Data Collection' })}
-                        description={formatMessage({
-                            defaultMessage: 'Allow anonymous usage data collection to improve the product.',
-                        })}
-                        disabled={dataCollection.disabled}
-                    >
-                        <Toggle
-                            id={$('data-collection')}
-                            size="md"
-                            toggled={!!dataCollection.value}
-                            onToggle={dataCollection.onChange}
-                            disabled={dataCollection.disabled}
-                            labelA={formatMessage({ defaultMessage: 'Off' })}
-                            labelB={formatMessage({ defaultMessage: 'On' })}
-                        />
-                    </Field>
-                </FieldSet>
             </section>
         );
     }

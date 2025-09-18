@@ -2,116 +2,71 @@ import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 
 import * as pb from '@/proto';
+import { getID } from '../../const';
+import { Form, type iField } from '@/lib/form';
 import AppContext, { type AppContextType } from '@/context';
-import { Form, type iField, getID } from '@/lib/form';
 
-import { Field, FieldSet, CarbonFormField, Button, ButtonSwitch } from '@/components';
+import { Field, FieldSet, CarbonFormField, Button, ButtonSwitch, type ButtonSwitchItem } from '@/components';
 import { Toggle, Dropdown, type DropdownProps, ComboBox, type ComboBoxProps } from '@carbon/react';
-import { TemperatureCelsius, TemperatureFahrenheit } from '@carbon/react/icons';
 
 // Styles
 import css from './SectionGeneral.scss';
 
-export enum TimeFormat {
-    twelve = 12,
-    twentyFour = 24,
-}
-export enum WeekDay {
-    Monday = 1,
-    Tuesday = 2,
-    Wednesday = 3,
-    Thursday = 4,
-    Friday = 5,
-    Saturday = 6,
-    Sunday = 7,
-}
-export enum Temperature {
-    C = 'C',
-    F = 'F',
-}
-export const DateFormat = {
-    DMY_DOT: 'DD.MM.YYYY',
-    DMY_SLASH: 'DD/MM/YYYY',
-    YDM_SLASH: 'YYYY/DD/MM',
-
-    MDY_DOT: 'MM.DD.YYYY',
-    MDY_SLASH: 'MM/DD/YYYY',
-    YMD_SLASH: 'YYYY/MM/DD',
-} as const;
-export const NumberFormat = {
-    spaceAndComma: '1 234 567,89',
-    commaAndDot: '1,234,567.89',
-    dotandComma: '1.234.567,89',
-    spaceAndDot: '1 234 567.89',
-} as const;
-
 export interface SectionGeneralProps {
-    timeFormat: iField<TimeFormat>;
-    secondsInStatusbar: iField<boolean>;
+    timeFormat: iField<pb.TimeFormat>;
+    // secondsInStatusbar: iField<boolean>;
     timezone: iField<pb.Timezone> & { items: ReadonlyArray<pb.Timezone> };
-    dateFormat: iField<keyof typeof DateFormat>;
-    firstWeekDay: iField<WeekDay>;
+    dateFormat: iField<pb.DateFormat>;
+    firstWeekDay: iField<pb.Weekday>;
 
-    temperature: iField<Temperature>;
-    numberFormat: iField<keyof typeof NumberFormat>;
+    // Regional settings
+    temperatureUnits: iField<pb.TemperatureUnit>;
+    numberFormat: iField<pb.NumberFormat>;
 
+    // System actions
     onFactoryReset(): void;
+    onSystemReboot(): void;
+
+    // Data collection
+    usageData: iField<boolean>;
 }
 interface Props extends SectionGeneralProps {
     intl: IntlShape;
 }
 
-const $ = getID('settings', 'general').get;
+const $ = getID('general').get;
 
 class View extends Component<Props> {
     static contextType = AppContext;
     declare context: AppContextType;
 
-    #dateFormatOptions = Object.keys(DateFormat) as (keyof typeof DateFormat)[];
-    #dateFormatRender = (k: keyof typeof DateFormat): string => DateFormat[k];
-    #dateFormatChange: DropdownProps<keyof typeof DateFormat>['onChange'] = x => {
+    #dateFormatChange: DropdownProps<pb.DateFormat>['onChange'] = x => {
         const { onChange } = this.props.dateFormat;
         if (x.selectedItem) onChange(x.selectedItem);
     };
 
-    #numberFormatOptions = Object.keys(NumberFormat) as (keyof typeof NumberFormat)[];
-    #numberFormatRender = (k: keyof typeof NumberFormat): string => NumberFormat[k];
-    #numberFormatChange: DropdownProps<keyof typeof NumberFormat>['onChange'] = x => {
+    #numberFormatChange: DropdownProps<pb.NumberFormat>['onChange'] = x => {
         const { onChange } = this.props.numberFormat;
         if (x.selectedItem) onChange(x.selectedItem);
     };
-
-    #weekDayOptions = [
-        WeekDay.Monday,
-        WeekDay.Tuesday,
-        WeekDay.Wednesday,
-        WeekDay.Thursday,
-        WeekDay.Friday,
-        WeekDay.Saturday,
-        WeekDay.Sunday,
-    ];
-    #weekDayRender = (k: WeekDay): string => {
-        const { formatMessage } = this.props.intl;
-        switch (k) {
-            case WeekDay.Monday:
-                return formatMessage({ defaultMessage: 'Monday' });
-            case WeekDay.Tuesday:
-                return formatMessage({ defaultMessage: 'Tuesday' });
-            case WeekDay.Wednesday:
-                return formatMessage({ defaultMessage: 'Wednesday' });
-            case WeekDay.Thursday:
-                return formatMessage({ defaultMessage: 'Thursday' });
-            case WeekDay.Friday:
-                return formatMessage({ defaultMessage: 'Friday' });
-            case WeekDay.Saturday:
-                return formatMessage({ defaultMessage: 'Saturday' });
-            case WeekDay.Sunday:
-                return formatMessage({ defaultMessage: 'Sunday' });
-        }
+    #numberFormatToString = (x: null | pb.NumberFormat): string => {
+        return pb.numberFormatToString(x) ?? 'N/A';
     };
-    #weekDayChange: DropdownProps<WeekDay>['onChange'] = x => {
+
+    #temperatureOptions = Array.from(pb.temperatureUnitOptions.entries()).map<ButtonSwitchItem<pb.TemperatureUnit>>(
+        ([key, Icon]) => ({
+            id: key,
+            text: pb.temperatureUnitToString(this.props.intl, key) ?? 'N/A',
+            icon: Icon,
+        }),
+    );
+
+    #weekDayChange: DropdownProps<pb.Weekday>['onChange'] = x => {
         const { onChange } = this.props.firstWeekDay;
         if (x.selectedItem) onChange(x.selectedItem);
+    };
+    #weekDayToString = (x: null | pb.Weekday): string => {
+        return pb.weekdayToString(this.props.intl, x, true) ?? 'N/A';
     };
 
     #timezoneRenderElement = (tz: pb.Timezone): ReactElement => {
@@ -127,19 +82,6 @@ class View extends Component<Props> {
         if (x.selectedItem) onChange(x.selectedItem);
     };
 
-    #temperatureOptions = [
-        {
-            id: Temperature.C,
-            icon: TemperatureCelsius,
-            text: this.props.intl.formatMessage({ defaultMessage: 'Celsius' }),
-        },
-        {
-            id: Temperature.F,
-            icon: TemperatureFahrenheit,
-            text: this.props.intl.formatMessage({ defaultMessage: 'Fahrenheit' }),
-        },
-    ];
-
     #reset = async (): Promise<void> => {
         const { intl, onFactoryReset } = this.props;
         const { confirm } = this.context;
@@ -154,21 +96,36 @@ class View extends Component<Props> {
         });
         if (response) onFactoryReset();
     };
+    #reboot = async (): Promise<void> => {
+        const { intl, onSystemReboot } = this.props;
+        const { confirm } = this.context;
+
+        const response: boolean = await confirm({
+            danger: true,
+            title: intl.formatMessage({ defaultMessage: 'Reboot Device' }),
+            message: intl.formatMessage({ defaultMessage: 'Do you really want to reboot the device?' }),
+            confirmLabel: intl.formatMessage({ defaultMessage: 'Reboot' }),
+        });
+        if (response) onSystemReboot();
+    };
 
     render() {
         const {
-            intl: { formatMessage },
-
             // Fields
             timeFormat,
-            secondsInStatusbar,
+            // secondsInStatusbar,
             timezone,
             dateFormat,
             firstWeekDay,
 
-            temperature,
+            temperatureUnits,
             numberFormat,
+            usageData,
+
+            //
+            intl,
         } = this.props;
+        const { formatMessage } = intl;
 
         return (
             <Form className={css.root}>
@@ -178,11 +135,17 @@ class View extends Component<Props> {
                         title={formatMessage({ defaultMessage: 'Time Format' })}
                         disabled={timeFormat.disabled}
                     >
-                        <ButtonSwitch<TimeFormat>
+                        <ButtonSwitch<pb.TimeFormat>
                             selectedOption={timeFormat.value}
                             options={[
-                                { id: TimeFormat.twelve, text: formatMessage({ defaultMessage: '12-hour' }) },
-                                { id: TimeFormat.twentyFour, text: formatMessage({ defaultMessage: '24-hour' }) },
+                                {
+                                    id: pb.TimeFormat.TIME_FORMAT_12_HOUR,
+                                    text: formatMessage({ defaultMessage: '12-hour' }),
+                                },
+                                {
+                                    id: pb.TimeFormat.TIME_FORMAT_24_HOUR,
+                                    text: formatMessage({ defaultMessage: '24-hour' }),
+                                },
                             ]}
                             size="md"
                             disabled={timeFormat.disabled}
@@ -192,7 +155,7 @@ class View extends Component<Props> {
                         />
                     </Field>
 
-                    <Field
+                    {/* <Field
                         title={formatMessage({ defaultMessage: 'Show Seconds in Status Bar' })}
                         disabled={secondsInStatusbar.disabled}
                     >
@@ -206,7 +169,7 @@ class View extends Component<Props> {
                                 disabled={secondsInStatusbar.disabled}
                             />
                         </CarbonFormField>
-                    </Field>
+                    </Field> */}
 
                     <Field
                         variant="dark"
@@ -234,17 +197,17 @@ class View extends Component<Props> {
                         title={formatMessage({ defaultMessage: 'Date Format' })}
                         disabled={dateFormat.disabled}
                     >
-                        <Dropdown<keyof typeof DateFormat>
+                        <Dropdown<null | pb.DateFormat>
                             id={$('date-format')}
                             size="md"
                             label=""
                             titleText=""
                             hideLabel
-                            items={this.#dateFormatOptions}
-                            selectedItem={dateFormat.value ?? undefined}
+                            items={pb.dateFormatOptions}
+                            selectedItem={dateFormat.value}
                             onChange={this.#dateFormatChange}
-                            itemToString={this.#dateFormatRender}
-                            renderSelectedItem={this.#dateFormatRender}
+                            itemToString={pb.dateFormatToString}
+                            renderSelectedItem={pb.dateFormatToString}
                             disabled={dateFormat.disabled}
                             invalid={!!dateFormat.error}
                             invalidText={dateFormat.error}
@@ -255,17 +218,17 @@ class View extends Component<Props> {
                         title={formatMessage({ defaultMessage: 'First Day of the Week' })}
                         disabled={firstWeekDay.disabled}
                     >
-                        <Dropdown<WeekDay>
+                        <Dropdown<null | pb.Weekday>
                             id={$('first-week-day')}
                             size="md"
                             label=""
                             titleText=""
                             hideLabel
-                            items={this.#weekDayOptions}
-                            selectedItem={firstWeekDay.value ?? undefined}
+                            items={pb.weekdayOptionsAll}
+                            selectedItem={firstWeekDay.value}
                             onChange={this.#weekDayChange}
-                            itemToString={this.#weekDayRender}
-                            renderSelectedItem={this.#weekDayRender}
+                            itemToString={this.#weekDayToString}
+                            renderSelectedItem={this.#weekDayToString}
                             disabled={firstWeekDay.disabled}
                             invalid={!!firstWeekDay.error}
                             invalidText={firstWeekDay.error}
@@ -277,17 +240,17 @@ class View extends Component<Props> {
                     <Field
                         variant="dark"
                         title={formatMessage({ defaultMessage: 'Temperature' })}
-                        disabled={temperature.disabled}
+                        disabled={temperatureUnits.disabled}
                     >
-                        <ButtonSwitch<Temperature>
+                        <ButtonSwitch<pb.TemperatureUnit>
                             id={$('temperature')}
                             size="md"
-                            selectedOption={temperature.value}
+                            selectedOption={temperatureUnits.value}
                             options={this.#temperatureOptions}
-                            disabled={temperature.disabled}
-                            onChange={temperature.onChange}
-                            invalid={!!temperature.error}
-                            invalidText={temperature.error}
+                            disabled={temperatureUnits.disabled}
+                            onChange={temperatureUnits.onChange}
+                            invalid={!!temperatureUnits.error}
+                            invalidText={temperatureUnits.error}
                         />
                     </Field>
 
@@ -296,17 +259,17 @@ class View extends Component<Props> {
                         title={formatMessage({ defaultMessage: 'Number Format' })}
                         disabled={numberFormat.disabled}
                     >
-                        <Dropdown<keyof typeof NumberFormat>
+                        <Dropdown<null | pb.NumberFormat>
                             size="md"
                             label=""
                             titleText=""
                             hideLabel
                             id={$('number-format')}
-                            items={this.#numberFormatOptions}
-                            selectedItem={numberFormat.value ?? undefined}
+                            items={pb.numberFormatOptions}
+                            selectedItem={numberFormat.value}
                             onChange={this.#numberFormatChange}
-                            itemToString={this.#numberFormatRender}
-                            renderSelectedItem={this.#numberFormatRender}
+                            itemToString={this.#numberFormatToString}
+                            renderSelectedItem={this.#numberFormatToString}
                             disabled={numberFormat.disabled}
                             invalid={!!numberFormat.error}
                             invalidText={numberFormat.error}
@@ -314,7 +277,7 @@ class View extends Component<Props> {
                     </Field>
                 </FieldSet>
 
-                <FieldSet title={formatMessage({ defaultMessage: 'Factory Reset' })}>
+                <FieldSet title={formatMessage({ defaultMessage: 'System Actions' })}>
                     <Field
                         title={formatMessage({ defaultMessage: 'Reset to Factory Defaults' })}
                         description={formatMessage({
@@ -328,6 +291,36 @@ class View extends Component<Props> {
                             children={formatMessage({ defaultMessage: 'Reset to Defaults' })}
                             onClick={this.#reset}
                         />
+                    </Field>
+
+                    <Field title={formatMessage({ defaultMessage: 'Reboot Device' })}>
+                        <Button
+                            id={$('system-reboot')}
+                            kind="secondary"
+                            children={formatMessage({ defaultMessage: 'Reboot' })}
+                            onClick={this.#reboot}
+                        />
+                    </Field>
+                </FieldSet>
+
+                <FieldSet title={formatMessage({ defaultMessage: 'Usage Data' })}>
+                    <Field
+                        title={formatMessage({ defaultMessage: 'Data Collection' })}
+                        description={formatMessage({
+                            defaultMessage: 'Allow anonymous usage data collection to improve the product',
+                        })}
+                        disabled={usageData.disabled}
+                    >
+                        <CarbonFormField error={usageData.error}>
+                            <Toggle
+                                id={$('data-collection')}
+                                size="md"
+                                aria-invalid={!!usageData.error}
+                                toggled={!!usageData.value}
+                                onToggle={usageData.onChange}
+                                disabled={usageData.disabled}
+                            />
+                        </CarbonFormField>
                     </Field>
                 </FieldSet>
             </Form>

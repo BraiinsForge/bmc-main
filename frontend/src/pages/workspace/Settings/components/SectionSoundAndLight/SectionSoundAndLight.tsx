@@ -1,21 +1,21 @@
 import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
-import { Form, type iField, getID } from '@/lib/form';
+import { Form, type iField } from '@/lib/form';
 
+// App
+import { getID } from '../../const';
+import * as pb from '@/proto';
+
+// Components
 import { Field, FieldSet, CarbonFormField } from '@/components';
 import { Toggle, Slider } from '@carbon/react';
 
 // Styles
 import css from './SectionSoundAndLight.scss';
 
-interface SteppedNumberMeta {
-    min: number;
-    max: number;
-    step: number;
-}
 export interface SectionSoundAndLightProps {
-    soundVolume: iField<Integer<0, 100>> & SteppedNumberMeta;
-    soundVolumeNight: iField<Integer<0, 100>> & SteppedNumberMeta;
+    soundVolume: iField<pb.SoundVolume>;
+    soundVolumeNight: iField<pb.SoundVolume>;
     // alarmAndNotifyVolume: iField<Integer<0, 100>>;
     ledNotifyEnabled: iField<boolean>;
 }
@@ -23,9 +23,34 @@ interface Props extends SectionSoundAndLightProps {
     intl: IntlShape;
 }
 
-const $ = getID('settings', 'general').get;
+const $ = getID('general').get;
 
 class View extends Component<Props> {
+    #handleVolumeChange = (x: { value: number }): void => {
+        const { value, onChange } = this.props.soundVolume;
+
+        onChange(
+            pb.create(pb.SoundVolumeSchema, {
+                min: value?.min,
+                max: value?.max,
+                step: value?.step,
+                value: x.value,
+            }),
+        );
+    };
+    #handleNightVolumeChange = (x: { value: number }): void => {
+        const { value, onChange } = this.props.soundVolumeNight;
+
+        onChange(
+            pb.create(pb.SoundVolumeSchema, {
+                min: value?.min,
+                max: value?.max,
+                step: value?.step,
+                value: x.value,
+            }),
+        );
+    };
+
     render() {
         const {
             intl,
@@ -49,14 +74,13 @@ class View extends Component<Props> {
                             hideLabel
                             labelText=""
                             // Range
-                            step={1}
-                            stepMultiplier={10}
-                            min={0}
-                            max={100}
+                            min={soundVolume.value?.min ?? 0}
+                            max={soundVolume.value?.max ?? 100}
+                            step={soundVolume.value?.step ?? 1}
                             // Value
-                            value={soundVolume.value ?? 0}
+                            value={soundVolume.value?.value ?? 0}
                             disabled={soundVolume.disabled}
-                            onChange={x => soundVolume.onChange(x.value)}
+                            onChange={this.#handleVolumeChange}
                             invalid={!!soundVolume.error}
                             invalidText={soundVolume.error}
                         />
@@ -71,14 +95,13 @@ class View extends Component<Props> {
                             hideLabel
                             labelText=""
                             // Range
-                            step={1}
-                            stepMultiplier={10}
-                            min={0}
-                            max={100}
+                            min={soundVolumeNight.value?.min ?? 0}
+                            max={soundVolumeNight.value?.max ?? 100}
+                            step={soundVolumeNight.value?.step ?? 1}
                             // Value
-                            value={soundVolumeNight.value ?? 0}
+                            value={soundVolumeNight.value?.value ?? 0}
                             disabled={soundVolumeNight.disabled}
-                            onChange={x => soundVolumeNight.onChange(x.value)}
+                            onChange={this.#handleNightVolumeChange}
                             invalid={!!soundVolumeNight.error}
                             invalidText={soundVolumeNight.error}
                         />

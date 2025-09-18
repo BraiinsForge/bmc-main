@@ -12,11 +12,6 @@ export default {
             onPasswordRemove: async d => action('onPasswordRemove')(d),
             onPasswordCreate: async d => action('onPasswordCreate')(d),
         },
-        dataCollection: {
-            value: true,
-            disabled: false,
-            onChange: action('dataCollection.onChange'),
-        },
     } satisfies SectionSecurityProps,
 } satisfies Meta<SectionSecurityProps>;
 

@@ -1,40 +1,65 @@
 import { Component, type ChangeEvent } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
-import { Form, type iField, type iFieldNumber, getID } from '@/lib/form';
+import { Form, type iField } from '@/lib/form';
+import { getID } from '../../const';
 
 import * as pb from '@/proto';
 
 import { CarbonFormField, Field, FieldSet, Button } from '@/components';
 import { Toggle, Slider, TextInput, TimePicker } from '@carbon/react';
-import { Location } from '@carbon/react/icons';
+import { Location as IconLocation, Checkmark as IconCheckmark } from '@carbon/react/icons';
 
 // Styles
 import css from './SectionDisplay.scss';
 
 export interface SectionDisplayProps {
-    brightness: iFieldNumber<Integer<0, 100>>;
-    nightBrightness: iFieldNumber<Integer<0, 100>>;
+    brightness: iField<pb.BrightnessInfo>;
+
     nightEnabled: iField<boolean>;
+    nightBrightness: iField<pb.BrightnessInfo>;
     nightUseLocation: iField<boolean>;
+
     nightLocation: iField<string>;
     onLocationDetect(): void;
+
     nightNotify: iField<boolean>;
-    nightInterval: iField<pb.TimeInterval>;
+    nightInterval: iField<pb.TimeInterval> & { hasChanged: boolean; onConfirm(): void };
 }
 interface Props extends SectionDisplayProps {
     intl: IntlShape;
 }
 
-const $ = getID('settings', 'general').get;
-
+const $ = getID('display').get;
 class View extends Component<Props> {
+    #brightnessChange = (x: { value: number }) => {
+        const { value, onChange } = this.props.brightness;
+        onChange(
+            pb.create(pb.BrightnessInfoSchema, {
+                value: x.value,
+                min: value?.min,
+                max: value?.max,
+                step: value?.step,
+            }),
+        );
+    };
+    #brightnessNightChange = (x: { value: number }) => {
+        const { value, onChange } = this.props.nightBrightness;
+        onChange(
+            pb.create(pb.BrightnessInfoSchema, {
+                value: x.value,
+                min: value?.min,
+                max: value?.max,
+                step: value?.step,
+            }),
+        );
+    };
     #nightIntervalChange = (field: 'from' | 'to') => (e: ChangeEvent<HTMLInputElement>) => {
         const { onChange, value } = this.props.nightInterval;
 
         const newValue = pb.create(pb.TimeIntervalSchema, {
-            from: value?.from,
-            to: value?.to,
-            [field]: e.target.value,
+            from: value?.from?.trim(),
+            to: value?.to?.trim(),
+            [field]: e.target.value?.trim(),
         });
 
         onChange?.(newValue);
@@ -73,14 +98,13 @@ class View extends Component<Props> {
                             hideLabel
                             labelText=""
                             // Range
-                            stepMultiplier={10}
-                            min={brightness.min ?? 0}
-                            max={brightness.max ?? 0}
-                            step={brightness.step ?? 1}
+                            min={brightness.value?.min ?? 0}
+                            max={brightness.value?.max ?? 0}
+                            step={brightness.value?.step ?? 1}
                             // Value
-                            value={brightness.value ?? 0}
+                            value={brightness.value?.value ?? 0}
                             disabled={brightness.disabled}
-                            onChange={x => brightness.onChange(x.value)}
+                            onChange={this.#brightnessChange}
                             invalid={!!brightness.error}
                             invalidText={brightness.error}
                         />
@@ -96,7 +120,7 @@ class View extends Component<Props> {
                         })}
                         disabled={nightEnabled.disabled}
                     >
-                        <CarbonFormField error={nightEnabled.error} style={{ display: 'inline-block' }}>
+                        <CarbonFormField error={nightEnabled.error}>
                             <Toggle
                                 id={$('night', 'enabled')}
                                 size="md"
@@ -118,13 +142,13 @@ class View extends Component<Props> {
                             labelText=""
                             // Range
                             stepMultiplier={10}
-                            min={brightness.min ?? 0}
-                            max={brightness.max ?? 100}
-                            step={brightness.step ?? 1}
+                            min={brightness.value?.min ?? 0}
+                            max={brightness.value?.max ?? 100}
+                            step={brightness.value?.step ?? 1}
                             // Value
-                            value={nightBrightness.value ?? 0}
+                            value={nightBrightness.value?.value ?? 0}
                             disabled={isNightBrightnessDisabled}
-                            onChange={x => nightBrightness.onChange(x.value)}
+                            onChange={this.#brightnessNightChange}
                             invalid={!!nightBrightness.error}
                             invalidText={nightBrightness.error}
                         />
@@ -144,7 +168,9 @@ class View extends Component<Props> {
                                     invalid={!!nightInterval.error}
                                     disabled={isNightIntervalDisabled}
                                 />
-                                <div className={css.divider}>-</div>
+
+                                <div className={css.divider} children="-" />
+
                                 <TimePicker
                                     id={$('night', 'interval', 'to')}
                                     placeholder="HH:MM"
@@ -152,6 +178,19 @@ class View extends Component<Props> {
                                     onChange={this.#nightIntervalChange('to')}
                                     invalid={!!nightInterval.error}
                                     disabled={isNightIntervalDisabled}
+                                />
+
+                                <Button
+                                    id={$('night', 'interval', 'confirm')}
+                                    disabled={isNightIntervalDisabled || !nightInterval.hasChanged}
+                                    // primary[disabled] looks bad here, so we'll fake
+                                    // a different disabled style by changing the kind
+                                    kind={nightInterval.hasChanged ? 'primary' : 'ghost'}
+                                    size="md"
+                                    hasIconOnly
+                                    icon={IconCheckmark}
+                                    title={intl.formatMessage({ defaultMessage: 'Confirm' })}
+                                    onClick={nightInterval.onConfirm}
                                 />
                             </div>
                         </CarbonFormField>
@@ -198,7 +237,7 @@ class View extends Component<Props> {
                                 id={$('night', 'location', 'detect')}
                                 kind="secondary"
                                 size="sm"
-                                icon={Location}
+                                icon={IconLocation}
                                 children={intl.formatMessage({ defaultMessage: 'Detect' })}
                                 onClick={onLocationDetect}
                             />

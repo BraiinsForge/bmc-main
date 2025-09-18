@@ -1,14 +1,10 @@
 import { action } from 'storybook/actions';
 import type { Meta } from '@storybook/react';
+
+import * as pb from '@/proto';
 import * as gen from '@/mocks';
 
-import {
-    SectionGeneral as Component,
-    type SectionGeneralProps,
-    Temperature,
-    TimeFormat,
-    WeekDay,
-} from './SectionGeneral';
+import { SectionGeneral as Component, type SectionGeneralProps } from './SectionGeneral';
 
 function getArg<T>(name: string, value: T) {
     return {
@@ -23,17 +19,21 @@ export default {
     title: 'settings/components/SectionGeneral',
     component: Component,
     args: {
-        timeFormat: getArg('timeFormat', TimeFormat.twelve),
-        secondsInStatusbar: getArg('secondsInStatusbar', true),
+        timeFormat: getArg('timeFormat', pb.TimeFormat.TIME_FORMAT_12_HOUR),
+        // secondsInStatusbar: getArg('secondsInStatusbar', true),
         timezone: {
             ...getArg('timezone', gen.randomItem(gen.timezones)),
             items: gen.timezones,
         },
-        dateFormat: getArg('dateFormat', 'DMY_SLASH'),
-        firstWeekDay: getArg('dateFormat', WeekDay.Monday),
-        temperature: getArg('dateFormat', Temperature.C),
-        numberFormat: getArg('dateFormat', 'spaceAndComma'),
+        dateFormat: getArg('dateFormat', pb.DateFormat.DD_MM_YYYY_DASH),
+        firstWeekDay: getArg('dateFormat', pb.Weekday.THURSDAY),
+        temperatureUnits: getArg('dateFormat', pb.TemperatureUnit.CELSIUS),
+        numberFormat: getArg('dateFormat', pb.NumberFormat.SPACE_GROUP_DOT_DECIMAL),
+
         onFactoryReset: action('onFactoryReset'),
+        onSystemReboot: action('onSystemReboot'),
+
+        usageData: getArg('usageData', true),
     } satisfies SectionGeneralProps,
 } satisfies Meta<SectionGeneralProps>;
 

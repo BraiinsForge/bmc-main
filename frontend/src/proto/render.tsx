@@ -1,3 +1,5 @@
+import { type CarbonIconType, TemperatureCelsius, TemperatureFahrenheit } from '@carbon/react/icons';
+
 import type { IntlShape } from 'react-intl';
 import { assertUnreachable } from '@/lib/ts';
 import { formatDuration } from 'date-fns';
@@ -77,9 +79,9 @@ export const weekdayOptionsWeek: Array<Exclude<pb.Weekday, 0>> = [
     pb.Weekday.FRIDAY,
 ];
 export const weekdayOptionsWeekend: Array<Exclude<pb.Weekday, 0>> = [pb.Weekday.SATURDAY, pb.Weekday.SUNDAY];
-export function weekdayToString(intl: IntlShape, x?: Maybe<pb.Weekday>): null;
-export function weekdayToString(intl: IntlShape, x: Exclude<pb.Weekday, 0>): string;
-export function weekdayToString(intl: IntlShape, x?: null | pb.Weekday) {
+export function weekdayToString(intl: IntlShape, x?: Maybe<pb.Weekday>, long?: boolean): null;
+export function weekdayToString(intl: IntlShape, x: Exclude<pb.Weekday, 0>, long?: boolean): string;
+export function weekdayToString(intl: IntlShape, x?: null | pb.Weekday, long?: boolean) {
     const { formatMessage } = intl;
 
     switch (x) {
@@ -89,25 +91,25 @@ export function weekdayToString(intl: IntlShape, x?: null | pb.Weekday) {
             return null;
 
         case pb.Weekday.MONDAY:
-            return formatMessage({ defaultMessage: 'Mon' });
+            return long ? formatMessage({ defaultMessage: 'Monday' }) : formatMessage({ defaultMessage: 'Mon' });
 
         case pb.Weekday.TUESDAY:
-            return formatMessage({ defaultMessage: 'Tue' });
+            return long ? formatMessage({ defaultMessage: 'Tuesday' }) : formatMessage({ defaultMessage: 'Tue' });
 
         case pb.Weekday.WEDNESDAY:
-            return formatMessage({ defaultMessage: 'Wed' });
+            return long ? formatMessage({ defaultMessage: 'Wednesday' }) : formatMessage({ defaultMessage: 'Wed' });
 
         case pb.Weekday.THURSDAY:
-            return formatMessage({ defaultMessage: 'Thu' });
+            return long ? formatMessage({ defaultMessage: 'Thursday' }) : formatMessage({ defaultMessage: 'Thu' });
 
         case pb.Weekday.FRIDAY:
-            return formatMessage({ defaultMessage: 'Fri' });
+            return long ? formatMessage({ defaultMessage: 'Friday' }) : formatMessage({ defaultMessage: 'Fri' });
 
         case pb.Weekday.SATURDAY:
-            return formatMessage({ defaultMessage: 'Sat' });
+            return long ? formatMessage({ defaultMessage: 'Saturday' }) : formatMessage({ defaultMessage: 'Sat' });
 
         case pb.Weekday.SUNDAY:
-            return formatMessage({ defaultMessage: 'Sun' });
+            return long ? formatMessage({ defaultMessage: 'Sunday' }) : formatMessage({ defaultMessage: 'Sun' });
 
         default:
             assertUnreachable(x, 'Scene transition effect');
@@ -325,12 +327,17 @@ export const dateFormatOptions: Array<Exclude<pb.DateFormat, 0>> = [
     pb.DateFormat.YYYY_MM_DD_DOT,
     pb.DateFormat.YYYY_MM_DD_DASH,
 ];
-export function dateFormatToString(x: Maybe<pb.DateFormat>): null | string {
-    if (!x) return null;
-
+export function dateFormatToString(x: Maybe<pb.DateFormat>): null;
+export function dateFormatToString(x: Exclude<pb.DateFormat, 0>): string;
+export function dateFormatToString(x: Maybe<pb.DateFormat>) {
     switch (x) {
+        case null:
+        case undefined:
+        case pb.DateFormat.UNSPECIFIED:
+            return null;
+
         case pb.DateFormat.DD_MM_YYYY_DOT:
-            return 'DD.MM.YYYY';
+            return 'DD.MM.YYYY' as string;
 
         case pb.DateFormat.DD_MM_YYYY_SLASH:
             return 'DD/MM/YYYY';
@@ -355,6 +362,30 @@ export function dateFormatToString(x: Maybe<pb.DateFormat>): null | string {
 
         default:
             assertUnreachable(x, 'date format');
+    }
+}
+
+export const temperatureUnitOptions: Map<Exclude<pb.TemperatureUnit, 0>, CarbonIconType> = new Map([
+    [pb.TemperatureUnit.CELSIUS, TemperatureCelsius],
+    [pb.TemperatureUnit.FAHRENHEIT, TemperatureFahrenheit],
+]);
+export function temperatureUnitToString(intl: IntlShape, x?: Maybe<pb.TemperatureUnit>): null;
+export function temperatureUnitToString(intl: IntlShape, x: Exclude<pb.TemperatureUnit, 0>): string;
+export function temperatureUnitToString(intl: IntlShape, x?: null | pb.TemperatureUnit) {
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.TemperatureUnit.UNSPECIFIED:
+            return null;
+
+        case pb.TemperatureUnit.CELSIUS:
+            return intl.formatMessage({ defaultMessage: 'Celsius' });
+
+        case pb.TemperatureUnit.FAHRENHEIT:
+            return intl.formatMessage({ defaultMessage: 'Fahrenheit' });
+
+        default:
+            assertUnreachable(x, 'temperature unit');
     }
 }
 

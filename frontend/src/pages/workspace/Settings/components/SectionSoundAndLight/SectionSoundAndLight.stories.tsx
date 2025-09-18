@@ -1,6 +1,8 @@
 import { action } from 'storybook/actions';
 import type { Meta } from '@storybook/react';
 import type { iField } from '@/lib/form';
+
+import * as pb from '@/proto';
 import * as gen from '@/mocks';
 
 import { SectionSoundAndLight as Component, type SectionSoundAndLightProps } from './SectionSoundAndLight';
@@ -18,18 +20,11 @@ export default {
     title: 'settings/components/SectionSoundAndLight',
     component: Component,
     args: {
-        soundVolume: {
-            ...getArg('brightnessDay', 22),
-            min: 0,
-            max: 100,
-            step: 4,
-        },
-        soundVolumeNight: {
-            ...getArg('nightBrightness', 33),
-            min: 0,
-            max: 100,
-            step: 4,
-        },
+        soundVolume: getArg('brightnessDay', pb.create(pb.SoundVolumeSchema, { value: 22, min: 0, max: 100, step: 4 })),
+        soundVolumeNight: getArg(
+            'nightBrightness',
+            pb.create(pb.SoundVolumeSchema, { value: 33, min: 0, max: 100, step: 4 }),
+        ),
         // alarmAndNotifyVolume: getArg('nightEnabled', 44),
         ledNotifyEnabled: getArg('nightNotify', true),
     } satisfies SectionSoundAndLightProps,

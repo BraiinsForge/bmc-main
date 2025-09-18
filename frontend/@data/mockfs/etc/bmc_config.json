@@ -137,13 +137,24 @@
     "automatic_cycling_default_duration": "1m 30s",
     "transition": "fade"
   },
-  "night_mode": {
-    "enabled": false,
-    "from": "22:30:00",
-    "to": "06:30:00",
-    "sound_volume_pct": 14
+  "localization": {
+    "time_system": "Hour12",
+    "number_format": "DotGroupCommaDecimal",
+    "date_format": "DdMmYyyyDash",
+    "first_day_of_week": "Tuesday",
+    "show_seconds_in_status_bar": false,
+    "temperature_unit": "Fahrenheit"
   },
-  "sound_volume_pct": 83,
+  "data_collection": true,
+  "brightness_pct": 70,
+  "night_mode": {
+    "enabled": true,
+    "from": "22:45:00",
+    "to": "06:50:00",
+    "brightness_pct": 65,
+    "sound_volume_pct": 83
+  },
+  "sound_volume_pct": 96,
   "alarms": [
     {
       "id": "0d7df0ca-3495-4529-977e-7643ba761088",
@@ -151,13 +162,13 @@
       "name": "",
       "time": "08:00:00",
       "repeat": [
-        "Thursday",
-        "Tuesday",
-        "Sunday",
-        "Saturday",
-        "Wednesday",
         "Friday",
-        "Monday"
+        "Sunday",
+        "Monday",
+        "Saturday",
+        "Thursday",
+        "Wednesday",
+        "Tuesday"
       ],
       "sound": "TickTockNextBlock",
       "snooze_options": {
@@ -171,10 +182,10 @@
       "name": "asdgadfgadf",
       "time": "08:01:00",
       "repeat": [
-        "Thursday",
-        "Sunday",
         "Saturday",
-        "Wednesday"
+        "Sunday",
+        "Wednesday",
+        "Thursday"
       ],
       "sound": "TickTockNextBlock",
       "snooze_options": {
@@ -182,5 +193,6 @@
         "duration": "FiveMinutes"
       }
     }
-  ]
+  ],
+  "led_enabled": true
 }

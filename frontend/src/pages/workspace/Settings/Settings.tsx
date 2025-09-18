@@ -1,33 +1,34 @@
 import { Component } from 'react';
-import { debounce } from 'es-toolkit';
+import { debounce, isEqual } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
 import { type Location, useLocation } from 'react-router';
 
 // Lib
-import { getTimestamp, validateTime } from '@/lib/time';
+import { setState } from '@/lib/react';
+import type { iField } from '@/lib/form';
 import { assertUnreachable } from '@/lib/ts';
+import { getTimestamp, validateTime } from '@/lib/time';
 import { unloadGuard, Ping, type PingCallback } from '@/lib/dom';
 
 // App
-import AppContext, { type AppContextType } from '@/context';
-import { store, useStore } from '@/store';
 import * as pb from '@/proto';
+import { store, useStore } from '@/store';
+import AppContext, { type AppContextType } from '@/context';
 
+// Components
 import {
     SectionGeneral,
     SectionSecurity,
     SectionUpgrade,
     SectionDisplay,
     SectionSoundAndLight,
-    Temperature,
-    TimeFormat,
-    WeekDay,
     type UpgradeFromFeedStatus,
 } from './components';
 import { InlineNotificationsGroup, Tabs, type TabsProps } from '@/components';
+
+// Styles
 import css from './Settings.scss';
-import { setState } from '@/lib/react';
 
 interface Props {
     intl: IntlShape;
@@ -45,20 +46,22 @@ enum Tab {
 }
 const validTabs: string[] = Object.values(Tab);
 
-interface LeafState<T> {
+interface FieldState<T> {
     value: null | T;
     errors: Maybe<string[]>;
     isSaving: boolean;
     isLoading: boolean;
 }
-const leafStateEmpty: Readonly<LeafState<any>> = Object.freeze({
+type ValueOrPatcher<T> = T | ((value: T) => T);
+
+const FIELD_STATE_DEFAULT: Readonly<FieldState<any>> = Object.freeze({
     value: null,
     errors: [],
     isSaving: false,
     isLoading: false,
 });
-function getEmptyLeafState<T>(value?: Maybe<T>, state?: 'loading' | 'saving'): LeafState<T> {
-    const res: LeafState<T> = { ...leafStateEmpty };
+function getFieldStateDefault<T>(value?: Maybe<T>, state?: 'loading' | 'saving'): FieldState<T> {
+    const res: FieldState<T> = { ...FIELD_STATE_DEFAULT };
     res.value = value ?? null;
 
     switch (state) {
@@ -77,22 +80,38 @@ function getEmptyLeafState<T>(value?: Maybe<T>, state?: 'loading' | 'saving'): L
 interface State {
     activeTab: Tab;
     globalErrors: Maybe<string[]>;
+
+    // Data that does not fit neatly into the form fields.
     data: {
         timezones: ReadonlyArray<pb.Timezone>;
-        display: null | pb.DisplaySettingsResponse;
         upgradeInfo: null | pb.CheckForUpgradeResponse;
+        displayNightmodeIntervalBackendValue: null | pb.TimeInterval;
     };
 
-    genTimezone: LeafState<pb.Timezone>;
+    // Strictly just the FieldState objects to allow us
+    // to abstract away a lot of the interactions and getters
+    values: {
+        // General
+        timeFormat: FieldState<pb.TimeFormat>;
+        dateFormat: FieldState<pb.DateFormat>;
+        numberFormat: FieldState<pb.NumberFormat>;
+        dataCollection: FieldState<boolean>;
+        // showSecondsStatusBar: LeafState<boolean>;
+        firstDayOfWeek: FieldState<pb.Weekday>;
+        temperatureUnit: FieldState<pb.TemperatureUnit>;
+        timezone: FieldState<pb.Timezone>;
 
-    dspBrightness: LeafState<number>;
-    dspNightmodeEnabled: LeafState<boolean>;
-    dspNightmodeBrightness: LeafState<number>;
-    dspNightmodeInterval: LeafState<pb.TimeInterval>;
+        // Sound & Light
+        volume: FieldState<pb.SoundVolume>;
+        volumeNightmode: FieldState<pb.SoundVolume>;
+        enableLedNotifications: FieldState<boolean>;
 
-    soundAndLight: pb.SoundVolumeSettingsResponse;
-
-    secAllowDataCollection: LeafState<boolean>;
+        // Display
+        displayBrightness: FieldState<pb.BrightnessInfo>;
+        displayNightmodeEnabled: FieldState<boolean>;
+        displayNightmodeBrightness: FieldState<pb.BrightnessInfo>;
+        displayNightmodeInterval: FieldState<pb.TimeInterval>;
+    };
 
     upgradeFromFeedStatus: UpgradeFromFeedStatus;
     upgradeFromFeedErrors: Maybe<string[]>;
@@ -104,25 +123,40 @@ const defaultNightmodeInterval = pb.create(pb.TimeIntervalSchema, {
 const getInitialState = (): State => ({
     activeTab: Tab.general,
     globalErrors: null,
+
     data: {
         timezones: [],
-        display: null,
         upgradeInfo: null,
+        displayNightmodeIntervalBackendValue: null,
     },
+    values: {
+        // General
+        timeFormat: getFieldStateDefault(),
+        dateFormat: getFieldStateDefault(),
+        numberFormat: getFieldStateDefault(),
+        dataCollection: getFieldStateDefault(),
+        // showSecondsStatusBar: getEmptyLeafState(),
+        firstDayOfWeek: getFieldStateDefault(),
+        temperatureUnit: getFieldStateDefault(),
+        timezone: getFieldStateDefault(),
 
-    dspBrightness: getEmptyLeafState(),
-    dspNightmodeEnabled: getEmptyLeafState(),
-    dspNightmodeBrightness: getEmptyLeafState(),
-    dspNightmodeInterval: getEmptyLeafState(),
+        // Sound & Light
+        volume: getFieldStateDefault(),
+        volumeNightmode: getFieldStateDefault(),
+        enableLedNotifications: getFieldStateDefault(),
 
-    soundAndLight: pb.create(pb.SoundVolumeSettingsResponseSchema),
-
-    genTimezone: getEmptyLeafState(),
-    secAllowDataCollection: getEmptyLeafState(),
+        // Display
+        displayBrightness: getFieldStateDefault(),
+        displayNightmodeEnabled: getFieldStateDefault(),
+        displayNightmodeBrightness: getFieldStateDefault(),
+        displayNightmodeInterval: getFieldStateDefault(),
+    } satisfies Record<string, FieldState<any>>,
 
     upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
     upgradeFromFeedErrors: [],
 });
+
+const noop = (): void => {};
 
 class View extends Component<Props, State> {
     static contextType = AppContext;
@@ -170,18 +204,23 @@ class View extends Component<Props, State> {
         if (!maybeTabHash) this.#tabChange(Tab.general);
         else if (validTabs.includes(maybeTabHash)) this.#tabChange(maybeTabHash as Tab);
     };
+    #fetchData = async (): Promise<void> => {
+        const q = [
+            this.#generalFetch(),
+            this.#fetchSystemInfo(),
+            this.#upgradesFeedCheck(),
+            this.#displayFetch(),
+            this.#soundLightFetch(),
+        ];
+        await Promise.allSettled(q);
+    };
 
-    #noop = () => {};
     // Forcing the external ID usage ensures that we won't spam the user with repeated notifications.
     #notifySuccess = (message: string): void => {
         this.context.notify('success', message, { id: 'settings-saved', timeoutSeconds: 3 });
     };
     #notifyError = (message: string, tag: string): void => {
         this.context.notify('error', message, { id: tag, timeoutSeconds: 3 });
-    };
-    #fetchData = async (): Promise<void> => {
-        const q = [this.#upgradesFeedCheck(), this.#fetchSystemInfo(), this.#displayFetch(), this.#soundLightFetch()];
-        await Promise.allSettled(q);
     };
 
     private fetchSystemInfoAbort = pb.abort.get();
@@ -194,7 +233,7 @@ class View extends Component<Props, State> {
             ]);
             this.setState(s => ({
                 data: { ...s.data, timezones },
-                genTimezone: getEmptyLeafState(timezone),
+                values: { ...s.values, timezone: getFieldStateDefault(timezone) },
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -244,35 +283,284 @@ class View extends Component<Props, State> {
     // General
     //
 
+    private generalFetchAbort = pb.abort.get();
+    #generalFetch = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        try {
+            const { signal } = this.generalFetchAbort.replace();
+            const d = await pb.rpc.config.getGeneralSettingsData({}, { signal });
+            this.setState(s => ({
+                values: {
+                    ...s.values,
+                    timeFormat: getFieldStateDefault(d.timeFormat),
+                    dateFormat: getFieldStateDefault(d.dateFormat),
+                    numberFormat: getFieldStateDefault(d.numberFormat),
+                    dataCollection: getFieldStateDefault(d.dataCollection),
+                    showSecondsStatusBar: getFieldStateDefault(d.showSecondsStatusBar),
+                    firstDayOfWeek: getFieldStateDefault(d.firstDayOfWeek),
+                    temperatureUnit: getFieldStateDefault(d.temperatureUnit),
+                },
+            }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load general settings!' });
+
+            this.#notifyError(msg, 'general-settings-load-error');
+        }
+    };
+
+    #setField = <Field extends keyof State['values']>(
+        field: Field,
+        value: ValueOrPatcher<State['values'][Field]>,
+    ): Promise<void> => {
+        return setState(this, state => ({
+            values: {
+                ...state.values,
+                [field]: typeof value === 'function' ? value(state.values[field]) : value,
+            },
+        }));
+    };
+    #setFieldAttr = <Field extends keyof State['values'], Attr extends keyof FieldState<any>>(
+        field: Field,
+        attr: Attr,
+        value: ValueOrPatcher<State['values'][Field][Attr]>,
+    ): Promise<void> => {
+        return this.#setField(field, fld => ({
+            ...fld,
+            [attr]: typeof value === 'function' ? value(fld[attr]) : value,
+        }));
+    };
+    #getFieldStruct<Value, Extra extends Rec = Rec>(
+        state: FieldState<Value>,
+        changeHandler: (value: Value) => void,
+        extra?: Extra,
+    ): iField<Value> & Extra {
+        return Object.assign(
+            {
+                value: state.value,
+                error: pb.renderFieldErrorsAsList(state.errors),
+                disabled: state.isLoading || state.isSaving,
+                onChange: changeHandler,
+            },
+            extra,
+        );
+    }
+
     private generalSetTimezoneAbort = pb.abort.get();
     #generalSetTimezone = async (value: pb.Timezone): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { genTimezone } = this.state;
+        const { timezone } = this.state.values;
 
         // No sense in moving ahead if we don't yet know
         // the current timezone or if it's already set.
-        if (genTimezone.value == null || value.id === genTimezone.value?.id) return;
+        if (timezone.value == null || value.id === timezone.value?.id) return;
 
         try {
+            // Optimistic update & saving flag
+            await this.#setField('timezone', s => ({ ...s, value, isSaving: true }));
+
             const { signal } = this.generalSetTimezoneAbort.replace();
-            await setState(this, s => ({ genTimezone: getEmptyLeafState(s.genTimezone.value, 'saving') }));
             await pb.rpc.sys.setTimezone({ id: value.id }, { signal });
+
             this.#notifySuccess(formatMessage({ defaultMessage: 'Timezone changed' }));
         } catch ($) {
             if (pb.abort.is($)) return;
+
             const errors = pb.collectAllErrors($);
-            this.setState(s => ({ genTimezone: { ...s.genTimezone, errors } }));
+            this.#setFieldAttr('timezone', 'errors', errors);
         } finally {
             await this.#fetchSystemInfo();
-            this.setState(s => ({ genTimezone: getEmptyLeafState(s.genTimezone.value) }));
+            this.#setField('timezone', s => getFieldStateDefault(s.value));
         }
     };
+
+    private generalSetTimeFormatAbort = pb.abort.get();
+    #generalSetTimeFormat = async (value: pb.TimeFormat): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('timeFormat', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            const { signal } = this.generalSetTimeFormatAbort.replace();
+            await pb.rpc.config.setTimeFormat({ timeFormat: value }, { signal });
+
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Time format changed' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let error = pb.collectAllErrorsAsFormattedList($);
+            error ||= formatMessage({ defaultMessage: 'Failed to save SecondsInStatusbar' });
+            this.#setFieldAttr('timeFormat', 'errors', [error]);
+        } finally {
+            await this.#generalFetch();
+            this.#setField('timeFormat', s => getFieldStateDefault(s.value));
+        }
+    };
+
+    // private generalSetSecondsInStatusbarAbort = pb.abort.get();
+    // #generalSetSecondsInStatusbar = async (value: boolean): Promise<void> => {
+    //     const { formatMessage } = this.props.intl;
+    //
+    //     try {
+    //         // Optimistic update & saving flag
+    //         this.#generalSetField('showSecondsStatusBar', s => ({ ...s, value, isSaving: true }));
+    //
+    //         // Submit
+    //         const { signal } = this.generalSetSecondsInStatusbarAbort.replace();
+    //         await pb.rpc.config.showSecondsInStatusBar({ value }, { signal });
+    //
+    //         this.#notifySuccess(formatMessage({ defaultMessage: 'Seconds in status bar changed' }));
+    //     } catch ($) {
+    //         if (pb.abort.is($)) return;
+    //
+    //         let message = pb.collectAllErrorsAsFormattedList($);
+    //         message ||= formatMessage({ defaultMessage: 'Failed to save SecondsInStatusbar' });
+    //         this.#notifyError(message, 'general-set-seconds-in-statusbar');
+    //     } finally {
+    //         await this.#fetchSystemInfo();
+    //         this.#generalSetField('showSecondsStatusBar', s => getEmptyLeafState(s.value));
+    //     }
+    // };
+
+    private generalSetDateFormatAbort = pb.abort.get();
+    #generalSetDateFormat = async (value: pb.DateFormat): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('dateFormat', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            const { signal } = this.generalSetDateFormatAbort.replace();
+            await pb.rpc.config.setDateFormat({ dateFormat: value }, { signal });
+
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Date format changed' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= formatMessage({ defaultMessage: 'Failed to save DateFormat' });
+            this.#notifyError(message, 'general-set-date-format');
+        } finally {
+            await this.#generalFetch();
+            this.#setField('dateFormat', s => getFieldStateDefault(s.value));
+        }
+    };
+
+    private generalSetFirsWeekDayAbort = pb.abort.get();
+    #generalSetFirsWeekDay = async (value: pb.Weekday): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('firstDayOfWeek', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            const { signal } = this.generalSetFirsWeekDayAbort.replace();
+            await pb.rpc.config.setFirstDayOfWeek({ firstDayOfWeek: value }, { signal });
+
+            this.#notifySuccess(formatMessage({ defaultMessage: 'First day of the week changed' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= formatMessage({ defaultMessage: 'Failed to save firs week day' });
+            this.#notifyError(message, 'general-set-firs-week-day');
+        } finally {
+            await this.#generalFetch();
+            this.#setField('firstDayOfWeek', s => getFieldStateDefault(s.value));
+        }
+    };
+
+    private generalSetTemperatureUnitsAbort = pb.abort.get();
+    #generalSetTemperatureUnits = async (value: pb.TemperatureUnit): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('temperatureUnit', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            const { signal } = this.generalSetTemperatureUnitsAbort.replace();
+            await pb.rpc.config.setTemperatureUnit({ temperatureUnit: value }, { signal });
+
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Temperature units changed' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= formatMessage({ defaultMessage: 'Failed to save TemperatureUnits' });
+            this.#notifyError(message, 'general-set-temperature-units');
+        } finally {
+            await this.#generalFetch();
+            this.#setField('temperatureUnit', s => getFieldStateDefault(s.value));
+        }
+    };
+
+    private generalSetNumberFormatAbort = pb.abort.get();
+    #generalSetNumberFormat = async (value: pb.NumberFormat): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('numberFormat', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            const { signal } = this.generalSetNumberFormatAbort.replace();
+            await pb.rpc.config.setNumberFormat({ numberFormat: value }, { signal });
+
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Number format changed' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= formatMessage({ defaultMessage: 'Failed to save NumberFormat' });
+            this.#notifyError(message, 'general-set-number-format');
+        } finally {
+            await this.#generalFetch();
+            this.#setField('numberFormat', s => getFieldStateDefault(s.value));
+        }
+    };
+
+    private generalSetDataCollectionAbort = pb.abort.get();
+    #generalSetDataCollection = async (value: boolean): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('dataCollection', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            const { signal } = this.generalSetDataCollectionAbort.replace();
+            await pb.rpc.config.setDataCollection({ value }, { signal });
+
+            this.#notifySuccess(
+                value
+                    ? formatMessage({ defaultMessage: 'Data collection enabled' })
+                    : formatMessage({ defaultMessage: 'Data collection disabled' }),
+            );
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= formatMessage({ defaultMessage: 'Failed to save NumberFormat' });
+            this.#notifyError(message, 'general-set-number-format');
+        } finally {
+            await this.#generalFetch();
+            this.#setField('dataCollection', s => getFieldStateDefault(s.value));
+        }
+    };
+
     #generalFactoryReset = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
 
         try {
             await pb.rpc.sys.factoryReset({});
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Factory reset complete!' }));
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Factory reset complete' }));
         } catch ($) {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
@@ -280,49 +568,52 @@ class View extends Component<Props, State> {
             this.#notifyError(msg, 'factory-reset-error');
         }
     };
+    #generalSystemReboot = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            await pb.rpc.sys.reboot({});
+            this.#notifySuccess(formatMessage({ defaultMessage: 'System reboot triggered' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Unknown error!' });
+            this.#notifyError(msg, 'system-reboot-error');
+        }
+    };
+
     #generalRender = (): ReactNode => {
-        const { data, genTimezone } = this.state;
+        const {
+            data,
+            values: {
+                timeFormat,
+                dateFormat,
+                numberFormat,
+                firstDayOfWeek,
+                temperatureUnit,
+                // showSecondsStatusBar,
+                timezone,
+                dataCollection,
+            },
+        } = this.state;
 
         return (
             <SectionGeneral
-                timeFormat={{
-                    value: TimeFormat.twentyFour,
-                    disabled: true,
-                    onChange: this.#noop,
-                }}
-                secondsInStatusbar={{
-                    value: false,
-                    disabled: true,
-                    onChange: this.#noop,
-                }}
-                timezone={{
-                    value: genTimezone.value,
-                    error: pb.renderFieldErrorsAsList(genTimezone.errors),
-                    items: data.timezones,
-                    disabled: genTimezone.isLoading || genTimezone.isSaving,
-                    onChange: this.#generalSetTimezone,
-                }}
-                dateFormat={{
-                    value: 'DMY_SLASH',
-                    disabled: true,
-                    onChange: this.#noop,
-                }}
-                firstWeekDay={{
-                    value: WeekDay.Monday,
-                    disabled: true,
-                    onChange: this.#noop,
-                }}
-                temperature={{
-                    value: Temperature.C,
-                    disabled: true,
-                    onChange: this.#noop,
-                }}
-                numberFormat={{
-                    value: 'spaceAndComma',
-                    disabled: true,
-                    onChange: this.#noop,
-                }}
+                timeFormat={this.#getFieldStruct(timeFormat, this.#generalSetTimeFormat)}
+                // secondsInStatusbar={this.#generalGetFieldStruct(showSecondsStatusBar, this.#generalSetSecondsInStatusbar)}
+
+                // Regional
+                timezone={this.#getFieldStruct(timezone, this.#generalSetTimezone, { items: data.timezones })}
+                dateFormat={this.#getFieldStruct(dateFormat, this.#generalSetDateFormat)}
+                firstWeekDay={this.#getFieldStruct(firstDayOfWeek, this.#generalSetFirsWeekDay)}
+                temperatureUnits={this.#getFieldStruct(temperatureUnit, this.#generalSetTemperatureUnits)}
+                numberFormat={this.#getFieldStruct(numberFormat, this.#generalSetNumberFormat)}
+                // System actions
                 onFactoryReset={this.#generalFactoryReset}
+                onSystemReboot={this.#generalSystemReboot}
+                // Usage data
+                usageData={this.#getFieldStruct(dataCollection, this.#generalSetDataCollection)}
             />
         );
     };
@@ -338,11 +629,19 @@ class View extends Component<Props, State> {
         try {
             const { signal } = this.displayFetchAbort.replace();
             const d = await pb.rpc.config.getDisplaySettings({}, { signal });
+
             this.setState(s => ({
                 data: {
                     ...s.data,
-                    display: d,
-                },
+                    displayNightmodeIntervalBackendValue: d.nightmodeInterval ?? null,
+                } satisfies State['data'],
+                values: {
+                    ...s.values,
+                    displayBrightness: getFieldStateDefault(d.brightness),
+                    displayNightmodeEnabled: getFieldStateDefault(d.nightmodeEnabled),
+                    displayNightmodeBrightness: getFieldStateDefault(d.brightnessNightmode),
+                    displayNightmodeInterval: getFieldStateDefault(d.nightmodeInterval),
+                } satisfies State['values'],
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -350,289 +649,194 @@ class View extends Component<Props, State> {
             this.#notifyError(msg, 'display-settings-load-error');
         }
     };
+
     private displaySetBrightnessAbort = pb.abort.get();
-    #displaySetBrightness = debounce(async (value: Maybe<number>): Promise<void> => {
+    #displaySetBrightness = debounce(async (value: Maybe<pb.BrightnessInfo>): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const currentValue = this.state.data.display?.brightness?.value ?? null;
-        if (value == null || value === currentValue) return;
+        const { displayBrightness } = this.state.values;
+
+        if (value == null || value.value === displayBrightness.value?.value) return;
 
         try {
+            // Optimistic update & saving flag
+            this.#setField('displayBrightness', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
             const { signal } = this.displaySetBrightnessAbort.replace();
-            await pb.rpc.config.setBrightness({ value }, { signal });
+            await pb.rpc.config.setBrightness({ value: value.value }, { signal });
+
             this.#notifySuccess(formatMessage({ defaultMessage: 'Brightness Saved' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            this.setState(s => ({
-                dspBrightness: {
-                    ...s.dspBrightness,
-                    errors: pb.collectAllErrors($) ?? [
-                        formatMessage({ defaultMessage: 'Failed to save the brightness!' }),
-                    ],
-                },
-            }));
+
+            const errors = pb.collectAllErrors($) ?? [
+                formatMessage({ defaultMessage: 'Failed to save the brightness!' }),
+            ];
+            this.#setField('displayBrightness', s => ({ ...getFieldStateDefault(s.value), errors }));
         }
     }, 600);
+
     private displaySetNightmodeEnabledAbort = pb.abort.get();
     #displaySetNightmodeEnabled = async (newEnabled: Maybe<boolean>): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
-        const { display } = this.state.data;
-
-        // Catch the display === null
-        if (!display) {
-            notify('error', formatMessage({ defaultMessage: 'Display settings not loaded yet!' }));
-            return;
-        }
+        const { displayNightmodeEnabled, displayNightmodeInterval } = this.state.values;
 
         // Сurrent state snapshot
-        const currentEnabled: boolean | null = display?.nightmodeEnabled ?? null;
-        const currentInterval: pb.TimeInterval | undefined = display?.nightmodeInterval;
+        const currentEnabled: null | boolean = displayNightmodeEnabled.value ?? null;
+        const currentInterval: null | pb.TimeInterval = displayNightmodeInterval.value;
         const hasInterval: boolean = currentInterval != null;
-        const nextInterval: pb.TimeInterval = currentInterval ?? defaultNightmodeInterval;
 
         // Ignore redundant updates
         if (newEnabled == null || newEnabled === currentEnabled) return;
 
         try {
-            const { signal } = this.displaySetNightmodeEnabledAbort.replace();
-            // Optimistic update (clear errors)
-            this.setState(s => ({
-                dspNightmodeEnabled: {
-                    ...s.dspNightmodeEnabled,
-                    value: newEnabled,
-                    isSaving: true,
-                    errors: null,
-                },
-                dspNightmodeInterval: { ...s.dspNightmodeInterval, errors: null },
-                dspNightmodeBrightness: { ...s.dspNightmodeBrightness, errors: null },
-            }));
+            // Optimistic update & saving flag
+            await this.#setField('displayNightmodeEnabled', s => ({ ...s, value: newEnabled, isSaving: true }));
 
             // Persist changes
+            const { signal } = this.displaySetNightmodeEnabledAbort.replace();
+            const reqOpts = { signal };
+
+            // Case 1: Disable nightmode or reuse existing interval (only update enabled flag)
             if (newEnabled === false || hasInterval) {
-                // Case 1: disable nightmode or reuse existing interval
-                // only update enabled flag
-                await pb.rpc.config.setNightmodeEnabled({ value: newEnabled }, { signal });
-            } else {
-                // Case 2: first-time enable without interval
-                // enable nightmode AND initialize default interval
+                await pb.rpc.config.setNightmodeEnabled({ value: newEnabled }, reqOpts);
+            }
+
+            // Case 2: First-time enable without interval
+            // (enable nightmode AND initialize default interval)
+            else {
                 await Promise.all([
-                    pb.rpc.config.setNightmodeEnabled({ value: newEnabled }, { signal }),
-                    pb.rpc.config.setNightmodeInterval(defaultNightmodeInterval, { signal }),
+                    pb.rpc.config.setNightmodeEnabled({ value: newEnabled }, reqOpts),
+                    pb.rpc.config.setNightmodeInterval(defaultNightmodeInterval, reqOpts),
                 ]);
             }
 
-            // Commit saved values
-
-            const updatedDisplay: pb.DisplaySettingsResponse = { ...display, nightmodeEnabled: newEnabled };
-
-            this.setState(s => ({
-                data: {
-                    ...s.data,
-                    display: updatedDisplay,
-                },
-                dspNightmodeEnabled: {
-                    ...s.dspNightmodeEnabled,
-                    value: newEnabled,
-                    isSaving: false,
-                },
-                dspNightmodeInterval: {
-                    ...s.dspNightmodeInterval,
-                    value: nextInterval,
-                },
-            }));
-
-            notify('success', formatMessage({ defaultMessage: 'Night Mode Saved' }));
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Night Mode Saved' }));
         } catch ($) {
             // Error handling
             if (pb.abort.is($)) return;
-            this.setState(s => ({
-                dspNightmodeEnabled: {
-                    ...s.dspNightmodeEnabled,
-                    value: s.data.display?.nightmodeEnabled ?? false,
-                    isSaving: false,
-                    errors: pb.collectAllErrors($) ?? [
-                        formatMessage({ defaultMessage: 'Failed to save the Night Mode!' }),
-                    ],
-                },
-            }));
+            const errors = pb.collectAllErrors($) ?? [
+                formatMessage({ defaultMessage: 'Failed to save the Night Mode!' }),
+            ];
+            this.#setFieldAttr('displayNightmodeEnabled', 'errors', errors);
+        } finally {
+            await this.#displayFetch();
+            this.#setField('displayNightmodeEnabled', s => getFieldStateDefault(s.value));
         }
     };
+
     private displaySetNightmodeBrightnessAbort = pb.abort.get();
-    #displaySetNightmodeBrightness = debounce(async (value: Maybe<number>): Promise<void> => {
-        const { notify } = this.context;
+    #displaySetNightmodeBrightness = debounce(async (value: Maybe<pb.BrightnessInfo>): Promise<void> => {
         const { formatMessage } = this.props.intl;
 
-        // Сurrent state snapshot
-        const currentValue: number | null = this.state.data.display?.brightnessNightmode?.value ?? null;
         // Ignore redundant updates
-        if (value == null || value === currentValue) return;
+        const { displayNightmodeBrightness } = this.state.values;
+        const currentValue: null | number = displayNightmodeBrightness.value?.value ?? null;
+        if (value == null || value.value === currentValue) return;
 
         try {
+            // Optimistic update & saving flag
+            await this.#setField('displayNightmodeBrightness', s => ({ ...s, value, isSaving: true }));
+
             // Persist changes
             const { signal } = this.displaySetNightmodeBrightnessAbort.replace();
-            await pb.rpc.config.setBrightnessNightmode({ value }, { signal });
-            notify('success', formatMessage({ defaultMessage: 'Night mode brightness saved' }));
+            await pb.rpc.config.setBrightnessNightmode({ value: value.value }, { signal });
+
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Night mode brightness saved' }));
         } catch ($) {
-            // Error handling
             if (pb.abort.is($)) return;
-            this.setState(s => ({
-                dspNightmodeBrightness: {
-                    ...s.dspNightmodeBrightness,
-                    errors: pb.collectAllErrors($) ?? [
-                        formatMessage({ defaultMessage: 'Failed to save the night mode brightness!' }),
-                    ],
-                },
-            }));
+
+            const errors: string[] = pb.collectAllErrors($) ?? [
+                formatMessage({ defaultMessage: 'Failed to save the night mode brightness!' }),
+            ];
+            this.#setFieldAttr('displayNightmodeBrightness', 'errors', errors);
+        } finally {
+            await this.#displayFetch();
+            this.#setField('displayNightmodeBrightness', s => getFieldStateDefault(s.value));
         }
     }, 600);
-    #handleNightmodeIntervalChange = (value: pb.TimeInterval) => {
-        //Update UI values and clear errors
-        this.setState(s => ({
-            dspNightmodeInterval: {
-                ...s.dspNightmodeInterval,
-                value: { ...s.dspNightmodeInterval.value, ...value },
-                errors: null,
-            },
-        }));
 
-        this.displaySetNightmodeInterval(value);
-    };
     private displaySetNightmodeIntervalAbort = pb.abort.get();
-    private displaySetNightmodeInterval = debounce(async (value: pb.TimeInterval): Promise<void> => {
-        const { notify } = this.context;
+    #displaySetNightmodeInterval = (value: pb.TimeInterval): void => {
+        this.#setFieldAttr('displayNightmodeInterval', 'value', value);
+    };
+    #displaySubmitNightmodeInterval = debounce(async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { display } = this.state.data;
 
-        // Catch the display === null
-        if (!display) {
-            notify('error', formatMessage({ defaultMessage: 'Display settings not loaded yet!' }));
-            return;
-        }
-
-        // Сurrent state snapshot
-        const currentValue: pb.TimeInterval | null = display?.nightmodeInterval ?? null;
+        const value = this.state.values.displayNightmodeInterval.value;
         const validationErrors: string[] = [];
 
-        // Set saving state
-        this.setState(s => ({
-            dspNightmodeInterval: {
-                ...s.dspNightmodeInterval,
-                isSaving: true,
-            },
-        }));
-        // Ignore redundant updates or validate time interval
-
-        if (value.from === currentValue?.from && value.to === currentValue?.to) return;
-
-        if (!value.from || !value.to)
+        // Validate time interval
+        if (!value?.from || !value?.to)
             validationErrors.push(formatMessage({ defaultMessage: 'Time interval must be set!' }));
-
-        if (value.from === value.to)
+        else if (value.from === value.to)
             validationErrors.push(formatMessage({ defaultMessage: 'Start and end time cannot be the same!' }));
-
-        if (!validateTime(value.from) || !validateTime(value.to))
+        else if (!validateTime(value.from) || !validateTime(value.to))
             validationErrors.push(formatMessage({ defaultMessage: 'Time must be in HH:MM format!' }));
 
-        if (validationErrors.length > 0) {
-            this.setState(s => ({
-                dspNightmodeInterval: {
-                    ...s.dspNightmodeInterval,
-                    errors: [...validationErrors],
-                },
-            }));
-            return;
-        }
+        // Abort if we have errors
+        if (validationErrors.length > 0)
+            return this.#setFieldAttr('displayNightmodeInterval', 'errors', validationErrors);
 
         try {
+            await this.#setFieldAttr('displayNightmodeInterval', 'isSaving', true);
+
+            // Persist changes
             const { signal } = this.displaySetNightmodeIntervalAbort.replace();
+            await pb.rpc.config.setNightmodeInterval(value as pb.TimeInterval, { signal });
 
-            await pb.rpc.config.setNightmodeInterval(value, { signal });
-
-            const updatedDisplay: pb.DisplaySettingsResponse = { ...display, nightmodeInterval: value };
-
-            this.setState(s => ({
-                data: {
-                    ...s.data,
-                    display: updatedDisplay,
-                },
-                dspNightmodeInterval: {
-                    ...s.dspNightmodeInterval,
-                    isSaving: false,
-                },
-            }));
-
-            notify('success', formatMessage({ defaultMessage: 'Night mode time interval saved' }));
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Night mode time interval saved' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            this.setState(s => ({
-                dspNightmodeInterval: {
-                    ...s.dspNightmodeInterval,
-                    isSaving: false,
-                    errors: pb.collectAllErrors($) ?? [
-                        formatMessage({ defaultMessage: 'Failed to save the night mode time interval!' }),
-                    ],
-                },
-            }));
+
+            const errors: string[] = pb.collectAllErrors($) ?? [
+                formatMessage({ defaultMessage: 'Failed to save the night mode time interval!' }),
+            ];
+            this.#setFieldAttr('displayNightmodeInterval', 'errors', errors);
+        } finally {
+            await this.#displayFetch();
+            this.#setField('displayNightmodeInterval', s => getFieldStateDefault(s.value));
         }
     }, 800);
-    #displayRender = (): ReactNode => {
-        const { dspBrightness, data, dspNightmodeEnabled, dspNightmodeBrightness, dspNightmodeInterval } = this.state;
-        const { display } = data;
 
-        const brightness: pb.BrightnessInfo | undefined = display?.brightness;
-        const nightmodeEnabled: boolean | undefined = display?.nightmodeEnabled;
-        const brightnessNightmode: pb.BrightnessInfo | undefined = display?.brightnessNightmode;
-        const nightmodeInterval: pb.TimeInterval | undefined = display?.nightmodeInterval;
+    #displayRender = (): ReactNode => {
+        const {
+            data: { displayNightmodeIntervalBackendValue },
+            values: {
+                displayBrightness,
+                displayNightmodeBrightness,
+                displayNightmodeEnabled,
+                displayNightmodeInterval,
+            },
+        } = this.state;
 
         return (
             <SectionDisplay
-                brightness={{
-                    value: dspBrightness.value ?? brightness?.value ?? null,
-                    min: brightness?.min,
-                    max: brightness?.max,
-                    step: brightness?.step,
-                    error: pb.renderFieldErrorsAsList(dspBrightness.errors),
-                    disabled: !brightness,
-                    onChange: this.#displaySetBrightness,
-                }}
+                brightness={this.#getFieldStruct(displayBrightness, this.#displaySetBrightness)}
                 // Night
-                nightEnabled={{
-                    value: dspNightmodeEnabled.value ?? nightmodeEnabled ?? false,
-                    disabled: false,
-                    onChange: this.#displaySetNightmodeEnabled,
-                }}
-                nightBrightness={{
-                    value: dspNightmodeBrightness.value ?? brightnessNightmode?.value ?? null,
-                    min: brightnessNightmode?.min,
-                    max: brightnessNightmode?.max,
-                    step: brightnessNightmode?.step,
-                    error: pb.renderFieldErrorsAsList(dspNightmodeBrightness.errors),
-                    disabled: !(dspNightmodeEnabled.value ?? nightmodeEnabled),
-                    onChange: this.#displaySetNightmodeBrightness,
-                }}
-                nightInterval={{
-                    value: dspNightmodeInterval.value ?? nightmodeInterval ?? null,
-                    error: pb.renderFieldErrorsAsList(dspNightmodeInterval.errors),
-                    disabled: !(dspNightmodeEnabled.value ?? nightmodeEnabled),
-                    onChange: this.#handleNightmodeIntervalChange,
-                }}
+                nightEnabled={this.#getFieldStruct(displayNightmodeEnabled, this.#displaySetNightmodeEnabled)}
+                nightBrightness={this.#getFieldStruct(displayNightmodeBrightness, this.#displaySetNightmodeBrightness)}
+                nightInterval={this.#getFieldStruct(displayNightmodeInterval, this.#displaySetNightmodeInterval, {
+                    hasChanged: !isEqual(displayNightmodeIntervalBackendValue, displayNightmodeInterval.value),
+                    onConfirm: this.#displaySubmitNightmodeInterval,
+                })}
                 nightNotify={{
                     value: true,
                     disabled: true,
-                    onChange: this.#noop,
+                    onChange: noop,
                 }}
                 // Location
                 nightUseLocation={{
                     value: true,
                     disabled: true,
-                    onChange: this.#noop,
+                    onChange: noop,
                 }}
                 nightLocation={{
                     value: 'Prague, Czechia',
                     disabled: true,
-                    onChange: this.#noop,
+                    onChange: noop,
                 }}
-                onLocationDetect={this.#noop}
+                onLocationDetect={noop}
             />
         );
     };
@@ -647,8 +851,18 @@ class View extends Component<Props, State> {
 
         try {
             const { signal } = this.soundLightFetcDataAbort.replace();
-            const soundAndLight = await pb.rpc.config.getSoundVolumeSettings({}, { signal });
-            this.setState({ soundAndLight });
+            const [soundAndLight, ledSettings] = await Promise.all([
+                pb.rpc.config.getSoundVolumeSettings({}, { signal }),
+                pb.rpc.config.getLedSettings({}, { signal }),
+            ]);
+            this.setState(s => ({
+                values: {
+                    ...s.values,
+                    volume: getFieldStateDefault(soundAndLight.volume),
+                    volumeNightmode: getFieldStateDefault(soundAndLight.volumeNightmode),
+                    enableLedNotifications: getFieldStateDefault(ledSettings.ledEnabled),
+                },
+            }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -657,26 +871,21 @@ class View extends Component<Props, State> {
             this.#notifyError(msg, 'sound-settings-load-error');
         }
     };
-    #soundLightSetVolume = debounce(async (value: number): Promise<void> => {
-        if (value === this.state.soundAndLight.volume?.value) return;
+
+    #soundLightSetVolume = debounce(async (value: pb.SoundVolume): Promise<void> => {
         const { formatMessage } = this.props.intl;
+        const { volume } = this.state.values;
+
+        // NOOP, required because the sliders are otherwise glitching this
+        if (value.value === volume.value?.value) return;
 
         try {
-            // Positive update
-            this.setState(s => ({
-                soundAndLight: {
-                    ...s.soundAndLight,
-                    volume: pb.create(pb.SoundVolumeSchema, {
-                        min: s.soundAndLight.volume?.min,
-                        max: s.soundAndLight.volume?.max,
-                        step: s.soundAndLight.volume?.step,
-                        value,
-                    }),
-                },
-            }));
+            // Optimistic update & saving flag
+            this.#setField('volume', s => ({ ...s, value, isSaving: true }));
 
             // Submit
-            await pb.rpc.config.setSoundVolume({ value });
+            await pb.rpc.config.setSoundVolume({ value: value.value });
+
             this.#notifySuccess(formatMessage({ defaultMessage: 'Sound volume saved' }));
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
@@ -684,28 +893,23 @@ class View extends Component<Props, State> {
             this.#notifyError(msg, 'sound-volume-save-error');
         } finally {
             await this.#soundLightFetch();
+            this.#setField('volume', s => getFieldStateDefault(s.value));
         }
     }, 200);
-    #soundLightSetVolumeNight = debounce(async (value: number): Promise<void> => {
-        if (value === this.state.soundAndLight.volumeNightmode?.value) return;
+    #soundLightSetVolumeNight = debounce(async (value: pb.SoundVolume): Promise<void> => {
         const { formatMessage } = this.props.intl;
+        const { volumeNightmode } = this.state.values;
+
+        // NOOP, required because the sliders are otherwise glitching this
+        if (value.value === volumeNightmode.value?.value) return;
 
         try {
-            // Positive update
-            this.setState(s => ({
-                soundAndLight: {
-                    ...s.soundAndLight,
-                    volumeNightmode: pb.create(pb.SoundVolumeSchema, {
-                        min: s.soundAndLight.volumeNightmode?.min,
-                        max: s.soundAndLight.volumeNightmode?.max,
-                        step: s.soundAndLight.volumeNightmode?.step,
-                        value,
-                    }),
-                },
-            }));
+            // Optimistic update & saving flag
+            this.#setField('volumeNightmode', s => ({ ...s, value, isSaving: true }));
 
             // Submit
-            await pb.rpc.config.setSoundVolumeNightmode({ value });
+            await pb.rpc.config.setSoundVolumeNightmode({ value: value.value });
+
             this.#notifySuccess(formatMessage({ defaultMessage: 'Night mode sound volume saved' }));
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
@@ -713,45 +917,42 @@ class View extends Component<Props, State> {
             this.#notifyError(msg, 'sound-volume-save-error');
         } finally {
             await this.#soundLightFetch();
+            this.#setField('volumeNightmode', s => getFieldStateDefault(s.value));
         }
     }, 200);
-    // #soundLightSetNotificationLightsEnabled = debounce(async (value: boolean): Promise<void> => {
-    //     const { formatMessage } = this.props.intl;
-    //     const { notify } = this.context;
-    //
-    //     try {
-    //         await pb.rpc.config;
-    //     } catch ($) {
-    //         let msg = pb.collectAllErrorsAsFormattedList($);
-    //         msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
-    //         this.#notifyError(msg, 'sound-volume-save-error');
-    //     }
-    // }, 200);
+    #soundLightSetLedNotify = async (value: boolean): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('enableLedNotifications', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            await pb.rpc.config.setLedEnabled({ value });
+
+            this.#notifySuccess(
+                value
+                    ? formatMessage({ defaultMessage: 'LED notifications enabled' })
+                    : formatMessage({ defaultMessage: 'LED notifications disabled' }),
+            );
+        } catch ($) {
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
+            this.#notifyError(msg, 'sound-volume-save-error');
+        } finally {
+            this.#soundLightFetch();
+            this.#setField('enableLedNotifications', s => getFieldStateDefault(s.value));
+        }
+    };
     #soundLightRender = (): ReactNode => {
-        const { volume, volumeNightmode } = this.state.soundAndLight;
+        const { volume, volumeNightmode, enableLedNotifications } = this.state.values;
 
         return (
             <SectionSoundAndLight
-                soundVolume={{
-                    min: volume?.min ?? 0,
-                    max: volume?.max ?? 100,
-                    step: volume?.step ?? 1,
-                    value: volume?.value ?? 0,
-                    onChange: this.#soundLightSetVolume,
-                }}
-                soundVolumeNight={{
-                    min: volumeNightmode?.min ?? 0,
-                    max: volumeNightmode?.max ?? 100,
-                    step: volumeNightmode?.step ?? 1,
-                    value: volumeNightmode?.value ?? 0,
-                    onChange: this.#soundLightSetVolumeNight,
-                }}
-                // alarmAndNotifyVolume={{ value: 65, onChange: this.#noop }}
-                ledNotifyEnabled={{
-                    value: true,
-                    disabled: true,
-                    onChange: this.#noop,
-                }}
+                soundVolume={this.#getFieldStruct<pb.SoundVolume>(volume, this.#soundLightSetVolume)}
+                soundVolumeNight={this.#getFieldStruct<pb.SoundVolume>(volumeNightmode, this.#soundLightSetVolumeNight)}
+                // alarmAndNotifyVolume={{ value: 65, onChange: noop }}
+                ledNotifyEnabled={this.#getFieldStruct<boolean>(enableLedNotifications, this.#soundLightSetLedNotify)}
             />
         );
     };
@@ -806,20 +1007,7 @@ class View extends Component<Props, State> {
     };
     #secRender = (): ReactNode => {
         const { hasPassword } = this.props;
-        const { secAllowDataCollection } = this.state;
-
-        return (
-            <SectionSecurity
-                hasPassword={hasPassword}
-                actions={this.#secActions}
-                dataCollection={{
-                    value: secAllowDataCollection.value,
-                    disabled: true, // FIXME: secAllowDataCollection.isLoading || secAllowDataCollection.isSaving,
-                    // FIXME: Implement the setter
-                    onChange: this.#noop,
-                }}
-            />
-        );
+        return <SectionSecurity hasPassword={hasPassword} actions={this.#secActions} />;
     };
 
     //

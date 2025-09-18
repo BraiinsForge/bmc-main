@@ -7,7 +7,8 @@ import { FormattedMessage, useIntl, type IntlShape } from 'react-intl';
 import * as pb from '@/proto';
 
 // Lib
-import { type iField, getID } from '@/lib/form';
+import { getID } from '../../const';
+import type { iField } from '@/lib/form';
 
 // Components
 import {
@@ -93,7 +94,7 @@ const getInitialState = (): State => ({
     isChangelogExpanded: false,
 });
 
-const $ = getID('settings', 'updates').get;
+const $ = getID('updates').get;
 class View extends Component<Props, State> {
     #milis = {
         installingTick: 150,

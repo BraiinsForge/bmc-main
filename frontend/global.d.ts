@@ -62,7 +62,7 @@ declare global {
     // Maybe values
     type Maybe<T> = undefined | null | T;
     type MaybeArray<T> = T | Array<T>;
-    type MaybeGetter<R, Args extends unknown[] | void = void> = R | Getter<R, Args>;
+    type MaybeGetter<Return, GetterArgs extends unknown[] | void = void> = Return | Getter<Return, GetterArgs>;
     type MaybePromise<T> = T | Promise<T>;
 
     // React
