@@ -42,7 +42,6 @@ pub(crate) struct DisplayTasks<T: BmcManager> {
     manager: Arc<T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     alarm_bus: AlarmBus,
-    last_price_change_24h_sender: watch::Sender<f32>,
 }
 
 impl<T: BmcManager> DisplayTasks<T> {
@@ -54,22 +53,16 @@ impl<T: BmcManager> DisplayTasks<T> {
         manager: Arc<T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
         alarm_bus: AlarmBus,
-    ) -> (Self, watch::Receiver<f32>) {
-        let (last_price_change_24h_sender, last_price_change_24h_receiver) = watch::channel(0.0);
-
-        (
-            Self {
-                display_controller,
-                system_upgrade_receiver,
-                timezone_receiver,
-                initial_setup_receiver,
-                manager,
-                config_handle,
-                alarm_bus,
-                last_price_change_24h_sender,
-            },
-            last_price_change_24h_receiver,
-        )
+    ) -> Self {
+        Self {
+            display_controller,
+            system_upgrade_receiver,
+            timezone_receiver,
+            initial_setup_receiver,
+            manager,
+            config_handle,
+            alarm_bus,
+        }
     }
 
     pub(crate) fn spawn(self) {
@@ -81,7 +74,6 @@ impl<T: BmcManager> DisplayTasks<T> {
             manager,
             config_handle,
             alarm_bus,
-            last_price_change_24h_sender,
         } = self;
 
         tokio::spawn(Self::run_init_display_screen(
@@ -103,7 +95,6 @@ impl<T: BmcManager> DisplayTasks<T> {
 
         tokio::spawn(Self::run_btc_price_update(
             display_controller.clone(),
-            last_price_change_24h_sender.clone(),
             config_handle.clone(),
         ));
 
@@ -362,7 +353,6 @@ impl<T: BmcManager> DisplayTasks<T> {
 
     async fn run_btc_price_update(
         display_controller: DisplayController,
-        last_price_change_24h_sender: watch::Sender<f32>,
         config_handle: Arc<RwLock<ConfigHandle>>,
     ) {
         let mut interval = interval(Duration::from_secs(60));
@@ -386,11 +376,6 @@ impl<T: BmcManager> DisplayTasks<T> {
                 .localization_config()
                 .number_format;
             display_controller.update_btc_price(btc_price_data, number_format);
-
-            if let Some(price_change_24h) = btc_price_data.price_change_24h() {
-                // Ignore return value, as we don't care about it
-                let _ = last_price_change_24h_sender.send(price_change_24h);
-            }
         }
     }
 

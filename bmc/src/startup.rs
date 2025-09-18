@@ -23,7 +23,7 @@ use bmc_led::led_driver::LedDriver;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tracing::info;
 
 use crate::manager::BmcManager;
@@ -140,7 +140,7 @@ where
         )
         .await?;
 
-        let (display_tasks, last_price_change_24h_receiver) = DisplayTasks::new(
+        let display_tasks = DisplayTasks::new(
             display_controller.clone(),
             state_service.subscribe(),
             manager.watch_timezone_updates(),
@@ -150,6 +150,7 @@ where
             alarm_bus,
         );
 
+        let (_, last_price_change_24h_receiver) = watch::channel(0.0);
         let mut led_controller = LedController::new(
             &state_service,
             manager.clone(),
