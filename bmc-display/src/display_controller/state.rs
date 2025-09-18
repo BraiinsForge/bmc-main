@@ -16,6 +16,7 @@ use crate::generated::{
 use crate::indexmap_model::IndexMapModel;
 use crate::utils;
 use bmc_shared_time::time::{DateFormat, Timezone};
+use bmc_shared_utils::number_format::NumberFormat;
 use chrono::{Datelike, Timelike};
 use indexmap::IndexMap;
 use slint::{FilterModel, Global, Model, ModelRc, VecModel};
@@ -267,11 +268,11 @@ impl DisplayController {
         });
     }
 
-    pub fn update_btc_price(&self, btc_data: BitcoinData) {
+    pub fn update_btc_price(&self, btc_data: BitcoinData, number_format: NumberFormat) {
         self.in_event_loop(move |main_window| {
             let bitcoin_adapter = BitcoinAdapter::get(&main_window);
-            bitcoin_adapter.set_price(btc_data.price_as_shared());
-            bitcoin_adapter.set_price_change(btc_data.price_change_as_shared());
+            bitcoin_adapter.set_price(btc_data.price_as_shared(number_format.clone()));
+            bitcoin_adapter.set_price_change(btc_data.price_change_as_shared(number_format));
             bitcoin_adapter.set_price_increase(btc_data.increasing_trend());
         });
     }

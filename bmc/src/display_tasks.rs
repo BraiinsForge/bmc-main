@@ -101,9 +101,10 @@ impl<T: BmcManager> DisplayTasks<T> {
             manager.clone(),
         ));
 
-        tokio::spawn(Self::run_price_update(
+        tokio::spawn(Self::run_btc_price_update(
             display_controller.clone(),
             last_price_change_24h_sender.clone(),
+            config_handle.clone(),
         ));
 
         tokio::spawn(Self::run_blockheight_update(
@@ -359,9 +360,10 @@ impl<T: BmcManager> DisplayTasks<T> {
         }
     }
 
-    async fn run_price_update(
+    async fn run_btc_price_update(
         display_controller: DisplayController,
         last_price_change_24h_sender: watch::Sender<f32>,
+        config_handle: Arc<RwLock<ConfigHandle>>,
     ) {
         let mut interval = interval(Duration::from_secs(60));
 
@@ -378,7 +380,12 @@ impl<T: BmcManager> DisplayTasks<T> {
                     BitcoinData::default()
                 };
 
-            display_controller.update_btc_price(btc_price_data);
+            let number_format = config_handle
+                .read()
+                .await
+                .localization_config()
+                .number_format;
+            display_controller.update_btc_price(btc_price_data, number_format);
 
             if let Some(price_change_24h) = btc_price_data.price_change_24h() {
                 // Ignore return value, as we don't care about it
