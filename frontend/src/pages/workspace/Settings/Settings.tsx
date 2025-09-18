@@ -162,8 +162,12 @@ class View extends Component<Props, State> {
     };
 
     #noop = () => {};
+    // Forcing the external ID usage ensures that we won't spam the user with repeated notifications.
     #notifySuccess = (message: string): void => {
         this.context.notify('success', message, { id: 'settings-saved', timeoutSeconds: 3 });
+    };
+    #notifyError = (message: string, tag: string): void => {
+        this.context.notify('error', message, { id: tag, timeoutSeconds: 3 });
     };
     #fetchData = async (): Promise<void> => {
         const q = [this.#upgradesFeedCheck(), this.#fetchSystemInfo(), this.#displayFetch(), this.#soundLightFetch()];
@@ -232,23 +236,18 @@ class View extends Component<Props, State> {
 
     private generalSetTimezoneAbort = pb.abort.get();
     #generalSetTimezone = async (value: pb.Timezone): Promise<void> => {
+        const { formatMessage } = this.props.intl;
         const { genTimezone } = this.state;
 
         // No sense in moving ahead if we don't yet know
         // the current timezone or if it's already set.
         if (genTimezone.value == null || value.id === genTimezone.value?.id) return;
 
-        const { formatMessage } = this.props.intl;
-        const { notify } = this.context;
-
         try {
             const { signal } = this.generalSetTimezoneAbort.replace();
             await setState(this, s => ({ genTimezone: getEmptyLeafState(s.genTimezone.value, 'saving') }));
             await pb.rpc.sys.setTimezone({ id: value.id }, { signal });
-            notify(
-                'success',
-                formatMessage({ defaultMessage: 'Timezone changed to {value}' }, { value: pb.renderTimezone(value) }),
-            );
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Timezone changed' }));
         } catch ($) {
             if (pb.abort.is($)) return;
             const errors = pb.collectAllErrors($);
@@ -260,17 +259,15 @@ class View extends Component<Props, State> {
     };
     #generalFactoryReset = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { notify } = this.context;
 
         try {
             await pb.rpc.sys.factoryReset({});
             this.#notifySuccess(formatMessage({ defaultMessage: 'Factory reset complete!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            notify(
-                'error',
-                pb.collectAllErrorsAsFormattedList($) ?? formatMessage({ defaultMessage: 'Unknown error!' }),
-            );
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Unknown error!' });
+            this.#notifyError(msg, 'factory-reset-error');
         }
     };
     #generalRender = (): ReactNode => {
@@ -326,7 +323,6 @@ class View extends Component<Props, State> {
 
     private displayFetchAbort = pb.abort.get();
     #displayFetch = async (): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
 
         try {
@@ -340,7 +336,8 @@ class View extends Component<Props, State> {
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            notify('error', formatMessage({ defaultMessage: 'Failed to load display settings!' }));
+            const msg: string = formatMessage({ defaultMessage: 'Failed to load display settings!' });
+            this.#notifyError(msg, 'display-settings-load-error');
         }
     };
     private displaySetBrightnessAbort = pb.abort.get();
@@ -417,7 +414,6 @@ class View extends Component<Props, State> {
 
     private soundLightFetcDataAbort = pb.abort.get();
     #soundLightFetch = async (): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
 
         try {
@@ -429,14 +425,12 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load sound settings!' });
-            notify('error', msg);
+            this.#notifyError(msg, 'sound-settings-load-error');
         }
     };
     #soundLightSetVolume = debounce(async (value: number): Promise<void> => {
         if (value === this.state.soundAndLight.volume?.value) return;
-
         const { formatMessage } = this.props.intl;
-        const { notify } = this.context;
 
         try {
             // Positive update
@@ -458,16 +452,14 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
-            notify('error', msg, { id: 'sound-volume-save-error', timeoutSeconds: 3 });
+            this.#notifyError(msg, 'sound-volume-save-error');
         } finally {
             await this.#soundLightFetch();
         }
     }, 200);
     #soundLightSetVolumeNight = debounce(async (value: number): Promise<void> => {
         if (value === this.state.soundAndLight.volumeNightmode?.value) return;
-
         const { formatMessage } = this.props.intl;
-        const { notify } = this.context;
 
         try {
             // Positive update
@@ -489,7 +481,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the night mode sound volume!' });
-            notify('error', msg, { id: 'sound-volume-save-error', timeoutSeconds: 3 });
+            this.#notifyError(msg, 'sound-volume-save-error');
         } finally {
             await this.#soundLightFetch();
         }
@@ -503,7 +495,7 @@ class View extends Component<Props, State> {
     //     } catch ($) {
     //         let msg = pb.collectAllErrorsAsFormattedList($);
     //         msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
-    //         notify('error', msg, { id: 'sound-volume-save-error', timeoutSeconds: 3 });
+    //         this.#notifyError(msg, 'sound-volume-save-error');
     //     }
     // }, 200);
     #soundLightRender = (): ReactNode => {
@@ -608,7 +600,6 @@ class View extends Component<Props, State> {
     private upgradesFeedCheckAbort = pb.abort.get();
     #upgradesFeedCheck = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { notify } = this.context;
         await setState(this, { upgradeFromFeedStatus: { kind: 'checking-upgrade', upgradeInfo: null } });
 
         try {
@@ -638,7 +629,7 @@ class View extends Component<Props, State> {
 
             const errors = pb.collectAllErrors($);
             const message = formatMessage({ defaultMessage: 'Failed to check for upgrade!' });
-            notify('error', message);
+            this.#notifyError(message, 'upgrade-check-error');
 
             this.setState(s => ({
                 data: { ...s.data, upgradeInfo: null },
@@ -652,7 +643,6 @@ class View extends Component<Props, State> {
     #upgradesFeedDownload = async (hash: string): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { upgradeInfo } = this.state.data;
-        const { notify } = this.context;
 
         const setBackWithError = (error: string[]) => {
             unloadGuard.disable();
@@ -709,7 +699,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             const error = pb.collectAllErrorsAsFormattedList($);
             const message = formatMessage({ defaultMessage: 'Unexpected error: {error}' }, { error });
-            notify('error', message);
+            this.#notifyError(message, 'upgrade-download-error');
         }
     };
 
