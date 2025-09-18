@@ -1,5 +1,6 @@
 import { Scene } from "../widgets/scene.slint";
 import { WidgetBuilder } from "widget-builder.slint";
+import { Palette } from "../style/palette.slint";
 
 export enum SceneCyclingTransition {
     Slide,
@@ -49,7 +50,7 @@ component AutomaticSceneCycler {
 
     changed scene-index => {
         if enabled {
-          timer.restart();
+            timer.restart();
         }
     }
 
@@ -147,6 +148,8 @@ component SceneCyclerFade inherits Rectangle {
     in property <[Scene]> scenes;
     in-out property <int> scene-index;
     out property <bool> user-interacting <=> swipe.swiping;
+
+    background: Palette.black;
 
     changed scene-index => {
         swipe.cancel();
