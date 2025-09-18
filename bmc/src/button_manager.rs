@@ -35,8 +35,6 @@ use tracing::log::warn;
 const REBOOT_MAX_HOLD_DURATION: Duration = Duration::from_secs(5);
 /// Maximum number of seconds to hold the button for to perform factory reset
 const FRESET_MAX_HOLD_DURATION: Duration = Duration::from_secs(10);
-/// Maximum number of seconds to hold the button for to perform hard factory reset
-const HARD_FRESET_MAX_HOLD_DURATION: Duration = Duration::from_secs(15);
 
 /// Button current state enum up/down, with holding time
 #[derive(Clone, Debug)]
@@ -145,29 +143,16 @@ where
             if let Err(e) = self.bmc_manager.reboot().await {
                 warn!("Error while rebooting: {e}");
             }
-        }
-        if pressed_at.elapsed() >= REBOOT_MAX_HOLD_DURATION
-            && pressed_at.elapsed() < FRESET_MAX_HOLD_DURATION
-        {
+        } else if pressed_at.elapsed() < FRESET_MAX_HOLD_DURATION {
             // Factory reset
-            info!("Performing factory reset");
+            info!("Performing factory soft reset");
             if let Err(e) = self.bmc_manager.factory_reset(false).await {
-                warn!("Error while factory reset: {e}");
+                warn!("Error while factory soft reset: {e}");
             }
-        }
-        if pressed_at.elapsed() >= REBOOT_MAX_HOLD_DURATION
-            && pressed_at.elapsed() < HARD_FRESET_MAX_HOLD_DURATION
-        {
-            // Hard factory reset
-            info!("Performing hard factory reset");
-            if let Err(e) = self.bmc_manager.factory_reset(true).await {
-                warn!("Error while hard factory reset: {e}");
-            }
-        }
-        if pressed_at.elapsed() >= HARD_FRESET_MAX_HOLD_DURATION {
+        } else {
             warn!(
                 "Reset button pressed for more than {} seconds, ignoring",
-                HARD_FRESET_MAX_HOLD_DURATION.as_secs()
+                FRESET_MAX_HOLD_DURATION.as_secs()
             );
         }
     }
