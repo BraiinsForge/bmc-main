@@ -155,6 +155,10 @@ impl NetworkInterface {
             .map(|network| Self { inner: network })
     }
 
+    pub fn get_inner(&self) -> PNetNetworkInterface {
+        self.inner.clone()
+    }
+
     #[must_use]
     pub fn mac_address(&self) -> Option<MacAddr> {
         self.inner
