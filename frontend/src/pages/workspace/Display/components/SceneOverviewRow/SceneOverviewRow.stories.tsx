@@ -66,9 +66,21 @@ export function SceneOverviewRow(args: SceneOverviewRowProps) {
                 title="Clock – Analog Rectangular"
                 description="Horizontal analog layout in a rectangular frame"
             />
-            {/* <Component {...args} preview={<ScenePreview kind={pb.SceneKind.ticker} variant={pb.SceneVariantTicker.candle} />} title="Ticker: Big Price" description="BTC-USD" /> */}
+            <Component
+                {...args}
+                preview={<ScenePreview kind={{ case: 'tickerBtc', value: pb.create(pb.TickerBtcWidgetSchema, {}) }} />}
+                title="Ticker: BTC Price"
+                description="Exsul potuss, tanquam velox extum."
+            />
+            <Component
+                {...args}
+                preview={
+                    <ScenePreview kind={{ case: 'blockHeight', value: pb.create(pb.BlockHeightWidgetSchema, {}) }} />
+                }
+                title="Block Height"
+                description="Teachers, winds, and special saints will always protect them."
+            />
             {/* <Component {...args} preview={<ScenePreview kind={pb.SceneKind.pool} />} title="Braiins Pool Stats" description="account.name" /> */}
-            {/* <Component {...args} enabled={false} preview={<ScenePreview kind={pb.SceneKind.clock} variant={pb.SceneVariantClock.digital_flip} />} title="Clock – Flip" description="Flip-style digital clock with adjustable font weight" /> */}
         </div>
     );
 }

@@ -25,94 +25,138 @@ $ctrl-height: to-rem(40px);
     user-select: none;
     color: $text-primary;
 
-    // Just a slight wrapping of the actions & duration controls
+    // // Just a slight wrapping of the actions & duration controls
+    // @container (width <= 900px) {
+    //     padding-block: mini-units(2);
+    //
+    //     grid-template-areas:
+    //         'handle    toggle    preview    actions'
+    //         'handle    toggle    labels     duration';
+    //     grid-template-columns: auto auto 1fr auto;
+    // }
+    //
+    // // - stretch the image
+    // // - controls over the image
+    // // - labels & toggle on it's own row
+    // // - duration on it's own row
+    // @container (width <= 800px) {
+    //     padding-inline: 0;
+    //     padding-block: 0 mini-units(3);
+    //
+    //     grid-template-areas:
+    //         'preview    preview'
+    //         'actions    actions'
+    //         'labels     toggle'
+    //         'duration   duration';
+    //     grid-template-columns: 1fr auto;
+    //     grid-template-rows: auto auto;
+    //     row-gap: 0;
+    //
+    //     // Covers the whole width
+    //     .preview {
+    //         width: 100%;
+    //         height: 4 * $row-height;
+    //         place-content: center;
+    //
+    //         // Image now COVERs the whole thing
+    //         img {
+    //             width: 100%;
+    //             height: 100%;
+    //             object-fit: contain;
+    //             object-position: center;
+    //         }
+    //     }
+    //
+    //     // Moves upward over the image
+    //     .actions {
+    //         position: relative;
+    //         z-index: 10;
+    //
+    //         margin-block:
+    //             // shift the action buttons over the image above them
+    //             mini-units(-9)
+    //             // …and space out the bottom a bit. This one now fights the negative top margin, so we gotta go big here too
+    //             mini-units(3);
+    //
+    //         // …and space out a bit more from the right edge
+    //         padding: mini-units(2);
+    //         backdrop-filter: blur(10px);
+    //     }
+    //
+    //     // Toggle now needs it's own spacing from the right edge
+    //     .toggle,
+    //     .duration {
+    //         margin-inline-end: mini-units(2);
+    //     }
+    //
+    //     // the label+input combo now covers the width
+    //     .duration {
+    //         place-self: stretch;
+    //         padding-block-start: mini-units(2);
+    //
+    //         :global(.cds--number) {
+    //             margin-inline-start: auto;
+    //         }
+    //     }
+    //
+    //     .duration,
+    //     .labels {
+    //         margin-inline-start: mini-units(2);
+    //     }
+    //
+    //     // Drag handle gets moved to the upper left corner
+    //     .dragHandle {
+    //         position: absolute;
+    //         top: mini-units(2);
+    //         left: mini-units(2);
+    //         width: to-rem(40px);
+    //         height: to-rem(40px);
+    //
+    //         background-color: $button-secondary;
+    //     }
+    // }
+
     @container (width <= 900px) {
         padding-block: mini-units(2);
-
         grid-template-areas:
-            'handle    toggle    preview    actions'
-            'handle    toggle    labels     duration';
+            'handle  preview labels    actions'
+            'handle  toggle  duration  actions';
         grid-template-columns: auto auto 1fr auto;
     }
 
-    // - stretch the image
-    // - controls over the image
-    // - labels & toggle on it's own row
-    // - duration on it's own row
-    @container (width <= 800px) {
-        padding-inline: 0;
-        padding-block: 0 mini-units(3);
-
+    @container (width <= 600px) {
         grid-template-areas:
-            'preview    preview'
-            'actions    actions'
-            'labels     toggle'
-            'duration   duration';
-        grid-template-columns: 1fr auto;
-        grid-template-rows: auto auto;
-        row-gap: 0;
+            'preview labels   labels  '
+            'handle  duration duration'
+            'handle  toggle   actions';
+        grid-template-columns: auto auto 1fr;
+        grid-auto-rows: minmax(48px, auto);
+        padding-inline: mini-units(1) mini-units(2);
 
-        // Covers the whole width
         .preview {
-            width: 100%;
-            height: 4 * $row-height;
-            place-content: center;
-
-            // Image now COVERs the whole thing
-            img {
-                width: 100%;
-                height: 100%;
-                object-fit: contain;
-                object-position: center;
-            }
+            margin-inline: auto;
         }
 
-        // Moves upward over the image
-        .actions {
-            position: relative;
-            z-index: 10;
-
-            margin-block:
-                // shift the action buttons over the image above them
-                mini-units(-9)
-                // …and space out the bottom a bit. This one now fights the negative top margin, so we gotta go big here too
-                mini-units(3);
-
-            // …and space out a bit more from the right edge
-            padding: mini-units(2);
-            backdrop-filter: blur(10px);
-        }
-
-        // Toggle now needs it's own spacing from the right edge
-        .toggle,
-        .duration {
-            margin-inline-end: mini-units(2);
-        }
-
-        // the label+input combo now covers the width
-        .duration {
-            place-self: stretch;
-            padding-block-start: mini-units(2);
-
-            :global(.cds--number) {
-                margin-inline-start: auto;
-            }
-        }
-
-        .duration,
-        .labels {
-            margin-inline-start: mini-units(2);
-        }
-
-        // Drag handle gets moved to the upper left corner
         .dragHandle {
-            position: absolute;
-            top: mini-units(2);
-            left: mini-units(2);
-            width: to-rem(40px);
-            height: to-rem(40px);
+            margin-inline: auto;
+        }
 
-            background-color: $button-secondary;
+        .actions {
+            margin-inline: 0 auto;
+        }
+    }
+
+    @container (width <= 330px) {
+        grid-template-areas:
+            'preview  labels'
+            'handle   duration'
+            'toggle   actions';
+        grid-template-columns: auto 1fr;
+
+        .duration {
+            flex-flow: column nowrap;
+            align-items: start;
+            gap: mini-units(1);
         }
     }
 }

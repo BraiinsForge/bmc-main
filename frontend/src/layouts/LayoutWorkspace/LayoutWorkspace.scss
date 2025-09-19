@@ -24,12 +24,6 @@
     }
 }
 
-@media (width <= 680px) {
-    .headerAction .label {
-        display: none;
-    }
-}
-
 //
 // Sidenav
 //
@@ -60,9 +54,24 @@
 
 .main {
     margin-inline-start: 16rem !important;
+    padding-inline: mini-units(3);
 
     @include breakpoint-down(lg) {
         height: 100%;
         margin-inline: 0 !important;
+    }
+}
+
+//
+// Responsive
+//
+
+@media (width <= 680px) {
+    .headerAction .label {
+        display: none;
+    }
+
+    .main {
+        padding-inline: mini-units(2);
     }
 }
