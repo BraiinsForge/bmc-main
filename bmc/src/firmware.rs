@@ -11,11 +11,22 @@ use index_common::NormalizedIndex;
 use minerctl_defs::bos::version::BosVersion;
 use reqwest::Client;
 use std::time::Duration;
+use tracing::warn;
+use url::Url;
 
 const INDEX_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Debug)]
-pub struct BmcIndex;
+#[derive(Debug, Default)]
+pub struct BmcIndex {
+    override_index_url: Option<Url>,
+}
+
+impl BmcIndex {
+    #[must_use]
+    pub fn new(override_index_url: Option<Url>) -> Self {
+        Self { override_index_url }
+    }
+}
 
 #[async_trait::async_trait]
 impl FirmwareIndex for BmcIndex {
@@ -30,9 +41,16 @@ impl FirmwareIndex for BmcIndex {
         let version = version
             .parse::<BosVersion>()
             .map_err(|_| FirmwareDownloadError::InvalidVersion)?;
-        let downloaded = index_bmc::download(client, None, INDEX_DOWNLOAD_TIMEOUT)
-            .await
-            .map_err(|_| FirmwareDownloadError::IndexDownloadFailed)?;
+        let downloaded = index_bmc::download(
+            client,
+            self.override_index_url.as_ref(),
+            INDEX_DOWNLOAD_TIMEOUT,
+        )
+        .await
+        .inspect_err(|e: &index_common::IndexError| {
+            warn!("Failed to download firmware index file, {:?}", e);
+        })
+        .map_err(|_| FirmwareDownloadError::IndexDownloadFailed)?;
 
         let index = NormalizedIndex::<BmcRelease>::normalize(downloaded);
 
