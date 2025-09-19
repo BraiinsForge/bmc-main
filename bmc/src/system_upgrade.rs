@@ -357,7 +357,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             .expect("BUG: Failed to lock boser config");
         config_handle.autoupgrade = Some(new_config.clone());
 
-        config_handle.sync_to_storage().await?;
+        config_handle.save().await?;
         drop(config_handle);
         debug!("Autoupgrade config updated");
 

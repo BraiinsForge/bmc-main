@@ -5,9 +5,9 @@ use crate::{
     BmcManager,
     config::ConfigHandle,
     manager::{InitialSetupError, WifiNetworkConfig},
-    utils::NumberFormat,
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
+use bmc_shared_utils::number_format::NumberFormat;
 use bmc_upgrade::autoupgrade::{
     AutoUpgradeConfig, AutoUpgradeFrequency, SECONDS_DEVICE_SETUP_DELAY,
 };
@@ -21,21 +21,12 @@ use std::{
     },
     time::Duration,
 };
-
-use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
-use bmc_shared_utils::number_format::NumberFormat;
 use thiserror::Error;
 use tokio::sync::{
     RwLock,
     watch::{self, Receiver},
 };
 use tracing::warn;
-
-use crate::{
-    BmcManager,
-    config::ConfigHandle,
-    manager::{InitialSetupError, WifiNetworkConfig},
-};
 
 const REBOOT_SLEEP_DURATION: Duration = Duration::from_secs(10);
 

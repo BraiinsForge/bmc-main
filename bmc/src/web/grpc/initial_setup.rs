@@ -3,6 +3,7 @@
 use super::{GrpcError, system::into_grpc_timezone};
 use crate::initial_setup::{DeviceSetupError, WifiSetupError};
 use crate::web::grpc::network::{scan_wifi_response, try_into_wifi_network_config};
+use crate::web::grpc::shared::try_from_number_format;
 use crate::{
     BmcManager,
     initial_setup::{DeviceSetupConfig, InitialSetup},
@@ -19,16 +20,6 @@ use std::{str::FromStr, sync::Arc};
 use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
 use tracing::warn;
-
-use super::shared::try_from_number_format;
-use super::{GrpcError, system::into_grpc_timezone};
-use crate::initial_setup::{DeviceSetupError, WifiSetupError};
-use crate::web::grpc::network::{scan_wifi_response, try_into_wifi_network_config};
-use crate::{
-    BmcManager,
-    initial_setup::{DeviceSetupConfig, InitialSetup},
-    manager::BmcState,
-};
 
 #[derive(Clone)]
 pub(crate) struct InitialSetupService<T, F>

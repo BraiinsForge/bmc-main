@@ -261,6 +261,7 @@ impl Default for Config {
             sound_volume_pct: None,
             alarms: None,
             led_enabled: None,
+            autoupgrade: None,
         }
     }
 }
