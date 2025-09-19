@@ -128,3 +128,14 @@ export function createBlockHeightWidgetKind(data: FormPropsToValuesRec<FormWidge
         },
     });
 }
+export function unpackBlockHeightWidgetKind(
+    data: pb.WidgetKind,
+    widgetSize: pb.WidgetSize,
+): FormPropsToValuesRec<FormWidgetBlockHeightProps> {
+    if (data.value?.case !== 'blockHeight') throw new Error('Invalid widget kind');
+    return {
+        widgetSize,
+        showDate: data.value.value.showTimestamp,
+        fontStyle: data.value.value.numbersFontStyle,
+    };
+}

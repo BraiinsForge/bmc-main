@@ -214,3 +214,20 @@ export function createClockWidgetKind(data: FormPropsToValuesRec<FormWidgetClock
         },
     });
 }
+export function unpackClockWidgetKind(
+    data: pb.WidgetKind,
+    widgetSize: pb.WidgetSize,
+): FormPropsToValuesRec<FormWidgetClockProps> {
+    if (data.value.case !== 'clock') throw new Error('Invalid widget kind');
+    const clock = data.value.value;
+
+    return {
+        widgetSize,
+        clockStyle: clock.clockStyle,
+        fontStyle: clock.numbersFontStyle,
+        showDate: clock.showDate,
+        showSeconds: clock.showSeconds,
+        showTimezone: clock.showTimezone,
+        timezone: clock.timezone,
+    };
+}

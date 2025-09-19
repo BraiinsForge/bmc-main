@@ -115,6 +115,10 @@ export function BoundRadioGroup<T extends string | number>(props: BoundRadioGrou
 
     return (
         <RadioButtonGroup
+            // This little shit seems to really need thrashing
+            // with value change, because otherwise it doesn't behave
+            // like a good little controlled input.
+            key={`${id}-${value}`}
             id={id}
             name={id}
             value={value ?? undefined}

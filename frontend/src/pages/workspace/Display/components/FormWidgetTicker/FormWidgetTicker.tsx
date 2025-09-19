@@ -133,3 +133,13 @@ export function createTickerWidgetKind(data: FormPropsToValuesRec<FormWidgetTick
         },
     });
 }
+export function unpackTicketWidgetKind(
+    data: pb.WidgetKind,
+    widgetSize: pb.WidgetSize,
+): FormPropsToValuesRec<FormWidgetTickerProps> {
+    if (data.value?.case !== 'tickerBtc') throw new Error('Invalid widget kind');
+    return {
+        widgetSize,
+        timeFrame: data.value.value.timeFrame,
+    };
+}
