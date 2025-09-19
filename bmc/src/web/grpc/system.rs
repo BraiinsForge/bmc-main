@@ -206,6 +206,15 @@ where
 
         Ok(Response::new(()))
     }
+
+    async fn reboot(&self, _request: Request<()>) -> Result<Response<()>, Status> {
+        self.manager.reboot().await.map_err(|err| {
+            warn!(?err, "Failed to reboot device");
+            Status::internal("Failed to reboot device")
+        })?;
+
+        Ok(Response::new(()))
+    }
 }
 
 pub(crate) fn into_grpc_timezone(timezone: &Timezone) -> bmc_grpc::web::Timezone {
