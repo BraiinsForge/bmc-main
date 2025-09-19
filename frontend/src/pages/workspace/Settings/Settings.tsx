@@ -83,6 +83,7 @@ interface State {
 
     // Data that does not fit neatly into the form fields.
     data: {
+        metadata: null | pb.Metadata;
         timezones: ReadonlyArray<pb.Timezone>;
         upgradeInfo: null | pb.CheckForUpgradeResponse;
         displayNightmodeIntervalBackendValue: null | pb.TimeInterval;
@@ -125,6 +126,7 @@ const getInitialState = (): State => ({
     globalErrors: null,
 
     data: {
+        metadata: null,
         timezones: [],
         upgradeInfo: null,
         displayNightmodeIntervalBackendValue: null,
@@ -227,12 +229,13 @@ class View extends Component<Props, State> {
     #fetchSystemInfo = async (): Promise<void> => {
         try {
             const { signal } = this.fetchSystemInfoAbort.replace();
-            const [{ timezone }, { timezones }] = await Promise.all([
+            const [{ timezone }, { timezones }, metadata] = await Promise.all([
                 pb.rpc.sys.getTimezone({}, { signal }),
                 pb.rpc.sys.getTimezoneList({}, { signal }),
+                pb.rpc.meta.getMetadata({}, { signal }),
             ]);
             this.setState(s => ({
-                data: { ...s.data, timezones },
+                data: { ...s.data, timezones, metadata },
                 values: { ...s.values, timezone: getFieldStateDefault(timezone) },
             }));
         } catch ($) {
@@ -1177,15 +1180,11 @@ class View extends Component<Props, State> {
 
     #updatesToggle = (enabled: boolean): void => console.log(enabled);
     #updatesRender = (): ReactNode => {
-        const { upgradeFromFeedStatus, upgradeFromFeedErrors } = this.state;
+        const { upgradeFromFeedStatus, upgradeFromFeedErrors, data } = this.state;
         return (
             <SectionUpgrade
-                automaticUpgrades={{
-                    value: true,
-                    onChange: this.#updatesToggle,
-                    disabled: true,
-                }}
-                versionCurrent="24.04.1"
+                automaticUpgrades={{ value: true, onChange: this.#updatesToggle, disabled: true }}
+                versionCurrent={data.metadata?.version ?? null}
                 status={upgradeFromFeedStatus}
                 errors={upgradeFromFeedErrors}
                 onCheckUpdates={this.#upgradesFeedCheck}
