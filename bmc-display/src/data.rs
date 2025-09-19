@@ -4,7 +4,7 @@ use crate::generated;
 use crate::indexmap_model::IndexMapModel;
 use anyhow::anyhow;
 use bmc_shared_time::time::Timezone;
-use chrono::TimeDelta;
+use chrono::{DateTime, TimeDelta, Utc};
 use indexmap::{IndexMap, indexmap};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use slint::{ModelRc, ToSharedString};
@@ -173,6 +173,7 @@ pub struct BraiinsPoolWidget {
     pub pool_style: PoolStyle,
     pub chart_frame: PoolChartTimeFrame,
     // pub worker_states: bool,
+    pub account_id: Option<AccountId>,
 }
 
 impl Default for BraiinsPoolWidget {
@@ -181,6 +182,7 @@ impl Default for BraiinsPoolWidget {
             pool_style: PoolStyle::Overview,
             chart_frame: PoolChartTimeFrame::Hours24,
             // worker_states: true,
+            account_id: None,
         }
     }
 }
@@ -792,6 +794,82 @@ fn font_style(font_style: FontStyle) -> generated::FontStyle {
         FontStyle::Medium => generated::FontStyle::Medium,
         FontStyle::Bold => generated::FontStyle::Bold,
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
+pub struct AccountId(String);
+
+impl AccountId {
+    pub(crate) fn generate() -> Self {
+        Self(Uuid::new_v4().to_string())
+    }
+}
+
+impl Display for AccountId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl FromStr for AccountId {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.is_empty() {
+            Err(anyhow!("Empty string"))
+        } else {
+            Ok(Self(value.to_owned()))
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountType {
+    BraiinsPool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthenticationType {
+    ApiKey(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub id: AccountId,
+    pub r#type: AccountType,
+    pub name: String,
+    pub authentication: AuthenticationType,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Account {
+    #[must_use]
+    pub fn new(account_type: AccountType, name: &str, authentication: AuthenticationType) -> Self {
+        Self {
+            id: AccountId::generate(),
+            r#type: account_type,
+            name: name.to_owned(),
+            authentication,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+#[inline]
+pub fn serialize_accounts<S: Serializer>(
+    map: &IndexMap<AccountId, Account>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(map.values())
+}
+
+#[inline]
+pub fn deserialize_accounts<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<IndexMap<AccountId, Account>, D::Error> {
+    de_indexmap(deserializer, |account: &Account| account.id.clone())
 }
 
 #[inline]
