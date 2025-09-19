@@ -24,8 +24,7 @@ pub enum BmcPlatform {
 }
 
 pub static DEFAULT_URL: LazyLock<Url> = LazyLock::new(|| {
-    Url::parse("https://downloads.braiins.com/braiins-mining-clock")
-        .expect("hardcoded url is invalid")
+    Url::parse("https://downloads.braiins.com/braiins-deck").expect("hardcoded url is invalid")
 });
 
 pub async fn download(
