@@ -225,6 +225,25 @@ impl DateFormat {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash, Copy, Display, Default)]
+pub enum WeekDay {
+    #[default]
+    Monday = 1,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
+impl WeekDay {
+    #[must_use]
+    pub fn as_number_string(self) -> String {
+        (self as u8).to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

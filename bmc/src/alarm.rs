@@ -12,9 +12,9 @@ use std::{
 use anyhow::anyhow;
 use bmc_display::display_controller::DisplayController;
 use bmc_scheduler::{Cron, JobScheduler, scheduler::Task};
+use bmc_shared_time::time::WeekDay;
 use chrono::{NaiveTime, Timelike};
 use serde::{Deserialize, Serialize};
-use strum::Display as StrumDisplay;
 use thiserror::Error;
 use tokio::{
     sync::{
@@ -131,23 +131,6 @@ impl AlarmData {
             Self::weekdays_to_number_string(&self.repeat)
         };
         Ok(Cron::from_str(&format!("0 {minute} {hour} * * {days}"))?)
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash, Copy, StrumDisplay)]
-pub(crate) enum WeekDay {
-    Monday = 1,
-    Tuesday,
-    Wednesday,
-    Thursday,
-    Friday,
-    Saturday,
-    Sunday,
-}
-
-impl WeekDay {
-    pub fn as_number_string(self) -> String {
-        (self as u8).to_string()
     }
 }
 

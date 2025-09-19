@@ -11,7 +11,7 @@ message Alarm {
   string name = 2;
   string time = 3; // Expected format: HH:MM, Range 00:00 - 23:59
   bool enabled = 4;
-  repeated Weekday repeat = 5;
+  repeated braiins.bmc.web.Weekday repeat = 5;
   optional braiins.bmc.web.SoundInfo sound = 6;
   SnoozeOptionsWrapper snooze_options = 7;
 }
@@ -31,7 +31,7 @@ message AddAlarmRequest {
   string name = 1;
   string time = 2; // Expected format: HH:MM, Range 00:00 - 23:59
   bool enabled = 3;
-  repeated Weekday repeat = 4;
+  repeated braiins.bmc.web.Weekday repeat = 4;
   optional string sound_id = 5;
   SnoozeOptionsWrapper snooze_options = 6;
 }
@@ -41,20 +41,9 @@ message SetAlarmRequest {
   string name = 2;
   string time = 3; // Expected format: HH:MM, Range 00:00 - 23:59
   bool enabled = 4;
-  repeated Weekday repeat = 5;
+  repeated braiins.bmc.web.Weekday repeat = 5;
   optional string sound_id = 6;
   SnoozeOptionsWrapper snooze_options = 7;
-}
-
-enum Weekday {
-  WEEKDAY_UNSPECIFIED = 0;
-  WEEKDAY_MONDAY = 1;
-  WEEKDAY_TUESDAY = 2;
-  WEEKDAY_WEDNESDAY = 3;
-  WEEKDAY_THURSDAY = 4;
-  WEEKDAY_FRIDAY = 5;
-  WEEKDAY_SATURDAY = 6;
-  WEEKDAY_SUNDAY = 7;
 }
 
 enum SnoozeLimit {
@@ -75,7 +64,7 @@ enum SnoozeDuration {
 message AlarmInfoResponse {
   string time = 1; // Format: HH:MM, Range 00:00 - 23:59
   string name = 2;
-  repeated Weekday repeat = 3;
+  repeated braiins.bmc.web.Weekday repeat = 3;
   string sound_id = 4;
   SnoozeOptionsWrapper snooze_options = 5;
 }

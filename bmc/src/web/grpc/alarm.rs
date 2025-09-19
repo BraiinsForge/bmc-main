@@ -9,6 +9,7 @@ use bmc_grpc::web::{
     alarm_service_server::AlarmService as GrpcAlarmService,
     snooze_options_wrapper::{self, Kind as SnoozeKind},
 };
+use bmc_shared_time::time::WeekDay;
 use chrono::NaiveTime;
 use std::str::FromStr;
 use tap::tap::TapOptional;
@@ -17,8 +18,7 @@ use tonic_types::{ErrorDetails, StatusExt};
 
 use crate::{
     alarm::{
-        AlarmController, AlarmData, AlarmError, AlarmId, SnoozeDuration, SnoozeLimit,
-        SnoozeOptions, WeekDay,
+        AlarmController, AlarmData, AlarmError, AlarmId, SnoozeDuration, SnoozeLimit, SnoozeOptions,
     },
     sound::Sounds,
     web::grpc::shared::unchecked_field_violations_status,
@@ -249,7 +249,7 @@ impl From<AlarmData> for AlarmProto {
             time: naive_time_to_hhmm(time),
             repeat: repeat
                 .into_iter()
-                .map(|weekday| Into::<Weekday>::into(weekday) as i32)
+                .map(|weekday| map_weekday_to_proto(weekday) as i32)
                 .collect(),
             sound: sound.map(Into::into),
             snooze_options: Some(map_snooze_options(snooze_options)),
@@ -319,11 +319,11 @@ fn map_weekday_vec(value: Vec<i32>) -> HashSet<WeekDay> {
         .into_iter()
         .filter_map(Weekday::from_i32)
         .filter(|day| *day != Weekday::Unspecified)
-        .filter_map(map_weekday_proto)
+        .filter_map(map_weekday_from_proto)
         .collect()
 }
 
-fn map_weekday_proto(value: Weekday) -> Option<WeekDay> {
+pub(crate) fn map_weekday_from_proto(value: Weekday) -> Option<WeekDay> {
     match value {
         Weekday::Unspecified => None,
         Weekday::Monday => Some(WeekDay::Monday),
@@ -336,17 +336,15 @@ fn map_weekday_proto(value: Weekday) -> Option<WeekDay> {
     }
 }
 
-impl From<WeekDay> for Weekday {
-    fn from(value: WeekDay) -> Self {
-        match value {
-            WeekDay::Monday => Self::Monday,
-            WeekDay::Tuesday => Self::Tuesday,
-            WeekDay::Wednesday => Self::Wednesday,
-            WeekDay::Thursday => Self::Thursday,
-            WeekDay::Friday => Self::Friday,
-            WeekDay::Saturday => Self::Saturday,
-            WeekDay::Sunday => Self::Sunday,
-        }
+pub(crate) fn map_weekday_to_proto(value: WeekDay) -> Weekday {
+    match value {
+        WeekDay::Monday => Weekday::Monday,
+        WeekDay::Tuesday => Weekday::Tuesday,
+        WeekDay::Wednesday => Weekday::Wednesday,
+        WeekDay::Thursday => Weekday::Thursday,
+        WeekDay::Friday => Weekday::Friday,
+        WeekDay::Saturday => Weekday::Saturday,
+        WeekDay::Sunday => Weekday::Sunday,
     }
 }
 
