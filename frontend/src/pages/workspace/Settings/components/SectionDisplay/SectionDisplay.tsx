@@ -167,6 +167,7 @@ class View extends Component<Props> {
                                     onChange={this.#nightIntervalChange('from')}
                                     invalid={!!nightInterval.error}
                                     disabled={isNightIntervalDisabled}
+                                    invalidText={null}
                                 />
 
                                 <div className={css.divider} children="-" />
@@ -178,6 +179,7 @@ class View extends Component<Props> {
                                     onChange={this.#nightIntervalChange('to')}
                                     invalid={!!nightInterval.error}
                                     disabled={isNightIntervalDisabled}
+                                    invalidText={null}
                                 />
 
                                 <Button
