@@ -55,7 +55,7 @@
         "@emotion/react": "11.14.0",
         "@emotion/styled": "11.14.1",
         "@formatjs/cli": "6.7.2",
-        "@rsbuild/core": "1.5.9",
+        "@rsbuild/core": "1.5.10",
         "@rsbuild/plugin-react": "1.4.0",
         "@rsbuild/plugin-sass": "1.4.0",
         "@rsbuild/plugin-svgr": "1.2.2",
@@ -91,7 +91,7 @@
         "postcss-urlrev": "3.0.1",
         "prettier": "3.6.2",
         "react-refresh": "0.17.0",
-        "sass-embedded": "1.92.1",
+        "sass-embedded": "1.93.0",
         "sass-loader": "16.0.5",
         "storybook": "9.1.7",
         "storybook-react-rsbuild": "2.1.1",
@@ -102,7 +102,7 @@
         "tsx": "4.20.5",
         "type-fest": "4.41.0",
         "typescript": "5.9.2",
-        "zx": "8.8.1"
+        "zx": "8.8.3"
     },
     "resolutions": {
         "react": "19.1.1",

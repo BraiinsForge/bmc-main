@@ -6,8 +6,16 @@ import { getID } from '../../const';
 import * as pb from '@/proto';
 
 import { CarbonFormField, Field, FieldSet, Button } from '@/components';
-import { Toggle, Slider, TextInput, TimePicker } from '@carbon/react';
-import { Location as IconLocation, Checkmark as IconCheckmark } from '@carbon/react/icons';
+import {
+    Toggle,
+    Slider,
+    // TextInput,
+    TimePicker,
+} from '@carbon/react';
+import {
+    //Location as IconLocation,
+    Checkmark as IconCheckmark,
+} from '@carbon/react/icons';
 
 // Styles
 import css from './SectionDisplay.scss';
@@ -77,10 +85,10 @@ class View extends Component<Props> {
             nightBrightness,
             nightInterval,
 
-            nightUseLocation,
-            nightLocation,
-            onLocationDetect,
-            nightNotify,
+            // nightUseLocation,
+            // nightLocation,
+            // onLocationDetect,
+            // nightNotify,
         } = this.props;
 
         const isNightIntervalDisabled: boolean = nightInterval.disabled || !nightEnabled.value;
@@ -199,6 +207,7 @@ class View extends Component<Props> {
                     </Field>
                 </FieldSet>
 
+                {/*
                 <FieldSet title={null}>
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Use Device Location' })}
@@ -265,6 +274,7 @@ class View extends Component<Props> {
                         </CarbonFormField>
                     </Field>
                 </FieldSet>
+                */}
             </Form>
         );
     }
