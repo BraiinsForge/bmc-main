@@ -2,7 +2,7 @@
   "vendored_subtrees": {
     "tooling": {
       "repo": "ssh://git@gitlab.ii.zone/tooling/tooling.git",
-      "commit": "0bf48952586c5e475368fad41d05b4ddb2b6a079",
+      "commit": "651d341b018e9942d3aa1f32d69ce1151621df3d",
       "auto_discover": true
     },
     "bmc-shared/ii-net": {
