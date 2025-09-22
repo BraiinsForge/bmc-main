@@ -11,10 +11,12 @@ use futures::stream::{BoxStream, StreamExt};
 use prost_types::Timestamp;
 use std::ops::Add;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tonic::{Code, Request, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 
 use super::{GrpcError, SystemUpgradeService};
+use crate::config::ConfigHandle;
 use crate::{
     BmcManager,
     system_upgrade::{DownloadState, SystemUpgradeError},
@@ -28,7 +30,8 @@ where
     U: FirmwareIndex,
 {
     manager: Arc<T>,
-    system_upgrade_service: Arc<SystemUpgradeService<U, T>>,
+    system_upgrade: SystemUpgradeService<U, T>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
 }
 
 impl<T, U> UpgradeService<T, U>
@@ -38,11 +41,13 @@ where
 {
     pub(crate) fn new(
         manager: Arc<T>,
-        system_upgrade_service: Arc<SystemUpgradeService<U, T>>,
+        system_upgrade: SystemUpgradeService<U, T>,
+        config_handle: Arc<RwLock<ConfigHandle>>,
     ) -> Self {
         Self {
             manager,
-            system_upgrade_service,
+            system_upgrade,
+            config_handle,
         }
     }
 }
@@ -61,7 +66,7 @@ where
         _request: Request<()>,
     ) -> Result<tonic::Response<CheckForUpgradeResponse>, tonic::Status> {
         let available_releases = self
-            .system_upgrade_service
+            .system_upgrade
             .check_for_upgrade()
             .await
             .map_err(Into::<tonic::Status>::into)?;
@@ -77,7 +82,7 @@ where
     ) -> Result<tonic::Response<Self::DownloadFirmwareStream>, tonic::Status> {
         let request = request.into_inner();
 
-        let rx = self.system_upgrade_service.download_firmware(request.hash);
+        let rx = self.system_upgrade.download_firmware(request.hash);
 
         let stream = UnboundedReceiverStream::new(rx).map(map_download_state);
 
@@ -90,7 +95,7 @@ where
     ) -> Result<tonic::Response<()>, tonic::Status> {
         let request = request.into_inner();
 
-        self.system_upgrade_service
+        self.system_upgrade
             .verify_and_upgrade(&request.hash)
             .await
             .map_err(Into::<tonic::Status>::into)?;
@@ -113,8 +118,8 @@ where
             timezone.chrono_offset(),
         );
 
-        self.system_upgrade_service
-            .autoupgrade_update(config)
+        self.system_upgrade
+            .autoupgrade_reschedule(config)
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
@@ -125,8 +130,7 @@ where
         &self,
         _request: Request<()>,
     ) -> Result<tonic::Response<GetAutoUpgradeResponse>, Status> {
-        let config_handle = self.system_upgrade_service.config_handle.read().await;
-        let autoupgrade_config = config_handle.autoupgrade.clone().unwrap_or_default();
+        let autoupgrade_config = self.config_handle.read().await.autoupgrade();
 
         let response = GetAutoUpgradeResponse {
             enabled: autoupgrade_config.enabled,

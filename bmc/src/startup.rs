@@ -24,7 +24,6 @@ use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use bmc_led::led_driver::LedDriver;
 use bmc_scheduler::JobScheduler;
-use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, watch};
@@ -43,7 +42,7 @@ where
     config: Configuration,
     display_tasks: DisplayTasks<T>,
     widget_tasks: WidgetTasks,
-    system_upgrade_service: Arc<SystemUpgradeService<V, T>>,
+    system_upgrade_service: SystemUpgradeService<V, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     initial_setup: InitialSetup<T, V>,
@@ -59,7 +58,6 @@ where
     U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
-    #[expect(clippy::too_many_lines)]
     pub async fn init(
         config: Configuration,
         manager: Arc<T>,
@@ -84,32 +82,21 @@ where
         let display_controller = display_driver.display_controller.clone();
         display_controller.set_scenes(config_handle.scenes.clone());
         display_controller.set_scene_cycling(config_handle.scene_cycling());
+        let autoupgrade_config = config_handle.autoupgrade();
 
         let config_handle = Arc::new(RwLock::new(config_handle));
 
-        let scheduler = Arc::new(JobScheduler::init(manager.watch_timezone_updates(), None).await);
-        let system_upgrade_service = Arc::new(SystemUpgradeService::new(
+        let scheduler = JobScheduler::init(manager.watch_timezone_updates(), None).await;
+        let system_upgrade_service = SystemUpgradeService::new(
             firmware_resolver,
             &config.upgrade_image_path,
             manager.clone(),
             state_service.clone(),
-            config_handle.clone(),
             scheduler.clone(),
-        ));
-        SystemUpgradeService::autoupgrade_init(system_upgrade_service.clone());
-        if let Some(autoupgrade_cron) = scheduler
-            .cron_entries()
-            .await
-            .iter()
-            .find(|e| e.source == Some(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME.to_owned()))
-        {
-            system_upgrade_service
-                .autoupgrade_update(AutoUpgradeConfig {
-                    enabled: true,
-                    cron: autoupgrade_cron.schedule.clone(),
-                })
-                .await?;
-        }
+        );
+        system_upgrade_service
+            .autoupgrade_init(autoupgrade_config)
+            .await?;
 
         let widget_tasks = WidgetTasks::new(
             display_controller.clone(),
@@ -131,8 +118,6 @@ where
             config_handle.clone(),
             system_upgrade_service.clone(),
         );
-
-        let scheduler = JobScheduler::init(manager.watch_timezone_updates(), None).await;
 
         let sound_controller =
             SoundController::new(config_handle.clone(), config.sounds_dir.clone());

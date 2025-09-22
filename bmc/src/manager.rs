@@ -4,7 +4,6 @@ use bmc_platform::{BmcPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
 use bmc_shared_time::time::Timezone;
-use std::time::Instant;
 use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr},
@@ -20,8 +19,6 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     type Error: std::error::Error + Send + Sync;
 
     async fn version(&self) -> BosVersion;
-
-    fn start_time(&self) -> Instant;
 
     fn platform(&self) -> BmcPlatform;
 

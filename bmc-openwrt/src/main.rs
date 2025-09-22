@@ -24,7 +24,6 @@ use tracing::{error, info};
 #[tokio::main]
 async fn main() -> Result<()> {
     log::init();
-    let start_time = std::time::Instant::now();
     let mut backlight_driver = GenericBacklightDriver::new("/sys/class/backlight/display-bl");
     backlight_driver.init()?;
 
@@ -55,15 +54,11 @@ async fn main() -> Result<()> {
 
     let manager = Manager::new(
         OpenwrtSessionManager,
-        start_time,
         current_timezone,
         wifi_manager,
         "Braiins Deck".to_owned(),
     );
     manager.init_wifi_ap().await?; // Has check on factory default already
-
-    let scheduler = bmc_scheduler::JobScheduler::init(manager.watch_timezone_updates(), None).await;
-    let _ = scheduler.sync_with_crontab().await;
 
     bmc::entry::main(
         manager,

@@ -1,6 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::config::ConfigHandle;
 use crate::{BmcManager, storage_checker::StorageChecker};
 use anyhow::anyhow;
 use bmc_scheduler::JobScheduler;
@@ -19,11 +18,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, sync::LazyLock};
 use thiserror::Error;
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch::{self, Receiver};
-use tokio::sync::{Mutex, RwLock};
 use tokio::task;
-use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(300);
@@ -78,8 +76,7 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     upgrade_image_path: PathBuf,
     bmc_manager: Arc<U>,
     client: Client,
-    pub config_handle: Arc<RwLock<ConfigHandle>>,
-    scheduler: Arc<JobScheduler>,
+    scheduler: JobScheduler,
     autoupgrade: Arc<AutoUpgrade>,
 }
 
@@ -96,7 +93,6 @@ where
             upgrade_image_path: self.upgrade_image_path.clone(),
             bmc_manager: self.bmc_manager.clone(),
             client: self.client.clone(),
-            config_handle: self.config_handle.clone(),
             scheduler: self.scheduler.clone(),
             autoupgrade: self.autoupgrade.clone(),
         }
@@ -109,8 +105,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         upgrade_image_path: &PathBuf,
         bmc_manager: Arc<U>,
         state_service: StateService,
-        config_handle: Arc<RwLock<ConfigHandle>>,
-        scheduler: Arc<JobScheduler>,
+        scheduler: JobScheduler,
     ) -> Self {
         let (autoupgrade_tx, _) = tokio::sync::broadcast::channel(1);
         let autoupgrade = AutoUpgrade::new(autoupgrade_tx, None);
@@ -121,7 +116,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             upgrade_image_path: upgrade_image_path.to_owned(),
             bmc_manager,
             client: CLIENT.clone(),
-            config_handle,
             scheduler,
             autoupgrade: Arc::new(autoupgrade),
         }
@@ -319,8 +313,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         Ok(())
     }
 
-    pub fn autoupgrade_init(self_clone: Arc<Self>) {
-        let mut rx = self_clone.autoupgrade.sender.subscribe();
+    pub async fn autoupgrade_init(&self, config: AutoUpgradeConfig) -> anyhow::Result<()> {
+        self.autoupgrade_reschedule(config).await?;
+        let self_clone = self.clone();
+        let mut rx = self.autoupgrade.sender.subscribe();
         tokio::task::spawn(async move {
             loop {
                 if let Ok(()) = rx.recv().await {
@@ -328,6 +324,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 }
             }
         });
+        Ok(())
     }
 
     async fn autoupgrade_trigger(&self) -> anyhow::Result<()> {
@@ -350,17 +347,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         }
     }
 
-    pub async fn autoupgrade_update(&self, new_config: AutoUpgradeConfig) -> anyhow::Result<()> {
-        let mut config_handle = self
-            .config_handle
-            .try_write()
-            .expect("BUG: Failed to lock boser config");
-        config_handle.autoupgrade = Some(new_config.clone());
-
-        config_handle.save().await?;
-        drop(config_handle);
-        debug!("Autoupgrade config updated");
-
+    pub async fn autoupgrade_reschedule(
+        &self,
+        new_config: AutoUpgradeConfig,
+    ) -> anyhow::Result<()> {
         // First, cancel existing jobs if there are any
         self.scheduler
             .cancel_jobs(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME.to_owned())
@@ -369,22 +359,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         if new_config.enabled {
             let schedule = Schedule::Cron(new_config.cron);
             let task = Task::Async(to_boxed(self.autoupgrade.task.clone()));
-            let job_config = JobConfig::new(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME).persist();
+            let job_config = JobConfig::new(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME);
 
-            self.scheduler
-                .schedule(schedule, task, job_config)
-                .await
-                .map_err(|e| anyhow!(e))
-                .map(|_| ())
-        } else {
-            Ok(())
+            self.scheduler.schedule(schedule, task, job_config).await?;
         }
+
+        Ok(())
     }
 
     async fn wait_for_download(mut receiver: UnboundedReceiver<DownloadState>) -> Option<String> {
-        let mut interval = interval(Duration::from_millis(250));
         while let Some(res) = receiver.recv().await {
-            interval.tick().await;
             match res {
                 DownloadState::Progress {
                     downloaded_mb,

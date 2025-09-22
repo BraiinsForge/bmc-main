@@ -47,7 +47,7 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     led_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub autoupgrade: Option<AutoUpgradeConfig>,
+    autoupgrade: Option<AutoUpgradeConfig>,
 }
 
 impl Config {
@@ -103,6 +103,14 @@ impl Config {
 
     pub fn set_led_enabled(&mut self, led_enabled: bool) {
         self.led_enabled = Some(led_enabled);
+    }
+
+    pub fn autoupgrade(&self) -> AutoUpgradeConfig {
+        self.autoupgrade.clone().unwrap_or_default()
+    }
+
+    pub fn set_autoupgrade(&mut self, config: AutoUpgradeConfig) {
+        self.autoupgrade = Some(config);
     }
 
     fn validate(&self) -> Result<()> {

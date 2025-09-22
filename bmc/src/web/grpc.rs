@@ -68,7 +68,7 @@ pub(crate) struct GrpcWeb<
 > {
     manager: Arc<T>,
     session_manager: Arc<S>,
-    system_upgrade_service: Arc<SystemUpgradeService<U, T>>,
+    system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     widget_tasks: WidgetTasks,
@@ -85,7 +85,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
     pub(crate) fn new(
         manager: Arc<T>,
         session_manager: Arc<S>,
-        system_upgrade_service: Arc<SystemUpgradeService<U, T>>,
+        system_upgrade_service: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
         widget_tasks: WidgetTasks,
@@ -116,7 +116,8 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         let upgrade_service = web::upgrade_service_server::UpgradeServiceServer::new(
             upgrade_service::UpgradeService::new(
                 self.manager.clone(),
-                self.system_upgrade_service.clone(),
+                self.system_upgrade_service,
+                self.config_handle.clone(),
             ),
         );
 

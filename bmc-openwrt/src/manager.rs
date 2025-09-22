@@ -21,7 +21,6 @@ use bmc_shared_ii_net_drv::{NetworkInterface, get_primary_interface};
 use bmc_shared_time::time::Timezone;
 use std::io;
 use std::sync::Arc;
-use std::time::Instant;
 use std::{
     net::{IpAddr, Ipv4Addr},
     path::Path,
@@ -33,7 +32,6 @@ use tracing::{error, info};
 #[derive(Debug)]
 pub struct Manager {
     bmc_info: Arc<BmcInfo>,
-    start_time: Instant,
     pub session_manager: OpenwrtSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     wifi_manager: Arc<OpenwrtWifiManager>,
@@ -60,7 +58,6 @@ impl Manager {
     #[must_use]
     pub fn new(
         session_manager: OpenwrtSessionManager,
-        start_time: Instant,
         timezone: Timezone,
         wifi_manager: Arc<OpenwrtWifiManager>,
         wifi_ap_ssid_base: String,
@@ -69,7 +66,6 @@ impl Manager {
         let bmc_info = BmcInfo::load().expect("Load BMC info failed");
         Self {
             bmc_info: Arc::new(bmc_info),
-            start_time,
             session_manager,
             timezone_sender,
             wifi_manager,
@@ -172,10 +168,6 @@ impl BmcManager for Manager {
 
     async fn version(&self) -> BosVersion {
         self.bmc_info.bos_version.clone()
-    }
-
-    fn start_time(&self) -> Instant {
-        self.start_time
     }
 
     fn platform(&self) -> BmcPlatform {

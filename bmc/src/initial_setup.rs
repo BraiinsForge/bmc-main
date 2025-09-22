@@ -66,7 +66,7 @@ pub(crate) struct InitialSetup<T: BmcManager, F: FirmwareIndex> {
     in_progress: Arc<AtomicBool>,
     state_service: StateService,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    system_upgrade_service: Arc<SystemUpgradeService<F, T>>,
+    system_upgrade_service: SystemUpgradeService<F, T>,
 }
 
 impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
@@ -74,7 +74,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         manager: Arc<T>,
         in_progress: Arc<AtomicBool>,
         config_handle: Arc<RwLock<ConfigHandle>>,
-        system_upgrade_service: Arc<SystemUpgradeService<F, T>>,
+        system_upgrade_service: SystemUpgradeService<F, T>,
     ) -> Self {
         Self {
             manager,
@@ -164,25 +164,6 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
                 .await
                 .map_err(|_| DeviceSetupError::SetPassword)?;
         }
-
-        config_guard.set_date_format(config.date_format);
-        config_guard.set_number_format(config.number_format);
-        config_guard.set_time_system(config.time_system);
-        config_guard.set_data_collection(config.data_collection);
-        config_guard
-            .save()
-            .await
-            .map_err(DeviceSetupError::SyncConfigData)?;
-        drop(config_guard); // Necessary to allow autoupgrade
-
-        self.manager
-            .update_device_state()
-            .await
-            .map_err(DeviceSetupError::UpdateDeviceState)?;
-
-        self.state_service
-            .notify(InitSetupState::DeviceSetupSuccess);
-
         let tz = timezone.chrono();
         let time_of_day = Utc::now()
             .with_timezone(tz)
@@ -194,8 +175,27 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             Some(time_of_day),
             timezone.chrono_offset(),
         );
+
+        config_guard.set_date_format(config.date_format);
+        config_guard.set_number_format(config.number_format);
+        config_guard.set_time_system(config.time_system);
+        config_guard.set_data_collection(config.data_collection);
+        config_guard.set_autoupgrade(autoupgrade_config.clone());
+        config_guard
+            .save()
+            .await
+            .map_err(DeviceSetupError::SyncConfigData)?;
+
+        self.manager
+            .update_device_state()
+            .await
+            .map_err(DeviceSetupError::UpdateDeviceState)?;
+
+        self.state_service
+            .notify(InitSetupState::DeviceSetupSuccess);
+
         self.system_upgrade_service
-            .autoupgrade_update(autoupgrade_config)
+            .autoupgrade_reschedule(autoupgrade_config)
             .await
             .map_err(DeviceSetupError::EnableAutoUpgrade)?;
 

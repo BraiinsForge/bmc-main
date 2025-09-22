@@ -964,7 +964,6 @@ dependencies = [
  "bmc-kobject",
  "bmc-led",
  "bmc-platform",
- "bmc-scheduler",
  "bmc-shared-time",
  "bmc-upgrade",
  "drm 0.14.1",
