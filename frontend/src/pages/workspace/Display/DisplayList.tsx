@@ -25,29 +25,16 @@ import {
     ChevronDown as IconChevronDown,
     ChevronUp as IconChevronUp,
 } from '@carbon/react/icons';
-import {
-    createBlockHeightWidgetKind,
-    createClockWidgetKind,
-    createTickerWidgetKind,
-    FormSceneSelect,
-    FormWidgetBlockHeight,
-    type FormWidgetBlockHeightProps,
-    FormWidgetClock,
-    type FormWidgetClockProps,
-    FormWidgetTicker,
-    type FormWidgetTickerProps,
-    type SceneKind,
-    SceneOverviewList,
-} from './components';
+import * as Comp from './components';
 
 // Styles
 import css from './DisplayList.scss';
 
 const $ = getID('list').get;
 
-type FormStateClock = FormPropsToLocalState<FormWidgetClockProps>;
-type FormStateTicker = FormPropsToLocalState<FormWidgetTickerProps>;
-type FormStateBlockHeight = FormPropsToLocalState<FormWidgetBlockHeightProps>;
+type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
+type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
+type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProps>;
 
 // Can be both edit & create dialogs
 type DialogStates = {
@@ -208,16 +195,19 @@ class View extends Component<Props, State> {
     };
 
     private abortLoadScenes = pb.abort.get();
-    #loadScenes = async (): Promise<void> => {
+    #loadScenes = async (): Promise<pb.Scene[]> => {
         await setState(this, { isLoading: true });
 
         try {
             const { signal } = this.abortLoadScenes.replace();
             const { scenes } = await pb.rpc.scenes.getScenes({}, { signal });
             this.setState({ isLoading: false, scenes });
+            return scenes;
         } catch ($) {
-            if (pb.abort.is($)) return;
+            if (pb.abort.is($)) return [];
         }
+
+        return [];
     };
     #loadScenesDebounced = debounce(this.#loadScenes, 1e3);
 
@@ -235,7 +225,7 @@ class View extends Component<Props, State> {
     }
 
     #openDialogSceneSelect = (): void => this.setState({ openDialogKind: 'scene-select' });
-    #sceneAddSelectedKind = async (kind: SceneKind): Promise<void> => {
+    #sceneAddSelectedKind = async (kind: Comp.SceneKind): Promise<void> => {
         const { navigate } = this.props;
 
         let $kind: pb.WidgetKind['value'];
@@ -268,25 +258,54 @@ class View extends Component<Props, State> {
                 assertUnreachable(kind, 'Invalid scene kind!');
         }
 
-        const response = await pb.rpc.scenes.addFullscreenScene({
+        const { value: sceneID } = await pb.rpc.scenes.addFullscreenScene({
             widgetKind: {
                 $typeName: 'braiins.bmc.web.WidgetKind',
                 value: $kind,
             },
         });
-        const sceneID = response.value;
-        await this.#loadScenes();
 
-        await setState(this, s => ({
-            openDialogKind: $openDialogKind,
-            dialogStates: {
-                ...s.dialogStates,
-                [$openDialogKind]: {
-                    ...s.dialogStates[$openDialogKind],
-                    sceneID,
-                },
-            },
-        }));
+        // Now that the scene has been added, we need to re-load the scenes
+        // to get the new scene data to make sure our state is consistent with the server.
+        const scenes = await this.#loadScenes();
+        const scene = scenes.find(x => x.id === sceneID);
+        const dialogStates = getInitialDialogStates();
+        const size = pb.WidgetSize.FULL;
+
+        if (scene?.kind.case === 'fullscreen' && scene.kind.value.widget) {
+            const widgetKind = scene.kind.value.widget.kind;
+            switch (widgetKind?.value?.case) {
+                case undefined:
+                    break;
+
+                case 'clock':
+                    dialogStates.clock.data = {
+                        errors: null,
+                        values: Comp.unpackClockWidgetKind(widgetKind, size),
+                    };
+                    break;
+
+                case 'tickerBtc':
+                    dialogStates.ticker.data = {
+                        errors: null,
+                        values: Comp.unpackTicketWidgetKind(widgetKind, size),
+                    };
+                    break;
+
+                case 'blockHeight':
+                    dialogStates.blockHeight.data = {
+                        errors: null,
+                        values: Comp.unpackBlockHeightWidgetKind(widgetKind, size),
+                    };
+                    break;
+
+                default:
+                    widgetKind?.value && assertUnreachable(widgetKind?.value, 'Unknown widget kind!');
+            }
+        }
+
+        dialogStates[$openDialogKind].sceneID = sceneID;
+        await setState(this, { openDialogKind: $openDialogKind, dialogStates });
         this.#previewOpen(sceneID);
     };
 
@@ -403,15 +422,15 @@ class View extends Component<Props, State> {
                 return notify('error', 'Invalid state, cannot submit without open dialog!');
 
             case 'clock':
-                widgetKind = createClockWidgetKind(dialogStates.clock.data.values);
+                widgetKind = Comp.createClockWidgetKind(dialogStates.clock.data.values);
                 break;
 
             case 'ticker':
-                widgetKind = createTickerWidgetKind(dialogStates.ticker.data.values);
+                widgetKind = Comp.createTickerWidgetKind(dialogStates.ticker.data.values);
                 break;
 
             case 'blockHeight':
-                widgetKind = createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
+                widgetKind = Comp.createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
                 break;
 
             default:
@@ -449,14 +468,14 @@ class View extends Component<Props, State> {
 
         return (
             <Fragment>
-                <FormSceneSelect
+                <Comp.FormSceneSelect
                     variant="scene"
                     isOpen={openDialogKind === 'scene-select'}
                     onClose={cancel}
                     onSelection={this.#sceneAddSelectedKind}
                 />
 
-                <FormWidgetClock
+                <Comp.FormWidgetClock
                     isOpen={openDialogKind === 'clock'}
                     isEdit={openDialogKind === 'clock' && clock.isEdit}
                     onClose={cancel}
@@ -474,7 +493,7 @@ class View extends Component<Props, State> {
                     // weatherLocation={this.#clockGetFieldStruct('clock', 'weatherLocation')}
                 />
 
-                <FormWidgetTicker
+                <Comp.FormWidgetTicker
                     isOpen={openDialogKind === 'ticker'}
                     isEdit={openDialogKind === 'ticker' && ticker.isEdit}
                     onClose={cancel}
@@ -484,7 +503,7 @@ class View extends Component<Props, State> {
                     timeFrame={this.#getFormFieldStruct('ticker', 'timeFrame')}
                 />
 
-                <FormWidgetBlockHeight
+                <Comp.FormWidgetBlockHeight
                     isOpen={openDialogKind === 'blockHeight'}
                     isEdit={openDialogKind === 'blockHeight' && blockHeight.isEdit}
                     onClose={cancel}
@@ -927,7 +946,7 @@ class View extends Component<Props, State> {
                 </header>
 
                 <main>
-                    <SceneOverviewList
+                    <Comp.SceneOverviewList
                         scenes={scenes}
                         onAdd={this.#openDialogSceneSelect}
                         onMove={this.#sceneListMove}

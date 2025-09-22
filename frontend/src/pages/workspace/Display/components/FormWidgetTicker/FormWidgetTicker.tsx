@@ -69,6 +69,7 @@ class View extends Component<Props> {
 
                 <Dropdown<pb.TickerBtcWidget_TimeFrame>
                     id={$('time-frame')}
+                    autoAlign
                     label={formatMessage({ defaultMessage: 'Time Frame' })}
                     titleText={formatMessage({ defaultMessage: 'Time Frame' })}
                     items={pb.tickerTimeFrameOptions}
