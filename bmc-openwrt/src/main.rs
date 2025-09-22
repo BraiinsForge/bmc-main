@@ -20,7 +20,6 @@ use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;
 use slint::platform::software_renderer::RenderingRotation;
 use tracing::{error, info};
-use url::Url;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -42,12 +41,7 @@ async fn main() -> Result<()> {
 
     let config = Configuration::default();
 
-    // FIXME: Only for testing purposes
-    let override_index_url =
-        Url::parse("https://downloads.braiins.com.ii.zone/braiins-deck/nightly").ok();
-    // FIXME:
-    // let bmc_index = bmc::firmware::BmcIndex::default();
-    let bmc_index = bmc::firmware::BmcIndex::new(override_index_url);
+    let bmc_index = bmc::firmware::BmcIndex::default();
     let firmware_resolver = FirmwareResolver::new(bmc_index);
 
     let current_timezone = iana_time_zone::get_timezone()
