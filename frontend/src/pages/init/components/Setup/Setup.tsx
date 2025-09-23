@@ -15,7 +15,7 @@ import {
     ProgressIndicator,
     ProgressStep,
     PasswordInput,
-    Toggle,
+    // Toggle,
 } from '@carbon/react';
 import { Information as IconInfo } from '@carbon/react/icons';
 
@@ -35,7 +35,7 @@ export interface SetupProps {
     password1: iField<string>;
     password2: iField<string>;
 
-    dataCollection: iField<boolean>;
+    // dataCollection: iField<boolean>;
 
     onSubmit(): void;
     submitDisabled?: boolean;
@@ -82,7 +82,7 @@ class View extends Component<Props> {
             password1,
             password2,
 
-            dataCollection,
+            // dataCollection,
         } = this.props;
 
         return (
@@ -242,6 +242,7 @@ class View extends Component<Props> {
                                 disabled={password1.disabled}
                                 invalid={!!password1.error}
                                 invalidText={password1.error}
+                                placeholder="---"
                             />
                         </Field>
 
@@ -259,10 +260,12 @@ class View extends Component<Props> {
                                 disabled={password2.disabled}
                                 invalid={!!password2.error}
                                 invalidText={password2.error}
+                                placeholder="---"
                             />
                         </Field>
                     </FieldSet>
 
+                    {/*
                     <FieldSet title={formatMessage({ defaultMessage: 'Usage Data' })}>
                         <Field
                             variant="light"
@@ -280,6 +283,7 @@ class View extends Component<Props> {
                             />
                         </Field>
                     </FieldSet>
+                    */}
                 </Form>
             </Layout>
         );

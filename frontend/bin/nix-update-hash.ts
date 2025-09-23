@@ -29,7 +29,7 @@ else {
 
     echo('');
     echo('> specified: ', chalk.yellowBright(hashSpecified));
-    echo('>       gpt: ', chalk.redBright(hashReceived));
+    echo('>       got: ', chalk.redBright(hashReceived));
     echo('> ');
 
     const underlinedFileName: string = chalk.underline(path.basename(PATH_YARN_FILES));

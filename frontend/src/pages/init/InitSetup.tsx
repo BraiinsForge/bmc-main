@@ -67,7 +67,7 @@ class View extends Component<Props, State> {
                 timeFormat: v.timeFormat || undefined,
                 dateFormat: v.dateFormat || undefined,
                 numberFormat: v.numberFormat || undefined,
-                dataCollection: v.dataCollection,
+                // dataCollection: v.dataCollection,
             };
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -111,7 +111,7 @@ class View extends Component<Props, State> {
             password2,
 
             // Privacy
-            dataCollection,
+            // dataCollection,
 
             // Time & format
             timezone,
@@ -142,7 +142,7 @@ class View extends Component<Props, State> {
         try {
             await pb.rpc.init.setupDevice(
                 pb.create(pb.SettingsRequestSchema, {
-                    dataCollection,
+                    // dataCollection,
                     dateFormat,
                     numberFormat,
                     password: password1,
@@ -220,13 +220,13 @@ class View extends Component<Props, State> {
                             error: this.#getFieldError('password2'),
                             onChange: this.#handleChange('password2'),
                         }}
-                        // Privacy
-                        dataCollection={{
-                            disabled,
-                            value: values.dataCollection || null,
-                            error: this.#getFieldError('dataCollection'),
-                            onChange: this.#handleChange('dataCollection'),
-                        }}
+                        // // Privacy
+                        // dataCollection={{
+                        //     disabled,
+                        //     value: values.dataCollection || null,
+                        //     error: this.#getFieldError('dataCollection'),
+                        //     onChange: this.#handleChange('dataCollection'),
+                        // }}
                         // Form
                         onSubmit={this.#submit}
                         submitDisabled={pb.hasFormErrors(errors)}

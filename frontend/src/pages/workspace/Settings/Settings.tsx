@@ -479,30 +479,30 @@ class View extends Component<Props, State> {
         }
     };
 
-    private generalSetTemperatureUnitsAbort = pb.abort.get();
-    #generalSetTemperatureUnits = async (value: pb.TemperatureUnit): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-
-        try {
-            // Optimistic update & saving flag
-            this.#setField('temperatureUnit', s => ({ ...s, value, isSaving: true }));
-
-            // Submit
-            const { signal } = this.generalSetTemperatureUnitsAbort.replace();
-            await pb.rpc.config.setTemperatureUnit({ temperatureUnit: value }, { signal });
-
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Temperature units changed' }));
-        } catch ($) {
-            if (pb.abort.is($)) return;
-
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= formatMessage({ defaultMessage: 'Failed to save TemperatureUnits' });
-            this.#notifyError(message, 'general-set-temperature-units');
-        } finally {
-            await this.#generalFetch();
-            this.#setField('temperatureUnit', s => getFieldStateDefault(s.value));
-        }
-    };
+    // private generalSetTemperatureUnitsAbort = pb.abort.get();
+    // #generalSetTemperatureUnits = async (value: pb.TemperatureUnit): Promise<void> => {
+    //     const { formatMessage } = this.props.intl;
+    //
+    //     try {
+    //         // Optimistic update & saving flag
+    //         this.#setField('temperatureUnit', s => ({ ...s, value, isSaving: true }));
+    //
+    //         // Submit
+    //         const { signal } = this.generalSetTemperatureUnitsAbort.replace();
+    //         await pb.rpc.config.setTemperatureUnit({ temperatureUnit: value }, { signal });
+    //
+    //         this.#notifySuccess(formatMessage({ defaultMessage: 'Temperature units changed' }));
+    //     } catch ($) {
+    //         if (pb.abort.is($)) return;
+    //
+    //         let message = pb.collectAllErrorsAsFormattedList($);
+    //         message ||= formatMessage({ defaultMessage: 'Failed to save TemperatureUnits' });
+    //         this.#notifyError(message, 'general-set-temperature-units');
+    //     } finally {
+    //         await this.#generalFetch();
+    //         this.#setField('temperatureUnit', s => getFieldStateDefault(s.value));
+    //     }
+    // };
 
     private generalSetNumberFormatAbort = pb.abort.get();
     #generalSetNumberFormat = async (value: pb.NumberFormat): Promise<void> => {
@@ -529,34 +529,34 @@ class View extends Component<Props, State> {
         }
     };
 
-    private generalSetDataCollectionAbort = pb.abort.get();
-    #generalSetDataCollection = async (value: boolean): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-
-        try {
-            // Optimistic update & saving flag
-            this.#setField('dataCollection', s => ({ ...s, value, isSaving: true }));
-
-            // Submit
-            const { signal } = this.generalSetDataCollectionAbort.replace();
-            await pb.rpc.config.setDataCollection({ value }, { signal });
-
-            this.#notifySuccess(
-                value
-                    ? formatMessage({ defaultMessage: 'Data collection enabled' })
-                    : formatMessage({ defaultMessage: 'Data collection disabled' }),
-            );
-        } catch ($) {
-            if (pb.abort.is($)) return;
-
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= formatMessage({ defaultMessage: 'Failed to save NumberFormat' });
-            this.#notifyError(message, 'general-set-number-format');
-        } finally {
-            await this.#generalFetch();
-            this.#setField('dataCollection', s => getFieldStateDefault(s.value));
-        }
-    };
+    // private generalSetDataCollectionAbort = pb.abort.get();
+    // #generalSetDataCollection = async (value: boolean): Promise<void> => {
+    //     const { formatMessage } = this.props.intl;
+    //
+    //     try {
+    //         // Optimistic update & saving flag
+    //         this.#setField('dataCollection', s => ({ ...s, value, isSaving: true }));
+    //
+    //         // Submit
+    //         const { signal } = this.generalSetDataCollectionAbort.replace();
+    //         await pb.rpc.config.setDataCollection({ value }, { signal });
+    //
+    //         this.#notifySuccess(
+    //             value
+    //                 ? formatMessage({ defaultMessage: 'Data collection enabled' })
+    //                 : formatMessage({ defaultMessage: 'Data collection disabled' }),
+    //         );
+    //     } catch ($) {
+    //         if (pb.abort.is($)) return;
+    //
+    //         let message = pb.collectAllErrorsAsFormattedList($);
+    //         message ||= formatMessage({ defaultMessage: 'Failed to save NumberFormat' });
+    //         this.#notifyError(message, 'general-set-number-format');
+    //     } finally {
+    //         await this.#generalFetch();
+    //         this.#setField('dataCollection', s => getFieldStateDefault(s.value));
+    //     }
+    // };
 
     #generalFactoryReset = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
@@ -594,10 +594,10 @@ class View extends Component<Props, State> {
                 dateFormat,
                 numberFormat,
                 firstDayOfWeek,
-                temperatureUnit,
+                // temperatureUnit,
                 // showSecondsStatusBar,
                 timezone,
-                dataCollection,
+                // dataCollection,
             },
         } = this.state;
 
@@ -610,13 +610,13 @@ class View extends Component<Props, State> {
                 timezone={this.#getFieldStruct(timezone, this.#generalSetTimezone, { items: data.timezones })}
                 dateFormat={this.#getFieldStruct(dateFormat, this.#generalSetDateFormat)}
                 firstWeekDay={this.#getFieldStruct(firstDayOfWeek, this.#generalSetFirsWeekDay)}
-                temperatureUnits={this.#getFieldStruct(temperatureUnit, this.#generalSetTemperatureUnits)}
+                // temperatureUnits={this.#getFieldStruct(temperatureUnit, this.#generalSetTemperatureUnits)}
                 numberFormat={this.#getFieldStruct(numberFormat, this.#generalSetNumberFormat)}
                 // System actions
                 onFactoryReset={this.#generalFactoryReset}
                 onSystemReboot={this.#generalSystemReboot}
                 // Usage data
-                usageData={this.#getFieldStruct(dataCollection, this.#generalSetDataCollection)}
+                // usageData={this.#getFieldStruct(dataCollection, this.#generalSetDataCollection)}
             />
         );
     };

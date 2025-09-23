@@ -27,13 +27,13 @@ export default {
         },
         dateFormat: getArg('dateFormat', pb.DateFormat.DD_MM_YYYY_DASH),
         firstWeekDay: getArg('dateFormat', pb.Weekday.THURSDAY),
-        temperatureUnits: getArg('dateFormat', pb.TemperatureUnit.CELSIUS),
+        // temperatureUnits: getArg('dateFormat', pb.TemperatureUnit.CELSIUS),
         numberFormat: getArg('dateFormat', pb.NumberFormat.SPACE_GROUP_DOT_DECIMAL),
 
         onFactoryReset: action('onFactoryReset'),
         onSystemReboot: action('onSystemReboot'),
 
-        usageData: getArg('usageData', true),
+        // usageData: getArg('usageData', true),
     } satisfies SectionGeneralProps,
 } satisfies Meta<SectionGeneralProps>;
 

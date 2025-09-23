@@ -35,7 +35,7 @@ export default {
         password1: getField('password1', ''),
         password2: getField('password2', ''),
 
-        dataCollection: getField('password2', true),
+        // dataCollection: getField('password2', true),
     } satisfies SetupProps,
 } satisfies Meta<SetupProps>;
 

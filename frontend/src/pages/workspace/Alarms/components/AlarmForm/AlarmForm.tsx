@@ -122,6 +122,9 @@ class View extends Component<Props, State> {
                             labelText={formatMessage({ defaultMessage: 'Time' })}
                             value={time.value ?? ''}
                             onChange={e => time.onChange(e.target.value)}
+                            invalid={!!time.error}
+                            invalidText={time.error}
+                            placeholder={formatMessage({ defaultMessage: 'HH:MM' })}
                         />
                     </div>
 
@@ -131,6 +134,9 @@ class View extends Component<Props, State> {
                             labelText={formatMessage({ defaultMessage: 'Alarm Name (optional)' })}
                             value={name.value ?? ''}
                             onChange={e => name.onChange(e.target.value)}
+                            invalid={!!name.error}
+                            invalidText={name.error}
+                            placeholder="---"
                         />
                     </div>
                 </div>
