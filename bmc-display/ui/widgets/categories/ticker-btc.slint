@@ -23,8 +23,8 @@ export component WidgetBtcGraph inherits Rectangle {
     height: BaseDimensions.widget-height(size);
 
     in property <string> btc_price <=> BitcoinAdapter.price;
-    in property <string> price_change <=> BitcoinAdapter.price_change;
-    in property <bool> price_increase <=> BitcoinAdapter.price_increase;
+    in property <string> price-change <=> BitcoinAdapter.price_change;
+    in property <bool> price-increase <=> BitcoinAdapter.price_increase;
 
     pure function btc-fontsize(size: WidgetSize) -> length {
         if (WidgetSize.Small == size) {
@@ -40,13 +40,13 @@ export component WidgetBtcGraph inherits Rectangle {
     }
     in property <length> btc_font_size: btc-fontsize(size);
 
-    property <length> bar_padding_left: (size == WidgetSize.Full) ? 32px : 16px;
-    property <length> bar_padding_right: (size == WidgetSize.Full) ? 32px : 16px;
-    property <length> bar_spacing: (size == WidgetSize.Full || size == WidgetSize.Large) ? 16px : 8px;
+    property <length> bar-padding-left: 16px;
+    property <length> bar-padding-right: (size == WidgetSize.Small) ? 9px : 16px;
+    property <length> bar-padding-top: (size == WidgetSize.Full) ? 16px : 8px;
 
-    property <length> trend_box_width: (size == WidgetSize.Full) ? 139px : 91px;
-    property <length> trend_box_height: (size == WidgetSize.Full) ? 60px : 39px;
-    property <length> trend_font_size: (size == WidgetSize.Full) ? 40px : 24px;
+    property <length> trend-box-width: 91px;
+    property <length> trend-box-height: 39px;
+    property <length> trend-font-size: 24px;
 
     property <length> ticker_text_font_size: (size == WidgetSize.Full || size == WidgetSize.Large) ? 32px : 24px;
 
@@ -55,11 +55,11 @@ export component WidgetBtcGraph inherits Rectangle {
     VerticalLayout {
         HorizontalLayout {
             alignment: space-between;
-            padding-left: bar_padding_left;
-            padding-right: bar_padding_right;
-            padding-top: 5px;
+            padding-left: bar-padding-left;
+            padding-right: bar-padding-right;
+            padding-top: bar-padding-top;
             HorizontalLayout {
-                spacing: bar_spacing;
+                spacing: 12px;
                 Rectangle {
                     Image {
                         source: Images.btc-icon;
@@ -75,36 +75,36 @@ export component WidgetBtcGraph inherits Rectangle {
                 }
             }
             HorizontalLayout {
-                spacing: bar_spacing;
-                if (size == WidgetSize.Full): Rectangle {
+                spacing: 8px;
+                if (size != WidgetSize.Small): Rectangle {
                     Text {
-                        text: "Last 24h";
+                        text: "24h";
                         color: Palette.gray-40;
                         font-size: 24px;
                         font-weight: Theme.font.weight.regular;
                     }
                 }
                 Rectangle {
-                    width: trend_box_width;
-                    height: trend_box_height;
+                    width: trend-box-width;
+                    height: trend-box-height;
                     border-radius: 4px;
                     states [
-                        positive when price_increase: {
+                        positive when price-increase: {
                             background: Palette.green-90;
                         }
-                        negative when !price_increase: {
+                        negative when !price-increase: {
                             background: Palette.red-100;
                         }
                     ]
                     Text {
-                        text: price_change;
-                        font-size: trend_font_size;
+                        text: price-change;
+                        font-size: trend-font-size;
                         font-weight: Theme.font.weight.semi-bold;
                         states [
-                            positive when price_increase: {
+                            positive when price-increase: {
                                 color: Palette.green-30;
                             }
-                            negative when !price_increase: {
+                            negative when !price-increase: {
                                 color: Palette.red-40;
                             }
                         ]

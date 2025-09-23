@@ -302,7 +302,7 @@ impl DisplayController {
                         .try_into()
                         .unwrap_or_default();
                     widget.ticker_btc.btc_graph =
-                        btc_history_data.into_graph_image(&main_window, width, height);
+                        btc_history_data.graph_image(&main_window, width, height);
                 });
             }
         });

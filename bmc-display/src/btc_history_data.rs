@@ -1,8 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::generated::{MainWindow, Palette};
+use bmc_shared_utils::number_format::NumberFormat;
 use serde::Deserialize;
-use slint::{Color, Global, Image, Rgb8Pixel, SharedPixelBuffer};
+use slint::{Color, Global, Image, Rgb8Pixel, SharedPixelBuffer, SharedString};
 
 use resvg::{tiny_skia, usvg};
 use svg::Document;
@@ -23,30 +24,68 @@ pub struct BtcHistoryData {
 }
 
 impl BtcHistoryData {
-    pub(crate) fn into_graph_image(
-        self,
-        main_window: &MainWindow,
-        width: u32,
-        height: u32,
-    ) -> Image {
+    pub(crate) fn graph_image(&self, main_window: &MainWindow, width: u32, height: u32) -> Image {
         let palette = Palette::get(main_window);
 
         self.price_graph_as_image(width, height, &palette, false)
     }
 
+    // NOTE: Code for later use #BOS-3408
+    #[expect(dead_code)]
+    pub(crate) fn price_change_frame(&self, number_format: NumberFormat) -> SharedString {
+        if let Some((first, last)) = self.first_last_price() {
+            let change = 100.0 * f64::from(last / first - 1.0);
+            SharedString::from(format!(
+                "{}{}%",
+                if change.is_sign_positive() { "+" } else { "" },
+                number_format.format_number(change)
+            ))
+        } else {
+            SharedString::default()
+        }
+    }
+
+    // NOTE: Code for later use #BOS-3408
+    #[expect(dead_code)]
+    pub(crate) fn increasing_trend_frame(&self) -> bool {
+        if let Some((first, last)) = self.first_last_price() {
+            last > first
+        } else {
+            false
+        }
+    }
+
+    // NOTE: Code for later use #BOS-3408
+    fn first_last_price(&self) -> Option<(f32, f32)> {
+        let prices = match self.price.as_ref() {
+            Some(prices) => prices
+                .iter()
+                .map(|price_point| price_point.y)
+                .collect::<Vec<f32>>(),
+            None => return None,
+        };
+        if prices.is_empty() {
+            return None;
+        }
+        match (prices.first(), prices.last()) {
+            (Some(first), Some(last)) => Some((*first, *last)),
+            _ => None,
+        }
+    }
+
     #[expect(clippy::too_many_lines)]
     fn price_graph_as_image(
-        self,
+        &self,
         width: u32,
         height: u32,
         palette: &Palette<'_>,
         use_gradient: bool,
     ) -> Image {
-        let Some(price) = self.price else {
+        let Some(price) = self.price.as_ref() else {
             return Image::default();
         };
 
-        let prices: Vec<f32> = price.into_iter().map(|price_point| price_point.y).collect();
+        let prices: Vec<f32> = price.iter().map(|price_point| price_point.y).collect();
         if prices.is_empty() {
             return Image::default();
         }
