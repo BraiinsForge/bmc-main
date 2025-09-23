@@ -98,3 +98,23 @@ intl-extract:
 PHONY: nix-update-hash
 nix-update-hash:
 	./bin/nix-update-hash.ts
+
+#
+# Image Minification
+#
+
+.PHONY: minify-images
+minify-images: minify-png minify-jpg
+
+.PHONY: minify-png
+minify-png:
+	@which oxipng > /dev/null || (echo "❌ Error: oxipng is not installed" && exit 1)
+	oxipng --zopfli --fast --alpha --strip=safe --opt=max --recursive --preserve .
+
+.PHONY: minify-jpg
+minify-jpg:
+	@command -v jpegoptim >/dev/null 2>&1 || { echo "❌ Error: jpegoptim is not installed"; exit 1; }
+	@find . \
+		\( -path '*/.*' -o -type d -name build \) -prune -o \
+		\( -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) \) \
+		-exec jpegoptim --max=70 --strip-all --threshold=5 {} \;
