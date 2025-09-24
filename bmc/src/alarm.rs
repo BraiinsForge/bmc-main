@@ -11,9 +11,14 @@ use std::{
 
 use anyhow::anyhow;
 use bmc_display::display_controller::DisplayController;
-use bmc_scheduler::{Cron, JobScheduler, scheduler::Task};
+use bmc_scheduler::{
+    Cron, JobScheduler,
+    scheduler::{JobConfig, Schedule, Task},
+};
+use bmc_shared_time::time::Timezone;
 use bmc_shared_time::time::WeekDay;
 use chrono::{NaiveTime, Timelike};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{
@@ -321,17 +326,40 @@ struct AlarmScheduler {
     scheduler: JobScheduler,
     active_alarms: Arc<Mutex<HashMap<AlarmId, Uuid>>>,
     alarm_bus: AlarmBus,
+    timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
+    display_controller: DisplayController,
 }
 
 impl AlarmScheduler {
-    fn new(scheduler: JobScheduler, alarm_bus: AlarmBus) -> Self {
-        Self {
+    const SCHEDULER_SOURCE: &str = "Alarm";
+
+    fn new(
+        scheduler: JobScheduler,
+        alarm_bus: AlarmBus,
+        timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
+        display_controller: DisplayController,
+    ) -> Self {
+        let alarm_scheduler = Self {
             scheduler,
             active_alarms: Arc::default(),
             alarm_bus,
-        }
+            timezone_receiver,
+            display_controller,
+        };
+
+        tokio::spawn({
+            let mut self_ = alarm_scheduler.clone();
+            async move {
+                while let Ok(()) = self_.timezone_receiver.changed().await {
+                    self_.recompute_next_alarm_time().await;
+                }
+            }
+        });
+
+        alarm_scheduler
     }
 
+    #[expect(clippy::too_many_lines)]
     async fn schedule(&self, alarm: Alarm) -> anyhow::Result<()> {
         let cron = alarm.data.cron()?;
         let name = alarm.data.name.clone();
@@ -344,11 +372,13 @@ impl AlarmScheduler {
         let task = {
             let alarm = alarm.clone();
             let alarm_bus = self.alarm_bus.clone();
+            let self_ = self.clone();
 
             move || {
                 let alarm = alarm.clone();
                 let name = name.clone();
                 let alarm_bus = alarm_bus.clone();
+                let self_ = self_.clone();
 
                 Box::pin(async move {
                     debug!("starting alarm: [{}]", name);
@@ -364,6 +394,8 @@ impl AlarmScheduler {
                     alarm.start(token.clone(), snooze_count);
 
                     alarm_bus.send_event(AlarmEvent::Started);
+
+                    self_.recompute_next_alarm_time().await;
 
                     loop {
                         match rx.recv().await {
@@ -435,10 +467,16 @@ impl AlarmScheduler {
 
         let id: Uuid = self
             .scheduler
-            .schedule_cron(cron, Task::Async(Box::new(task)))
+            .schedule(
+                Schedule::Cron(cron),
+                Task::Async(Box::new(task)),
+                JobConfig::new(Self::SCHEDULER_SOURCE),
+            )
             .await?;
 
         self.active_alarms.lock().await.insert(alarm.data.id, id);
+
+        self.recompute_next_alarm_time().await;
 
         Ok(())
     }
@@ -452,7 +490,27 @@ impl AlarmScheduler {
                 .await
                 .map_err(|e| anyhow!("Failed to remove scheduled alarm, err: {e}"))?;
         }
+
+        self.recompute_next_alarm_time().await;
         Ok(())
+    }
+
+    async fn recompute_next_alarm_time(&self) {
+        let Ok(alarms) = self.scheduler.jobs_by_source(Self::SCHEDULER_SOURCE).await else {
+            self.display_controller.set_next_alarm(None);
+            return;
+        };
+
+        let timezone = self.timezone_receiver.borrow().clone();
+
+        let maybe_next_alarm_dt = alarms
+            .into_iter()
+            .filter_map(|alarm| alarm.next_tick)
+            .sorted()
+            .next()
+            .map(|next_tick| next_tick.with_timezone(timezone.chrono()).fixed_offset());
+
+        self.display_controller.set_next_alarm(maybe_next_alarm_dt);
     }
 }
 
@@ -471,8 +529,14 @@ impl AlarmController {
         sound_controller: SoundController,
         display_controller: DisplayController,
         alarm_bus: AlarmBus,
+        timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
     ) -> anyhow::Result<Self> {
-        let scheduler = AlarmScheduler::new(scheduler, alarm_bus.clone());
+        let scheduler = AlarmScheduler::new(
+            scheduler,
+            alarm_bus.clone(),
+            timezone_receiver,
+            display_controller.clone(),
+        );
 
         for alarm_data in config_handle
             .clone()

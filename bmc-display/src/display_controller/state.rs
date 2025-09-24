@@ -17,7 +17,7 @@ use crate::indexmap_model::IndexMapModel;
 use crate::utils;
 use bmc_shared_time::time::{DateFormat, Timezone};
 use bmc_shared_utils::number_format::NumberFormat;
-use chrono::{DateTime, Datelike, FixedOffset, Local, NaiveTime, Timelike};
+use chrono::{Datelike, Timelike};
 use indexmap::IndexMap;
 use slint::{FilterModel, Global, Model, ModelRc, VecModel};
 use std::any::type_name;
@@ -415,20 +415,14 @@ impl DisplayController {
         });
     }
 
-    pub fn set_next_alarm(&self, maybe_next_alarm: Option<NaiveTime>) {
+    pub fn set_next_alarm(&self, maybe_next_alarm: Option<chrono::DateTime<chrono::FixedOffset>>) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
             let alarm_adapter = AlarmAdapter::get(&main_window);
 
             alarm_adapter.set_next_alarm_is_defined(maybe_next_alarm.is_some());
 
-            if let Some(next_time) = maybe_next_alarm {
+            if let Some(datetime) = maybe_next_alarm {
                 let system_datetime = main_window.get_system_datetime();
-
-                let today = Local::now().date_naive();
-                let naive_dt = today.and_time(next_time);
-
-                let datetime = DateTime::from_naive_utc_and_offset(naive_dt, FixedOffset::east(0));
-
                 alarm_adapter.set_next_alarm_time(to_datetime(
                     datetime,
                     system_datetime.timezone.to_string(),

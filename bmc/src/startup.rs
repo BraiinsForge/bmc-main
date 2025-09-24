@@ -135,6 +135,7 @@ where
             sound_controller.clone(),
             display_controller.clone(),
             alarm_bus.clone(),
+            manager.watch_timezone_updates(),
         )
         .await?;
 

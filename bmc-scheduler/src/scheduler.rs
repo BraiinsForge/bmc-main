@@ -51,7 +51,6 @@ impl JobConfig {
     }
 }
 
-#[expect(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Schedule {
     Cron(Cron),
@@ -272,6 +271,21 @@ impl JobScheduler {
 
     pub async fn jobs(&self) -> Result<Vec<JobDetails>> {
         list_jobs(self.storage.clone(), self.inner.clone()).await
+    }
+
+    pub async fn jobs_by_source(&self, source: &str) -> Result<Vec<JobDetails>> {
+        let mut inner = self.inner.lock().await;
+        let jobs = self.storage.read().await;
+        let mut jobs_vec = Vec::new();
+
+        for (job_id, job_details) in jobs.iter().filter(|job| job.1.source == source) {
+            let mut job_details = job_details.clone();
+            let next_tick = inner.next_tick_for_job(*job_id).await?;
+            job_details.next_tick = next_tick;
+            jobs_vec.push(job_details);
+        }
+
+        Ok(jobs_vec)
     }
 
     pub async fn job(&self, job_id: &Uuid) -> Result<Option<JobDetails>> {
