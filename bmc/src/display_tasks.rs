@@ -251,6 +251,7 @@ impl<T: BmcManager> DisplayTasks<T> {
                     InitSetupState::DeviceSetupSuccess => {
                         display_controller.set_init_screen(Some(InitScreen::SetupCompleted));
                         tokio::time::sleep(SCREEN_DURATION).await;
+                        display_controller.set_scene_cycler_screen(true);
                         display_controller.set_init_screen(None);
                     }
                 }
