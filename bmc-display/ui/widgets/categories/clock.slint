@@ -4,6 +4,7 @@ import { Images } from "../../style/images.slint";
 import { Backend } from "../../backend.slint";
 import { WidgetSize, FontStyle, WidgetUtilsAdapter } from "../widget-shared.slint";
 import { DateTime } from "../../controls/common.slint";
+import { AlarmAdapter } from "../../controls/adapters.slint";
 
 export enum ClockStyle {
   AnalogRound,
@@ -63,16 +64,16 @@ export component WidgetClockAnalogRound inherits Rectangle {
             height: clock-dial-height;
             source: clock-dial;
         }
+
         timezone := Text {
             visible: config.show-timezone;
             text: root.datetime.timezone;
-            y: (size == WidgetSize.Full) ? 104px
-                : (size == WidgetSize.Large) ? 112px
-                : 53px;
+            y: (size == WidgetSize.Full) ? 104px : (size == WidgetSize.Large) ? 112px : 53px;
             font-weight: Theme.font.weight.regular;
             font-size: (size == WidgetSize.Full || size == WidgetSize.Large) ? 24px : 16px;
             color: Palette.gray-40;
         }
+
         date-window := Rectangle {
             visible: (size == WidgetSize.Large || size == WidgetSize.Full) && config.show-date;
             width: 60px;
@@ -91,6 +92,29 @@ export component WidgetClockAnalogRound inherits Rectangle {
                 horizontal-alignment: center;
             }
         }
+
+        next_alarm := HorizontalLayout {
+            visible: size == WidgetSize.Full && AlarmAdapter.next-alarm-is-defined;
+            x: datetime.is-24-format ? -130px : -145px;
+            y: 178px;
+            spacing: 8px;
+
+            Image {
+                source: Images.alarm-bell;
+                width: 24px;
+                height: 24px;
+                y: 5px;
+                colorize: Palette.gray-40;
+            }
+
+            Text {
+                text: AlarmAdapter.next-alarm-is-defined ? datetime.is-24-format ? AlarmAdapter.next-alarm-time.time-24 : (AlarmAdapter.next-alarm-time.time-12 + " " + (AlarmAdapter.next-alarm-time.is_pm ? "PM" : "AM")) : "";
+                font-size: 24px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-40;
+            }
+        }
+
         hour := Image {
             width: Images.hour-hand-width * relative-size;
             height: Images.hour-hand-height * relative-size;
@@ -100,6 +124,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             // source: Images.hand-hour;
             source: data.analog-clock-hands.hour-hand-round;
         }
+
         minute := Image {
             width: Images.minute-hand-width * relative-size;
             height: Images.minute-hand-height * relative-size;
@@ -109,6 +134,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             // source: Images.hand-minute;
             source: data.analog-clock-hands.minute-hand-round;
         }
+
         Image {
             width: Images.circle-white-width * relative-size;
             height: Images.circle-white-height * relative-size;
@@ -116,6 +142,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             y: 168px * relative-size;
             source: Images.center-circle-white;
         }
+
         second := Image {
             width: Images.second-hand-width * relative-size;
             height: Images.second-hand-height * relative-size;
@@ -125,6 +152,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             // source: Images.hand-second;
             source: data.analog-clock-hands.second-hand-round;
         }
+
         Image {
             width: Images.circle-orange-width * relative-size;
             height: Images.circle-orange-height * relative-size;
@@ -132,6 +160,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             y: 187px * relative-size;
             source: Images.center-circle-orange;
         }
+
         Image {
             width: Images.circle-black-width * relative-size;
             height: Images.circle-black-height * relative-size;
@@ -139,6 +168,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             y: 191px * relative-size;
             source: Images.center-circle-black;
         }
+
         Image {
             width: Images.circle-stroke-width * relative-size;
             height: Images.circle-stroke-height * relative-size;
@@ -172,15 +202,11 @@ export component WidgetClockAnalogRect inherits Rectangle {
     property <percent> relative-width: (size == WidgetSize.Full) ? 100% : (size == WidgetSize.Small) ? 25% : 50%;
     property <percent> relative-height: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
-    property <image> clock-dial: (size == WidgetSize.Full) ? Images.clock-dial-rect-full : (size == WidgetSize.Large)
-        ? Images.clock-dial-rect-large: (size == WidgetSize.Medium) ? Images.clock-dial-rect-medium : Images.clock-dial-rect-small;
+    property <image> clock-dial: (size == WidgetSize.Full) ? Images.clock-dial-rect-full : (size == WidgetSize.Large) ? Images.clock-dial-rect-large : (size == WidgetSize.Medium) ? Images.clock-dial-rect-medium : Images.clock-dial-rect-small;
     property <length> clock-dial-width: clock-dial.width * 1px;
     property <length> clock-dial-height: clock-dial.height * 1px;
 
-    property <length> hour-font-size: (size == WidgetSize.Full) ? 64px
-        : (size == WidgetSize.Large) ? 40px
-        : (size == WidgetSize.Medium) ? 24px
-        : 24px;
+    property <length> hour-font-size: (size == WidgetSize.Full) ? 64px : (size == WidgetSize.Large) ? 40px : (size == WidgetSize.Medium) ? 24px : 24px;
     property <int> hour-font-weight: (size == WidgetSize.Full) ? Theme.font.weight.bold : Theme.font.weight.semi-bold;
 
     width: base-width * (size == WidgetSize.Small ? 1 : (size == WidgetSize.Medium || size == WidgetSize.Large) ? 2 : 4);
@@ -194,6 +220,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             height: clock-dial-height;
             source: clock-dial;
         }
+
         twelve := Text {
             text: "12";
             font-size: hour-font-size;
@@ -201,6 +228,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             color: Palette.white;
             y: twelve-vertical-offset(size);
         }
+
         three := Text {
             text: "3";
             font-size: hour-font-size;
@@ -208,6 +236,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             color: Palette.white;
             x: three-horizontal-offset(size, root.width, self.width);
         }
+
         six := Text {
             text: "6";
             font-size: hour-font-size;
@@ -215,6 +244,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             color: Palette.white;
             y: six-vertical-offset(size, root.height, self.height);
         }
+
         nine := Text {
             text: "9";
             font-size: hour-font-size;
@@ -222,6 +252,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             color: Palette.white;
             x: nine-horizontal-offset(size);
         }
+
         date := Text {
             visible: size == WidgetSize.Full && config.show-date;
             text: root.datetime.weekday + " " + root.datetime.day;
@@ -231,17 +262,37 @@ export component WidgetClockAnalogRect inherits Rectangle {
             vertical-alignment: center;
             x: 870px;
         }
+
         timezone_element := Text {
             visible: config.show-timezone;
             text: root.datetime.timezone;
-            y: (size == WidgetSize.Full) ? 265px
-                : (size == WidgetSize.Large) ? 270px
-                : (size == WidgetSize.Medium) ? 130px
-                : 130px;
+            y: (size == WidgetSize.Full) ? 265px : (size == WidgetSize.Large) ? 270px : (size == WidgetSize.Medium) ? 130px : 130px;
             font-weight: Theme.font.weight.regular;
             font-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 16px : 24px;
             color: Palette.gray-40;
         }
+
+        next_alarm := HorizontalLayout {
+            visible: size == WidgetSize.Full && AlarmAdapter.next-alarm-is-defined;
+            x: 250px;
+            y: 195px;
+            spacing: 6px;
+
+            Image {
+                source: Images.alarm-bell;
+                width: 36px;
+                height: 36px;
+                y: 9px;
+            }
+
+            Text {
+                text: AlarmAdapter.next-alarm-is-defined ? datetime.is-24-format ? AlarmAdapter.next-alarm-time.time-24 : (AlarmAdapter.next-alarm-time.time-12 + " " + (AlarmAdapter.next-alarm-time.is_pm ? "PM" : "AM")) : "";
+                font-size: 40px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-60;
+            }
+        }
+
         hour := Image {
             // width: 0.9 * Images.hour-hand-rect-width * relative-size;
             // height: 0.9 * Images.hour-hand-rect-height * relative-size;
@@ -253,6 +304,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             // source: Images.hand-hour-rect;
             source: data.analog-clock-hands.hour-hand-rect;
         }
+
         minute := Image {
             // width: 0.9 * Images.minute-hand-rect-width * relative-size;
             // height: 0.9 * Images.minute-hand-rect-height * relative-size;
@@ -264,6 +316,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             // source: Images.hand-minute-rect;
             source: data.analog-clock-hands.minute-hand-rect;
         }
+
         Image {
             width: Images.circle-white-width * relative-size;
             height: Images.circle-white-height * relative-size;
@@ -271,6 +324,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             y: parent.height / 2 - (relative-size) * Images.circle-white-height / 2;
             source: Images.center-circle-white;
         }
+
         second := Image {
             // width: 0.9 * Images.second-hand-rect-width * relative-size;
             // height: 0.9 * Images.second-hand-rect-height * relative-size;
@@ -282,6 +336,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             // source: Images.hand-second-rect;
             source: data.analog-clock-hands.second-hand-rect;
         }
+
         Image {
             width: Images.circle-orange-width * relative-size;
             height: Images.circle-orange-height * relative-size;
@@ -289,6 +344,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             y: parent.height / 2 - (relative-size) * Images.circle-orange-height / 2;
             source: Images.center-circle-orange;
         }
+
         Image {
             width: Images.circle-black-width * relative-size;
             height: Images.circle-black-height * relative-size;
@@ -296,6 +352,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             y: parent.height / 2 - (relative-size) * Images.circle-black-height / 2;
             source: Images.center-circle-black;
         }
+
         Image {
             width: Images.circle-stroke-width * relative-size;
             height: Images.circle-stroke-height * relative-size;
@@ -316,33 +373,25 @@ export component WidgetClockAnalogRect inherits Rectangle {
         }
 
         function twelve-vertical-offset(w-size: WidgetSize) -> length {
-            return (w-size == WidgetSize.Full) ? 59px
-                : (w-size == WidgetSize.Large) ? 80px
-                : (w-size == WidgetSize.Medium) ? 35px
+            return (w-size == WidgetSize.Full) ? 59px : (w-size == WidgetSize.Large) ? 80px : (w-size == WidgetSize.Medium) ? 35px
                 // Small
                 : 40px;
         }
 
         function three-horizontal-offset(w-size: WidgetSize, r-w: length, s-w: length) -> length {
-            return (w-size == WidgetSize.Full) ? r-w - s-w - 105px
-                : (w-size == WidgetSize.Large) ? r-w - s-w - 90px
-                : (w-size == WidgetSize.Medium) ? r-w - s-w - 50px
+            return (w-size == WidgetSize.Full) ? r-w - s-w - 105px : (w-size == WidgetSize.Large) ? r-w - s-w - 90px : (w-size == WidgetSize.Medium) ? r-w - s-w - 50px
                 // Small
                 : r-w - s-w - 50px;
         }
 
         function six-vertical-offset(w-size: WidgetSize, r-h: length, s-h: length) -> length {
-            return (w-size == WidgetSize.Full) ? r-h - s-h - 59px
-                : (w-size == WidgetSize.Large) ? r-h - s-h - 80px
-                : (w-size == WidgetSize.Medium) ? r-h - s-h - 35px
+            return (w-size == WidgetSize.Full) ? r-h - s-h - 59px : (w-size == WidgetSize.Large) ? r-h - s-h - 80px : (w-size == WidgetSize.Medium) ? r-h - s-h - 35px
                 // Small
                 : r-h - s-h - 40px;
         }
 
         function nine-horizontal-offset(w-size: WidgetSize) -> length {
-            return (w-size == WidgetSize.Full) ? 105px
-                : (w-size == WidgetSize.Large) ? 90px
-                : (w-size == WidgetSize.Medium) ? 50px
+            return (w-size == WidgetSize.Full) ? 105px : (w-size == WidgetSize.Large) ? 90px : (w-size == WidgetSize.Medium) ? 50px
                 // Small
                 : 50px;
         }
@@ -356,9 +405,7 @@ export component WidgetClockDigital inherits Rectangle {
     in property <WidgetClockConfig> config;
     in property <DateTime> datetime;
 
-    property <string> time: datetime.is-24-format
-        ? (config.show-seconds ? datetime.time-sec-24 : datetime.time-24)
-        : (config.show-seconds ? datetime.time-sec-12 : datetime.time-12);
+    property <string> time: datetime.is-24-format ? (config.show-seconds ? datetime.time-sec-24 : datetime.time-24) : (config.show-seconds ? datetime.time-sec-12 : datetime.time-12);
     property <percent> relative-size: (size == WidgetSize.Small || size == WidgetSize.Medium) ? 50% : 100%;
 
     width: base-width * (size == WidgetSize.Small ? 1 : (size == WidgetSize.Medium || size == WidgetSize.Large) ? 2 : 4);
@@ -423,6 +470,7 @@ export component WidgetClockDigital inherits Rectangle {
             HorizontalLayout {
                 width: 228px;
             }
+
             HorizontalLayout {
                 Text {
                     text: root.time;
@@ -431,6 +479,7 @@ export component WidgetClockDigital inherits Rectangle {
                     color: Palette.white;
                 }
             }
+
             HorizontalLayout {
                 width: 228px;
                 padding-left: 25px;
@@ -448,8 +497,14 @@ export component WidgetClockDigital inherits Rectangle {
         HorizontalLayout {
             alignment: center;
             padding-bottom: 32px;
+            spacing: 6px;
+
+            if AlarmAdapter.next-alarm-is-defined:Image {
+                source: Images.alarm-bell;
+            }
+
             Text {
-                text: "Alarm: 6:30";
+                text: AlarmAdapter.next-alarm-is-defined ? datetime.is-24-format ? AlarmAdapter.next-alarm-time.time-24 : (AlarmAdapter.next-alarm-time.time-12 + " " + (AlarmAdapter.next-alarm-time.is_pm ? "PM" : "AM")) : "";
                 font-size: 40px;
                 font-weight: Theme.font.weight.regular;
                 color: Palette.gray-60;
@@ -470,6 +525,7 @@ export component WidgetClockDigital inherits Rectangle {
                 horizontal-alignment: center;
             }
         }
+
         Row {
             Text {
                 text: root.time;
@@ -479,6 +535,7 @@ export component WidgetClockDigital inherits Rectangle {
                 horizontal-alignment: center;
             }
         }
+
         Row {
             Text {
                 visible: !root.datetime.is_24_format;

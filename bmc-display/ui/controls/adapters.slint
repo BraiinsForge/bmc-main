@@ -1,4 +1,4 @@
-import { InitScreen, ConnectInfoScreen, UpgradeScreen } from "common.slint";
+import { InitScreen, ConnectInfoScreen, UpgradeScreen, DateTime } from "common.slint";
 
 export global UpgradeDownloadAdapter {
     in property <float> progress: 0.0;
@@ -48,6 +48,8 @@ export global BlockHeightAdapter {
 export global AlarmAdapter {
     in property <string> label;
     in property <bool> snooze-visible;
+    in property <DateTime> next-alarm-time;
+    in property <bool> next-alarm-is-defined;
     callback stop_alarm;
     callback snooze_alarm;
 }
