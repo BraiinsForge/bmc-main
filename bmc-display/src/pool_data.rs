@@ -8,7 +8,8 @@ use serde::Deserialize;
 use slint::{Global, Image, ModelRc, SharedString, VecModel};
 use svg::Document;
 
-pub const POOL_API_URL: &str = "https://pool.braiins.com/api/v1";
+pub const POOL_API_URL: &str = "https://api.braiins.com/pool/v2";
+
 pub const USER_HASHRATE_CURRENT: &str = "/user/hashrate/current";
 pub const USER_REWARD_LATEST: &str = "/user/rewards/latest";
 pub const USER_WORKERS_CURRENT: &str = "/user/workers/current";
