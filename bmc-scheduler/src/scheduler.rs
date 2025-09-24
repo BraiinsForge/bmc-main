@@ -175,15 +175,17 @@ impl JobScheduler {
 
         let inner = Arc::new(Mutex::new(job_scheduler));
         let storage = Arc::new(RwLock::new(BTreeMap::new()));
-        let mut crontab_manager = CrontabManager::new(crontab_path);
-        let _ = crontab_manager
-            .load_all()
-            .await
-            .map_err(|e| warn!("Failed to load crontabs: {}", e));
-        let _ = crontab_manager
-            .ensure_scheduler_disclaimer()
-            .await
-            .map_err(|e| warn!("Failed to ensure scheduler crontab disclaimer: {}", e));
+        let mut crontab_manager = CrontabManager::new(crontab_path.clone());
+        if crontab_path.is_some() {
+            let _ = crontab_manager
+                .load_all()
+                .await
+                .map_err(|e| warn!("Failed to load crontabs: {}", e));
+            let _ = crontab_manager
+                .ensure_scheduler_disclaimer()
+                .await
+                .map_err(|e| warn!("Failed to ensure scheduler crontab disclaimer: {}", e));
+        }
         let crontab_manager = Arc::new(RwLock::new(crontab_manager));
 
         spawn_timezone_listener(timezone_receiver.clone(), inner.clone(), storage.clone());

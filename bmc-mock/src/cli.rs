@@ -77,6 +77,9 @@ pub struct Config {
     /// Path to a directory with sounds
     #[clap(long, default_value = data_dir("sounds"))]
     pub sounds_dir: PathBuf,
+    /// Path to a main crontab file
+    #[clap(long, default_value = None)]
+    pub crontab_path: Option<PathBuf>,
 }
 
 impl From<Config> for Configuration {
@@ -101,6 +104,7 @@ impl From<Config> for Configuration {
             default_volume_pct: value.default_volume_pct,
             default_night_mode_volume_pct: value.default_night_mode_volume_pct,
             sounds_dir: value.sounds_dir,
+            crontab_path: value.crontab_path,
         }
     }
 }

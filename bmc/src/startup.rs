@@ -58,6 +58,7 @@ where
     U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
+    #[expect(clippy::too_many_lines)]
     pub async fn init(
         config: Configuration,
         manager: Arc<T>,
@@ -86,7 +87,11 @@ where
 
         let config_handle = Arc::new(RwLock::new(config_handle));
 
-        let scheduler = JobScheduler::init(manager.watch_timezone_updates(), None).await;
+        let scheduler = JobScheduler::init(
+            manager.watch_timezone_updates(),
+            config.crontab_path.clone(),
+        )
+        .await;
         let system_upgrade_service = SystemUpgradeService::new(
             firmware_resolver,
             &config.upgrade_image_path,
@@ -225,6 +230,7 @@ pub struct Configuration {
     pub default_volume_pct: u8,
     pub default_night_mode_volume_pct: u8,
     pub sounds_dir: PathBuf,
+    pub crontab_path: Option<PathBuf>,
 }
 
 impl Configuration {
@@ -235,6 +241,7 @@ impl Configuration {
     const DEFAULT_VOLUME_PCT: u8 = 80;
     const DEFAULT_NIGHT_MODE_VOLUME_PCT: u8 = 50;
     const SOUNDS_DIR: &str = "/usr/share/bmc/sounds/";
+    const CRONTAB_PATH: &str = "/etc/crontabs/root";
 }
 
 impl Default for Configuration {
@@ -249,6 +256,7 @@ impl Default for Configuration {
             default_volume_pct: Self::DEFAULT_VOLUME_PCT,
             default_night_mode_volume_pct: Self::DEFAULT_NIGHT_MODE_VOLUME_PCT,
             sounds_dir: PathBuf::from(Self::SOUNDS_DIR),
+            crontab_path: Some(Self::CRONTAB_PATH.into()),
         }
     }
 }

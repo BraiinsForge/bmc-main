@@ -507,55 +507,7 @@ impl CrontabManager {
         self.scheduler_crontab.load_from_path().await?;
 
         // Load all system crontabs from /etc/crontabs/
-        self.load_system_crontabs().await?;
-
-        Ok(())
-    }
-
-    /// Load all crontabs from /etc/crontabs/ directory (except the scheduler's own if it's there)
-    async fn load_system_crontabs(&mut self) -> anyhow::Result<()> {
-        let crontabs_dir = PathBuf::from(CRON_DEFAULT_DIR);
-        self.system_crontabs.clear();
-
-        if !crontabs_dir.exists() {
-            return Ok(()); // No system crontabs directory
-        }
-
-        let mut dir_entries = tokio::fs::read_dir(&crontabs_dir).await?;
-
-        while let Some(entry) = dir_entries.next_entry().await? {
-            let entry_path = entry.path();
-
-            // Skip if it's not a regular file
-            if !entry_path.is_file() {
-                continue;
-            }
-
-            // Skip hidden files and backup files
-            if let Some(filename) = entry_path.file_name() {
-                let filename_str = filename.to_string_lossy();
-                if filename_str.starts_with('.') || filename_str.ends_with('~') {
-                    continue;
-                }
-            }
-
-            // Skip if this is the scheduler's own crontab file
-            if entry_path == self.scheduler_crontab.path {
-                continue;
-            }
-
-            // Create a separate Crontab instance for this file
-            let mut system_crontab = Crontab::new(Some(entry_path));
-            if let Err(e) = system_crontab.load_from_path().await {
-                warn!(
-                    "Failed to load system crontab file {:?}: {}",
-                    system_crontab.path, e
-                );
-                continue;
-            }
-
-            self.system_crontabs.push(system_crontab);
-        }
+        self.scheduler_crontab.load_from_directory().await?;
 
         Ok(())
     }
