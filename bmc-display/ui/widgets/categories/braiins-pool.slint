@@ -40,6 +40,7 @@ export struct WidgetBraiinsPoolConfig {
 
 export struct WidgetBraiinsPoolData {
     config: WidgetBraiinsPoolConfig,
+    account-name: string,
     current-hashrate: string,
     current-hashrate-unit: string,
     reward-btc: string,
@@ -118,6 +119,7 @@ export global PoolChartDimensions {
 
 component braiins-pool-icon-box inherits HorizontalLayout {
     in property <bool> show-account;
+    in property <string> account-name;
     in property <length> font-size: 24px;
     in property <length> top-padding: 16px;
 
@@ -139,7 +141,7 @@ component braiins-pool-icon-box inherits HorizontalLayout {
         color: Palette.white;
     }
     if show-account: Text {
-        text: "(user.braiins)";
+        text: "(" + account-name + ")";
         font-size: font-size;
         font-weight: Theme.font.weight.regular;
         color: Palette.gray-40;
@@ -402,6 +404,7 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
         Row {
             braiins-pool-icon-box {
                 show-account: true;
+                account-name: data.account-name;
             }
         }
         Row {
@@ -495,6 +498,7 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
         braiins-pool-icon-box {
             padding-left: 0px;
             show-account: true;
+            account-name: data.account-name;
         }
         bordered-box {
             height: 120px;
@@ -548,6 +552,7 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
             braiins-pool-icon-box {
                 padding-left: 16px;
                 show-account: true;
+                account-name: data.account-name;
             }
 
             HorizontalLayout {
@@ -611,6 +616,7 @@ export component WidgetBraiinsPoolBigChart inherits Rectangle {
             spacing: 24px;
             braiins-pool-icon-box {
                 show-account: true;
+                account-name: data.account-name;
             }
             HorizontalLayout {
                 spacing: 8px;
@@ -706,6 +712,7 @@ export component WidgetBraiinsPoolBigChart inherits Rectangle {
         braiins-pool-icon-box {
             show-account: true;
             font-size: 20px;
+            account-name: data.account-name;
         }
         HorizontalLayout {
             // Without max-height: 0px Slint sets the height of the HorizontalLayout way too big.

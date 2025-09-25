@@ -24,7 +24,7 @@ use bmc_shared_time::time::{DateFormat, Timezone};
 use bmc_shared_utils::number_format::NumberFormat;
 use chrono::{Datelike, Timelike, Utc};
 use indexmap::IndexMap;
-use slint::{FilterModel, Global, Model, ModelRc, VecModel};
+use slint::{FilterModel, Global, Model, ModelRc, SharedString, VecModel};
 use std::any::type_name;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -328,6 +328,26 @@ impl DisplayController {
                 is_24_format,
                 date_format,
             ));
+        });
+    }
+
+    pub fn update_account_name(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        account_name: String,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    widget.braiins_pool.account_name = SharedString::from(account_name);
+                });
+            }
         });
     }
 

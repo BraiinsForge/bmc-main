@@ -4,8 +4,8 @@ use crate::config::ConfigHandle;
 use bmc_display::btc_history_data::BtcHistoryData;
 use bmc_display::clock_data::ClockData;
 use bmc_display::data::{
-    PoolChartTimeFrame, PoolStyle, SceneId, TickerTimeFrame, Widget, WidgetId, WidgetKind,
-    WidgetSize,
+    AccountId, AuthenticationType, PoolChartTimeFrame, PoolStyle, SceneId, TickerTimeFrame, Widget,
+    WidgetId, WidgetKind, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_display::pool_data::{
@@ -21,7 +21,7 @@ use tokio::spawn;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 const BTC_HISTORY_API_URL: &str = "https://public-api.braiins.com/v1/price-history";
 const BTC_HISTORY_TIMEFRAME_API_PARAM: &str = "timeframe";
@@ -102,6 +102,7 @@ impl WidgetTasks {
                 self.config_handle.clone(),
                 &pool_widget.pool_style,
                 pool_widget.chart_frame.clone(),
+                pool_widget.account_id.clone(),
             ))),
         };
 
@@ -247,7 +248,7 @@ impl WidgetTasks {
         }
     }
 
-    #[expect(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, clippy::too_many_arguments)]
     fn make_braiins_pool_task(
         &self,
         scene_id: SceneId,
@@ -256,6 +257,7 @@ impl WidgetTasks {
         config_handle: Arc<RwLock<ConfigHandle>>,
         pool_style: &PoolStyle,
         chart_frame: PoolChartTimeFrame,
+        account_id: Option<AccountId>,
     ) -> impl Future<Output = ()> + Send + 'static {
         let display_controller = self.display_controller.clone();
         let mut system_timezone_receiver = self.system_timezone_receiver.clone();
@@ -296,19 +298,43 @@ impl WidgetTasks {
 
         async move {
             let mut interval = interval(Duration::from_secs(60));
+            let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
+                error!("HTTP Client init failed");
+                return;
+            };
+            let Some(account_id) = account_id else {
+                warn!("Widget {widget_id} is missing Account ID");
+                return;
+            };
 
             loop {
                 interval.tick().await;
 
+                let (api_key, account_name) =
+                    if let Some(account) = config_handle.read().await.accounts.get(&account_id) {
+                        let auth = match &account.authentication {
+                            AuthenticationType::ApiKey(api_key) => api_key.clone(),
+                        };
+                        (auth, account.name.clone())
+                    } else {
+                        warn!("Missing account with id: {account_id}");
+                        return;
+                    };
+
+                display_controller.update_account_name(
+                    scene_id.clone(),
+                    widget_id.clone(),
+                    account_name,
+                );
+
                 debug!("Getting user current hashrate data...");
-                let client = Client::new();
                 let current_hashrate = match client
                     .get(format!(
                         "{}{}",
                         pool_data::POOL_API_URL,
                         pool_data::USER_HASHRATE_CURRENT
                     ))
-                    .timeout(API_TIMEOUT)
+                    .header("X-API-Key", &api_key)
                     .send()
                     .await
                 {
@@ -336,7 +362,7 @@ impl WidgetTasks {
                             pool_data::POOL_API_URL,
                             pool_data::USER_REWARD_LATEST
                         ))
-                        .timeout(API_TIMEOUT)
+                        .header("X-API-Key", &api_key)
                         .send()
                         .await
                     {
@@ -388,8 +414,8 @@ impl WidgetTasks {
 
                         let hashrate_history_partial = match client
                             .get(&url)
+                            .header("X-API-Key", &api_key)
                             .query(&query_params)
-                            .timeout(API_TIMEOUT)
                             .send()
                             .await
                         {
@@ -437,7 +463,7 @@ impl WidgetTasks {
                             pool_data::POOL_API_URL,
                             pool_data::USER_WORKERS_CURRENT
                         ))
-                        .timeout(API_TIMEOUT)
+                        .header("X-API-Key", &api_key)
                         .send()
                         .await
                     {
@@ -489,8 +515,8 @@ impl WidgetTasks {
 
                         let worker_history_partial = match client
                             .get(&url)
+                            .header("X-API-Key", &api_key)
                             .query(&query_params)
-                            .timeout(API_TIMEOUT)
                             .send()
                             .await
                         {
@@ -527,7 +553,7 @@ impl WidgetTasks {
                             pool_data::POOL_API_URL,
                             pool_data::USER_FINANCIALS
                         ))
-                        .timeout(API_TIMEOUT)
+                        .header("X-API-Key", &api_key)
                         .send()
                         .await
                     {
@@ -548,8 +574,8 @@ impl WidgetTasks {
                             pool_data::POOL_API_URL,
                             pool_data::USER_PAYOUTS_RECENT
                         ))
+                        .header("X-API-Key", &api_key)
                         .query(&[(pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX)])
-                        .timeout(API_TIMEOUT)
                         .send()
                         .await
                     {
@@ -602,8 +628,8 @@ impl WidgetTasks {
 
                         let recent_payouts_partial = match client
                             .get(&url)
+                            .header("X-API-Key", &api_key)
                             .query(&query_params)
-                            .timeout(API_TIMEOUT)
                             .send()
                             .await
                         {
