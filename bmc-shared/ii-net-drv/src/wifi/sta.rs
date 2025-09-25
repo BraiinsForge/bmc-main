@@ -20,68 +20,75 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use anyhow::{Result, anyhow};
+use anyhow::{Ok, Result, bail};
+use futures::stream::TryStreamExt;
 use ii_net::wifi::WifiLinkState;
+use tracing::debug;
+use wl_nl80211::{Nl80211Attr, Nl80211Handle, Nl80211StationInfo};
 
-use crate::wifi::utils::CommandUtils;
+struct WifiInterfaceDetails {
+    index: u32,
+    ssid: String,
+}
 
 pub struct WifiSta;
 
 impl WifiSta {
-    fn get_value_by_key(input: &str, key: &str) -> Result<String> {
-        input
-            .lines()
-            .find_map(|line| {
-                line.trim().starts_with(key).then(|| {
-                    line.split_once(':')
-                        .map(|(_key, value)| value.trim().to_owned())
-                })
-            })
-            .flatten()
-            .ok_or_else(|| anyhow!("No value found for '{key}' key"))
-    }
+    async fn get_iface_details(
+        handle: Nl80211Handle,
+        ifname: &str,
+    ) -> anyhow::Result<WifiInterfaceDetails> {
+        let ifname_attr = Nl80211Attr::IfName(ifname.to_string());
+        let mut interface_handle = handle.interface().get(Vec::new()).execute().await;
 
-    fn get_ssid(input: &str) -> Result<String> {
-        let key = "SSID";
-        let value = Self::get_value_by_key(input, key)?;
-        str::parse::<String>(&value)
-            .map_err(|_| anyhow!("Cannot parse {value} which is a value for '{key}' key"))
-    }
+        let mut index = None;
+        let mut ssid = None;
+        while let Some(ifhandle) = interface_handle.try_next().await? {
+            let attrs = ifhandle.payload.attributes;
+            if attrs.iter().any(|attr| attr == &ifname_attr) {
+                for attr in attrs {
+                    match attr {
+                        Nl80211Attr::IfIndex(i) => index = Some(i.to_owned()),
+                        Nl80211Attr::Ssid(s) => ssid = Some(s),
+                        _ => {}
+                    }
+                }
+            }
+        }
 
-    fn get_signal(input: &str) -> Result<i32> {
-        let key = "signal";
-        let value = Self::get_value_by_key(input, key)?.replace("dBm", "");
-        str::parse::<i32>(value.trim())
-            .map_err(|_| anyhow!("Cannot parse {value} which is a value for '{key}' key"))
+        debug!("Interface details: index={index:?}, ssid={ssid:?}");
+        if let (Some(index), Some(ssid)) = (index, ssid) {
+            return Ok(WifiInterfaceDetails { index, ssid });
+        }
+        bail!("Some details for interface {ifname} are missing")
     }
 
     pub async fn link_details(device: &str) -> Result<WifiLinkState> {
-        let link_details = CommandUtils::call_iw_cmd(&["dev", device, "link"]).await?;
-        Ok(WifiLinkState {
-            ssid: Self::get_ssid(&link_details)?,
-            signal_level: Self::get_signal(&link_details)?,
-        })
-    }
-}
+        let (connection, handle, _) = wl_nl80211::new_connection()?;
+        tokio::spawn(connection);
 
-mod tests {
-    #[test]
-    fn test_parser() {
-        // Keep the formatting as is including leading whitespaces!
-        let output = r#"
-Connected to 80:2a:a8:5a:05:36 (on wlan0)
-	SSID: ubnt-ms
-	freq: 2462
-	RX: 305344 bytes (2085 packets)
-	TX: 60248 bytes (507 packets)
-	signal: -58 dBm
-"#;
+        let intf_details = Self::get_iface_details(handle.clone(), device).await?;
 
-        let ssid = crate::wifi::WifiSta::get_ssid(output).expect("BUG: SSID parsing error");
-        let signal_level =
-            crate::wifi::WifiSta::get_signal(output).expect("BUG: Signal parsing error");
+        let mut signal = None;
+        let mut sta_msg = handle.station().dump(intf_details.index).execute().await;
+        while let Some(station_handle) = sta_msg.try_next().await? {
+            for attr in station_handle.payload.attributes {
+                if let Nl80211Attr::StationInfo(sta_attrs) = attr {
+                    for sta in sta_attrs {
+                        if let Nl80211StationInfo::Signal(dbm) = sta {
+                            signal = Some(dbm);
+                        }
+                    }
+                }
+            }
+        }
 
-        assert_eq!(ssid, "ubnt-ms".to_owned());
-        assert_eq!(signal_level, -58);
+        if let Some(signal) = signal {
+            return Ok(WifiLinkState {
+                ssid: intf_details.ssid,
+                signal_level: signal.into(),
+            });
+        }
+        bail!("Wifi signal not found")
     }
 }

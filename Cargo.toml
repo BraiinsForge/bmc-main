@@ -210,6 +210,7 @@ tracing-subscriber = "0.3.19"
 url = { version = "2.5.4", features = ["serde"] }
 uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
 ux = { version = "0.1.6" }
+wl-nl80211 = "0.3.2"
 sysfs_gpio = "0.6.1"
 gpiod = "0.2.3"
 merge-streams = "0.1.2"
