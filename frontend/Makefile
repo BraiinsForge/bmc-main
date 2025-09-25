@@ -79,6 +79,14 @@ storybook-start:
 	  --exact-port \
 	  --disable-telemetry
 
+.PHONY: minify-jpg
+minify-jpg:
+	@command -v jpegoptim >/dev/null 2>&1 || { echo "❌ Error: jpegoptim is not installed"; exit 1; }
+	@find . \
+		\( -path '*/.*' -o -type d -name build \) -prune -o \
+		\( -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) \) \
+		-exec jpegoptim --max=70 --strip-all --threshold=5 {} \;
+
 .PHONY: minify-png
 minify-png:
 	@which oxipng > /dev/null || (echo "Error: oxipng is not installed" && exit 1)
@@ -89,7 +97,7 @@ minify-svg:
 	yarn run svgo --recursive --folder ./src
 
 .PHONY: minify-images
-minify-images: minify-png minify-svg
+minify-images: minify-jpg minify-png minify-svg
 
 .PHONY: intl-extract
 intl-extract:
@@ -102,19 +110,3 @@ nix-update-hash:
 #
 # Image Minification
 #
-
-.PHONY: minify-images
-minify-images: minify-png minify-jpg
-
-.PHONY: minify-png
-minify-png:
-	@which oxipng > /dev/null || (echo "❌ Error: oxipng is not installed" && exit 1)
-	oxipng --zopfli --fast --alpha --strip=safe --opt=max --recursive --preserve .
-
-.PHONY: minify-jpg
-minify-jpg:
-	@command -v jpegoptim >/dev/null 2>&1 || { echo "❌ Error: jpegoptim is not installed"; exit 1; }
-	@find . \
-		\( -path '*/.*' -o -type d -name build \) -prune -o \
-		\( -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) \) \
-		-exec jpegoptim --max=70 --strip-all --threshold=5 {} \;

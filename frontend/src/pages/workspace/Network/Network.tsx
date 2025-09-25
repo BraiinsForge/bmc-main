@@ -123,7 +123,6 @@ class View extends Component<Props, State> {
     #mount = debounce(() => {
         this.#syncTabs();
         this.#load();
-        this.#wifiScan();
     }, 150);
     #syncTabs = () => {
         const { location } = this.props;

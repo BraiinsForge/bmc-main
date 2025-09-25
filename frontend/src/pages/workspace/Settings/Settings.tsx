@@ -676,6 +676,9 @@ class View extends Component<Props, State> {
                 formatMessage({ defaultMessage: 'Failed to save the brightness!' }),
             ];
             this.#setField('displayBrightness', s => ({ ...getFieldStateDefault(s.value), errors }));
+        } finally {
+            await this.#displayFetch();
+            this.#setField('displayBrightness', s => getFieldStateDefault(s.value));
         }
     }, 600);
 
