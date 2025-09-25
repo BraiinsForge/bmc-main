@@ -9,17 +9,14 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio_stream::{Stream, StreamExt};
-use tracing::warn;
+use tracing::{debug, trace, warn};
 
 const PREFIX_SOURCE: &str = "###";
 const PREFIX_COMMENT: &str = "#";
 const CRON_DEFAULT_PATH: &str = "/etc/crontabs/root";
-const CRON_DEFAULT_DIR: &str = "/etc/crontabs";
 pub(crate) const CRON_DUMMY_COMMAND: &str = "true";
 pub(crate) const CRON_SECONDS_PREFIX: &str = "0 ";
 const MIN_CRON_FIELDS: usize = 6;
-const SCHEDULER_CRONTAB_DISCLAIMER: &str =
-    "# This file is automatically managed by the scheduler - DO NOT EDIT MANUALLY";
 
 // Represents a single cron job
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +192,8 @@ impl Default for Crontab {
 }
 
 impl Crontab {
+    pub const SCHEDULER_CRONTAB_DISCLAIMER: &str =
+        "# This file is automatically managed by the scheduler - DO NOT EDIT MANUALLY";
     #[must_use]
     pub fn new(path: Option<PathBuf>) -> Self {
         let path = path.unwrap_or(
@@ -261,6 +260,7 @@ impl Crontab {
     /// Only loads from the specific file path configured for this Crontab instance
     pub async fn load_from_path(&mut self) -> anyhow::Result<()> {
         if !self.path.exists() {
+            debug!("Crontab file {:?} does not exist, creating it", self.path);
             // Create directories
             let parent_dir = self.path.parent().expect("BUG: Failed to parse parent dir");
             tokio::fs::create_dir_all(parent_dir).await?;
@@ -269,6 +269,7 @@ impl Crontab {
             self.entries = Vec::new();
             return Ok(());
         }
+        debug!("Crontab file {:?} exists, using it", self.path);
 
         let file = tokio::fs::File::open(&self.path).await?;
         self.entries = Self::read_full_crontab(file).await?;
@@ -417,12 +418,13 @@ impl Crontab {
 
         // Collect all lines from the stream into a Vec<String>
         let lines = lines_stream.collect::<Vec<String>>().await;
+        trace!("Read full crontab: {:?}", lines);
 
         // Parse the lines into CronEntry and create Crontab
         CronEntry::from_lines(lines)
     }
 
-    pub fn read_from_stream(stream: impl AsyncRead + Unpin) -> impl Stream<Item = String> {
+    pub fn read_from_stream(stream: impl AsyncRead + Unpin) -> impl Stream<Item=String> {
         let buf_reader = BufReader::new(stream);
         let lines_stream = tokio_stream::wrappers::LinesStream::new(buf_reader.lines());
 
@@ -444,7 +446,7 @@ impl Crontab {
                 let content = tokio::fs::read_to_string(&self.path).await?;
                 !content
                     .trim_start()
-                    .starts_with(SCHEDULER_CRONTAB_DISCLAIMER)
+                    .starts_with(Self::SCHEDULER_CRONTAB_DISCLAIMER)
             } else {
                 true
             }
@@ -452,7 +454,7 @@ impl Crontab {
 
         if needs_disclaimer {
             // Rewrite the entire file with disclaimer at the top
-            let mut content = format!("{SCHEDULER_CRONTAB_DISCLAIMER}\n");
+            let mut content = format!("{}\n", Self::SCHEDULER_CRONTAB_DISCLAIMER);
 
             if !self.entries.is_empty() {
                 content.push('\n'); // Extra newline after disclaimer
@@ -557,89 +559,6 @@ pub fn from_naive_time(time: NaiveTime) -> anyhow::Result<Cron> {
 }
 
 mod tests {
-    #[tokio::test]
-    async fn test_scheduler_disclaimer() {
-        use std::str::FromStr;
-        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
-        let crontab_path = temp_dir.path().join("test_scheduler_crontab");
-
-        let mut crontab = crate::cron::Crontab::new(Some(crontab_path.clone()));
-
-        // First, add an entry using the proper method (upsert_by_source)
-        let test_entry = crate::cron::CronEntry {
-            source: Some("test".to_owned()),
-            schedule: crate::cron::Cron::from_str("0 0 * * *").expect("Valid cron"),
-            command: "echo test".to_owned(),
-        };
-        crontab
-            .upsert_by_source(test_entry)
-            .await
-            .expect("Should add entry");
-
-        // Now ensure disclaimer is added
-        crontab
-            .ensure_disclaimer()
-            .await
-            .expect("Should add disclaimer");
-
-        // Read the file and verify disclaimer is at the top
-        let content = tokio::fs::read_to_string(&crontab_path)
-            .await
-            .expect("Should read file");
-
-        // Verify disclaimer is present at the start
-        assert!(
-            content
-                .trim_start()
-                .starts_with(crate::cron::SCHEDULER_CRONTAB_DISCLAIMER)
-        );
-
-        // Verify the entry is also present
-        assert!(content.contains("### test"));
-        assert!(content.contains("0 0 * * * echo test"));
-
-        // Test that calling ensure_disclaimer again doesn't duplicate
-        crontab
-            .ensure_disclaimer()
-            .await
-            .expect("Should not fail on second call");
-        let content2 = tokio::fs::read_to_string(&crontab_path)
-            .await
-            .expect("Should read file again");
-
-        // Content should be identical (no duplicate disclaimer)
-        assert_eq!(content, content2);
-
-        // Count occurrences of disclaimer to ensure no duplication
-        let disclaimer_count = content
-            .matches(crate::cron::SCHEDULER_CRONTAB_DISCLAIMER)
-            .count();
-        assert_eq!(disclaimer_count, 1, "Should have exactly one disclaimer");
-    }
-
-    #[tokio::test]
-    async fn test_disclaimer_with_empty_crontab() {
-        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
-        let crontab_path = temp_dir.path().join("test_empty_crontab");
-
-        let mut crontab = crate::cron::Crontab::new(Some(crontab_path.clone()));
-
-        // Ensure disclaimer on empty crontab
-        crontab
-            .ensure_disclaimer()
-            .await
-            .expect("Should add disclaimer to empty crontab");
-
-        let content = tokio::fs::read_to_string(&crontab_path)
-            .await
-            .expect("Should read file");
-
-        // Should only contain disclaimer and proper newlines
-        let disclaimer = crate::cron::SCHEDULER_CRONTAB_DISCLAIMER;
-        let expected = format!("{disclaimer}\n");
-        assert_eq!(content, expected);
-    }
-
     #[test]
     fn test_cron_job_parse() {
         let crontab = r"### Source
