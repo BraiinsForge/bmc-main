@@ -206,56 +206,6 @@ impl Crontab {
         }
     }
 
-    /// Load crontabs from all files in the /etc/crontabs/ directory
-    pub async fn load_from_directory(&mut self) -> anyhow::Result<()> {
-        let crontabs_dir = PathBuf::from(CRON_DEFAULT_DIR);
-
-        // Ensure directory exists
-        if !crontabs_dir.exists() {
-            tokio::fs::create_dir_all(&crontabs_dir).await?;
-            self.entries = Vec::new();
-            return Ok(());
-        }
-
-        let mut all_entries = Vec::new();
-        let mut dir_entries = tokio::fs::read_dir(&crontabs_dir).await?;
-
-        while let Some(entry) = dir_entries.next_entry().await? {
-            let entry_path = entry.path();
-
-            // Skip if it's not a regular file
-            if !entry_path.is_file() {
-                continue;
-            }
-
-            // Skip hidden files and backup files
-            if let Some(filename) = entry_path.file_name() {
-                let filename_str = filename.to_string_lossy();
-                if filename_str.starts_with('.') || filename_str.ends_with('~') {
-                    continue;
-                }
-            }
-
-            // Try to read and parse the file
-            match tokio::fs::File::open(&entry_path).await {
-                Ok(file) => match Self::read_full_crontab(file).await {
-                    Ok(mut entries) => {
-                        all_entries.append(&mut entries);
-                    }
-                    Err(e) => {
-                        warn!("Failed to parse crontab file {:?}: {}", entry_path, e);
-                    }
-                },
-                Err(e) => {
-                    warn!("Failed to open crontab file {:?}: {}", entry_path, e);
-                }
-            }
-        }
-
-        self.entries = all_entries;
-        Ok(())
-    }
-
     /// Load the current crontab from disk, preserving all entries
     /// Only loads from the specific file path configured for this Crontab instance
     pub async fn load_from_path(&mut self) -> anyhow::Result<()> {
@@ -424,7 +374,7 @@ impl Crontab {
         CronEntry::from_lines(lines)
     }
 
-    pub fn read_from_stream(stream: impl AsyncRead + Unpin) -> impl Stream<Item=String> {
+    pub fn read_from_stream(stream: impl AsyncRead + Unpin) -> impl Stream<Item = String> {
         let buf_reader = BufReader::new(stream);
         let lines_stream = tokio_stream::wrappers::LinesStream::new(buf_reader.lines());
 
@@ -505,12 +455,71 @@ impl CrontabManager {
 
     /// Load all crontabs: the scheduler's own crontab and all system crontabs
     pub async fn load_all(&mut self) -> anyhow::Result<()> {
-        // Load the scheduler's own crontab
+        // Load the scheduler's own crontab from its specific path
         self.scheduler_crontab.load_from_path().await?;
 
-        // Load all system crontabs from /etc/crontabs/
-        self.scheduler_crontab.load_from_directory().await?;
+        // Load all OTHER crontabs from the same directory as scheduler crontab
+        self.load_system_crontabs().await
+    }
 
+    /// Load all system crontabs (excluding the scheduler's own crontab)
+    async fn load_system_crontabs(&mut self) -> anyhow::Result<()> {
+        let crontabs_dir = self
+            .scheduler_crontab
+            .path
+            .parent()
+            .expect("BUG: Failed to parse parent dir");
+
+        // Ensure directory exists
+        if !crontabs_dir.exists() {
+            tokio::fs::create_dir_all(&crontabs_dir).await?;
+            self.system_crontabs = Vec::new();
+            return Ok(());
+        }
+
+        let mut system_crontabs = Vec::new();
+        let mut dir_entries = tokio::fs::read_dir(&crontabs_dir).await?;
+
+        while let Some(entry) = dir_entries.next_entry().await? {
+            let entry_path = entry.path();
+
+            // Skip if it's not a regular file
+            if !entry_path.is_file() {
+                continue;
+            }
+
+            // Skip the scheduler's own crontab file
+            if entry_path == self.scheduler_crontab.path {
+                continue;
+            }
+
+            // Skip hidden files and backup files
+            if let Some(filename) = entry_path.file_name() {
+                let filename_str = filename.to_string_lossy();
+                if filename_str.starts_with('.') || filename_str.ends_with('~') {
+                    continue;
+                }
+            }
+
+            // Try to read and parse the file
+            match tokio::fs::File::open(&entry_path).await {
+                Ok(file) => match Crontab::read_full_crontab(file).await {
+                    Ok(entries) => {
+                        let mut system_crontab = Crontab::new(Some(entry_path));
+                        system_crontab.entries = entries;
+                        system_crontabs.push(system_crontab);
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse crontab file {:?}: {}", entry_path, e);
+                    }
+                },
+                Err(e) => {
+                    warn!("Failed to open crontab file {:?}: {}", entry_path, e);
+                }
+            }
+        }
+
+        self.system_crontabs = system_crontabs;
         Ok(())
     }
 
