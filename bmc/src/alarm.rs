@@ -183,7 +183,7 @@ impl SnoozeDuration {
 }
 
 #[derive(Clone, Debug)]
-enum AlarmCmd {
+pub enum AlarmCmd {
     StopAll,
     Stop { id: AlarmId },
     Snooze,
@@ -228,11 +228,11 @@ impl AlarmBus {
         let _ = self.tx_events.send(event);
     }
 
-    fn subscribe_commands(&self) -> broadcast::Receiver<AlarmCmd> {
+    pub fn subscribe_commands(&self) -> broadcast::Receiver<AlarmCmd> {
         self.tx_commands.subscribe()
     }
 
-    fn subscribe_events(&self) -> broadcast::Receiver<AlarmEvent> {
+    pub fn subscribe_events(&self) -> broadcast::Receiver<AlarmEvent> {
         self.tx_events.subscribe()
     }
 }
@@ -567,19 +567,12 @@ impl AlarmController {
             let mut rx = alarm_bus.subscribe_events();
 
             while let Ok(event) = rx.recv().await {
-                match event {
-                    AlarmEvent::Stopped { id } => {
-                        if let Some(alarm) =
-                            self_.alarms().await.iter().find(|alarm| alarm.id == id)
-                        {
-                            if alarm.repeat.is_empty() {
-                                _ = self_.set_enabled(id, false).await;
-                            }
+                if let AlarmEvent::Stopped { id } = event {
+                    // NOTE: Alarm that is not repeatable needs to be deactivated after it was triggered
+                    if let Some(alarm) = self_.alarms().await.iter().find(|alarm| alarm.id == id) {
+                        if alarm.repeat.is_empty() {
+                            _ = self_.set_enabled(id, false).await;
                         }
-                        // TODO: Turn off LED strip
-                    }
-                    AlarmEvent::Snoozed | AlarmEvent::Started => {
-                        // TODO: Turn off LED strip
                     }
                 }
             }
