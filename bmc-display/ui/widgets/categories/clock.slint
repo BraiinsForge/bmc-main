@@ -143,7 +143,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             source: Images.center-circle-white;
         }
 
-        second := Image {
+        if config.show-seconds: second := Image {
             width: Images.second-hand-width * relative-size;
             height: Images.second-hand-height * relative-size;
             // y: 5px * relative-size;
@@ -152,8 +152,7 @@ export component WidgetClockAnalogRound inherits Rectangle {
             // source: Images.hand-second;
             source: data.analog-clock-hands.second-hand-round;
         }
-
-        Image {
+        if config.show-seconds: Image {
             width: Images.circle-orange-width * relative-size;
             height: Images.circle-orange-height * relative-size;
             x: 187px * relative-size;
@@ -325,7 +324,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             source: Images.center-circle-white;
         }
 
-        second := Image {
+        if config.show-seconds: second := Image {
             // width: 0.9 * Images.second-hand-rect-width * relative-size;
             // height: 0.9 * Images.second-hand-rect-height * relative-size;
             width: Images.second-hand-rect-width * relative-size;
@@ -336,8 +335,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
             // source: Images.hand-second-rect;
             source: data.analog-clock-hands.second-hand-rect;
         }
-
-        Image {
+        if config.show-seconds: Image {
             width: Images.circle-orange-width * relative-size;
             height: Images.circle-orange-height * relative-size;
             x: parent.width / 2 - (relative-size) * Images.circle-orange-width / 2;
