@@ -30,10 +30,12 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tokio::time::{self, Instant, MissedTickBehavior};
 use uci::UciHelper;
 use utils::{WifiCommand, WifiUtils};
+use wl_nl80211::Nl80211Handle;
 
 use crate::wifi::uci::map_uci_iface_to_wifi_status;
 use crate::{NetworkInterface, WIRELESS_CONFIG_FILE_PATH};
@@ -93,6 +95,8 @@ pub struct OpenwrtWifiManager {
     scan_result_list: Mutex<SharedCache<Vec<WifiScanItem>>>,
     wifi_status_cache: Mutex<SharedCache<Vec<WifiStatus>>>,
     wlan_dev_syspath: String,
+    nl80211_handle: Nl80211Handle,
+    nl80211_task_handle: JoinHandle<()>,
 }
 
 #[expect(clippy::missing_fields_in_debug)]
@@ -107,13 +111,17 @@ impl Debug for OpenwrtWifiManager {
 impl OpenwrtWifiManager {
     const WIFI_INTERACTION_DELAY: Duration = Duration::from_secs(5);
 
-    #[must_use]
-    pub fn new(wlan_dev_syspath: &str) -> Self {
-        Self {
+    pub fn new(wlan_dev_syspath: &str) -> anyhow::Result<Self> {
+        let (connection, nl80211_handle, _) = wl_nl80211::new_connection()?;
+        let nl80211_task_handle = tokio::spawn(connection);
+
+        Ok(Self {
             scan_result_list: Mutex::new(SharedCache::new(Self::WIFI_INTERACTION_DELAY)),
             wifi_status_cache: Mutex::new(SharedCache::new(Self::WIFI_INTERACTION_DELAY)),
             wlan_dev_syspath: wlan_dev_syspath.to_owned(),
-        }
+            nl80211_handle,
+            nl80211_task_handle,
+        })
     }
 
     async fn get_wifi_filtered_scan_list(device: &str) -> Result<Vec<WifiScanItem>> {
@@ -200,24 +208,30 @@ impl OpenwrtWifiManager {
     }
 
     #[allow(dead_code)]
-    async fn get_status(wlan_dev_syspath: String) -> Result<WifiStatus> {
+    async fn get_status(
+        nl80211_handle: Nl80211Handle,
+        wlan_dev_syspath: String,
+    ) -> Result<WifiStatus> {
         let device = WifiUtils::get_device_by_syspath(&wlan_dev_syspath).await?;
         let uci = UciHelper::new(&wlan_dev_syspath);
 
         Ok(WifiStatus {
             enabled: uci.wifi_enabled().await?,
             configuration: uci.wifi_iface_find_enabled().await,
-            sta_link_state: WifiSta::link_details(&device)
+            sta_link_state: WifiSta::link_details(nl80211_handle, &device)
                 .await
                 .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))
                 .ok(),
         })
     }
 
-    async fn get_status_all(wlan_dev_syspath: String) -> Result<Vec<WifiStatus>> {
+    async fn get_status_all(
+        nl80211_handle: Nl80211Handle,
+        wlan_dev_syspath: String,
+    ) -> Result<Vec<WifiStatus>> {
         let device = WifiUtils::get_device_by_syspath(&wlan_dev_syspath).await?;
         let uci = UciHelper::new(&wlan_dev_syspath);
-        let sta_link_state = WifiSta::link_details(&device)
+        let sta_link_state = WifiSta::link_details(nl80211_handle, &device)
             .await
             .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))
             .ok();
@@ -289,11 +303,12 @@ impl OpenwrtWifiManager {
 
     pub async fn status_all(&self) -> Result<Vec<WifiStatus>> {
         let wlan_dev_syspath = self.wlan_dev_syspath.clone();
+        let nl80211_handle = self.nl80211_handle.clone();
         self.wifi_status_cache
             .lock()
             .await
             .cached_or_else::<anyhow::Error>(Box::pin(async move {
-                Self::get_status_all(wlan_dev_syspath).await
+                Self::get_status_all(nl80211_handle, wlan_dev_syspath).await
             }))
             .await
     }
@@ -313,5 +328,11 @@ impl OpenwrtWifiManager {
 
     pub(crate) fn filter_empty_ssid(scan_result: &WifiScanItem) -> bool {
         !scan_result.ssid.is_empty()
+    }
+}
+
+impl Drop for OpenwrtWifiManager {
+    fn drop(&mut self) {
+        self.nl80211_task_handle.abort();
     }
 }

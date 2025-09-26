@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
 
     let wifi_manager = Arc::new(OpenwrtWifiManager::new(
         "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1:1.0/", // TODO: This is pre-prod board specific
-    ));
+    )?);
 
     let manager = Manager::new(
         OpenwrtSessionManager,

@@ -63,10 +63,7 @@ impl WifiSta {
         bail!("Some details for interface {ifname} are missing")
     }
 
-    pub async fn link_details(device: &str) -> Result<WifiLinkState> {
-        let (connection, handle, _) = wl_nl80211::new_connection()?;
-        tokio::spawn(connection);
-
+    pub async fn link_details(handle: Nl80211Handle, device: &str) -> Result<WifiLinkState> {
         let intf_details = Self::get_iface_details(handle.clone(), device).await?;
 
         let mut signal = None;
