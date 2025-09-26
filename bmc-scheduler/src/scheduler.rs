@@ -290,13 +290,14 @@ impl JobScheduler {
     }
 
     pub async fn job(&self, job_id: &Uuid) -> Result<Option<JobDetails>> {
+        // This is here to keep the lock requirements the same as the rest of the methods
+        let mut inner = self.inner.lock().await;
         let job_details = { self.storage.read().await.get(job_id).cloned() };
 
         let Some(mut job_details) = job_details else {
             return Ok(None);
         };
 
-        let mut inner = self.inner.lock().await;
         let next_tick = inner.next_tick_for_job(*job_id).await?;
         job_details.next_tick = next_tick;
 
@@ -478,8 +479,9 @@ impl JobScheduler {
         source: String,
         command: Option<String>,
     ) -> Result<Uuid> {
-        let job_id = self.inner.lock().await.add(job.clone()).await?;
-        let next_tick = self.inner.lock().await.next_tick_for_job(job_id).await?;
+        let mut inner = self.inner.lock().await;
+        let job_id = inner.add(job.clone()).await?;
+        let next_tick = inner.next_tick_for_job(job_id).await?;
         debug!(">>> Job from '{source}' added: job_id: {job_id}, next_tick: {next_tick:?}");
         let job_details = JobDetails {
             job_id,
