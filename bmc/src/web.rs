@@ -9,6 +9,7 @@ mod session;
 use crate::alarm::AlarmController;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
+use crate::led::LedState;
 use crate::session::Manager as SessionManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
@@ -25,7 +26,7 @@ use std::{
     sync::Arc,
 };
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tower::{Layer, steer::Steer};
 use tower_http::normalize_path::NormalizePathLayer;
 
@@ -46,6 +47,7 @@ pub(crate) struct WebService<
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
     alarm_controller: AlarmController,
+    led_state_sender: watch::Sender<LedState>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -64,6 +66,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
         alarm_controller: AlarmController,
+        led_state_sender: watch::Sender<LedState>,
     ) -> Self {
         Self {
             manager,
@@ -77,6 +80,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             system_manager,
             sound_controller,
             alarm_controller,
+            led_state_sender,
         }
     }
 
@@ -93,6 +97,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.system_manager,
             self.sound_controller,
             self.alarm_controller,
+            self.led_state_sender,
         )
         .build()
         .into_axum_router()

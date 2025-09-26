@@ -19,6 +19,31 @@ use bmc_led::{
 };
 use tokio::task;
 
+#[derive(Clone, Debug)]
+pub enum LedState {
+    Enabled,
+    Disabled,
+}
+
+impl From<bool> for LedState {
+    fn from(value: bool) -> Self {
+        if value {
+            LedState::Enabled
+        } else {
+            LedState::Disabled
+        }
+    }
+}
+
+impl From<LedState> for LedEvent {
+    fn from(value: LedState) -> Self {
+        match value {
+            LedState::Enabled => LedEvent::Enable,
+            LedState::Disabled => LedEvent::Disable,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct LedController<T>
 where
@@ -28,6 +53,7 @@ where
     system_upgrade_receiver: sync::watch::Receiver<Option<SystemUpgradeState>>,
     manager: Arc<T>,
     last_price_change_24h_receiver: watch::Receiver<f32>,
+    state_receiver: watch::Receiver<LedState>,
 }
 
 impl<T> LedController<T>
@@ -38,15 +64,21 @@ where
         state_service: &StateService,
         manager: Arc<T>,
         last_price_change_24h: watch::Receiver<f32>,
-    ) -> Self {
+        led_enabled: bool,
+    ) -> (Self, watch::Sender<LedState>) {
         let system_upgrade_receiver = state_service.subscribe();
 
-        Self {
+        let (state_sender, state_receiver) = watch::channel(led_enabled.into());
+
+        let this = Self {
             led_event_handler: LedEventHandler::default(),
             system_upgrade_receiver,
             manager,
             last_price_change_24h_receiver: last_price_change_24h,
-        }
+            state_receiver,
+        };
+
+        (this, state_sender)
     }
 
     fn run_wifi_task(&self, led_event_tx: Sender<LedEvent>) {
@@ -177,11 +209,33 @@ where
         });
     }
 
+    fn run_led_state_task(&self, led_event_tx: Sender<LedEvent>) {
+        let mut receiver = self.state_receiver.clone();
+
+        task::spawn(async move {
+            while let Ok(()) = receiver.changed().await {
+                let led_state = (*receiver.borrow_and_update()).clone();
+
+                debug!("Setting led state: {:?}", led_state);
+
+                if let Err(e) = led_event_tx.send(led_state.into()).await {
+                    error!("Failed to send led command: {}", e);
+                }
+            }
+        });
+    }
+
     pub(crate) fn init(&mut self, led_cmd_tx: Sender<LedCommand>) {
         let led_event_tx = self.led_event_handler.init(led_cmd_tx);
 
+        // NOTE: Enable/Disable led events on start
+        let led_state = self.state_receiver.borrow().clone().into();
+        self.push_event(led_state);
+
+        self.run_led_state_task(led_event_tx.clone());
         self.run_wifi_task(led_event_tx.clone());
-        self.run_sysupgrade_task(led_event_tx.clone());
+        self.run_sysupgrade_task(led_event_tx);
+
         // TODO: Price alerts
         // self.run_price_task(led_event_tx);
     }

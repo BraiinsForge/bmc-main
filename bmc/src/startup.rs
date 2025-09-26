@@ -11,7 +11,7 @@ use crate::button_manager::ButtonManager;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
-use crate::led::LedController;
+use crate::led::{LedController, LedState};
 use crate::manager::BmcManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
@@ -50,6 +50,7 @@ where
     sound_controller: SoundController,
     alarm_controller: AlarmController,
     button_manager: ButtonManager<T>,
+    led_state_sender: watch::Sender<LedState>,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -80,10 +81,13 @@ where
             config.default_night_mode_volume_pct,
         )
         .await;
+
         let display_controller = display_driver.display_controller.clone();
         display_controller.set_scenes(config_handle.scenes.clone());
         display_controller.set_scene_cycling(config_handle.scene_cycling());
+
         let autoupgrade_config = config_handle.autoupgrade();
+        let led_enabled = config_handle.led_enabled();
 
         let config_handle = Arc::new(RwLock::new(config_handle));
 
@@ -92,6 +96,7 @@ where
             config.crontab_path.clone(),
         )
         .await;
+
         let system_upgrade_service = SystemUpgradeService::new(
             firmware_resolver,
             &config.upgrade_image_path,
@@ -99,6 +104,7 @@ where
             state_service.clone(),
             scheduler.clone(),
         );
+
         system_upgrade_service
             .autoupgrade_init(autoupgrade_config)
             .await?;
@@ -160,11 +166,13 @@ where
         );
 
         let (_, last_price_change_24h_receiver) = watch::channel(0.0);
-        let mut led_controller = LedController::new(
+        let (mut led_controller, led_state_sender) = LedController::new(
             &state_service,
             manager.clone(),
-            last_price_change_24h_receiver.clone(),
+            last_price_change_24h_receiver,
+            led_enabled,
         );
+
         led_controller.init(led_driver.command_sender.clone());
         led_controller.push_event(bmc_led::data::LedEvent::DeviceReady);
 
@@ -185,6 +193,7 @@ where
             sound_controller,
             alarm_controller,
             button_manager,
+            led_state_sender,
         })
     }
 
@@ -208,6 +217,7 @@ where
             self.system_manager,
             self.sound_controller,
             self.alarm_controller,
+            self.led_state_sender,
         )
         .run(self.listener)
         .await?;
