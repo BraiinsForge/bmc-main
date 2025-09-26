@@ -12,6 +12,7 @@ use bmc_upgrade::{
         DownloadEvent, FirmwareDownloadError, FirmwareIndex, FirmwareResolver, UpgradeDetail,
     },
 };
+use chrono::{DateTime, Utc};
 use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -108,7 +109,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         scheduler: JobScheduler,
     ) -> Self {
         let (autoupgrade_tx, _) = tokio::sync::broadcast::channel(1);
-        let autoupgrade = AutoUpgrade::new(autoupgrade_tx, None);
+        let autoupgrade = AutoUpgrade::new(autoupgrade_tx, Instant::now());
         Self {
             state_service,
             firmware_resolver: Arc::new(Mutex::new(Arc::new(firmware_resolver))),
@@ -357,7 +358,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             .await;
 
         if new_config.enabled {
-            let schedule = Schedule::Cron(new_config.cron);
+            let Some(cron) = new_config.cron else {
+                return Err(anyhow!("Missing Cron in AutoUpgrade config"));
+            };
+            let schedule = Schedule::Cron(cron);
             let task = Task::Async(to_boxed(self.autoupgrade.task.clone()));
             let job_config = JobConfig::new(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME);
 
@@ -365,6 +369,20 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         }
 
         Ok(())
+    }
+
+    pub async fn get_autoupgrade_next_run(&self) -> Option<DateTime<Utc>> {
+        let Ok(jobs) = self.scheduler.jobs().await else {
+            return None;
+        };
+        if let Some(autoupgrade_job) = jobs
+            .into_iter()
+            .find(|job| job.source == AutoUpgrade::AUTOUPGRADE_SOURCE_NAME)
+        {
+            autoupgrade_job.next_tick
+        } else {
+            None
+        }
     }
 
     async fn wait_for_download(mut receiver: UnboundedReceiver<DownloadState>) -> Option<String> {

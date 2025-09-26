@@ -3,7 +3,7 @@
 use anyhow::anyhow;
 use bmc_grpc::web::AutoUpgradeFrequency as GrpcAutoUpgradeFrequency;
 use bmc_scheduler::{Cron, jobs::BoxedTask};
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use chrono_tz::{Tz, TzOffset};
 use croner::parser::{CronParser, Seconds};
 use serde::{Deserialize, Serialize};
@@ -20,42 +20,9 @@ const AUTOUPGRADE_MINIMUM_UPTIME: Duration = Duration::from_secs(60 * 60); // 1 
 const SECONDS_IN_DAY: u64 = 60 * 60 * 24; // 86,400 seconds
 const SECONDS_IN_WEEK: u64 = SECONDS_IN_DAY * 7; // 604,800 seconds
 const SECONDS_IN_TWO_WEEKS: u64 = SECONDS_IN_WEEK * 2; // 1,209,600 seconds
-const SECONDS_IN_MONTH: u64 = SECONDS_IN_WEEK * 4; // 2,592,000 seconds
+const SECONDS_IN_FOUR_WEEKS: u64 = SECONDS_IN_WEEK * 4; // 2,592,000 seconds
 pub const SECONDS_DEVICE_SETUP_DELAY: i64 = 5;
 const CRON_BIWEEKLY_DAYS: &str = "1,15";
-
-pub trait UpgradeCondition {
-    fn check(&self) -> anyhow::Result<()>;
-}
-
-#[derive(Debug)]
-pub struct UptimeCondition {
-    start_time: Instant,
-    minimum_uptime: Duration,
-}
-
-impl UptimeCondition {
-    #[must_use]
-    pub fn new(start_time: Instant, minimum_uptime: Duration) -> Self {
-        Self {
-            start_time,
-            minimum_uptime,
-        }
-    }
-}
-
-impl UpgradeCondition for UptimeCondition {
-    fn check(&self) -> anyhow::Result<()> {
-        let uptime = self.start_time.elapsed();
-        if uptime.as_secs() < self.minimum_uptime.as_secs() {
-            return Err(anyhow!(
-                "Cannot upgrade: uptime is insufficient ({} seconds required).",
-                self.minimum_uptime.as_secs()
-            ));
-        }
-        Ok(())
-    }
-}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum UpgradeStatus {
@@ -75,18 +42,6 @@ pub enum AutoUpgradeFrequency {
     Monthly = 4,
 }
 
-impl From<i32> for AutoUpgradeFrequency {
-    fn from(value: i32) -> Self {
-        match value {
-            1 => Self::Daily,
-            2 => Self::Weekly,
-            3 => Self::BiWeekly,
-            4 => Self::Monthly,
-            _ => Self::default(),
-        }
-    }
-}
-
 impl AutoUpgradeFrequency {
     #[must_use]
     pub fn to_seconds(&self) -> u64 {
@@ -94,7 +49,7 @@ impl AutoUpgradeFrequency {
             AutoUpgradeFrequency::Daily => SECONDS_IN_DAY,
             AutoUpgradeFrequency::Weekly => SECONDS_IN_WEEK,
             AutoUpgradeFrequency::BiWeekly => SECONDS_IN_TWO_WEEKS,
-            AutoUpgradeFrequency::Monthly => SECONDS_IN_MONTH,
+            AutoUpgradeFrequency::Monthly => SECONDS_IN_FOUR_WEEKS,
         }
     }
 }
@@ -129,8 +84,8 @@ impl From<AutoUpgradeFrequency> for i32 {
     }
 }
 
-impl From<Cron> for AutoUpgradeFrequency {
-    fn from(value: Cron) -> Self {
+impl From<&Cron> for AutoUpgradeFrequency {
+    fn from(value: &Cron) -> Self {
         let pattern = value.pattern.as_str();
 
         // Check for biweekly pattern (contains "1,15")
@@ -168,25 +123,10 @@ impl From<Cron> for AutoUpgradeFrequency {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
 pub struct AutoUpgradeConfig {
     pub enabled: bool,
-    pub cron: Cron,
-}
-
-impl Default for AutoUpgradeConfig {
-    fn default() -> Self {
-        let frequency = AutoUpgradeFrequency::default();
-        let date = get_date_from_frequency(
-            frequency,
-            None,
-            Tz::UTC.offset_from_utc_date(&NaiveDate::default()),
-        );
-        Self {
-            enabled: false,
-            cron: build_cron_from_frequency_date(frequency, date),
-        }
-    }
+    pub cron: Option<Cron>,
 }
 
 impl AutoUpgradeConfig {
@@ -200,7 +140,7 @@ impl AutoUpgradeConfig {
         let date = get_date_from_frequency(frequency, time_of_day, timezone_offset);
         Self {
             enabled,
-            cron: build_cron_from_frequency_date(frequency, date),
+            cron: Some(build_cron_from_frequency_date(frequency, date)),
         }
     }
 }
@@ -224,7 +164,7 @@ impl AutoUpgrade {
     /// When supplied, the start time is used to determine if the upgrade should be performed.
     /// Otherwise, the upgrade is performed immediately, when available
     #[must_use]
-    pub fn new(sender: Sender<()>, start_time: Option<Instant>) -> Self {
+    pub fn new(sender: Sender<()>, start_time: Instant) -> Self {
         let task = {
             let sender_clone = sender.clone();
             move || Self::autoupgrade_task(sender_clone.clone(), start_time)
@@ -238,20 +178,10 @@ impl AutoUpgrade {
 
     fn autoupgrade_task(
         sender: Sender<()>,
-        start_time: Option<Instant>,
+        start_time: Instant,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
-            let mut conditions: Vec<&dyn UpgradeCondition> = vec![];
-            // Due to using dyn UpgradeCondition, we need to create a vector of pointers to the conditions
-            let uptime_condition = UptimeCondition::new(
-                start_time.unwrap_or(Instant::now()),
-                AUTOUPGRADE_MINIMUM_UPTIME,
-            );
-            if start_time.is_some() {
-                conditions.push(&uptime_condition);
-            }
-
-            if let Err(e) = can_upgrade(&conditions) {
+            if let Err(e) = can_upgrade(start_time) {
                 debug!("{e}");
                 return;
             }
@@ -263,10 +193,8 @@ impl AutoUpgrade {
     }
 }
 
-fn can_upgrade(conditions: &[&dyn UpgradeCondition]) -> anyhow::Result<()> {
-    for condition in conditions {
-        condition.check()?;
-    }
+fn can_upgrade(start_time: Instant) -> anyhow::Result<()> {
+    check_uptime(start_time, AUTOUPGRADE_MINIMUM_UPTIME)?;
     Ok(())
 }
 
@@ -307,7 +235,7 @@ fn frequency_to_partial_cron_pattern(
     }
 }
 
-/// Builds a CronBuilder with day, month, and days_of_week fields configured based on frequency
+/// Builds a Cron with day, month, and days_of_week fields configured based on frequency
 #[must_use]
 fn build_cron_from_frequency_date(frequency: AutoUpgradeFrequency, date: DateTime<Tz>) -> Cron {
     let cron_parser = CronParser::builder()
@@ -327,6 +255,17 @@ fn build_cron_from_frequency_date(frequency: AutoUpgradeFrequency, date: DateTim
         .expect("BUG: Invalid cron pattern format")
 }
 
+fn check_uptime(start_time: Instant, minimum_uptime: Duration) -> anyhow::Result<()> {
+    let uptime = start_time.elapsed();
+    if uptime.as_secs() < minimum_uptime.as_secs() {
+        return Err(anyhow!(
+            "Cannot upgrade: uptime is insufficient ({} seconds required).",
+            minimum_uptime.as_secs()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -335,8 +274,8 @@ mod test {
 
     #[test]
     fn test_get_cron_from_frequency() {
-        let d = NaiveDate::from_ymd_opt(2009, 1, 3).unwrap();
-        let t = NaiveTime::from_hms_milli_opt(19, 15, 5, 0).unwrap();
+        let d = NaiveDate::from_ymd_opt(2009, 1, 3).unwrap_or_default();
+        let t = NaiveTime::from_hms_milli_opt(19, 15, 5, 0).unwrap_or_default();
         let date = NaiveDateTime::new(d, t);
         let tz_offset = Timezone::from_str(Tz::Etc__GMT.name())
             .expect("BUG: Invalid timezone")

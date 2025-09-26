@@ -1,8 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_grpc::web::{
-    CheckForUpgradeResponse, DownloadFinished, DownloadFirmwareRequest, DownloadFirmwareResponse,
-    GetAutoUpgradeResponse, SetAutoUpgradeRequest, UpgradeRequest, download_firmware_response,
+    AutoUpgradeFrequency as GrpcAutoUpgradeFrequency, CheckForUpgradeResponse, DownloadFinished,
+    DownloadFirmwareRequest, DownloadFirmwareResponse, GetAutoUpgradeResponse,
+    SetAutoUpgradeRequest, UpgradeRequest, download_firmware_response,
     upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail, UpgradeMetadata};
@@ -131,11 +132,21 @@ where
         _request: Request<()>,
     ) -> Result<tonic::Response<GetAutoUpgradeResponse>, Status> {
         let autoupgrade_config = self.config_handle.read().await.autoupgrade();
-
+        let (frequency, time_of_day) = if let Some(cron) = autoupgrade_config.cron {
+            (
+                GrpcAutoUpgradeFrequency::from(AutoUpgradeFrequency::from(&cron)).into(),
+                self.system_upgrade
+                    .get_autoupgrade_next_run()
+                    .await
+                    .map(map_datetime_to_timestamp),
+            )
+        } else {
+            (None, None)
+        };
         let response = GetAutoUpgradeResponse {
             enabled: autoupgrade_config.enabled,
-            frequency: AutoUpgradeFrequency::from(autoupgrade_config.cron.clone()).into(),
-            cron_string: autoupgrade_config.cron.to_string(),
+            frequency: frequency.map(Into::into),
+            time_of_day,
         };
 
         Ok(tonic::Response::new(response))
@@ -221,4 +232,12 @@ fn map_timestamp_to_naive_time(value: prost_types::Timestamp) -> NaiveTime {
     NaiveTime::default()
         .add(TimeDelta::seconds(value.seconds))
         .add(TimeDelta::nanoseconds(i64::from(value.nanos)))
+}
+
+fn map_datetime_to_timestamp(value: chrono::DateTime<chrono::Utc>) -> Timestamp {
+    Timestamp {
+        seconds: value.timestamp(),
+        #[expect(clippy::cast_possible_wrap)]
+        nanos: value.timestamp_subsec_nanos() as i32,
+    }
 }
