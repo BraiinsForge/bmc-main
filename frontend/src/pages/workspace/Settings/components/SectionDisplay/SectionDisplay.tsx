@@ -1,9 +1,13 @@
 import { Component, type ChangeEvent } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
-import { Form, type iField } from '@/lib/form';
-import { getID } from '../../const';
 
+// Lib
+import { Form, type iField } from '@/lib/form';
+import { handleSliderParentKeyDownCapture } from '@/lib/carbon';
+
+// App
 import * as pb from '@/proto';
+import { getID } from '../../const';
 
 import { CarbonFormField, Field, FieldSet, Button } from '@/components';
 import {
@@ -100,6 +104,7 @@ class View extends Component<Props> {
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Screen Brightness' })}
                         disabled={brightness.disabled}
+                        onKeyDownCapture={handleSliderParentKeyDownCapture}
                     >
                         <Slider
                             id={$('brightness-day')}
@@ -143,6 +148,7 @@ class View extends Component<Props> {
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Night Mode Brightness' })}
                         disabled={isNightBrightnessDisabled}
+                        onKeyDownCapture={handleSliderParentKeyDownCapture}
                     >
                         <Slider
                             id={$('night', 'brightness')}

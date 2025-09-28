@@ -1,6 +1,7 @@
 import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { Form, type iField } from '@/lib/form';
+import { handleSliderParentKeyDownCapture } from '@/lib/carbon';
 
 // App
 import { getID } from '../../const';
@@ -68,6 +69,7 @@ class View extends Component<Props> {
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Sound Volume' })}
                         disabled={soundVolume.disabled}
+                        onKeyDownCapture={handleSliderParentKeyDownCapture}
                     >
                         <Slider
                             id={$('sound', 'volume', 'day')}
@@ -89,6 +91,7 @@ class View extends Component<Props> {
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Sound Volume in Night Mode' })}
                         disabled={soundVolumeNight.disabled}
+                        onKeyDownCapture={handleSliderParentKeyDownCapture}
                     >
                         <Slider
                             id={$('sound', 'volume', 'night')}

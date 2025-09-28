@@ -152,9 +152,9 @@
     "from": "22:45:00",
     "to": "06:50:00",
     "brightness_pct": 65,
-    "sound_volume_pct": 83
+    "sound_volume_pct": 0
   },
-  "sound_volume_pct": 96,
+  "sound_volume_pct": 0,
   "alarms": [
     {
       "id": "0d7df0ca-3495-4529-977e-7643ba761088",
@@ -162,13 +162,13 @@
       "name": "",
       "time": "08:00:00",
       "repeat": [
-        "Friday",
-        "Sunday",
-        "Monday",
-        "Saturday",
         "Thursday",
         "Wednesday",
-        "Tuesday"
+        "Tuesday",
+        "Monday",
+        "Friday",
+        "Sunday",
+        "Saturday"
       ],
       "sound": "TickTockNextBlock",
       "snooze_options": {

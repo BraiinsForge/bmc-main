@@ -2,8 +2,8 @@
 // @generated from file web/upgrade.proto (package braiins.bmc.web, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv2';
-import { fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
+import type { GenEnum, GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv2';
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
 import type { EmptySchema, Timestamp } from '@bufbuild/protobuf/wkt';
 import { file_google_protobuf_empty, file_google_protobuf_timestamp } from '@bufbuild/protobuf/wkt';
 import type { Message } from '@bufbuild/protobuf';
@@ -14,7 +14,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_upgrade: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'ChF3ZWIvdXBncmFkZS5wcm90bxIPYnJhaWlucy5ibWMud2ViIncKD1VwZ3JhZGVNZXRhZGF0YRIMCgRoYXNoGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSMAoMcmVsZWFzZV9kYXRlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtkZXNjcmlwdGlvbhgEIAEoCSIzCgtSZWxlYXNlSW5mbxIPCgd2ZXJzaW9uGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJIowBChdDaGVja0ZvclVwZ3JhZGVSZXNwb25zZRI4Cg5sYXRlc3RfcmVsZWFzZRgBIAEoCzIgLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlTWV0YWRhdGESNwoRcHJldmlvdXNfcmVsZWFzZXMYAiADKAsyHC5icmFpaW5zLmJtYy53ZWIuUmVsZWFzZUluZm8iJwoXRG93bmxvYWRGaXJtd2FyZVJlcXVlc3QSDAoEaGFzaBgBIAEoCSI7ChBEb3dubG9hZFByb2dyZXNzEhUKDWRvd25sb2FkZWRfbWIYASABKAISEAoIdG90YWxfbWIYAiABKAIiIAoQRG93bmxvYWRGaW5pc2hlZBIMCgRoYXNoGAEgASgJIqMBChhEb3dubG9hZEZpcm13YXJlUmVzcG9uc2USPgoRZG93bmxvYWRfcHJvZ3Jlc3MYASABKAsyIS5icmFpaW5zLmJtYy53ZWIuRG93bmxvYWRQcm9ncmVzc0gAEj4KEWRvd25sb2FkX2ZpbmlzaGVkGAIgASgLMiEuYnJhaWlucy5ibWMud2ViLkRvd25sb2FkRmluaXNoZWRIAEIHCgVzdGF0ZSIeCg5VcGdyYWRlUmVxdWVzdBIMCgRoYXNoGAEgASgJMpQCCg5VcGdyYWRlU2VydmljZRJTCg9DaGVja0ZvclVwZ3JhZGUSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaKC5icmFpaW5zLmJtYy53ZWIuQ2hlY2tGb3JVcGdyYWRlUmVzcG9uc2USaQoQRG93bmxvYWRGaXJtd2FyZRIoLmJyYWlpbnMuYm1jLndlYi5Eb3dubG9hZEZpcm13YXJlUmVxdWVzdBopLmJyYWlpbnMuYm1jLndlYi5Eb3dubG9hZEZpcm13YXJlUmVzcG9uc2UwARJCCgdVcGdyYWRlEh8uYnJhaWlucy5ibWMud2ViLlVwZ3JhZGVSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5YgZwcm90bzM',
+        'ChF3ZWIvdXBncmFkZS5wcm90bxIPYnJhaWlucy5ibWMud2ViIncKD1VwZ3JhZGVNZXRhZGF0YRIMCgRoYXNoGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSMAoMcmVsZWFzZV9kYXRlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtkZXNjcmlwdGlvbhgEIAEoCSIzCgtSZWxlYXNlSW5mbxIPCgd2ZXJzaW9uGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJIowBChdDaGVja0ZvclVwZ3JhZGVSZXNwb25zZRI4Cg5sYXRlc3RfcmVsZWFzZRgBIAEoCzIgLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlTWV0YWRhdGESNwoRcHJldmlvdXNfcmVsZWFzZXMYAiADKAsyHC5icmFpaW5zLmJtYy53ZWIuUmVsZWFzZUluZm8iJwoXRG93bmxvYWRGaXJtd2FyZVJlcXVlc3QSDAoEaGFzaBgBIAEoCSI7ChBEb3dubG9hZFByb2dyZXNzEhUKDWRvd25sb2FkZWRfbWIYASABKAISEAoIdG90YWxfbWIYAiABKAIiIAoQRG93bmxvYWRGaW5pc2hlZBIMCgRoYXNoGAEgASgJIqMBChhEb3dubG9hZEZpcm13YXJlUmVzcG9uc2USPgoRZG93bmxvYWRfcHJvZ3Jlc3MYASABKAsyIS5icmFpaW5zLmJtYy53ZWIuRG93bmxvYWRQcm9ncmVzc0gAEj4KEWRvd25sb2FkX2ZpbmlzaGVkGAIgASgLMiEuYnJhaWlucy5ibWMud2ViLkRvd25sb2FkRmluaXNoZWRIAEIHCgVzdGF0ZSIeCg5VcGdyYWRlUmVxdWVzdBIMCgRoYXNoGAEgASgJIqgBChVTZXRBdXRvVXBncmFkZVJlcXVlc3QSDwoHZW5hYmxlZBgBIAEoCBI4CglmcmVxdWVuY3kYAiABKA4yJS5icmFpaW5zLmJtYy53ZWIuQXV0b1VwZ3JhZGVGcmVxdWVuY3kSNAoLdGltZV9vZl9kYXkYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQFCDgoMX3RpbWVfb2ZfZGF5IngKFkdldEF1dG9VcGdyYWRlUmVzcG9uc2USDwoHZW5hYmxlZBgBIAEoCBI4CglmcmVxdWVuY3kYAiABKA4yJS5icmFpaW5zLmJtYy53ZWIuQXV0b1VwZ3JhZGVGcmVxdWVuY3kSEwoLY3Jvbl9zdHJpbmcYAyABKAkqzQEKFEF1dG9VcGdyYWRlRnJlcXVlbmN5EiYKIkFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfVU5TUEVDSUZJRUQQABIgChxBVVRPX1VQR1JBREVfRlJFUVVFTkNZX0RBSUxZEAESIQodQVVUT19VUEdSQURFX0ZSRVFVRU5DWV9XRUVLTFkQAhIkCiBBVVRPX1VQR1JBREVfRlJFUVVFTkNZX0JJX1dFRUtMWRADEiIKHkFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfTU9OVEhMWRAEMrkDCg5VcGdyYWRlU2VydmljZRJTCg9DaGVja0ZvclVwZ3JhZGUSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaKC5icmFpaW5zLmJtYy53ZWIuQ2hlY2tGb3JVcGdyYWRlUmVzcG9uc2USaQoQRG93bmxvYWRGaXJtd2FyZRIoLmJyYWlpbnMuYm1jLndlYi5Eb3dubG9hZEZpcm13YXJlUmVxdWVzdBopLmJyYWlpbnMuYm1jLndlYi5Eb3dubG9hZEZpcm13YXJlUmVzcG9uc2UwARJCCgdVcGdyYWRlEh8uYnJhaWlucy5ibWMud2ViLlVwZ3JhZGVSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElAKDlNldEF1dG9VcGdyYWRlEiYuYnJhaWlucy5ibWMud2ViLlNldEF1dG9VcGdyYWRlUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJRCg5HZXRBdXRvVXBncmFkZRIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRonLmJyYWlpbnMuYm1jLndlYi5HZXRBdXRvVXBncmFkZVJlc3BvbnNlYgZwcm90bzM',
         [file_google_protobuf_empty, file_google_protobuf_timestamp],
     );
 
@@ -198,6 +198,97 @@ export type UpgradeRequest = Message<'braiins.bmc.web.UpgradeRequest'> & {
 export const UpgradeRequestSchema: GenMessage<UpgradeRequest> = /*@__PURE__*/ messageDesc(file_web_upgrade, 7);
 
 /**
+ * @generated from message braiins.bmc.web.SetAutoUpgradeRequest
+ */
+export type SetAutoUpgradeRequest = Message<'braiins.bmc.web.SetAutoUpgradeRequest'> & {
+    /**
+     * @generated from field: bool enabled = 1;
+     */
+    enabled: boolean;
+
+    /**
+     * @generated from field: braiins.bmc.web.AutoUpgradeFrequency frequency = 2;
+     */
+    frequency: AutoUpgradeFrequency;
+
+    /**
+     * @generated from field: optional google.protobuf.Timestamp time_of_day = 3;
+     */
+    timeOfDay?: Timestamp;
+};
+
+/**
+ * Describes the message braiins.bmc.web.SetAutoUpgradeRequest.
+ * Use `create(SetAutoUpgradeRequestSchema)` to create a new message.
+ */
+export const SetAutoUpgradeRequestSchema: GenMessage<SetAutoUpgradeRequest> =
+    /*@__PURE__*/
+    messageDesc(file_web_upgrade, 8);
+
+/**
+ * @generated from message braiins.bmc.web.GetAutoUpgradeResponse
+ */
+export type GetAutoUpgradeResponse = Message<'braiins.bmc.web.GetAutoUpgradeResponse'> & {
+    /**
+     * @generated from field: bool enabled = 1;
+     */
+    enabled: boolean;
+
+    /**
+     * @generated from field: braiins.bmc.web.AutoUpgradeFrequency frequency = 2;
+     */
+    frequency: AutoUpgradeFrequency;
+
+    /**
+     * @generated from field: string cron_string = 3;
+     */
+    cronString: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.GetAutoUpgradeResponse.
+ * Use `create(GetAutoUpgradeResponseSchema)` to create a new message.
+ */
+export const GetAutoUpgradeResponseSchema: GenMessage<GetAutoUpgradeResponse> =
+    /*@__PURE__*/
+    messageDesc(file_web_upgrade, 9);
+
+/**
+ * @generated from enum braiins.bmc.web.AutoUpgradeFrequency
+ */
+export enum AutoUpgradeFrequency {
+    /**
+     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_UNSPECIFIED = 0;
+     */
+    UNSPECIFIED = 0,
+
+    /**
+     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_DAILY = 1;
+     */
+    DAILY = 1,
+
+    /**
+     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_WEEKLY = 2;
+     */
+    WEEKLY = 2,
+
+    /**
+     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_BI_WEEKLY = 3;
+     */
+    BI_WEEKLY = 3,
+
+    /**
+     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_MONTHLY = 4;
+     */
+    MONTHLY = 4,
+}
+
+/**
+ * Describes the enum braiins.bmc.web.AutoUpgradeFrequency.
+ */
+export const AutoUpgradeFrequencySchema: GenEnum<AutoUpgradeFrequency> = /*@__PURE__*/ enumDesc(file_web_upgrade, 0);
+
+/**
  * @generated from service braiins.bmc.web.UpgradeService
  */
 export const UpgradeService: GenService<{
@@ -228,5 +319,25 @@ export const UpgradeService: GenService<{
         methodKind: 'unary';
         input: typeof UpgradeRequestSchema;
         output: typeof EmptySchema;
+    };
+    /**
+     * Allows en/disabling of AutoUpgrade feature
+     *
+     * @generated from rpc braiins.bmc.web.UpgradeService.SetAutoUpgrade
+     */
+    setAutoUpgrade: {
+        methodKind: 'unary';
+        input: typeof SetAutoUpgradeRequestSchema;
+        output: typeof EmptySchema;
+    };
+    /**
+     * Returns the current AutoUpgrade configuration and status
+     *
+     * @generated from rpc braiins.bmc.web.UpgradeService.GetAutoUpgrade
+     */
+    getAutoUpgrade: {
+        methodKind: 'unary';
+        input: typeof EmptySchema;
+        output: typeof GetAutoUpgradeResponseSchema;
     };
 }> = /*@__PURE__*/ serviceDesc(file_web_upgrade, 0);

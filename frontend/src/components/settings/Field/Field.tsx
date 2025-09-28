@@ -1,9 +1,9 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, type HTMLAttributes } from 'react';
 
 import cn from 'clsx';
 import css from './Field.scss';
 
-export interface FieldProps {
+export interface FieldProps extends Omit<HTMLAttributes<HTMLInputElement>, 'title'> {
     title: ReactNode;
     description?: ReactNode;
     disabled?: boolean;
@@ -16,7 +16,7 @@ export interface FieldProps {
 }
 
 export function Field(props: FieldProps) {
-    const { title, description, disabled, children, variant = 'dark', className, style } = props;
+    const { title, description, disabled, children, variant = 'dark', className, ...rest } = props;
 
     const widgetRef = useRef<null | HTMLDivElement>(null);
     const handleClick = useCallback(() => {
@@ -24,7 +24,7 @@ export function Field(props: FieldProps) {
     }, []);
 
     return (
-        <div style={style} className={cn(css.root, css[`variant-${variant}`], disabled && css.disabled, className)}>
+        <div {...rest} className={cn(css.root, css[`variant-${variant}`], disabled && css.disabled, className)}>
             {/* biome-ignore lint/a11y/useKeyWithClickEvents: Just a click helper, irrelevant for keyboard navigation */}
             <div onClick={handleClick} className={css.title} children={title} />
             {/* biome-ignore lint/a11y/useKeyWithClickEvents: Just a click helper, irrelevant for keyboard navigation */}
