@@ -398,7 +398,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
 
 export component WidgetClockDigital inherits Rectangle {
     property <length> base-width: 320px;
-    property <length> base-height: 220px;
+    property <length> base-height: 240px;
     in property <WidgetSize> size;
     in property <WidgetClockConfig> config;
     in property <DateTime> datetime;
@@ -428,7 +428,7 @@ export component WidgetClockDigital inherits Rectangle {
             alignment: start;
             padding-left: 32px;
             padding-right: 32px;
-            padding-top: 48px;
+            padding-top: 32px;
             Text {
                 visible: config.show-date;
                 text: root.datetime.weekday + " " + root.datetime.day + ", " + root.datetime.year;
