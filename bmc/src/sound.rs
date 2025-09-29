@@ -1,14 +1,17 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::config::ConfigHandle;
 use bmc_audio::{Audio, Volume};
+
+const SLEEP_DURATION: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug)]
 pub(crate) struct SoundController {
@@ -52,6 +55,16 @@ impl SoundController {
         let path = self.sounds_dir.join(sound.file_name());
         let audio = self.audio.read().await;
         audio.play(path.as_os_str(), token).await
+    }
+
+    pub(crate) async fn play_until_cancelled(&self, sound: Sounds, token: CancellationToken) {
+        while !token.is_cancelled() {
+            if let Err(e) = self.play_sound(sound.clone(), token.clone()).await {
+                warn!("Failed to play sound, err: {e}");
+                //NOTE: Sleep for few seconds. Resource can by busy playing other sounds
+                tokio::time::sleep(SLEEP_DURATION).await;
+            }
+        }
     }
 }
 

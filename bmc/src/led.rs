@@ -11,6 +11,7 @@ use tracing::{debug, error};
 
 use crate::{
     BmcManager,
+    alarm::{AlarmBus, AlarmEvent},
     system_upgrade::{StateService, SystemUpgradeState},
 };
 use bmc_led::{
@@ -54,6 +55,7 @@ where
     manager: Arc<T>,
     last_price_change_24h_receiver: watch::Receiver<f32>,
     state_receiver: watch::Receiver<LedState>,
+    alarm_bus: AlarmBus,
 }
 
 impl<T> LedController<T>
@@ -65,6 +67,7 @@ where
         manager: Arc<T>,
         last_price_change_24h: watch::Receiver<f32>,
         led_enabled: bool,
+        alarm_bus: AlarmBus,
     ) -> (Self, watch::Sender<LedState>) {
         let system_upgrade_receiver = state_service.subscribe();
 
@@ -76,6 +79,7 @@ where
             manager,
             last_price_change_24h_receiver: last_price_change_24h,
             state_receiver,
+            alarm_bus,
         };
 
         (this, state_sender)
@@ -225,6 +229,29 @@ where
         });
     }
 
+    fn run_alarm_event_listener(&self, led_event_tx: Sender<LedEvent>) {
+        let mut rx_events = self.alarm_bus.subscribe_events();
+        tokio::spawn({
+            async move {
+                while let Ok(event) = rx_events.recv().await {
+                    match event {
+                        AlarmEvent::Stopped { .. } | AlarmEvent::Snoozed => {
+                            if let Err(e) = led_event_tx.try_send(LedEvent::ClockAlarmEnded) {
+                                error!("Failed to send command: {}", e);
+                            }
+                        }
+
+                        AlarmEvent::Started { .. } => {
+                            if let Err(e) = led_event_tx.try_send(LedEvent::ClockAlarm) {
+                                error!("Failed to send command: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     pub(crate) fn init(&mut self, led_cmd_tx: Sender<LedCommand>) {
         let led_event_tx = self.led_event_handler.init(led_cmd_tx);
 
@@ -234,7 +261,8 @@ where
 
         self.run_led_state_task(led_event_tx.clone());
         self.run_wifi_task(led_event_tx.clone());
-        self.run_sysupgrade_task(led_event_tx);
+        self.run_sysupgrade_task(led_event_tx.clone());
+        self.run_alarm_event_listener(led_event_tx);
 
         // TODO: Price alerts
         // self.run_price_task(led_event_tx);

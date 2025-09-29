@@ -162,7 +162,7 @@ where
             initial_setup.subscribe(),
             manager.clone(),
             config_handle.clone(),
-            alarm_bus,
+            alarm_bus.clone(),
         );
 
         let (_, last_price_change_24h_receiver) = watch::channel(0.0);
@@ -171,6 +171,7 @@ where
             manager.clone(),
             last_price_change_24h_receiver,
             led_enabled,
+            alarm_bus,
         );
 
         led_controller.init(led_driver.command_sender.clone());

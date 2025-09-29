@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::BmcManager;
-use crate::alarm::AlarmBus;
+use crate::alarm::{AlarmBus, AlarmEvent};
 use crate::initial_setup::InitSetupState;
 use crate::system_upgrade::SystemUpgradeState;
 
@@ -17,7 +17,7 @@ use reqwest::Client;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{RwLock, broadcast, watch};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
@@ -32,6 +32,7 @@ const CONNECT_INFO_SCREEN_DURATION: Duration = Duration::from_secs(10);
 const ERROR_SCREEN_DURATION: Duration = Duration::from_secs(5);
 const CHECK_IP_ATTEMPTS: u8 = 10;
 const CHECK_IP_WAIT_DURATION: Duration = Duration::from_secs(2);
+const DEFAULT_ALARM_LABEL: &str = "Alarm";
 
 #[derive(Debug)]
 pub(crate) struct DisplayTasks<T: BmcManager> {
@@ -116,9 +117,16 @@ impl<T: BmcManager> DisplayTasks<T> {
             initial_setup_receiver,
         ));
 
+        // NOTE: Propagate events from Slint to Alarm controller, e.g. stop/snooze alarm
+        tokio::spawn(Self::run_alarm_slint_event_listener(
+            display_controller.clone(),
+            alarm_bus.clone(),
+        ));
+
+        //NOTE: Propagate events from Alarm controller to display, e.g. alarm was triggered, show alarm screen
         tokio::spawn(Self::run_alarm_event_listener(
             display_controller,
-            alarm_bus,
+            alarm_bus.subscribe_events(),
         ));
     }
 
@@ -433,13 +441,46 @@ impl<T: BmcManager> DisplayTasks<T> {
         }
     }
 
-    async fn run_alarm_event_listener(display_controller: DisplayController, alarm_bus: AlarmBus) {
+    async fn run_alarm_slint_event_listener(
+        display_controller: DisplayController,
+        alarm_bus: AlarmBus,
+    ) {
         let mut alarm_receiver = display_controller.on_alarm_events();
         while let Some(event) = alarm_receiver.next().await {
             debug!("Alarm event received [{:?}], sending to AlarmBus", event);
             match event {
                 bmc_display::display_controller::callback::AlarmEvent::Stop => alarm_bus.stop_all(),
                 bmc_display::display_controller::callback::AlarmEvent::Snooze => alarm_bus.snooze(),
+            }
+        }
+    }
+
+    async fn run_alarm_event_listener(
+        display_controller: DisplayController,
+        mut events_rx: broadcast::Receiver<AlarmEvent>,
+    ) {
+        while let Ok(event) = events_rx.recv().await {
+            match event {
+                AlarmEvent::Stopped { .. } | AlarmEvent::Snoozed => {
+                    display_controller.set_clock_alarm_screen(false);
+                }
+                AlarmEvent::Started { alarm } => {
+                    let label = if alarm.data.name.is_empty() {
+                        DEFAULT_ALARM_LABEL.to_owned()
+                    } else {
+                        alarm.data.name
+                    };
+
+                    let show_snooze = alarm.data.snooze_options.is_some_and(|options| {
+                        options
+                            .limit
+                            .limit()
+                            .is_none_or(|limit| alarm.snooze_count < limit)
+                    });
+
+                    display_controller.set_alarm_data(label, show_snooze);
+                    display_controller.set_clock_alarm_screen(true);
+                }
             }
         }
     }
