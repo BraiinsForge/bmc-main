@@ -359,7 +359,6 @@ impl AlarmScheduler {
         alarm_scheduler
     }
 
-    #[expect(clippy::too_many_lines)]
     async fn schedule(&self, alarm: Alarm) -> anyhow::Result<()> {
         let cron = alarm.data.cron()?;
         let name = alarm.data.name.clone();
