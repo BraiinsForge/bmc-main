@@ -89,6 +89,7 @@ async-stream = "0.3.6"
 async-trait = "0.1.88"
 axum = "0.8.4"
 axum-extra = "0.10.1"
+backon = { version = "1.5.2", default-features = false, features = ["std"] }
 base64 = "0.22.1"
 bincode = "2.0.0" # NOTE: check https://docs.rs/bincode/latest/bincode/serde/index.html#known-issues before enabling `serde` feature
 bmc = { path = "bmc" }
@@ -138,6 +139,7 @@ humantime-serde = "1.1.1"
 hyper = "1.6.0"
 iana-time-zone = "0.1.63"
 idxgen-data = { path = "tooling/idxgen/idxgen-data" }
+image = { version = "0.25.8", features = ["default-formats"] }
 index-bmc = { path = "tooling/crates/index-bmc" }
 index-common = { path = "tooling/crates/index-common" }
 indexmap = { version = "2.10.0", default-features = false, features = ["serde", "std"] }
@@ -173,7 +175,7 @@ serde_with = { version = "3.14.0", default-features = false, features = ["macros
 sha2 = "0.10.9"
 # we cannot upgrade to 1.11.0 because it panicks with our minifb platform,
 # and we cannot upgrade to >1.11.0 because it does not support MUSL anymore
-slint = { version = "=1.10.0", default-features = false, features = ["compat-1-2", "log", "serde", "std"] }
+slint = { version = "=1.10.0", default-features = false, features = ["compat-1-2", "image-default-formats", "log", "serde", "std"] }
 slint-build = "=1.10.0"
 smart-leds-trait = { version = "0.3.1" }
 spidev = { version = "0.7.0" }

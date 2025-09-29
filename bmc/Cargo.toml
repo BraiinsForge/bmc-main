@@ -14,6 +14,7 @@ axum-extra = { workspace = true, features = [
     "multipart",
     "typed-header",
 ] }
+backon.workspace = true
 bmc-audio.workspace = true
 bmc-button.workspace = true
 bmc-display.workspace = true
@@ -31,6 +32,7 @@ futures.workspace = true
 http.workspace = true
 humantime-serde.workspace = true
 hyper.workspace = true
+image.workspace = true
 index-bmc.workspace = true
 index-common.workspace = true
 indexmap.workspace = true

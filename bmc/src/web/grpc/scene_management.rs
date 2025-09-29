@@ -7,8 +7,8 @@ use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
     AccountId, AddWidgetError, BlockHeightWidget, BraiinsPoolWidget, ClockStyle, ClockWidget,
-    FontStyle, PoolChartTimeFrame, PoolStyle, RemoveWidgetError, Scene, SceneCycling,
-    SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget, TickerTimeFrame,
+    FontStyle, PoolChartTimeFrame, PoolStyle, RemoteImageWidget, RemoveWidgetError, Scene,
+    SceneCycling, SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget, TickerTimeFrame,
     UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
@@ -1069,6 +1069,9 @@ fn parse_widget_kind_with_default_params(
         web::widget_kind::Value::BraiinsPool(_) => {
             WidgetKind::BraiinsPool(BraiinsPoolWidget::default())
         }
+        web::widget_kind::Value::RemoteImage(_) => {
+            WidgetKind::RemoteImage(RemoteImageWidget::default())
+        }
     };
 
     (Some(kind), field_violations)
@@ -1112,6 +1115,12 @@ fn parse_widget_kind(
         web::widget_kind::Value::BraiinsPool(braiins_pool_proto) => {
             let (maybe_kind, field_violations) =
                 parse_braiins_pool_widget_kind("braiins_pool", braiins_pool_proto);
+            all_field_violations.extend(field_violations);
+            maybe_kind
+        }
+        web::widget_kind::Value::RemoteImage(remote_image_proto) => {
+            let (maybe_kind, field_violations) =
+                parse_remote_image_widget_kind(format!("{field}.remote_image"), remote_image_proto);
             all_field_violations.extend(field_violations);
             maybe_kind
         }
@@ -1282,6 +1291,33 @@ fn parse_braiins_pool_widget_kind(
     (maybe_kind, field_violations)
 }
 
+fn parse_remote_image_widget_kind(
+    field: impl AsRef<str> + Display,
+    remote_image_proto: web::RemoteImageWidget,
+) -> ParseOutput<WidgetKind> {
+    let mut field_violations = FieldViolations::new();
+
+    let refresh_duration = Some(Duration::from_secs(
+        remote_image_proto.refresh_duration_sec.into(),
+    ))
+    .filter(|duration| !duration.is_zero())
+    .tap_none(|| {
+        field_violations.push(
+            format!("{field}.refresh_duration_sec"),
+            "Refresh duration cannot be zero!",
+        );
+    });
+
+    let maybe_kind = refresh_duration.map(|refresh_duration| {
+        WidgetKind::RemoteImage(RemoteImageWidget {
+            url: remote_image_proto.url,
+            refresh_duration,
+        })
+    });
+
+    (maybe_kind, field_violations)
+}
+
 fn map_scene_to_proto(scene: Scene) -> web::Scene {
     let kind = match &scene.kind {
         SceneKind::Fullscreen => web::scene::Kind::Fullscreen(web::scene::Fullscreen {
@@ -1320,6 +1356,7 @@ fn map_widget_to_proto(widget: Widget) -> web::Widget {
         WidgetKind::TickerBtc(ticker_btc) => map_ticker_btc_to_proto(&ticker_btc),
         WidgetKind::BlockHeight(block_height) => map_block_height_to_proto(&block_height),
         WidgetKind::BraiinsPool(braiins_pool) => map_braiins_pool_to_proto(braiins_pool),
+        WidgetKind::RemoteImage(remote_image) => map_remote_image_to_proto(remote_image),
     };
 
     web::Widget {
@@ -1490,5 +1527,21 @@ fn map_braiins_pool_to_proto(braiins_pool: BraiinsPoolWidget) -> web::WidgetKind
 
     web::WidgetKind {
         value: Some(web::widget_kind::Value::BraiinsPool(proto)),
+    }
+}
+
+fn map_remote_image_to_proto(remote_image: RemoteImageWidget) -> web::WidgetKind {
+    let proto = web::RemoteImageWidget {
+        url: remote_image.url,
+        refresh_duration_sec: {
+            #[expect(clippy::cast_possible_truncation)]
+            let refresh_duration_sec = remote_image.refresh_duration.as_secs() as u32;
+
+            refresh_duration_sec
+        },
+    };
+
+    web::WidgetKind {
+        value: Some(web::widget_kind::Value::RemoteImage(proto)),
     }
 }

@@ -188,6 +188,22 @@ impl Default for BraiinsPoolWidget {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteImageWidget {
+    pub url: String,
+    #[serde(with = "humantime_serde")]
+    pub refresh_duration: Duration,
+}
+
+impl Default for RemoteImageWidget {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            refresh_duration: Duration::from_secs(60 * 60 * 24),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "params")]
 #[serde(rename_all = "snake_case")]
 pub enum WidgetKind {
@@ -195,9 +211,10 @@ pub enum WidgetKind {
     TickerBtc(TickerBtcWidget),
     BlockHeight(BlockHeightWidget),
     BraiinsPool(BraiinsPoolWidget),
+    RemoteImage(RemoteImageWidget),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum WidgetSize {
     Small,
@@ -722,6 +739,10 @@ impl From<Widget> for generated::Widget {
                     config: config.into(),
                     ..generated::WidgetBraiinsPoolData::default()
                 }
+            }
+            WidgetKind::RemoteImage(_config) => {
+                slint_widget.kind = generated::WidgetKind::RemoteImage;
+                slint_widget.remote_image = generated::WidgetRemoteImageData::default();
             }
         }
 

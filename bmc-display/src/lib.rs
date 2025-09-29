@@ -16,4 +16,9 @@ mod indexmap_model;
 pub mod metadata;
 pub mod pool_data;
 pub mod proxy;
+pub mod remote_image_data;
 mod utils;
+
+pub use slint::{
+    Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, private_unstable_api::re_exports::SharedImageBuffer,
+};

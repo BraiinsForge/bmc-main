@@ -202,7 +202,8 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                         WidgetKind::BraiinsPool(_)
                         | WidgetKind::Clock(_)
                         | WidgetKind::TickerBtc(_)
-                        | WidgetKind::BlockHeight(_) => None,
+                        | WidgetKind::BlockHeight(_)
+                        | WidgetKind::RemoteImage(_) => None,
                     })
                     .collect();
                 account

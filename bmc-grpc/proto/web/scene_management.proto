@@ -131,6 +131,7 @@ message WidgetKind {
     TickerBtcWidget ticker_btc = 2;
     BlockHeightWidget block_height = 3;
     BraiinsPoolWidget braiins_pool = 4;
+    RemoteImageWidget remote_image = 5;
   }
 }
 
@@ -211,6 +212,13 @@ enum FontStyle {
   FONT_STYLE_LIGHT = 1;
   FONT_STYLE_MEDIUM = 2;
   FONT_STYLE_BOLD = 3;
+}
+
+message RemoteImageWidget {
+  // required (can be empty)
+  string url = 1;
+  // required
+  uint32 refresh_duration_sec = 2;
 }
 
 enum SceneCyclingTransition {
