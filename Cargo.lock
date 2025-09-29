@@ -3475,7 +3475,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.58.0",
+ "windows-core 0.61.0",
 ]
 
 [[package]]
@@ -7144,9 +7144,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-cron-scheduler"
-version = "0.18.0"
+version = "0.19.0"
 source = "sparse+http://registry.ii.zone/api/v1/crates/"
-checksum = "c8f080dd2ac9154f1fed81f0b348febe445873d549db59f86bd7f2d2d5db8324"
+checksum = "eaa9405182eb42c8af5a63e9446a7de78d43462007eaa4f027091637f21463c5"
 dependencies = [
  "chrono",
  "chrono-tz",
