@@ -23,6 +23,7 @@ workspace = true
 
 [dev-dependencies]
 chrono-tz.workspace = true
+rand = { workspace = true, default-features = true }
 tracing.workspace = true
 
 [[example]]

@@ -1016,6 +1016,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "croner",
+ "rand 0.9.1",
  "serde",
  "tempfile",
  "tokio",
