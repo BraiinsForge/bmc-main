@@ -250,8 +250,8 @@ impl Configuration {
     const CONFIG_PATH: &'static str = "/etc/bmc_config.json";
     const DEFAULT_BRIGHTNESS_PCT: u8 = 80;
     const DEFAULT_NIGHT_MODE_BRIGHTNESS_PCT: u8 = 50;
-    const DEFAULT_VOLUME_PCT: u8 = 80;
-    const DEFAULT_NIGHT_MODE_VOLUME_PCT: u8 = 50;
+    const DEFAULT_VOLUME_PCT: u8 = 60;
+    const DEFAULT_NIGHT_MODE_VOLUME_PCT: u8 = 40;
     const SOUNDS_DIR: &str = "/usr/share/bmc/sounds/";
     const CRONTAB_PATH: &str = "/etc/crontabs/root";
 }
