@@ -248,8 +248,8 @@ pub struct Configuration {
 impl Configuration {
     const UPGRADE_IMAGE_PATH: &'static str = "/tmp/firmware.tar";
     const CONFIG_PATH: &'static str = "/etc/bmc_config.json";
-    const DEFAULT_BRIGHTNESS_PCT: u8 = 80;
-    const DEFAULT_NIGHT_MODE_BRIGHTNESS_PCT: u8 = 50;
+    const DEFAULT_BRIGHTNESS_PCT: u8 = 60;
+    const DEFAULT_NIGHT_MODE_BRIGHTNESS_PCT: u8 = 25;
     const DEFAULT_VOLUME_PCT: u8 = 60;
     const DEFAULT_NIGHT_MODE_VOLUME_PCT: u8 = 40;
     const SOUNDS_DIR: &str = "/usr/share/bmc/sounds/";
