@@ -48,8 +48,6 @@ class View extends Component<Props, State> {
         const { isPlaying } = this.state;
         const { currentlyPlaying } = this.context.device.sound;
 
-        console.log(JSON.stringify({ currentlyPlaying, sound: sound.value, isPlaying }, null, 4));
-
         // Something outside played a sound, but we are not marked as playing
         if (currentlyPlaying?.id === sound.value && !isPlaying) this.setState({ isPlaying: true });
         // We think we are playing a sound, but context says otherwise

@@ -4,6 +4,9 @@ import { pluginSass } from '@rsbuild/plugin-sass';
 import { pluginSvgr } from '@rsbuild/plugin-svgr';
 import { pluginTypedCSSModules } from '@rsbuild/plugin-typed-css-modules';
 
+import SVGO_CONFIG from './svgo.config.js';
+import SVGR_TEMPLATE from './svgr.template.js';
+
 const isProduction = process.env.NODE_ENV === 'production';
 
 export default defineConfig({
@@ -32,6 +35,8 @@ export default defineConfig({
         pluginSvgr({
             svgrOptions: {
                 exportType: 'default',
+                template: SVGR_TEMPLATE,
+                svgoConfig: SVGO_CONFIG,
             },
         }),
         pluginSass(),
