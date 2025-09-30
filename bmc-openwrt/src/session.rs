@@ -56,7 +56,7 @@ pub enum Error {
     SessionNotFound,
     #[error("Session cookie not found")]
     SessionCookieNotFound,
-    #[error("Bad credentials")]
+    #[error("Incorrect username or password")]
     BadCredentials,
 }
 

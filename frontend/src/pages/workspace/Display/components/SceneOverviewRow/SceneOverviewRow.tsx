@@ -1,5 +1,4 @@
-import { useCallback } from 'react';
-import type { DetailedHTMLProps, HTMLAttributes, SyntheticEvent } from 'react';
+import { useCallback, type DetailedHTMLProps, type HTMLAttributes } from 'react';
 import { useIntl } from 'react-intl';
 
 // Lib
@@ -19,15 +18,6 @@ import {
 // Styles
 import cn from 'clsx';
 import css from './SceneOverviewRow.scss';
-
-function applyDirectionToStringValue(value: string | number, direction: string): string {
-    let res = Number.parseInt(value as string, 10);
-
-    if (direction === 'up') res += 1;
-    else if (direction === 'down') res -= 1;
-
-    return String(res);
-}
 
 interface DataProps {
     id: string;
@@ -93,51 +83,8 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
 
     const handleToggle = useCallback((value: boolean) => onToggle(id, value), [id, onToggle]);
     const handleDurationChange = useCallback(
-        (event: SyntheticEvent, info: { direction: string }) => {
-            const target = event.target;
-
-            // The value from CDS is not used because if the input is empty and has
-            // a minimum value, the minimum value is given instead of empty string…
-            //
-            // This fucks us here, because we need real value without processing.
-            // This is also because the given `direction` string is basically useless
-            // as it's `down` when the input is just cleared.
-            //
-            // The fucky input selection is here because the change handler
-            // can be called from following events / elements:
-            //  - MouseEvent<HTMLButtonElement>
-            //  - FocusEvent<HTMLInputElement>
-            //  - KeyboardEvent<HTMLInputElement>
-            const input: Maybe<HTMLInputElement> = (target as HTMLElement)
-                .closest('.cds--form-item')
-                ?.querySelector('input[type="number"]');
-
-            // The value is then obtained directly from the input element.
-            const valueRaw: string = input?.value ?? '';
-            const value: string =
-                target instanceof HTMLButtonElement || 'keyCode' in event
-                    ? applyDirectionToStringValue(valueRaw, info.direction)
-                    : valueRaw;
-
-            // NOOP: Some events are fired even though no change is possible
-            // eg.: example: `value === min` and minus button is pressed
-            if (value === String(duration)) return;
-
-            // Keyboard input
-            if (event.nativeEvent instanceof InputEvent) onDurationChange(id, value);
-            // Removing the value (number => '')
-            else if (!!duration && value === '') onDurationChange(id, '');
-            //
-            // Empty value (default used) and something got triggered
-            // => use defaultValue and apply the reported operation to it
-            else if (!duration) onDurationChange(id, applyDirectionToStringValue(durationDefault, info.direction));
-            //
-            // default case, just pass the value upward
-            else onDurationChange(id, value);
-
-            if (input) input.value = '';
-        },
-        [id, onDurationChange, duration, durationDefault],
+        (_: any, info: { value: string | number }) => onDurationChange(id, String(info.value)),
+        [id, onDurationChange],
     );
     const handleEdit = useCallback(() => onEdit(id), [id, onEdit]);
     const handleClone = useCallback(() => onClone(id), [id, onClone]);
@@ -188,6 +135,8 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
                     min={1}
                     step={1}
                     allowEmpty
+                    disableWheel
+                    stepStartValue={Number.parseInt(String(durationDefault || 0), 10)}
                     placeholder={String(durationDefault)}
                     value={duration ?? ''}
                     onChange={handleDurationChange}

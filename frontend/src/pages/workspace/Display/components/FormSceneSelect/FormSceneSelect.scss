@@ -1,17 +1,17 @@
 @use 'styles/carbon' as *;
 
-.root {
-    composes: vertical from 'styles/layout.scss';
-    container-type: inline-size;
-    gap: 1px;
-}
-
 .dialogBody {
-    padding-bottom: mini-units(2);
+    padding: 0;
 
     > *:last-child {
         margin-bottom: 0;
     }
+}
+
+.list {
+    composes: vertical from 'styles/layout.scss';
+    container-type: inline-size;
+    gap: 1px;
 }
 
 //
@@ -19,8 +19,9 @@
 //
 
 .row {
-    background-color: $layer-01;
     padding: mini-units(2);
+    background-color: $layer-01;
+    border-block-start: 1px solid $border-subtle;
 
     display: grid;
     column-gap: mini-units(2);
@@ -54,9 +55,10 @@
 }
 
 .rowDescription {
-    composes: body-short-02 from 'styles/carbon/typography.scss';
-    text-wrap: balance;
+    composes: body-short-01 from 'styles/carbon/typography.scss';
     grid-area: description;
+    text-wrap: balance;
+    color: $text-secondary;
 }
 
 .rowAction {

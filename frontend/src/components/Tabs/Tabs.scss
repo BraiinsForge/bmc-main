@@ -3,7 +3,9 @@
 @use 'styles/carbon' as *;
 
 .tabs {
-    composes: horizontal wrap from 'styles/layout.scss';
+    composes: horizontal from 'styles/layout.scss';
+    composes: scrollbar from 'styles/interaction.scss';
+    overflow: auto hidden;
     position: relative;
     width: 100%;
 

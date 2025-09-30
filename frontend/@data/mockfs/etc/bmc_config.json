@@ -93,7 +93,7 @@
           "kind": "braiins_pool",
           "params": {
             "pool_style": "overview",
-            "chart_frame": "days7",
+            "chart_frame": "hours24",
             "account_id": "8b13f327-6107-4f2e-a5d2-a3d6fc2e38ed"
           }
         }
@@ -129,6 +129,65 @@
           }
         }
       ]
+    },
+    {
+      "id": "4e9ee290-0018-4eeb-8312-1819aa2e41d8",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "7ef62b86-0c54-4e08-a915-c23b9dc8f3d4",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "braiins_pool",
+          "params": {
+            "pool_style": "overview",
+            "chart_frame": "hours24",
+            "account_id": ""
+          }
+        }
+      ]
+    }
+  ],
+  "alarms": [
+    {
+      "id": "1c6d0d8b-59e1-4a3c-83f6-6f8788a024d6",
+      "enabled": true,
+      "name": "xxx",
+      "time": "10:10:00",
+      "repeat": [
+        "Monday",
+        "Saturday",
+        "Wednesday",
+        "Thursday",
+        "Friday"
+      ],
+      "sound": "KeepCalmAndDca",
+      "snooze_options": {
+        "limit": "Three",
+        "duration": "FiveMinutes"
+      }
+    },
+    {
+      "id": "b1e6ba66-fefd-416a-b366-819a60b2563b",
+      "enabled": true,
+      "name": "",
+      "time": "11:22:00",
+      "repeat": [
+        "Wednesday",
+        "Saturday",
+        "Monday",
+        "Friday",
+        "Tuesday",
+        "Thursday",
+        "Sunday"
+      ],
+      "sound": "GreenCandleMorning",
+      "snooze_options": {
+        "limit": "Three",
+        "duration": "FiveMinutes"
+      }
     }
   ],
   "accounts": [

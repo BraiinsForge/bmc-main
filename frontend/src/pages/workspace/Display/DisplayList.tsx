@@ -6,9 +6,9 @@ import { type NavigateFunction, useNavigate } from 'react-router';
 
 // Libs
 import { getID } from './const';
-import { setState, Sized } from '@/lib/react';
-import { assertUnreachable, assertUndefined } from '@/lib/ts';
 import { listenDocumentEvent } from '@/lib/dom';
+import { assertUnreachable, assertUndefined } from '@/lib/ts';
+import { setState, Sized, stopEventPropagation } from '@/lib/react';
 import { Form, type FormPropsToLocalState, type iField } from '@/lib/form';
 
 // App
@@ -24,6 +24,7 @@ import {
     CarouselHorizontal as IconCycle,
     ChevronDown as IconChevronDown,
     ChevronUp as IconChevronUp,
+    type CarbonIconType,
 } from '@carbon/react/icons';
 import * as Comp from './components';
 
@@ -152,6 +153,7 @@ class View extends Component<Props, State> {
     #notifySuccess = (message: string): void => {
         this.context.notify('success', message, { timeoutSeconds: 3, id: 'display-success' });
     };
+    #notifySuccessDebounced = debounce(this.#notifySuccess, 1e3);
 
     private abortLoadMetadata = pb.abort.get();
     #loadMetadata = async (): Promise<void> => {
@@ -482,7 +484,6 @@ class View extends Component<Props, State> {
             const res = this.state.dialogStates;
             (Object.keys(dialogStates) as Array<keyof DialogStates>).forEach(key => {
                 if (!Object.hasOwn(fields, key)) return;
-                console.log('fields', fields[key]);
                 res[key].data.errors = { fields: fields[key] };
             });
             this.setState({ dialogStates: res });
@@ -623,29 +624,27 @@ class View extends Component<Props, State> {
         this.#loadScenesDebounced();
     };
 
+    /**
+     * This just stores the value to local state and fires of a debounced handler to submit to the backend.
+     * This one is split off like that because this values can be changed very quickly by the user by clicking on +/- buttons.
+     */
+    #sceneListSetDurationLocal = async (id: string, value: string): Promise<void> => {
+        const cycleDurationSec: undefined | number = value === '' ? undefined : Number.parseInt(value, 10);
+
+        // Optimistic update first
+        this.setState(s => ({ scenes: s.scenes.map(x => (x.id === id ? { ...x, cycleDurationSec } : x)) }));
+        this.#sceneListSetDurationSubmit(id, cycleDurationSec);
+    };
     private abortSceneSetDuration = pb.abort.get();
-    #sceneListSetDuration = async (id: string, value: string): Promise<void> => {
+    #sceneListSetDurationSubmit = debounce(async (id: string, valueSeconds: undefined | number): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneSetDuration.replace();
         const tag = 'scene-set-duration';
 
         try {
-            const cycleDurationSec: undefined | number = value === '' ? undefined : Number.parseInt(value, 10);
-
-            // Optimistic update first
-            await setState(this, s => ({
-                scenes: s.scenes.map(x => (x.id === id ? { ...x, cycleDurationSec } : x)),
-            }));
-
-            pb.rpc.scenes.updateScene(
-                {
-                    id,
-                    enabled: this.#getScene(id)?.enabled ?? true,
-                    cycleDurationSec,
-                },
-                { signal },
-            );
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene duration updated!' }));
+            const enabled: boolean = this.#getScene(id)?.enabled ?? true;
+            await pb.rpc.scenes.updateScene({ id, enabled, cycleDurationSec: valueSeconds }, { signal });
+            this.#notifySuccessDebounced(formatMessage({ defaultMessage: 'Scene duration updated!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -653,9 +652,7 @@ class View extends Component<Props, State> {
             msg ||= formatMessage({ defaultMessage: 'Failed to update scene duration! Please try again!' });
             this.#notifyError(msg, tag);
         }
-
-        this.#loadScenesDebounced();
-    };
+    }, 500);
 
     private abortSceneSetEnabled = pb.abort.get();
     #sceneListSetEnabled = async (id: string, value: boolean): Promise<void> => {
@@ -680,7 +677,7 @@ class View extends Component<Props, State> {
                 },
                 { signal },
             );
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene state updated!' }));
+            // Design declares that this action does not need a success notification
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -916,6 +913,7 @@ class View extends Component<Props, State> {
                 render={(ref, size) => {
                     const iconLayout: boolean = !!size && size.width <= 800;
                     const mobileLayout: boolean = !!size && size.width <= 600;
+                    const overflowMenuHasLabel: boolean = !(iconLayout && !mobileLayout);
 
                     return (
                         <div className={css.headerControls} ref={ref}>
@@ -935,19 +933,29 @@ class View extends Component<Props, State> {
                                                 flipped={!mobileLayout}
                                                 focusTrap={false}
                                                 direction="bottom"
+                                                // Sadly we cannot remove this one because we get only three options:
+                                                // - leave it on default → "Options"
+                                                // - supply our own text
+                                                // - get an empty tooltip when giving it an empty string
                                                 iconDescription={cycleToggleText}
                                                 onOpen={this.#cycleDialogOpen}
                                                 onClose={this.#cycleDialogClose}
                                                 open={cycle.isOpen}
-                                                renderIcon={() => (
-                                                    <div className={css.screenCycleButtonContent}>
-                                                        <IconCycle />
-                                                        {iconLayout && !mobileLayout ? null : (
-                                                            <span children={cycleToggleText} />
-                                                        )}
-                                                        {cycle.isOpen ? <IconChevronUp /> : <IconChevronDown />}
-                                                    </div>
-                                                )}
+                                                renderIcon={() => {
+                                                    const ToggleIcon: CarbonIconType = cycle.isOpen
+                                                        ? IconChevronUp
+                                                        : IconChevronDown;
+
+                                                    return (
+                                                        <div className={css.screenCycleButtonContent}>
+                                                            <IconCycle />
+                                                            {overflowMenuHasLabel ? (
+                                                                <span children={cycleToggleText} />
+                                                            ) : null}
+                                                            <ToggleIcon className={css.chevron} />
+                                                        </div>
+                                                    );
+                                                }}
                                                 selectorPrimaryFocus="input,button,select"
                                                 size="sm"
                                             >
@@ -1014,7 +1022,7 @@ class View extends Component<Props, State> {
                         onClone={this.#sceneListClone}
                         onDelete={this.#sceneListDelete}
                         onToggle={this.#sceneListSetEnabled}
-                        onDurationChange={this.#sceneListSetDuration}
+                        onDurationChange={this.#sceneListSetDurationLocal}
                         defaultSceneDuration={cycle.defaultDurationSeconds}
                     />
                 </main>
@@ -1032,10 +1040,10 @@ interface ScreenCyclingConfigFormProps {
     render(x: { title: string; content: ReactElement }): ReactElement;
 }
 function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElement {
-    const intl = useIntl();
-    const { formatMessage } = intl;
     const { cycle, duration, transitionEffect, render } = props;
+    const intl = useIntl();
 
+    const { formatMessage } = intl;
     const txt = {
         enableCycling: formatMessage({ defaultMessage: 'Enable Screen Cycling' }),
         on: formatMessage({ defaultMessage: 'On' }),
@@ -1043,9 +1051,9 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
 
         defaultDuration: formatMessage({ defaultMessage: 'Default Display Duration' }),
         txEffect: formatMessage({ defaultMessage: 'Transition Effect' }),
+        title: formatMessage({ defaultMessage: 'Screen Cycling' }),
     };
 
-    const title: string = formatMessage({ defaultMessage: 'Screen Cycling' });
     /**
      * CDS expects specific children types in some places and passes down props that they then use in the child.
      * One example for all is children of menus where they get some handlers.
@@ -1055,7 +1063,11 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
      */
     const Content = (): ReactElement => {
         return (
-            <Form className={css.screenCycleForm}>
+            <Form
+                className={css.screenCycleForm}
+                // Prevents click events from bubbling up to the dropdown menu and closing it.
+                onClick={stopEventPropagation}
+            >
                 <Toggle
                     id={$('cycle-active')}
                     size="md"
@@ -1091,7 +1103,7 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
         );
     };
 
-    return render({ title, content: <Content /> });
+    return render({ title: txt.title, content: <Content /> });
 }
 
 export default function DisplayList() {

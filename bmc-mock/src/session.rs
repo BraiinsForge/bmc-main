@@ -20,7 +20,7 @@ pub enum Error {
     SessionCookieNotFound,
     #[error("Session cookie is invalid")]
     SessionCookieInvalid,
-    #[error("Bad credentials")]
+    #[error("Incorrect username or password")]
     BadCredentials,
 }
 

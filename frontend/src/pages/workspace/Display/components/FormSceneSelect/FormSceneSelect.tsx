@@ -48,7 +48,7 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
         >
             {/* Mitigation for unwanted and otherwise seamingly unpreventable focus first button. */}
             <input type="hidden" />
-            <section role="list" className={css.root}>
+            <section role="list" className={css.list}>
                 {variant === 'scene' ? (
                     <Row
                         variant={variant}

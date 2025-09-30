@@ -1,6 +1,6 @@
 import { Fragment, Component, useCallback, type UIEvent, type KeyboardEvent } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
-import { useLocation, useNavigate } from 'react-router';
+import { useLocation, useNavigate, type NavigateFunction } from 'react-router';
 import { Key } from 'ts-key-enum';
 
 import { URLS } from '@/constants';
@@ -40,6 +40,7 @@ export interface LayoutWorkspaceProps {
 }
 interface Props extends LayoutWorkspaceProps {
     intl: IntlShape;
+    navigate: NavigateFunction;
     hasPassword: null | boolean;
 }
 
@@ -56,6 +57,9 @@ class Base extends Component<Props, State> {
         logout: this.props.intl.formatMessage({ defaultMessage: 'Logout' }),
     };
 
+    #gotHome = (): void => {
+        this.props.navigate(URLS.pages.display.list);
+    };
     #renderSidenavItems = (): ReactNode => {
         const { formatMessage } = this.props.intl;
 
@@ -110,7 +114,7 @@ class Base extends Component<Props, State> {
                         aria-expanded={isSideNavExpanded}
                     />
 
-                    <HeaderName href={URLS.pages.settings} prefix="" className={css.headerName}>
+                    <HeaderName prefix="" onClick={this.#gotHome} className={css.headerName}>
                         <LogoHeader style={{ width: 'auto', height: 18 }} />
                     </HeaderName>
 
@@ -149,7 +153,8 @@ class Base extends Component<Props, State> {
 export function LayoutWorkspace(props: LayoutWorkspaceProps) {
     const intl = useIntl();
     const hasPassword: null | boolean = useStore(x => x.state.sessionInfo.hasPassword);
-    return <Base {...props} intl={intl} hasPassword={hasPassword} />;
+    const navigate = useNavigate();
+    return <Base {...props} intl={intl} navigate={navigate} hasPassword={hasPassword} />;
 }
 
 interface HeaderActionButtonProps {

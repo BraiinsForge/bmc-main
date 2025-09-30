@@ -444,7 +444,7 @@ export class View extends Component<Props, State> {
                             </tr>
                             <tr>
                                 <FormattedMessage tagName="th" defaultMessage="Label" />
-                                <td children={d.name ?? '--'} />
+                                <td children={d.name || '--'} />
                             </tr>
                             <tr>
                                 <FormattedMessage tagName="th" defaultMessage="Repeat" />
@@ -452,7 +452,7 @@ export class View extends Component<Props, State> {
                             </tr>
                             <tr>
                                 <FormattedMessage tagName="th" defaultMessage="Sound" />
-                                <td children={d.sound?.name ?? '--'} />
+                                <td children={d.sound?.name || '--'} />
                             </tr>
                             <tr>
                                 <FormattedMessage tagName="th" defaultMessage="Snooze" />
@@ -471,6 +471,7 @@ export class View extends Component<Props, State> {
 
             // Then submit to API
             await pb.rpc.alarm.deleteAlarm({ value: id });
+            this.#alarmDialogClose();
             notify('success', intl.formatMessage({ defaultMessage: 'Alarm has been deleted.' }), {
                 id: 'alarm-delete-success',
                 timeoutSeconds: 1.5,

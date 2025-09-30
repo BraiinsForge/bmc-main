@@ -95,6 +95,10 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
     return (
         <ComboBox<OptionItem<T>>
             id={id}
+            // This little shit seems to really need thrashing because otherwise
+            // it remembers the last selected value even when it's on a different
+            // parent entity and it should be nullified by the new one.
+            key={id}
             autoAlign
             className={css.comboBox}
             onChange={x => {
@@ -150,6 +154,10 @@ export function BoundDropdown<T>(props: BoundDropdownProps<T>) {
     return (
         <Dropdown<T>
             id={id}
+            // This little shit seems to really need thrashing because otherwise
+            // it remembers the last selected value even when it's on a different
+            // parent entity and it should be nullified by the new one.
+            key={id}
             autoAlign
             // className={css.dropdown}
             onChange={x => {
@@ -184,10 +192,10 @@ export function BoundRadioGroup<T extends string | number>(props: BoundRadioGrou
 
     return (
         <RadioButtonGroup
-            // This little shit seems to really need thrashing
-            // with value change, because otherwise it doesn't behave
-            // like a good little controlled input.
-            key={`${id}-${value}`}
+            // This little shit seems to really need thrashing because otherwise
+            // it remembers the last selected value even when it's on a different
+            // parent entity and it should be nullified by the new one.
+            key={id}
             id={id}
             name={id}
             value={value ?? undefined}
@@ -216,6 +224,10 @@ export function BoundToggle(props: BoundToggleProps) {
     return (
         <Toggle
             id={id}
+            // This little shit seems to really need thrashing because otherwise
+            // it remembers the last selected value even when it's on a different
+            // parent entity and it should be nullified by the new one.
+            key={id}
             size="md"
             toggled={!!value}
             onToggle={onChange}

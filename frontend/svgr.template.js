@@ -6,32 +6,35 @@ ${imports}
 import { useEffect, useRef, createElement } from 'react';
 
 function ${componentName}(props) {
-  const host = useRef(null);
+    const ref = useRef(null);
   
-  useEffect(() => {
-    if (host.current && !host.current.shadowRoot) {
-      const shadow = host.current.attachShadow({ mode: 'open' });
-      const svg = host.current.firstElementChild;
-      const clone = svg.cloneNode(true);
-      clone.style.display = '';
-      shadow.appendChild(clone);
-      svg.style.display = 'none';
-    }
-  }, []);
+    useEffect(() => {
+        const host = ref.current;
+        if (host && !host.shadowRoot) {
+            const shadow = ref.current.attachShadow({ mode: 'open' });
+            const svgOld = ref.current.firstElementChild;
+
+            const svgNew = svgOld.cloneNode(true);
+            svgNew.style.display = '';
+
+            shadow.appendChild(svgNew);
+            ref.current.removeChild(svgOld);
+        }
+    }, []);
   
-  return createElement('div', {
-      ref: host,
-      style: {
-          display: 'inline-block', 
-          width: props.width,
-          height: props.height ?? props.width,
-          color: props.color,
-          ...props.style 
-      },
-      className: props.className 
-  }, ${jsx});
-};
+    return createElement('div', {
+        ref: ref,
+        style: {
+            display: 'inline-block', 
+            width: props.width,
+            height: props.height ?? props.width,
+            color: props.color,
+            ...props.style 
+        },
+        className: props.className 
+    }, ${jsx});
+}
 
 ${exports}
-  `;
+`;
 }

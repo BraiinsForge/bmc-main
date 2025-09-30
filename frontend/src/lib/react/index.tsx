@@ -21,6 +21,9 @@ export function setState<State>(
     return new Promise(resolve => self.setState(state as State, resolve));
 }
 
+export function stopEventPropagation(e: SyntheticEvent | Event) {
+    e.stopPropagation();
+}
 export function blockEvent(e: SyntheticEvent | Event) {
     e.preventDefault();
     e.stopPropagation();

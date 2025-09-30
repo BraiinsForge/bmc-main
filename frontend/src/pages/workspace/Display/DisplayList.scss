@@ -20,6 +20,14 @@
         .headerControls {
             justify-content: start;
             flex-flow: row wrap;
+
+            > *,
+            :global(.cds--tooltip),
+            :global(.cds--overflow-menu__wrapper),
+            :global(.cds--overflow-menu) {
+                min-width: 100%;
+                text-align: start !important;
+            }
         }
     }
 }
@@ -50,7 +58,11 @@
     position: relative;
 
     button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: start;
         flex-shrink: 0;
+
         block-size: to-rem(48px);
         inline-size: unset;
         padding-inline: mini-units(2);
@@ -61,13 +73,19 @@
 }
 
 .screenCycleButtonContent {
-    composes: inline horizontal center from 'styles/layout.scss';
+    composes: inline flex horizontal center from 'styles/layout.scss';
     gap: mini-units(1);
+
     white-space: nowrap;
+    font-size: var(--cds-body-compact-01-font-size, 0.875rem);
 
     // Without disabled pointer events the button
     // in which this is rendered does not work reliably
     pointer-events: none;
+
+    .chevron {
+        margin-inline-start: auto;
+    }
 }
 
 .screenCycleMenu {
