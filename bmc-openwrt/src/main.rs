@@ -58,7 +58,11 @@ async fn main() -> Result<()> {
         wifi_manager,
         "Braiins Deck".to_owned(),
     );
-    manager.init_wifi_ap().await?; // Has check on factory default already
+
+    // Has check on factory default already
+    if let Err(err) = manager.init_wifi_ap().await {
+        error!(?err, "Failed to setup init WiFi AP");
+    }
 
     bmc::entry::main(
         manager,
