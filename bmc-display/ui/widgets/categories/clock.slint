@@ -494,8 +494,8 @@ export component WidgetClockDigital inherits Rectangle {
         /// Alarm
         HorizontalLayout {
             alignment: center;
-            padding-bottom: 32px;
-            spacing: 6px;
+            padding-bottom: 20px;
+            spacing: 8px;
 
             if AlarmAdapter.next-alarm-is-defined:Image {
                 source: Images.alarm-bell;
@@ -505,6 +505,7 @@ export component WidgetClockDigital inherits Rectangle {
                 text: AlarmAdapter.next-alarm-is-defined ? datetime.is-24-format ? AlarmAdapter.next-alarm-time.time-24 : (AlarmAdapter.next-alarm-time.time-12 + " " + (AlarmAdapter.next-alarm-time.is_pm ? "PM" : "AM")) : "";
                 font-size: 40px;
                 font-weight: Theme.font.weight.regular;
+                vertical-alignment: center;
                 color: Palette.gray-60;
             }
         }
