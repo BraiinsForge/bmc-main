@@ -107,7 +107,7 @@ where
 
         system_upgrade_service
             .autoupgrade_init(autoupgrade_config)
-            .await?;
+            .await;
 
         let widget_tasks = WidgetTasks::new(
             display_controller.clone(),

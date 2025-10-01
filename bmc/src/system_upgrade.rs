@@ -314,10 +314,14 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         Ok(())
     }
 
-    pub async fn autoupgrade_init(&self, config: AutoUpgradeConfig) -> anyhow::Result<()> {
-        self.autoupgrade_reschedule(config).await?;
+    pub async fn autoupgrade_init(&self, config: AutoUpgradeConfig) {
+        if let Err(err) = self.autoupgrade_reschedule(config).await {
+            error!(?err, "Failed to reschedule autoupgrade");
+        }
+
         let self_clone = self.clone();
         let mut rx = self.autoupgrade.sender.subscribe();
+
         tokio::task::spawn(async move {
             loop {
                 if let Ok(()) = rx.recv().await {
@@ -325,7 +329,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 }
             }
         });
-        Ok(())
     }
 
     async fn autoupgrade_trigger(&self) -> anyhow::Result<()> {
