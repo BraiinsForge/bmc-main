@@ -71,9 +71,11 @@ struct LedIndicatorsState {
     clock_persist: Option<LedCommand>,
     device_persist: Option<LedCommand>,
     sys_persist: Option<LedCommand>,
+    scene_persist: Option<LedCommand>,
 }
 
 impl LedIndicatorsState {
+    #[expect(clippy::too_many_lines)]
     fn apply_event(
         &mut self,
         event: LedEvent,
@@ -125,6 +127,18 @@ impl LedIndicatorsState {
                     SOLID_PERIOD,
                 ));
                 self.wifi_temp = None;
+            }
+
+            // Preview of the scene
+            LedEvent::PreviewScene => {
+                self.scene_persist = Some(LedCommand::SetEffect(
+                    LedEffect::KnightRider(RGB_VIOLET60),
+                    LedEventPersistence::Persistent,
+                    KNIGHT_RIDER_PERIOD,
+                ));
+            }
+            LedEvent::PreviewSceneEnded => {
+                self.scene_persist = None;
             }
 
             // Price
@@ -198,6 +212,7 @@ impl LedIndicatorsState {
             || self.wifi_persist.is_some()
             || self.sys_persist.is_some()
             || self.price_persist.is_some()
+            || self.scene_persist.is_some()
     }
 
     fn select_persistent(&self, temp_present: bool) -> Option<LedCommand> {
@@ -218,6 +233,7 @@ impl LedIndicatorsState {
                 .or(self.clock_persist)
                 .or(self.wifi_persist)
                 .or(self.sys_persist)
+                .or(self.scene_persist)
                 .or(self.price_persist)
                 .or(Some(LedCommand::SetEffect(
                     LedEffect::None,
