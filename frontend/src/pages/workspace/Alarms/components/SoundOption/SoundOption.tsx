@@ -2,6 +2,7 @@ import { Component, type UIEvent } from 'react';
 import { abort } from '@/lib/abort';
 import { setState } from '@/lib/react';
 import { useIntl, type IntlShape } from 'react-intl';
+import { toast } from '@/lib/toast';
 
 // App
 import * as pb from '@/proto';
@@ -55,7 +56,7 @@ class View extends Component<Props, State> {
     #play = async (): Promise<void> => {
         const { signal } = this.abortPlaying.replace();
 
-        const { notify, device } = this.context;
+        const { device } = this.context;
         const { sound, intl } = this.props;
 
         try {
@@ -64,7 +65,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: `Failed to play the sound ${sound.name}` });
-            notify('error', msg);
+            toast.show('error', msg);
         } finally {
             this.setState({ isPlaying: false });
         }

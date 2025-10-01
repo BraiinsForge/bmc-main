@@ -1,0 +1,42 @@
+@use '@/styles/carbon' as *;
+
+.item {
+    composes: elevation-6dp from 'styles/shadows.scss';
+    composes: body-short-01 from 'styles/carbon/typography.scss';
+
+    :global {
+        .cds--toast-notification {
+            margin: 0 !important;
+
+            min-height: to-rem(68px);
+            width: max-content;
+            max-width: 80vw;
+
+            .cds--toast-notification__details {
+                white-space: pre-line;
+
+                &:not(:has(.cds--toast-notification__title)) {
+                    padding-top: mini-units(2);
+                }
+            }
+        }
+
+        .cds--toast-notification__details {
+            flex: 1;
+        }
+
+        // We're removing the title & subtitle requirement,
+        // so it needs to be hidden when it's empty
+        .cds--toast-notification__title:empty,
+        .cds--toast-notification__subtitle:empty {
+            display: none !important;
+        }
+
+        // The empty subtitle is used as spacer by default
+        // so we'll space-out the caption by it's margin
+        .cds--toast-notification__caption {
+            margin-top: to-rem(12px) !important;
+            padding-top: 0 !important;
+        }
+    }
+}

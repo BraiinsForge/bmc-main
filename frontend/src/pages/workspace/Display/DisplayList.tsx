@@ -6,6 +6,7 @@ import { type NavigateFunction, useNavigate } from 'react-router';
 
 // Libs
 import { getID } from './const';
+import { toast } from '@/lib/toast';
 import { listenDocumentEvent } from '@/lib/dom';
 import { assertUnreachable, assertUndefined } from '@/lib/ts';
 import { setState, Sized, stopEventPropagation } from '@/lib/react';
@@ -147,18 +148,13 @@ class View extends Component<Props, State> {
         pb.abort.all(this);
     }
 
-    #notifyError = (message: string, tag: string): void => {
-        this.context.notify('error', message, { id: tag, timeoutSeconds: 3 });
-    };
-    #notifySuccess = (message: string): void => {
-        this.context.notify('success', message, { timeoutSeconds: 3, id: 'display-success' });
-    };
+    #notifyError = (message: string) => toast.show('error', message);
+    #notifySuccess = (message: string) => toast.show('success', message);
     #notifySuccessDebounced = debounce(this.#notifySuccess, 1e3);
 
     private abortLoadMetadata = pb.abort.get();
     #loadMetadata = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const tag = 'display-metadata-load';
 
         try {
             const { signal } = this.abortLoadMetadata.replace();
@@ -183,7 +179,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load timezones!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         }
     };
 
@@ -392,7 +388,6 @@ class View extends Component<Props, State> {
     private abortPreview = pb.abort.get();
     #previewOpen = async (sceneId: string): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const tag = 'display-preview-lost';
 
         try {
             const { signal } = this.abortPreview.replace();
@@ -401,20 +396,16 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
             const msg: string = formatMessage({ defaultMessage: 'Display preview connection lost!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         }
     };
 
     #sceneFullscreenWidgetSubmit = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const tag = 'scene-fullscreen-widget-submit';
 
         const { openDialogKind, dialogStates } = this.state;
         if (!openDialogKind || !(openDialogKind in dialogStates)) {
-            this.#notifyError(
-                formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }),
-                tag,
-            );
+            this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }));
             return;
         }
 
@@ -422,11 +413,11 @@ class View extends Component<Props, State> {
         const scene = this.#getScene(data.sceneID);
 
         if (!scene) {
-            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: cannot find the scene value!' }), tag);
+            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: cannot find the scene value!' }));
             return;
         }
         if (scene.kind.case !== 'fullscreen') {
-            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: not a fullscreen widget, aborting!' }), tag);
+            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: not a fullscreen widget, aborting!' }));
             return;
         }
 
@@ -435,7 +426,6 @@ class View extends Component<Props, State> {
             case 'scene-select': {
                 this.#notifyError(
                     formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }),
-                    tag,
                 );
                 return;
             }
@@ -462,7 +452,7 @@ class View extends Component<Props, State> {
 
         const widget = scene.kind.value.widget;
         if (!widget) {
-            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: no widget value, aborting!' }), tag);
+            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: no widget value, aborting!' }));
             return;
         }
 
@@ -491,7 +481,7 @@ class View extends Component<Props, State> {
             if (global.length) {
                 let msg = pb.renderFieldErrorsAsList(global);
                 msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
-                this.#notifyError(msg, tag);
+                this.#notifyError(msg);
             }
         }
 
@@ -599,7 +589,6 @@ class View extends Component<Props, State> {
     ): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneMove.replace();
-        const tag = 'scene-move';
 
         try {
             // Optimistic update first
@@ -618,7 +607,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to move scene!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         }
 
         this.#loadScenesDebounced();
@@ -639,7 +628,6 @@ class View extends Component<Props, State> {
     #sceneListSetDurationSubmit = debounce(async (id: string, valueSeconds: undefined | number): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneSetDuration.replace();
-        const tag = 'scene-set-duration';
 
         try {
             const enabled: boolean = this.#getScene(id)?.enabled ?? true;
@@ -650,7 +638,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to update scene duration! Please try again!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         }
     }, 500);
 
@@ -658,7 +646,6 @@ class View extends Component<Props, State> {
     #sceneListSetEnabled = async (id: string, value: boolean): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneSetEnabled.replace();
-        const tag = 'scene-set-enabled';
 
         try {
             // Optimistic update first
@@ -683,7 +670,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to update scene state!!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         }
 
         this.#loadScenesDebounced();
@@ -693,7 +680,6 @@ class View extends Component<Props, State> {
     #sceneListDelete = async (id: string): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneDelete.replace();
-        const tag = 'scene-delete';
 
         try {
             // Optimistic update first
@@ -706,7 +692,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to delete scene!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         }
 
         this.#loadScenesDebounced();
@@ -716,7 +702,6 @@ class View extends Component<Props, State> {
     #sceneListClone = async (id: string): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneClone.replace();
-        const tag = 'scene-clone';
 
         try {
             // Optimistic update first
@@ -739,7 +724,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to clone scene!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         }
 
         this.#loadScenesDebounced();
@@ -856,7 +841,6 @@ class View extends Component<Props, State> {
     #cycleDialogSubmit = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { cycle } = this.state;
-        const tag = 'cycle-dialog-submit';
 
         try {
             const { signal } = this.abortCycleSubmit.replace();
@@ -876,7 +860,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to update scene cycling settings!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         } finally {
             this.#loadScenesDebounced();
         }

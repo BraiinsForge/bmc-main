@@ -10,6 +10,7 @@ import { getID } from './const';
 import { setState } from '@/lib/react';
 import type { FormPropsToLocalState } from '@/lib/form';
 import { assertUnreachable, assertUndefined } from '@/lib/ts';
+import { toast } from '@/lib/toast';
 
 // App
 import * as pb from '@/proto';
@@ -101,11 +102,11 @@ class View extends Component<Props, State> {
     #txt = {
         title: this.props.intl.formatMessage({ defaultMessage: 'Edit Combined Scene' }),
     };
-    #notifyError = (msg: string, tag: string): void => {
-        this.context.notify('error', msg, { id: tag, timeoutSeconds: 3 });
+    #notifyError = (msg: string): void => {
+        toast.show('error', msg);
     };
     #notifySuccess = (msg: string): void => {
-        this.context.notify('success', msg, { id: 'combined-widget-success', timeoutSeconds: 3 });
+        toast.show('success', msg);
     };
 
     componentDidMount() {
@@ -133,7 +134,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to load timezones!' });
-            this.#notifyError(msg, 'combined-display-metadata-load');
+            this.#notifyError(msg);
         }
     };
 
@@ -153,7 +154,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to load scene!' });
-            this.#notifyError(msg, 'load-scene-error');
+            this.#notifyError(msg);
         }
     };
     #loadSceneDebounced = debounce(this.#loadScene, 200);
@@ -170,7 +171,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
 
             const msg: string = intl.formatMessage({ defaultMessage: 'Display preview connection lost!' });
-            this.#notifyError(msg, 'combined-display-preview-lost');
+            this.#notifyError(msg);
         }
     };
 
@@ -179,11 +180,13 @@ class View extends Component<Props, State> {
         target: pb.Widget,
     ): Promise<void> => {
         const { sceneId } = this.props;
+        const { formatMessage } = this.props.intl;
         const scene = cloneDeep(this.state.scene);
 
-        const tag: string = 'display-combined-widget-move';
-        if (scene?.kind.case !== 'combined')
-            return this.#notifyError('Invalid state, cannot move widget without combined scene!', tag);
+        if (scene?.kind.case !== 'combined') {
+            const msg = formatMessage({ defaultMessage: 'Invalid state, cannot move widget without combined scene!' });
+            return this.#notifyError(msg);
+        }
         const widgets = scene.kind.value.widgets;
 
         // Widget keeps all of its original attributes,
@@ -195,7 +198,8 @@ class View extends Component<Props, State> {
 
         // If we did not find an insertion slot,
         // there is no point in continuing…
-        if (!canonicalInsertPosition) return this.#notifyError('Invalid state, widget seems not to fit!', tag);
+        if (!canonicalInsertPosition)
+            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, widget seems not to fit!' }));
 
         // otherwise update the new widget state with canonical position
         // and do an optimistic update…
@@ -230,8 +234,9 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const msg: string = pb.collectAllErrorsAsFormattedList($) ?? 'Failed to update widget!';
-            this.#notifyError(msg, 'display-combined-widget-move');
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
+            this.#notifyError(msg);
         }
 
         this.#loadSceneDebounced();
@@ -240,16 +245,22 @@ class View extends Component<Props, State> {
         this.setState({ openDialogKind: 'scene-select', addPosition: position });
     };
     #handleEdit: Comp.CombinedSceneViewProps['onWidgetEdit'] = (id: string): void => {
+        const { formatMessage } = this.props.intl;
         const scene = this.state.scene;
-        const tag: string = 'display-combined-widget-edit';
         if (scene?.kind.case !== 'combined')
-            return this.#notifyError('Invalid state, cannot edit widget without combined scene!', tag);
+            return this.#notifyError(
+                formatMessage({ defaultMessage: 'Invalid state, cannot edit widget without combined scene!' }),
+            );
 
         const widget = scene.kind.value.widgets.find(x => x.id === id);
-        if (!widget) return this.#notifyError('Invalid state, widget data not found!', tag);
+        if (!widget)
+            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, widget data not found!' }));
 
         const position = widget.position;
-        if (!position) return this.#notifyError('Cannot continute editing, widget has no position!', tag);
+        if (!position)
+            return this.#notifyError(
+                formatMessage({ defaultMessage: 'Cannot continute editing, widget has no position!' }),
+            );
 
         const wkind = widget.kind;
         switch (wkind?.value?.case) {
@@ -368,12 +379,15 @@ class View extends Component<Props, State> {
     };
     #handleWidgetAdd = async (kind: Comp.SceneKind): Promise<void> => {
         const { sceneId } = this.props;
+        const { formatMessage } = this.props.intl;
         const { openDialogKind, addPosition } = this.state;
 
-        const tag: string = 'display-widget-add';
-        if (kind === 'combined') return this.#notifyError("Can't add a combined scene, aborting!", tag);
-        if (!addPosition) return this.#notifyError("Can't add widget without position, aborting!", tag);
-        if (openDialogKind !== 'scene-select') return this.#notifyError("Can't add widget without open dialog!", tag);
+        if (kind === 'combined')
+            return this.#notifyError(formatMessage({ defaultMessage: "Can't add a combined scene, aborting!" }));
+        if (!addPosition)
+            return this.#notifyError(formatMessage({ defaultMessage: "Can't add widget without position, aborting!" }));
+        if (openDialogKind !== 'scene-select')
+            return this.#notifyError(formatMessage({ defaultMessage: "Can't add widget without open dialog!" }));
         const size = pb.WidgetSize.SMALL;
 
         // Here we have to call the widget RPC just with widget kind, size and position.
@@ -539,13 +553,15 @@ class View extends Component<Props, State> {
 
     #submit = async (): Promise<void> => {
         const { sceneId } = this.props;
+        const { formatMessage } = this.props.intl;
         const { scene, openDialogKind, dialogStates } = this.state;
 
-        const tag: string = 'combined-widget-submit';
-        if (scene?.kind.case !== 'combined') return this.#notifyError('Cannot submit without combined scene!', tag);
+        if (scene?.kind.case !== 'combined')
+            return this.#notifyError(formatMessage({ defaultMessage: 'Cannot submit without combined scene!' }));
 
         const widgets = scene.kind.value.widgets;
-        if (!widgets) return this.#notifyError('Scene edit: no widget data, aborting!', tag);
+        if (!widgets)
+            return this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: no widget data, aborting!' }));
 
         let id: pb.Widget['id'];
         let size: pb.WidgetSize = pb.WidgetSize.SMALL;
@@ -554,7 +570,9 @@ class View extends Component<Props, State> {
         switch (openDialogKind) {
             case null:
             case 'scene-select':
-                return this.#notifyError('Invalid state, cannot submit without open dialog!', tag);
+                return this.#notifyError(
+                    formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }),
+                );
 
             case 'clock':
                 id = dialogStates.clock.widgetID;
@@ -589,7 +607,8 @@ class View extends Component<Props, State> {
         }
 
         const canonicalInsertPosition = fn.getWidgetInsertionSlot(widgets, { id, size, position });
-        if (!canonicalInsertPosition) return this.#notifyError('Invalid state, widget seems not to fit!', tag);
+        if (!canonicalInsertPosition)
+            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, widget seems not to fit!' }));
 
         const payload = pb.create(pb.UpdateWidgetRequestSchema, {
             id,
@@ -600,7 +619,7 @@ class View extends Component<Props, State> {
         });
         try {
             await pb.rpc.scenes.updateWidget(payload);
-            this.#notifySuccess('Widget updated!');
+            this.#notifySuccess(formatMessage({ defaultMessage: 'Widget updated!' }));
         } catch ($) {
             const formErrors = pb.parseFormErrors($, ['sceneId', 'position', 'size', 'kind']);
             this.setState(s => ({

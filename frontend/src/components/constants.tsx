@@ -2,7 +2,10 @@ import type { MouseEvent, KeyboardEvent, SyntheticEvent, HTMLAttributes } from '
 
 function handleSpaceEnter(event: Maybe<KeyboardEvent>, callback: (e: KeyboardEvent) => void) {
     if (!event?.key) return;
-    if (event.key === 'Enter' || event.key === ' ') callback(event);
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        callback(event);
+    }
 }
 
 const checkbox = (checked: boolean | 'mixed', handler: AnyFunction) => ({

@@ -7,6 +7,7 @@ import { type Location, useLocation } from 'react-router';
 // Lib
 import { setState } from '@/lib/react';
 import type { iField } from '@/lib/form';
+import { toast } from '@/lib/toast';
 import { assertUnreachable } from '@/lib/ts';
 import { getTimestamp, validateTime } from '@/lib/time';
 import { unloadGuard, Ping, type PingCallback } from '@/lib/dom';
@@ -217,12 +218,11 @@ class View extends Component<Props, State> {
         await Promise.allSettled(q);
     };
 
-    // Forcing the external ID usage ensures that we won't spam the user with repeated notifications.
     #notifySuccess = (message: string): void => {
-        this.context.notify('success', message, { id: 'settings-saved', timeoutSeconds: 3 });
+        toast.show('success', message);
     };
-    #notifyError = (message: string, tag: string): void => {
-        this.context.notify('error', message, { id: tag, timeoutSeconds: 3 });
+    #notifyError = (message: string): void => {
+        toast.show('error', message);
     };
 
     private fetchSystemInfoAbort = pb.abort.get();
@@ -310,7 +310,7 @@ class View extends Component<Props, State> {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load general settings!' });
 
-            this.#notifyError(msg, 'general-settings-load-error');
+            this.#notifyError(msg);
         }
     };
 
@@ -447,7 +447,7 @@ class View extends Component<Props, State> {
 
             let message = pb.collectAllErrorsAsFormattedList($);
             message ||= formatMessage({ defaultMessage: 'Failed to save DateFormat' });
-            this.#notifyError(message, 'general-set-date-format');
+            this.#notifyError(message);
         } finally {
             await this.#generalFetch();
             this.#setField('dateFormat', s => getFieldStateDefault(s.value));
@@ -472,7 +472,7 @@ class View extends Component<Props, State> {
 
             let message = pb.collectAllErrorsAsFormattedList($);
             message ||= formatMessage({ defaultMessage: 'Failed to save firs week day' });
-            this.#notifyError(message, 'general-set-firs-week-day');
+            this.#notifyError(message);
         } finally {
             await this.#generalFetch();
             this.#setField('firstDayOfWeek', s => getFieldStateDefault(s.value));
@@ -522,7 +522,7 @@ class View extends Component<Props, State> {
 
             let message = pb.collectAllErrorsAsFormattedList($);
             message ||= formatMessage({ defaultMessage: 'Failed to save NumberFormat' });
-            this.#notifyError(message, 'general-set-number-format');
+            this.#notifyError(message);
         } finally {
             await this.#generalFetch();
             this.#setField('numberFormat', s => getFieldStateDefault(s.value));
@@ -568,7 +568,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Unknown error!' });
-            this.#notifyError(msg, 'factory-reset-error');
+            this.#notifyError(msg);
         }
     };
     #generalSystemReboot = async (): Promise<void> => {
@@ -582,7 +582,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Unknown error!' });
-            this.#notifyError(msg, 'system-reboot-error');
+            this.#notifyError(msg);
         }
     };
 
@@ -649,7 +649,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
             const msg: string = formatMessage({ defaultMessage: 'Failed to load display settings!' });
-            this.#notifyError(msg, 'display-settings-load-error');
+            this.#notifyError(msg);
         }
     };
 
@@ -874,7 +874,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load sound settings!' });
-            this.#notifyError(msg, 'sound-settings-load-error');
+            this.#notifyError(msg);
         }
     };
 
@@ -896,7 +896,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
-            this.#notifyError(msg, 'sound-volume-save-error');
+            this.#notifyError(msg);
         } finally {
             await this.#soundLightFetch();
             this.#setField('volume', s => getFieldStateDefault(s.value));
@@ -920,7 +920,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the night mode sound volume!' });
-            this.#notifyError(msg, 'sound-volume-save-error');
+            this.#notifyError(msg);
         } finally {
             await this.#soundLightFetch();
             this.#setField('volumeNightmode', s => getFieldStateDefault(s.value));
@@ -944,7 +944,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
-            this.#notifyError(msg, 'sound-volume-save-error');
+            this.#notifyError(msg);
         } finally {
             this.#soundLightFetch();
             this.#setField('enableLedNotifications', s => getFieldStateDefault(s.value));
@@ -1052,7 +1052,7 @@ class View extends Component<Props, State> {
 
             const errors = pb.collectAllErrors($);
             const message = formatMessage({ defaultMessage: 'Failed to check for upgrade!' });
-            this.#notifyError(message, 'upgrade-check-error');
+            this.#notifyError(message);
 
             this.setState(s => ({
                 data: { ...s.data, upgradeInfo: null },
@@ -1122,7 +1122,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             const error = pb.collectAllErrorsAsFormattedList($);
             const message = formatMessage({ defaultMessage: 'Unexpected error: {error}' }, { error });
-            this.#notifyError(message, 'upgrade-download-error');
+            this.#notifyError(message);
         }
     };
 

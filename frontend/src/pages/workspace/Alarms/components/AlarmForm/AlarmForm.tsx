@@ -1,6 +1,7 @@
 import { Component, Fragment } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { getID, Form, type iField } from '@/lib/form';
+import { toast } from '@/lib/toast';
 
 // App
 import * as pb from '@/proto';
@@ -69,7 +70,7 @@ class View extends Component<Props, State> {
 
     private abortPlaying = pb.abort.get();
     #playSelectedSound = async (): Promise<void> => {
-        const { notify, device } = this.context;
+        const { device } = this.context;
         const { sound, intl } = this.props;
 
         // In both play and stop case, we need to
@@ -92,7 +93,7 @@ class View extends Component<Props, State> {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to play the sound!' });
 
-            notify('error', msg as string);
+            toast.show('error', msg);
         }
 
         this.setState({ isPlaying: false });
@@ -155,6 +156,7 @@ class View extends Component<Props, State> {
                                     kind={active ? 'primary' : 'secondary'}
                                     children={label}
                                     onClick={() => this.#toggleDay(x)}
+                                    blurOnClick={false}
                                 />
                             );
                         })}

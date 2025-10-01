@@ -8,6 +8,7 @@ import { type Location, useLocation } from 'react-router';
 // Lib
 import { setState } from '@/lib/react';
 import { assertUnreachable } from '@/lib/ts';
+import { toast } from '@/lib/toast';
 
 // App
 import AppContext, { type AppContextType } from '@/context';
@@ -225,7 +226,6 @@ class View extends Component<Props, State> {
     };
     private wifiConnectAbort = pb.abort.get();
     #wifiConnect = async (ssid: string, encryptionType: pb.EncryptionType, password: string): Promise<boolean> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
         const { signal } = this.wifiConnectAbort.replace();
 
@@ -239,7 +239,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Wifi connection: Unknown error!' });
-            notify('error', msg);
+            toast.show('error', msg);
             return false;
         }
     };
@@ -248,7 +248,6 @@ class View extends Component<Props, State> {
     private saveAbort = pb.abort.get();
     #save = async (): Promise<void> => {
         const { confSaved, confTemp } = this.state;
-        const { notify } = this.context;
 
         const hasUnsavedChanges: boolean = this.#hasUnsavedChanges();
         if (!hasUnsavedChanges) return;
@@ -282,7 +281,7 @@ class View extends Component<Props, State> {
             }
 
             await pb.rpc.net.setNetworkConfig(payload, { signal });
-            notify('success', 'Network configuration saved!');
+            toast.show('success', 'Network configuration saved!');
             await this.#load();
         } catch ($) {
             if (pb.abort.is($)) return;

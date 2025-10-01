@@ -13,7 +13,6 @@ export * from './Link';
 export * from './Loading';
 export * from './Modal';
 export * from './ModalCustom';
-export * from './Notifications';
 export * from './Overlay';
 export * from './Progressbar';
 export * from './RadioButton';

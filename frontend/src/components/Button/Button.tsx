@@ -15,6 +15,7 @@ export type ButtonProps = Omit<ButtonBaseProps, 'href' | 'target' | 'rel' | 'kin
     kind?: ButtonBaseProps['kind'];
     icon?: ComponentType;
     onClick?(e: SyntheticEvent): void;
+    blurOnClick?: boolean;
 
     children?: ReactNode;
     title?: string;
@@ -32,6 +33,7 @@ function ButtonComponent(props: ButtonProps & { innerRef: Ref<HTMLButtonElement>
         children: childrenRaw,
         title,
         onClick,
+        blurOnClick = true,
         className,
         innerRef,
         loading,
@@ -77,7 +79,7 @@ function ButtonComponent(props: ButtonProps & { innerRef: Ref<HTMLButtonElement>
         });
     }
 
-    if (onClick) Object.assign(targetProps, ARIA.button(onClick, true));
+    if (onClick) Object.assign(targetProps, ARIA.button(onClick, blurOnClick));
     if (!targetProps.iconDescription) targetProps.iconDescription = '';
     if (loading) {
         targetProps.disabled = true;

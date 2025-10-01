@@ -5,6 +5,7 @@ import { useIntl, type IntlShape, FormattedMessage } from 'react-intl';
 
 import { getID } from '@/lib/form';
 import { setState } from '@/lib/react';
+import { toast } from '@/lib/toast';
 
 // App
 import * as pb from '@/proto';
@@ -69,7 +70,6 @@ export class View extends Component<Props, State> {
 
     private abortLoad = pb.abort.get();
     #load = async () => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
 
         const { signal } = this.abortLoad.replace();
@@ -89,7 +89,7 @@ export class View extends Component<Props, State> {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load data for alarms!' });
 
-            notify('error', msg, { id: 'alarms-load-error', timeoutSeconds: 3 });
+            toast.show('error', msg);
         } finally {
             this.setState({ isLoading: false });
         }
@@ -146,12 +146,11 @@ export class View extends Component<Props, State> {
 
     private abortAddSubmit = pb.abort.get();
     #alarmDialogSubmit = async (): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
         const { openDialog, alarms } = this.state;
 
         if (openDialog?.key !== 'alarm') {
-            notify(
+            toast.show(
                 'error',
                 formatMessage({
                     defaultMessage: "Invalid state, can't create alarm when create dialog is not open!",
@@ -196,10 +195,7 @@ export class View extends Component<Props, State> {
                     }),
                     { signal },
                 );
-                notify('success', formatMessage({ defaultMessage: 'Alarm has been updated' }), {
-                    id: 'alarm-add-success',
-                    timeoutSeconds: 1.5,
-                });
+                toast.show('success', formatMessage({ defaultMessage: 'Alarm has been updated' }));
             }
 
             // Create
@@ -215,10 +211,7 @@ export class View extends Component<Props, State> {
                     }),
                     { signal },
                 );
-                notify('success', formatMessage({ defaultMessage: 'Alarm has been added' }), {
-                    id: 'alarm-add-success',
-                    timeoutSeconds: 1.5,
-                });
+                toast.show('success', formatMessage({ defaultMessage: 'Alarm has been added' }));
             }
 
             this.#alarmDialogClose();
@@ -394,7 +387,6 @@ export class View extends Component<Props, State> {
         });
     };
     #onToggle = async (id: pb.Alarm['id'], enabled: boolean): Promise<void> => {
-        const { notify } = this.context;
         const { formatMessage } = this.props.intl;
 
         try {
@@ -403,16 +395,10 @@ export class View extends Component<Props, State> {
 
             // Then submit to API
             await pb.rpc.alarm.setAlarmEnabled({ id, enabled });
-            notify('success', formatMessage({ defaultMessage: 'Alarm has been successfully toggled.' }), {
-                id: 'alarm-toggle-success',
-                timeoutSeconds: 1.5,
-            });
+            toast.show('success', formatMessage({ defaultMessage: 'Alarm has been successfully toggled.' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            notify('error', formatMessage({ defaultMessage: 'Failed to toggle alarm!' }), {
-                id: 'alarm-toggle-error',
-                timeoutSeconds: 3,
-            });
+            toast.show('error', formatMessage({ defaultMessage: 'Failed to toggle alarm!' }));
         } finally {
             // Always reload data to make sure
             // we have the latest state
@@ -420,7 +406,7 @@ export class View extends Component<Props, State> {
         }
     };
     #onDelete = async (id: pb.Alarm['id']): Promise<void> => {
-        const { confirm, notify } = this.context;
+        const { confirm } = this.context;
         const { intl } = this.props;
         const { alarms } = this.state;
 
@@ -472,15 +458,12 @@ export class View extends Component<Props, State> {
             // Then submit to API
             await pb.rpc.alarm.deleteAlarm({ value: id });
             this.#alarmDialogClose();
-            notify('success', intl.formatMessage({ defaultMessage: 'Alarm has been deleted.' }), {
-                id: 'alarm-delete-success',
-                timeoutSeconds: 1.5,
-            });
+            toast.show('success', intl.formatMessage({ defaultMessage: 'Alarm has been deleted.' }));
         } catch ($) {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to delete alarm!' });
-            notify('error', msg, { id: 'alarm-delete-error', timeoutSeconds: 3 });
+            toast.show('error', msg);
         } finally {
             // Always reload data to make sure
             // we have the latest state

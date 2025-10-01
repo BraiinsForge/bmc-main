@@ -9,10 +9,10 @@ import { useNavigate, type NavigateFunction } from 'react-router';
 import { setState } from '@/lib/react';
 import { assertUnreachable } from '@/lib/ts';
 import type { FormPropsToLocalState } from '@/lib/form';
+import { toast } from '@/lib/toast';
 
 // App
 import * as pb from '@/proto';
-import * as gen from '@/mocks';
 import { URLS } from '@/constants';
 import { getID } from './const';
 import AppContext, { type AppContextType } from '@/context';
@@ -49,8 +49,8 @@ function getInitialDialogStates(): DialogStates {
         braiinsPool: {
             errors: null,
             values: {
-                name: gen.lorem.generateWords(2),
-                apiKey: gen.uuid(),
+                name: '',
+                apiKey: '',
             },
         },
     };
@@ -94,17 +94,15 @@ class View extends Component<Props, State> {
         };
     }
     #notifySuccess = (text: string): void => {
-        this.context.notify('success', text, { id: 'accounts-success', timeoutSeconds: 3 });
+        toast.show('success', text);
     };
-    #notifyError = (text: string, tag: string): void => {
-        this.context.notify('error', text, { id: tag, timeoutSeconds: 3 });
+    #notifyError = (text: string): void => {
+        toast.show('error', text);
     };
 
     private fetchAccountsAbort = pb.abort.get();
     #fetchAccounts = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-
-        const tag = 'accounts-fetch';
         await setState(this, { isLoading: true });
 
         try {
@@ -115,7 +113,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to fetch accounts!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         } finally {
             this.setState({ isLoading: false });
         }
@@ -207,7 +205,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load account creation metadata!' });
-            this.#notifyError(msg, 'add-error');
+            this.#notifyError(msg);
         }
     };
 
@@ -216,12 +214,8 @@ class View extends Component<Props, State> {
         const { formatMessage } = this.props.intl;
         const { openDialog, dialogStates } = this.state;
 
-        const tag = 'add-acc-submit-new';
         if (openDialog?.kind !== 'create') {
-            return this.#notifyError(
-                formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }),
-                tag,
-            );
+            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }));
         }
 
         await setState(this, { isSaving: true });
@@ -280,12 +274,8 @@ class View extends Component<Props, State> {
         const { formatMessage } = this.props.intl;
         const { openDialog, dialogStates } = this.state;
 
-        const tag = 'add-acc-submit-edit';
         if (openDialog?.kind !== 'edit') {
-            return this.#notifyError(
-                formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }),
-                tag,
-            );
+            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }));
         }
 
         await setState(this, { isSaving: true });
@@ -441,7 +431,6 @@ class View extends Component<Props, State> {
             navigate,
         } = this.props;
         const { confirm } = this.context;
-        const tag = 'acc-delete';
 
         const confirmStringTitle: string = formatMessage({ defaultMessage: 'Delete Account' });
         const confirmStringCancel: string = formatMessage({ defaultMessage: 'Cancel' });
@@ -489,7 +478,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Account deletion failed!' });
-            this.#notifyError(msg, tag);
+            this.#notifyError(msg);
         } finally {
             this.#fetchAccounts();
         }

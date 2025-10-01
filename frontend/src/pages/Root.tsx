@@ -4,21 +4,16 @@ import { Outlet, useNavigate, type NavigateFunction, useLocation } from 'react-r
 
 // Libs
 import { setState } from '@/lib/react';
+import { Toaster } from '@/lib/toast';
 
 // App
 import * as pb from '@/proto';
 import { URLS } from '@/constants';
 import { useStore } from '@/store';
-import AppContext, {
-    getAppContextDefault,
-    type AppContextType,
-    type NotifyFunction,
-    type NotificationExtra,
-    type ConfirmationDescriptor,
-} from '@/context';
+import AppContext, { getAppContextDefault, type AppContextType, type ConfirmationDescriptor } from '@/context';
 
 // Components
-import { Modal, Notifications, type NotificationItem } from '@/components';
+import { Modal } from '@/components';
 
 // Styles
 import '@/styles/carbon/carbon.global.scss';
@@ -35,14 +30,8 @@ interface Confirmation extends ConfirmationDescriptor {
     confirm(): void;
     cancel(): void;
 }
-interface Notification {
-    id: string | number;
-    externalID: null | NotificationExtra['id'];
-    data: NotificationItem;
-}
 
 interface State {
-    notifications: Notification[];
     confirmation: null | Confirmation;
     appContextValue: AppContextType;
 }
@@ -51,15 +40,8 @@ class View extends Component<Props, State> {
     constructor(props: Props) {
         super(props);
         this.state = {
-            notifications: [],
             confirmation: null,
             appContextValue: Object.assign({}, getAppContextDefault(), {
-                notify: Object.assign(
-                    ((type, message, extra) => this.#notify(type, message, extra)) as NotifyFunction,
-                    {
-                        clear: this.#notificationClearExternal,
-                    },
-                ) as AppContextType['notify'],
                 confirm: (conf => {
                     return this.#confirm({
                         size: conf.size,
@@ -175,45 +157,6 @@ class View extends Component<Props, State> {
         });
     };
 
-    //
-    // Notifications
-    //
-
-    #notificationLastID: number = 0;
-    #notificationClearInternal = (id: Notification['id']): void => {
-        this.setState({ notifications: this.state.notifications.filter(x => x.id !== id) });
-    };
-    #notificationClearExternal = (externalID?: NotificationExtra['id']): void => {
-        this.setState(s => ({
-            notifications: externalID != null ? s.notifications.filter(x => x.externalID !== externalID) : [],
-        }));
-    };
-    #notificationClearExternalAll = (): void => this.#notificationClearExternal();
-    #notify: NotifyFunction = (type, text, extra): void => {
-        const externalID = extra?.id ?? null;
-        const timeoutSeconds = extra?.timeoutSeconds;
-
-        this.#notificationLastID += +1;
-        const id: number = this.#notificationLastID;
-
-        let currentList = this.state.notifications.slice(0);
-        const data: NotificationItem = { id, kind: type, content: text, counter: null };
-
-        if (externalID != null) {
-            const existingItem = currentList.find(x => x.externalID === externalID);
-            currentList = currentList.filter(x => x.externalID !== externalID);
-            if (existingItem) data.counter = (existingItem.data.counter ?? 0) + 1;
-        }
-
-        this.setState({
-            notifications: [...currentList, { id, externalID, data }],
-        });
-
-        if (timeoutSeconds != null && Number.isFinite(timeoutSeconds)) {
-            setTimeout(() => this.#notificationClearInternal(id), timeoutSeconds * 3e3);
-        }
-    };
-
     private soundPlayAbort = pb.abort.get();
     #soundSetPlaying = (sound: null | pb.SoundInfo): Promise<void> => {
         return setState(this, s => ({
@@ -256,16 +199,11 @@ class View extends Component<Props, State> {
     };
 
     render() {
-        const { notifications, appContextValue } = this.state;
+        const { appContextValue } = this.state;
 
         return (
             <AppContext value={appContextValue}>
-                <Notifications
-                    top={12}
-                    items={notifications.map(x => x.data)}
-                    onHide={x => this.#notificationClearInternal(x.id)}
-                    onClear={this.#notificationClearExternalAll}
-                />
+                <Toaster position="top-right" visibleToasts={3} duration={4} />
 
                 {this.#confirmRender()}
 
