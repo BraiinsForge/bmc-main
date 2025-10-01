@@ -46,12 +46,12 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         scheduler: JobScheduler,
         display_controller: DisplayController,
         sound_controller: SoundController,
-    ) -> anyhow::Result<Self> {
+    ) -> Self {
         let backlight_controller =
             DisplayBacklightController::new(config_handle.clone(), backlight_driver);
 
         let night_mode_controller =
-            NightModeController::init(config_handle, scheduler, timezone_receiver).await?;
+            NightModeController::init(config_handle, scheduler, timezone_receiver).await;
 
         let brightness_modified = Arc::new(Notify::new());
 
@@ -74,13 +74,13 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             sound_volume_modified.clone(),
         ));
 
-        Ok(Self {
+        Self {
             night_mode_controller,
             backlight_controller,
             brightness_modified,
             sound_controller,
             sound_volume_modified,
-        })
+        }
     }
 
     async fn set_current_brightness(

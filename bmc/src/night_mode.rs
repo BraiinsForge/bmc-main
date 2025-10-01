@@ -9,7 +9,7 @@ use bmc_scheduler::scheduler::Task;
 use bmc_shared_time::time::Timezone;
 use chrono::NaiveTime;
 use tokio::sync::{RwLock, watch};
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::config::{ConfigHandle, NightModeConfig};
 
@@ -28,7 +28,7 @@ impl NightModeController {
         config_handle: Arc<RwLock<ConfigHandle>>,
         scheduler: JobScheduler,
         timezone_receiver: watch::Receiver<Timezone>,
-    ) -> anyhow::Result<Self> {
+    ) -> Self {
         let night_mode = config_handle.read().await.night_mode();
         let timezone = timezone_receiver.borrow().clone();
         let is_active = night_mode.is_active(&timezone);
@@ -47,9 +47,11 @@ impl NightModeController {
             is_active_sender,
         };
 
-        this.schedule_jobs(&night_mode).await?;
+        if let Err(err) = this.schedule_jobs(&night_mode).await {
+            error!(?err, "Failed to schedule night-mode jobs");
+        }
 
-        Ok(this)
+        this
     }
 
     async fn update_is_active_on_timezone_change(

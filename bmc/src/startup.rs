@@ -153,7 +153,7 @@ where
             display_controller.clone(),
             sound_controller.clone(),
         )
-        .await?;
+        .await;
 
         let display_tasks = DisplayTasks::new(
             display_controller.clone(),
