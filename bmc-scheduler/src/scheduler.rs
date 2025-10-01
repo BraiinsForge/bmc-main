@@ -109,6 +109,7 @@ fn spawn_timezone_listener(
             debug!("Updating jobs {}", jobs.len());
 
             let scheduler = scheduler.clone().lock_owned().await;
+            let mut storage = storage.write().await;
             for mut job_details in jobs {
                 let job_id = job_details.job_id;
                 debug!("job_id before update: {:?}", job_id);
@@ -116,6 +117,7 @@ fn spawn_timezone_listener(
                     error!("Error removing job: {:?}", e);
                     continue;
                 }
+                storage.remove(&job_id);
 
                 let Ok(mut job_data) = job_details.job.job_data() else {
                     error!("Error getting job data: {:?}", job_details.job_id);
@@ -135,7 +137,7 @@ fn spawn_timezone_listener(
                     error!("Error adding job: {:?}", job_details.job_id);
                     continue;
                 };
-                storage.clone().write().await.insert(job_id, job_details);
+                storage.insert(job_id, job_details);
                 debug!("job_id after update: {:?}", job_id);
             }
         }
