@@ -143,7 +143,7 @@ where
             alarm_bus.clone(),
             manager.watch_timezone_updates(),
         )
-        .await?;
+        .await;
 
         let system_manager = SystemManager::init(
             config_handle.clone(),

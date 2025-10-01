@@ -32,7 +32,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -593,7 +593,7 @@ impl AlarmController {
         display_controller: DisplayController,
         alarm_bus: AlarmBus,
         timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
-    ) -> anyhow::Result<Self> {
+    ) -> Self {
         let scheduler = AlarmScheduler::init(
             scheduler,
             alarm_bus.clone(),
@@ -610,7 +610,10 @@ impl AlarmController {
             .into_iter()
             .filter(|alarm| alarm.enabled)
         {
-            scheduler.schedule(alarm_data).await?;
+            let alarm_id = alarm_data.id.clone();
+            if let Err(err) = scheduler.schedule(alarm_data).await {
+                error!(%alarm_id, ?err, "Failed to schedule alarm job");
+            }
         }
 
         let controller = Self {
@@ -635,7 +638,7 @@ impl AlarmController {
             }
         });
 
-        Ok(controller)
+        controller
     }
 
     pub(crate) async fn alarms(&self) -> Vec<AlarmData> {
