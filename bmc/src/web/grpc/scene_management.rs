@@ -1,6 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::BmcManager;
 use crate::config::ConfigHandle;
+use crate::led::LedController;
 use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
@@ -11,6 +13,7 @@ use bmc_display::data::{
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
+use bmc_led::data::LedEvent;
 use bmc_shared_time::time::Timezone;
 use futures::StreamExt;
 use futures::stream::BoxStream;
@@ -28,30 +31,35 @@ use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
 use tooling_std::attach_data::AttachData;
 use tracing::error;
 
-pub(crate) struct SceneManagementService {
+pub(crate) struct SceneManagementService<T: BmcManager> {
     config_handle: Arc<RwLock<ConfigHandle>>,
     display_controller: DisplayController,
     widget_tasks: WidgetTasks,
     preview_scene_id: Arc<Mutex<Option<SceneId>>>,
+    led_controller: LedController<T>,
 }
 
-impl SceneManagementService {
+impl<T: BmcManager> SceneManagementService<T> {
     pub(crate) fn new(
         config_handle: Arc<RwLock<ConfigHandle>>,
         display_controller: DisplayController,
         widget_tasks: WidgetTasks,
+        led_controller: LedController<T>,
     ) -> Self {
         Self {
             config_handle,
             display_controller,
             widget_tasks,
             preview_scene_id: Arc::default(),
+            led_controller,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl web::scene_management_service_server::SceneManagementService for SceneManagementService {
+impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
+    for SceneManagementService<T>
+{
     async fn get_scenes(
         &self,
         _request: Request<()>,
@@ -533,17 +541,20 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
         };
 
         self.display_controller.set_preview_scene(Some(id.clone()));
+        self.led_controller.push_event(LedEvent::PreviewScene);
 
-        struct DisableScenePreviewOnDrop {
+        struct DisableScenePreviewOnDrop<T: BmcManager> {
             display_controller: DisplayController,
             widget_tasks: WidgetTasks,
             preview_scene_id: Arc<Mutex<Option<SceneId>>>,
             started_temporary_widget_tasks: bool,
+            led_controller: LedController<T>,
         }
 
-        impl Drop for DisableScenePreviewOnDrop {
+        impl<T: BmcManager> Drop for DisableScenePreviewOnDrop<T> {
             fn drop(&mut self) {
                 self.display_controller.set_preview_scene(None);
+                self.led_controller.push_event(LedEvent::PreviewSceneEnded);
 
                 tokio::spawn({
                     let preview_scene_id = self.preview_scene_id.clone();
@@ -573,6 +584,7 @@ impl web::scene_management_service_server::SceneManagementService for SceneManag
                 widget_tasks: self.widget_tasks.clone(),
                 preview_scene_id: self.preview_scene_id.clone(),
                 started_temporary_widget_tasks,
+                led_controller: self.led_controller.clone(),
             })
             .boxed();
 

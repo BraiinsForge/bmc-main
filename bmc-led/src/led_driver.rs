@@ -58,7 +58,7 @@ impl LedDriver {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LedEventHandler {
     pub event_sender: Option<Sender<data::LedEvent>>,
 }
@@ -270,7 +270,7 @@ impl LedEventHandler {
         sender
     }
 
-    pub fn push_event(&mut self, event: data::LedEvent) {
+    pub fn push_event(&self, event: data::LedEvent) {
         if let Some(sender) = &self.event_sender {
             let _ = sender.try_send(event);
         }

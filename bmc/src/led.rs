@@ -58,6 +58,19 @@ where
     alarm_bus: AlarmBus,
 }
 
+impl<T: BmcManager> Clone for LedController<T> {
+    fn clone(&self) -> Self {
+        Self {
+            led_event_handler: self.led_event_handler.clone(),
+            system_upgrade_receiver: self.system_upgrade_receiver.clone(),
+            manager: self.manager.clone(),
+            last_price_change_24h_receiver: self.last_price_change_24h_receiver.clone(),
+            state_receiver: self.state_receiver.clone(),
+            alarm_bus: self.alarm_bus.clone(),
+        }
+    }
+}
+
 impl<T> LedController<T>
 where
     T: BmcManager,
@@ -268,7 +281,7 @@ where
         // self.run_price_task(led_event_tx);
     }
 
-    pub fn push_event(&mut self, event: LedEvent) {
+    pub fn push_event(&self, event: LedEvent) {
         self.led_event_handler.push_event(event);
     }
 }

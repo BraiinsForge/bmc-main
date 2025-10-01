@@ -3,7 +3,7 @@
 use crate::BmcManager;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
-use crate::led::LedState;
+use crate::led::{LedController, LedState};
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::web::SessionManager;
@@ -79,6 +79,7 @@ pub(crate) struct GrpcWeb<
     sound_controller: SoundController,
     alarm_controller: AlarmController,
     led_state_sender: watch::Sender<LedState>,
+    led_controller: LedController<T>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -97,6 +98,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         sound_controller: SoundController,
         alarm_controller: AlarmController,
         led_state_sender: watch::Sender<LedState>,
+        led_controller: LedController<T>,
     ) -> Self {
         Self {
             manager,
@@ -110,6 +112,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             sound_controller,
             alarm_controller,
             led_state_sender,
+            led_controller,
         }
     }
 
@@ -169,6 +172,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                     self.config_handle.clone(),
                     self.display_controller,
                     self.widget_tasks,
+                    self.led_controller,
                 ),
             );
 

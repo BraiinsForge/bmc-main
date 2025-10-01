@@ -51,6 +51,7 @@ where
     alarm_controller: AlarmController,
     button_manager: ButtonManager<T>,
     led_state_sender: watch::Sender<LedState>,
+    led_controller: LedController<T>,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -195,6 +196,7 @@ where
             alarm_controller,
             button_manager,
             led_state_sender,
+            led_controller,
         })
     }
 
@@ -219,6 +221,7 @@ where
             self.sound_controller,
             self.alarm_controller,
             self.led_state_sender,
+            self.led_controller,
         )
         .run(self.listener)
         .await?;
