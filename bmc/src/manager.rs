@@ -18,7 +18,7 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     type SessionManager: crate::session::Manager;
     type Error: std::error::Error + Send + Sync;
 
-    async fn version(&self) -> BosVersion;
+    async fn version(&self) -> Option<BosVersion>;
 
     fn platform(&self) -> BmcPlatform;
 

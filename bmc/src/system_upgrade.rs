@@ -130,7 +130,11 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         };
 
         let platform = self.bmc_manager.platform();
-        let version = self.bmc_manager.version().await;
+        let version = self
+            .bmc_manager
+            .version()
+            .await
+            .ok_or(SystemUpgradeError::FailedToDetectCurrentVersion)?;
 
         let Some(release_info) = firmware_handle
             .check_for_upgrade(&self.client, platform, version.full)
@@ -427,6 +431,8 @@ pub(crate) enum SystemUpgradeState {
 
 #[derive(Debug, Error, Clone, PartialEq)]
 pub(crate) enum SystemUpgradeError {
+    #[error("Failed to detect current version")]
+    FailedToDetectCurrentVersion,
     #[error("Firmware with a given hash does not exist")]
     NoImageWithHash,
     #[error("Firmware image checksum mismatch. Expected {expected}, downloaded {actual}")]

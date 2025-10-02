@@ -35,7 +35,14 @@ where
         &self,
         _request: Request<GetMetadataRequest>,
     ) -> Result<tonic::Response<Metadata>, tonic::Status> {
-        let version = self.bmc_manager.version().await.full;
-        Ok(tonic::Response::new(Metadata { version }))
+        let version = self
+            .bmc_manager
+            .version()
+            .await
+            .ok_or_else(|| tonic::Status::internal("Failed to detect current version"))?;
+
+        Ok(tonic::Response::new(Metadata {
+            version: version.full,
+        }))
     }
 }

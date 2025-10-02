@@ -217,7 +217,8 @@ impl From<SystemUpgradeError> for Status {
                 GrpcError::BadRequest.to_string(),
                 ErrorDetails::with_bad_request_violation("hash", value.to_string()),
             ),
-            SystemUpgradeError::DownloadedImageHashMismatch { .. }
+            SystemUpgradeError::FailedToDetectCurrentVersion
+            | SystemUpgradeError::DownloadedImageHashMismatch { .. }
             | SystemUpgradeError::VerifyFailed
             | SystemUpgradeError::UpgradeInProgress
             | SystemUpgradeError::FailedToDownload(_)

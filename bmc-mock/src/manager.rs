@@ -75,8 +75,8 @@ impl bmc::BmcManager for Manager {
     type Error = Error;
     type SessionManager = MockSessionManager;
 
-    async fn version(&self) -> BosVersion {
-        BosVersion::new(&25, &7)
+    async fn version(&self) -> Option<BosVersion> {
+        Some(BosVersion::new(&25, &7))
     }
 
     fn platform(&self) -> BmcPlatform {

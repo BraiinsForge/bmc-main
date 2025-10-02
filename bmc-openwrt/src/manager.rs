@@ -31,7 +31,7 @@ use tracing::{error, info};
 
 #[derive(Debug)]
 pub struct Manager {
-    bmc_info: Arc<BmcInfo>,
+    bmc_info: Arc<Option<BmcInfo>>,
     pub session_manager: OpenwrtSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     wifi_manager: Arc<OpenwrtWifiManager>,
@@ -63,7 +63,14 @@ impl Manager {
         wifi_ap_ssid_base: String,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
-        let bmc_info = BmcInfo::load().expect("Load BMC info failed");
+        let bmc_info = match BmcInfo::load() {
+            Ok(bmc_info) => Some(bmc_info),
+            Err(err) => {
+                error!(?err, "Failed to load BMC info");
+                None
+            }
+        };
+
         Self {
             bmc_info: Arc::new(bmc_info),
             session_manager,
@@ -166,8 +173,11 @@ impl BmcManager for Manager {
     type SessionManager = OpenwrtSessionManager;
     type Error = Error;
 
-    async fn version(&self) -> BosVersion {
-        self.bmc_info.bos_version.clone()
+    async fn version(&self) -> Option<BosVersion> {
+        self.bmc_info
+            .as_ref()
+            .as_ref()
+            .map(|bmc_info| bmc_info.bos_version.clone())
     }
 
     fn platform(&self) -> BmcPlatform {
