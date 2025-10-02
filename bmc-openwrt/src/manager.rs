@@ -8,7 +8,9 @@ use crate::unix::{
 };
 use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
-use bmc::manager::{BmcState, IfaceData, InitialSetupError, WifiData, WifiNetworkConfig};
+use bmc::manager::{
+    BmcState, IfaceData, InitialSetupError, WifiData, WifiEvent, WifiNetworkConfig,
+};
 use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
@@ -36,6 +38,7 @@ pub struct Manager {
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     wifi_manager: Arc<OpenwrtWifiManager>,
     wifi_ap_ssid_base: String,
+    wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
 }
 
 impl Manager {
@@ -54,6 +57,7 @@ impl Manager {
     const UCI_NET_LAN_NETMASK: &str = "network.wifi_sta.netmask";
     const UCI_NET_LAN_GATEWAY: &str = "network.wifi_sta.gateway";
     const UCI_NET_LAN_DNS: &str = "network.wifi_sta.dns";
+    const WIFI_EVENTS_CAPACITY: usize = 10;
 
     #[must_use]
     pub fn new(
@@ -63,6 +67,8 @@ impl Manager {
         wifi_ap_ssid_base: String,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
+        let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
+
         let bmc_info = match BmcInfo::load() {
             Ok(bmc_info) => Some(bmc_info),
             Err(err) => {
@@ -77,6 +83,7 @@ impl Manager {
             timezone_sender,
             wifi_manager,
             wifi_ap_ssid_base,
+            wifi_event_sender,
         }
     }
 
@@ -436,7 +443,28 @@ impl BmcManager for Manager {
     }
 
     async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
+        // NOTE: Future can be cancelled before returning result, but it is necessary to signal that scan has ended
+        struct DropGuard {
+            wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
+        }
+
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                _ = self.wifi_event_sender.send(WifiEvent::ScanEnded);
+            }
+        }
+
+        let _guard = DropGuard {
+            wifi_event_sender: self.wifi_event_sender.clone(),
+        };
+
+        _ = self.wifi_event_sender.send(WifiEvent::ScanStarted);
+
         self.wifi_manager.scan().await
+    }
+
+    fn subscribe_wifi_events(&self) -> tokio::sync::broadcast::Receiver<WifiEvent> {
+        self.wifi_event_sender.subscribe()
     }
 
     async fn reboot(&self) -> anyhow::Result<()> {

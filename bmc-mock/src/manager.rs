@@ -3,7 +3,8 @@
 use crate::{MockSessionManager, mockfs::MockFs};
 use anyhow::anyhow;
 use bmc::manager::{
-    BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, WifiData, WifiNetworkConfig,
+    BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, WifiData, WifiEvent,
+    WifiNetworkConfig,
 };
 use bmc_platform::{BmcPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
@@ -39,10 +40,12 @@ pub struct Manager {
     network_config: Arc<Mutex<NetworkProtocolConfig>>,
     port: u16,
     connected_wifi: Arc<tokio::sync::Mutex<Option<WifiNetworkConfig>>>,
+    wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
 }
 
 impl Manager {
     const WIFI_SSID: &str = "BMC 5a200d";
+    const WIFI_EVENTS_CAPACITY: usize = 10;
 
     #[must_use]
     pub fn new(
@@ -55,6 +58,7 @@ impl Manager {
         port: u16,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
+        let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
         Self {
             mockfs,
             session_manager,
@@ -66,6 +70,7 @@ impl Manager {
             ip_address,
             port,
             connected_wifi: Arc::new(tokio::sync::Mutex::new(None)),
+            wifi_event_sender,
         }
     }
 }
@@ -214,6 +219,10 @@ impl bmc::BmcManager for Manager {
     async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
         info!("Scanning WiFi...");
 
+        // NOTE: Mock wifi scan by sleeping for some time. On production board scan takes between 5-10s
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        _ = self.wifi_event_sender.send(WifiEvent::ScanStarted);
+
         let mut rng = rand::rng();
         let mut signal_strength = || rng.random_range(-90..=-50);
 
@@ -248,7 +257,14 @@ impl bmc::BmcManager for Manager {
 
         // return random number of elements
         let count = rng.random_range(0..=3);
+
+        _ = self.wifi_event_sender.send(WifiEvent::ScanEnded);
+
         Ok(wifi_list.split_off(count))
+    }
+
+    fn subscribe_wifi_events(&self) -> tokio::sync::broadcast::Receiver<WifiEvent> {
+        self.wifi_event_sender.subscribe()
     }
 
     async fn reboot(&self) -> anyhow::Result<()> {

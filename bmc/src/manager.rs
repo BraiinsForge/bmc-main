@@ -72,6 +72,8 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>>;
 
+    fn subscribe_wifi_events(&self) -> tokio::sync::broadcast::Receiver<WifiEvent>;
+
     async fn reboot(&self) -> anyhow::Result<()>;
 
     async fn device_state(&self) -> BmcState;
@@ -92,6 +94,12 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     async fn wifi_status(&self) -> anyhow::Result<WifiData>;
 
     async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>>;
+}
+
+#[derive(Clone, Debug)]
+pub enum WifiEvent {
+    ScanStarted,
+    ScanEnded,
 }
 
 #[derive(Debug, Display, PartialEq)]
