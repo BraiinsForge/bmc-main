@@ -12,6 +12,7 @@ use tracing::{debug, error};
 use crate::{
     BmcManager,
     alarm::{AlarmBus, AlarmEvent},
+    manager::WifiEvent,
     system_upgrade::{StateService, SystemUpgradeState},
 };
 use bmc_led::{
@@ -265,6 +266,24 @@ where
         });
     }
 
+    fn run_wifi_scan_listener(&self, led_event_tx: Sender<LedEvent>) {
+        let mut rx_events = self.manager.subscribe_wifi_events();
+        tokio::spawn({
+            async move {
+                while let Ok(event) = rx_events.recv().await {
+                    let led_event = match event {
+                        WifiEvent::ScanStarted => LedEvent::WifiScan,
+                        WifiEvent::ScanEnded => LedEvent::WifiScanEnded,
+                    };
+
+                    if let Err(e) = led_event_tx.try_send(led_event) {
+                        error!("Failed to send command: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
     pub(crate) fn init(&mut self, led_cmd_tx: Sender<LedCommand>) {
         let led_event_tx = self.led_event_handler.init(led_cmd_tx);
 
@@ -275,7 +294,8 @@ where
         self.run_led_state_task(led_event_tx.clone());
         self.run_wifi_task(led_event_tx.clone());
         self.run_sysupgrade_task(led_event_tx.clone());
-        self.run_alarm_event_listener(led_event_tx);
+        self.run_alarm_event_listener(led_event_tx.clone());
+        self.run_wifi_scan_listener(led_event_tx);
 
         // TODO: Price alerts
         // self.run_price_task(led_event_tx);
