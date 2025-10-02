@@ -218,13 +218,6 @@ class View extends Component<Props, State> {
         await Promise.allSettled(q);
     };
 
-    #notifySuccess = (message: string): void => {
-        toast.show('success', message);
-    };
-    #notifyError = (message: string): void => {
-        toast.show('error', message);
-    };
-
     private fetchSystemInfoAbort = pb.abort.get();
     #fetchSystemInfo = async (): Promise<void> => {
         try {
@@ -310,7 +303,7 @@ class View extends Component<Props, State> {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load general settings!' });
 
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
 
@@ -367,7 +360,7 @@ class View extends Component<Props, State> {
             const { signal } = this.generalSetTimezoneAbort.replace();
             await pb.rpc.sys.setTimezone({ id: value.id }, { signal });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Timezone changed' }));
+            toast.success(formatMessage({ defaultMessage: 'Timezone changed' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -391,7 +384,7 @@ class View extends Component<Props, State> {
             const { signal } = this.generalSetTimeFormatAbort.replace();
             await pb.rpc.config.setTimeFormat({ timeFormat: value }, { signal });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Time format changed' }));
+            toast.success(formatMessage({ defaultMessage: 'Time format changed' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -416,13 +409,13 @@ class View extends Component<Props, State> {
     //         const { signal } = this.generalSetSecondsInStatusbarAbort.replace();
     //         await pb.rpc.config.showSecondsInStatusBar({ value }, { signal });
     //
-    //         this.#notifySuccess(formatMessage({ defaultMessage: 'Seconds in status bar changed' }));
+    //         toast.success(formatMessage({ defaultMessage: 'Seconds in status bar changed' }));
     //     } catch ($) {
     //         if (pb.abort.is($)) return;
     //
     //         let message = pb.collectAllErrorsAsFormattedList($);
     //         message ||= formatMessage({ defaultMessage: 'Failed to save SecondsInStatusbar' });
-    //         this.#notifyError(message, 'general-set-seconds-in-statusbar');
+    //         toast.error(message, 'general-set-seconds-in-statusbar');
     //     } finally {
     //         await this.#fetchSystemInfo();
     //         this.#generalSetField('showSecondsStatusBar', s => getEmptyLeafState(s.value));
@@ -441,13 +434,13 @@ class View extends Component<Props, State> {
             const { signal } = this.generalSetDateFormatAbort.replace();
             await pb.rpc.config.setDateFormat({ dateFormat: value }, { signal });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Date format changed' }));
+            toast.success(formatMessage({ defaultMessage: 'Date format changed' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let message = pb.collectAllErrorsAsFormattedList($);
             message ||= formatMessage({ defaultMessage: 'Failed to save DateFormat' });
-            this.#notifyError(message);
+            toast.error(message);
         } finally {
             await this.#generalFetch();
             this.#setField('dateFormat', s => getFieldStateDefault(s.value));
@@ -466,13 +459,13 @@ class View extends Component<Props, State> {
             const { signal } = this.generalSetFirsWeekDayAbort.replace();
             await pb.rpc.config.setFirstDayOfWeek({ firstDayOfWeek: value }, { signal });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'First day of the week changed' }));
+            toast.success(formatMessage({ defaultMessage: 'First day of the week changed' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let message = pb.collectAllErrorsAsFormattedList($);
             message ||= formatMessage({ defaultMessage: 'Failed to save firs week day' });
-            this.#notifyError(message);
+            toast.error(message);
         } finally {
             await this.#generalFetch();
             this.#setField('firstDayOfWeek', s => getFieldStateDefault(s.value));
@@ -491,13 +484,13 @@ class View extends Component<Props, State> {
     //         const { signal } = this.generalSetTemperatureUnitsAbort.replace();
     //         await pb.rpc.config.setTemperatureUnit({ temperatureUnit: value }, { signal });
     //
-    //         this.#notifySuccess(formatMessage({ defaultMessage: 'Temperature units changed' }));
+    //         toast.success(formatMessage({ defaultMessage: 'Temperature units changed' }));
     //     } catch ($) {
     //         if (pb.abort.is($)) return;
     //
     //         let message = pb.collectAllErrorsAsFormattedList($);
     //         message ||= formatMessage({ defaultMessage: 'Failed to save TemperatureUnits' });
-    //         this.#notifyError(message, 'general-set-temperature-units');
+    //         toast.error(message, 'general-set-temperature-units');
     //     } finally {
     //         await this.#generalFetch();
     //         this.#setField('temperatureUnit', s => getFieldStateDefault(s.value));
@@ -516,13 +509,13 @@ class View extends Component<Props, State> {
             const { signal } = this.generalSetNumberFormatAbort.replace();
             await pb.rpc.config.setNumberFormat({ numberFormat: value }, { signal });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Number format changed' }));
+            toast.success(formatMessage({ defaultMessage: 'Number format changed' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let message = pb.collectAllErrorsAsFormattedList($);
             message ||= formatMessage({ defaultMessage: 'Failed to save NumberFormat' });
-            this.#notifyError(message);
+            toast.error(message);
         } finally {
             await this.#generalFetch();
             this.#setField('numberFormat', s => getFieldStateDefault(s.value));
@@ -541,7 +534,7 @@ class View extends Component<Props, State> {
     //         const { signal } = this.generalSetDataCollectionAbort.replace();
     //         await pb.rpc.config.setDataCollection({ value }, { signal });
     //
-    //         this.#notifySuccess(
+    //         toast.success(
     //             value
     //                 ? formatMessage({ defaultMessage: 'Data collection enabled' })
     //                 : formatMessage({ defaultMessage: 'Data collection disabled' }),
@@ -551,7 +544,7 @@ class View extends Component<Props, State> {
     //
     //         let message = pb.collectAllErrorsAsFormattedList($);
     //         message ||= formatMessage({ defaultMessage: 'Failed to save NumberFormat' });
-    //         this.#notifyError(message, 'general-set-number-format');
+    //         toast.error(message, 'general-set-number-format');
     //     } finally {
     //         await this.#generalFetch();
     //         this.#setField('dataCollection', s => getFieldStateDefault(s.value));
@@ -563,12 +556,12 @@ class View extends Component<Props, State> {
 
         try {
             await pb.rpc.sys.factoryReset({});
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Factory reset complete' }));
+            toast.success(formatMessage({ defaultMessage: 'Factory reset complete' }));
         } catch ($) {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Unknown error!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
     #generalSystemReboot = async (): Promise<void> => {
@@ -576,13 +569,13 @@ class View extends Component<Props, State> {
 
         try {
             await pb.rpc.sys.reboot({});
-            this.#notifySuccess(formatMessage({ defaultMessage: 'System reboot triggered' }));
+            toast.success(formatMessage({ defaultMessage: 'System reboot triggered' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Unknown error!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
 
@@ -649,7 +642,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
             const msg: string = formatMessage({ defaultMessage: 'Failed to load display settings!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
 
@@ -668,7 +661,7 @@ class View extends Component<Props, State> {
             const { signal } = this.displaySetBrightnessAbort.replace();
             await pb.rpc.config.setBrightness({ value: value.value }, { signal });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Brightness Saved' }));
+            toast.success(formatMessage({ defaultMessage: 'Brightness Saved' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -717,7 +710,7 @@ class View extends Component<Props, State> {
                 ]);
             }
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Night Mode Saved' }));
+            toast.success(formatMessage({ defaultMessage: 'Night Mode Saved' }));
         } catch ($) {
             // Error handling
             if (pb.abort.is($)) return;
@@ -748,7 +741,7 @@ class View extends Component<Props, State> {
             const { signal } = this.displaySetNightmodeBrightnessAbort.replace();
             await pb.rpc.config.setBrightnessNightmode({ value: value.value }, { signal });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Night mode brightness saved' }));
+            toast.success(formatMessage({ defaultMessage: 'Night mode brightness saved' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -791,7 +784,7 @@ class View extends Component<Props, State> {
             const { signal } = this.displaySetNightmodeIntervalAbort.replace();
             await pb.rpc.config.setNightmodeInterval(value as pb.TimeInterval, { signal });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Night mode time interval saved' }));
+            toast.success(formatMessage({ defaultMessage: 'Night mode time interval saved' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -874,7 +867,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load sound settings!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
 
@@ -892,11 +885,11 @@ class View extends Component<Props, State> {
             // Submit
             await pb.rpc.config.setSoundVolume({ value: value.value });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Sound volume saved' }));
+            toast.success(formatMessage({ defaultMessage: 'Sound volume saved' }));
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         } finally {
             await this.#soundLightFetch();
             this.#setField('volume', s => getFieldStateDefault(s.value));
@@ -916,11 +909,11 @@ class View extends Component<Props, State> {
             // Submit
             await pb.rpc.config.setSoundVolumeNightmode({ value: value.value });
 
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Night mode sound volume saved' }));
+            toast.success(formatMessage({ defaultMessage: 'Night mode sound volume saved' }));
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the night mode sound volume!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         } finally {
             await this.#soundLightFetch();
             this.#setField('volumeNightmode', s => getFieldStateDefault(s.value));
@@ -936,7 +929,7 @@ class View extends Component<Props, State> {
             // Submit
             await pb.rpc.config.setLedEnabled({ value });
 
-            this.#notifySuccess(
+            toast.success(
                 value
                     ? formatMessage({ defaultMessage: 'LED notifications enabled' })
                     : formatMessage({ defaultMessage: 'LED notifications disabled' }),
@@ -944,7 +937,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         } finally {
             this.#soundLightFetch();
             this.#setField('enableLedNotifications', s => getFieldStateDefault(s.value));
@@ -1052,7 +1045,7 @@ class View extends Component<Props, State> {
 
             const errors = pb.collectAllErrors($);
             const message = formatMessage({ defaultMessage: 'Failed to check for upgrade!' });
-            this.#notifyError(message);
+            toast.error(message);
 
             this.setState(s => ({
                 data: { ...s.data, upgradeInfo: null },
@@ -1122,7 +1115,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             const error = pb.collectAllErrorsAsFormattedList($);
             const message = formatMessage({ defaultMessage: 'Unexpected error: {error}' }, { error });
-            this.#notifyError(message);
+            toast.error(message);
         }
     };
 

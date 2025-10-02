@@ -239,7 +239,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Wifi connection: Unknown error!' });
-            toast.show('error', msg);
+            toast.error(msg);
             return false;
         }
     };
@@ -281,7 +281,7 @@ class View extends Component<Props, State> {
             }
 
             await pb.rpc.net.setNetworkConfig(payload, { signal });
-            toast.show('success', 'Network configuration saved!');
+            toast.success('Network configuration saved!');
             await this.#load();
         } catch ($) {
             if (pb.abort.is($)) return;

@@ -83,7 +83,6 @@ class View extends Component<Props, State> {
     componentWillUnmount = () => pb.abort.all(this);
 
     #mount = debounce(() => this.#fetchAccounts(), 150);
-
     get #txt() {
         const { formatMessage } = this.props.intl;
         return {
@@ -93,12 +92,6 @@ class View extends Component<Props, State> {
             editAccount: formatMessage({ defaultMessage: 'Edit Account' }),
         };
     }
-    #notifySuccess = (text: string): void => {
-        toast.show('success', text);
-    };
-    #notifyError = (text: string): void => {
-        toast.show('error', text);
-    };
 
     private fetchAccountsAbort = pb.abort.get();
     #fetchAccounts = async (): Promise<void> => {
@@ -113,7 +106,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to fetch accounts!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         } finally {
             this.setState({ isLoading: false });
         }
@@ -205,7 +198,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load account creation metadata!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
 
@@ -215,7 +208,8 @@ class View extends Component<Props, State> {
         const { openDialog, dialogStates } = this.state;
 
         if (openDialog?.kind !== 'create') {
-            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }));
+            toast.error(formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }));
+            return;
         }
 
         await setState(this, { isSaving: true });
@@ -236,7 +230,7 @@ class View extends Component<Props, State> {
             await pb.rpc.accounts.connectApp(payload, opts);
 
             this.#dialogClose();
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Account "{name}" connected' }, { name: accountName }));
+            toast.success(formatMessage({ defaultMessage: 'Account "{name}" connected' }, { name: accountName }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -275,7 +269,8 @@ class View extends Component<Props, State> {
         const { openDialog, dialogStates } = this.state;
 
         if (openDialog?.kind !== 'edit') {
-            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }));
+            toast.error(formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }));
+            return;
         }
 
         await setState(this, { isSaving: true });
@@ -299,7 +294,7 @@ class View extends Component<Props, State> {
             await pb.rpc.accounts.editAccount(payload, opts);
 
             this.#dialogClose();
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Account "{name}" saved' }, { name: accountName }));
+            toast.success(formatMessage({ defaultMessage: 'Account "{name}" saved' }, { name: accountName }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -447,11 +442,8 @@ class View extends Component<Props, State> {
                 confirmLabel: formatMessage({ defaultMessage: 'Go to display scenes' }),
                 message: (
                     <FormattedMessage
-                        defaultMessage="This account is linked to <b>{count, plural, one {1 display scene} other {# display scenes}}</b>. To delete it, please remove or edit {count, plural, one {that scene} other {those scenes}}."
-                        values={{
-                            b: ch => <strong children={ch} />,
-                            count: connectedAccountsCount,
-                        }}
+                        defaultMessage="This account is linked to <b>{count, plural, one {1 widget} other {# widgets}}</b>. To delete it, please remove or edit {count, plural, one {that widget} other {those widgets}}."
+                        values={{ b: ch => <strong children={ch} />, count: connectedAccountsCount }}
                     />
                 ),
             });
@@ -467,18 +459,21 @@ class View extends Component<Props, State> {
             cancelLabel: confirmStringCancel,
             confirmLabel: confirmStringTitle,
             message: (
-                <FormattedMessage defaultMessage="This account isn’t used in any display scenes. You can safely delete ‘{name}’ now." />
+                <FormattedMessage
+                    defaultMessage="This account isn’t used in any display scenes. You can safely delete {name} now."
+                    values={{ name: <strong children={acc.accountName} /> }}
+                />
             ),
         });
         if (!confirmed) return;
 
         try {
             await pb.rpc.accounts.removeAccount({ value: acc.id });
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Account deleted' }));
+            toast.success(formatMessage({ defaultMessage: 'Account deleted' }));
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Account deletion failed!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         } finally {
             this.#fetchAccounts();
         }

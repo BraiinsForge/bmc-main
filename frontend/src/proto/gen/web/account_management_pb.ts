@@ -4,8 +4,12 @@
 
 import type { GenEnum, GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv2';
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
-import type { EmptySchema, StringValueSchema } from '@bufbuild/protobuf/wkt';
-import { file_google_protobuf_empty, file_google_protobuf_wrappers } from '@bufbuild/protobuf/wkt';
+import type { EmptySchema, StringValueSchema, Timestamp } from '@bufbuild/protobuf/wkt';
+import {
+    file_google_protobuf_empty,
+    file_google_protobuf_timestamp,
+    file_google_protobuf_wrappers,
+} from '@bufbuild/protobuf/wkt';
 import type { Message } from '@bufbuild/protobuf';
 
 /**
@@ -14,8 +18,8 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_account_management: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chx3ZWIvYWNjb3VudF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIiUAoSQWRkQWNjb3VudFJlc3BvbnNlEjoKFGRlZmF1bHRfYWNjb3VudF90eXBlGAEgASgOMhwuYnJhaWlucy5ibWMud2ViLkFjY291bnRUeXBlIkQKFkdldEFsbEFjY291bnRzUmVzcG9uc2USKgoIYWNjb3VudHMYASADKAsyGC5icmFpaW5zLmJtYy53ZWIuQWNjb3VudCJvChJFZGl0QWNjb3VudFJlcXVlc3QSCgoCaWQYASABKAkSFAoMYWNjb3VudF9uYW1lGAIgASgJEjcKDmF1dGhlbnRpY2F0aW9uGAMgASgLMh8uYnJhaWlucy5ibWMud2ViLkF1dGhlbnRpY2F0aW9uIpYBChFDb25uZWN0QXBwUmVxdWVzdBIyCgxhY2NvdW50X3R5cGUYASABKA4yHC5icmFpaW5zLmJtYy53ZWIuQWNjb3VudFR5cGUSFAoMYWNjb3VudF9uYW1lGAIgASgJEjcKDmF1dGhlbnRpY2F0aW9uGAMgASgLMh8uYnJhaWlucy5ibWMud2ViLkF1dGhlbnRpY2F0aW9uIscBCgdBY2NvdW50EgoKAmlkGAEgASgJEjIKDGFjY291bnRfdHlwZRgCIAEoDjIcLmJyYWlpbnMuYm1jLndlYi5BY2NvdW50VHlwZRIUCgxhY2NvdW50X25hbWUYAyABKAkSNwoOYXV0aGVudGljYXRpb24YBCABKAsyHy5icmFpaW5zLmJtYy53ZWIuQXV0aGVudGljYXRpb24SEgoKY3JlYXRlZF9hdBgFIAEoCRIZChFjb25uZWN0ZWRfd2lkZ2V0cxgGIAMoCSIsCg5BdXRoZW50aWNhdGlvbhIRCgdhcGlfa2V5GAEgASgJSABCBwoFdmFsdWUqSQoLQWNjb3VudFR5cGUSHAoYQUNDT1VOVF9UWVBFX1VOU1BFQ0lGSUVEEAASHAoYQUNDT1VOVF9UWVBFX0JSQUlJTlNQT09MEAEymwMKGEFjY291bnRNYW5hZ2VtZW50U2VydmljZRJJCgpBZGRBY2NvdW50EhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiMuYnJhaWlucy5ibWMud2ViLkFkZEFjY291bnRSZXNwb25zZRJFCg1SZW1vdmVBY2NvdW50EhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkoKC0VkaXRBY2NvdW50EiMuYnJhaWlucy5ibWMud2ViLkVkaXRBY2NvdW50UmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJRCg5HZXRBbGxBY2NvdW50cxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRonLmJyYWlpbnMuYm1jLndlYi5HZXRBbGxBY2NvdW50c1Jlc3BvbnNlEk4KCkNvbm5lY3RBcHASIi5icmFpaW5zLmJtYy53ZWIuQ29ubmVjdEFwcFJlcXVlc3QaHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWViBnByb3RvMw',
-        [file_google_protobuf_empty, file_google_protobuf_wrappers],
+        'Chx3ZWIvYWNjb3VudF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIiUAoSQWRkQWNjb3VudFJlc3BvbnNlEjoKFGRlZmF1bHRfYWNjb3VudF90eXBlGAEgASgOMhwuYnJhaWlucy5ibWMud2ViLkFjY291bnRUeXBlIkQKFkdldEFsbEFjY291bnRzUmVzcG9uc2USKgoIYWNjb3VudHMYASADKAsyGC5icmFpaW5zLmJtYy53ZWIuQWNjb3VudCJvChJFZGl0QWNjb3VudFJlcXVlc3QSCgoCaWQYASABKAkSFAoMYWNjb3VudF9uYW1lGAIgASgJEjcKDmF1dGhlbnRpY2F0aW9uGAMgASgLMh8uYnJhaWlucy5ibWMud2ViLkF1dGhlbnRpY2F0aW9uIpYBChFDb25uZWN0QXBwUmVxdWVzdBIyCgxhY2NvdW50X3R5cGUYASABKA4yHC5icmFpaW5zLmJtYy53ZWIuQWNjb3VudFR5cGUSFAoMYWNjb3VudF9uYW1lGAIgASgJEjcKDmF1dGhlbnRpY2F0aW9uGAMgASgLMh8uYnJhaWlucy5ibWMud2ViLkF1dGhlbnRpY2F0aW9uIuMBCgdBY2NvdW50EgoKAmlkGAEgASgJEjIKDGFjY291bnRfdHlwZRgCIAEoDjIcLmJyYWlpbnMuYm1jLndlYi5BY2NvdW50VHlwZRIUCgxhY2NvdW50X25hbWUYAyABKAkSNwoOYXV0aGVudGljYXRpb24YBCABKAsyHy5icmFpaW5zLmJtYy53ZWIuQXV0aGVudGljYXRpb24SLgoKY3JlYXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASGQoRY29ubmVjdGVkX3dpZGdldHMYBiADKAkiLAoOQXV0aGVudGljYXRpb24SEQoHYXBpX2tleRgBIAEoCUgAQgcKBXZhbHVlKkkKC0FjY291bnRUeXBlEhwKGEFDQ09VTlRfVFlQRV9VTlNQRUNJRklFRBAAEhwKGEFDQ09VTlRfVFlQRV9CUkFJSU5TUE9PTBABMpsDChhBY2NvdW50TWFuYWdlbWVudFNlcnZpY2USSQoKQWRkQWNjb3VudBIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRojLmJyYWlpbnMuYm1jLndlYi5BZGRBY2NvdW50UmVzcG9uc2USRQoNUmVtb3ZlQWNjb3VudBIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJKCgtFZGl0QWNjb3VudBIjLmJyYWlpbnMuYm1jLndlYi5FZGl0QWNjb3VudFJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUQoOR2V0QWxsQWNjb3VudHMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJy5icmFpaW5zLmJtYy53ZWIuR2V0QWxsQWNjb3VudHNSZXNwb25zZRJOCgpDb25uZWN0QXBwEiIuYnJhaWlucy5ibWMud2ViLkNvbm5lY3RBcHBSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlYgZwcm90bzM',
+        [file_google_protobuf_empty, file_google_protobuf_timestamp, file_google_protobuf_wrappers],
     );
 
 /**
@@ -135,12 +139,9 @@ export type Account = Message<'braiins.bmc.web.Account'> & {
     authentication?: Authentication;
 
     /**
-     * ISO 8601 string timestamp with UTC timezone,
-     * example: 2025-09-26T16:23:23.222065+00:00
-     *
-     * @generated from field: string created_at = 5;
+     * @generated from field: google.protobuf.Timestamp created_at = 5;
      */
-    createdAt: string;
+    createdAt?: Timestamp;
 
     /**
      * @generated from field: repeated string connected_widgets = 6;

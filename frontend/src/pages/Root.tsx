@@ -127,7 +127,7 @@ class View extends Component<Props, State> {
                 onSecondarySubmit={cancel}
                 // Close button
                 onRequestClose={cancel}
-                children={message}
+                children={<div style={{ textWrap: 'balance' }} children={message} />}
                 danger={firstEntry?.danger}
             />
         );

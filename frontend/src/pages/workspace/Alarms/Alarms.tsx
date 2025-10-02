@@ -89,7 +89,7 @@ export class View extends Component<Props, State> {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load data for alarms!' });
 
-            toast.show('error', msg);
+            toast.error(msg);
         } finally {
             this.setState({ isLoading: false });
         }
@@ -150,11 +150,8 @@ export class View extends Component<Props, State> {
         const { openDialog, alarms } = this.state;
 
         if (openDialog?.key !== 'alarm') {
-            toast.show(
-                'error',
-                formatMessage({
-                    defaultMessage: "Invalid state, can't create alarm when create dialog is not open!",
-                }),
+            toast.error(
+                formatMessage({ defaultMessage: "Invalid state, can't create alarm when create dialog is not open!" }),
             );
             return;
         }
@@ -195,7 +192,7 @@ export class View extends Component<Props, State> {
                     }),
                     { signal },
                 );
-                toast.show('success', formatMessage({ defaultMessage: 'Alarm has been updated' }));
+                toast.success(formatMessage({ defaultMessage: 'Alarm has been updated' }));
             }
 
             // Create
@@ -211,7 +208,7 @@ export class View extends Component<Props, State> {
                     }),
                     { signal },
                 );
-                toast.show('success', formatMessage({ defaultMessage: 'Alarm has been added' }));
+                toast.success(formatMessage({ defaultMessage: 'Alarm has been added' }));
             }
 
             this.#alarmDialogClose();
@@ -395,10 +392,10 @@ export class View extends Component<Props, State> {
 
             // Then submit to API
             await pb.rpc.alarm.setAlarmEnabled({ id, enabled });
-            toast.show('success', formatMessage({ defaultMessage: 'Alarm has been successfully toggled.' }));
+            toast.success(formatMessage({ defaultMessage: 'Alarm has been successfully toggled.' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            toast.show('error', formatMessage({ defaultMessage: 'Failed to toggle alarm!' }));
+            toast.error(formatMessage({ defaultMessage: 'Failed to toggle alarm!' }));
         } finally {
             // Always reload data to make sure
             // we have the latest state
@@ -458,12 +455,12 @@ export class View extends Component<Props, State> {
             // Then submit to API
             await pb.rpc.alarm.deleteAlarm({ value: id });
             this.#alarmDialogClose();
-            toast.show('success', intl.formatMessage({ defaultMessage: 'Alarm has been deleted.' }));
+            toast.success(intl.formatMessage({ defaultMessage: 'Alarm has been deleted.' }));
         } catch ($) {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to delete alarm!' });
-            toast.show('error', msg);
+            toast.error(msg);
         } finally {
             // Always reload data to make sure
             // we have the latest state

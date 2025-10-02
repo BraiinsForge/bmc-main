@@ -148,8 +148,8 @@ class View extends Component<Props, State> {
         pb.abort.all(this);
     }
 
-    #notifyError = (message: string) => toast.show('error', message);
-    #notifySuccess = (message: string) => toast.show('success', message);
+    #notifyError = (message: string) => toast.error(message);
+    #notifySuccess = (message: string) => toast.success(message);
     #notifySuccessDebounced = debounce(this.#notifySuccess, 1e3);
 
     private abortLoadMetadata = pb.abort.get();

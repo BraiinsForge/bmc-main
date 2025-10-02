@@ -4,7 +4,6 @@ import type { Meta } from '@storybook/react';
 
 import * as pb from '@/proto';
 import * as gen from '@/mocks';
-import { formatISO as formatDateIso } from 'date-fns';
 import { FormWidgetBraiinsPool as Component, type FormWidgetBraiinsPoolProps } from './FormWidgetBraiinsPool';
 
 export default {
@@ -18,7 +17,7 @@ const accounts = gen.arrayOf<pb.Account>(6, () => {
         accountType: pb.AccountType.BRAIINSPOOL,
         accountName: gen.lorem.generateWords(2),
         authentication: { $typeName: 'braiins.bmc.web.Authentication', value: { case: 'apiKey', value: gen.uuid() } },
-        createdAt: formatDateIso(new Date()),
+        createdAt: gen.protoTimestamp(),
     });
 });
 

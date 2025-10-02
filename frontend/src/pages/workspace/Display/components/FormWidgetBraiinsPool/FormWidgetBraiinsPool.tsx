@@ -1,5 +1,4 @@
 import { useMemo, useCallback } from 'react';
-import { parseISO as parseIsoDate } from 'date-fns';
 import { type IntlShape, useIntl } from 'react-intl';
 
 // App
@@ -64,7 +63,7 @@ function AccountElement(props: pb.Account) {
 
             <div className={css.accountElementDate}>
                 <IconCalendar size={16} />
-                <Datetime value={parseIsoDate(createdAt)} />
+                <Datetime value={createdAt} />
             </div>
         </div>
     );
@@ -116,7 +115,7 @@ export function FormWidgetBraiinsPool(props: FormWidgetBraiinsPoolProps) {
 
             <BoundDropdown<pb.Account>
                 {...accountId}
-                id={$('account')}
+                id={$('account-id')}
                 labelText={formatMessage({ defaultMessage: 'Pool Account' })}
                 placeholderText="---"
                 value={selectedAccount}

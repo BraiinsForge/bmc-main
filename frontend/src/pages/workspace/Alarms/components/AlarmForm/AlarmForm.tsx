@@ -93,7 +93,7 @@ class View extends Component<Props, State> {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to play the sound!' });
 
-            toast.show('error', msg);
+            toast.error(msg);
         }
 
         this.setState({ isPlaying: false });

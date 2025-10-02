@@ -1,7 +1,10 @@
 import { localTimeFormat } from '@/lib/time';
+import type { Timestamp as PbTimestamp } from '@/proto';
 
-export type DatetimeProps = {
-    value: Maybe<Timestamp | bigint | Date>; // Posix timestamp (seconds)
+const FAULT_MARKER = `invalid-datetime-value-${Math.random()}`;
+
+export interface DatetimeProps {
+    value: Maybe<Timestamp | PbTimestamp | bigint | Date>; // Posix timestamp (seconds)
 
     format?: Maybe<string>; // d3's format string
     seconds?: boolean; // determines if the default format string (used if none supplied) will include seconds
@@ -10,14 +13,14 @@ export type DatetimeProps = {
     placeholder?: ReactNode;
     className?: string;
     style?: CSSProperties;
-};
-
+}
 export function Datetime(props: DatetimeProps) {
     const { value, format, placeholder = '---', seconds, tzname, className, ...rest } = props;
+    const $format = format || (seconds ? '%d.%m.%Y %H:%M:%S' : '%d.%m.%Y %H:%M');
 
-    const res = (val: ReactNode) => <span role="timer" {...rest} className={className} children={val} />;
+    let res: ReactNode = placeholder;
+    if (value != null) res = localTimeFormat(value, $format, tzname, FAULT_MARKER);
+    if (res === FAULT_MARKER) res = placeholder;
 
-    if (!value || (!Number.isFinite(value) && !(value instanceof Date))) return res(placeholder);
-    const fmt = format || (seconds ? '%d.%m.%Y %H:%M:%S' : '%d.%m.%Y %H:%M');
-    return res(localTimeFormat(value, fmt, tzname));
+    return <span {...rest} className={className} children={res} />;
 }

@@ -98,7 +98,7 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
             // This little shit seems to really need thrashing because otherwise
             // it remembers the last selected value even when it's on a different
             // parent entity and it should be nullified by the new one.
-            key={id}
+            key={`${id}-${value}`}
             autoAlign
             className={css.comboBox}
             onChange={x => {
@@ -157,7 +157,7 @@ export function BoundDropdown<T>(props: BoundDropdownProps<T>) {
             // This little shit seems to really need thrashing because otherwise
             // it remembers the last selected value even when it's on a different
             // parent entity and it should be nullified by the new one.
-            key={id}
+            key={`${id}-${value}`}
             autoAlign
             // className={css.dropdown}
             onChange={x => {
@@ -192,11 +192,11 @@ export function BoundRadioGroup<T extends string | number>(props: BoundRadioGrou
 
     return (
         <RadioButtonGroup
+            id={id}
             // This little shit seems to really need thrashing because otherwise
             // it remembers the last selected value even when it's on a different
             // parent entity and it should be nullified by the new one.
-            key={id}
-            id={id}
+            key={`${id}-${value}`}
             name={id}
             value={value ?? undefined}
             legendText={labelText}
@@ -227,7 +227,7 @@ export function BoundToggle(props: BoundToggleProps) {
             // This little shit seems to really need thrashing because otherwise
             // it remembers the last selected value even when it's on a different
             // parent entity and it should be nullified by the new one.
-            key={id}
+            key={`${id}-${value}`}
             size="md"
             toggled={!!value}
             onToggle={onChange}

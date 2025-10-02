@@ -1,6 +1,5 @@
 import { Component, useState, useCallback, type RefObject } from 'react';
 import { Sized } from '@/lib/react';
-import { parseISO as parseIsoDateTime } from 'date-fns';
 import { useIntl, type IntlShape } from 'react-intl';
 
 // APP
@@ -107,7 +106,7 @@ class View extends Component<Props> {
                     ),
                     name: x.accountName,
                     apiKey: <ApiKey id={$('api-key', index)} value={x.authentication?.value?.value} />,
-                    createdAt: <Datetime value={parseIsoDateTime(x.createdAt)} format="%d.%m.%Y %H:%M" />,
+                    createdAt: <Datetime value={x.createdAt} format="%d.%m.%Y %H:%M" />,
                     actions: (
                         <ButtonGroup spaced>
                             {editButton}

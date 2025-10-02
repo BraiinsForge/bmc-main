@@ -102,12 +102,6 @@ class View extends Component<Props, State> {
     #txt = {
         title: this.props.intl.formatMessage({ defaultMessage: 'Edit Combined Scene' }),
     };
-    #notifyError = (msg: string): void => {
-        toast.show('error', msg);
-    };
-    #notifySuccess = (msg: string): void => {
-        toast.show('success', msg);
-    };
 
     componentDidMount() {
         this.#loadScene();
@@ -134,7 +128,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to load timezones!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
 
@@ -154,7 +148,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to load scene!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
     #loadSceneDebounced = debounce(this.#loadScene, 200);
@@ -171,7 +165,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
 
             const msg: string = intl.formatMessage({ defaultMessage: 'Display preview connection lost!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
 
@@ -185,7 +179,8 @@ class View extends Component<Props, State> {
 
         if (scene?.kind.case !== 'combined') {
             const msg = formatMessage({ defaultMessage: 'Invalid state, cannot move widget without combined scene!' });
-            return this.#notifyError(msg);
+            toast.error(msg);
+            return;
         }
         const widgets = scene.kind.value.widgets;
 
@@ -198,8 +193,10 @@ class View extends Component<Props, State> {
 
         // If we did not find an insertion slot,
         // there is no point in continuing…
-        if (!canonicalInsertPosition)
-            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, widget seems not to fit!' }));
+        if (!canonicalInsertPosition) {
+            toast.error(formatMessage({ defaultMessage: 'Invalid state, widget seems not to fit!' }));
+            return;
+        }
 
         // otherwise update the new widget state with canonical position
         // and do an optimistic update…
@@ -236,7 +233,7 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
 
         this.#loadSceneDebounced();
@@ -247,20 +244,22 @@ class View extends Component<Props, State> {
     #handleEdit: Comp.CombinedSceneViewProps['onWidgetEdit'] = (id: string): void => {
         const { formatMessage } = this.props.intl;
         const scene = this.state.scene;
-        if (scene?.kind.case !== 'combined')
-            return this.#notifyError(
-                formatMessage({ defaultMessage: 'Invalid state, cannot edit widget without combined scene!' }),
-            );
+        if (scene?.kind.case !== 'combined') {
+            toast.error(formatMessage({ defaultMessage: 'Invalid state, cannot edit widget without combined scene!' }));
+            return;
+        }
 
         const widget = scene.kind.value.widgets.find(x => x.id === id);
-        if (!widget)
-            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, widget data not found!' }));
+        if (!widget) {
+            toast.error(formatMessage({ defaultMessage: 'Invalid state, widget data not found!' }));
+            return;
+        }
 
         const position = widget.position;
-        if (!position)
-            return this.#notifyError(
-                formatMessage({ defaultMessage: 'Cannot continute editing, widget has no position!' }),
-            );
+        if (!position) {
+            toast.error(formatMessage({ defaultMessage: 'Cannot continute editing, widget has no position!' }));
+            return;
+        }
 
         const wkind = widget.kind;
         switch (wkind?.value?.case) {
@@ -382,12 +381,18 @@ class View extends Component<Props, State> {
         const { formatMessage } = this.props.intl;
         const { openDialogKind, addPosition } = this.state;
 
-        if (kind === 'combined')
-            return this.#notifyError(formatMessage({ defaultMessage: "Can't add a combined scene, aborting!" }));
-        if (!addPosition)
-            return this.#notifyError(formatMessage({ defaultMessage: "Can't add widget without position, aborting!" }));
-        if (openDialogKind !== 'scene-select')
-            return this.#notifyError(formatMessage({ defaultMessage: "Can't add widget without open dialog!" }));
+        if (kind === 'combined') {
+            toast.error(formatMessage({ defaultMessage: "Can't add a combined scene, aborting!" }));
+            return;
+        }
+        if (!addPosition) {
+            toast.error(formatMessage({ defaultMessage: "Can't add widget without position, aborting!" }));
+            return;
+        }
+        if (openDialogKind !== 'scene-select') {
+            toast.error(formatMessage({ defaultMessage: "Can't add widget without open dialog!" }));
+            return;
+        }
         const size = pb.WidgetSize.SMALL;
 
         // Here we have to call the widget RPC just with widget kind, size and position.
@@ -482,7 +487,7 @@ class View extends Component<Props, State> {
     };
     #openDialogCancel = (): void => this.setState({ openDialogKind: null, dialogStates: getInitialDialogStates() });
 
-    #getFieldChangeHandler = <
+    #getChangeHandler = <
         const Kind extends keyof DialogStates,
         const FieldKey extends keyof DialogStates[Kind]['data']['values'],
     >(
@@ -509,7 +514,7 @@ class View extends Component<Props, State> {
             }, this.#submit);
         };
     };
-    #getFieldValue = <
+    #getValue = <
         const Kind extends keyof DialogStates,
         const FieldKey extends keyof DialogStates[Kind]['data']['values'],
     >(
@@ -521,7 +526,7 @@ class View extends Component<Props, State> {
         const values = dialogStates[widgetKind].data.values as DialogStates[Kind]['data']['values'];
         return values?.[fieldKey] ?? null;
     };
-    #getFieldError = <
+    #getError = <
         const Kind extends keyof DialogStates,
         const FieldKey extends keyof DialogStates[Kind]['data']['values'],
     >(
@@ -536,7 +541,7 @@ class View extends Component<Props, State> {
         const fieldError = errors.fields?.[fieldKey] as null | pb.FieldErrors;
         return pb.renderFieldErrorsAsList(fieldError);
     };
-    #getFieldStruct = <
+    #getField = <
         const Kind extends keyof DialogStates,
         const FieldKey extends keyof DialogStates[Kind]['data']['values'],
     >(
@@ -544,9 +549,9 @@ class View extends Component<Props, State> {
         fieldKey: FieldKey,
     ) => {
         return {
-            value: this.#getFieldValue(widgetKind, fieldKey),
-            error: this.#getFieldError(widgetKind, fieldKey),
-            onChange: this.#getFieldChangeHandler(widgetKind, fieldKey),
+            value: this.#getValue(widgetKind, fieldKey),
+            error: this.#getError(widgetKind, fieldKey),
+            onChange: this.#getChangeHandler(widgetKind, fieldKey),
             disabled: false,
         };
     };
@@ -556,12 +561,16 @@ class View extends Component<Props, State> {
         const { formatMessage } = this.props.intl;
         const { scene, openDialogKind, dialogStates } = this.state;
 
-        if (scene?.kind.case !== 'combined')
-            return this.#notifyError(formatMessage({ defaultMessage: 'Cannot submit without combined scene!' }));
+        if (scene?.kind.case !== 'combined') {
+            toast.error(formatMessage({ defaultMessage: 'Cannot submit without combined scene!' }));
+            return;
+        }
 
         const widgets = scene.kind.value.widgets;
-        if (!widgets)
-            return this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: no widget data, aborting!' }));
+        if (!widgets) {
+            toast.error(formatMessage({ defaultMessage: 'Scene edit: no widget data, aborting!' }));
+            return;
+        }
 
         let id: pb.Widget['id'];
         let size: pb.WidgetSize = pb.WidgetSize.SMALL;
@@ -570,9 +579,8 @@ class View extends Component<Props, State> {
         switch (openDialogKind) {
             case null:
             case 'scene-select':
-                return this.#notifyError(
-                    formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }),
-                );
+                toast.error(formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }));
+                return;
 
             case 'clock':
                 id = dialogStates.clock.widgetID;
@@ -607,8 +615,10 @@ class View extends Component<Props, State> {
         }
 
         const canonicalInsertPosition = fn.getWidgetInsertionSlot(widgets, { id, size, position });
-        if (!canonicalInsertPosition)
-            return this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, widget seems not to fit!' }));
+        if (!canonicalInsertPosition) {
+            toast.error(formatMessage({ defaultMessage: 'Invalid state, widget seems not to fit!' }));
+            return;
+        }
 
         const payload = pb.create(pb.UpdateWidgetRequestSchema, {
             id,
@@ -619,7 +629,7 @@ class View extends Component<Props, State> {
         });
         try {
             await pb.rpc.scenes.updateWidget(payload);
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Widget updated!' }));
+            toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
         } catch ($) {
             const formErrors = pb.parseFormErrors($, ['sceneId', 'position', 'size', 'kind']);
             this.setState(s => ({
@@ -690,18 +700,18 @@ class View extends Component<Props, State> {
                     error={openDialogKind === 'clock' ? pb.renderFieldErrorsAsList(clock.data?.errors?.global) : null}
                     // Fields
                     widgetSize={{
-                        ...this.#getFieldStruct('clock', 'widgetSize'),
+                        ...this.#getField('clock', 'widgetSize'),
                         options: fn.getValidWidgetSizes(widgets, {
                             id: clock.widgetID,
                             position: clock.position,
                         }),
                     }}
-                    clockStyle={this.#getFieldStruct('clock', 'clockStyle')}
-                    fontStyle={this.#getFieldStruct('clock', 'fontStyle')}
-                    showDate={this.#getFieldStruct('clock', 'showDate')}
-                    showSeconds={this.#getFieldStruct('clock', 'showSeconds')}
-                    showTimezone={this.#getFieldStruct('clock', 'showTimezone')}
-                    timezone={{ ...this.#getFieldStruct('clock', 'timezone'), options: timezones }}
+                    clockStyle={this.#getField('clock', 'clockStyle')}
+                    fontStyle={this.#getField('clock', 'fontStyle')}
+                    showDate={this.#getField('clock', 'showDate')}
+                    showSeconds={this.#getField('clock', 'showSeconds')}
+                    showTimezone={this.#getField('clock', 'showTimezone')}
+                    timezone={{ ...this.#getField('clock', 'timezone'), options: timezones }}
 
                     // showWeather={this.#getFormFieldStruct('clock', 'showWeather')}
                     // weatherLocation={this.#getFormFieldStruct('clock', 'weatherLocation')}
@@ -713,13 +723,13 @@ class View extends Component<Props, State> {
                     error={openDialogKind === 'ticker' ? pb.renderFieldErrorsAsList(ticker.data?.errors?.global) : null}
                     // Fields
                     widgetSize={{
-                        ...this.#getFieldStruct('ticker', 'widgetSize'),
+                        ...this.#getField('ticker', 'widgetSize'),
                         options: fn.getValidWidgetSizes(widgets, {
                             id: ticker.widgetID,
                             position: ticker.position,
                         }),
                     }}
-                    timeFrame={this.#getFieldStruct('ticker', 'timeFrame')}
+                    timeFrame={this.#getField('ticker', 'timeFrame')}
                 />
                 <Comp.FormWidgetBlockHeight
                     isOpen={openDialogKind === 'blockHeight'}
@@ -732,14 +742,14 @@ class View extends Component<Props, State> {
                     }
                     // Fields
                     widgetSize={{
-                        ...this.#getFieldStruct('blockHeight', 'widgetSize'),
+                        ...this.#getField('blockHeight', 'widgetSize'),
                         options: fn.getValidWidgetSizes(widgets, {
                             id: blockHeight.widgetID,
                             position: blockHeight.position,
                         }),
                     }}
-                    fontStyle={this.#getFieldStruct('blockHeight', 'fontStyle')}
-                    showDate={this.#getFieldStruct('blockHeight', 'showDate')}
+                    fontStyle={this.#getField('blockHeight', 'fontStyle')}
+                    showDate={this.#getField('blockHeight', 'showDate')}
                 />
                 <Comp.FormWidgetBraiinsPool
                     isOpen={openDialogKind === 'braiinsPool'}
@@ -752,18 +762,18 @@ class View extends Component<Props, State> {
                     }
                     // Fields
                     widgetSize={{
-                        ...this.#getFieldStruct('braiinsPool', 'widgetSize'),
+                        ...this.#getField('braiinsPool', 'widgetSize'),
                         options: fn.getValidWidgetSizes(widgets, {
                             id: braiinsPool.widgetID,
                             position: braiinsPool.position,
                         }),
                     }}
                     accountId={{
-                        ...this.#getFieldStruct('braiinsPool', 'accountId'),
+                        ...this.#getField('braiinsPool', 'accountId'),
                         options: accounts,
                     }}
-                    sceneStyle={this.#getFieldStruct('braiinsPool', 'sceneStyle')}
-                    timeFrame={this.#getFieldStruct('braiinsPool', 'timeFrame')}
+                    sceneStyle={this.#getField('braiinsPool', 'sceneStyle')}
+                    timeFrame={this.#getField('braiinsPool', 'timeFrame')}
                 />
             </div>
         );
