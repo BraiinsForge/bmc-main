@@ -67,6 +67,7 @@ pub struct LedEventHandler {
 struct LedIndicatorsState {
     wifi_persist: Option<LedCommand>,
     wifi_temp: Option<LedCommand>,
+    wifi_scan_persist: Option<LedCommand>,
     price_persist: Option<LedCommand>,
     clock_persist: Option<LedCommand>,
     device_persist: Option<LedCommand>,
@@ -127,6 +128,19 @@ impl LedIndicatorsState {
                     SOLID_PERIOD,
                 ));
                 self.wifi_temp = None;
+            }
+
+            LedEvent::WifiScan => {
+                self.wifi_scan_persist = Some(LedCommand::SetEffect(
+                    LedEffect::KnightRider(RGB_VIOLET60),
+                    LedEventPersistence::Persistent,
+                    KNIGHT_RIDER_PERIOD,
+                ));
+                self.wifi_temp = None;
+            }
+
+            LedEvent::WifiScanEnded => {
+                self.wifi_scan_persist = None;
             }
 
             // Preview of the scene
@@ -213,6 +227,7 @@ impl LedIndicatorsState {
             || self.sys_persist.is_some()
             || self.price_persist.is_some()
             || self.scene_persist.is_some()
+            || self.wifi_scan_persist.is_some()
     }
 
     fn select_persistent(&self, temp_present: bool) -> Option<LedCommand> {
@@ -234,6 +249,7 @@ impl LedIndicatorsState {
                 .or(self.wifi_persist)
                 .or(self.sys_persist)
                 .or(self.scene_persist)
+                .or(self.wifi_scan_persist)
                 .or(self.price_persist)
                 .or(Some(LedCommand::SetEffect(
                     LedEffect::None,

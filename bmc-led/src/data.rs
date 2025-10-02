@@ -42,7 +42,9 @@ pub enum LedEvent {
     WifiConnected,  // Success
     WifiNone,       // None
     WifiError,      // Error
-    PriceUp,        // Breathe
+    WifiScan,       // Knight Rider
+    WifiScanEnded,
+    PriceUp, // Breathe
     PriceUpEnded,
     PriceDown, // Breathe
     PriceDownEnded,
