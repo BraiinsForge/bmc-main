@@ -16,7 +16,11 @@ import { useStore } from '@/store';
 import * as pb from '@/proto';
 
 import { SectionSettings } from './components';
-import { InlineNotificationsGroup, Tabs, type TabsProps } from '@/components';
+import {
+    InlineNotificationsGroup,
+    // Tabs
+    // type TabsProps,
+} from '@/components';
 import css from './Network.scss';
 
 interface Props {
@@ -126,10 +130,10 @@ class View extends Component<Props, State> {
         this.#load();
     }, 150);
     #syncTabs = () => {
-        const { location } = this.props;
-        const maybeTabHash = location.hash.slice(1);
-        if (!maybeTabHash) this.#tabChange(Tab.settings);
-        else if (Object.hasOwn(Tab, maybeTabHash)) this.#tabChange(maybeTabHash as Tab);
+        // const { location } = this.props;
+        // const maybeTabHash = location.hash.slice(1);
+        // if (!maybeTabHash) this.#tabChange(Tab.settings);
+        // else if (Object.hasOwn(Tab, maybeTabHash)) this.#tabChange(maybeTabHash as Tab);
     };
 
     #hasUnsavedChanges = (): boolean => {
@@ -327,24 +331,24 @@ class View extends Component<Props, State> {
         };
     }
 
-    get #tabs(): TabsProps<Tab>['tabs'] {
-        const { formatMessage } = this.props.intl;
-        return [
-            {
-                key: Tab.settings,
-                label: formatMessage({ defaultMessage: 'Settings' }),
-            },
-            {
-                key: Tab.diagnostics,
-                label: formatMessage({ defaultMessage: 'Diagnostics' }),
-                disabled: true,
-            },
-        ];
-    }
-    #tabChange = (tab: Tab): void => {
-        this.setState({ activeTab: tab });
-        window.history.replaceState(null, '', `#${tab}`);
-    };
+    // get #tabs(): TabsProps<Tab>['tabs'] {
+    //     const { formatMessage } = this.props.intl;
+    //     return [
+    //         {
+    //             key: Tab.settings,
+    //             label: formatMessage({ defaultMessage: 'Settings' }),
+    //         },
+    //         {
+    //             key: Tab.diagnostics,
+    //             label: formatMessage({ defaultMessage: 'Diagnostics' }),
+    //             disabled: true,
+    //         },
+    //     ];
+    // }
+    // #tabChange = (tab: Tab): void => {
+    //     this.setState({ activeTab: tab });
+    //     window.history.replaceState(null, '', `#${tab}`);
+    // };
 
     //
     // General
@@ -469,29 +473,31 @@ class View extends Component<Props, State> {
     };
 
     render() {
-        const { activeTab } = this.state;
+        // const { activeTab } = this.state;
+
         const { title } = this.#txt;
+        const content = this.#confRender();
 
-        let content: ReactNode;
-        switch (activeTab) {
-            case Tab.settings:
-                content = this.#confRender();
-                break;
-
-            case Tab.diagnostics:
-                content = null;
-                break;
-
-            default:
-                assertUnreachable(activeTab, 'settings: active tab');
-        }
+        // let content: ReactNode;
+        // switch (activeTab) {
+        //     case Tab.settings:
+        //         content = this.#confRender();
+        //         break;
+        //
+        //     case Tab.diagnostics:
+        //         content = null;
+        //         break;
+        //
+        //     default:
+        //         assertUnreachable(activeTab, 'settings: active tab');
+        // }
 
         return (
             <div className={css.root}>
                 <Helmet title={title} />
                 <h1 className={css.title} children={title} />
 
-                <Tabs tabs={this.#tabs} activeTab={activeTab} onChange={this.#tabChange} className={css.tabs} />
+                {/* <Tabs tabs={this.#tabs} activeTab={activeTab} onChange={this.#tabChange} className={css.tabs} /> */}
                 <div className={css.content} children={content} />
             </div>
         );
