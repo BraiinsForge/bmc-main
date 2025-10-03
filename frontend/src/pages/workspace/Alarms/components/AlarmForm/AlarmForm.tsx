@@ -105,7 +105,6 @@ class View extends Component<Props, State> {
         sound.onChange(x.selectedItem?.id ?? null);
     };
     #alarmSoundToString = (value: null | pb.SoundInfo): string => value?.name ?? '--';
-    #alarmSoundToElement = (value: pb.SoundInfo) => <SoundOption sound={value} />;
 
     render() {
         const { time, name, repeat, sound, snoozeEnabled, snoozeLimit, snoozeDuration, intl } = this.props;
@@ -174,7 +173,7 @@ class View extends Component<Props, State> {
                             selectedItem={sound.options.find(x => x.id === sound.value)}
                             onChange={this.#alarmSoundChange}
                             itemToString={this.#alarmSoundToString}
-                            itemToElement={this.#alarmSoundToElement}
+                            itemToElement={SoundOptionElement}
                         />
                         <Button
                             id={$('play-selected-sound')}
@@ -237,4 +236,8 @@ class View extends Component<Props, State> {
 export function AlarmForm(props: AlarmFormProps) {
     const intl = useIntl();
     return <View {...props} intl={intl} />;
+}
+
+function SoundOptionElement(props: pb.SoundInfo) {
+    return <SoundOption sound={props} />;
 }

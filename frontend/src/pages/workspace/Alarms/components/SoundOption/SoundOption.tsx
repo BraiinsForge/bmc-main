@@ -34,21 +34,23 @@ class View extends Component<Props, State> {
     static contextType = AppContext;
     declare context: AppContextType;
 
+    #lastKnownCurrentlyPlaying: null | pb.SoundInfo = null;
     constructor(props: Props, context: AppContextType) {
         super(props);
 
         const { currentlyPlaying } = context.device.sound;
         this.state = { isPlaying: currentlyPlaying?.id === props.sound.id };
+        this.#lastKnownCurrentlyPlaying = currentlyPlaying;
     }
+
     componentDidUpdate() {
         const { sound } = this.props;
-        const { isPlaying } = this.state;
         const { currentlyPlaying } = this.context.device.sound;
 
-        // Something outside played a sound, but we are not marked as playing
-        if (currentlyPlaying?.id === sound.id && !isPlaying) this.setState({ isPlaying: true });
-        // We think we are playing a sound, but context says otherwise
-        else if (isPlaying && !currentlyPlaying) this.setState({ isPlaying: false });
+        if (currentlyPlaying?.id !== this.#lastKnownCurrentlyPlaying?.id) {
+            this.#lastKnownCurrentlyPlaying = currentlyPlaying;
+            this.setState({ isPlaying: currentlyPlaying?.id === sound.id });
+        }
     }
     componentWillUnmount = () => abort.all(this);
 

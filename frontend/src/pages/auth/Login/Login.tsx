@@ -34,6 +34,11 @@ class View extends Component<Props, State> {
     readonly state = getInitialState();
     #ref = createRef<HTMLDivElement>();
 
+    #refPassword = createRef<HTMLInputElement>();
+    #focusPassword = (): void => {
+        this.#refPassword.current?.focus();
+    };
+
     #txt = {
         login: this.props.intl.formatMessage({ defaultMessage: 'Login' }),
     };
@@ -71,7 +76,8 @@ class View extends Component<Props, State> {
             <div className={css.root} ref={this.#ref}>
                 <Helmet title={this.#txt.login} />
 
-                <div className={css.containerForm}>
+                {/** biome-ignore lint/a11y/useKeyWithClickEvents: Irrelevant for keyboard navigation. */}
+                <div className={css.containerForm} onClick={this.#focusPassword}>
                     <Form className={css.form}>
                         <LogoHeader style={{ width: 'auto', height: 18 }} className={css.logo} />
 
@@ -79,6 +85,7 @@ class View extends Component<Props, State> {
 
                         <PasswordInput
                             id="login-password"
+                            ref={this.#refPassword}
                             labelText="Password"
                             autoComplete="current-password"
                             value={data.password}
