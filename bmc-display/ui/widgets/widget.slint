@@ -4,6 +4,7 @@ import { WidgetBtcData } from "./categories/ticker-btc.slint";
 import { WidgetBlockHeightData } from "./categories/block-height.slint";
 import { WidgetBraiinsPoolData } from "./categories/braiins-pool.slint";
 import { WidgetRemoteImageData } from "./categories/remote-image.slint";
+import { BlockchainData } from "./categories/blockchain-data.slint";
 export { WidgetSize }
 
 export enum WidgetKind {
@@ -12,7 +13,7 @@ export enum WidgetKind {
     BlockHeight,
     BraiinsPool,
     RemoteImage,
-    BlockchainData
+    BlockchainData,
 }
 
 export struct Widget {
@@ -26,4 +27,5 @@ export struct Widget {
     blockheight: WidgetBlockHeightData,
     braiins-pool: WidgetBraiinsPoolData,
     remote-image: WidgetRemoteImageData,
+    blockchain-data: BlockchainData,
 }

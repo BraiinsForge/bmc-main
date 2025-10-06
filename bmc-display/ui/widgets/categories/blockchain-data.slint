@@ -1,21 +1,329 @@
 import { Palette } from "../../style/palette.slint";
+import { Theme } from "../../style/theme.slint";
+import { Images } from "../../style/images.slint";
 import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
+import { BitcoinAdapter, BlockHeightAdapter, DifficultyAdapter } from "../../controls/adapters.slint";
+
+export struct BlockchainData {
+    // Hashprice
+    hashprice: string,
+    hashprice-graph: image,
+    hashprice-trend-increase: bool,
+    hashprice-trend-change: string,
+    // BTC price graph
+    btc-price-graph: image,
+    // Hashrate
+    hashrate: string,
+    hashrate-graph: image,
+    hashrate-trend-increase: bool,
+    hashrate-trend-change: string,
+    // Stats
+    avg-fees: string,
+    fees-percent: string,
+    total-revenue: string,
+    curr-epoch-blk-time: string,
+    blocks-24h: string,
+    blocks-epoch: string,
+}
+
+component bordered-box inherits Rectangle {
+    border-width: 1px;
+    border-radius: 8px;
+    border-color: Palette.gray-90;
+    background: Palette.gray-100;
+}
+
+component text-block inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> value;
+
+    Text {
+        text: title;
+        font-size: 24px;
+        font-weight: Theme.font.weight.regular;
+        color: Palette.gray-40;
+        horizontal-alignment: left;
+    }
+    Text {
+        text: value;
+        font-size: 24px;
+        font-weight: Theme.font.weight.semi-bold;
+        color: Palette.white;
+        horizontal-alignment: right;
+    }
+}
+
+component icon-title inherits HorizontalLayout {
+    in property <image> icon;
+    in property <string> title;
+
+    alignment: start;
+    spacing: 12px;
+
+    Image {
+        width: 24px;
+        height: 24px;
+        source: icon;
+    }
+    Text {
+        text: title;
+        font-size: 24px;
+        font-weight: Theme.font.weight.semi-bold;
+        color: Palette.gray-40;
+    }
+}
+
+ component trend-box inherits HorizontalLayout {
+    in property <bool> show-24h;
+    in property <bool> trend-increase;
+    in property <string> trend-change;
+
+    spacing: 8px;
+    alignment: end;
+
+    if show-24h: Rectangle {
+        Text {
+            text: "24h";
+            color: Palette.gray-40;
+            font-size: 24px;
+            font-weight: Theme.font.weight.regular;
+        }
+    }
+    Rectangle {
+        width: 105px;
+        height: 32px;
+        border-radius: 4px;
+        states [
+            positive when trend-increase: {
+                background: Palette.green-90;
+            }
+            negative when !trend-increase: {
+                background: Palette.red-100;
+            }
+        ]
+        Text {
+            text: trend-change;
+            font-size: 24px;
+            font-weight: Theme.font.weight.semi-bold;
+            states [
+                positive when trend-increase: {
+                    color: Palette.green-30;
+                }
+                negative when !trend-increase: {
+                    color: Palette.red-40;
+                }
+            ]
+        }
+    }
+ }
+
+component graph-box inherits VerticalLayout {
+    in property <WidgetSize> size;
+    in property <string> title;
+    in property <image> icon;
+    in property <string> big-text;
+    in property <image> graph;
+    in property <bool> show-24h;
+    in property <bool> trend-increase;
+    in property <string> trend-change;
+
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: 8px;
+    spacing: 8px;
+    HorizontalLayout {
+        icon-title {
+            icon: icon;
+            title: title;
+        }
+        if (size != WidgetSize.Small): trend-box {
+            show-24h: show-24h;
+            trend-increase: trend-increase;
+            trend-change: trend-change;
+        }
+    }
+    Text {
+        text: big-text;
+        font-size: size == WidgetSize.Large ? 48px : 32px;
+        font-weight: Theme.font.weight.semi-bold;
+        color: Palette.white;
+    }
+    Image {
+        source: graph;
+    }
+}
+
+component bitcoin-difficulty-box inherits VerticalLayout {
+    in property <WidgetSize> size;
+    in property <string> difficulty;
+
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: 8px;
+    icon-title {
+        icon: Images.axe;
+        title: "Bitcoin Difficulty";
+    }
+    Text {
+        text: difficulty;
+        font-size: size == WidgetSize.Large ? 48px : 32px;
+        font-weight: Theme.font.weight.semi-bold;
+        color: Palette.white;
+    }
+    HorizontalLayout {}
+    Rectangle {}
+    HorizontalLayout {}
+}
 
 export component WidgetBlockchainData inherits Rectangle {
-    background: Palette.black;
-
     in property <WidgetSize> size;
+    in property <BlockchainData> data;
 
+    in property <string> difficulty <=> DifficultyAdapter.difficulty;
+
+    background: Palette.black;
     width: BaseDimensions.widget-width(size);
     height: BaseDimensions.widget-height(size);
 
-    // TODO: Blockchain data design
-    VerticalLayout {
-        Rectangle {
-            Text {
-                text: "Bitcoin Data";
-                color: Palette.white;
+    if size == WidgetSize.Full: HorizontalLayout {
+        in property <string> block-height <=> BlockHeightAdapter.block-height;
+        in property <string> btc-price <=> BitcoinAdapter.price;
+        in property <bool> btc-price-trend-increase <=> BitcoinAdapter.price_increase;
+        in property <string> btc-price-trend-change <=> BitcoinAdapter.price_change;
+
+        spacing: 24px;
+        padding: 16px;
+        VerticalLayout {
+            width: 400px;
+            spacing: 8px;
+            bordered-box {
+                height: 220px;
+                bitcoin-difficulty-box {
+                    size: size;
+                    difficulty: difficulty;
+                }
             }
+            bordered-box {
+                graph-box {
+                    size: size;
+                    title: "Hash Price";
+                    icon: Images.chart;
+                    show-24h: true;
+                    big-text: data.hashprice;
+                    graph: data.hashprice-graph;
+                    trend-increase: data.hashprice-trend-increase;
+                    trend-change: data.hashprice-trend-change;
+                }
+            }
+        }
+        VerticalLayout {
+            padding-top: 16px;
+            padding-bottom: 16px;
+            alignment: space-between;
+            text-block {
+                title: "Avg. Fees per Block";
+                value: data.avg-fees;
+            }
+            text-block {
+                title: "Fees % of Block Rew.";
+                value: data.fees-percent;
+            }
+            text-block {
+                title: "Total Mining Rev.";
+                value: data.total-revenue;
+            }
+            text-block {
+                title: "Curr. Epoch Blk. Time";
+                value: data.curr-epoch-blk-time;
+            }
+            text-block {
+                title: "Block Height";
+                value: block-height;
+            }
+            text-block {
+                title: "Blocks in Last 24h";
+                value: data.blocks-24h;
+            }
+            text-block {
+                title: "Blocks this Epoch";
+                value: data.blocks-epoch;
+            }
+        }
+        VerticalLayout {
+            width: 400px;
+            spacing: 8px;
+            bordered-box {
+                graph-box {
+                    size: size;
+                    title: "BTC-USD";
+                    icon: Images.btc-icon;
+                    show-24h: true;
+                    big-text: btc-price + " USD";
+                    graph: data.btc-price-graph;
+                    trend-increase: btc-price-trend-increase;
+                    trend-change: btc-price-trend-change;
+                }
+            }
+            bordered-box {
+                graph-box {
+                    size: size;
+                    title: "Hashrate";
+                    icon: Images.meter;
+                    show-24h: true;
+                    big-text: data.hashrate;
+                    graph: data.hashrate-graph;
+                    trend-increase: data.hashrate-trend-increase;
+                    trend-change: data.hashrate-trend-change;
+                }
+            }
+        }
+    }
+    if size == WidgetSize.Large: VerticalLayout {
+        bitcoin-difficulty-box {
+            size: size;
+            difficulty: difficulty;
+        }
+        graph-box {
+            size: size;
+            title: "Hash Price";
+            icon: Images.chart;
+            show-24h: true;
+            big-text: data.hashprice;
+            graph: data.hashprice-graph;
+            trend-increase: data.hashprice-trend-increase;
+            trend-change: data.hashprice-trend-change;
+        }
+    }
+    if size == WidgetSize.Medium: HorizontalLayout {
+        bitcoin-difficulty-box {
+            size: size;
+            difficulty: difficulty;
+        }
+        graph-box {
+            size: size;
+            title: "Hash Price";
+            icon: Images.chart;
+            show-24h: true;
+            big-text: data.hashprice;
+            graph: data.hashprice-graph;
+            trend-increase: data.hashprice-trend-increase;
+            trend-change: data.hashprice-trend-change;
+        }
+    }
+    if size == WidgetSize.Small: VerticalLayout {
+        bitcoin-difficulty-box {
+            size: size;
+            difficulty: difficulty;
+        }
+        graph-box {
+            size: size;
+            title: "Hash Price";
+            icon: Images.chart;
+            show-24h: true;
+            big-text: data.hashprice;
+            graph: data.hashprice-graph;
+            trend-increase: data.hashprice-trend-increase;
+            trend-change: data.hashprice-trend-change;
         }
     }
 }

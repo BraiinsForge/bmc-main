@@ -73,6 +73,7 @@ export component WidgetBuilder inherits Rectangle {
             }
             if widget.kind == WidgetKind.BlockchainData: WidgetBlockchainData {
                 size: widget.size;
+                data: widget.blockchain-data;
             }
         }
     }

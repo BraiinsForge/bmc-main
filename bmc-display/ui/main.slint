@@ -1,6 +1,7 @@
 import { Palette } from "style/palette.slint";
 import { Theme } from "style/theme.slint";
-import { ScreenAdapter, StatusOverlayAdapter, UpgradeDownloadAdapter, NotificationAdapter, BitcoinAdapter, BlockHeightAdapter } from "controls/adapters.slint";
+import { ScreenAdapter, StatusOverlayAdapter, UpgradeDownloadAdapter, NotificationAdapter, BitcoinAdapter,
+    BlockHeightAdapter, DifficultyAdapter } from "controls/adapters.slint";
 import { DateTime, InitScreen, ConnectInfoScreen, UpgradeScreen } from "controls/common.slint";
 import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
     InitStartConnect, InitWifiConnectProgress, InitWifiConnectSuccess, InitWifiConnectFailed, InitSetupSuccess, InitGeneralError, InitDeviceSetupQr, ConnectInfo,
@@ -18,7 +19,8 @@ import { Images } from "style/images.slint";
 import { WifiAdapter, ConnectionAdapter, AlarmAdapter } from "controls/adapters.slint";
 import { StatusOverlay } from "controls/status-overlay.slint";
 
-export { ScreenAdapter, StatusOverlayAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, DateTime, NotificationAdapter, BitcoinAdapter, BlockHeightAdapter }
+export { ScreenAdapter, StatusOverlayAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, DateTime, NotificationAdapter,
+    BitcoinAdapter, BlockHeightAdapter, DifficultyAdapter }
 export { InitScreen, ConnectInfoScreen, UpgradeScreen }
 export { WidgetSize, WidgetKind, Widget }
 export { BraiinsPoolStyle, PoolChartDimensions, PoolWorkerStatus, BraiinsPoolPayouts, PoolPayoutType }
