@@ -223,6 +223,23 @@ impl WidgetSize {
             Self::Full => 4,
         }
     }
+
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        match self {
+            Self::Small => 317,
+            Self::Medium | Self::Large => 638,
+            Self::Full => 1280,
+        }
+    }
+
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        match self {
+            Self::Small | Self::Medium => 238,
+            Self::Large | Self::Full => 480,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -653,6 +670,17 @@ impl From<WidgetSize> for generated::WidgetSize {
             WidgetSize::Medium => Self::Medium,
             WidgetSize::Large => Self::Large,
             WidgetSize::Full => Self::Full,
+        }
+    }
+}
+
+impl From<generated::WidgetSize> for WidgetSize {
+    fn from(value: generated::WidgetSize) -> Self {
+        match value {
+            generated::WidgetSize::Small => Self::Small,
+            generated::WidgetSize::Medium => Self::Medium,
+            generated::WidgetSize::Large => Self::Large,
+            generated::WidgetSize::Full => Self::Full,
         }
     }
 }

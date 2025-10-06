@@ -39,29 +39,13 @@ export global WidgetUtilsAdapter {
 }
 
 export global BaseDimensions {
-  public pure function widget-width-int(size: WidgetSize) -> int {
-    if (size == WidgetSize.Small) {
-      return 317;
-    } else if (size == WidgetSize.Medium || size == WidgetSize.Large) {
-      return 638;
-    } else {
-      // WidgetSize.Full
-      return 1280;
-    }
-  }
+  pure callback widget-width-int(size: WidgetSize) -> int;
 
   public pure function widget-width(size: WidgetSize) -> length {
     return widget-width-int(size) * 1px;
   }
 
-  public pure function widget-height-int(size: WidgetSize) -> int {
-    if (size == WidgetSize.Small || size == WidgetSize.Medium) {
-      return 238;
-    } else {
-      // WidgetSize.Large || WidgetSize.Full
-      return 480;
-    }
-  }
+  pure callback widget-height-int(size: WidgetSize) -> int;
 
   public pure function widget-height(size: WidgetSize) -> length {
     return widget-height-int(size) * 1px;

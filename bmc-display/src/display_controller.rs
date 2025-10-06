@@ -39,6 +39,8 @@ impl DisplayController {
             window_closed,
         };
 
+        Self::setup_static_callbacks(&main_window);
+
         Ok((controller, WindowHandle(main_window)))
     }
 

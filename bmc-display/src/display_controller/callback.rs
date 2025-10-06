@@ -1,8 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::data::WidgetSize;
 use crate::display_controller::DisplayController;
 use crate::generated;
-use crate::generated::AlarmAdapter;
+use crate::generated::{AlarmAdapter, BaseDimensions};
 use slint::ComponentHandle;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -26,6 +27,28 @@ impl DisplayController {
     //         })
     //     })
     // }
+
+    pub(super) fn setup_static_callbacks(main_window: &generated::MainWindow) {
+        let base_dimensions = main_window.global::<BaseDimensions<'_>>();
+
+        base_dimensions.on_widget_width_int(|widget_size| {
+            let widget_size = WidgetSize::from(widget_size);
+
+            #[expect(clippy::cast_possible_wrap)]
+            let width = widget_size.width() as i32;
+
+            width
+        });
+
+        base_dimensions.on_widget_height_int(|widget_size| {
+            let widget_size = WidgetSize::from(widget_size);
+
+            #[expect(clippy::cast_possible_wrap)]
+            let height = widget_size.height() as i32;
+
+            height
+        });
+    }
 
     #[must_use]
     pub fn on_alarm_events(&self) -> UnboundedReceiverStream<AlarmEvent> {
