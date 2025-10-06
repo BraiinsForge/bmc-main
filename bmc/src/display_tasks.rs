@@ -437,12 +437,18 @@ impl<T: BmcManager> DisplayTasks<T> {
                 .time_system
                 .is_24();
             let date_format = config_handle.read().await.localization_config().date_format;
+            let number_format = config_handle
+                .read()
+                .await
+                .localization_config()
+                .number_format;
 
             display_controller.update_blockheight_data(
                 blockheight_data,
                 timezone,
                 is_24_format,
                 date_format,
+                number_format,
             );
         }
     }

@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_shared_time::time::{DateFormat, Timezone};
-use num_format::{Locale, ToFormattedString};
+use bmc_shared_utils::number_format::NumberFormat;
 use serde::Deserialize;
 
 const NOT_AVAILABLE: &str = "--";
@@ -18,13 +18,9 @@ const FORMAT_12H: &str = "%I:%M %p";
 
 impl BlockheightData {
     #[must_use]
-    pub fn blockheight_as_shared(self) -> slint::SharedString {
+    pub fn blockheight_as_shared(self, number_format: NumberFormat) -> slint::SharedString {
         self.height.map_or(NOT_AVAILABLE.into(), |height| {
-            slint::SharedString::from(
-                height
-                    .to_formatted_string(&Locale::fr)
-                    .replace("\u{202f}", " "),
-            )
+            slint::SharedString::from(number_format.format_number(height, 0))
         })
     }
 

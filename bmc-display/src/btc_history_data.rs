@@ -35,7 +35,7 @@ impl BtcHistoryData {
             SharedString::from(format!(
                 "{}{}%",
                 if change.is_sign_positive() { "+" } else { "" },
-                number_format.format_number(change)
+                number_format.format_number(change, 1)
             ))
         } else {
             SharedString::default()

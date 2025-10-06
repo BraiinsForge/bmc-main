@@ -15,9 +15,7 @@ impl BitcoinData {
     #[must_use]
     pub fn price_as_shared(self, number_format: NumberFormat) -> slint::SharedString {
         self.price.map_or(NOT_AVAILABLE.into(), |price| {
-            #[expect(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-            let price = price as u64;
-            slint::SharedString::from(number_format.format_number(price))
+            slint::SharedString::from(number_format.format_number(price, 0))
         })
     }
 
@@ -33,7 +31,7 @@ impl BitcoinData {
                 };
                 slint::SharedString::from(format!(
                     "{plus_symbol}{}%",
-                    number_format.format_number(percent_change_24h)
+                    number_format.format_number(percent_change_24h, 1)
                 ))
             })
     }

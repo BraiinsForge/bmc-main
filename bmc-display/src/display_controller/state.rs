@@ -319,10 +319,15 @@ impl DisplayController {
         timezone: Timezone,
         is_24_format: bool,
         date_format: DateFormat,
+        number_format: NumberFormat,
     ) {
         self.in_event_loop(move |main_window| {
             let blockheight_adapter = BlockHeightAdapter::get(&main_window);
-            blockheight_adapter.set_block_height(blockheight_data.clone().blockheight_as_shared());
+            blockheight_adapter.set_block_height(
+                blockheight_data
+                    .clone()
+                    .blockheight_as_shared(number_format),
+            );
             blockheight_adapter.set_timestamp(blockheight_data.timestamp_as_shared(
                 &timezone,
                 is_24_format,
@@ -356,6 +361,7 @@ impl DisplayController {
         scene_id: SceneId,
         widget_id: WidgetId,
         current_user_hashrate: CurrentUserHashrate,
+        number_format: NumberFormat,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -366,7 +372,7 @@ impl DisplayController {
 
                 widgets_ref.modify(&widget_id, |widget| {
                     widget.braiins_pool.current_hashrate =
-                        current_user_hashrate.hashrate_as_shared();
+                        current_user_hashrate.hashrate_as_shared(number_format);
                     widget.braiins_pool.current_hashrate_unit =
                         current_user_hashrate.hashrate_units();
                 });
@@ -379,6 +385,7 @@ impl DisplayController {
         scene_id: SceneId,
         widget_id: WidgetId,
         latest_rewards: LatestUserRewards,
+        number_format: NumberFormat,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -388,13 +395,15 @@ impl DisplayController {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
                 widgets_ref.modify(&widget_id, |widget| {
-                    widget.braiins_pool.reward_btc = latest_rewards.today_reward_btc();
-                    widget.braiins_pool.reward_usd = latest_rewards.today_reward_usd();
+                    widget.braiins_pool.reward_btc =
+                        latest_rewards.today_reward_btc(number_format.clone());
+                    widget.braiins_pool.reward_usd = latest_rewards.today_reward_usd(number_format);
                 });
             }
         });
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub fn update_hashrate_history(
         &self,
         scene_id: SceneId,
@@ -403,6 +412,7 @@ impl DisplayController {
         is_24_format: bool,
         date_format: DateFormat,
         hashrate_history: UserHashrateHistory,
+        number_format: NumberFormat,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -420,7 +430,8 @@ impl DisplayController {
                     let width: u32 = image_dimensions.width.try_into().unwrap_or_default();
                     let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
 
-                    widget.braiins_pool.hashrate_units = hashrate_history.graph_units();
+                    widget.braiins_pool.hashrate_units =
+                        hashrate_history.graph_units(number_format);
 
                     match (pool_style, widget_size) {
                         (BraiinsPoolStyle::Overview, WidgetSize::Large) => {
@@ -467,6 +478,7 @@ impl DisplayController {
         scene_id: SceneId,
         widget_id: WidgetId,
         workers_stats: CurrentUserWorkerStats,
+        number_format: NumberFormat,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -476,7 +488,7 @@ impl DisplayController {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
                 widgets_ref.modify(&widget_id, |widget| {
-                    widget.braiins_pool.worker_status = workers_stats.worker_stats();
+                    widget.braiins_pool.worker_status = workers_stats.worker_stats(number_format);
                 });
             }
         });
@@ -487,6 +499,7 @@ impl DisplayController {
         scene_id: SceneId,
         widget_id: WidgetId,
         worker_history: UserWorkerHistory,
+        number_format: NumberFormat,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -504,7 +517,7 @@ impl DisplayController {
                     let width: u32 = image_dimensions.width.try_into().unwrap_or_default();
                     let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
 
-                    widget.braiins_pool.workers_units = worker_history.graph_units();
+                    widget.braiins_pool.workers_units = worker_history.graph_units(number_format);
 
                     match (pool_style, widget_size) {
                         (BraiinsPoolStyle::Overview, WidgetSize::Full) => {
@@ -567,6 +580,7 @@ impl DisplayController {
         widget_id: WidgetId,
         user_financials: UserFinancials,
         recent_payouts: RecentUserPayouts,
+        number_format: NumberFormat,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -578,7 +592,8 @@ impl DisplayController {
                 widgets_ref.modify(&widget_id, |widget| {
                     widget.braiins_pool.next_payout_estimate =
                         user_financials.next_payout_estimate_to_shared();
-                    widget.braiins_pool.last_payout = recent_payouts.last_payout_to_shared();
+                    widget.braiins_pool.last_payout =
+                        recent_payouts.last_payout_to_shared(number_format);
                     if let (Some(next_payout_estimate), Some(last_payout)) = (
                         user_financials.next_payout_estimate(),
                         recent_payouts.last_payout_datetime(),

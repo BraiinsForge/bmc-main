@@ -3,6 +3,7 @@
 use crate::generated::{BraiinsPoolPayouts, MainWindow, Palette, PoolPayoutType, PoolWorkerStatus};
 use crate::graph_utils::{self, ColorPalette};
 use bmc_shared_time::time::{DateFormat, Timezone};
+use bmc_shared_utils::number_format::NumberFormat;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use slint::{Global, Image, ModelRc, SharedString, VecModel};
@@ -34,13 +35,13 @@ pub struct CurrentUserHashrate {
 
 impl CurrentUserHashrate {
     #[must_use]
-    pub fn hashrate_as_shared(&self) -> SharedString {
+    pub fn hashrate_as_shared(&self, number_format: NumberFormat) -> SharedString {
         let hashrate_per_sec = if self.hashrate_th_per_sec > 1000.0 {
             self.hashrate_th_per_sec / 1000.0
         } else {
             self.hashrate_th_per_sec
         };
-        SharedString::from(format!("{hashrate_per_sec:.1}"))
+        SharedString::from(number_format.format_number(hashrate_per_sec, 1))
     }
 
     #[must_use]
@@ -115,7 +116,8 @@ impl UserHashrateHistory {
     }
 
     #[must_use]
-    pub fn graph_units(&self) -> ModelRc<SharedString> {
+    #[expect(clippy::needless_pass_by_value)]
+    pub fn graph_units(&self, number_format: NumberFormat) -> ModelRc<SharedString> {
         let max = self
             .slots
             .iter()
@@ -130,7 +132,7 @@ impl UserHashrateHistory {
         ModelRc::new(VecModel::from_iter(
             [max, 2.0 * max / 3.0, max / 3.0, 0.0]
                 .iter()
-                .map(|unit| SharedString::from(format!("{unit:.1}")))
+                .map(|unit| SharedString::from(number_format.clone().format_number(*unit, 1)))
                 .collect::<Vec<SharedString>>(),
         ))
     }
@@ -300,7 +302,8 @@ impl UserWorkerHistory {
     }
 
     #[must_use]
-    pub fn graph_units(&self) -> ModelRc<SharedString> {
+    #[expect(clippy::needless_pass_by_value)]
+    pub fn graph_units(&self, number_format: NumberFormat) -> ModelRc<SharedString> {
         let max = self
             .slots
             .iter()
@@ -320,12 +323,14 @@ impl UserWorkerHistory {
         let units: Vec<SharedString> = if max > 3000 {
             #[expect(clippy::integer_division)]
             [max / 1000, 2 * max / 3000, max / 3000, 0]
-                .map(|unit| SharedString::from(format!("{unit}k")))
+                .map(|unit| {
+                    SharedString::from(format!("{}k", number_format.clone().format_number(unit, 1)))
+                })
                 .to_vec()
         } else if max >= 3 {
             #[expect(clippy::integer_division)]
             [max, 2 * max / 3, max / 3, 0]
-                .map(|unit| SharedString::from(format!("{unit}")))
+                .map(|unit| SharedString::from(number_format.clone().format_number(unit, 0)))
                 .to_vec()
         } else {
             [max, 0]
@@ -370,15 +375,15 @@ pub struct CurrentUserWorkerStats {
 
 impl CurrentUserWorkerStats {
     #[must_use]
-    pub fn worker_stats(self) -> PoolWorkerStatus {
+    pub fn worker_stats(self, number_format: NumberFormat) -> PoolWorkerStatus {
         PoolWorkerStatus {
-            total: SharedString::from(format!(
-                "{}",
-                self.active_workers + self.low_workers + self.offline_workers
+            total: SharedString::from(number_format.clone().format_number(
+                self.active_workers + self.low_workers + self.offline_workers,
+                0,
             )),
-            active: SharedString::from(format!("{}", self.active_workers)),
-            low: SharedString::from(format!("{}", self.low_workers)),
-            offline: SharedString::from(format!("{}", self.offline_workers)),
+            active: SharedString::from(number_format.clone().format_number(self.active_workers, 0)),
+            low: SharedString::from(number_format.clone().format_number(self.low_workers, 0)),
+            offline: SharedString::from(number_format.format_number(self.offline_workers, 0)),
         }
     }
 }
@@ -439,13 +444,19 @@ pub struct LatestUserRewards {
 
 impl LatestUserRewards {
     #[must_use]
-    pub fn today_reward_btc(&self) -> SharedString {
-        SharedString::from(format!("{:.6} BTC", self.todays_reward_estimate_btc))
+    pub fn today_reward_btc(&self, number_format: NumberFormat) -> SharedString {
+        SharedString::from(format!(
+            "{} BTC",
+            number_format.format_number(self.todays_reward_estimate_btc, 6)
+        ))
     }
 
     #[must_use]
-    pub fn today_reward_usd(&self) -> SharedString {
-        SharedString::from(format!("~ {:.1} USD", self.todays_reward_estimate_usd))
+    pub fn today_reward_usd(&self, number_format: NumberFormat) -> SharedString {
+        SharedString::from(format!(
+            "~ {} USD",
+            number_format.format_number(self.todays_reward_estimate_usd, 3)
+        ))
     }
 }
 
@@ -486,14 +497,17 @@ pub struct RecentUserPayouts {
 
 impl RecentUserPayouts {
     #[must_use]
-    pub fn last_payout_to_shared(&self) -> SharedString {
+    pub fn last_payout_to_shared(&self, number_format: NumberFormat) -> SharedString {
         let now = Utc::now();
         self.payouts
             .iter()
             .filter(|payout| payout.status == PayoutStatus::Completed)
             .min_by_key(|payout| (now - payout.occurred_at).abs().num_seconds())
             .map_or(SharedString::default(), |payout| {
-                SharedString::from(format!("{:.6} BTC", payout.amount_btc))
+                SharedString::from(format!(
+                    "{} BTC",
+                    number_format.format_number(payout.amount_btc, 6)
+                ))
             })
     }
 

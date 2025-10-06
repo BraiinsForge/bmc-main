@@ -321,6 +321,12 @@ impl WidgetTasks {
                         return;
                     };
 
+                let number_format = config_handle
+                    .read()
+                    .await
+                    .localization_config()
+                    .number_format;
+
                 display_controller.update_account_name(
                     scene_id.clone(),
                     widget_id.clone(),
@@ -352,6 +358,7 @@ impl WidgetTasks {
                     scene_id.clone(),
                     widget_id.clone(),
                     current_hashrate,
+                    number_format.clone(),
                 );
 
                 if download_rewards {
@@ -380,6 +387,7 @@ impl WidgetTasks {
                         scene_id.clone(),
                         widget_id.clone(),
                         latest_rewards,
+                        number_format.clone(),
                     );
                 }
 
@@ -452,6 +460,7 @@ impl WidgetTasks {
                         is_24_format,
                         date_format,
                         hashrate_history,
+                        number_format.clone(),
                     );
                 }
 
@@ -481,6 +490,7 @@ impl WidgetTasks {
                         scene_id.clone(),
                         widget_id.clone(),
                         workers_stats,
+                        number_format.clone(),
                     );
                 }
 
@@ -542,6 +552,7 @@ impl WidgetTasks {
                         scene_id.clone(),
                         widget_id.clone(),
                         worker_history,
+                        number_format.clone(),
                     );
                 }
 
@@ -594,6 +605,7 @@ impl WidgetTasks {
                         widget_id.clone(),
                         user_financials,
                         recent_payouts,
+                        number_format,
                     );
                 }
 
@@ -651,7 +663,6 @@ impl WidgetTasks {
                             break;
                         }
                     }
-                    // println!("{recent_payouts:#?}");
                     display_controller.update_recent_payouts(
                         scene_id.clone(),
                         widget_id.clone(),
