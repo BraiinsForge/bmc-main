@@ -7,12 +7,12 @@
     },
     "bmc-shared/ii-net": {
       "repo": "ssh://git@gitlab.ii.zone/bos/bos-main.git",
-      "commit": "2302c16ed7d58f7313dc241ac21396618e71d731",
+      "commit": "f58300e1f9bf89e507ad59ce08f42690ad9a61ef",
       "upstream_path": "open/utils-rs/ii-net"
     },
     "bmc-shared/ii-net-drv": {
       "repo": "ssh://git@gitlab.ii.zone/bos/bos-main.git",
-      "commit": "2302c16ed7d58f7313dc241ac21396618e71d731",
+      "commit": "f58300e1f9bf89e507ad59ce08f42690ad9a61ef",
       "upstream_path": "open/utils-rs/ii-net-drv"
     }
   }
