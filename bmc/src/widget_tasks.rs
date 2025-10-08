@@ -27,7 +27,7 @@ use tokio::spawn;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior, interval, sleep};
-use tracing::{Instrument, debug, error, info, warn};
+use tracing::{Instrument, debug, error, info, instrument, warn};
 use url::Url;
 
 const BTC_HISTORY_API_URL: &str = "https://public-api.braiins.com/v1/price-history";
@@ -105,9 +105,9 @@ impl WidgetTasks {
             WidgetKind::BraiinsPool(pool_widget) => Some(spawn(self.make_braiins_pool_task(
                 scene_id.clone(),
                 widget.id.clone(),
-                &widget.size,
+                widget.size,
                 self.config_handle.clone(),
-                &pool_widget.pool_style,
+                pool_widget.pool_style,
                 pool_widget.chart_frame.clone(),
                 pool_widget.account_id.clone(),
             ))),
@@ -122,11 +122,13 @@ impl WidgetTasks {
             }
         };
 
-        join_handle.map(|handle| TaskHandle {
-            scene_id: scene_id.clone(),
-            widget_id: widget.id.clone(),
-            handle,
-        })
+        join_handle
+            .inspect(|_| debug!(%scene_id, widget_id = %widget.id, "Widget task spawned"))
+            .map(|handle| TaskHandle {
+                scene_id: scene_id.clone(),
+                widget_id: widget.id.clone(),
+                handle,
+            })
     }
 
     pub async fn abort_all(&self, scene_id: &SceneId) {
@@ -164,9 +166,11 @@ impl WidgetTasks {
 
         for task_handle in to_abort {
             let _ = task_handle.handle.await;
+            debug!(scene_id = %task_handle.scene_id, widget_id = %task_handle.widget_id, "Widget task aborted");
         }
     }
 
+    #[instrument(name = "clock", skip_all, fields(%scene_id, %widget_id))]
     fn make_clock_task(
         &self,
         scene_id: SceneId,
@@ -178,6 +182,8 @@ impl WidgetTasks {
         let mut system_timezone_receiver = self.system_timezone_receiver.clone();
 
         async move {
+            info!(?timezone, "Params");
+
             loop {
                 let current_tick = chrono::Local::now();
 
@@ -216,8 +222,10 @@ impl WidgetTasks {
                 sleep(duration_to_next_tick).await;
             }
         }
+        .in_current_span()
     }
 
+    #[instrument(name = "btc_graph", skip_all, fields(%scene_id, %widget_id))]
     fn make_btc_graph_task(
         &self,
         scene_id: SceneId,
@@ -227,6 +235,8 @@ impl WidgetTasks {
         let display_controller = self.display_controller.clone();
 
         async move {
+            info!(?timeframe, "Params");
+
             let mut interval = interval(Duration::from_secs(60));
 
             loop {
@@ -262,16 +272,18 @@ impl WidgetTasks {
                 );
             }
         }
+        .in_current_span()
     }
 
-    #[expect(clippy::too_many_lines, clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
+    #[instrument(name = "braiins_pool", skip_all, fields(%scene_id, %widget_id))]
     fn make_braiins_pool_task(
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
-        widget_size: &WidgetSize,
+        widget_size: WidgetSize,
         config_handle: Arc<RwLock<ConfigHandle>>,
-        pool_style: &PoolStyle,
+        pool_style: PoolStyle,
         chart_frame: PoolChartTimeFrame,
         account_id: Option<AccountId>,
     ) -> impl Future<Output = ()> + Send + 'static {
@@ -313,6 +325,8 @@ impl WidgetTasks {
         );
 
         async move {
+            info!(?pool_style, ?chart_frame, ?account_id, "Params");
+
             let mut interval = interval(Duration::from_secs(60));
             let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
                 error!("HTTP Client init failed");
@@ -689,6 +703,7 @@ impl WidgetTasks {
         }
     }
 
+    #[instrument(name = "remote_image", skip_all, fields(%scene_id, %widget_id))]
     fn make_remote_image_task(
         &self,
         scene_id: SceneId,
@@ -884,6 +899,7 @@ impl WidgetTasks {
                 display_controller.update_remote_image(scene_id.clone(), widget_id.clone(), state);
             }
         }
+        .in_current_span()
     }
 }
 
