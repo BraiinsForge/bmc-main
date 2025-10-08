@@ -9,6 +9,7 @@ pub mod blockheight_data;
 pub mod btc_history_data;
 pub mod clock_data;
 pub mod data;
+pub mod difficulty_data;
 pub mod display_controller;
 pub mod display_driver;
 pub mod graph_utils;

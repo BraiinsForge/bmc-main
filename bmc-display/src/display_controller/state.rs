@@ -8,11 +8,12 @@ use crate::data::{
     ConnectInfoScreen, InitScreen, Scene, SceneCycling, SceneCyclingTransition, SceneId,
     UpgradeScreen, Widget, WidgetId,
 };
+use crate::difficulty_data::DifficultyData;
 use crate::display_controller::DisplayController;
 use crate::generated::{
     self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, BraiinsPoolStyle,
-    ClockStyle, ConnectionAdapter, PoolChartDimensions, SceneCyclingAdapter, ScreenAdapter,
-    WidgetSize, WifiAdapter,
+    ClockStyle, ConnectionAdapter, DifficultyAdapter, PoolChartDimensions, SceneCyclingAdapter,
+    ScreenAdapter, WidgetSize, WifiAdapter,
 };
 use crate::indexmap_model::IndexMapModel;
 use crate::pool_data::{
@@ -334,6 +335,20 @@ impl DisplayController {
                 is_24_format,
                 date_format,
             ));
+        });
+    }
+
+    pub fn update_difficulty_data(
+        &self,
+        difficulty_data: DifficultyData,
+        number_format: NumberFormat,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let difficulty_adapter = DifficultyAdapter::get(&main_window);
+            difficulty_adapter
+                .set_difficulty(difficulty_data.difficulty_as_shared(number_format.clone()));
+            difficulty_adapter.set_blocks_epoch(difficulty_data.block_epoch(number_format));
+            difficulty_adapter.set_epoch_block_time(difficulty_data.epoch_block_time());
         });
     }
 

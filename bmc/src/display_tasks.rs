@@ -9,6 +9,7 @@ use crate::config::ConfigHandle;
 use bmc_display::bitcoin_data::BitcoinData;
 use bmc_display::blockheight_data::BlockheightData;
 use bmc_display::data::{ConnectInfoScreen, InitScreen, UpgradeScreen};
+use bmc_display::difficulty_data::DifficultyData;
 use bmc_display::display_controller::DisplayController;
 use bmc_shared_ii_net::wifi::SignalStrength;
 use bmc_shared_time::time::Timezone;
@@ -19,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, broadcast, watch};
 use tokio::time::interval;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 const SCREEN_DURATION: Duration = Duration::from_secs(5);
 
@@ -27,6 +28,7 @@ const PRICE_API_URL: &str = "https://public-api.braiins.com/v1/price-stats";
 const BLOCK_HEIGHT_API_URL: &str = "https://public-api.braiins.com/v2/blocks";
 const BLOCK_HEIGHT_LIMIT_API_PARAM: &str = "limit";
 const CURRENCY_API_PARAM: &str = "currency";
+const DIFFICULTY_STATS_URL: &str = "https://public-api.braiins.com/v1/difficulty-stats";
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_INFO_SCREEN_DURATION: Duration = Duration::from_secs(10);
 const ERROR_SCREEN_DURATION: Duration = Duration::from_secs(5);
@@ -103,6 +105,11 @@ impl<T: BmcManager> DisplayTasks<T> {
             display_controller.clone(),
             config_handle.clone(),
             manager.clone(),
+        ));
+
+        tokio::spawn(Self::run_difficulty_stats_update(
+            display_controller.clone(),
+            config_handle.clone(),
         ));
 
         tokio::spawn(Self::run_date_time_update(
@@ -450,6 +457,42 @@ impl<T: BmcManager> DisplayTasks<T> {
                 date_format,
                 number_format,
             );
+        }
+    }
+
+    async fn run_difficulty_stats_update(
+        display_controller: DisplayController,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+    ) {
+        let mut interval = interval(Duration::from_secs(60));
+        let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
+            error!("HTTP Client init failed");
+            return;
+        };
+
+        loop {
+            interval.tick().await;
+
+            debug!("Getting difficulty data...");
+            let difficulty_data = match client.get(DIFFICULTY_STATS_URL).send().await {
+                Ok(response) => response
+                    .json::<DifficultyData>()
+                    .await
+                    .map_err(|e| warn!("Failed to parse difficulty JSON: {e}"))
+                    .unwrap_or_default(),
+                Err(e) => {
+                    warn!("Failed to get difficulty data from API: {e}");
+                    DifficultyData::default()
+                }
+            };
+
+            let number_format = config_handle
+                .read()
+                .await
+                .localization_config()
+                .number_format;
+
+            display_controller.update_difficulty_data(difficulty_data, number_format);
         }
     }
 

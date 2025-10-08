@@ -21,9 +21,7 @@ export struct BlockchainData {
     avg-fees: string,
     fees-percent: string,
     total-revenue: string,
-    curr-epoch-blk-time: string,
     blocks-24h: string,
-    blocks-epoch: string,
 }
 
 component bordered-box inherits Rectangle {
@@ -187,6 +185,8 @@ export component WidgetBlockchainData inherits Rectangle {
 
     if size == WidgetSize.Full: HorizontalLayout {
         in property <string> block-height <=> BlockHeightAdapter.block-height;
+        in property <string> blocks-epoch <=> DifficultyAdapter.blocks-epoch;
+        in property <string> epoch-block-time <=> DifficultyAdapter.epoch-block-time;
         in property <string> btc-price <=> BitcoinAdapter.price;
         in property <bool> btc-price-trend-increase <=> BitcoinAdapter.price_increase;
         in property <string> btc-price-trend-change <=> BitcoinAdapter.price_change;
@@ -234,7 +234,7 @@ export component WidgetBlockchainData inherits Rectangle {
             }
             text-block {
                 title: "Curr. Epoch Blk. Time";
-                value: data.curr-epoch-blk-time;
+                value: epoch-block-time;
             }
             text-block {
                 title: "Block Height";
@@ -246,7 +246,7 @@ export component WidgetBlockchainData inherits Rectangle {
             }
             text-block {
                 title: "Blocks this Epoch";
-                value: data.blocks-epoch;
+                value: blocks-epoch;
             }
         }
         VerticalLayout {
