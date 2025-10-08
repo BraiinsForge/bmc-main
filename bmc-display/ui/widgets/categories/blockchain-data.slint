@@ -149,6 +149,12 @@ component graph-box inherits VerticalLayout {
 component bitcoin-difficulty-box inherits VerticalLayout {
     in property <WidgetSize> size;
     in property <string> difficulty;
+    in property <bool> prev-adjustment-increase;
+    in property <string> prev-adjustment-change;
+    in property <string> prev-adjustment-time;
+    in property <bool> next-adjustment-increase;
+    in property <string> next-adjustment-change;
+    in property <string> next-adjustment-time;
 
     padding-left: 16px;
     padding-right: 16px;
@@ -163,9 +169,60 @@ component bitcoin-difficulty-box inherits VerticalLayout {
         font-weight: Theme.font.weight.semi-bold;
         color: Palette.white;
     }
-    HorizontalLayout {}
-    Rectangle {}
-    HorizontalLayout {}
+    // VerticalLayout {
+        if size != WidgetSize.Small: HorizontalLayout {
+            alignment: space-between;
+            Text {
+                text: "Prev Adjust";
+                color: Palette.gray-40;
+                font-size: 24px;
+                font-weight: Theme.font.weight.regular;
+            }
+            if (size == WidgetSize.Full || size == WidgetSize.Large): Text {
+                // text: "8 days ago";
+                text: prev-adjustment-time;
+                color: Palette.gray-40;
+                font-size: size == WidgetSize.Full ? 16px : 24px;
+                font-weight: Theme.font.weight.regular;
+                vertical-alignment: center;
+            }
+            trend-box {
+                show-24h: false;
+                trend-increase: prev-adjustment-increase;
+                trend-change: prev-adjustment-change;
+            }
+        }
+        if size != WidgetSize.Small: Rectangle {
+            // border-color: Palette.gray-90;
+            border-color: pink;
+            border-width: 1px;
+            height: 1px;
+            width: 0.9 * parent.width;
+            x: 0.05 * parent.width;
+        }
+        HorizontalLayout {
+            alignment: space-between;
+            Text {
+                text: "Next Adjust";
+                color: Palette.gray-40;
+                font-size: size == WidgetSize.Small ? 16px : 24px;
+                font-weight: Theme.font.weight.regular;
+            }
+            if (size == WidgetSize.Full || size == WidgetSize.Large): Text {
+                // text: "~ in 9 days";
+                text: next-adjustment-time;
+                color: Palette.gray-40;
+                font-size: size == WidgetSize.Full ? 16px : 24px;
+                font-weight: Theme.font.weight.regular;
+                vertical-alignment: center;
+            }
+            trend-box {
+                show-24h: false;
+                trend-increase: next-adjustment-increase;
+                trend-change: next-adjustment-change;
+            }
+        }
+    // }
 }
 
 export component WidgetBlockchainData inherits Rectangle {
@@ -173,6 +230,12 @@ export component WidgetBlockchainData inherits Rectangle {
     in property <BlockchainData> data;
 
     in property <string> difficulty <=> DifficultyAdapter.difficulty;
+    in property <bool> prev-adjustment-increase <=> DifficultyAdapter.prev-adjustment-increase;
+    in property <string> prev-adjustment-change <=> DifficultyAdapter.prev-adjustment-change;
+    in property <string> prev-adjustment-time <=> DifficultyAdapter.prev-adjustment-time;
+    in property <bool> next-adjustment-increase <=> DifficultyAdapter.next-adjustment-increase;
+    in property <string> next-adjustment-change <=> DifficultyAdapter.next-adjustment-change;
+    in property <string> next-adjustment-time <=> DifficultyAdapter.next-adjustment-time;
     in property <string> hashprice <=> HashrateAdapter.hashprice;
 
     background: Palette.black;
@@ -201,6 +264,12 @@ export component WidgetBlockchainData inherits Rectangle {
                 bitcoin-difficulty-box {
                     size: size;
                     difficulty: difficulty;
+                    prev-adjustment-increase: prev-adjustment-increase;
+                    prev-adjustment-change: prev-adjustment-change;
+                    prev-adjustment-time: prev-adjustment-time;
+                    next-adjustment-increase: next-adjustment-increase;
+                    next-adjustment-change: next-adjustment-change;
+                    next-adjustment-time: next-adjustment-time;
                 }
             }
             bordered-box {
@@ -283,6 +352,12 @@ export component WidgetBlockchainData inherits Rectangle {
             height: parent.height / 2;
             size: size;
             difficulty: difficulty;
+            prev-adjustment-increase: prev-adjustment-increase;
+            prev-adjustment-change: prev-adjustment-change;
+            prev-adjustment-time: prev-adjustment-time;
+            next-adjustment-increase: next-adjustment-increase;
+            next-adjustment-change: next-adjustment-change;
+            next-adjustment-time: next-adjustment-time;
         }
         Rectangle {
             border-color: Palette.gray-90;
@@ -305,6 +380,10 @@ export component WidgetBlockchainData inherits Rectangle {
             width: parent.width / 2;
             size: size;
             difficulty: difficulty;
+            prev-adjustment-increase: prev-adjustment-increase;
+            prev-adjustment-change: prev-adjustment-change;
+            next-adjustment-increase: next-adjustment-increase;
+            next-adjustment-change: next-adjustment-change;
         }
         Rectangle {
             border-color: Palette.gray-90;
@@ -329,6 +408,8 @@ export component WidgetBlockchainData inherits Rectangle {
             height: parent.height / 2;
             size: size;
             difficulty: difficulty;
+            next-adjustment-increase: next-adjustment-increase;
+            next-adjustment-change: next-adjustment-change;
         }
         Rectangle {
             border-color: Palette.gray-90;

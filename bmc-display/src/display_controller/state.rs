@@ -348,8 +348,17 @@ impl DisplayController {
             let difficulty_adapter = DifficultyAdapter::get(&main_window);
             difficulty_adapter
                 .set_difficulty(difficulty_data.difficulty_as_shared(number_format.clone()));
-            difficulty_adapter.set_blocks_epoch(difficulty_data.block_epoch(number_format));
+            difficulty_adapter.set_blocks_epoch(difficulty_data.block_epoch(number_format.clone()));
             difficulty_adapter.set_epoch_block_time(difficulty_data.epoch_block_time());
+            difficulty_adapter.set_prev_adjustment_increase(difficulty_data.prev_adjust_increase());
+            difficulty_adapter.set_prev_adjustment_change(
+                difficulty_data.prev_adjust_as_shared(number_format.clone()),
+            );
+            difficulty_adapter.set_prev_adjustment_time(difficulty_data.prev_adjust_time());
+            difficulty_adapter.set_next_adjustment_increase(difficulty_data.next_adjust_increase());
+            difficulty_adapter
+                .set_next_adjustment_change(difficulty_data.next_adjust_as_shared(number_format));
+            difficulty_adapter.set_next_adjustment_time(difficulty_data.next_adjust_time());
         });
     }
 
