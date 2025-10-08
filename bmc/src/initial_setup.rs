@@ -164,9 +164,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
                 .await
                 .map_err(|_| DeviceSetupError::SetPassword)?;
         }
-        let tz = timezone.chrono();
         let time_of_day = Utc::now()
-            .with_timezone(tz)
             .time()
             .add(TimeDelta::seconds(SECONDS_DEVICE_SETUP_DELAY));
         let autoupgrade_config = AutoUpgradeConfig::new(

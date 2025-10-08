@@ -19,9 +19,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, sync::LazyLock};
 use thiserror::Error;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch::{self, Receiver};
+use tokio::sync::{Mutex, Notify};
 use tokio::task;
 use tracing::{debug, error, info, warn};
 
@@ -108,8 +108,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         state_service: StateService,
         scheduler: JobScheduler,
     ) -> Self {
-        let (autoupgrade_tx, _) = tokio::sync::broadcast::channel(1);
-        let autoupgrade = AutoUpgrade::new(autoupgrade_tx, Instant::now());
+        let autoupgrade = AutoUpgrade::new(Notify::new(), Instant::now());
         Self {
             state_service,
             firmware_resolver: Arc::new(Mutex::new(Arc::new(firmware_resolver))),
@@ -324,13 +323,12 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         }
 
         let self_clone = self.clone();
-        let mut rx = self.autoupgrade.sender.subscribe();
+        let notifier = self.autoupgrade.notifier.clone();
 
         tokio::task::spawn(async move {
             loop {
-                if let Ok(()) = rx.recv().await {
-                    let _ = self_clone.autoupgrade_trigger().await;
-                }
+                notifier.notified().await;
+                let _ = self_clone.autoupgrade_trigger().await;
             }
         });
     }

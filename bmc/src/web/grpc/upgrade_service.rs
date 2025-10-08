@@ -120,9 +120,10 @@ where
         );
 
         self.system_upgrade
-            .autoupgrade_reschedule(config)
+            .autoupgrade_reschedule(config.clone())
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
+        self.config_handle.write().await.set_autoupgrade(config);
 
         Ok(tonic::Response::new(()))
     }
