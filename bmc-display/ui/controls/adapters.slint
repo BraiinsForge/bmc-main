@@ -51,6 +51,14 @@ export global DifficultyAdapter {
     in property <string> epoch-block-time;
 }
 
+export global HashrateAdapter {
+    in property <string> avg-fees-per-block;
+    in property <string> fees-percent;
+    in property <string> current-hashrate;
+    in property <string> hashprice;
+    in property <string> total-revenue;
+}
+
 export global AlarmAdapter {
     in property <string> label;
     in property <bool> snooze-visible;

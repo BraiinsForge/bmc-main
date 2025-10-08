@@ -12,9 +12,10 @@ use crate::difficulty_data::DifficultyData;
 use crate::display_controller::DisplayController;
 use crate::generated::{
     self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, BraiinsPoolStyle,
-    ClockStyle, ConnectionAdapter, DifficultyAdapter, PoolChartDimensions, SceneCyclingAdapter,
-    ScreenAdapter, WidgetSize, WifiAdapter,
+    ClockStyle, ConnectionAdapter, DifficultyAdapter, HashrateAdapter, PoolChartDimensions,
+    SceneCyclingAdapter, ScreenAdapter, WidgetSize, WifiAdapter,
 };
+use crate::hashrate_data::HashrateData;
 use crate::indexmap_model::IndexMapModel;
 use crate::pool_data::{
     CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, RecentUserPayouts,
@@ -349,6 +350,19 @@ impl DisplayController {
                 .set_difficulty(difficulty_data.difficulty_as_shared(number_format.clone()));
             difficulty_adapter.set_blocks_epoch(difficulty_data.block_epoch(number_format));
             difficulty_adapter.set_epoch_block_time(difficulty_data.epoch_block_time());
+        });
+    }
+
+    pub fn update_hashrate_data(&self, hashrate_data: HashrateData, number_format: NumberFormat) {
+        self.in_event_loop(move |main_window| {
+            let hashrate_adapter = HashrateAdapter::get(&main_window);
+            hashrate_adapter
+                .set_avg_fees_per_block(hashrate_data.avg_fees_per_block(number_format.clone()));
+            hashrate_adapter.set_fees_percent(hashrate_data.fees_percent(number_format.clone()));
+            hashrate_adapter
+                .set_current_hashrate(hashrate_data.current_hashrate(number_format.clone()));
+            hashrate_adapter.set_hashprice(hashrate_data.hashprice(number_format.clone()));
+            hashrate_adapter.set_total_revenue(hashrate_data.total_revenue(number_format));
         });
     }
 

@@ -2,25 +2,20 @@ import { Palette } from "../../style/palette.slint";
 import { Theme } from "../../style/theme.slint";
 import { Images } from "../../style/images.slint";
 import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
-import { BitcoinAdapter, BlockHeightAdapter, DifficultyAdapter } from "../../controls/adapters.slint";
+import { BitcoinAdapter, BlockHeightAdapter, DifficultyAdapter, HashrateAdapter } from "../../controls/adapters.slint";
 
 export struct BlockchainData {
     // Hashprice
-    hashprice: string,
     hashprice-graph: image,
     hashprice-trend-increase: bool,
     hashprice-trend-change: string,
     // BTC price graph
     btc-price-graph: image,
     // Hashrate
-    hashrate: string,
     hashrate-graph: image,
     hashrate-trend-increase: bool,
     hashrate-trend-change: string,
     // Stats
-    avg-fees: string,
-    fees-percent: string,
-    total-revenue: string,
     blocks-24h: string,
 }
 
@@ -178,6 +173,7 @@ export component WidgetBlockchainData inherits Rectangle {
     in property <BlockchainData> data;
 
     in property <string> difficulty <=> DifficultyAdapter.difficulty;
+    in property <string> hashprice <=> HashrateAdapter.hashprice;
 
     background: Palette.black;
     width: BaseDimensions.widget-width(size);
@@ -187,6 +183,10 @@ export component WidgetBlockchainData inherits Rectangle {
         in property <string> block-height <=> BlockHeightAdapter.block-height;
         in property <string> blocks-epoch <=> DifficultyAdapter.blocks-epoch;
         in property <string> epoch-block-time <=> DifficultyAdapter.epoch-block-time;
+        in property <string> avg-fees-per-block <=> HashrateAdapter.avg-fees-per-block;
+        in property <string> fees-percent <=> HashrateAdapter.fees-percent;
+        in property <string> current-hashrate <=> HashrateAdapter.current-hashrate;
+        in property <string> total-revenue <=> HashrateAdapter.total-revenue;
         in property <string> btc-price <=> BitcoinAdapter.price;
         in property <bool> btc-price-trend-increase <=> BitcoinAdapter.price_increase;
         in property <string> btc-price-trend-change <=> BitcoinAdapter.price_change;
@@ -209,7 +209,7 @@ export component WidgetBlockchainData inherits Rectangle {
                     title: "Hash Price";
                     icon: Images.chart;
                     show-24h: true;
-                    big-text: data.hashprice;
+                    big-text: hashprice;
                     graph: data.hashprice-graph;
                     trend-increase: data.hashprice-trend-increase;
                     trend-change: data.hashprice-trend-change;
@@ -222,15 +222,15 @@ export component WidgetBlockchainData inherits Rectangle {
             alignment: space-between;
             text-block {
                 title: "Avg. Fees per Block";
-                value: data.avg-fees;
+                value: avg-fees-per-block;
             }
             text-block {
                 title: "Fees % of Block Rew.";
-                value: data.fees-percent;
+                value: fees-percent;
             }
             text-block {
                 title: "Total Mining Rev.";
-                value: data.total-revenue;
+                value: total-revenue;
             }
             text-block {
                 title: "Curr. Epoch Blk. Time";
@@ -270,7 +270,7 @@ export component WidgetBlockchainData inherits Rectangle {
                     title: "Hashrate";
                     icon: Images.meter;
                     show-24h: true;
-                    big-text: data.hashrate;
+                    big-text: current-hashrate;
                     graph: data.hashrate-graph;
                     trend-increase: data.hashrate-trend-increase;
                     trend-change: data.hashrate-trend-change;
@@ -288,7 +288,7 @@ export component WidgetBlockchainData inherits Rectangle {
             title: "Hash Price";
             icon: Images.chart;
             show-24h: true;
-            big-text: data.hashprice;
+            big-text: hashprice;
             graph: data.hashprice-graph;
             trend-increase: data.hashprice-trend-increase;
             trend-change: data.hashprice-trend-change;
@@ -304,7 +304,7 @@ export component WidgetBlockchainData inherits Rectangle {
             title: "Hash Price";
             icon: Images.chart;
             show-24h: true;
-            big-text: data.hashprice;
+            big-text: hashprice;
             graph: data.hashprice-graph;
             trend-increase: data.hashprice-trend-increase;
             trend-change: data.hashprice-trend-change;
@@ -320,7 +320,7 @@ export component WidgetBlockchainData inherits Rectangle {
             title: "Hash Price";
             icon: Images.chart;
             show-24h: true;
-            big-text: data.hashprice;
+            big-text: hashprice;
             graph: data.hashprice-graph;
             trend-increase: data.hashprice-trend-increase;
             trend-change: data.hashprice-trend-change;

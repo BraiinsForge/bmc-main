@@ -11,6 +11,7 @@ use bmc_display::blockheight_data::BlockheightData;
 use bmc_display::data::{ConnectInfoScreen, InitScreen, UpgradeScreen};
 use bmc_display::difficulty_data::DifficultyData;
 use bmc_display::display_controller::DisplayController;
+use bmc_display::hashrate_data::HashrateData;
 use bmc_shared_ii_net::wifi::SignalStrength;
 use bmc_shared_time::time::Timezone;
 use futures::StreamExt;
@@ -29,6 +30,7 @@ const BLOCK_HEIGHT_API_URL: &str = "https://public-api.braiins.com/v2/blocks";
 const BLOCK_HEIGHT_LIMIT_API_PARAM: &str = "limit";
 const CURRENCY_API_PARAM: &str = "currency";
 const DIFFICULTY_STATS_URL: &str = "https://public-api.braiins.com/v1/difficulty-stats";
+const HASHRATE_STATS_URL: &str = "https://public-api.braiins.com/v2/hashrate-stats";
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_INFO_SCREEN_DURATION: Duration = Duration::from_secs(10);
 const ERROR_SCREEN_DURATION: Duration = Duration::from_secs(5);
@@ -108,6 +110,11 @@ impl<T: BmcManager> DisplayTasks<T> {
         ));
 
         tokio::spawn(Self::run_difficulty_stats_update(
+            display_controller.clone(),
+            config_handle.clone(),
+        ));
+
+        tokio::spawn(Self::run_hashrate_stats_update(
             display_controller.clone(),
             config_handle.clone(),
         ));
@@ -493,6 +500,47 @@ impl<T: BmcManager> DisplayTasks<T> {
                 .number_format;
 
             display_controller.update_difficulty_data(difficulty_data, number_format);
+        }
+    }
+
+    async fn run_hashrate_stats_update(
+        display_controller: DisplayController,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+    ) {
+        let mut interval = interval(Duration::from_secs(60));
+        let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
+            error!("HTTP Client init failed");
+            return;
+        };
+
+        loop {
+            interval.tick().await;
+
+            debug!("Getting hashrate data...");
+            let hashrate_data = match client
+                .get(HASHRATE_STATS_URL)
+                .query(&[(CURRENCY_API_PARAM, "usd")])
+                .send()
+                .await
+            {
+                Ok(response) => response
+                    .json::<HashrateData>()
+                    .await
+                    .map_err(|e| warn!("Failed to parse hashrate JSON: {e}"))
+                    .unwrap_or_default(),
+                Err(e) => {
+                    warn!("Failed to get hashrate data from API: {e}");
+                    HashrateData::default()
+                }
+            };
+
+            let number_format = config_handle
+                .read()
+                .await
+                .localization_config()
+                .number_format;
+
+            display_controller.update_hashrate_data(hashrate_data, number_format);
         }
     }
 
