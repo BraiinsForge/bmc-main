@@ -280,8 +280,14 @@ export component WidgetBlockchainData inherits Rectangle {
     }
     if size == WidgetSize.Large: VerticalLayout {
         bitcoin-difficulty-box {
+            height: parent.height / 2;
             size: size;
             difficulty: difficulty;
+        }
+        Rectangle {
+            border-color: Palette.gray-90;
+            border-width: 1px;
+            height: 1px;
         }
         graph-box {
             size: size;
@@ -296,14 +302,22 @@ export component WidgetBlockchainData inherits Rectangle {
     }
     if size == WidgetSize.Medium: HorizontalLayout {
         bitcoin-difficulty-box {
+            width: parent.width / 2;
             size: size;
             difficulty: difficulty;
+        }
+        Rectangle {
+            border-color: Palette.gray-90;
+            border-width: 1px;
+            width: 1px;
+            height: 0.94 * parent.height;
+            y: 0.03 * parent.height;
         }
         graph-box {
             size: size;
             title: "Hash Price";
             icon: Images.chart;
-            show-24h: true;
+            show-24h: false;
             big-text: hashprice;
             graph: data.hashprice-graph;
             trend-increase: data.hashprice-trend-increase;
@@ -312,8 +326,16 @@ export component WidgetBlockchainData inherits Rectangle {
     }
     if size == WidgetSize.Small: VerticalLayout {
         bitcoin-difficulty-box {
+            height: parent.height / 2;
             size: size;
             difficulty: difficulty;
+        }
+        Rectangle {
+            border-color: Palette.gray-90;
+            border-width: 1px;
+            height: 1px;
+            width: 0.9 * parent.width;
+            x: 0.05 * parent.width;
         }
         graph-box {
             size: size;
