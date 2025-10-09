@@ -540,6 +540,19 @@ export function braiinsPoolTimeFrameToString(intl: IntlShape, x?: null | Braiins
     }
 }
 
+export function getRemoteImageRefreshIntervalOptions(intl: IntlShape): Array<{ seconds: number; label: string }> {
+    return [
+        { seconds: 10, label: intl.formatMessage({ defaultMessage: '10 seconds' }) },
+        { seconds: 30, label: intl.formatMessage({ defaultMessage: '30 seconds' }) },
+        { seconds: 60, label: intl.formatMessage({ defaultMessage: '1 minute' }) },
+        { seconds: 5 * 60, label: intl.formatMessage({ defaultMessage: '5 minutes' }) },
+        { seconds: 10 * 60, label: intl.formatMessage({ defaultMessage: '10 minutes' }) },
+        { seconds: 30 * 60, label: intl.formatMessage({ defaultMessage: '30 minutes' }) },
+        { seconds: 60 * 60, label: intl.formatMessage({ defaultMessage: '1 hour' }) },
+        { seconds: 24 * 60 * 60, label: intl.formatMessage({ defaultMessage: '1 day' }) },
+    ];
+}
+
 export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.WidgetKind['value']>>): null | string {
     switch (kind) {
         case null:
@@ -557,6 +570,9 @@ export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.Widget
 
         case 'braiinsPool':
             return intl.formatMessage({ defaultMessage: 'Braiins Pool' });
+
+        case 'remoteImage':
+            return intl.formatMessage({ defaultMessage: 'Remote Image' });
 
         default:
             assertUnreachable(kind);
@@ -606,6 +622,11 @@ export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
                     timeframe: braiinsPoolTimeFrameToString(intl, d.timeFrame) || 'N/A',
                 },
             );
+        }
+
+        case 'remoteImage': {
+            const d = val.value satisfies pb.RemoteImageWidget;
+            return intl.formatMessage({ defaultMessage: 'URL: {url}' }, { url: d.url || 'N/A' });
         }
 
         default:

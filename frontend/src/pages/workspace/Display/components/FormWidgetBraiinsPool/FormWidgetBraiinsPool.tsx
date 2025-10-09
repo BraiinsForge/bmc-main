@@ -106,7 +106,7 @@ export function FormWidgetBraiinsPool(props: FormWidgetBraiinsPoolProps) {
             const id = value?.id ?? null;
             if (id) accountId.onChange(id);
         },
-        [accountId.onChange],
+        [accountId],
     );
 
     const form = (

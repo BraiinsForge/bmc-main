@@ -100,6 +100,14 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
                     onClick={() => onSelection('braiinsPool')}
                 />
 
+                <Row
+                    variant={variant}
+                    icon={Icons.WidgetRemoteImage}
+                    title={formatMessage({ defaultMessage: 'Remote Image' })}
+                    description={formatMessage({ defaultMessage: 'Studere satis ducunt ad fatalis gluten.' })}
+                    onClick={() => onSelection('remoteImage')}
+                />
+
                 {/*
 
                 <Row

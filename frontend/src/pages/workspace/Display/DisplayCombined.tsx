@@ -29,6 +29,7 @@ type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
 type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProps>;
 type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
+type FormStateRemoteImage = FormPropsToLocalState<Comp.FormWidgetRemoteImageProps>;
 
 // Can be both edit & create dialogs
 type FormDialogState<Data> = {
@@ -43,6 +44,7 @@ type DialogStates = {
     ticker: FormDialogState<FormStateTicker>;
     blockHeight: FormDialogState<FormStateBlockHeight>;
     braiinsPool: FormDialogState<FormStateBraiinsPool>;
+    remoteImage: FormDialogState<FormStateRemoteImage>;
 };
 function getInitialDialogStates(): DialogStates {
     const getForm = () => ({
@@ -60,6 +62,7 @@ function getInitialDialogStates(): DialogStates {
         ticker: getForm(),
         blockHeight: getForm(),
         braiinsPool: getForm(),
+        remoteImage: getForm(),
     };
 }
 
@@ -342,6 +345,24 @@ class View extends Component<Props, State> {
                 break;
             }
 
+            case 'remoteImage':
+                this.setState(s => ({
+                    openDialogKind: 'remoteImage',
+                    dialogStates: {
+                        ...s.dialogStates,
+                        remoteImage: {
+                            isEdit: true,
+                            widgetID: id,
+                            position,
+                            data: {
+                                errors: null,
+                                values: Comp.unpackRemoteImageWidgetKind(wkind, widget.size),
+                            },
+                        },
+                    },
+                }));
+                break;
+
             default:
                 assertUndefined(wkind?.value, 'Unknown widget kind!');
         }
@@ -420,6 +441,11 @@ class View extends Component<Props, State> {
                 $widgetKind = { case: 'braiinsPool', value: pb.create(pb.BraiinsPoolWidgetSchema) };
                 break;
 
+            case 'remoteImage':
+                $openDialogKind = 'remoteImage';
+                $widgetKind = { case: 'remoteImage', value: pb.create(pb.RemoteImageWidgetSchema) };
+                break;
+
             default:
                 assertUnreachable(kind, 'Unknown widget kind!');
         }
@@ -474,6 +500,13 @@ class View extends Component<Props, State> {
                     };
                     break;
 
+                case 'remoteImage':
+                    dialogStates.remoteImage.data = {
+                        errors: null,
+                        values: Comp.unpackRemoteImageWidgetKind(widgetKind, size),
+                    };
+                    break;
+
                 default:
                     widgetKind?.value && assertUnreachable(widgetKind?.value, 'Unknown widget kind!');
             }
@@ -511,7 +544,7 @@ class View extends Component<Props, State> {
                         [widgetKind]: form,
                     },
                 };
-            }, this.#submit);
+            }, this.#submitDebounced);
         };
     };
     #getValue = <
@@ -610,6 +643,13 @@ class View extends Component<Props, State> {
                 kind = Comp.createBraiinsPoolWidgetKind(dialogStates.braiinsPool.data.values);
                 break;
 
+            case 'remoteImage':
+                id = dialogStates.remoteImage.widgetID;
+                size = dialogStates.remoteImage.data.values.widgetSize ?? size;
+                position = dialogStates.remoteImage.position;
+                kind = Comp.createRemoteImageWidgetKind(dialogStates.remoteImage.data.values);
+                break;
+
             default:
                 assertUnreachable(openDialogKind, 'Unknown open dialog kind!');
         }
@@ -632,6 +672,7 @@ class View extends Component<Props, State> {
             toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
         } catch ($) {
             const formErrors = pb.parseFormErrors($, ['sceneId', 'position', 'size', 'kind']);
+            console.log('formErrors', formErrors);
             this.setState(s => ({
                 dialogStates: {
                     ...s.dialogStates,
@@ -645,6 +686,7 @@ class View extends Component<Props, State> {
 
         return this.#loadSceneDebounced();
     };
+    #submitDebounced = debounce(this.#submit, 300);
 
     render() {
         const { intl } = this.props;
@@ -653,7 +695,7 @@ class View extends Component<Props, State> {
             accounts,
             timezones,
             openDialogKind,
-            dialogStates: { clock, ticker, blockHeight, braiinsPool },
+            dialogStates: { clock, ticker, blockHeight, braiinsPool, remoteImage },
         } = this.state;
 
         const widgets: pb.Widget[] = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
@@ -774,6 +816,26 @@ class View extends Component<Props, State> {
                     }}
                     sceneStyle={this.#getField('braiinsPool', 'sceneStyle')}
                     timeFrame={this.#getField('braiinsPool', 'timeFrame')}
+                />
+                <Comp.FormWidgetRemoteImage
+                    isOpen={openDialogKind === 'remoteImage'}
+                    isEdit={remoteImage.isEdit}
+                    onClose={this.#openDialogCancel}
+                    error={
+                        openDialogKind === 'remoteImage'
+                            ? pb.renderFieldErrorsAsList(remoteImage.data?.errors?.global)
+                            : null
+                    }
+                    // Fields
+                    widgetSize={{
+                        ...this.#getField('remoteImage', 'widgetSize'),
+                        options: fn.getValidWidgetSizes(widgets, {
+                            id: remoteImage.widgetID,
+                            position: remoteImage.position,
+                        }),
+                    }}
+                    url={this.#getField('remoteImage', 'url')}
+                    refreshDurationSec={this.#getField('remoteImage', 'refreshDurationSec')}
                 />
             </div>
         );

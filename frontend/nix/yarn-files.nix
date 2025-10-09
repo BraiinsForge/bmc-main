@@ -59,6 +59,6 @@ pkgs.stdenv.mkDerivation {
     dontFixup = true;
 
     outputHashMode = "recursive";
-    outputHash = "sha256-ykcuOk+G7TXmZv7j1EV9GXvW0pyztT2GKSaGaEXK/w4=";
+    outputHash = "sha256-iU5hNeNQQ9gSyg7EL0m2wf+dP2YkmqgBszsL1zvodto=";
   };
 }

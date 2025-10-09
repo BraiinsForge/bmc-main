@@ -184,7 +184,7 @@ export function usePing(opts: UsePingOptions): UsePingState {
         return () => {
             CLS.stop();
         };
-    }, [isActive, CLS.isActive, CLS.start, CLS.stop]);
+    }, [isActive, CLS]);
 
     return state;
 }

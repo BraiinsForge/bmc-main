@@ -38,6 +38,7 @@ type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
 type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProps>;
 type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
+type FormStateRemoteImage = FormPropsToLocalState<Comp.FormWidgetRemoteImageProps>;
 
 // Can be both edit & create dialogs
 type DialogStates = {
@@ -61,6 +62,11 @@ type DialogStates = {
         isEdit: boolean;
         sceneID: string;
     };
+    remoteImage: {
+        data: FormStateRemoteImage;
+        isEdit: boolean;
+        sceneID: string;
+    };
 };
 function getInitialDialogStates(): DialogStates {
     const getForm = () => ({
@@ -77,6 +83,7 @@ function getInitialDialogStates(): DialogStates {
         ticker: getForm(),
         blockHeight: getForm(),
         braiinsPool: getForm(),
+        remoteImage: getForm(),
     };
 }
 
@@ -248,6 +255,11 @@ class View extends Component<Props, State> {
                 $kind = { case: 'braiinsPool', value: pb.create(pb.BraiinsPoolWidgetSchema) };
                 break;
 
+            case 'remoteImage':
+                $openDialogKind = 'remoteImage';
+                $kind = { case: 'remoteImage', value: pb.create(pb.RemoteImageWidgetSchema) };
+                break;
+
             default:
                 assertUnreachable(kind, 'Invalid scene kind!');
         }
@@ -300,6 +312,13 @@ class View extends Component<Props, State> {
                     };
                     break;
 
+                case 'remoteImage':
+                    dialogStates.remoteImage.data = {
+                        errors: null,
+                        values: Comp.unpackRemoteImageWidgetKind(widgetKind, size),
+                    };
+                    break;
+
                 default:
                     widgetKind?.value && assertUnreachable(widgetKind?.value, 'Unknown widget kind!');
             }
@@ -340,7 +359,7 @@ class View extends Component<Props, State> {
                         [widgetKind]: form,
                     },
                 };
-            }, this.#sceneFullscreenWidgetSubmit);
+            }, this.#sceneFullscreenWidgetSubmitDebounced);
         };
     };
     #getFormFieldValue = <
@@ -446,6 +465,10 @@ class View extends Component<Props, State> {
                 widgetKind = Comp.createBraiinsPoolWidgetKind(dialogStates.braiinsPool.data.values);
                 break;
 
+            case 'remoteImage':
+                widgetKind = Comp.createRemoteImageWidgetKind(dialogStates.remoteImage.data.values);
+                break;
+
             default:
                 assertUnreachable(openDialogKind, 'Submit: Invalid dialog kind!');
         }
@@ -487,10 +510,11 @@ class View extends Component<Props, State> {
 
         this.#loadScenesDebounced();
     };
+    #sceneFullscreenWidgetSubmitDebounced = debounce(this.#sceneFullscreenWidgetSubmit, 300);
     #sceneAddRender = (): ReactElement => {
         const {
             openDialogKind,
-            dialogStates: { clock, ticker, blockHeight, braiinsPool },
+            dialogStates: { clock, ticker, blockHeight, braiinsPool, remoteImage },
             timezones,
             accounts,
         } = this.state;
@@ -565,6 +589,21 @@ class View extends Component<Props, State> {
                     }}
                     sceneStyle={this.#getFormFieldStruct('braiinsPool', 'sceneStyle')}
                     timeFrame={this.#getFormFieldStruct('braiinsPool', 'timeFrame')}
+                />
+
+                <Comp.FormWidgetRemoteImage
+                    isOpen={openDialogKind === 'remoteImage'}
+                    isEdit={openDialogKind === 'remoteImage' && remoteImage.isEdit}
+                    onClose={cancel}
+                    error={
+                        openDialogKind === 'remoteImage'
+                            ? pb.renderFieldErrorsAsList(remoteImage.data?.errors?.global)
+                            : null
+                    }
+                    // No size selector for the fullscreen widgets we operate with here
+                    widgetSize={null}
+                    url={this.#getFormFieldStruct('remoteImage', 'url')}
+                    refreshDurationSec={this.#getFormFieldStruct('remoteImage', 'refreshDurationSec')}
                 />
             </Fragment>
         );
@@ -809,6 +848,22 @@ class View extends Component<Props, State> {
                         this.setState(
                             // Set state
                             { openDialogKind: 'braiinsPool', dialogStates: ds },
+                            // ...and open the dialog
+                            () => this.#previewOpen(id),
+                        );
+
+                        break;
+                    }
+
+                    case 'remoteImage': {
+                        const ds = getInitialDialogStates();
+                        ds.remoteImage.sceneID = id;
+                        ds.remoteImage.isEdit = true;
+                        ds.remoteImage.data.values = Comp.unpackRemoteImageWidgetKind(widgetKind, pb.WidgetSize.FULL);
+
+                        this.setState(
+                            // Set state
+                            { openDialogKind: 'remoteImage', dialogStates: ds },
                             // ...and open the dialog
                             () => this.#previewOpen(id),
                         );

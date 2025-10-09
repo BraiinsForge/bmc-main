@@ -37,6 +37,9 @@ export function ScenePreview(props: ScenePreviewProps) {
             // return <img {...rest} src={require('./preview-pool.png')} alt="Preview for Braiins Pool" />;
             return <Icons.WidgetPool size={40} />;
 
+        case 'remoteImage':
+            return <Icons.WidgetRemoteImage size={40} />;
+
         // case 'image':
         //     return (
         //         <img

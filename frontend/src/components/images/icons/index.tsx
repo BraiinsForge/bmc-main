@@ -9,5 +9,6 @@ export const WidgetClocks = carbonizeSvgIcon(require('./widget-clocks.svg'), 'Wi
 export const WidgetCombined = carbonizeSvgIcon(require('./widget-combined.svg'), 'WidgetCombined');
 export const WidgetManager = carbonizeSvgIcon(require('./widget-manager.svg'), 'WidgetManager');
 export const WidgetPool = carbonizeSvgIcon(require('./Accounts/braiins-pool.svg'), 'WidgetPool');
+export const WidgetRemoteImage = carbonizeSvgIcon(require('./widget-image.svg'), 'WidgetRemoteImage');
 export const WidgetTicker = carbonizeSvgIcon(require('./widget-ticker.svg'), 'WidgetTicker');
 export const WidgetBlockHeight = carbonizeSvgIcon(require('./widget-block-height.svg'), 'WidgetBlockHeight');

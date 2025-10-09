@@ -106,8 +106,8 @@
       "widgets": [
         {
           "id": "f7e69d8d-33eb-4ee4-b1f7-28a0d7a2b806",
-          "row": 0,
-          "col": 0,
+          "row": 1,
+          "col": 1,
           "size": "small",
           "kind": "braiins_pool",
           "params": {
@@ -119,13 +119,35 @@
         {
           "id": "a16641e3-9c0d-4e89-8645-dc1ef06ff27f",
           "row": 0,
-          "col": 1,
+          "col": 2,
           "size": "large",
           "kind": "braiins_pool",
           "params": {
             "pool_style": "overview",
             "chart_frame": "hours24",
             "account_id": "8b13f327-6107-4f2e-a5d2-a3d6fc2e38ed"
+          }
+        },
+        {
+          "id": "1989837a-dac1-450d-a7a2-fba204713beb",
+          "row": 1,
+          "col": 0,
+          "size": "small",
+          "kind": "remote_image",
+          "params": {
+            "url": "https://picsum.photos/317/238",
+            "refresh_duration": "10s"
+          }
+        },
+        {
+          "id": "ba1c8dd1-58be-4c23-a2d3-1b9267819f6f",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_image",
+          "params": {
+            "url": "https://picsum.photos/638/238",
+            "refresh_duration": "10s"
           }
         }
       ]
@@ -157,11 +179,11 @@
       "name": "xxx",
       "time": "10:10:00",
       "repeat": [
-        "Monday",
         "Saturday",
-        "Wednesday",
+        "Monday",
         "Thursday",
-        "Friday"
+        "Friday",
+        "Wednesday"
       ],
       "sound": "KeepCalmAndDca",
       "snooze_options": {
@@ -175,13 +197,13 @@
       "name": "",
       "time": "11:22:00",
       "repeat": [
-        "Wednesday",
-        "Saturday",
-        "Monday",
         "Friday",
-        "Tuesday",
+        "Monday",
+        "Sunday",
+        "Saturday",
         "Thursday",
-        "Sunday"
+        "Tuesday",
+        "Wednesday"
       ],
       "sound": "GreenCandleMorning",
       "snooze_options": {
