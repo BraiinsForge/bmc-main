@@ -57,18 +57,20 @@ message UpgradeRequest {
 message SetAutoUpgradeRequest {
   bool enabled = 1;
   optional AutoUpgradeFrequency frequency = 2;
-  optional google.protobuf.Timestamp time_of_day = 3;
+  optional uint32 hour = 3;
+  optional uint32 minute = 4;
 }
 
 message GetAutoUpgradeResponse {
   bool enabled = 1;
   optional AutoUpgradeFrequency frequency = 2;
-  optional google.protobuf.Timestamp time_of_day = 3;
+  optional uint32 hour = 3;
+  optional uint32 minute = 4;
 }
 
 service UpgradeService {
   rpc CheckForUpgrade(google.protobuf.Empty) returns (CheckForUpgradeResponse);
-  // Call with a release hash to donload data and provide user feedback about the progress
+  // Call with a release hash to download data and provide user feedback about the progress
   rpc DownloadFirmware(DownloadFirmwareRequest) returns (stream DownloadFirmwareResponse);
   // Called when release has been downloaded
   rpc Upgrade(UpgradeRequest) returns (google.protobuf.Empty);

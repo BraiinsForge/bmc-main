@@ -141,6 +141,7 @@ impl AutoUpgradeConfig {
         Self { enabled, cron }
     }
 }
+
 #[derive(Clone)]
 pub struct AutoUpgrade {
     pub task: Arc<BoxedTask>,

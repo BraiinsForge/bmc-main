@@ -7,7 +7,7 @@ use bmc_grpc::web::{
     upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail, UpgradeMetadata};
-use chrono::{NaiveTime, TimeDelta};
+use chrono::{NaiveTime, TimeDelta, Timelike};
 use futures::stream::{BoxStream, StreamExt};
 use prost_types::Timestamp;
 use std::ops::Add;
@@ -111,7 +111,8 @@ where
         let req = request.get_ref();
         let frequency = req.frequency().into();
         let timezone = self.manager.timezone();
-        let time_of_day = req.time_of_day.map(map_timestamp_to_naive_time);
+        let (hour, minute) = (req.hour, req.minute);
+        let time_of_day = map_hour_minute_to_naive_time(hour, minute).into();
         let config = AutoUpgradeConfig::new(
             req.enabled,
             frequency,
@@ -133,21 +134,23 @@ where
         _request: Request<()>,
     ) -> Result<tonic::Response<GetAutoUpgradeResponse>, Status> {
         let autoupgrade_config = self.config_handle.read().await.autoupgrade();
-        let (frequency, time_of_day) = if let Some(cron) = autoupgrade_config.cron {
+        let (frequency, hour_minute) = if let Some(cron) = autoupgrade_config.cron {
             (
                 GrpcAutoUpgradeFrequency::from(AutoUpgradeFrequency::from(&cron)).into(),
                 self.system_upgrade
                     .get_autoupgrade_next_run()
                     .await
-                    .map(map_datetime_to_timestamp),
+                    .map(map_datetime_to_hour_minute),
             )
         } else {
             (None, None)
         };
+        let (hour, minute) = hour_minute.unwrap_or((None, None));
         let response = GetAutoUpgradeResponse {
             enabled: autoupgrade_config.enabled,
             frequency: frequency.map(Into::into),
-            time_of_day,
+            hour,
+            minute,
         };
 
         Ok(tonic::Response::new(response))
@@ -230,16 +233,15 @@ impl From<SystemUpgradeError> for Status {
     }
 }
 
-fn map_timestamp_to_naive_time(value: prost_types::Timestamp) -> NaiveTime {
+fn map_hour_minute_to_naive_time(hour: Option<u32>, minute: Option<u32>) -> NaiveTime {
     NaiveTime::default()
-        .add(TimeDelta::seconds(value.seconds))
-        .add(TimeDelta::nanoseconds(i64::from(value.nanos)))
+        .add(TimeDelta::hours(i64::from(hour.unwrap_or_default())))
+        .add(TimeDelta::minutes(i64::from(minute.unwrap_or_default())))
 }
 
-fn map_datetime_to_timestamp(value: chrono::DateTime<chrono::Utc>) -> Timestamp {
-    Timestamp {
-        seconds: value.timestamp(),
-        #[expect(clippy::cast_possible_wrap)]
-        nanos: value.timestamp_subsec_nanos() as i32,
-    }
+fn map_datetime_to_hour_minute(value: chrono::DateTime<chrono::Utc>) -> (Option<u32>, Option<u32>) {
+    let naive_time = value.naive_utc();
+    let hour = naive_time.hour().into();
+    let minute = naive_time.minute().into();
+    (hour, minute)
 }
