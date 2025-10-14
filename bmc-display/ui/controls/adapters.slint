@@ -1,4 +1,4 @@
-import { InitScreen, ConnectInfoScreen, UpgradeScreen, DateTime } from "common.slint";
+import { InitScreen, ConnectInfoScreen, UpgradeScreen, DateTime, SignalStrength } from "common.slint";
 
 export global UpgradeDownloadAdapter {
     in property <float> progress: 0.0;
@@ -27,6 +27,7 @@ export global NotificationAdapter {
 
 export global WifiAdapter {
     in property <string> ssid;
+    in property <SignalStrength> signal_strength;
 }
 
 export global ConnectionAdapter {

@@ -1230,3 +1230,22 @@ mod widget_overlaps_tests {
         }
     }
 }
+
+#[derive(Debug)]
+pub enum SignalStrength {
+    Offline,
+    Low,
+    Fair,
+    Strong,
+}
+
+impl From<SignalStrength> for generated::SignalStrength {
+    fn from(value: SignalStrength) -> Self {
+        match value {
+            SignalStrength::Offline => Self::Offline,
+            SignalStrength::Low => Self::Low,
+            SignalStrength::Fair => Self::Fair,
+            SignalStrength::Strong => Self::Strong,
+        }
+    }
+}

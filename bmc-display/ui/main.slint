@@ -2,7 +2,7 @@ import { Palette } from "style/palette.slint";
 import { Theme } from "style/theme.slint";
 import { ScreenAdapter, StatusOverlayAdapter, UpgradeDownloadAdapter, NotificationAdapter, BitcoinAdapter,
     BlockHeightAdapter, DifficultyAdapter, HashrateAdapter } from "controls/adapters.slint";
-import { DateTime, InitScreen, ConnectInfoScreen, UpgradeScreen } from "controls/common.slint";
+import { DateTime, InitScreen, ConnectInfoScreen, UpgradeScreen, SignalStrength  } from "controls/common.slint";
 import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
     InitStartConnect, InitWifiConnectProgress, InitWifiConnectSuccess, InitWifiConnectFailed, InitSetupSuccess, InitGeneralError, InitDeviceSetupQr, ConnectInfo,
     WifiConnectFailed, WifiConnectProgress, Alarm
@@ -19,10 +19,11 @@ import { Notification } from "components/notification.slint";
 import { Images } from "style/images.slint";
 import { WifiAdapter, ConnectionAdapter, AlarmAdapter } from "controls/adapters.slint";
 import { StatusOverlay } from "controls/status-overlay.slint";
+import { TopRollette } from "components/top-rollette.slint";
 
 export { ScreenAdapter, StatusOverlayAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, DateTime, NotificationAdapter,
     BitcoinAdapter, BlockHeightAdapter, DifficultyAdapter, HashrateAdapter }
-export { InitScreen, ConnectInfoScreen, UpgradeScreen }
+export { InitScreen, ConnectInfoScreen, UpgradeScreen, SignalStrength }
 export { WidgetSize, WidgetKind, Widget }
 export { BraiinsPoolStyle, PoolChartDimensions, PoolWorkerStatus, BraiinsPoolPayouts, PoolPayoutType }
 export { BlockchainDataChartDimensions }
@@ -90,6 +91,13 @@ export component MainWindow inherits Window {
         if ScreenAdapter.connect-info == ConnectInfoScreen.WifiConnectFailed: WifiConnectFailed { }
         if ScreenAdapter.connect-info == ConnectInfoScreen.WifiConnectProgress: WifiConnectProgress { }
     }
+
+    // NOTE: TopRollette will be used for notifications
+    // TopRollette {
+    //     z: 5;
+    //     width: root.width;
+    //     height: root.height;
+    // }
 
     if ScreenAdapter.clock-alarm: Alarm {
         z: 6;

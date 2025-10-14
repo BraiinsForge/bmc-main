@@ -1,0 +1,181 @@
+import { Palette } from "../style/palette.slint";
+import { ConnectionAdapter, WifiAdapter } from "../controls/adapters.slint";
+import { Images } from "../style/images.slint";
+import { Theme } from "../style/theme.slint";
+import { WifiIndicator } from "./wifi-indicator.slint";
+
+export component TopRollette inherits Rectangle {
+    in property <length> handle_size: 50px;
+    in property <length> open_close_delta: 20px;
+    property <string> ip <=> ConnectionAdapter.ip;
+    property <image> ip_qr_code <=> ConnectionAdapter.ip_qr_code;
+
+    private property <bool> dragging: false;
+    private property <length> start_y: 0px;
+    private property <length> start_offset: 0px;
+    private property <length> offset: 0px;
+    private property <length> temp_offset: 0px;
+    private property <length> delta: 0px;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        y: -root.height + root.offset;
+        background: Palette.black;
+        opacity: 0.95;
+
+        // Main content layout
+        HorizontalLayout {
+            padding-top: 33px;
+            padding-left: 32px;
+            padding-right: 106px; // 26px (right edge) + 48px (icon width) + 32px (spacing)
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 24px;
+                Rectangle {
+                    background: Palette.white;
+                    width: 132px;
+                    height: 132px;
+                    border-radius: 4px;
+
+                    Image {
+                        source: ip_qr_code;
+                        width: 116px;
+                        height: 116px;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: "IP Address";
+                        color: Palette.gray-50;
+                        font-size: 16px;
+                        horizontal-alignment: left;
+                        vertical-alignment: top;
+                    }
+
+                    Text {
+                        text: ConnectionAdapter.ip;
+                        color: Palette.white;
+                        font-size: 24px;
+                        horizontal-alignment: left;
+                        vertical-alignment: top;
+                    }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 8px;
+                alignment: start;
+
+                Text {
+                    text: "WiFi Connection";
+                    color: Palette.gray-40;
+                    font-size: 16px;
+                    horizontal-alignment: left;
+                }
+
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 16px;
+
+                    WifiIndicator {
+                        signal: WifiAdapter.signal_strength;
+                    }
+
+                    Text {
+                        text: WifiAdapter.ssid;
+                        color: Palette.white;
+                        font-size: 24px;
+                        horizontal-alignment: left;
+                        wrap: no-wrap;
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Touch / drag logic ---
+    TouchArea {
+        width: parent.width;
+        y: 0px;
+        height: (root.offset == 0px) ? root.handle_size : parent.height;
+
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.dragging = true;
+                root.start_y = self.pressed-y;
+                root.start_offset = root.offset;
+                root.delta = 0px;
+            } else if (e.kind == PointerEventKind.move && root.dragging) {
+                root.temp_offset = root.start_offset + (self.mouse-y - root.start_y);
+
+                if (root.temp_offset < 0px) {
+                    root.temp_offset = 0px;
+                } else if (root.temp_offset > root.height) {
+                    root.temp_offset = root.height;
+                }
+                root.offset = root.temp_offset;
+                root.delta = root.offset - root.start_offset;
+            } else if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) {
+                root.dragging = false;
+
+                if (root.start_offset > (root.height / 2)) {
+                    if (root.delta <= -root.open_close_delta) {
+                        root.offset = 0px;
+                    } else {
+                        root.offset = root.height;
+                    }
+                } else {
+                    if (root.delta >= root.open_close_delta) {
+                        root.offset = root.height;
+                    } else {
+                        root.offset = 0px;
+                    }
+                }
+            }
+        }
+    }
+
+    // X icon positioned absolutely - declared after TouchArea to be on top
+    Rectangle {
+        width: 48px;
+        height: 48px;
+        x: root.width - self.width - 26px;
+        y: 25px - root.height + root.offset;
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+
+            clicked => {
+                root.offset = 0px;
+            }
+
+            Image {
+                source: Images.x;
+                width: 24px;
+                height: 24px;
+                x: 12px;
+                y: 12px;
+            }
+        }
+    }
+
+    Timer {
+        interval: 60s;
+        // The timer starts when fully open and not being dragged
+        running: (root.offset == root.height) && !root.dragging;
+
+        triggered => {
+               // Only close if still open and not being interacted with
+               if ((root.offset == root.height) && !root.dragging) {
+                root.offset = 0px;
+            }
+        }
+    }
+}

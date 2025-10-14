@@ -6,7 +6,7 @@ use crate::btc_history_data::BtcHistoryData;
 use crate::clock_data::ClockData;
 use crate::data::{
     ConnectInfoScreen, InitScreen, Scene, SceneCycling, SceneCyclingTransition, SceneId,
-    UpgradeScreen, Widget, WidgetId,
+    SignalStrength, UpgradeScreen, Widget, WidgetId,
 };
 use crate::diff_hashrate_data::DiffHashrateData;
 use crate::difficulty_data::DifficultyData;
@@ -886,8 +886,15 @@ impl DisplayController {
 
     pub fn set_wifi_ssid(&self, wifi_ssid: String) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
-            let init_setup_wifi_adapter = WifiAdapter::get(&main_window);
-            init_setup_wifi_adapter.set_ssid(wifi_ssid.into());
+            let wifi_adapter = WifiAdapter::get(&main_window);
+            wifi_adapter.set_ssid(wifi_ssid.into());
+        });
+    }
+
+    pub fn set_wifi_signal_strength(&self, signal_strength: SignalStrength) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let wifi_adapter = WifiAdapter::get(&main_window);
+            wifi_adapter.set_signal_strength(signal_strength.into());
         });
     }
 

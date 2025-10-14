@@ -1,0 +1,15 @@
+import { SignalStrength } from "../controls/common.slint";
+import { Images } from "../style/images.slint";
+
+export component WifiIndicator inherits Image {
+    in property <SignalStrength> signal;
+
+    property <bool> is_offline: signal == SignalStrength.Offline;
+    property <bool> is_low: signal == SignalStrength.Low;
+    property <bool> is_fair: signal == SignalStrength.Fair;
+
+    width: 32px;
+    height: 32px;
+
+    source: is_offline ? Images.wifi-problem : is_low ? Images.wifi-low : is_fair ? Images.wifi-fair : Images.wifi-strong;
+}
