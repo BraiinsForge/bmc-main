@@ -55,7 +55,7 @@ impl HashrateData {
             .map_or(NOT_AVAILABLE.into(), |hash_price_currency| {
                 SharedString::from(format!(
                     "{} USD/PH/Day",
-                    number_format.format_number(1000.0 * hash_price_currency, 2)
+                    number_format.format_number(1000.0 * hash_price_currency, 0)
                 ))
             })
     }

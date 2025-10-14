@@ -10,6 +10,7 @@ pub(crate) fn draw_canvas(
     width: u32,
     height: u32,
     draw_extra_line: bool,
+    dashed_x_axis: bool,
     stroke_color: &str,
 ) -> Document {
     let stroke_width = 2;
@@ -29,6 +30,12 @@ pub(crate) fn draw_canvas(
         )
         .set("stroke", stroke_color)
         .set("stroke-width", stroke_width);
+
+    let x_axis = if dashed_x_axis {
+        x_axis.set("stroke-dasharray", "4,4")
+    } else {
+        x_axis
+    };
 
     let top_line = Path::new()
         .set(
@@ -77,24 +84,23 @@ pub(crate) fn draw_canvas(
 }
 
 pub(crate) fn create_graph(
-    data: &[f32],
+    data: &[f64],
     width: u32,
     height: u32,
     stroke_color: &str,
     abs_values: bool,
     units_integer_round: bool,
-    shift_max: Option<f32>,
+    shift_max: Option<f64>,
 ) -> Option<Path> {
     if data.is_empty() {
         return None;
     }
     // Prevent graph clipping on the screen
     let vertical_margin = 10.0;
-    #[expect(clippy::cast_precision_loss)]
-    let height = height as f32 - vertical_margin;
+    let height = f64::from(height) - vertical_margin;
 
     #[expect(clippy::cast_precision_loss)]
-    let point_width = width as f32 / (data.len() - 1) as f32;
+    let point_width = f64::from(width) / (data.len() - 1) as f64;
     let max_value = data
         .iter()
         .max_by(|a, b| a.total_cmp(b))
@@ -127,8 +133,8 @@ pub(crate) fn create_graph(
     let point_ratio = point_ratio * new_max_coef;
     let new_max_move = height * (1.0 - new_max_coef) * shift_max;
 
-    let point_shift = |index: f32| -> f32 { index * point_width };
-    let point_value = |value: f32| -> f32 {
+    let point_shift = |index: f64| -> f64 { index * point_width };
+    let point_value = |value: f64| -> f64 {
         point_ratio * (max_value - value) + move_max + new_max_move + vertical_margin / 2.0
     };
 
@@ -140,7 +146,7 @@ pub(crate) fn create_graph(
             path_data = path_data.move_to((0, point_value(value)));
         } else {
             #[expect(clippy::cast_precision_loss)]
-            let index = index as f32;
+            let index = index as f64;
             path_data = path_data.line_to((point_shift(index), point_value(value)));
         }
     }
@@ -156,7 +162,7 @@ pub(crate) fn create_graph(
 
 #[expect(clippy::too_many_lines)]
 pub(crate) fn create_graph_fill(
-    data: &[f32],
+    data: &[f64],
     width: u32,
     height: u32,
     palette: &Palette<'_>,
@@ -167,7 +173,7 @@ pub(crate) fn create_graph_fill(
     }
 
     #[expect(clippy::cast_precision_loss)]
-    let point_width = width as f32 / (data.len() - 1) as f32;
+    let point_width = f64::from(width) / (data.len() - 1) as f64;
     let max_value = data
         .iter()
         .max_by(|a, b| a.total_cmp(b))
@@ -180,15 +186,14 @@ pub(crate) fn create_graph_fill(
         .unwrap_or_default();
 
     let coef = max_value - min_value;
-    #[expect(clippy::cast_precision_loss)]
-    let height_f32 = height as f32;
+    let height_f32 = f64::from(height);
     let point_ratio = if coef == 0.0 {
         height_f32
     } else {
         height_f32 / coef
     };
-    let point_shift = |index: f32| -> f32 { index * point_width };
-    let point_value = |value: f32| -> f32 { point_ratio * (max_value - value) };
+    let point_shift = |index: f64| -> f64 { index * point_width };
+    let point_value = |value: f64| -> f64 { point_ratio * (max_value - value) };
 
     let border_command = Data::new()
         .move_to((0, 0))
@@ -202,7 +207,7 @@ pub(crate) fn create_graph_fill(
             path_data = path_data.move_to((0, point_value(value)));
         } else {
             #[expect(clippy::cast_precision_loss)]
-            let index = index as f32;
+            let index = index as f64;
             path_data = path_data.line_to((point_shift(index), point_value(value)));
         }
     }
@@ -288,7 +293,7 @@ pub(crate) fn create_graph_fill(
 }
 
 // Calculates nearest number divisible by 3
-pub(crate) fn y_axis_max(value: f32, integer_round: bool) -> f32 {
+pub(crate) fn y_axis_max(value: f64, integer_round: bool) -> f64 {
     if value == 0.0 {
         return 3.0;
     }
@@ -297,12 +302,13 @@ pub(crate) fn y_axis_max(value: f32, integer_round: bool) -> f32 {
     } else {
         value.log10().floor() - 1.0
     };
-    let divisor = 3.0 * f32::powf(10.0, exponent);
+    let divisor = 3.0 * f64::powf(10.0, exponent);
     let multiplicator = (value / divisor).ceil();
     multiplicator * divisor
 }
 
 pub(crate) struct ColorPalette {
+    pub green_40: String,
     pub green_50: String,
     pub green_60: String,
     pub green_100: String,
@@ -318,6 +324,7 @@ pub(crate) struct ColorPalette {
 impl ColorPalette {
     pub(crate) fn new(palette: &Palette<'_>) -> Self {
         Self {
+            green_40: Self::color_to_hex(palette.get_green_40().color()),
             green_50: Self::color_to_hex(palette.get_green_50().color()),
             green_60: Self::color_to_hex(palette.get_green_60().color()),
             green_100: Self::color_to_hex(palette.get_green_100().color()),

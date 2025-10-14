@@ -57,7 +57,7 @@ impl CurrentUserHashrate {
 #[derive(Clone, Debug, Deserialize)]
 struct HashrateSlot {
     slot_start: DateTime<Utc>,
-    hashrate_th_per_sec: f32,
+    hashrate_th_per_sec: f64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -87,7 +87,7 @@ impl UserHashrateHistory {
         height: u32,
         draw_extra_line: bool,
     ) -> Image {
-        let data: Vec<f32> = self
+        let data: Vec<f64> = self
             .slots
             .iter()
             .map(|slot| slot.hashrate_th_per_sec)
@@ -98,7 +98,8 @@ impl UserHashrateHistory {
         // Align horizontal lines with y axis units
         let height = height - 24;
 
-        let canvas = graph_utils::draw_canvas(width, height, draw_extra_line, &palette.gray_80);
+        let canvas =
+            graph_utils::draw_canvas(width, height, draw_extra_line, false, &palette.gray_80);
         let path = graph_utils::create_graph(
             &data,
             width,
@@ -123,7 +124,7 @@ impl UserHashrateHistory {
             .iter()
             .map(|slot| slot.hashrate_th_per_sec)
             .filter(|x| !x.is_nan())
-            .max_by(f32::total_cmp)
+            .max_by(f64::total_cmp)
             .unwrap_or(3.0);
 
         let max = graph_utils::y_axis_max(max, false);
@@ -144,7 +145,7 @@ impl UserHashrateHistory {
             .iter()
             .map(|slot| slot.hashrate_th_per_sec)
             .filter(|x| !x.is_nan())
-            .max_by(f32::total_cmp)
+            .max_by(f64::total_cmp)
             .unwrap_or(3.0);
 
         if max > 1000.0 {
@@ -255,14 +256,10 @@ impl UserWorkerHistory {
         draw_extra_line: bool,
         original_image: &Image,
     ) -> Image {
-        let data: Vec<f32> = self
+        let data: Vec<f64> = self
             .slots
             .into_iter()
-            .map(|slot| {
-                #[expect(clippy::cast_precision_loss)]
-                let active_workers = slot.active_workers as f32;
-                active_workers
-            })
+            .map(|slot| f64::from(slot.active_workers))
             .collect();
 
         let palette = Palette::get(main_window);
@@ -295,7 +292,8 @@ impl UserWorkerHistory {
                 original_image.clone()
             }
         } else {
-            let canvas = graph_utils::draw_canvas(width, height, draw_extra_line, &palette.gray_80);
+            let canvas =
+                graph_utils::draw_canvas(width, height, draw_extra_line, false, &palette.gray_80);
             let document = canvas.add(path);
             graph_utils::svg_into_image(&document, width, height)
         }
@@ -313,12 +311,8 @@ impl UserWorkerHistory {
             .max(3); // Default unit max
 
         // Shift max
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            clippy::cast_precision_loss
-        )]
-        let max = 2 * graph_utils::y_axis_max(max as f32, true) as u32;
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let max = 2 * graph_utils::y_axis_max(f64::from(max), true) as u32;
 
         let units: Vec<SharedString> = if max > 3000 {
             #[expect(clippy::integer_division)]
