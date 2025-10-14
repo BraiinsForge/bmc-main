@@ -8,12 +8,14 @@ use crate::data::{
     ConnectInfoScreen, InitScreen, Scene, SceneCycling, SceneCyclingTransition, SceneId,
     UpgradeScreen, Widget, WidgetId,
 };
+use crate::diff_hashrate_data::DiffHashrateData;
 use crate::difficulty_data::DifficultyData;
 use crate::display_controller::DisplayController;
 use crate::generated::{
-    self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter, BraiinsPoolStyle,
-    ClockStyle, ConnectionAdapter, DifficultyAdapter, HashrateAdapter, PoolChartDimensions,
-    SceneCyclingAdapter, ScreenAdapter, WidgetSize, WifiAdapter,
+    self, AlarmAdapter, BaseDimensions, BitcoinAdapter, BlockHeightAdapter,
+    BlockchainDataChartDimensions, BraiinsPoolStyle, ClockStyle, ConnectionAdapter,
+    DifficultyAdapter, HashrateAdapter, PoolChartDimensions, SceneCyclingAdapter, ScreenAdapter,
+    WidgetSize, WifiAdapter,
 };
 use crate::hashrate_data::HashrateData;
 use crate::indexmap_model::IndexMapModel;
@@ -372,6 +374,60 @@ impl DisplayController {
                 .set_current_hashrate(hashrate_data.current_hashrate(number_format.clone()));
             hashrate_adapter.set_hashprice(hashrate_data.hashprice(number_format.clone()));
             hashrate_adapter.set_total_revenue(hashrate_data.total_revenue(number_format));
+        });
+    }
+
+    pub fn update_blockchain_btc_graph(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        btc_history_data: BtcHistoryData,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    let widget_size = widget.size;
+                    let chart_dimensions = BlockchainDataChartDimensions::get(&main_window);
+                    let image_dimensions = chart_dimensions.invoke_get_dimensions(widget_size);
+                    let width: u32 = image_dimensions.width.try_into().unwrap_or_default();
+                    let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
+
+                    widget.blockchain_data.btc_price_graph =
+                        btc_history_data.graph_small_image(&main_window, width, height, true);
+                });
+            }
+        });
+    }
+
+    pub fn update_diff_hashrate_graph(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        diff_hashrate_data: DiffHashrateData,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    let widget_size = widget.size;
+                    let chart_dimensions = BlockchainDataChartDimensions::get(&main_window);
+                    let image_dimensions = chart_dimensions.invoke_get_dimensions(widget_size);
+                    let width: u32 = image_dimensions.width.try_into().unwrap_or_default();
+                    let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
+
+                    widget.blockchain_data.hashrate_graph =
+                        diff_hashrate_data.graph_hashrate_image(&main_window, width, height, true);
+                });
+            }
         });
     }
 

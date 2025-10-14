@@ -9,6 +9,7 @@ use bmc_display::data::{
     AccountId, AuthenticationType, PoolChartTimeFrame, PoolStyle, SceneId, TickerTimeFrame, Widget,
     WidgetId, WidgetKind, WidgetSize,
 };
+use bmc_display::diff_hashrate_data::DiffHashrateData;
 use bmc_display::display_controller::DisplayController;
 use bmc_display::pool_data::{
     self, CurrentUserHashrate, CurrentUserWorkerStats, LatestUserRewards, RecentUserPayouts,
@@ -31,8 +32,12 @@ use tracing::{Instrument, debug, error, info, instrument, warn};
 use url::Url;
 
 const BTC_HISTORY_API_URL: &str = "https://public-api.braiins.com/v1/price-history";
-const BTC_HISTORY_TIMEFRAME_API_PARAM: &str = "timeframe";
+const DATA_HISTORY_TIMEFRAME_PARAM: &str = "timeframe";
+const DIFF_HASHRATE_API_URL: &str =
+    "https://public-api.braiins.com/v1/hashrate-and-difficulty-history";
 const API_TIMEOUT: Duration = Duration::from_secs(10);
+
+const DATA_REFRESH_PERIOD: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 struct TaskHandle {
@@ -100,8 +105,8 @@ impl WidgetTasks {
                 widget.id.clone(),
                 ticker_widget.time_frame.clone(),
             ))),
-            // BlockHeight and BlockchainData widgets do not have any widget specific data
-            WidgetKind::BlockHeight(_) | WidgetKind::BlockchainData => None,
+            // BlockHeight widget does not have any widget specific data
+            WidgetKind::BlockHeight(_) => None,
             WidgetKind::BraiinsPool(pool_widget) => Some(spawn(self.make_braiins_pool_task(
                 scene_id.clone(),
                 widget.id.clone(),
@@ -120,6 +125,11 @@ impl WidgetTasks {
                     remote_image_widget.refresh_duration,
                 )))
             }
+            WidgetKind::BlockchainData => Some(spawn(self.make_blockchain_data_task(
+                scene_id.clone(),
+                widget.id.clone(),
+                &widget.size,
+            ))),
         };
 
         join_handle
@@ -236,8 +246,7 @@ impl WidgetTasks {
 
         async move {
             info!(?timeframe, "Params");
-
-            let mut interval = interval(Duration::from_secs(60));
+            let mut interval = interval(DATA_REFRESH_PERIOD);
 
             loop {
                 interval.tick().await;
@@ -247,7 +256,7 @@ impl WidgetTasks {
                 let btc_history_data = match client
                     .get(BTC_HISTORY_API_URL)
                     .query(&[(
-                        BTC_HISTORY_TIMEFRAME_API_PARAM,
+                        DATA_HISTORY_TIMEFRAME_PARAM,
                         Into::<String>::into(timeframe.clone()),
                     )])
                     .timeout(API_TIMEOUT)
@@ -326,8 +335,7 @@ impl WidgetTasks {
 
         async move {
             info!(?pool_style, ?chart_frame, ?account_id, "Params");
-
-            let mut interval = interval(Duration::from_secs(60));
+            let mut interval = interval(DATA_REFRESH_PERIOD);
             let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
                 error!("HTTP Client init failed");
                 return;
@@ -900,6 +908,92 @@ impl WidgetTasks {
             }
         }
         .in_current_span()
+    }
+
+    fn make_blockchain_data_task(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        widget_size: &WidgetSize,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        let display_controller = self.display_controller.clone();
+
+        let download_btc_history = matches!(widget_size, WidgetSize::Full);
+        let download_diff_and_hashrate_history =
+            matches!(widget_size, WidgetSize::Full | WidgetSize::Large);
+
+        async move {
+            let mut interval = interval(DATA_REFRESH_PERIOD);
+            let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
+                error!("HTTP Client init failed");
+                return;
+            };
+
+            loop {
+                interval.tick().await;
+
+                if download_btc_history {
+                    debug!("Getting bitcoin history data...");
+                    let btc_history_data = match client
+                        .get(BTC_HISTORY_API_URL)
+                        .query(&[(
+                            DATA_HISTORY_TIMEFRAME_PARAM,
+                            String::from(TickerTimeFrame::Day1),
+                        )])
+                        .send()
+                        .await
+                    {
+                        Ok(response) => response
+                            .json::<BtcHistoryData>()
+                            .await
+                            .map_err(|e| warn!("Failed to parse btc history JSON: {e}"))
+                            .unwrap_or_default(),
+                        Err(e) => {
+                            warn!("Failed to get btc history data from API: {e}");
+                            BtcHistoryData::default()
+                        }
+                    };
+
+                    display_controller.update_blockchain_btc_graph(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        btc_history_data,
+                    );
+                }
+                if download_diff_and_hashrate_history {
+                    debug!("Getting difficulty and hashrate history data...");
+                    let diff_hashrate_data = match client
+                        .get(DIFF_HASHRATE_API_URL)
+                        .query(&[(
+                            DATA_HISTORY_TIMEFRAME_PARAM,
+                            String::from(TickerTimeFrame::Day1),
+                        )])
+                        .send()
+                        .await
+                    {
+                        Ok(response) => response
+                            .json::<DiffHashrateData>()
+                            .await
+                            .map_err(|e| {
+                                warn!("Failed to parse difficulty and hashrate history JSON: {e}");
+                            })
+                            .unwrap_or_default(),
+                        Err(e) => {
+                            warn!(
+                                "Failed to get difficulty and hashrate history data from API: {e}"
+                            );
+                            DiffHashrateData::default()
+                        }
+                    };
+
+                    display_controller.update_diff_hashrate_graph(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        diff_hashrate_data,
+                    );
+                }
+            }
+        }
     }
 }
 
