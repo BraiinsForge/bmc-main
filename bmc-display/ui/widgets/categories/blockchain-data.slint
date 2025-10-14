@@ -19,6 +19,42 @@ export struct BlockchainData {
     blocks-24h: string,
 }
 
+struct ImageDimensions {
+  width: int,
+  height: int,
+}
+
+export global BlockchainDataChartDimensions {
+  public pure function get-dimensions(size: WidgetSize) -> ImageDimensions {
+    if size == WidgetSize.Full {
+        return {
+            width: 375,
+            height: 95,
+        };
+    } else if size == WidgetSize.Large {
+        return {
+            width: 618,
+            height: 57,
+        };
+    } else if size == WidgetSize.Medium {
+        return {
+            width: 285,
+            height: 107,
+        };
+    // WidgetSize.Small
+    } else {
+        return {
+            width: 285,
+            height: 20,
+        };
+    }
+    return {
+        width: 0,
+        height: 0,
+    };
+  }
+}
+
 component bordered-box inherits Rectangle {
     border-width: 1px;
     border-radius: 8px;
@@ -123,6 +159,7 @@ component graph-box inherits VerticalLayout {
     padding-left: 16px;
     padding-right: 16px;
     padding-top: 8px;
+    padding-bottom: 16px;
     spacing: 8px;
     HorizontalLayout {
         icon-title {
@@ -142,7 +179,44 @@ component graph-box inherits VerticalLayout {
         color: Palette.white;
     }
     Image {
+        width: BlockchainDataChartDimensions.get-dimensions(size).width * 1px;
+        height: BlockchainDataChartDimensions.get-dimensions(size).height * 1px;
         source: graph;
+    }
+}
+
+component small-box inherits VerticalLayout {
+    in property <WidgetSize> size;
+    in property <string> title;
+    in property <image> icon;
+    in property <string> big-text;
+    in property <bool> show-trend;
+    in property <bool> trend-increase;
+    in property <string> trend-change;
+    in property <length> padding-btm: 16px;
+
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: 8px;
+    padding-bottom: padding-btm;
+    alignment: space-between;
+
+    HorizontalLayout {
+        icon-title {
+            icon: icon;
+            title: title;
+        }
+        if show-trend: trend-box {
+            show-24h: false;
+            trend-increase: trend-increase;
+            trend-change: trend-change;
+        }
+    }
+    Text {
+        text: big-text;
+        font-size: size == WidgetSize.Large ? 48px : 32px;
+        font-weight: Theme.font.weight.semi-bold;
+        color: Palette.white;
     }
 }
 
@@ -159,6 +233,7 @@ component bitcoin-difficulty-box inherits VerticalLayout {
     padding-left: 16px;
     padding-right: 16px;
     padding-top: 8px;
+    padding-bottom: 16px;
     icon-title {
         icon: Images.axe;
         title: "Bitcoin Difficulty";
@@ -229,6 +304,9 @@ export component WidgetBlockchainData inherits Rectangle {
     in property <WidgetSize> size;
     in property <BlockchainData> data;
 
+    in property <string> btc-price <=> BitcoinAdapter.price;
+    in property <bool> btc-price-trend-increase <=> BitcoinAdapter.price_increase;
+    in property <string> btc-price-trend-change <=> BitcoinAdapter.price_change;
     in property <string> difficulty <=> DifficultyAdapter.difficulty;
     in property <bool> prev-adjustment-increase <=> DifficultyAdapter.prev-adjustment-increase;
     in property <string> prev-adjustment-change <=> DifficultyAdapter.prev-adjustment-change;
@@ -250,9 +328,6 @@ export component WidgetBlockchainData inherits Rectangle {
         in property <string> fees-percent <=> HashrateAdapter.fees-percent;
         in property <string> current-hashrate <=> HashrateAdapter.current-hashrate;
         in property <string> total-revenue <=> HashrateAdapter.total-revenue;
-        in property <string> btc-price <=> BitcoinAdapter.price;
-        in property <bool> btc-price-trend-increase <=> BitcoinAdapter.price_increase;
-        in property <string> btc-price-trend-change <=> BitcoinAdapter.price_change;
 
         spacing: 24px;
         padding: 16px;
@@ -260,7 +335,7 @@ export component WidgetBlockchainData inherits Rectangle {
             width: 400px;
             spacing: 8px;
             bordered-box {
-                height: 220px;
+                height: 312px;
                 bitcoin-difficulty-box {
                     size: size;
                     difficulty: difficulty;
@@ -273,15 +348,13 @@ export component WidgetBlockchainData inherits Rectangle {
                 }
             }
             bordered-box {
-                graph-box {
+                small-box {
                     size: size;
                     title: "Hash Price";
                     icon: Images.chart;
-                    show-24h: true;
                     big-text: hashprice;
-                    graph: data.hashprice-graph;
-                    trend-increase: data.hashprice-trend-increase;
-                    trend-change: data.hashprice-trend-change;
+                    show-trend: false;
+                    padding-btm: 32px;
                 }
             }
         }
@@ -392,20 +465,33 @@ export component WidgetBlockchainData inherits Rectangle {
             height: 0.94 * parent.height;
             y: 0.03 * parent.height;
         }
-        graph-box {
-            size: size;
-            title: "Hash Price";
-            icon: Images.chart;
-            show-24h: false;
-            big-text: hashprice;
-            graph: data.hashprice-graph;
-            trend-increase: data.hashprice-trend-increase;
-            trend-change: data.hashprice-trend-change;
+        VerticalLayout {
+            small-box {
+                size: size;
+                title: "Hash Price";
+                icon: Images.chart;
+                big-text: hashprice;
+                show-trend: false;
+            }
+            Rectangle {
+                border-color: Palette.gray-90;
+                border-width: 1px;
+                height: 1px;
+            }
+            small-box {
+                size: size;
+                title: "BTC-USD";
+                icon: Images.btc-icon;
+                big-text: btc-price + " USD";
+                show-trend: true;
+                trend-increase: btc-price-trend-increase;
+                trend-change: btc-price-trend-change;
+            }
         }
     }
     if size == WidgetSize.Small: VerticalLayout {
         bitcoin-difficulty-box {
-            height: parent.height / 2;
+            height: 0.6 * parent.height;
             size: size;
             difficulty: difficulty;
             next-adjustment-increase: next-adjustment-increase;
@@ -418,15 +504,12 @@ export component WidgetBlockchainData inherits Rectangle {
             width: 0.9 * parent.width;
             x: 0.05 * parent.width;
         }
-        graph-box {
+        small-box {
             size: size;
             title: "Hash Price";
             icon: Images.chart;
-            show-24h: true;
             big-text: hashprice;
-            graph: data.hashprice-graph;
-            trend-increase: data.hashprice-trend-increase;
-            trend-change: data.hashprice-trend-change;
+            show-trend: false;
         }
     }
 }
