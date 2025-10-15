@@ -409,6 +409,7 @@ impl DisplayController {
         scene_id: SceneId,
         widget_id: WidgetId,
         diff_hashrate_data: DiffHashrateData,
+        number_format: NumberFormat,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -426,6 +427,42 @@ impl DisplayController {
 
                     widget.blockchain_data.hashrate_graph =
                         diff_hashrate_data.graph_hashrate_image(&main_window, width, height, true);
+                    widget.blockchain_data.hashrate_trend_increase =
+                        diff_hashrate_data.hashrate_increasing_trend();
+                    widget.blockchain_data.hashrate_trend_change =
+                        diff_hashrate_data.hashrate_change_trend(number_format);
+                    widget.blockchain_data.difficulty_graph =
+                        diff_hashrate_data.graph_dificulty_image(&main_window, width, height, true);
+                });
+            }
+        });
+    }
+
+    pub fn update_blocks_last_24h(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        blocks: Vec<BlockheightData>,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    let now = Utc::now();
+                    let block_count = blocks
+                        .into_iter()
+                        .filter(|block| {
+                            block
+                                .timestamp_as_datetime()
+                                .is_some_and(|timestamp| (now - timestamp).num_hours() <= 24)
+                        })
+                        .count();
+                    widget.blockchain_data.blocks_24h =
+                        SharedString::from(format!("{block_count}/144"));
                 });
             }
         });

@@ -7,7 +7,7 @@ use crate::system_upgrade::SystemUpgradeState;
 
 use crate::config::ConfigHandle;
 use bmc_display::bitcoin_data::BitcoinData;
-use bmc_display::blockheight_data::BlockheightData;
+use bmc_display::blockheight_data::{self, BlockheightData};
 use bmc_display::data::{ConnectInfoScreen, InitScreen, UpgradeScreen};
 use bmc_display::difficulty_data::DifficultyData;
 use bmc_display::display_controller::DisplayController;
@@ -26,8 +26,6 @@ use tracing::{debug, error, info, warn};
 const SCREEN_DURATION: Duration = Duration::from_secs(5);
 
 const PRICE_API_URL: &str = "https://public-api.braiins.com/v1/price-stats";
-const BLOCK_HEIGHT_API_URL: &str = "https://public-api.braiins.com/v2/blocks";
-const BLOCK_HEIGHT_LIMIT_API_PARAM: &str = "limit";
 const CURRENCY_API_PARAM: &str = "currency";
 const DIFFICULTY_STATS_URL: &str = "https://public-api.braiins.com/v1/difficulty-stats";
 const HASHRATE_STATS_URL: &str = "https://public-api.braiins.com/v2/hashrate-stats";
@@ -419,9 +417,9 @@ impl<T: BmcManager> DisplayTasks<T> {
             debug!("Getting blockheight data...");
             let client = Client::new();
             let blockheight_data = match client
-                .get(BLOCK_HEIGHT_API_URL)
+                .get(blockheight_data::BLOCK_HEIGHT_API_URL)
                 .query(&[
-                    (BLOCK_HEIGHT_LIMIT_API_PARAM, "1"),
+                    (blockheight_data::BLOCK_HEIGHT_LIMIT_API_PARAM, "1"),
                     (CURRENCY_API_PARAM, "usd"),
                 ])
                 .timeout(API_TIMEOUT)

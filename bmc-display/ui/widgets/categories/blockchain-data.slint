@@ -5,16 +5,14 @@ import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
 import { BitcoinAdapter, BlockHeightAdapter, DifficultyAdapter, HashrateAdapter } from "../../controls/adapters.slint";
 
 export struct BlockchainData {
-    // Hashprice
-    hashprice-graph: image,
-    hashprice-trend-increase: bool,
-    hashprice-trend-change: string,
     // BTC price graph
     btc-price-graph: image,
     // Hashrate
     hashrate-graph: image,
     hashrate-trend-increase: bool,
     hashrate-trend-change: string,
+    // Difficulty
+    difficulty-graph: image,
     // Stats
     blocks-24h: string,
 }
@@ -34,18 +32,7 @@ export global BlockchainDataChartDimensions {
     } else if size == WidgetSize.Large {
         return {
             width: 618,
-            height: 57,
-        };
-    } else if size == WidgetSize.Medium {
-        return {
-            width: 285,
-            height: 107,
-        };
-    // WidgetSize.Small
-    } else {
-        return {
-            width: 285,
-            height: 20,
+            height: 70,
         };
     }
     return {
@@ -223,6 +210,7 @@ component small-box inherits VerticalLayout {
 component bitcoin-difficulty-box inherits VerticalLayout {
     in property <WidgetSize> size;
     in property <string> difficulty;
+    in property <image> difficulty-graph;
     in property <bool> prev-adjustment-increase;
     in property <string> prev-adjustment-change;
     in property <string> prev-adjustment-time;
@@ -234,6 +222,7 @@ component bitcoin-difficulty-box inherits VerticalLayout {
     padding-right: 16px;
     padding-top: 8px;
     padding-bottom: 16px;
+    alignment: space-between;
     icon-title {
         icon: Images.axe;
         title: "Bitcoin Difficulty";
@@ -244,60 +233,61 @@ component bitcoin-difficulty-box inherits VerticalLayout {
         font-weight: Theme.font.weight.semi-bold;
         color: Palette.white;
     }
-    // VerticalLayout {
-        if size != WidgetSize.Small: HorizontalLayout {
-            alignment: space-between;
-            Text {
-                text: "Prev Adjust";
-                color: Palette.gray-40;
-                font-size: 24px;
-                font-weight: Theme.font.weight.regular;
-            }
-            if (size == WidgetSize.Full || size == WidgetSize.Large): Text {
-                // text: "8 days ago";
-                text: prev-adjustment-time;
-                color: Palette.gray-40;
-                font-size: size == WidgetSize.Full ? 16px : 24px;
-                font-weight: Theme.font.weight.regular;
-                vertical-alignment: center;
-            }
-            trend-box {
-                show-24h: false;
-                trend-increase: prev-adjustment-increase;
-                trend-change: prev-adjustment-change;
-            }
+    Image {
+        width: BlockchainDataChartDimensions.get-dimensions(size).width * 1px;
+        height: BlockchainDataChartDimensions.get-dimensions(size).height * 1px;
+        source: difficulty-graph;
+    }
+    if size != WidgetSize.Small: HorizontalLayout {
+        alignment: space-between;
+        Text {
+            text: "Prev Adjust";
+            color: Palette.gray-40;
+            font-size: 24px;
+            font-weight: Theme.font.weight.regular;
         }
-        if size != WidgetSize.Small: Rectangle {
-            // border-color: Palette.gray-90;
-            border-color: pink;
-            border-width: 1px;
-            height: 1px;
-            width: 0.9 * parent.width;
-            x: 0.05 * parent.width;
+        if (size == WidgetSize.Full || size == WidgetSize.Large): Text {
+            text: prev-adjustment-time;
+            color: Palette.gray-40;
+            font-size: size == WidgetSize.Full ? 16px : 24px;
+            font-weight: Theme.font.weight.regular;
+            vertical-alignment: center;
         }
-        HorizontalLayout {
-            alignment: space-between;
-            Text {
-                text: "Next Adjust";
-                color: Palette.gray-40;
-                font-size: size == WidgetSize.Small ? 16px : 24px;
-                font-weight: Theme.font.weight.regular;
-            }
-            if (size == WidgetSize.Full || size == WidgetSize.Large): Text {
-                // text: "~ in 9 days";
-                text: next-adjustment-time;
-                color: Palette.gray-40;
-                font-size: size == WidgetSize.Full ? 16px : 24px;
-                font-weight: Theme.font.weight.regular;
-                vertical-alignment: center;
-            }
-            trend-box {
-                show-24h: false;
-                trend-increase: next-adjustment-increase;
-                trend-change: next-adjustment-change;
-            }
+        trend-box {
+            show-24h: false;
+            trend-increase: prev-adjustment-increase;
+            trend-change: prev-adjustment-change;
         }
-    // }
+    }
+    if size != WidgetSize.Small: Rectangle {
+        // border-color: Palette.gray-90;
+        border-color: pink;
+        border-width: 1px;
+        height: 1px;
+        width: 0.9 * parent.width;
+        x: 0.05 * parent.width;
+    }
+    HorizontalLayout {
+        alignment: space-between;
+        Text {
+            text: "Next Adjust";
+            color: Palette.gray-40;
+            font-size: size == WidgetSize.Small ? 16px : 24px;
+            font-weight: Theme.font.weight.regular;
+        }
+        if (size == WidgetSize.Full || size == WidgetSize.Large): Text {
+            text: next-adjustment-time;
+            color: Palette.gray-40;
+            font-size: size == WidgetSize.Full ? 16px : 24px;
+            font-weight: Theme.font.weight.regular;
+            vertical-alignment: center;
+        }
+        trend-box {
+            show-24h: false;
+            trend-increase: next-adjustment-increase;
+            trend-change: next-adjustment-change;
+        }
+    }
 }
 
 export component WidgetBlockchainData inherits Rectangle {
@@ -339,6 +329,7 @@ export component WidgetBlockchainData inherits Rectangle {
                 bitcoin-difficulty-box {
                     size: size;
                     difficulty: difficulty;
+                    difficulty-graph: data.difficulty-graph;
                     prev-adjustment-increase: prev-adjustment-increase;
                     prev-adjustment-change: prev-adjustment-change;
                     prev-adjustment-time: prev-adjustment-time;
@@ -422,9 +413,10 @@ export component WidgetBlockchainData inherits Rectangle {
     }
     if size == WidgetSize.Large: VerticalLayout {
         bitcoin-difficulty-box {
-            height: parent.height / 2;
+            height: 0.68 * parent.height;
             size: size;
             difficulty: difficulty;
+            difficulty-graph: data.difficulty-graph;
             prev-adjustment-increase: prev-adjustment-increase;
             prev-adjustment-change: prev-adjustment-change;
             prev-adjustment-time: prev-adjustment-time;
@@ -437,15 +429,13 @@ export component WidgetBlockchainData inherits Rectangle {
             border-width: 1px;
             height: 1px;
         }
-        graph-box {
+        small-box {
             size: size;
             title: "Hash Price";
             icon: Images.chart;
-            show-24h: true;
             big-text: hashprice;
-            graph: data.hashprice-graph;
-            trend-increase: data.hashprice-trend-increase;
-            trend-change: data.hashprice-trend-change;
+            show-trend: false;
+            padding-btm: 24px;
         }
     }
     if size == WidgetSize.Medium: HorizontalLayout {

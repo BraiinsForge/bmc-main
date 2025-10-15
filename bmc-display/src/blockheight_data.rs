@@ -2,9 +2,12 @@
 
 use bmc_shared_time::time::{DateFormat, Timezone};
 use bmc_shared_utils::number_format::NumberFormat;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Deserialize;
 
 const NOT_AVAILABLE: &str = "--";
+pub const BLOCK_HEIGHT_API_URL: &str = "https://public-api.braiins.com/v2/blocks";
+pub const BLOCK_HEIGHT_LIMIT_API_PARAM: &str = "limit";
 
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct BlockheightData {
@@ -13,6 +16,7 @@ pub struct BlockheightData {
 }
 
 const TIMESTAMP_FORMAT: &str = "%FT%T%z";
+const NAIVE_TIMESTAMP_FORMAT: &str = "%FT%T";
 const FORMAT_24H: &str = "%H:%M";
 const FORMAT_12H: &str = "%I:%M %p";
 
@@ -34,7 +38,7 @@ impl BlockheightData {
         self.timestamp
             .map_or(NOT_AVAILABLE.into(), |mut timestamp| {
                 timestamp.push_str("+0000");
-                let date_time = chrono::DateTime::parse_from_str(&timestamp, TIMESTAMP_FORMAT)
+                let date_time = DateTime::parse_from_str(&timestamp, TIMESTAMP_FORMAT)
                     .map(|timestamp| {
                         let timestamp = timestamp.with_timezone(timezone.chrono()).fixed_offset();
                         let mut date_time = timestamp
@@ -49,5 +53,15 @@ impl BlockheightData {
                     .ok();
                 slint::SharedString::from(date_time.unwrap_or(NOT_AVAILABLE.to_owned()))
             })
+    }
+
+    #[must_use]
+    pub fn timestamp_as_datetime(&self) -> Option<DateTime<Utc>> {
+        self.timestamp
+            .as_ref()
+            .and_then(|timestamp| {
+                NaiveDateTime::parse_from_str(timestamp, NAIVE_TIMESTAMP_FORMAT).ok()
+            })
+            .map(|naive| naive.and_utc())
     }
 }

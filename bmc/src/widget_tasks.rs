@@ -3,6 +3,7 @@
 use crate::config::ConfigHandle;
 use anyhow::{Context, bail};
 use backon::{BackoffBuilder, ExponentialBuilder};
+use bmc_display::blockheight_data::{self, BlockheightData};
 use bmc_display::btc_history_data::BtcHistoryData;
 use bmc_display::clock_data::ClockData;
 use bmc_display::data::{
@@ -33,6 +34,7 @@ use url::Url;
 
 const BTC_HISTORY_API_URL: &str = "https://public-api.braiins.com/v1/price-history";
 const DATA_HISTORY_TIMEFRAME_PARAM: &str = "timeframe";
+const CURRENCY_API_PARAM: &str = "currency";
 const DIFF_HASHRATE_API_URL: &str =
     "https://public-api.braiins.com/v1/hashrate-and-difficulty-history";
 const API_TIMEOUT: Duration = Duration::from_secs(10);
@@ -129,6 +131,7 @@ impl WidgetTasks {
                 scene_id.clone(),
                 widget.id.clone(),
                 &widget.size,
+                self.config_handle.clone(),
             ))),
         };
 
@@ -910,17 +913,20 @@ impl WidgetTasks {
         .in_current_span()
     }
 
+    #[expect(clippy::too_many_lines)]
     fn make_blockchain_data_task(
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
         widget_size: &WidgetSize,
+        config_handle: Arc<RwLock<ConfigHandle>>,
     ) -> impl Future<Output = ()> + Send + 'static {
         let display_controller = self.display_controller.clone();
 
         let download_btc_history = matches!(widget_size, WidgetSize::Full);
         let download_diff_and_hashrate_history =
             matches!(widget_size, WidgetSize::Full | WidgetSize::Large);
+        let download_blocks_history = matches!(widget_size, WidgetSize::Full);
 
         async move {
             let mut interval = interval(DATA_REFRESH_PERIOD);
@@ -986,10 +992,45 @@ impl WidgetTasks {
                         }
                     };
 
+                    let number_format = config_handle
+                        .read()
+                        .await
+                        .localization_config()
+                        .number_format;
+
                     display_controller.update_diff_hashrate_graph(
                         scene_id.clone(),
                         widget_id.clone(),
                         diff_hashrate_data,
+                        number_format,
+                    );
+                }
+                if download_blocks_history {
+                    debug!("Getting blocks history data...");
+                    let blockheight_history = match client
+                        .get(blockheight_data::BLOCK_HEIGHT_API_URL)
+                        .query(&[
+                            (blockheight_data::BLOCK_HEIGHT_LIMIT_API_PARAM, "200"),
+                            (CURRENCY_API_PARAM, "usd"),
+                        ])
+                        .send()
+                        .await
+                    {
+                        Ok(response) => response
+                            .json::<Vec<BlockheightData>>()
+                            .await
+                            .map_err(|e| warn!("Failed to parse blockheight history JSON: {e}"))
+                            .unwrap_or_default(),
+                        Err(e) => {
+                            warn!("Failed to get blockheight history from API: {e}");
+                            Vec::default()
+                        }
+                    };
+
+                    display_controller.update_blocks_last_24h(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        blockheight_history,
                     );
                 }
             }
