@@ -404,11 +404,11 @@ impl DisplayController {
         });
     }
 
-    pub fn update_diff_hashrate_graph(
+    pub fn update_hashrate_info(
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
-        diff_hashrate_data: DiffHashrateData,
+        hashrate_data: DiffHashrateData,
         number_format: NumberFormat,
     ) {
         self.in_event_loop(move |main_window| {
@@ -426,13 +426,38 @@ impl DisplayController {
                     let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
 
                     widget.blockchain_data.hashrate_graph =
-                        diff_hashrate_data.graph_hashrate_image(&main_window, width, height, true);
+                        hashrate_data.graph_hashrate_image(&main_window, width, height, true);
                     widget.blockchain_data.hashrate_trend_increase =
-                        diff_hashrate_data.hashrate_increasing_trend();
+                        hashrate_data.hashrate_increasing_trend();
                     widget.blockchain_data.hashrate_trend_change =
-                        diff_hashrate_data.hashrate_change_trend(number_format);
+                        hashrate_data.hashrate_change_trend(number_format);
+                });
+            }
+        });
+    }
+
+    pub fn update_difficulty_graph(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        difficulty_data: DiffHashrateData,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    let widget_size = widget.size;
+                    let chart_dimensions = BlockchainDataChartDimensions::get(&main_window);
+                    let image_dimensions = chart_dimensions.invoke_get_dimensions(widget_size);
+                    let width: u32 = image_dimensions.width.try_into().unwrap_or_default();
+                    let height: u32 = image_dimensions.height.try_into().unwrap_or_default();
+
                     widget.blockchain_data.difficulty_graph =
-                        diff_hashrate_data.graph_dificulty_image(&main_window, width, height, true);
+                        difficulty_data.graph_dificulty_image(&main_window, width, height, true);
                 });
             }
         });

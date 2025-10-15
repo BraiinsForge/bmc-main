@@ -968,11 +968,34 @@ impl WidgetTasks {
                 }
                 if download_diff_and_hashrate_history {
                     debug!("Getting difficulty and hashrate history data...");
-                    let diff_hashrate_data = match client
+                    let hashrate_data = match client
                         .get(DIFF_HASHRATE_API_URL)
                         .query(&[(
                             DATA_HISTORY_TIMEFRAME_PARAM,
                             String::from(TickerTimeFrame::Day1),
+                        )])
+                        .send()
+                        .await
+                    {
+                        Ok(response) => response
+                            .json::<DiffHashrateData>()
+                            .await
+                            .map_err(|e| {
+                                warn!("Failed to parse difficulty and hashrate history JSON: {e}");
+                            })
+                            .unwrap_or_default(),
+                        Err(e) => {
+                            warn!(
+                                "Failed to get difficulty and hashrate history data from API: {e}"
+                            );
+                            DiffHashrateData::default()
+                        }
+                    };
+                    let difficulty_data = match client
+                        .get(DIFF_HASHRATE_API_URL)
+                        .query(&[(
+                            DATA_HISTORY_TIMEFRAME_PARAM,
+                            String::from(TickerTimeFrame::Year1),
                         )])
                         .send()
                         .await
@@ -998,11 +1021,17 @@ impl WidgetTasks {
                         .localization_config()
                         .number_format;
 
-                    display_controller.update_diff_hashrate_graph(
+                    display_controller.update_hashrate_info(
                         scene_id.clone(),
                         widget_id.clone(),
-                        diff_hashrate_data,
+                        hashrate_data,
                         number_format,
+                    );
+
+                    display_controller.update_difficulty_graph(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        difficulty_data,
                     );
                 }
                 if download_blocks_history {

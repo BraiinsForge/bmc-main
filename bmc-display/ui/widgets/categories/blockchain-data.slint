@@ -5,15 +5,11 @@ import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
 import { BitcoinAdapter, BlockHeightAdapter, DifficultyAdapter, HashrateAdapter } from "../../controls/adapters.slint";
 
 export struct BlockchainData {
-    // BTC price graph
     btc-price-graph: image,
-    // Hashrate
     hashrate-graph: image,
     hashrate-trend-increase: bool,
     hashrate-trend-change: string,
-    // Difficulty
     difficulty-graph: image,
-    // Stats
     blocks-24h: string,
 }
 
@@ -31,7 +27,7 @@ export global BlockchainDataChartDimensions {
         };
     } else if size == WidgetSize.Large {
         return {
-            width: 618,
+            width: 605,
             height: 70,
         };
     }
@@ -227,11 +223,20 @@ component bitcoin-difficulty-box inherits VerticalLayout {
         icon: Images.axe;
         title: "Bitcoin Difficulty";
     }
-    Text {
-        text: difficulty;
-        font-size: size == WidgetSize.Large ? 48px : 32px;
-        font-weight: Theme.font.weight.semi-bold;
-        color: Palette.white;
+    HorizontalLayout {
+        alignment: space-between;
+        Text {
+            text: difficulty;
+            font-size: size == WidgetSize.Large ? 48px : 32px;
+            font-weight: Theme.font.weight.semi-bold;
+            color: Palette.white;
+        }
+        if size == WidgetSize.Full || size == WidgetSize.Large: Text {
+            text: "1 year";
+            font-size: 24px;
+            font-weight: Theme.font.weight.regular;
+            color: Palette.gray-40;
+        }
     }
     Image {
         width: BlockchainDataChartDimensions.get-dimensions(size).width * 1px;
@@ -260,12 +265,10 @@ component bitcoin-difficulty-box inherits VerticalLayout {
         }
     }
     if size != WidgetSize.Small: Rectangle {
-        // border-color: Palette.gray-90;
-        border-color: pink;
+        border-color: Palette.gray-90;
         border-width: 1px;
         height: 1px;
-        width: 0.9 * parent.width;
-        x: 0.05 * parent.width;
+        width: parent.width - root.padding-left - root.padding-right;
     }
     HorizontalLayout {
         alignment: space-between;
