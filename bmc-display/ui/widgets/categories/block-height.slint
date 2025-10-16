@@ -1,5 +1,6 @@
 import { Palette } from "../../style/palette.slint";
 import { Theme } from "../../style/theme.slint";
+import { Images } from "../../style/images.slint";
 import { WidgetSize, FontStyle, BaseDimensions } from "../widget-shared.slint";
 import { BlockHeightAdapter } from "../../controls/adapters.slint";
 
@@ -27,9 +28,6 @@ export component WidgetBlockHeight inherits Rectangle {
         : data.config.numbers-font-style == FontStyle.Medium ? Theme.font.weight.semi-bold
         : Theme.font.weight.bold;
 
-    property <length> grid-padding-top: (WidgetSize.Full == size) ? 22px : (WidgetSize.Large == size) ? 90px : 31px;
-    property <length> grid-padding-bottom: (WidgetSize.Full == size) ? 62px : (WidgetSize.Large == size) ? 90px : 31px;
-
     pure function blockheight-fontsize(size: WidgetSize) -> length {
         if (WidgetSize.Small == size) {
             return 64px;
@@ -54,35 +52,42 @@ export component WidgetBlockHeight inherits Rectangle {
         }
     }
 
-    GridLayout {
-        padding-top: grid-padding-top;
-        padding-bottom: grid-padding-bottom;
-        Row {
+    VerticalLayout {
+        padding-left: (WidgetSize.Full == size) ? 24px : 16px;
+        padding-top: (WidgetSize.Full == size) ? 16px : 8px;
+        padding-bottom: (WidgetSize.Full == size || WidgetSize.Large == size) ? 60px : 16px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            alignment: start;
+            spacing: 12px;
+            Image {
+                source: Images.cube;
+                width: 24px;
+                height: 24px;
+            }
             Text {
-                text: "Bitcoin Block Height";
+                text: "Block Height";
                 color: Palette.gray-60;
-                font-size: text-fontsize(size);
+                font-size: 24px;
                 font-weight: Theme.font.weight.regular;
-                horizontal-alignment: center;
+                horizontal-alignment: left;
             }
         }
-        Row {
-            Text {
-                text: block-height;
-                color: Palette.white;
-                font-size: blockheight-fontsize(size);
-                font-weight: font-weight;
-                horizontal-alignment: center;
-            }
+        Text {
+            text: block-height;
+            color: Palette.white;
+            font-size: blockheight-fontsize(size);
+            font-weight: font-weight;
+            font-family: "Braiins Deck Sans";
+            horizontal-alignment: center;
         }
-        Row {
-            Text {
-                text: data.config.show-timestamp ? timestamp : "";
-                color: Palette.gray-60;
-                font-size: text-fontsize(size);
-                font-weight: Theme.font.weight.regular;
-                horizontal-alignment: center;
-            }
+        Text {
+            text: data.config.show-timestamp ? timestamp : "";
+            color: Palette.gray-60;
+            font-size: text-fontsize(size);
+            font-weight: Theme.font.weight.regular;
+            horizontal-alignment: center;
         }
     }
 }
