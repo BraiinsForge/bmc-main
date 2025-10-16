@@ -34,26 +34,22 @@ import css from './DisplayList.scss';
 
 const $ = getID('list').get;
 
-type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
-type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProps>;
+type FormStateBlockchainData = FormPropsToLocalState<Comp.FormWidgetBlockchainDataProps>;
 type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
+type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
 type FormStateRemoteImage = FormPropsToLocalState<Comp.FormWidgetRemoteImageProps>;
+type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 
 // Can be both edit & create dialogs
 type DialogStates = {
-    clock: {
-        data: FormStateClock;
-        isEdit: boolean;
-        sceneID: string;
-    };
-    ticker: {
-        data: FormStateTicker;
-        isEdit: boolean;
-        sceneID: string;
-    };
     blockHeight: {
         data: FormStateBlockHeight;
+        isEdit: boolean;
+        sceneID: string;
+    };
+    blockchainData: {
+        data: FormStateBlockchainData;
         isEdit: boolean;
         sceneID: string;
     };
@@ -62,8 +58,18 @@ type DialogStates = {
         isEdit: boolean;
         sceneID: string;
     };
+    clock: {
+        data: FormStateClock;
+        isEdit: boolean;
+        sceneID: string;
+    };
     remoteImage: {
         data: FormStateRemoteImage;
+        isEdit: boolean;
+        sceneID: string;
+    };
+    ticker: {
+        data: FormStateTicker;
         isEdit: boolean;
         sceneID: string;
     };
@@ -79,11 +85,12 @@ function getInitialDialogStates(): DialogStates {
     });
 
     return {
-        clock: getForm(),
-        ticker: getForm(),
         blockHeight: getForm(),
+        blockchainData: getForm(),
         braiinsPool: getForm(),
+        clock: getForm(),
         remoteImage: getForm(),
+        ticker: getForm(),
     };
 }
 
@@ -250,6 +257,11 @@ class View extends Component<Props, State> {
                 $kind = { case: 'blockHeight', value: pb.create(pb.BlockHeightWidgetSchema) };
                 break;
 
+            case 'blockchainData':
+                $openDialogKind = 'blockchainData';
+                $kind = { case: 'blockchainData', value: pb.create(pb.BlockchainDataWidgetSchema) };
+                break;
+
             case 'braiinsPool':
                 $openDialogKind = 'braiinsPool';
                 $kind = { case: 'braiinsPool', value: pb.create(pb.BraiinsPoolWidgetSchema) };
@@ -302,6 +314,13 @@ class View extends Component<Props, State> {
                     dialogStates.blockHeight.data = {
                         errors: null,
                         values: Comp.unpackBlockHeightWidgetKind(widgetKind, size),
+                    };
+                    break;
+
+                case 'blockchainData':
+                    dialogStates.blockchainData.data = {
+                        errors: null,
+                        values: Comp.unpackBlockchainDataWidgetKind(widgetKind, size),
                     };
                     break;
 
@@ -461,6 +480,10 @@ class View extends Component<Props, State> {
                 widgetKind = Comp.createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
                 break;
 
+            case 'blockchainData':
+                widgetKind = Comp.createBlockchainDataWidgetKind(dialogStates.blockchainData.data.values);
+                break;
+
             case 'braiinsPool':
                 widgetKind = Comp.createBraiinsPoolWidgetKind(dialogStates.braiinsPool.data.values);
                 break;
@@ -514,7 +537,7 @@ class View extends Component<Props, State> {
     #sceneAddRender = (): ReactElement => {
         const {
             openDialogKind,
-            dialogStates: { clock, ticker, blockHeight, braiinsPool, remoteImage },
+            dialogStates: { clock, ticker, blockHeight, blockchainData, braiinsPool, remoteImage },
             timezones,
             accounts,
         } = this.state;
@@ -570,6 +593,19 @@ class View extends Component<Props, State> {
                     widgetSize={null}
                     showDate={this.#getFormFieldStruct('blockHeight', 'showDate')}
                     fontStyle={this.#getFormFieldStruct('blockHeight', 'fontStyle')}
+                />
+
+                <Comp.FormWidgetBlockchainData
+                    isOpen={openDialogKind === 'blockchainData'}
+                    isEdit={openDialogKind === 'blockchainData' && blockchainData.isEdit}
+                    onClose={cancel}
+                    error={
+                        openDialogKind === 'blockchainData'
+                            ? pb.renderFieldErrorsAsList(blockchainData.data?.errors?.global)
+                            : null
+                    }
+                    // No size selector for the fullscreen widgets we operate with here
+                    widgetSize={null}
                 />
 
                 <Comp.FormWidgetBraiinsPool
@@ -832,6 +868,25 @@ class View extends Component<Props, State> {
                         this.setState(
                             // Set state
                             { openDialogKind: 'blockHeight', dialogStates: ds },
+                            // ...and open the dialog
+                            () => this.#previewOpen(id),
+                        );
+
+                        break;
+                    }
+
+                    case 'blockchainData': {
+                        const ds = getInitialDialogStates();
+                        ds.blockchainData.sceneID = id;
+                        ds.blockchainData.isEdit = true;
+                        ds.blockchainData.data.values = Comp.unpackBlockchainDataWidgetKind(
+                            widgetKind,
+                            pb.WidgetSize.FULL,
+                        );
+
+                        this.setState(
+                            // Set state
+                            { openDialogKind: 'blockchainData', dialogStates: ds },
                             // ...and open the dialog
                             () => this.#previewOpen(id),
                         );

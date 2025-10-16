@@ -5,7 +5,7 @@ import { type CarbonIconType, useSizeSelector } from '@/lib/react';
 
 // App
 import { getID } from '../const';
-import type * as pb from '@/proto';
+import * as pb from '@/proto';
 
 // Components
 import * as Icons from '@/components/images/icons';
@@ -28,7 +28,9 @@ export interface FormSceneSelectProps {
 
 const $ = getID('scene-select-kind').get;
 export function FormSceneSelect(props: FormSceneSelectProps) {
-    const { formatMessage } = useIntl();
+    const intl = useIntl();
+    const { formatMessage } = intl;
+
     const { onSelection, isOpen, onClose, variant } = props;
 
     return (
@@ -65,7 +67,7 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
                 <Row
                     variant={variant}
                     icon={Icons.WidgetClocks}
-                    title={formatMessage({ defaultMessage: 'Clocks' })}
+                    title={String(pb.sceneTitle(intl, 'clock'))}
                     description={formatMessage({
                         defaultMessage: 'You can choose between types of clocks - Flip, Digital, Analog',
                     })}
@@ -75,7 +77,7 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
                 <Row
                     variant={variant}
                     icon={Icons.WidgetTicker}
-                    title={formatMessage({ defaultMessage: 'Ticker' })}
+                    title={String(pb.sceneTitle(intl, 'tickerBtc'))}
                     description={formatMessage({ defaultMessage: 'BTC price adjusted in 5min intervals.' })}
                     onClick={() => onSelection('tickerBtc')}
                 />
@@ -83,7 +85,7 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
                 <Row
                     variant={variant}
                     icon={Icons.WidgetBlockHeight}
-                    title={formatMessage({ defaultMessage: 'Block Height' })}
+                    title={String(pb.sceneTitle(intl, 'blockHeight'))}
                     description={formatMessage({
                         defaultMessage: 'Combined scene displaying multiple configurable modules that can be adjusted.',
                     })}
@@ -92,8 +94,18 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
 
                 <Row
                     variant={variant}
+                    icon={Icons.WidgetBlockchainData}
+                    title={String(pb.sceneTitle(intl, 'blockchainData'))}
+                    description={formatMessage({
+                        defaultMessage: 'Get all the relevant information about bitcoin mining on one display.',
+                    })}
+                    onClick={() => onSelection('blockchainData')}
+                />
+
+                <Row
+                    variant={variant}
                     icon={Icons.WidgetPool}
-                    title={formatMessage({ defaultMessage: 'Braiins Pool' })}
+                    title={String(pb.sceneTitle(intl, 'braiinsPool'))}
                     description={formatMessage({
                         defaultMessage: 'Combined scene displaying multiple configurable modules that can be adjusted.',
                     })}
@@ -103,13 +115,12 @@ export function FormSceneSelect(props: FormSceneSelectProps) {
                 <Row
                     variant={variant}
                     icon={Icons.WidgetRemoteImage}
-                    title={formatMessage({ defaultMessage: 'Remote Image' })}
-                    description={formatMessage({ defaultMessage: 'Studere satis ducunt ad fatalis gluten.' })}
+                    title={String(pb.sceneTitle(intl, 'remoteImage'))}
+                    description={formatMessage({ defaultMessage: 'Display your own image.' })}
                     onClick={() => onSelection('remoteImage')}
                 />
 
                 {/*
-
                 <Row
                     variant={variant}
                     icon={Icons.WidgetManager}

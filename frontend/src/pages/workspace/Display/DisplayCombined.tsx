@@ -25,11 +25,12 @@ import * as Comp from './components';
 // Styles
 import css from './DisplayCombined.scss';
 
-type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
-type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProps>;
+type FormStateBlockchainData = FormPropsToLocalState<Comp.FormWidgetBlockchainDataProps>;
 type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
+type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
 type FormStateRemoteImage = FormPropsToLocalState<Comp.FormWidgetRemoteImageProps>;
+type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 
 // Can be both edit & create dialogs
 type FormDialogState<Data> = {
@@ -40,11 +41,12 @@ type FormDialogState<Data> = {
 };
 
 type DialogStates = {
-    clock: FormDialogState<FormStateClock>;
-    ticker: FormDialogState<FormStateTicker>;
     blockHeight: FormDialogState<FormStateBlockHeight>;
+    blockchainData: FormDialogState<FormStateBlockchainData>;
     braiinsPool: FormDialogState<FormStateBraiinsPool>;
+    clock: FormDialogState<FormStateClock>;
     remoteImage: FormDialogState<FormStateRemoteImage>;
+    ticker: FormDialogState<FormStateTicker>;
 };
 function getInitialDialogStates(): DialogStates {
     const getForm = () => ({
@@ -58,11 +60,12 @@ function getInitialDialogStates(): DialogStates {
     });
 
     return {
-        clock: getForm(),
-        ticker: getForm(),
         blockHeight: getForm(),
+        blockchainData: getForm(),
         braiinsPool: getForm(),
+        clock: getForm(),
         remoteImage: getForm(),
+        ticker: getForm(),
     };
 }
 
@@ -326,6 +329,25 @@ class View extends Component<Props, State> {
                 break;
             }
 
+            case 'blockchainData': {
+                this.setState(s => ({
+                    openDialogKind: 'blockchainData',
+                    dialogStates: {
+                        ...s.dialogStates,
+                        blockchainData: {
+                            isEdit: true,
+                            widgetID: id,
+                            position,
+                            data: {
+                                errors: null,
+                                values: Comp.unpackBlockchainDataWidgetKind(wkind, widget.size),
+                            },
+                        },
+                    },
+                }));
+                break;
+            }
+
             case 'braiinsPool': {
                 this.setState(s => ({
                     openDialogKind: 'braiinsPool',
@@ -436,6 +458,11 @@ class View extends Component<Props, State> {
                 $widgetKind = { case: 'blockHeight', value: pb.create(pb.BlockHeightWidgetSchema) };
                 break;
 
+            case 'blockchainData':
+                $openDialogKind = 'blockchainData';
+                $widgetKind = { case: 'blockchainData', value: pb.create(pb.BlockchainDataWidgetSchema) };
+                break;
+
             case 'braiinsPool':
                 $openDialogKind = 'braiinsPool';
                 $widgetKind = { case: 'braiinsPool', value: pb.create(pb.BraiinsPoolWidgetSchema) };
@@ -490,6 +517,13 @@ class View extends Component<Props, State> {
                     dialogStates.blockHeight.data = {
                         errors: null,
                         values: Comp.unpackBlockHeightWidgetKind(widgetKind, size),
+                    };
+                    break;
+
+                case 'blockchainData':
+                    dialogStates.blockchainData.data = {
+                        errors: null,
+                        values: Comp.unpackBlockchainDataWidgetKind(widgetKind, size),
                     };
                     break;
 
@@ -636,6 +670,13 @@ class View extends Component<Props, State> {
                 kind = Comp.createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
                 break;
 
+            case 'blockchainData':
+                id = dialogStates.blockchainData.widgetID;
+                size = dialogStates.blockchainData.data.values.widgetSize ?? size;
+                position = dialogStates.blockchainData.position;
+                kind = Comp.createBlockchainDataWidgetKind(dialogStates.blockchainData.data.values);
+                break;
+
             case 'braiinsPool':
                 id = dialogStates.braiinsPool.widgetID;
                 size = dialogStates.braiinsPool.data.values.widgetSize ?? size;
@@ -695,7 +736,7 @@ class View extends Component<Props, State> {
             accounts,
             timezones,
             openDialogKind,
-            dialogStates: { clock, ticker, blockHeight, braiinsPool, remoteImage },
+            dialogStates: { clock, ticker, blockHeight, blockchainData, braiinsPool, remoteImage },
         } = this.state;
 
         const widgets: pb.Widget[] = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
@@ -792,6 +833,24 @@ class View extends Component<Props, State> {
                     }}
                     fontStyle={this.#getField('blockHeight', 'fontStyle')}
                     showDate={this.#getField('blockHeight', 'showDate')}
+                />
+                <Comp.FormWidgetBlockchainData
+                    isOpen={openDialogKind === 'blockchainData'}
+                    isEdit={blockchainData.isEdit}
+                    onClose={this.#openDialogCancel}
+                    error={
+                        openDialogKind === 'blockchainData'
+                            ? pb.renderFieldErrorsAsList(blockchainData.data?.errors?.global)
+                            : null
+                    }
+                    // Fields
+                    widgetSize={{
+                        ...this.#getField('blockchainData', 'widgetSize'),
+                        options: fn.getValidWidgetSizes(widgets, {
+                            id: blockchainData.widgetID,
+                            position: blockchainData.position,
+                        }),
+                    }}
                 />
                 <Comp.FormWidgetBraiinsPool
                     isOpen={openDialogKind === 'braiinsPool'}

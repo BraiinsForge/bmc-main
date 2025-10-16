@@ -568,6 +568,9 @@ export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.Widget
         case 'blockHeight':
             return intl.formatMessage({ defaultMessage: 'Block Height' });
 
+        case 'blockchainData':
+            return intl.formatMessage({ defaultMessage: 'Bitcoin Mining Data' });
+
         case 'braiinsPool':
             return intl.formatMessage({ defaultMessage: 'Braiins Pool' });
 
@@ -613,6 +616,9 @@ export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
                     font: fontStyleToString(intl, val.value.numbersFontStyle) || 'N/A',
                 },
             );
+
+        case 'blockchainData':
+            return intl.formatMessage({ defaultMessage: 'No parameters' });
 
         case 'braiinsPool': {
             const d = val.value satisfies pb.BraiinsPoolWidget;

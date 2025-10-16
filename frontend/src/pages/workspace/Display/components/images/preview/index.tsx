@@ -40,6 +40,9 @@ export function ScenePreview(props: ScenePreviewProps) {
         case 'remoteImage':
             return <Icons.WidgetRemoteImage size={40} />;
 
+        case 'blockchainData':
+            return <Icons.WidgetBlockchainData size={40} />;
+
         // case 'image':
         //     return (
         //         <img

@@ -170,6 +170,59 @@
           }
         }
       ]
+    },
+    {
+      "id": "b541c527-be79-481f-89fb-ba87383164f6",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "14717a00-2229-4ccb-9c91-f69d20e400f9",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "blockchain_data"
+        }
+      ]
+    },
+    {
+      "id": "83bfa487-e07f-4be4-b6ef-5ff5c7226a65",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "4e7d720f-8f0d-4f4f-b339-ada58eff978f",
+          "row": 1,
+          "col": 1,
+          "size": "small",
+          "kind": "blockchain_data"
+        },
+        {
+          "id": "966a3e74-4ab9-4f4c-b5bb-0c9bc53ce1d6",
+          "row": 1,
+          "col": 0,
+          "size": "small",
+          "kind": "block_height",
+          "params": {
+            "show_timestamp": true,
+            "numbers_font_style": "bold"
+          }
+        },
+        {
+          "id": "3e80ab69-13e9-4ed9-ae2f-6cee4c845ad2",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "blockchain_data"
+        },
+        {
+          "id": "d124bbe1-81c1-4eec-943e-25f250094a48",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "blockchain_data"
+        }
+      ]
     }
   ],
   "alarms": [
@@ -179,11 +232,11 @@
       "name": "xxx",
       "time": "10:10:00",
       "repeat": [
-        "Saturday",
+        "Wednesday",
         "Monday",
-        "Thursday",
+        "Saturday",
         "Friday",
-        "Wednesday"
+        "Thursday"
       ],
       "sound": "KeepCalmAndDca",
       "snooze_options": {
@@ -197,13 +250,13 @@
       "name": "",
       "time": "11:22:00",
       "repeat": [
-        "Friday",
-        "Monday",
         "Sunday",
         "Saturday",
+        "Monday",
         "Thursday",
-        "Tuesday",
-        "Wednesday"
+        "Friday",
+        "Wednesday",
+        "Tuesday"
       ],
       "sound": "GreenCandleMorning",
       "snooze_options": {
