@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use anyhow::{Context, bail};
+use anyhow::{Context, Result, bail};
 use backon::{BackoffBuilder, ExponentialBuilder};
 use bmc_display::data::{SceneId, WidgetId, WidgetSize};
 use bmc_display::display_controller::DisplayController;
@@ -23,22 +23,6 @@ pub async fn run(
     url: String,
     refresh_duration: Duration,
 ) {
-    struct ResetToInitialStateDropGuard {
-        scene_id: SceneId,
-        widget_id: WidgetId,
-        display_controller: DisplayController,
-    }
-
-    impl Drop for ResetToInitialStateDropGuard {
-        fn drop(&mut self) {
-            self.display_controller.update_remote_image(
-                self.scene_id.clone(),
-                self.widget_id.clone(),
-                RemoteImageState::Initial,
-            );
-        }
-    }
-
     let error_backoff_builder = ExponentialBuilder::new()
         .with_min_delay(Duration::from_secs(10))
         .with_max_delay(Duration::from_secs(60 * 5).min(refresh_duration))
@@ -121,72 +105,15 @@ pub async fn run(
     );
 
     loop {
-        // NOTE: this might take `refresh_duration` or `error_refresh_duration` time
         interval.tick().await;
 
-        let state = async {
-            info!("Sending request to get remote image");
-
-            let start = Instant::now();
-
-            let bytes = client
-                .get(parsed_url.clone())
-                .send()
-                .await
-                .context("Failed to get remote image")?
-                .error_for_status()
-                .context("Server returned an error")?
-                .bytes()
-                .await
-                .context("Failed to read bytes from the response")?;
-
-            info!(duration = ?start.elapsed(), "Response received successfully");
-
-            let mut reader = image::ImageReader::new(io::Cursor::new(bytes));
-            reader.limits(decoder_limits.clone());
-            reader.set_format(image::ImageFormat::Png);
-
-            let decoder = reader
-                .with_guessed_format()
-                .expect("BUG: Seek for io::Cursor cannot fail")
-                .into_decoder()
-                .context("Failed to initialize image decoder")?;
-
-            let (width, height) = decoder.dimensions();
-
-            if width != widget_width || height != widget_height {
-                warn!(
-                    width,
-                    height,
-                    expected_width = widget_width,
-                    expected_height = widget_height,
-                    "Unexpected image dimensions"
-                );
-                bail!("Unexpected image dimensions");
-            }
-
-            #[expect(clippy::wildcard_enum_match_arm)]
-            match decoder.color_type() {
-                image::ColorType::Rgb8 => {
-                    let mut buffer = SharedPixelBuffer::new(width, height);
-
-                    decoder
-                        .read_image(buffer.make_mut_bytes())
-                        .map(|()| SharedImageBuffer::RGB8(buffer))
-                }
-                image::ColorType::Rgba8 => {
-                    let mut buffer = SharedPixelBuffer::new(width, height);
-
-                    decoder
-                        .read_image(buffer.make_mut_bytes())
-                        .map(|()| SharedImageBuffer::RGBA8(buffer))
-                }
-                color_type => {
-                    bail!("Unexpected color type: {color_type:?}");
-                }
-            }
-            .context("Failed to decode image")
-        }
+        let state = load_image(
+            &client,
+            &parsed_url,
+            &decoder_limits,
+            widget_width,
+            widget_height,
+        )
         .in_current_span()
         .await
         .map_or_else(
@@ -206,5 +133,91 @@ pub async fn run(
         }
 
         display_controller.update_remote_image(scene_id.clone(), widget_id.clone(), state);
+    }
+}
+
+async fn load_image(
+    client: &Client,
+    parsed_url: &Url,
+    decoder_limits: &image::Limits,
+    widget_width: u32,
+    widget_height: u32,
+) -> Result<SharedImageBuffer> {
+    info!("Sending request to get remote image");
+
+    let start = Instant::now();
+
+    let bytes = client
+        .get(parsed_url.clone())
+        .send()
+        .await
+        .context("Failed to get remote image")?
+        .error_for_status()
+        .context("Server returned an error")?
+        .bytes()
+        .await
+        .context("Failed to read bytes from the response")?;
+
+    info!(duration = ?start.elapsed(), "Response received successfully");
+
+    let mut reader = image::ImageReader::new(io::Cursor::new(bytes));
+    reader.limits(decoder_limits.clone());
+    reader.set_format(image::ImageFormat::Png);
+
+    let decoder = reader
+        .with_guessed_format()
+        .expect("BUG: Seek for io::Cursor cannot fail")
+        .into_decoder()
+        .context("Failed to initialize image decoder")?;
+
+    let (width, height) = decoder.dimensions();
+
+    if width != widget_width || height != widget_height {
+        warn!(
+            width,
+            height,
+            expected_width = widget_width,
+            expected_height = widget_height,
+            "Unexpected image dimensions"
+        );
+        bail!("Unexpected image dimensions");
+    }
+
+    #[expect(clippy::wildcard_enum_match_arm)]
+    match decoder.color_type() {
+        image::ColorType::Rgb8 => {
+            let mut buffer = SharedPixelBuffer::new(width, height);
+
+            decoder
+                .read_image(buffer.make_mut_bytes())
+                .map(|()| SharedImageBuffer::RGB8(buffer))
+        }
+        image::ColorType::Rgba8 => {
+            let mut buffer = SharedPixelBuffer::new(width, height);
+
+            decoder
+                .read_image(buffer.make_mut_bytes())
+                .map(|()| SharedImageBuffer::RGBA8(buffer))
+        }
+        color_type => {
+            bail!("Unexpected color type: {color_type:?}");
+        }
+    }
+    .context("Failed to decode image")
+}
+
+struct ResetToInitialStateDropGuard {
+    scene_id: SceneId,
+    widget_id: WidgetId,
+    display_controller: DisplayController,
+}
+
+impl Drop for ResetToInitialStateDropGuard {
+    fn drop(&mut self) {
+        self.display_controller.update_remote_image(
+            self.scene_id.clone(),
+            self.widget_id.clone(),
+            RemoteImageState::Initial,
+        );
     }
 }
