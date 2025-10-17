@@ -47,7 +47,7 @@ pub async fn run(
                 .get(BTC_HISTORY_API_URL)
                 .query(&[(
                     DATA_HISTORY_TIMEFRAME_PARAM,
-                    String::from(TickerTimeFrame::Day1),
+                    TickerTimeFrame::Day1.to_string(),
                 )])
                 .send()
                 .await
@@ -75,7 +75,7 @@ pub async fn run(
                 .get(DIFF_HASHRATE_API_URL)
                 .query(&[(
                     DATA_HISTORY_TIMEFRAME_PARAM,
-                    String::from(TickerTimeFrame::Day1),
+                    TickerTimeFrame::Day1.to_string(),
                 )])
                 .send()
                 .await
@@ -96,7 +96,7 @@ pub async fn run(
                 .get(DIFF_HASHRATE_API_URL)
                 .query(&[(
                     DATA_HISTORY_TIMEFRAME_PARAM,
-                    String::from(TickerTimeFrame::Year1),
+                    TickerTimeFrame::Year1.to_string(),
                 )])
                 .send()
                 .await

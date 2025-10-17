@@ -27,10 +27,7 @@ pub async fn run(
         let client = Client::new();
         let btc_history_data = match client
             .get(BTC_HISTORY_API_URL)
-            .query(&[(
-                DATA_HISTORY_TIMEFRAME_PARAM,
-                Into::<String>::into(timeframe.clone()),
-            )])
+            .query(&[(DATA_HISTORY_TIMEFRAME_PARAM, timeframe.to_string())])
             .timeout(API_TIMEOUT)
             .send()
             .await

@@ -96,20 +96,22 @@ pub enum TickerTimeFrame {
     All,
 }
 
-impl From<TickerTimeFrame> for String {
-    fn from(value: TickerTimeFrame) -> Self {
-        match value {
-            TickerTimeFrame::Day1 => "1d".into(),
-            TickerTimeFrame::Week1 => "1w".into(),
-            TickerTimeFrame::Week2 => "2w".into(),
-            TickerTimeFrame::Month1 => "1m".into(),
-            TickerTimeFrame::Month3 => "3m".into(),
-            TickerTimeFrame::Month6 => "6m".into(),
-            TickerTimeFrame::Year1 => "1y".into(),
-            TickerTimeFrame::Year2 => "2y".into(),
-            TickerTimeFrame::Year5 => "5y".into(),
-            TickerTimeFrame::All => "all".into(),
-        }
+impl Display for TickerTimeFrame {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Day1 => "1d",
+            Self::Week1 => "1w",
+            Self::Week2 => "2w",
+            Self::Month1 => "1m",
+            Self::Month3 => "3m",
+            Self::Month6 => "6m",
+            Self::Year1 => "1y",
+            Self::Year2 => "2y",
+            Self::Year5 => "5y",
+            Self::All => "all",
+        };
+
+        f.write_str(value)
     }
 }
 
