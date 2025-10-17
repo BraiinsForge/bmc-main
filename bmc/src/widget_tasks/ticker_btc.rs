@@ -18,20 +18,26 @@ pub async fn run(
     timeframe: TickerTimeFrame,
 ) {
     info!(?timeframe, "Params");
+
+    let client = match Client::builder().timeout(API_TIMEOUT).build() {
+        Ok(client) => client,
+        Err(err) => {
+            warn!(?err, "Failed to create reqwest client, stopping");
+            return;
+        }
+    };
+
     let mut interval = interval(DATA_REFRESH_PERIOD);
 
     loop {
         interval.tick().await;
 
         debug!("Getting bitcoin history data...");
-        let client = Client::new();
-        let btc_history_data = match client
+        let request = client
             .get(BTC_HISTORY_API_URL)
-            .query(&[(DATA_HISTORY_TIMEFRAME_PARAM, timeframe.to_string())])
-            .timeout(API_TIMEOUT)
-            .send()
-            .await
-        {
+            .query(&[(DATA_HISTORY_TIMEFRAME_PARAM, timeframe.to_string())]);
+
+        let btc_history_data = match request.send().await {
             Ok(response) => response
                 .json::<BtcHistoryData>()
                 .await
