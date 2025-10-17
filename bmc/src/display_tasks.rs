@@ -225,10 +225,17 @@ impl<T: BmcManager> DisplayTasks<T> {
                         .unwrap_or_default()
                         .signal_strength();
 
+                    display_controller
+                        .set_wifi_signal_strength(map_signal_strength(signal_strength));
+
                     signal_strength == SignalStrength::Offline
                 }
                 Err(err) => {
                     warn!(?err, "Failed to retrieve wifi status");
+
+                    display_controller
+                        .set_wifi_signal_strength(bmc_display::data::SignalStrength::Offline);
+
                     true
                 }
             };
@@ -592,5 +599,14 @@ impl<T: BmcManager> DisplayTasks<T> {
                 }
             }
         }
+    }
+}
+
+fn map_signal_strength(value: SignalStrength) -> bmc_display::data::SignalStrength {
+    match value {
+        SignalStrength::Offline => bmc_display::data::SignalStrength::Offline,
+        SignalStrength::Low => bmc_display::data::SignalStrength::Low,
+        SignalStrength::Fair => bmc_display::data::SignalStrength::Fair,
+        SignalStrength::Excellent => bmc_display::data::SignalStrength::Strong,
     }
 }
