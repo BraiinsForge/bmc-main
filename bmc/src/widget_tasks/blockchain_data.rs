@@ -13,13 +13,13 @@ use bmc_display::display_controller::DisplayController;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::interval;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, instrument, warn};
 
 const CURRENCY_API_PARAM: &str = "currency";
 const DIFF_HASHRATE_API_URL: &str =
     "https://public-api.braiins.com/v1/hashrate-and-difficulty-history";
 
-#[expect(clippy::too_many_lines)]
+#[instrument(name = "blockchain_data", skip_all, fields(%scene_id, %widget_id))]
 pub async fn run(
     display_controller: DisplayController,
     scene_id: SceneId,
