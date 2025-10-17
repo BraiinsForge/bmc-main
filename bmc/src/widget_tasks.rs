@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 mod clock;
+mod ticker_btc;
 
 use crate::config::ConfigHandle;
 use anyhow::{Context, bail};
@@ -108,11 +109,15 @@ impl WidgetTasks {
                 )
                 .in_current_span(),
             )),
-            WidgetKind::TickerBtc(ticker_widget) => Some(spawn(self.make_btc_graph_task(
-                scene_id.clone(),
-                widget.id.clone(),
-                ticker_widget.time_frame.clone(),
-            ))),
+            WidgetKind::TickerBtc(ticker_widget) => Some(spawn(
+                ticker_btc::run(
+                    self.display_controller.clone(),
+                    scene_id.clone(),
+                    widget.id.clone(),
+                    ticker_widget.time_frame.clone(),
+                )
+                .in_current_span(),
+            )),
             // BlockHeight widget does not have any widget specific data
             WidgetKind::BlockHeight(_) => None,
             WidgetKind::BraiinsPool(pool_widget) => Some(spawn(self.make_braiins_pool_task(
@@ -187,55 +192,6 @@ impl WidgetTasks {
             let _ = task_handle.handle.await;
             debug!(scene_id = %task_handle.scene_id, widget_id = %task_handle.widget_id, "Widget task aborted");
         }
-    }
-
-    #[instrument(name = "btc_graph", skip_all, fields(%scene_id, %widget_id))]
-    fn make_btc_graph_task(
-        &self,
-        scene_id: SceneId,
-        widget_id: WidgetId,
-        timeframe: TickerTimeFrame,
-    ) -> impl Future<Output = ()> + Send + 'static {
-        let display_controller = self.display_controller.clone();
-
-        async move {
-            info!(?timeframe, "Params");
-            let mut interval = interval(DATA_REFRESH_PERIOD);
-
-            loop {
-                interval.tick().await;
-
-                debug!("Getting bitcoin history data...");
-                let client = Client::new();
-                let btc_history_data = match client
-                    .get(BTC_HISTORY_API_URL)
-                    .query(&[(
-                        DATA_HISTORY_TIMEFRAME_PARAM,
-                        Into::<String>::into(timeframe.clone()),
-                    )])
-                    .timeout(API_TIMEOUT)
-                    .send()
-                    .await
-                {
-                    Ok(response) => response
-                        .json::<BtcHistoryData>()
-                        .await
-                        .map_err(|e| warn!("Failed to parse btc history JSON: {e}"))
-                        .unwrap_or_default(),
-                    Err(e) => {
-                        warn!("Failed to get btc history data from API: {e}");
-                        BtcHistoryData::default()
-                    }
-                };
-
-                display_controller.update_btc_graph(
-                    scene_id.clone(),
-                    widget_id.clone(),
-                    btc_history_data,
-                );
-            }
-        }
-        .in_current_span()
     }
 
     #[expect(clippy::too_many_arguments)]

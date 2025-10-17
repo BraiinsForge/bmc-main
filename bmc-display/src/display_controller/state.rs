@@ -287,7 +287,7 @@ impl DisplayController {
         });
     }
 
-    pub fn update_btc_graph(
+    pub fn update_ticker_btc(
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
