@@ -1,11 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+mod clock;
+
 use crate::config::ConfigHandle;
 use anyhow::{Context, bail};
 use backon::{BackoffBuilder, ExponentialBuilder};
 use bmc_display::blockheight_data::{self, BlockheightData};
 use bmc_display::btc_history_data::BtcHistoryData;
-use bmc_display::clock_data::ClockData;
 use bmc_display::data::{
     AccountId, AuthenticationType, PoolChartTimeFrame, PoolStyle, SceneId, TickerTimeFrame, Widget,
     WidgetId, WidgetKind, WidgetSize,
@@ -19,7 +20,6 @@ use bmc_display::pool_data::{
 use bmc_display::remote_image_data::RemoteImageState;
 use bmc_display::{SharedImageBuffer, SharedPixelBuffer};
 use bmc_shared_time::time::Timezone;
-use chrono::SubsecRound;
 use image::ImageDecoder;
 use reqwest::Client;
 use std::io;
@@ -28,7 +28,7 @@ use std::time::Duration;
 use tokio::spawn;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, MissedTickBehavior, interval, sleep};
+use tokio::time::{Instant, MissedTickBehavior, interval};
 use tracing::{Instrument, debug, error, info, instrument, warn};
 use url::Url;
 
@@ -97,11 +97,17 @@ impl WidgetTasks {
 
     fn spawn_internal(&self, scene_id: &SceneId, widget: &Widget) -> Option<TaskHandle> {
         let join_handle = match &widget.kind {
-            WidgetKind::Clock(clock_widget) => Some(spawn(self.make_clock_task(
-                scene_id.clone(),
-                widget.id.clone(),
-                clock_widget.timezone.clone(),
-            ))),
+            WidgetKind::Clock(clock_widget) => Some(spawn(
+                clock::run(
+                    self.display_controller.clone(),
+                    self.config_handle.clone(),
+                    self.system_timezone_receiver.clone(),
+                    scene_id.clone(),
+                    widget.id.clone(),
+                    clock_widget.timezone.clone(),
+                )
+                .in_current_span(),
+            )),
             WidgetKind::TickerBtc(ticker_widget) => Some(spawn(self.make_btc_graph_task(
                 scene_id.clone(),
                 widget.id.clone(),
@@ -181,61 +187,6 @@ impl WidgetTasks {
             let _ = task_handle.handle.await;
             debug!(scene_id = %task_handle.scene_id, widget_id = %task_handle.widget_id, "Widget task aborted");
         }
-    }
-
-    #[instrument(name = "clock", skip_all, fields(%scene_id, %widget_id))]
-    fn make_clock_task(
-        &self,
-        scene_id: SceneId,
-        widget_id: WidgetId,
-        timezone: Option<Timezone>,
-    ) -> impl Future<Output = ()> + Send + 'static {
-        let display_controller = self.display_controller.clone();
-        let config_handle = self.config_handle.clone();
-        let mut system_timezone_receiver = self.system_timezone_receiver.clone();
-
-        async move {
-            info!(?timezone, "Params");
-
-            loop {
-                let current_tick = chrono::Local::now();
-
-                let timezone = timezone
-                    .clone()
-                    .unwrap_or_else(|| system_timezone_receiver.borrow_and_update().clone());
-
-                let now = chrono::Local::now()
-                    .with_timezone(timezone.chrono())
-                    .fixed_offset();
-
-                let is_24_format = config_handle
-                    .read()
-                    .await
-                    .localization_config()
-                    .time_system
-                    .is_24();
-
-                let clock_data = ClockData::new(now);
-
-                display_controller.update_clock_widget(
-                    scene_id.clone(),
-                    widget_id.clone(),
-                    now,
-                    timezone.to_string(),
-                    is_24_format,
-                    clock_data,
-                );
-
-                // NOTE: we want to schedule next tick at next wall clock second
-                let next_tick = current_tick.trunc_subsecs(0) + Duration::from_secs(1);
-                let duration_to_next_tick = (next_tick - current_tick)
-                    .to_std()
-                    .expect("BUG: negative duration");
-
-                sleep(duration_to_next_tick).await;
-            }
-        }
-        .in_current_span()
     }
 
     #[instrument(name = "btc_graph", skip_all, fields(%scene_id, %widget_id))]
