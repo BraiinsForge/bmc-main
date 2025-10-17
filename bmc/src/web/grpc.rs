@@ -153,7 +153,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             );
 
         let network_service = web::network_service_server::NetworkServiceServer::new(
-            network::NetworkService::new(self.manager.clone()),
+            network::NetworkService::new(self.manager.clone(), self.display_controller.clone()),
         );
 
         let system_service = web::system_service_server::SystemServiceServer::new(
