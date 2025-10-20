@@ -12,10 +12,12 @@ use bmc_display::pool_data::{
     UserFinancials, UserHashrateHistory, UserWorkerHistory,
 };
 use bmc_shared_time::time::Timezone;
+use chrono::{DateTime, Utc};
+use reqwest::Client;
 use std::sync::Arc;
 use tokio::sync::{RwLock, watch};
 use tokio::time::interval;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 #[expect(clippy::too_many_arguments)]
 #[instrument(name = "braiins_pool", skip_all, fields(%scene_id, %widget_id))]
@@ -64,16 +66,33 @@ pub async fn run(
         (PoolStyle::BigChart, WidgetSize::Full)
     );
 
-    info!(?pool_style, ?chart_frame, ?account_id, "Params");
-    let mut interval = interval(DATA_REFRESH_PERIOD);
-    let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
-        error!("HTTP Client init failed");
-        return;
-    };
+    info!(
+        ?pool_style,
+        ?chart_frame,
+        ?account_id,
+        download_rewards,
+        download_hashrate_history,
+        download_workers_stats,
+        download_workers_history,
+        download_payout_stats,
+        download_recent_payouts,
+        "Params"
+    );
+
     let Some(account_id) = account_id else {
         warn!("Widget {widget_id} is missing Account ID");
         return;
     };
+
+    let client = match Client::builder().timeout(API_TIMEOUT).build() {
+        Ok(client) => client,
+        Err(err) => {
+            warn!(?err, "Failed to create reqwest client, stopping");
+            return;
+        }
+    };
+
+    let mut interval = interval(DATA_REFRESH_PERIOD);
 
     loop {
         interval.tick().await;
@@ -98,26 +117,7 @@ pub async fn run(
         display_controller.update_account_name(scene_id.clone(), widget_id.clone(), account_name);
 
         debug!("Getting user current hashrate data...");
-        let current_hashrate = match client
-            .get(format!(
-                "{}{}",
-                pool_data::POOL_API_URL,
-                pool_data::USER_HASHRATE_CURRENT
-            ))
-            .header("X-API-Key", &api_key)
-            .send()
-            .await
-        {
-            Ok(response) => response
-                .json::<CurrentUserHashrate>()
-                .await
-                .map_err(|e| warn!("Failed to parse user current hashrate JSON: {e}"))
-                .unwrap_or_default(),
-            Err(e) => {
-                warn!("Failed to get user current hashrate data from API: {e}");
-                CurrentUserHashrate::default()
-            }
-        };
+        let current_hashrate = download_current_hashrate_data(&client, &api_key).await;
         display_controller.update_current_user_hashrate(
             scene_id.clone(),
             widget_id.clone(),
@@ -127,26 +127,7 @@ pub async fn run(
 
         if download_rewards {
             debug!("Getting user latest rewards data...");
-            let latest_rewards = match client
-                .get(format!(
-                    "{}{}",
-                    pool_data::POOL_API_URL,
-                    pool_data::USER_REWARD_LATEST
-                ))
-                .header("X-API-Key", &api_key)
-                .send()
-                .await
-            {
-                Ok(response) => response
-                    .json::<LatestUserRewards>()
-                    .await
-                    .map_err(|e| warn!("Failed to parse user latest rewards JSON: {e}"))
-                    .unwrap_or_default(),
-                Err(e) => {
-                    warn!("Failed to get user latest rewards data from API: {e}");
-                    LatestUserRewards::default()
-                }
-            };
+            let latest_rewards = download_latest_rewards_data(&client, &api_key).await;
             display_controller.update_rewards_latest(
                 scene_id.clone(),
                 widget_id.clone(),
@@ -157,56 +138,20 @@ pub async fn run(
 
         if download_hashrate_history {
             debug!("Getting user hashrate history data...");
-            let to_timestamp = chrono::Utc::now();
+            let to_timestamp = Utc::now();
             let from_timestamp = to_timestamp
                 .checked_sub_signed(chart_frame.clone().into())
                 // We don't expect this operation will fail
                 .unwrap_or_default();
-            let to_timestamp = to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            let from_timestamp = from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            let mut hashrate_history = UserHashrateHistory::default();
-            let mut next_cursor: Option<String> = None;
-            let url = format!(
-                "{}{}",
-                pool_data::POOL_API_URL,
-                pool_data::USER_HASHRATE_HISTORY
-            );
-            loop {
-                let mut query_params = vec![
-                    (pool_data::FROM_TIMESTAMP, from_timestamp.as_str()),
-                    (pool_data::TO_TIMESTAMP, to_timestamp.as_str()),
-                    (pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX),
-                ];
 
-                if let Some(cursor) = &next_cursor {
-                    query_params.push((pool_data::CURSOR, cursor));
-                }
+            let hashrate_history = download_paginated_hashrate_history_data(
+                &client,
+                &api_key,
+                from_timestamp,
+                to_timestamp,
+            )
+            .await;
 
-                let hashrate_history_partial = match client
-                    .get(&url)
-                    .header("X-API-Key", &api_key)
-                    .query(&query_params)
-                    .send()
-                    .await
-                {
-                    Ok(response) => match response.json::<UserHashrateHistory>().await {
-                        Ok(data) => data,
-                        Err(e) => {
-                            warn!("Failed to parse user hashrate history JSON: {e}");
-                            break;
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to get user hashrate history data from API: {e}");
-                        break;
-                    }
-                };
-                hashrate_history.merge_and_sort(&hashrate_history_partial);
-                next_cursor = hashrate_history_partial.next_cursor();
-                if next_cursor.is_none() {
-                    break;
-                }
-            }
             let system_timezone = system_timezone_receiver.borrow_and_update().clone();
             let is_24_format = config_handle
                 .read()
@@ -228,26 +173,7 @@ pub async fn run(
 
         if download_workers_stats {
             debug!("Getting current workers data...");
-            let workers_stats = match client
-                .get(format!(
-                    "{}{}",
-                    pool_data::POOL_API_URL,
-                    pool_data::USER_WORKERS_CURRENT
-                ))
-                .header("X-API-Key", &api_key)
-                .send()
-                .await
-            {
-                Ok(response) => response
-                    .json::<CurrentUserWorkerStats>()
-                    .await
-                    .map_err(|e| warn!("Failed to parse current workers JSON: {e}"))
-                    .unwrap_or_default(),
-                Err(e) => {
-                    warn!("Failed to get current workers data from API: {e}");
-                    CurrentUserWorkerStats::default()
-                }
-            };
+            let workers_stats = download_worker_stats_data(&client, &api_key).await;
             display_controller.update_current_workers(
                 scene_id.clone(),
                 widget_id.clone(),
@@ -258,56 +184,20 @@ pub async fn run(
 
         if download_workers_history {
             debug!("Getting user worker history data...");
-            let to_timestamp = chrono::Utc::now();
+            let to_timestamp = Utc::now();
             let from_timestamp = to_timestamp
                 .checked_sub_signed(chart_frame.clone().into())
                 // We don't expect this operation will fail
                 .unwrap_or_default();
-            let to_timestamp = to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            let from_timestamp = from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            let mut worker_history = UserWorkerHistory::default();
-            let mut next_cursor: Option<String> = None;
-            let url = format!(
-                "{}{}",
-                pool_data::POOL_API_URL,
-                pool_data::USER_WORKERS_HISTORY
-            );
-            loop {
-                let mut query_params = vec![
-                    (pool_data::FROM_TIMESTAMP, from_timestamp.as_str()),
-                    (pool_data::TO_TIMESTAMP, to_timestamp.as_str()),
-                    (pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX),
-                ];
 
-                if let Some(cursor) = &next_cursor {
-                    query_params.push((pool_data::CURSOR, cursor));
-                }
+            let worker_history = download_paginated_worker_history_data(
+                &client,
+                &api_key,
+                from_timestamp,
+                to_timestamp,
+            )
+            .await;
 
-                let worker_history_partial = match client
-                    .get(&url)
-                    .header("X-API-Key", &api_key)
-                    .query(&query_params)
-                    .send()
-                    .await
-                {
-                    Ok(response) => match response.json::<UserWorkerHistory>().await {
-                        Ok(data) => data,
-                        Err(e) => {
-                            warn!("Failed to parse user worker history JSON: {e}");
-                            break;
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to get user worker history data from API: {e}");
-                        break;
-                    }
-                };
-                worker_history.merge_and_sort(&worker_history_partial);
-                next_cursor = worker_history_partial.next_cursor();
-                if next_cursor.is_none() {
-                    break;
-                }
-            }
             display_controller.update_worker_history(
                 scene_id.clone(),
                 widget_id.clone(),
@@ -318,48 +208,9 @@ pub async fn run(
 
         if download_payout_stats {
             debug!("Getting user financials data...");
-            let user_financials = match client
-                .get(format!(
-                    "{}{}",
-                    pool_data::POOL_API_URL,
-                    pool_data::USER_FINANCIALS
-                ))
-                .header("X-API-Key", &api_key)
-                .send()
-                .await
-            {
-                Ok(response) => response
-                    .json::<UserFinancials>()
-                    .await
-                    .map_err(|e| warn!("Failed to parse user financials JSON: {e}"))
-                    .unwrap_or_default(),
-                Err(e) => {
-                    warn!("Failed to get user financials data from API: {e}");
-                    UserFinancials::default()
-                }
-            };
+            let user_financials = download_user_financials_data(&client, &api_key).await;
             debug!("Getting user recent payouts data...");
-            let recent_payouts = match client
-                .get(format!(
-                    "{}{}",
-                    pool_data::POOL_API_URL,
-                    pool_data::USER_PAYOUTS_RECENT
-                ))
-                .header("X-API-Key", &api_key)
-                .query(&[(pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX)])
-                .send()
-                .await
-            {
-                Ok(response) => response
-                    .json::<RecentUserPayouts>()
-                    .await
-                    .map_err(|e| warn!("Failed to parse user recent payouts JSON: {e}"))
-                    .unwrap_or_default(),
-                Err(e) => {
-                    warn!("Failed to get user recent payouts data from API: {e}");
-                    RecentUserPayouts::default()
-                }
-            };
+            let recent_payouts = download_recent_payouts_data(&client, &api_key).await;
             display_controller.update_payout_stats(
                 scene_id.clone(),
                 widget_id.clone(),
@@ -371,56 +222,20 @@ pub async fn run(
 
         if download_recent_payouts {
             debug!("Getting user recent payouts data...");
-            let to_timestamp = chrono::Utc::now();
+            let to_timestamp = Utc::now();
             let from_timestamp = to_timestamp
                 .checked_sub_signed(chart_frame.clone().into())
                 // We don't expect this operation will fail
                 .unwrap_or_default();
-            let to_timestamp = to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            let from_timestamp = from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            let mut recent_payouts = RecentUserPayouts::default();
-            let mut next_cursor: Option<String> = None;
-            let url = format!(
-                "{}{}",
-                pool_data::POOL_API_URL,
-                pool_data::USER_PAYOUTS_RECENT
-            );
-            loop {
-                let mut query_params = vec![
-                    (pool_data::FROM_TIMESTAMP, from_timestamp.as_str()),
-                    (pool_data::TO_TIMESTAMP, to_timestamp.as_str()),
-                    (pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX),
-                ];
 
-                if let Some(cursor) = &next_cursor {
-                    query_params.push((pool_data::CURSOR, cursor));
-                }
+            let recent_payouts = download_paginated_recent_payouts_data(
+                &client,
+                &api_key,
+                from_timestamp,
+                to_timestamp,
+            )
+            .await;
 
-                let recent_payouts_partial = match client
-                    .get(&url)
-                    .header("X-API-Key", &api_key)
-                    .query(&query_params)
-                    .send()
-                    .await
-                {
-                    Ok(response) => match response.json::<RecentUserPayouts>().await {
-                        Ok(data) => data,
-                        Err(e) => {
-                            warn!("Failed to parse user recent payouts JSON: {e}");
-                            break;
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to get user recent payouts data from API: {e}");
-                        break;
-                    }
-                };
-                recent_payouts.merge_and_sort(&recent_payouts_partial);
-                next_cursor = recent_payouts_partial.next_cursor();
-                if next_cursor.is_none() {
-                    break;
-                }
-            }
             display_controller.update_recent_payouts(
                 scene_id.clone(),
                 widget_id.clone(),
@@ -428,4 +243,279 @@ pub async fn run(
             );
         }
     }
+}
+
+async fn download_current_hashrate_data(client: &Client, api_key: &str) -> CurrentUserHashrate {
+    let request = client
+        .get(format!(
+            "{}{}",
+            pool_data::POOL_API_URL,
+            pool_data::USER_HASHRATE_CURRENT
+        ))
+        .header("X-API-Key", api_key);
+
+    match request.send().await {
+        Ok(response) => response
+            .json::<CurrentUserHashrate>()
+            .await
+            .map_err(|e| warn!("Failed to parse user current hashrate JSON: {e}"))
+            .unwrap_or_default(),
+        Err(e) => {
+            warn!("Failed to get user current hashrate data from API: {e}");
+            CurrentUserHashrate::default()
+        }
+    }
+}
+
+async fn download_latest_rewards_data(client: &Client, api_key: &str) -> LatestUserRewards {
+    let request = client
+        .get(format!(
+            "{}{}",
+            pool_data::POOL_API_URL,
+            pool_data::USER_REWARD_LATEST
+        ))
+        .header("X-API-Key", api_key);
+
+    match request.send().await {
+        Ok(response) => response
+            .json::<LatestUserRewards>()
+            .await
+            .map_err(|e| warn!("Failed to parse user latest rewards JSON: {e}"))
+            .unwrap_or_default(),
+        Err(e) => {
+            warn!("Failed to get user latest rewards data from API: {e}");
+            LatestUserRewards::default()
+        }
+    }
+}
+
+async fn download_paginated_hashrate_history_data(
+    client: &Client,
+    api_key: &str,
+    from_timestamp: DateTime<Utc>,
+    to_timestamp: DateTime<Utc>,
+) -> UserHashrateHistory {
+    let from_timestamp = from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let to_timestamp = to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut hashrate_history = UserHashrateHistory::default();
+    let mut next_cursor: Option<String> = None;
+    let url = format!(
+        "{}{}",
+        pool_data::POOL_API_URL,
+        pool_data::USER_HASHRATE_HISTORY
+    );
+    loop {
+        let mut query_params = vec![
+            (pool_data::FROM_TIMESTAMP, from_timestamp.as_str()),
+            (pool_data::TO_TIMESTAMP, to_timestamp.as_str()),
+            (pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX),
+        ];
+
+        if let Some(cursor) = &next_cursor {
+            query_params.push((pool_data::CURSOR, cursor));
+        }
+
+        let request = client
+            .get(&url)
+            .header("X-API-Key", api_key)
+            .query(&query_params);
+
+        let hashrate_history_partial = match request.send().await {
+            Ok(response) => match response.json::<UserHashrateHistory>().await {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("Failed to parse user hashrate history JSON: {e}");
+                    break;
+                }
+            },
+            Err(e) => {
+                warn!("Failed to get user hashrate history data from API: {e}");
+                break;
+            }
+        };
+        hashrate_history.merge_and_sort(&hashrate_history_partial);
+        next_cursor = hashrate_history_partial.next_cursor();
+        if next_cursor.is_none() {
+            break;
+        }
+    }
+
+    hashrate_history
+}
+
+async fn download_worker_stats_data(client: &Client, api_key: &str) -> CurrentUserWorkerStats {
+    let request = client
+        .get(format!(
+            "{}{}",
+            pool_data::POOL_API_URL,
+            pool_data::USER_WORKERS_CURRENT
+        ))
+        .header("X-API-Key", api_key);
+
+    match request.send().await {
+        Ok(response) => response
+            .json::<CurrentUserWorkerStats>()
+            .await
+            .map_err(|e| warn!("Failed to parse current workers JSON: {e}"))
+            .unwrap_or_default(),
+        Err(e) => {
+            warn!("Failed to get current workers data from API: {e}");
+            CurrentUserWorkerStats::default()
+        }
+    }
+}
+
+async fn download_paginated_worker_history_data(
+    client: &Client,
+    api_key: &str,
+    from_timestamp: DateTime<Utc>,
+    to_timestamp: DateTime<Utc>,
+) -> UserWorkerHistory {
+    let from_timestamp = from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let to_timestamp = to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut worker_history = UserWorkerHistory::default();
+    let mut next_cursor: Option<String> = None;
+    let url = format!(
+        "{}{}",
+        pool_data::POOL_API_URL,
+        pool_data::USER_WORKERS_HISTORY
+    );
+
+    loop {
+        let mut query_params = vec![
+            (pool_data::FROM_TIMESTAMP, from_timestamp.as_str()),
+            (pool_data::TO_TIMESTAMP, to_timestamp.as_str()),
+            (pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX),
+        ];
+
+        if let Some(cursor) = &next_cursor {
+            query_params.push((pool_data::CURSOR, cursor));
+        }
+
+        let request = client
+            .get(&url)
+            .header("X-API-Key", api_key)
+            .query(&query_params);
+
+        let worker_history_partial = match request.send().await {
+            Ok(response) => match response.json::<UserWorkerHistory>().await {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("Failed to parse user worker history JSON: {e}");
+                    break;
+                }
+            },
+            Err(e) => {
+                warn!("Failed to get user worker history data from API: {e}");
+                break;
+            }
+        };
+        worker_history.merge_and_sort(&worker_history_partial);
+        next_cursor = worker_history_partial.next_cursor();
+        if next_cursor.is_none() {
+            break;
+        }
+    }
+
+    worker_history
+}
+
+async fn download_user_financials_data(client: &Client, api_key: &str) -> UserFinancials {
+    let request = client
+        .get(format!(
+            "{}{}",
+            pool_data::POOL_API_URL,
+            pool_data::USER_FINANCIALS
+        ))
+        .header("X-API-Key", api_key);
+
+    match request.send().await {
+        Ok(response) => response
+            .json::<UserFinancials>()
+            .await
+            .map_err(|e| warn!("Failed to parse user financials JSON: {e}"))
+            .unwrap_or_default(),
+        Err(e) => {
+            warn!("Failed to get user financials data from API: {e}");
+            UserFinancials::default()
+        }
+    }
+}
+
+async fn download_recent_payouts_data(client: &Client, api_key: &str) -> RecentUserPayouts {
+    let request = client
+        .get(format!(
+            "{}{}",
+            pool_data::POOL_API_URL,
+            pool_data::USER_PAYOUTS_RECENT
+        ))
+        .header("X-API-Key", api_key)
+        .query(&[(pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX)]);
+
+    match request.send().await {
+        Ok(response) => response
+            .json::<RecentUserPayouts>()
+            .await
+            .map_err(|e| warn!("Failed to parse user recent payouts JSON: {e}"))
+            .unwrap_or_default(),
+        Err(e) => {
+            warn!("Failed to get user recent payouts data from API: {e}");
+            RecentUserPayouts::default()
+        }
+    }
+}
+
+async fn download_paginated_recent_payouts_data(
+    client: &Client,
+    api_key: &str,
+    from_timestamp: DateTime<Utc>,
+    to_timestamp: DateTime<Utc>,
+) -> RecentUserPayouts {
+    let from_timestamp = from_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let to_timestamp = to_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut recent_payouts = RecentUserPayouts::default();
+    let mut next_cursor: Option<String> = None;
+    let url = format!(
+        "{}{}",
+        pool_data::POOL_API_URL,
+        pool_data::USER_PAYOUTS_RECENT
+    );
+
+    loop {
+        let mut query_params = vec![
+            (pool_data::FROM_TIMESTAMP, from_timestamp.as_str()),
+            (pool_data::TO_TIMESTAMP, to_timestamp.as_str()),
+            (pool_data::PAGE_LIMIT, pool_data::PAGE_LIMIT_MAX),
+        ];
+
+        if let Some(cursor) = &next_cursor {
+            query_params.push((pool_data::CURSOR, cursor));
+        }
+
+        let request = client
+            .get(&url)
+            .header("X-API-Key", api_key)
+            .query(&query_params);
+
+        let recent_payouts_partial = match request.send().await {
+            Ok(response) => match response.json::<RecentUserPayouts>().await {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("Failed to parse user recent payouts JSON: {e}");
+                    break;
+                }
+            },
+            Err(e) => {
+                warn!("Failed to get user recent payouts data from API: {e}");
+                break;
+            }
+        };
+        recent_payouts.merge_and_sort(&recent_payouts_partial);
+        next_cursor = recent_payouts_partial.next_cursor();
+        if next_cursor.is_none() {
+            break;
+        }
+    }
+
+    recent_payouts
 }
