@@ -20,6 +20,7 @@ import { Images } from "style/images.slint";
 import { WifiAdapter, ConnectionAdapter, AlarmAdapter } from "controls/adapters.slint";
 import { StatusOverlay } from "controls/status-overlay.slint";
 import { TopRollette } from "components/top-rollette.slint";
+import { BottomRollette } from "components/bottom-rollette.slint";
 
 export { ScreenAdapter, StatusOverlayAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, DateTime, NotificationAdapter,
     BitcoinAdapter, BlockHeightAdapter, DifficultyAdapter, HashrateAdapter }
@@ -99,17 +100,23 @@ export component MainWindow inherits Window {
     //     height: root.height;
     // }
 
-    if ScreenAdapter.clock-alarm: Alarm {
+    BottomRollette {
         z: 6;
+        width: root.width;
+        height: root.height;
+    }
+
+    if ScreenAdapter.clock-alarm: Alarm {
+        z: 7;
         datetime: root.system-datetime;
     }
 
     StatusOverlay {
-        z: 7;
+        z: 8;
     }
 
     if ScreenAdapter.init != InitScreen.None: Rectangle {
-        z: 8;
+        z: 9;
 
         // stop touch propagation (https://github.com/slint-ui/slint/discussions/8044)
         TouchArea { }
