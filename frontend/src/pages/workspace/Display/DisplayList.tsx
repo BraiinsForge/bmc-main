@@ -162,9 +162,20 @@ class View extends Component<Props, State> {
         pb.abort.all(this);
     }
 
-    #notifyError = (message: string) => toast.error(message);
-    #notifySuccess = (message: string) => toast.success(message);
+    #notifyError = (message: string, title?: string): void => {
+        toast.error(message, { title });
+    };
+    #notifySuccess = (message: string, title?: string): void => {
+        toast.success(message, { title });
+    };
     #notifySuccessDebounced = debounce(this.#notifySuccess, 1e3);
+    #notifySceneAdded = () => {
+        const { formatMessage } = this.props.intl;
+        this.#notifySuccess(
+            formatMessage({ defaultMessage: 'Display Scene Added has been successfully added.' }),
+            formatMessage({ defaultMessage: 'Display Scene Added' }),
+        );
+    };
 
     private abortLoadMetadata = pb.abort.get();
     #loadMetadata = async (): Promise<void> => {
@@ -238,6 +249,7 @@ class View extends Component<Props, State> {
             case 'combined': {
                 const response = await pb.rpc.scenes.addCombinedScene({});
                 navigate(URLS.pages.display.combined.getHref(response.value), { replace: false });
+                this.#notifySceneAdded();
                 return;
             }
 
@@ -276,6 +288,7 @@ class View extends Component<Props, State> {
                 assertUnreachable(kind, 'Invalid scene kind!');
         }
 
+        this.#notifySceneAdded();
         const { value: sceneID } = await pb.rpc.scenes.addFullscreenScene({
             widgetKind: {
                 $typeName: 'braiins.bmc.web.WidgetKind',

@@ -7,10 +7,11 @@ import { useParams, useNavigate, type NavigateFunction } from 'react-router';
 // Libs
 import * as fn from './fn';
 import { getID } from './const';
+import { toast } from '@/lib/toast';
+import { delay } from '@/lib/async';
 import { setState } from '@/lib/react';
 import type { FormPropsToLocalState } from '@/lib/form';
 import { assertUnreachable, assertUndefined } from '@/lib/ts';
-import { toast } from '@/lib/toast';
 
 // App
 import * as pb from '@/proto';
@@ -18,9 +19,9 @@ import { URLS } from '@/constants';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { Button } from '@/components';
-import { ChevronLeft as IconChevronLeft } from '@carbon/react/icons';
 import * as Comp from './components';
+import { ButtonGroup, Button } from '@/components';
+import { ChevronLeft as IconChevronLeft } from '@carbon/react/icons';
 
 // Styles
 import css from './DisplayCombined.scss';
@@ -729,6 +730,46 @@ class View extends Component<Props, State> {
     };
     #submitDebounced = debounce(this.#submit, 300);
 
+    #delete = async (): Promise<void> => {
+        const { intl } = this.props;
+
+        const { scene } = this.state;
+        if (!scene) {
+            toast.error(intl.formatMessage({ defaultMessage: 'Unknown scene!' }));
+            return;
+        }
+
+        // Let the user confirm
+        const answer: boolean = await this.context.confirm({
+            size: 'sm',
+            danger: true,
+            title: intl.formatMessage({ defaultMessage: 'Delete Scene' }),
+            message: intl.formatMessage({ defaultMessage: 'Are you sure you want to delete this scene?' }),
+            confirmLabel: intl.formatMessage({ defaultMessage: 'Delete' }),
+            cancelLabel: intl.formatMessage({ defaultMessage: 'Cancel' }),
+        });
+        if (!answer) return;
+
+        try {
+            // First we have to stop the preview, because
+            // otherwise the backend won't let us delete it
+            this.abortPreview.replace();
+
+            // Since the abort is not blocking and/or immediate,
+            // we have to wait a bit before backends gets the message
+            await delay(600);
+
+            // Now we can delete the scene
+            await pb.rpc.scenes.removeScene({ value: scene?.id });
+            toast.success(intl.formatMessage({ defaultMessage: 'Scene deleted!' }));
+            this.#goBack();
+        } catch ($) {
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= intl.formatMessage({ defaultMessage: 'Failed to delete scene with an unknown error!' });
+            toast.error(message);
+        }
+    };
+
     render() {
         const { intl } = this.props;
         const {
@@ -761,13 +802,36 @@ class View extends Component<Props, State> {
                     </div>
                 </header>
 
-                <Comp.CombinedSceneView
-                    widgets={widgets}
-                    onWidgetMove={this.#handleMove}
-                    onWidgetAdd={this.#handleAdd}
-                    onWidgetEdit={this.#handleEdit}
-                    onWidgetRemove={this.#handleRemove}
-                />
+                <main className={css.main}>
+                    <p
+                        className={css.explainer}
+                        children={intl.formatMessage({
+                            defaultMessage:
+                                "Drag and drop widgets to organize your screen layout. You'll see a live preview on your device as you make changes. Changes are saved automatically.",
+                        })}
+                    />
+
+                    <Comp.CombinedSceneView
+                        widgets={widgets}
+                        onWidgetMove={this.#handleMove}
+                        onWidgetAdd={this.#handleAdd}
+                        onWidgetEdit={this.#handleEdit}
+                        onWidgetRemove={this.#handleRemove}
+                    />
+                    <ButtonGroup spaced className={css.footer}>
+                        <Button
+                            id={$('done')}
+                            children={intl.formatMessage({ defaultMessage: 'Done' })}
+                            onClick={this.#goBack}
+                        />
+                        <Button
+                            id={$('delete')}
+                            kind="secondary"
+                            children={intl.formatMessage({ defaultMessage: 'Delete Scene' })}
+                            onClick={this.#delete}
+                        />
+                    </ButtonGroup>
+                </main>
 
                 <Comp.FormSceneSelect
                     variant="widget"

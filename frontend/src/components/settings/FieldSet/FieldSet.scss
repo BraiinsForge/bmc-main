@@ -11,7 +11,7 @@
 }
 
 .description {
-    composes: body-short-02 from 'styles/carbon/typography.scss';
+    composes: body-short-01 from 'styles/carbon/typography.scss';
     margin-inline-start: mini-units(2);
     margin-block: mini-units(-1.5) mini-units(2);
     color: $text-secondary;

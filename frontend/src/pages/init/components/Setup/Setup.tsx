@@ -1,8 +1,10 @@
-import { Component } from 'react';
+import { Component, type KeyboardEvent } from 'react';
 import { type IntlShape, useIntl } from 'react-intl';
+import { Key } from 'ts-key-enum';
 
-import { Form, getID, type iField } from '@/lib/form';
 import * as pb from '@/proto';
+import { blockEvent } from '@/lib/react';
+import { Form, getID, type iField } from '@/lib/form';
 
 // Components
 import { Layout } from '../Layout';
@@ -55,8 +57,12 @@ class View extends Component<Props> {
         );
     };
     #timezoneChange: ComboBoxProps<pb.Timezone>['onChange'] = x => {
-        const { onChange } = this.props.timezone;
+        const { onChange, value } = this.props.timezone;
+
+        // Only update if a new item is selected, prevent clearing on ESC
         if (x.selectedItem) onChange(x.selectedItem);
+        // ESC was pressed - restore the current value
+        else if (x.selectedItem == null && value) onChange(value);
     };
 
     #dateFormatChange: DropdownProps<DateFormat>['onChange'] = x => {
@@ -66,6 +72,13 @@ class View extends Component<Props> {
     #numberFormatChange: DropdownProps<NumberFormat>['onChange'] = x => {
         const { onChange } = this.props.numberFormat;
         if (x.selectedItem) onChange(x.selectedItem);
+    };
+
+    #catchEscapeKey = (e: KeyboardEvent<HTMLFormElement>): void => {
+        if (e.target instanceof HTMLInputElement && e.key === Key.Escape) {
+            blockEvent(e);
+            e.target.blur();
+        }
     };
 
     render() {
@@ -115,7 +128,7 @@ class View extends Component<Props> {
                     })}
                 />
 
-                <Form className={css.form}>
+                <Form className={css.form} onKeyDownCapture={this.#catchEscapeKey}>
                     <FieldSet title={formatMessage({ defaultMessage: 'Time, Date and Regional Settings' })}>
                         <Field
                             variant="light"

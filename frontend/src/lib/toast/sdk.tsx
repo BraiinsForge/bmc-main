@@ -18,9 +18,10 @@ export function Toaster(props: ToasterProps) {
 
 type Extra = ExternalToast & { title?: string };
 function show(kind: ToastProps['kind'], message: ToastProps['message'], extra?: Extra): ToastID {
+    const duration = extra?.duration;
     return sonnerToast.custom(id => <Toast id={id} kind={kind} title={extra?.title} message={message} />, {
         ...extra,
-        duration: extra?.duration ? extra.duration * 1e3 : undefined,
+        duration: duration != null && Number.isFinite(duration) ? duration * 1e3 : 3e3,
     });
 }
 function success(message: ToastProps['message'], extra?: Extra): ToastID {

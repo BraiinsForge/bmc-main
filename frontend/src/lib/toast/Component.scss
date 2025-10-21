@@ -9,8 +9,8 @@
             margin: 0 !important;
 
             min-height: to-rem(68px);
-            width: max-content;
-            max-width: 80vw;
+            width: 100%;
+            max-width: unset;
 
             .cds--toast-notification__details {
                 white-space: pre-line;

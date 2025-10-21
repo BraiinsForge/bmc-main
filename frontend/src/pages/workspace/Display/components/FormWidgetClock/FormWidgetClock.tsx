@@ -143,7 +143,6 @@ class View extends Component<Props> {
                         items={timezone.options.map(x => ({ value: x.id, label: `${x.offset} ${x.label}` }))}
                         labelText={formatMessage({ defaultMessage: 'Timezone' })}
                         decorator={<IconEarth size={20} />}
-                        helperText={formatMessage({ defaultMessage: 'Location is used for Timezone.' })}
                     />
                 ) : null}
 

@@ -48,7 +48,7 @@ class View extends Component<Props, State> {
 
     private abortLoadConfig = pb.abort.get();
     #loadConfig = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
+        const { formatMessage, timeZone } = this.props.intl;
         const { signal } = this.abortLoadConfig.replace();
 
         await setState(this, { isLoading: true });
@@ -61,7 +61,12 @@ class View extends Component<Props, State> {
         try {
             const v = await pb.rpc.init.getSettingsData({}, { signal });
             timezones = v.timezones;
-            const selectedTimezone = timezones.find(x => x.id === v.timezoneId);
+
+            // Try to detect browser timezone from react-intl first, fallback to Intl API, then server default
+            const browserTimezone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const selectedTimezone =
+                timezones.find(x => x.id === browserTimezone) ?? timezones.find(x => x.id === v.timezoneId);
+
             res.values = {
                 timezone: selectedTimezone,
                 timeFormat: v.timeFormat || undefined,

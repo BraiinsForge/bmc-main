@@ -4,9 +4,13 @@
     max-width: to-rem(1200px);
 }
 
+//
+// Header
+//
+
 .header {
     composes: horizontal justified from 'styles/layout.scss';
-    margin-block-end: mini-units(3);
+    margin-block-end: mini-units(2);
 
     container-type: inline-size;
     width: 100%;
@@ -18,4 +22,24 @@
 }
 .title {
     composes: heading-06 from 'styles/carbon/typography.scss';
+}
+
+//
+// Main
+//
+
+.explainer {
+    composes: body-long-01 from 'styles/carbon/typography.scss';
+    margin-block-end: mini-units(3);
+    max-inline-size: to-rem(778px);
+    text-wrap: pretty;
+    color: $text-secondary;
+}
+
+.main {
+    position: relative;
+}
+.footer {
+    position: relative;
+    margin-block-start: mini-units(3);
 }

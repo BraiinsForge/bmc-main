@@ -105,7 +105,7 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
                 const v = x.selectedItem?.value;
                 if (v != null) onChange(v);
             }}
-            itemToString={x => (x?.label ? String(x.label) : 'N/A')}
+            itemToString={x => (x?.label ? String(x.label) : '')}
             items={items}
             selectedItem={selectedItemStruct}
             titleText={labelText}
