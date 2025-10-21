@@ -52,7 +52,7 @@ export default defineConfig({
 
     html: {
         template: './src/index.html',
-        favicon: './src/components/images/icons/ii.svg',
+        favicon: './src/icon.png',
     },
 
     output: {

@@ -233,8 +233,23 @@ $ctrl-height: to-rem(40px);
         color: $text-secondary;
     }
 
+    &.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+
+        * {
+            pointer-events: none;
+        }
+    }
+
     :global(.cds--number) {
         max-inline-size: to-rem(130px);
+
+        input {
+            width: 100%;
+            max-width: 100%;
+            min-width: 100%;
+        }
     }
 }
 
@@ -258,7 +273,7 @@ $ctrl-height: to-rem(40px);
 // Disabled
 //
 
-.disabled {
+.disabledRow {
     .preview,
     .labels *,
     .duration {

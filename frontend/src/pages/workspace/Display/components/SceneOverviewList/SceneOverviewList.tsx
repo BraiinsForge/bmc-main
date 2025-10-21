@@ -27,7 +27,8 @@ export interface SceneOverviewListProps {
     onDelete(id: string): void;
     onToggle(id: string, value: boolean): void;
 
-    defaultSceneDuration: number;
+    cycleEnabled: boolean;
+    cycleDefaultDuration: number;
     onDurationChange(id: string, value: string): void;
 }
 interface Props extends SceneOverviewListProps {
@@ -42,7 +43,8 @@ class View extends Component<Props> {
     componentWillUnmount = () => pb.abort.all(this);
 
     #renderItem = (props: RenderSortableListItemProps<pb.Scene>, firstEnabledSceneID: Maybe<pb.Scene['id']>) => {
-        const { defaultSceneDuration, onEdit, onToggle, onClone, onDelete, onDurationChange, intl } = this.props;
+        const { cycleEnabled, cycleDefaultDuration, onEdit, onToggle, onClone, onDelete, onDurationChange, intl } =
+            this.props;
         const { item, state, rootProps, dragHandleProps } = props;
 
         let title: string = 'N/A';
@@ -89,8 +91,9 @@ class View extends Component<Props> {
                         : null
                 }
                 description={description}
-                duration={item.cycleDurationSec}
-                durationDefault={defaultSceneDuration}
+                cycleEnabled={cycleEnabled}
+                cycleDurationValue={item.cycleDurationSec}
+                cycleDurationDefault={cycleDefaultDuration}
                 // Handlers
                 onEdit={onEdit}
                 onClone={onClone}

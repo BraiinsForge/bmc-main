@@ -19,8 +19,9 @@ export default {
         enabled: true,
         onToggle: action('onToggle'),
 
-        duration: 10,
-        durationDefault: 11,
+        cycleEnabled: true,
+        cycleDurationValue: 10,
+        cycleDurationDefault: 11,
         onDurationChange: action('onDurationChange'),
 
         onEdit: action('onEdit'),

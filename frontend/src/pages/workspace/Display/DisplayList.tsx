@@ -1130,7 +1130,8 @@ class View extends Component<Props, State> {
                         onDelete={this.#sceneListDelete}
                         onToggle={this.#sceneListSetEnabled}
                         onDurationChange={this.#sceneListSetDurationLocal}
-                        defaultSceneDuration={cycle.defaultDurationSeconds}
+                        cycleDefaultDuration={cycle.defaultDurationSeconds}
+                        cycleEnabled={!!cycle.isActive}
                     />
                 </main>
 

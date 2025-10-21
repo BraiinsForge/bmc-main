@@ -49,7 +49,7 @@
         "uuid": "13.0.0"
     },
     "devDependencies": {
-        "@biomejs/biome": "2.2.6",
+        "@biomejs/biome": "2.2.7",
         "@bufbuild/buf": "1.59.0",
         "@bufbuild/protoc-gen-es": "2.10.0",
         "@emotion/react": "11.14.0",
@@ -60,7 +60,7 @@
         "@rsbuild/plugin-sass": "1.4.0",
         "@rsbuild/plugin-svgr": "1.2.2",
         "@rsbuild/plugin-typed-css-modules": "1.1.1",
-        "@rstest/core": "0.5.3",
+        "@rstest/core": "0.5.4",
         "@storybook/react": "9.1.13",
         "@swc/plugin-emotion": "11.1.0",
         "@swc/plugin-formatjs": "6.1.0",

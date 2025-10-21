@@ -69,6 +69,14 @@
 
         background: $button-secondary !important;
         color: $text-primary !important;
+
+        &:focus,
+        &:hover {
+            background: $button-secondary-hover !important;
+        }
+        &:active {
+            background: $button-secondary-active !important;
+        }
     }
 }
 

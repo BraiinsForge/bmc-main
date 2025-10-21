@@ -25,8 +25,9 @@ interface DataProps {
     enabled: boolean;
     onToggle(id: string, value: boolean): void;
 
-    duration: Maybe<string | number>;
-    durationDefault: string | number;
+    cycleEnabled: boolean;
+    cycleDurationValue: Maybe<string | number>;
+    cycleDurationDefault: string | number;
     onDurationChange(id: string, duration: string): void;
 
     onEdit(id: string): void;
@@ -56,8 +57,9 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
         enabled,
         onToggle,
 
-        duration,
-        durationDefault,
+        cycleEnabled,
+        cycleDurationValue,
+        cycleDurationDefault,
         onDurationChange,
 
         onEdit,
@@ -83,15 +85,17 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
 
     const handleToggle = useCallback((value: boolean) => onToggle(id, value), [id, onToggle]);
     const handleDurationChange = useCallback(
-        (_: any, info: { value: string | number }) => onDurationChange(id, String(info.value)),
-        [id, onDurationChange],
+        (_: any, info: { value: string | number }) => {
+            if (cycleEnabled) onDurationChange(id, String(info.value));
+        },
+        [cycleEnabled, id, onDurationChange],
     );
     const handleEdit = useCallback(() => onEdit(id), [id, onEdit]);
     const handleClone = useCallback(() => onClone(id), [id, onClone]);
     const handleDelete = useCallback(() => onDelete(id), [id, onDelete]);
 
     return (
-        <div {...rest} {...dndRootProps} className={cn(css.root, disabled && css.disabled, className)}>
+        <div {...rest} {...dndRootProps} className={cn(css.root, disabled && css.disabledRow, className)}>
             <div
                 {...dndDragHandleProps}
                 className={cn(css.dragHandle, dndDragHandleProps?.className)}
@@ -127,18 +131,18 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
                 <div className={css.details} children={description} />
             </div>
 
-            <div className={css.duration}>
+            <div className={cn(css.duration, !cycleEnabled && css.disabled)}>
                 <label htmlFor={$('duration')} children={formatMessage({ defaultMessage: 'Duration (s)' })} />
                 <NumberInput
-                    disabled={disabled}
+                    disabled={disabled || !cycleEnabled}
                     id={$('duration')}
                     min={1}
-                    step={1}
+                    step={5}
                     allowEmpty
                     disableWheel
-                    stepStartValue={Number.parseInt(String(durationDefault || 0), 10)}
-                    placeholder={String(durationDefault)}
-                    value={duration ?? ''}
+                    stepStartValue={Number.parseInt(String(cycleDurationDefault || 0), 10)}
+                    placeholder={String(cycleDurationDefault)}
+                    value={cycleDurationValue ?? ''}
                     onChange={handleDurationChange}
                     onFocus={selfSelect}
                 />
