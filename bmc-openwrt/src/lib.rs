@@ -7,6 +7,7 @@ pub mod linux_drm_platform;
 pub mod manager;
 mod pwd;
 pub mod session;
+mod signal;
 mod sys;
 mod unix;
 

@@ -3,17 +3,19 @@
 use std::{
     net::IpAddr,
     process::{Output, Stdio},
+    time::Duration,
 };
 
 use bmc::utils::read_to_string;
 use get_if_addrs::IfAddr;
 use tokio::{io::AsyncWriteExt, process::Command};
-use tracing::debug;
+use tracing::{debug, info};
 
-use crate::sys;
+use crate::{signal, sys};
 
 const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
 const REBOOT_COMMAND: &str = "reboot";
+const SHUTDOWN_SLEEP_DURATION: Duration = Duration::from_secs(5);
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -81,4 +83,18 @@ pub fn get_ip_address() -> Option<IpAddr> {
 
 pub async fn system_reboot() -> Result<(), Error> {
     call_command(REBOOT_COMMAND, &[]).await
+}
+
+// HACK: this function only delays the shutdown by sleeping
+// It is necessary when doing a system upgrade to delay the shutdown of Axum web server.
+pub async fn handle_graceful_shutdown() {
+    let signal = signal::wait_for_first_signal(signal::SHUTDOWN_SIGNALS).await;
+
+    info!(
+        "{:?} signal received. Waiting for {:?}s, then shutting down",
+        signal,
+        SHUTDOWN_SLEEP_DURATION.as_secs()
+    );
+    tokio::time::sleep(SHUTDOWN_SLEEP_DURATION).await;
+    info!("Timeout reached. Forcefully shutting down...");
 }

@@ -94,6 +94,9 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     async fn wifi_status(&self) -> anyhow::Result<WifiData>;
 
     async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>>;
+
+    // Executes the function once bmc is shutting down
+    async fn handle_graceful_shutdown(&self);
 }
 
 #[derive(Clone, Debug)]

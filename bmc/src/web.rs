@@ -90,7 +90,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
     pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
         let http_router = http_server::HttpServer::new(self.config, self.manager.clone()).build();
         let grpc_router = grpc::GrpcWeb::new(
-            self.manager,
+            self.manager.clone(),
             self.session_manager.clone(),
             self.system_upgrade_service,
             self.config_handle,
@@ -129,7 +129,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         let service =
             ServiceExt::<Request>::into_make_service_with_connect_info::<SocketAddr>(service);
 
-        axum::serve(listener, service).await?;
+        axum::serve(listener, service)
+            .with_graceful_shutdown(async move { self.manager.handle_graceful_shutdown().await })
+            .await?;
 
         Ok(())
     }

@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::signal;
 use tracing::info;
 use tracing::log::warn;
 
@@ -365,5 +366,10 @@ impl bmc::BmcManager for Manager {
                 sta_link_state: Some(WifiLinkState::new("MockWiFiDisabled", -5)),
             },
         ])
+    }
+
+    async fn handle_graceful_shutdown(&self) {
+        _ = signal::ctrl_c().await;
+        info!("Shutdown signal received");
     }
 }

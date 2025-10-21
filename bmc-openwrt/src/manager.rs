@@ -568,6 +568,12 @@ impl BmcManager for Manager {
             })
             .collect::<Vec<WifiStatus>>())
     }
+
+    // HACK: this function only delays the shutdown by sleeping
+    // It is necessary when doing a system upgrade to delay the shutdown of Axum web server.
+    async fn handle_graceful_shutdown(&self) {
+        unix::handle_graceful_shutdown().await;
+    }
 }
 
 async fn uci_get_opt(opt: &str) -> Option<String> {
