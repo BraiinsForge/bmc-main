@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use bmc_display::proxy::{Proxy, ProxyEvent};
+use core::time::Duration;
 use drm::Device;
 use drm::buffer::{Buffer, DrmFourcc};
 use drm::control::Device as ControlDevice;
@@ -18,6 +19,7 @@ use tracing::{info, trace};
 const PIXEL_FORMAT: DrmFourcc = DrmFourcc::Rgb565;
 const BITS_PER_PIXEL: u32 = 16;
 const BYTES_PER_PIXEL: usize = 2;
+const IDLE_TICK_MAX: Duration = Duration::from_millis(16);
 
 #[derive(Debug)]
 /// A simple wrapper for a device node.
@@ -358,16 +360,17 @@ impl Platform for LinuxDrmPlatform {
 
             // Do not sleep when there are active animations (as mentioned in `duration_until_next_timer_update` docs)
             if self.window.has_active_animations() {
+                std::thread::sleep(Duration::from_millis(1));
                 // If there will be performance issues, we can introduce small delay, like in official `android-activity` implementation.
                 // https://github.com/slint-ui/slint/blob/b80d5a23042c866fbc6d82d00c633bfda9057dd2/internal/backends/android-activity/lib.rs#L102
                 continue;
             }
 
+            let timeout = slint::platform::duration_until_next_timer_update()
+                .map_or(IDLE_TICK_MAX, |t| t.min(IDLE_TICK_MAX));
+
             // Wait for the next event, error is ignored because it is timeout/close.
-            saved_proxy_event = match slint::platform::duration_until_next_timer_update() {
-                Some(timeout) => self.event_receiver.recv_timeout(timeout).ok(),
-                None => self.event_receiver.recv().ok(),
-            };
+            saved_proxy_event = self.event_receiver.recv_timeout(timeout).ok();
         }
 
         drop(map);
