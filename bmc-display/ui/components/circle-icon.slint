@@ -6,6 +6,7 @@ export component CircleIcon inherits Rectangle {
     in property <brush> circle_color_pressed: @linear-gradient(176deg, rgba(255, 255, 255, 0.90) 3.1%, rgba(255, 255, 255, 0.54) 98.54%);
     in property <color> icon_color: Palette.white;
     in property <color> icon_color_pressed: Palette.black;
+    in property <bool> disable_pressed_color: false;
     property <bool> is_pressed: touch.pressed;
 
     callback clicked;
@@ -17,7 +18,7 @@ export component CircleIcon inherits Rectangle {
         width: root.width;
         height: root.height;
         border-radius: self.width / 2;
-        background: root.is_pressed ? root.circle_color_pressed : root.circle_color;
+        background: root.disable_pressed_color ? root.circle_color : root.is_pressed ? root.circle_color_pressed : root.circle_color;
     }
 
     Image {
