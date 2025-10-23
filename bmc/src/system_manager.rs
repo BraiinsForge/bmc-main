@@ -73,6 +73,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             sound_controller.clone(),
             night_mode_controller.clone(),
             sound_volume_modified.clone(),
+            display_controller.clone(),
         ));
 
         Self {
@@ -132,6 +133,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         sound_controller: SoundController,
         night_mode_controller: NightModeController,
         sound_volume_modified: Arc<Notify>,
+        display_controller: DisplayController,
     ) {
         let mut night_mode_receiver = night_mode_controller.subscribe();
         loop {
@@ -151,6 +153,9 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                     "Failed to set audio sound volume"
                 );
             }
+
+            // Update the SoundAdapter in Slint
+            display_controller.set_sound_volume(sound_volume);
 
             tokio::select! {
                 biased;

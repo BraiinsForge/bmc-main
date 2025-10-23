@@ -153,6 +153,12 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             display_controller.clone(),
             system_manager.clone(),
         ));
+
+        // NOTE: Propagate sound volume events from Slint to system manager
+        tokio::spawn(Self::run_sound_slint_event_listener(
+            display_controller.clone(),
+            system_manager.clone(),
+        ));
     }
 
     async fn run_date_time_update(
@@ -657,6 +663,51 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
 
             if let Err(e) = result {
                 error!("Failed to set brightness: {:?}", e);
+            }
+        }
+    }
+
+    async fn run_sound_slint_event_listener(
+        display_controller: DisplayController,
+        system_manager: SystemManager<U>,
+    ) {
+        let mut sound_receiver = display_controller.on_sound_events();
+        while let Some(event) = sound_receiver.next().await {
+            debug!("Sound event received [{:?}]", event);
+
+            let night_mode_is_active = system_manager.is_night_mode_active();
+            let sound_settings = system_manager.sound_settings().await;
+
+            let current_volume = if night_mode_is_active {
+                sound_settings.volume_night_mode
+            } else {
+                sound_settings.volume
+            };
+
+            debug!(
+                "Current volume: {}, night_mode_active: {}",
+                current_volume, night_mode_is_active
+            );
+
+            let new_volume = match event {
+                bmc_display::display_controller::callback::SoundEvent::Increase => {
+                    current_volume.saturating_add(10).min(100)
+                }
+                bmc_display::display_controller::callback::SoundEvent::Decrease => {
+                    current_volume.saturating_sub(10)
+                }
+            };
+
+            debug!("New volume: {}", new_volume);
+
+            let result = if night_mode_is_active {
+                system_manager.set_sound_volume_night_mode(new_volume).await
+            } else {
+                system_manager.set_sound_volume(new_volume).await
+            };
+
+            if let Err(e) = result {
+                error!("Failed to set sound volume: {:?}", e);
             }
         }
     }
