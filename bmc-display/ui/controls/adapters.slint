@@ -74,3 +74,9 @@ export global AlarmAdapter {
     callback stop_alarm;
     callback snooze_alarm;
 }
+
+export global BrightnessAdapter {
+    in property <int> brightness: 0;
+    callback brightness_increase;
+    callback brightness_decrease;
+}
