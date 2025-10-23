@@ -40,6 +40,8 @@ export component MainWindow inherits Window {
     in property <bool> night-mode-enabled;
     in property <DateTime> system-datetime;
 
+    callback restart();
+
     // all (enabled & disabled) scenes
     in property <[Scene]> scenes;
     in property <int> preview-scene-index: -1;
@@ -104,6 +106,9 @@ export component MainWindow inherits Window {
         z: 6;
         width: root.width;
         height: root.height;
+        restart => {
+            root.restart();
+        }
     }
 
     if ScreenAdapter.clock-alarm: Alarm {

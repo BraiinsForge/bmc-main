@@ -130,6 +130,11 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             manager.clone(),
         ));
 
+        tokio::spawn(Self::run_restart_event_listener(
+            display_controller.clone(),
+            manager.clone(),
+        ));
+
         tokio::spawn(Self::run_initial_setup_listener(
             display_controller.clone(),
             manager,
@@ -586,6 +591,17 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             match event {
                 bmc_display::display_controller::callback::AlarmEvent::Stop => alarm_bus.stop_all(),
                 bmc_display::display_controller::callback::AlarmEvent::Snooze => alarm_bus.snooze(),
+            }
+        }
+    }
+
+    async fn run_restart_event_listener(display_controller: DisplayController, manager: Arc<T>) {
+        let mut restart_receiver = display_controller.on_restart_events();
+        while restart_receiver.next().await.is_some() {
+            debug!("Restart event received");
+
+            if let Err(e) = manager.reboot().await {
+                error!("Failed to reboot: {:?}", e);
             }
         }
     }

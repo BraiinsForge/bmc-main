@@ -131,6 +131,19 @@ impl DisplayController {
         UnboundedReceiverStream::new(rx)
     }
 
+    #[must_use]
+    pub fn on_restart_events(&self) -> UnboundedReceiverStream<()> {
+        let (tx, rx) = unbounded_channel();
+
+        self.in_event_loop(move |main_window| {
+            main_window.on_restart(move || {
+                debug!("Restart clicked!");
+                _ = tx.send(());
+            });
+        });
+        UnboundedReceiverStream::new(rx)
+    }
+
     #[expect(unused)]
     fn set_unbounded_callback<T, F>(&self, func: F) -> UnboundedReceiverStream<T>
     where
