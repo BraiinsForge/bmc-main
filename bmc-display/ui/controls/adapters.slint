@@ -80,3 +80,9 @@ export global BrightnessAdapter {
     callback brightness_increase;
     callback brightness_decrease;
 }
+
+export global SoundAdapter {
+    in property <int> volume: 0;
+    callback volume_increase;
+    callback volume_decrease;
+}
