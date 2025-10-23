@@ -40,7 +40,7 @@ where
     manager: Arc<T>,
     session_manager: Arc<T::SessionManager>,
     config: Configuration,
-    display_tasks: DisplayTasks<T>,
+    display_tasks: DisplayTasks<T, U>,
     widget_tasks: WidgetTasks,
     system_upgrade_service: SystemUpgradeService<V, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
@@ -164,6 +164,7 @@ where
             manager.clone(),
             config_handle.clone(),
             alarm_bus.clone(),
+            system_manager.clone(),
         );
 
         let (_, last_price_change_24h_receiver) = watch::channel(0.0);

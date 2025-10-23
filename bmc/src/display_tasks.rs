@@ -3,6 +3,7 @@
 use crate::BmcManager;
 use crate::alarm::{AlarmBus, AlarmEvent};
 use crate::initial_setup::InitSetupState;
+use crate::system_manager::SystemManager;
 use crate::system_upgrade::SystemUpgradeState;
 
 use crate::config::ConfigHandle;
@@ -11,6 +12,7 @@ use bmc_display::blockheight_data::{self, BlockheightData};
 use bmc_display::data::{ConnectInfoScreen, InitScreen, UpgradeScreen};
 use bmc_display::difficulty_data::DifficultyData;
 use bmc_display::display_controller::DisplayController;
+use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_display::hashrate_data::HashrateData;
 use bmc_shared_ii_net::wifi::SignalStrength;
 use bmc_shared_time::time::Timezone;
@@ -37,7 +39,7 @@ const CHECK_IP_WAIT_DURATION: Duration = Duration::from_secs(2);
 const DEFAULT_ALARM_LABEL: &str = "Alarm";
 
 #[derive(Debug)]
-pub(crate) struct DisplayTasks<T: BmcManager> {
+pub(crate) struct DisplayTasks<T: BmcManager, U: DisplayBacklightDriver> {
     display_controller: DisplayController,
     system_upgrade_receiver: watch::Receiver<Option<SystemUpgradeState>>,
     timezone_receiver: watch::Receiver<Timezone>,
@@ -45,9 +47,11 @@ pub(crate) struct DisplayTasks<T: BmcManager> {
     manager: Arc<T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     alarm_bus: AlarmBus,
+    system_manager: SystemManager<U>,
 }
 
-impl<T: BmcManager> DisplayTasks<T> {
+impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         display_controller: DisplayController,
         system_upgrade_receiver: watch::Receiver<Option<SystemUpgradeState>>,
@@ -56,6 +60,7 @@ impl<T: BmcManager> DisplayTasks<T> {
         manager: Arc<T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
         alarm_bus: AlarmBus,
+        system_manager: SystemManager<U>,
     ) -> Self {
         Self {
             display_controller,
@@ -65,6 +70,7 @@ impl<T: BmcManager> DisplayTasks<T> {
             manager,
             config_handle,
             alarm_bus,
+            system_manager,
         }
     }
 
@@ -77,6 +83,7 @@ impl<T: BmcManager> DisplayTasks<T> {
             manager,
             config_handle,
             alarm_bus,
+            system_manager,
         } = self;
 
         tokio::spawn(Self::run_init_display_screen(
@@ -135,10 +142,16 @@ impl<T: BmcManager> DisplayTasks<T> {
             alarm_bus.clone(),
         ));
 
-        //NOTE: Propagate events from Alarm controller to display, e.g. alarm was triggered, show alarm screen
+        //NOTE: Propagate events from Alarm controller to display, e.g. alarm was triggered => show alarm screen
         tokio::spawn(Self::run_alarm_event_listener(
-            display_controller,
+            display_controller.clone(),
             alarm_bus.subscribe_events(),
+        ));
+
+        // NOTE: Propagate brightness events from Slint to system manager
+        tokio::spawn(Self::run_brightness_slint_event_listener(
+            display_controller.clone(),
+            system_manager.clone(),
         ));
     }
 
@@ -597,6 +610,53 @@ impl<T: BmcManager> DisplayTasks<T> {
                     display_controller.set_alarm_data(label, show_snooze);
                     display_controller.set_clock_alarm_screen(true);
                 }
+            }
+        }
+    }
+
+    async fn run_brightness_slint_event_listener(
+        display_controller: DisplayController,
+        system_manager: SystemManager<U>,
+    ) {
+        let mut brightness_receiver = display_controller.on_brightness_events();
+        while let Some(event) = brightness_receiver.next().await {
+            debug!("Brightness event received [{:?}]", event);
+
+            let night_mode_is_active = system_manager.is_night_mode_active();
+            let display_settings = system_manager.display_settings().await;
+
+            let current_brightness = if night_mode_is_active {
+                display_settings.night_mode_config.brightness_pct
+            } else {
+                display_settings.brightness_pct
+            };
+
+            debug!(
+                "Current brightness: {}, night_mode_active: {}",
+                current_brightness, night_mode_is_active
+            );
+
+            let new_brightness = match event {
+                bmc_display::display_controller::callback::BrightnessEvent::Increase => {
+                    current_brightness.saturating_add(10).min(100)
+                }
+                bmc_display::display_controller::callback::BrightnessEvent::Decrease => {
+                    current_brightness.saturating_sub(10)
+                }
+            };
+
+            debug!("New brightness: {}", new_brightness);
+
+            let result = if night_mode_is_active {
+                system_manager
+                    .set_night_mode_brightness(new_brightness)
+                    .await
+            } else {
+                system_manager.set_brightness(new_brightness).await
+            };
+
+            if let Err(e) = result {
+                error!("Failed to set brightness: {:?}", e);
             }
         }
     }

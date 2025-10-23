@@ -59,10 +59,11 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             backlight_controller.clone(),
             night_mode_controller.clone(),
             brightness_modified.clone(),
+            display_controller.clone(),
         ));
 
         tokio::spawn(Self::set_night_mode_flag_in_slint(
-            display_controller,
+            display_controller.clone(),
             night_mode_controller.clone(),
         ));
 
@@ -87,6 +88,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         backlight_controller: DisplayBacklightController<T>,
         night_mode_controller: NightModeController,
         brightness_modified: Arc<Notify>,
+        display_controller: DisplayController,
     ) {
         let mut night_mode_receiver = night_mode_controller.subscribe();
         loop {
@@ -109,6 +111,9 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                     "Failed to set display brightness"
                 );
             }
+
+            // Update the BrightnessAdapter in Slint UI
+            display_controller.set_brightness(brightness);
 
             tokio::select! {
                 biased;
@@ -206,6 +211,10 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         self.brightness_modified.notify_waiters();
 
         Ok(())
+    }
+
+    pub(crate) fn is_night_mode_active(&self) -> bool {
+        *self.night_mode_controller.subscribe().borrow()
     }
 
     pub(crate) async fn display_settings(&self) -> DisplaySettings {
