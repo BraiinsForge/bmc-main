@@ -926,6 +926,13 @@ impl DisplayController {
         });
     }
 
+    pub fn set_sound_volume(&self, volume_pct: u8) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let sound_adapter = generated::SoundAdapter::get(&main_window);
+            sound_adapter.set_volume(i32::from(volume_pct));
+        });
+    }
+
     pub fn set_next_alarm(&self, maybe_next_alarm: Option<chrono::DateTime<chrono::FixedOffset>>) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
             let alarm_adapter = AlarmAdapter::get(&main_window);

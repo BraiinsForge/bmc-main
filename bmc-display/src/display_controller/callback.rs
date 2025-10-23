@@ -3,7 +3,7 @@
 use crate::data::WidgetSize;
 use crate::display_controller::DisplayController;
 use crate::generated;
-use crate::generated::{AlarmAdapter, BaseDimensions, BrightnessAdapter};
+use crate::generated::{AlarmAdapter, BaseDimensions, BrightnessAdapter, SoundAdapter};
 use slint::ComponentHandle;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -17,6 +17,12 @@ pub enum AlarmEvent {
 
 #[derive(Debug)]
 pub enum BrightnessEvent {
+    Increase,
+    Decrease,
+}
+
+#[derive(Debug)]
+pub enum SoundEvent {
     Increase,
     Decrease,
 }
@@ -97,6 +103,29 @@ impl DisplayController {
             brightness_adapter.on_brightness_decrease(move || {
                 debug!("Brightness decrease clicked!");
                 _ = tx.send(BrightnessEvent::Decrease);
+            });
+        });
+        UnboundedReceiverStream::new(rx)
+    }
+
+    #[must_use]
+    pub fn on_sound_events(&self) -> UnboundedReceiverStream<SoundEvent> {
+        let (tx, rx) = unbounded_channel();
+
+        self.in_event_loop(move |main_window| {
+            let sound_adapter = main_window.global::<SoundAdapter<'_>>();
+
+            sound_adapter.on_volume_increase({
+                let tx = tx.clone();
+                move || {
+                    debug!("Sound volume increase clicked!");
+                    _ = tx.send(SoundEvent::Increase);
+                }
+            });
+
+            sound_adapter.on_volume_decrease(move || {
+                debug!("Sound volume decrease clicked!");
+                _ = tx.send(SoundEvent::Decrease);
             });
         });
         UnboundedReceiverStream::new(rx)
