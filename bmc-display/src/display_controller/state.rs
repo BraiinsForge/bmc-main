@@ -919,6 +919,13 @@ impl DisplayController {
         });
     }
 
+    pub fn set_brightness(&self, brightness_pct: u8) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let brightness_adapter = generated::BrightnessAdapter::get(&main_window);
+            brightness_adapter.set_brightness(i32::from(brightness_pct));
+        });
+    }
+
     pub fn set_next_alarm(&self, maybe_next_alarm: Option<chrono::DateTime<chrono::FixedOffset>>) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
             let alarm_adapter = AlarmAdapter::get(&main_window);

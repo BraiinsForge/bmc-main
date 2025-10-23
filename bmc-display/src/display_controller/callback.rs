@@ -3,7 +3,7 @@
 use crate::data::WidgetSize;
 use crate::display_controller::DisplayController;
 use crate::generated;
-use crate::generated::{AlarmAdapter, BaseDimensions};
+use crate::generated::{AlarmAdapter, BaseDimensions, BrightnessAdapter};
 use slint::ComponentHandle;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -13,6 +13,12 @@ use tracing::debug;
 pub enum AlarmEvent {
     Stop,
     Snooze,
+}
+
+#[derive(Debug)]
+pub enum BrightnessEvent {
+    Increase,
+    Decrease,
 }
 
 // When consumer creates two streams using two e.g. `on_example()` calls, then first stream will be closed,
@@ -68,6 +74,29 @@ impl DisplayController {
             alarm_adapter.on_snooze_alarm(move || {
                 debug!("Snooze alarm clicked!");
                 _ = tx.send(AlarmEvent::Snooze);
+            });
+        });
+        UnboundedReceiverStream::new(rx)
+    }
+
+    #[must_use]
+    pub fn on_brightness_events(&self) -> UnboundedReceiverStream<BrightnessEvent> {
+        let (tx, rx) = unbounded_channel();
+
+        self.in_event_loop(move |main_window| {
+            let brightness_adapter = main_window.global::<BrightnessAdapter<'_>>();
+
+            brightness_adapter.on_brightness_increase({
+                let tx = tx.clone();
+                move || {
+                    debug!("Brightness increase clicked!");
+                    _ = tx.send(BrightnessEvent::Increase);
+                }
+            });
+
+            brightness_adapter.on_brightness_decrease(move || {
+                debug!("Brightness decrease clicked!");
+                _ = tx.send(BrightnessEvent::Decrease);
             });
         });
         UnboundedReceiverStream::new(rx)
