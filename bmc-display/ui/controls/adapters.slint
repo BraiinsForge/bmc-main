@@ -86,3 +86,9 @@ export global SoundAdapter {
     callback volume_increase;
     callback volume_decrease;
 }
+
+export global NightModeAdapter {
+    in property <bool> is-active: false;
+    in property <string> status-text;
+    callback toggle;
+}
