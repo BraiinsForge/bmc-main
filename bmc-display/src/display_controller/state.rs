@@ -933,6 +933,14 @@ impl DisplayController {
         });
     }
 
+    pub fn set_night_mode_ui_state(&self, is_active: bool, status_text: String) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let night_mode_adapter = generated::NightModeAdapter::get(&main_window);
+            night_mode_adapter.set_is_active(is_active);
+            night_mode_adapter.set_status_text(status_text.into());
+        });
+    }
+
     pub fn set_next_alarm(&self, maybe_next_alarm: Option<chrono::DateTime<chrono::FixedOffset>>) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
             let alarm_adapter = AlarmAdapter::get(&main_window);

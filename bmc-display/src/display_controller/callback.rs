@@ -144,6 +144,21 @@ impl DisplayController {
         UnboundedReceiverStream::new(rx)
     }
 
+    #[must_use]
+    pub fn on_night_mode_toggle_events(&self) -> UnboundedReceiverStream<()> {
+        let (tx, rx) = unbounded_channel();
+
+        self.in_event_loop(move |main_window| {
+            let night_mode_adapter = main_window.global::<generated::NightModeAdapter<'_>>();
+
+            night_mode_adapter.on_toggle(move || {
+                debug!("Night mode toggle clicked!");
+                _ = tx.send(());
+            });
+        });
+        UnboundedReceiverStream::new(rx)
+    }
+
     #[expect(unused)]
     fn set_unbounded_callback<T, F>(&self, func: F) -> UnboundedReceiverStream<T>
     where
