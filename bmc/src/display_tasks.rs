@@ -164,6 +164,18 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             display_controller.clone(),
             system_manager.clone(),
         ));
+
+        // NOTE: Propagate night mode toggle events from Slint to system manager
+        tokio::spawn(Self::run_night_mode_toggle_listener(
+            display_controller.clone(),
+            system_manager.clone(),
+        ));
+
+        // NOTE: Watch night mode state changes and update UI
+        tokio::spawn(Self::run_night_mode_state_watcher(
+            display_controller.clone(),
+            system_manager.clone(),
+        ));
     }
 
     async fn run_date_time_update(
@@ -724,6 +736,45 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
 
             if let Err(e) = result {
                 error!("Failed to set sound volume: {:?}", e);
+            }
+        }
+    }
+
+    async fn run_night_mode_toggle_listener(
+        display_controller: DisplayController,
+        system_manager: SystemManager<U>,
+    ) {
+        let mut toggle_receiver = display_controller.on_night_mode_toggle_events();
+        while toggle_receiver.next().await.is_some() {
+            debug!("Night mode toggle event received");
+            if let Err(e) = system_manager.toggle_night_mode().await {
+                error!("Failed to toggle night mode: {:?}", e);
+            }
+        }
+    }
+
+    async fn run_night_mode_state_watcher(
+        display_controller: DisplayController,
+        system_manager: SystemManager<U>,
+    ) {
+        let mut night_mode_receiver = system_manager.subscribe_night_mode();
+
+        loop {
+            let is_active = *night_mode_receiver.borrow_and_update();
+            let config = system_manager.night_mode_config().await;
+
+            let status_text = if is_active {
+                format!("Until {}", config.to.format("%H:%M"))
+            } else if config.enabled {
+                format!("Until {}", config.from.format("%H:%M"))
+            } else {
+                String::new()
+            };
+
+            display_controller.set_night_mode_ui_state(is_active, status_text);
+
+            if night_mode_receiver.changed().await.is_err() {
+                break;
             }
         }
     }

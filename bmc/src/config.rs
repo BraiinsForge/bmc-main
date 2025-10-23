@@ -469,7 +469,7 @@ impl NightModeConfig {
 
     /// Checks whether `now` (in local time) is in the [from, to) range.
     /// Handles ranges that cross midnight.
-    fn is_time_in_range(from: NaiveTime, to: NaiveTime, now: NaiveTime) -> bool {
+    pub fn is_time_in_range(from: NaiveTime, to: NaiveTime, now: NaiveTime) -> bool {
         if from <= to {
             now >= from && now < to
         } else {

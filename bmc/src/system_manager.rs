@@ -190,6 +190,18 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         }
     }
 
+    pub(crate) fn subscribe_night_mode(&self) -> watch::Receiver<bool> {
+        self.night_mode_controller.subscribe()
+    }
+
+    pub(crate) async fn night_mode_config(&self) -> crate::config::NightModeConfig {
+        self.night_mode_controller.config().await
+    }
+
+    pub(crate) async fn toggle_night_mode(&self) -> anyhow::Result<()> {
+        self.night_mode_controller.toggle().await
+    }
+
     pub(crate) async fn set_night_mode_enabled(&self, enabled: bool) -> anyhow::Result<()> {
         self.night_mode_controller.set_enabled(enabled).await
     }
