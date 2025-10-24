@@ -18,6 +18,10 @@
         margin-bottom: 0;
     }
 }
+.standaloneIcon .header {
+    flex-flow: column nowrap;
+    align-items: start;
+}
 
 .info .icon {
     fill: $braiins-gray-50;

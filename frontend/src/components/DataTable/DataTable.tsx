@@ -893,6 +893,7 @@ export class DataTableComponent<ColumnID extends string> extends Component<Props
                 <Empty
                     icon={placeholder?.icon || IconFolder}
                     iconSize={placeholder?.iconSize ?? 48}
+                    standaloneIcon
                     title={placeholder?.title}
                     message={placeholder?.message}
                     controls={placeholder?.controls}

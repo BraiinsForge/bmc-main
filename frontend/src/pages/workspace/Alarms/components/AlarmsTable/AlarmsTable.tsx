@@ -8,7 +8,7 @@ import * as pb from '@/proto';
 // Components
 import { Button, ButtonGroup, DataTable, type DataTableHeader, type DataTableRow } from '@/components';
 import { Toggle } from '@carbon/react';
-import { TrashCan as IconDelete } from '@carbon/react/icons';
+import { TrashCan as IconDelete, Time as IconClock } from '@carbon/react/icons';
 
 // Styles
 import css from './AlarmsTable.scss';
@@ -134,7 +134,8 @@ class View extends Component<Props> {
                     headers={this.#getHeaders()}
                     rows={this.#getRows()}
                     placeholder={{
-                        title: formatMessage({ defaultMessage: 'No alarms found' }),
+                        icon: IconClock,
+                        title: formatMessage({ defaultMessage: 'No Alarms Yet' }),
                         message: formatMessage({ defaultMessage: 'Create your first alarm to get started' }),
                     }}
                     skeletonRowsCount={5}

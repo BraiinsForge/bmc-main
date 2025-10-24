@@ -21,7 +21,6 @@ const data: ReadonlyArray<Case> = [
 ];
 
 describe('<Percentage />', () => {
-    // @ts-expect-error: Bad type-def on their generic guard
     test.each<Case>(data)('Renders corrent percentage', ({ exp, ...props }) => {
         const { baseElement } = render(<Percentage {...props} />);
         expect(baseElement.querySelector('[data-role="value"]')?.textContent).toEqual(exp);

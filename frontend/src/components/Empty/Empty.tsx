@@ -6,6 +6,7 @@ import cn from 'clsx';
 export type EmptyProps = {
     icon: CarbonIconType;
     iconSize?: number;
+    standaloneIcon?: boolean;
 
     title?: ReactNode;
     message?: ReactNode;
@@ -21,7 +22,19 @@ export type EmptyProps = {
 };
 
 export function Empty(props: EmptyProps) {
-    const { icon: Icon, iconSize, title, message, controls, kind, fullWidth, transparent, className, style } = props;
+    const {
+        icon: Icon,
+        iconSize,
+        standaloneIcon,
+        title,
+        message,
+        controls,
+        kind,
+        fullWidth,
+        transparent,
+        className,
+        style,
+    } = props;
 
     return (
         <div
@@ -29,6 +42,7 @@ export function Empty(props: EmptyProps) {
                 css.root,
                 fullWidth && css.fullWidth,
                 transparent && css.transparent,
+                standaloneIcon && css.standaloneIcon,
                 css[kind || 'info'],
                 className,
             )}
