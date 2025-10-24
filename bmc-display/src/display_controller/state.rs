@@ -236,25 +236,15 @@ impl DisplayController {
 
                     // NOTE: this is optimization for analog hands, because we need to avoid image
                     // re-creation each time
-                    if datetime.hour24 != new_datetime.hour24 {
-                        match config.clock_style {
-                            ClockStyle::AnalogRound => {
-                                analog_hands.hour_hand_round = clock_data.hour_hand_round();
-                            }
-                            ClockStyle::AnalogRect => {
-                                analog_hands.hour_hand_rect = clock_data.hour_hand_rect();
-                            }
-                            ClockStyle::Digital => {}
-                        }
-                    }
-
                     if datetime.minute != new_datetime.minute {
                         match config.clock_style {
                             ClockStyle::AnalogRound => {
+                                analog_hands.hour_hand_round = clock_data.hour_hand_round();
                                 analog_hands.minute_hand_round = clock_data.minute_hand_round();
                             }
                             ClockStyle::AnalogRect => {
                                 analog_hands.minute_hand_rect = clock_data.minute_hand_rect();
+                                analog_hands.hour_hand_rect = clock_data.hour_hand_rect();
                             }
                             ClockStyle::Digital => {}
                         }
