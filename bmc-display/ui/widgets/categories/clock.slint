@@ -204,8 +204,8 @@ export component WidgetClockAnalogRect inherits Rectangle {
     property <length> clock-dial-width: clock-dial.width * 1px;
     property <length> clock-dial-height: clock-dial.height * 1px;
 
-    property <length> hour-font-size: (size == WidgetSize.Full) ? 64px : (size == WidgetSize.Large) ? 40px : (size == WidgetSize.Medium) ? 24px : 24px;
-    property <int> hour-font-weight: (size == WidgetSize.Full) ? Theme.font.weight.bold : Theme.font.weight.semi-bold;
+    property <length> hour-font-size: (size == WidgetSize.Full) ? 64px : (size == WidgetSize.Large) ? 40px : 24px;
+    property <int> hour-font-weight: (config.numbers-font-style == FontStyle.Bold) ? Theme.font.weight.bold : (config.numbers-font-style == FontStyle.Medium) ? Theme.font.weight.semi-bold : Theme.font.weight.regular;
 
     width: base-width * (size == WidgetSize.Small ? 1 : (size == WidgetSize.Medium || size == WidgetSize.Large) ? 2 : 4);
     height: base-height * ((size == WidgetSize.Small || size == WidgetSize.Medium) ? 1 : 2);
