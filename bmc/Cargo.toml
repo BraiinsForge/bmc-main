@@ -25,6 +25,7 @@ bmc-scheduler.workspace = true
 bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true
 bmc-shared-utils.workspace = true
+bmc-support.workspace = true
 bmc-upgrade.workspace = true
 chrono = { workspace = true }
 chrono-tz.workspace = true

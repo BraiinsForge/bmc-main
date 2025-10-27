@@ -12,7 +12,9 @@ use bmc_shared_ii_net::wifi::{
     EncryptionType, WifiConfiguration, WifiLinkState, WifiMode, WifiScanItem, WifiStatus,
 };
 use bmc_shared_time::time::Timezone;
+use bmc_support::SupportArchiveFormat;
 use rand::Rng;
+use std::io::{Cursor, Write};
 use std::{
     net::IpAddr,
     path::Path,
@@ -22,11 +24,14 @@ use std::{
 use tokio::signal;
 use tracing::info;
 use tracing::log::warn;
+use zip::write::SimpleFileOptions;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Zip(#[from] zip::result::ZipError),
 }
 
 #[derive(Debug)]
@@ -47,6 +52,8 @@ pub struct Manager {
 impl Manager {
     const WIFI_SSID: &str = "BMC 5a200d";
     const WIFI_EVENTS_CAPACITY: usize = 10;
+    const DUMMY_SUPPORT_FILE_NAME: &'static str = "hello_deck.txt";
+    const DUMMY_SUPPORT_FILE_CONTENT: &'static str = "wake up Neo";
 
     #[must_use]
     pub fn new(
@@ -371,5 +378,18 @@ impl bmc::BmcManager for Manager {
     async fn handle_graceful_shutdown(&self) {
         _ = signal::ctrl_c().await;
         info!("Shutdown signal received");
+    }
+
+    async fn support_archive(&self, _format: SupportArchiveFormat) -> Result<Vec<u8>, Error> {
+        info!("Support archive");
+        let mut buf = [0; 256];
+        let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf[..]));
+        zip.start_file(
+            Self::DUMMY_SUPPORT_FILE_NAME,
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+        )?;
+        zip.write_all(Self::DUMMY_SUPPORT_FILE_CONTENT.as_bytes())?;
+        zip.finish()?;
+        Ok(buf.to_vec())
     }
 }

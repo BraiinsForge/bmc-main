@@ -16,6 +16,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use bmc_support::SupportArchiveFormat;
+use http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use hyper::{
     HeaderMap, StatusCode,
     header::{self, CONTENT_LENGTH},
@@ -31,6 +33,9 @@ use crate::{BmcManager, manager::BmcState};
 use super::{ServerConfig, captive_portal::CaptivePortalLayer};
 
 const ZERO: &str = "0";
+const SUPPORT_ARCHIVE_FILENAME_PREFIX: &str = "support_archive_";
+const SUPPORT_ARCHIVE_FILENAME_SUFFIX: &str = ".zip.enc";
+const SUPPORT_ARCHIVE_FORMAT: SupportArchiveFormat = SupportArchiveFormat::ZipEncrypted;
 
 pub(crate) struct HttpServer<T: BmcManager> {
     config: ServerConfig,
@@ -43,6 +48,7 @@ impl<T: BmcManager> HttpServer<T> {
     pub(crate) const WIFI_SETUP_URL_ENDPOINT: &str = "/init_connect";
     pub(crate) const DEVICE_SETUP_URL_ENDPOINT: &str = "/init_setup";
     pub(crate) const ROOT_URL_ENDPOINT: &str = "/";
+    const SUPPORT_ARCHIVE: &str = "/support_archive";
 
     pub(crate) fn new(config: ServerConfig, manager: Arc<T>) -> Self {
         Self { config, manager }
@@ -51,6 +57,7 @@ impl<T: BmcManager> HttpServer<T> {
     pub(crate) fn build(&self) -> Router {
         Router::new()
             .merge(self.static_file_router())
+            .merge(self.general_api_router())
             .layer(CompressionLayer::new())
             .layer(CaptivePortalLayer::new(self.manager.clone()))
             .layer(middleware::from_fn(Self::log_request))
@@ -85,6 +92,12 @@ impl<T: BmcManager> HttpServer<T> {
             .with_state(index_state)
             .merge(var_router)
             .merge(assets_router)
+    }
+
+    fn general_api_router(&self) -> Router {
+        Router::new()
+            .route(Self::SUPPORT_ARCHIVE, get(Self::handle_support_archive))
+            .with_state(self.manager.clone())
     }
 
     async fn file_handler_with_index_fallback(
@@ -265,6 +278,28 @@ impl<T: BmcManager> HttpServer<T> {
         );
 
         response
+    }
+
+    async fn handle_support_archive(State(manager): State<Arc<T>>) -> impl IntoResponse {
+        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%z").to_string();
+        let filename = format!(
+            "{}_{}{}",
+            SUPPORT_ARCHIVE_FILENAME_PREFIX,
+            timestamp.as_str(),
+            SUPPORT_ARCHIVE_FILENAME_SUFFIX
+        );
+
+        match manager.support_archive(SUPPORT_ARCHIVE_FORMAT).await {
+            Ok(data) => {
+                let content_disposition = format!("attachment; filename=\"{filename}\"");
+                let headers = [
+                    (CONTENT_TYPE, "application/octet-stream"),
+                    (CONTENT_DISPOSITION, content_disposition.as_str()),
+                ];
+                (StatusCode::OK, headers, data).into_response()
+            }
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
     }
 }
 

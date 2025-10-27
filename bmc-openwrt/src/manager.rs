@@ -21,6 +21,7 @@ use bmc_shared_ii_net::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_ii_net_drv::{NetworkInterface, get_primary_interface};
 use bmc_shared_time::time::Timezone;
+use bmc_support::SupportArchiveFormat;
 use std::io;
 use std::sync::Arc;
 use std::{
@@ -573,6 +574,10 @@ impl BmcManager for Manager {
     // It is necessary when doing a system upgrade to delay the shutdown of Axum web server.
     async fn handle_graceful_shutdown(&self) {
         unix::handle_graceful_shutdown().await;
+    }
+
+    async fn support_archive(&self, format: SupportArchiveFormat) -> Result<Vec<u8>, Error> {
+        unix::get_support_archive(format).await.map_err(Into::into)
     }
 }
 

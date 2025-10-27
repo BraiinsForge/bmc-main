@@ -7,8 +7,9 @@ use std::{
 };
 
 use bmc::utils::read_to_string;
+use bmc_support::SupportArchiveFormat;
 use get_if_addrs::IfAddr;
-use tokio::{io::AsyncWriteExt, process::Command};
+use tokio::{io::AsyncWriteExt, process::Command, task};
 use tracing::{debug, info};
 
 use crate::{signal, sys};
@@ -23,6 +24,8 @@ pub enum Error {
     Sys(#[from] sys::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("Support archive error: `{0}`")]
+    SupportArchive(String),
 }
 
 pub async fn call_command<T>(command_name: T, args: &[T]) -> Result<(), Error>
@@ -97,4 +100,21 @@ pub async fn handle_graceful_shutdown() {
     );
     tokio::time::sleep(SHUTDOWN_SLEEP_DURATION).await;
     info!("Timeout reached. Forcefully shutting down...");
+}
+
+pub async fn get_support_archive(format: SupportArchiveFormat) -> Result<Vec<u8>, Error> {
+    let result = task::spawn_blocking(move || {
+        let mut buf = Vec::new();
+        bmc_support::collect(&mut buf, format, false)?;
+        Ok::<_, anyhow::Error>(buf)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(buf)) => Ok(buf),
+        // JoinError
+        Err(err) => Err(Error::SupportArchive(err.to_string())),
+        // anyhow::Error
+        Ok(Err(err)) => Err(Error::SupportArchive(err.to_string())),
+    }
 }

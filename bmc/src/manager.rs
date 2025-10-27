@@ -4,6 +4,7 @@ use bmc_platform::{BmcPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
 use bmc_shared_time::time::Timezone;
+use bmc_support::SupportArchiveFormat;
 use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr},
@@ -97,6 +98,8 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     // Executes the function once bmc is shutting down
     async fn handle_graceful_shutdown(&self);
+
+    async fn support_archive(&self, format: SupportArchiveFormat) -> Result<Vec<u8>, Self::Error>;
 }
 
 #[derive(Clone, Debug)]
