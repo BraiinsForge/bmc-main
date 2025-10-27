@@ -16,6 +16,10 @@ use bmc_openwrt::{
     button_driver::UEventButtons, generic_backlight_driver::GenericBacklightDriver,
     linux_drm_platform::LinuxDrmPlatform, manager::Manager, session::OpenwrtSessionManager,
 };
+use bmc_openwrt::{
+    cli::Args, led_driver::platform_led_driver::PlatformLedDriver,
+    log::build_panic_hook_with_tracing,
+};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;
@@ -24,7 +28,9 @@ use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    bmc_openwrt::log::init();
+    let args = Args::parse();
+
+    bmc_openwrt::log::init(args.log_to_file);
 
     panic::set_hook(build_panic_hook_with_tracing());
 

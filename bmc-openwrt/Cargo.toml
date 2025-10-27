@@ -22,6 +22,7 @@ bmc-shared-ii-net.workspace = true
 bmc-shared-ii-net-drv.workspace = true
 bmc-shared-time.workspace = true
 bmc-upgrade.workspace = true
+clap.workspace = true
 drm.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true

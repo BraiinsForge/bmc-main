@@ -976,6 +976,7 @@ dependencies = [
  "bmc-platform",
  "bmc-shared-time",
  "bmc-upgrade",
+ "clap",
  "drm 0.14.1",
  "embedded-hal",
  "embedded-hal-async",
