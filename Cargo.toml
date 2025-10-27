@@ -15,6 +15,7 @@ members = [
     "bmc-platform",
     "bmc-scheduler",
     "bmc-shared/*",
+    "bmc-support",
     "bmc-upgrade",
 ]
 
@@ -81,6 +82,7 @@ unseparated_literal_suffix = "warn"
 wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
+aes = "0.8.4"
 anyhow = "1.0.98"
 apa102-spi = "0.5.1"
 assert_matches = "1.5.0"
@@ -109,10 +111,12 @@ bmc-shared-ii-net = { package = "ii-net", path = "bmc-shared/ii-net" }
 bmc-shared-ii-net-drv = { package = "ii-net-drv", path = "bmc-shared/ii-net-drv" }
 bmc-shared-time = { path = "bmc-shared/time" }
 bmc-shared-utils = { path = "bmc-shared/utils" }
+bmc-support = { path = "bmc-support" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bstr = "1.11.3"
 bytes = { version = "1.6.0", default-features = false }
 bytesize = { version = "2.0.1", features = ["serde"] }
+cbc = { version = "0.1.2", default-features = false }
 chrono = { version = "0.4.40", features = ["serde"] }
 chrono-tz = { version = "0.10.3", default-features = false }
 clap = { version = "4.5.37", features = ["derive", "std"] }
@@ -127,6 +131,7 @@ enum-assoc = "1.2.4"
 evdev = "0.13.1"
 fdlimit = "0.3.0"
 file-rotate = "0.7.6"
+flate2 = { version = "1.0.30", default-features = false }
 flume = { version = "0.11.1", default-features = false }
 formato = "0.3.0"
 fs-err = { version = "3.1.0", features = ["tokio"] }
@@ -157,7 +162,9 @@ minerctl-defs = { path = "tooling/minerctl/minerctl-defs" }
 minifb = "0.28.0"
 nonzero_ext = "0.3.0"
 parking_lot = "0.12.3"
+pcap-file = "3.0.0-rc1"
 pin-project = "1.1.10"
+ping = "0.4.0"
 pnet = "0.35.0"
 proc-macro2 = "1.0.94"
 prost = "0.13"
@@ -176,6 +183,8 @@ serde = { version = "1.0.218", features = ["derive", "rc"] }
 serde_json = "1.0.140"
 serde_with = { version = "3.14.0", default-features = false, features = ["macros"] }
 sha2 = "0.10.9"
+walkdir = "2.5.0"
+zip = { version = "4.3.0", default-features = false }
 # we cannot upgrade to 1.11.0 because it panicks with our minifb platform,
 # and we cannot upgrade to >1.11.0 because it does not support MUSL anymore
 slint = { version = "=1.10.0", default-features = false, features = ["compat-1-2", "image-default-formats", "log", "serde", "std"] }

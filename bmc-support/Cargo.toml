@@ -1,0 +1,28 @@
+[package]
+name = "bmc-support"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins <braiins@braiins.com>"]
+
+[lints]
+workspace = true
+
+[dependencies]
+aes.workspace = true
+anyhow.workspace = true
+bmc-shared-ii-dns.workspace = true
+cbc = { workspace = true, features = ["alloc", "block-padding"] }
+# zip crate with 'deflate-flate2' cannot be compiled without 'flate2' with 'rust_backend'
+flate2 = { workspace = true, features = ["rust_backend"] }
+pcap-file.workspace = true
+ping.workspace = true
+pnet.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+thiserror.workspace = true
+tracing.workspace = true
+walkdir.workspace = true
+zip = { workspace = true, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+anyhow.workspace = true
+tracing-subscriber.workspace = true
