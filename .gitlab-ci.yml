@@ -11,8 +11,7 @@ stages:
 ##################################
 variables:
   CI_TOOLS_REV: 57c7cd63b3d18abdbb8a57017deae96aece680df # This is not accessible inside "include"
-  WORKSPACE_LINTS_IGNORE_PATHS: "./bmc-shared/ii-net ./bmc-shared/ii-net-drv"
-
+  WORKSPACE_LINTS_IGNORE_PATHS: "./bmc-shared/ii-net ./bmc-shared/ii-net-drv ./bmc-shared/ii-dns"
 
 include:
   - project: "nix/ci-tools"
