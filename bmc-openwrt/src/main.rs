@@ -1,16 +1,17 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use std::panic;
 use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context, Result, anyhow};
-use bmc::{BmcManager, Configuration, log};
+use bmc::{BmcManager, Configuration};
 use bmc_display::{
     display_controller::DisplayController,
     display_driver::{DisplayBacklightDriver, DisplayDriver},
     metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
 };
 use bmc_led::led_driver::LedDriverFactory;
-use bmc_openwrt::led_driver::platform_led_driver::PlatformLedDriver;
+use bmc_openwrt::cli::Parser;
 use bmc_openwrt::{
     button_driver::UEventButtons, generic_backlight_driver::GenericBacklightDriver,
     linux_drm_platform::LinuxDrmPlatform, manager::Manager, session::OpenwrtSessionManager,
@@ -23,7 +24,10 @@ use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    log::init();
+    bmc_openwrt::log::init();
+
+    panic::set_hook(build_panic_hook_with_tracing());
+
     let mut backlight_driver = GenericBacklightDriver::new("/sys/class/backlight/display-bl");
     backlight_driver.init()?;
 

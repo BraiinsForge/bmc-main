@@ -125,6 +125,7 @@ embedded-hal-async = { version = "1.0.0" }
 enum-assoc = "1.2.4"
 evdev = "0.13.1"
 fdlimit = "0.3.0"
+file-rotate = "0.7.6"
 flume = { version = "0.11.1", default-features = false }
 formato = "0.3.0"
 fs-err = { version = "3.1.0", features = ["tokio"] }

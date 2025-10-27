@@ -980,6 +980,7 @@ dependencies = [
  "embedded-hal",
  "embedded-hal-async",
  "evdev",
+ "file-rotate",
  "flume",
  "futures",
  "get_if_addrs",
@@ -1004,6 +1005,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
  "ux",
 ]
@@ -2263,6 +2265,16 @@ checksum = "38e2275cc4e4fc009b0669731a1e5ab7ebf11f469eaede2bab9309a5b4d6057f"
 dependencies = [
  "memoffset 0.9.1",
  "rustc_version",
+]
+
+[[package]]
+name = "file-rotate"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a3ed82142801f5b1363f7d463963d114db80f467e860b1cd82228eaebc627a0"
+dependencies = [
+ "chrono",
+ "flate2",
 ]
 
 [[package]]
