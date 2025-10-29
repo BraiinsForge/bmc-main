@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tap::TapFallible;
 use tokio::sync::RwLock;
 use tokio::time::interval;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
 const CURRENCY_API_PARAM: &str = "currency";
 const DIFF_HASHRATE_API_URL: &str =
@@ -38,7 +38,7 @@ pub async fn run(
     let client = match Client::builder().timeout(API_TIMEOUT).build() {
         Ok(client) => client,
         Err(err) => {
-            warn!(?err, "Failed to create reqwest client, stopping");
+            error!(?err, "Failed to create reqwest client, stopping");
             return;
         }
     };
@@ -49,7 +49,7 @@ pub async fn run(
         interval.tick().await;
 
         if download_btc_history {
-            debug!("Getting bitcoin history data...");
+            debug!("Fetching Bitcoin history data");
             let btc_history_data = download_btc_history_data(&client).await;
 
             display_controller.update_blockchain_btc_graph(
@@ -60,7 +60,7 @@ pub async fn run(
         }
 
         if download_diff_and_hashrate_history {
-            debug!("Getting difficulty and hashrate history data...");
+            debug!("Fetching difficulty and hashrate history data");
             let diff_and_hashrate_day =
                 download_diff_and_hashrate_data(&client, TickerTimeFrame::Day1).await;
 
@@ -88,7 +88,7 @@ pub async fn run(
         }
 
         if download_blocks_history {
-            debug!("Getting blocks history data...");
+            debug!("Fetching block height history data");
             let blockheight_history = download_blockheight_history(&client).await;
 
             display_controller.update_blocks_last_24h(
@@ -110,10 +110,10 @@ async fn download_btc_history_data(client: &Client) -> BtcHistoryData {
         Ok(response) => response
             .json::<BtcHistoryData>()
             .await
-            .tap_err(|e| warn!("Failed to parse btc history JSON: {e}"))
+            .tap_err(|err| error!(error = %err, "Failed to parse Bitcoin history JSON response"))
             .unwrap_or_default(),
-        Err(e) => {
-            warn!("Failed to get btc history data from API: {e}");
+        Err(err) => {
+            warn!(error = %err, "Failed to fetch Bitcoin history data from API");
             BtcHistoryData::default()
         }
     }
@@ -131,12 +131,12 @@ async fn download_diff_and_hashrate_data(
         Ok(response) => response
             .json::<DiffHashrateData>()
             .await
-            .tap_err(|e| {
-                warn!("Failed to parse difficulty and hashrate history JSON: {e}");
+            .tap_err(|err| {
+                error!(error = %err, timeframe = %timeframe, "Failed to parse difficulty and hashrate history JSON response");
             })
             .unwrap_or_default(),
-        Err(e) => {
-            warn!("Failed to get difficulty and hashrate history data from API: {e}");
+        Err(err) => {
+            warn!(error = %err, timeframe = %timeframe, "Failed to fetch difficulty and hashrate history data from API");
             DiffHashrateData::default()
         }
     }
@@ -152,10 +152,12 @@ async fn download_blockheight_history(client: &Client) -> Vec<BlockheightData> {
         Ok(response) => response
             .json::<Vec<BlockheightData>>()
             .await
-            .tap_err(|e| warn!("Failed to parse blockheight history JSON: {e}"))
+            .tap_err(
+                |err| error!(error = %err, "Failed to parse block height history JSON response"),
+            )
             .unwrap_or_default(),
-        Err(e) => {
-            warn!("Failed to get blockheight history from API: {e}");
+        Err(err) => {
+            warn!(error = %err, "Failed to fetch block height history data from API");
             Vec::default()
         }
     }
