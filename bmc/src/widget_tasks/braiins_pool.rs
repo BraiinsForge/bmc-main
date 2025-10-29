@@ -17,7 +17,7 @@ use reqwest::Client;
 use std::sync::Arc;
 use tokio::sync::{RwLock, watch};
 use tokio::time::interval;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 #[expect(clippy::too_many_arguments)]
 #[instrument(name = "braiins_pool", skip_all, fields(%scene_id, %widget_id))]
@@ -80,14 +80,14 @@ pub async fn run(
     );
 
     let Some(account_id) = account_id else {
-        warn!("Widget {widget_id} is missing Account ID");
+        warn!(widget_id = %widget_id, "Widget is missing Account ID");
         return;
     };
 
     let client = match Client::builder().timeout(API_TIMEOUT).build() {
         Ok(client) => client,
         Err(err) => {
-            warn!(?err, "Failed to create reqwest client, stopping");
+            error!(?err, "Failed to create reqwest client, stopping");
             return;
         }
     };
@@ -104,7 +104,7 @@ pub async fn run(
                 };
                 (auth, account.name.clone())
             } else {
-                warn!("Missing account with id: {account_id}");
+                warn!(account_id = %account_id, "Missing account with ID");
                 return;
             };
 
@@ -116,7 +116,7 @@ pub async fn run(
 
         display_controller.update_account_name(scene_id.clone(), widget_id.clone(), account_name);
 
-        debug!("Getting user current hashrate data...");
+        debug!("Fetching user current hashrate data");
         let current_hashrate = download_current_hashrate_data(&client, &api_key).await;
         display_controller.update_current_user_hashrate(
             scene_id.clone(),
@@ -126,7 +126,7 @@ pub async fn run(
         );
 
         if download_rewards {
-            debug!("Getting user latest rewards data...");
+            debug!("Fetching user latest rewards data");
             let latest_rewards = download_latest_rewards_data(&client, &api_key).await;
             display_controller.update_rewards_latest(
                 scene_id.clone(),
@@ -137,7 +137,7 @@ pub async fn run(
         }
 
         if download_hashrate_history {
-            debug!("Getting user hashrate history data...");
+            debug!("Fetching user hashrate history data");
             let to_timestamp = Utc::now();
             let from_timestamp = to_timestamp
                 .checked_sub_signed(chart_frame.clone().into())
@@ -172,7 +172,7 @@ pub async fn run(
         }
 
         if download_workers_stats {
-            debug!("Getting current workers data...");
+            debug!("Fetching current workers data");
             let workers_stats = download_worker_stats_data(&client, &api_key).await;
             display_controller.update_current_workers(
                 scene_id.clone(),
@@ -183,7 +183,7 @@ pub async fn run(
         }
 
         if download_workers_history {
-            debug!("Getting user worker history data...");
+            debug!("Fetching user worker history data");
             let to_timestamp = Utc::now();
             let from_timestamp = to_timestamp
                 .checked_sub_signed(chart_frame.clone().into())
@@ -207,9 +207,9 @@ pub async fn run(
         }
 
         if download_payout_stats {
-            debug!("Getting user financials data...");
+            debug!("Fetching user financials data");
             let user_financials = download_user_financials_data(&client, &api_key).await;
-            debug!("Getting user recent payouts data...");
+            debug!("Fetching user recent payouts data");
             let recent_payouts = download_recent_payouts_data(&client, &api_key).await;
             display_controller.update_payout_stats(
                 scene_id.clone(),
@@ -221,7 +221,7 @@ pub async fn run(
         }
 
         if download_recent_payouts {
-            debug!("Getting user recent payouts data...");
+            debug!("Fetching user recent payouts data");
             let to_timestamp = Utc::now();
             let from_timestamp = to_timestamp
                 .checked_sub_signed(chart_frame.clone().into())
@@ -258,10 +258,12 @@ async fn download_current_hashrate_data(client: &Client, api_key: &str) -> Curre
         Ok(response) => response
             .json::<CurrentUserHashrate>()
             .await
-            .map_err(|e| warn!("Failed to parse user current hashrate JSON: {e}"))
+            .inspect_err(
+                |err| error!(error = %err, "Failed to parse user current hashrate JSON response"),
+            )
             .unwrap_or_default(),
-        Err(e) => {
-            warn!("Failed to get user current hashrate data from API: {e}");
+        Err(err) => {
+            warn!(error = %err, "Failed to fetch user current hashrate data from API");
             CurrentUserHashrate::default()
         }
     }
@@ -280,10 +282,12 @@ async fn download_latest_rewards_data(client: &Client, api_key: &str) -> LatestU
         Ok(response) => response
             .json::<LatestUserRewards>()
             .await
-            .map_err(|e| warn!("Failed to parse user latest rewards JSON: {e}"))
+            .inspect_err(
+                |err| error!(error = %err, "Failed to parse user latest rewards JSON response"),
+            )
             .unwrap_or_default(),
-        Err(e) => {
-            warn!("Failed to get user latest rewards data from API: {e}");
+        Err(err) => {
+            warn!(error = %err, "Failed to fetch user latest rewards data from API");
             LatestUserRewards::default()
         }
     }
@@ -323,13 +327,13 @@ async fn download_paginated_hashrate_history_data(
         let hashrate_history_partial = match request.send().await {
             Ok(response) => match response.json::<UserHashrateHistory>().await {
                 Ok(data) => data,
-                Err(e) => {
-                    warn!("Failed to parse user hashrate history JSON: {e}");
+                Err(err) => {
+                    error!(error = %err, "Failed to parse user hashrate history JSON response");
                     break;
                 }
             },
-            Err(e) => {
-                warn!("Failed to get user hashrate history data from API: {e}");
+            Err(err) => {
+                warn!(error = %err, "Failed to fetch user hashrate history data from API");
                 break;
             }
         };
@@ -356,10 +360,12 @@ async fn download_worker_stats_data(client: &Client, api_key: &str) -> CurrentUs
         Ok(response) => response
             .json::<CurrentUserWorkerStats>()
             .await
-            .map_err(|e| warn!("Failed to parse current workers JSON: {e}"))
+            .inspect_err(
+                |err| error!(error = %err, "Failed to parse current workers JSON response"),
+            )
             .unwrap_or_default(),
-        Err(e) => {
-            warn!("Failed to get current workers data from API: {e}");
+        Err(err) => {
+            warn!(error = %err, "Failed to fetch current workers data from API");
             CurrentUserWorkerStats::default()
         }
     }
@@ -400,13 +406,13 @@ async fn download_paginated_worker_history_data(
         let worker_history_partial = match request.send().await {
             Ok(response) => match response.json::<UserWorkerHistory>().await {
                 Ok(data) => data,
-                Err(e) => {
-                    warn!("Failed to parse user worker history JSON: {e}");
+                Err(err) => {
+                    error!(error = %err, "Failed to parse user worker history JSON response");
                     break;
                 }
             },
-            Err(e) => {
-                warn!("Failed to get user worker history data from API: {e}");
+            Err(err) => {
+                warn!(error = %err, "Failed to fetch user worker history data from API");
                 break;
             }
         };
@@ -433,10 +439,12 @@ async fn download_user_financials_data(client: &Client, api_key: &str) -> UserFi
         Ok(response) => response
             .json::<UserFinancials>()
             .await
-            .map_err(|e| warn!("Failed to parse user financials JSON: {e}"))
+            .inspect_err(
+                |err| error!(error = %err, "Failed to parse user financials JSON response"),
+            )
             .unwrap_or_default(),
-        Err(e) => {
-            warn!("Failed to get user financials data from API: {e}");
+        Err(err) => {
+            warn!(error = %err, "Failed to fetch user financials data from API");
             UserFinancials::default()
         }
     }
@@ -456,10 +464,12 @@ async fn download_recent_payouts_data(client: &Client, api_key: &str) -> RecentU
         Ok(response) => response
             .json::<RecentUserPayouts>()
             .await
-            .map_err(|e| warn!("Failed to parse user recent payouts JSON: {e}"))
+            .inspect_err(
+                |err| error!(error = %err, "Failed to parse user recent payouts JSON response"),
+            )
             .unwrap_or_default(),
-        Err(e) => {
-            warn!("Failed to get user recent payouts data from API: {e}");
+        Err(err) => {
+            warn!(error = %err, "Failed to fetch user recent payouts data from API");
             RecentUserPayouts::default()
         }
     }
@@ -500,13 +510,13 @@ async fn download_paginated_recent_payouts_data(
         let recent_payouts_partial = match request.send().await {
             Ok(response) => match response.json::<RecentUserPayouts>().await {
                 Ok(data) => data,
-                Err(e) => {
-                    warn!("Failed to parse user recent payouts JSON: {e}");
+                Err(err) => {
+                    error!(error = %err, "Failed to parse user recent payouts JSON response");
                     break;
                 }
             },
-            Err(e) => {
-                warn!("Failed to get user recent payouts data from API: {e}");
+            Err(err) => {
+                warn!(error = %err, "Failed to fetch user recent payouts data from API");
                 break;
             }
         };
