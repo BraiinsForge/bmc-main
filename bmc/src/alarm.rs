@@ -32,7 +32,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -216,19 +216,27 @@ impl AlarmBus {
     }
 
     pub fn stop_all(&self) {
-        let _ = self.tx_commands.send(AlarmCmd::StopAll);
+        if let Err(err) = self.tx_commands.send(AlarmCmd::StopAll) {
+            warn!(error = %err, "Failed to send StopAll command, no active receivers");
+        }
     }
 
-    pub fn stop_alarm(&self, id: AlarmId) {
-        let _ = self.tx_commands.send(AlarmCmd::Stop { id });
+    pub fn stop_alarm(&self, id: &AlarmId) {
+        if let Err(err) = self.tx_commands.send(AlarmCmd::Stop { id: id.clone() }) {
+            warn!(alarm_id = %id, error = %err, "Failed to send Stop command, no active receivers");
+        }
     }
 
     pub fn snooze(&self) {
-        let _ = self.tx_commands.send(AlarmCmd::Snooze);
+        if let Err(err) = self.tx_commands.send(AlarmCmd::Snooze) {
+            warn!(error = %err, "Failed to send Snooze command, no active receivers");
+        }
     }
 
     pub fn send_event(&self, event: AlarmEvent) {
-        let _ = self.tx_events.send(event);
+        if let Err(err) = self.tx_events.send(event) {
+            warn!(error = %err, "Failed to send alarm event, no active receivers");
+        }
     }
 
     pub fn subscribe_commands(&self) -> broadcast::Receiver<AlarmCmd> {
@@ -307,9 +315,13 @@ impl CurrentRunningAlarm {
     async fn cancel(self) {
         self.cancellation_token.cancel();
         if let Some(handle) = self.sound_join_handle {
-            _ = handle.await;
+            if let Err(err) = handle.await {
+                warn!(alarm_id = %self.alarm.id, error = %err, "Sound task panicked during cancellation");
+            }
         }
-        _ = self.timeout_join_handle.await;
+        if let Err(err) = self.timeout_join_handle.await {
+            warn!(alarm_id = %self.alarm.id, error = %err, "Timeout task panicked during cancellation");
+        }
     }
 }
 
@@ -372,7 +384,17 @@ impl AlarmScheduler {
             let self_ = self.clone();
             async move {
                 while let Some(active_alarm) = alarm_receiver.recv().await {
-                    debug!("New alarm is starting: {:?}", active_alarm);
+                    let alarm_id = &active_alarm.id;
+                    let alarm_name = &active_alarm.name;
+                    let alarm_time = active_alarm.time;
+                    let snooze_count = active_alarm.snooze_count;
+                    info!(
+                        alarm_id = %alarm_id,
+                        alarm_name = %alarm_name,
+                        alarm_time = %alarm_time,
+                        snooze_count = snooze_count,
+                        "Starting alarm"
+                    );
 
                     //NOTE: Check if active_alarm is really enabled. It could happen that alarm is snoozed and then it is manually removed or disabled
                     if !self_
@@ -414,10 +436,10 @@ impl AlarmScheduler {
 
                             tokio::select! {
                                 () = token.cancelled() => {
-                                    debug!("Alarm cancelled before timeout {:?}", alarm_id);
+                                    info!(alarm_id = %alarm_id, "Alarm cancelled before timeout");
                                 }
                                 () = &mut deadline => {
-                                    debug!("Alarm timed out after 10 minutes, sending Stopped message. {:?}", alarm_id);
+                                    info!(alarm_id = %alarm_id, timeout_minutes = 10, "Alarm timed out, auto-stopping");
                                     token.cancel();
                                     alarm_bus.send_event(AlarmEvent::Stopped { id: alarm_id });
                                 }
@@ -425,7 +447,6 @@ impl AlarmScheduler {
                         }
                     });
 
-                    debug!("Sending message AlarmEvent::Started: {:?}", active_alarm);
                     self_.alarm_bus.send_event(AlarmEvent::Started {
                         alarm: active_alarm.clone(),
                     });
@@ -453,10 +474,13 @@ impl AlarmScheduler {
 
             async move {
                 while let Ok(cmd) = rx.recv().await {
-                    debug!("Command received: {:?}", cmd);
                     match cmd {
-                        AlarmCmd::StopAll => self_.cancel_current_alarm().await,
+                        AlarmCmd::StopAll => {
+                            info!("Received StopAll command");
+                            self_.cancel_current_alarm().await;
+                        }
                         AlarmCmd::Stop { id } => {
+                            info!(alarm_id = %id, "Received Stop command");
                             if let Some(alarm) = self_
                                 .current_alarm
                                 .lock()
@@ -468,6 +492,7 @@ impl AlarmScheduler {
                             }
                         }
                         AlarmCmd::Snooze => {
+                            info!("Received Snooze command");
                             if let Some(active_alarm) = self_.current_alarm.lock().await.take() {
                                 let mut alarm = active_alarm.alarm.clone();
                                 active_alarm.cancel().await;
@@ -479,11 +504,19 @@ impl AlarmScheduler {
                                     tokio::spawn({
                                         let self_ = self_.clone();
                                         alarm.snooze_count += 1;
+                                        let snooze_count = alarm.snooze_count;
+                                        let alarm_id = alarm.id.clone();
 
                                         async move {
+                                            info!(
+                                                alarm_id = %alarm_id,
+                                                snooze_count = snooze_count,
+                                                snooze_duration_secs = duration.as_secs(),
+                                                "Alarm snoozed, will retrigger after duration"
+                                            );
                                             tokio::time::sleep(duration).await;
-                                            if let Err(e) = self_.alarm_sender.send(alarm).await {
-                                                warn!("Failed to trigger alarm. {e}");
+                                            if let Err(err) = self_.alarm_sender.send(alarm).await {
+                                                warn!(error = %err, "Failed to trigger snoozed alarm");
                                             }
                                         }
                                     });
@@ -499,13 +532,16 @@ impl AlarmScheduler {
     async fn cancel_current_alarm(&self) {
         if let Some(running_alarm) = self.current_alarm.lock().await.take() {
             let alarm_data = running_alarm.alarm.data.clone();
+            let alarm_id = &alarm_data.id;
+            let alarm_name = &alarm_data.name;
+
             running_alarm.cancel().await;
 
             self.alarm_bus.send_event(AlarmEvent::Stopped {
                 id: alarm_data.id.clone(),
             });
 
-            debug!("Current active alarm was cancelled: {:?}", alarm_data);
+            info!(alarm_id = %alarm_id, alarm_name = %alarm_name, "Cancelled active alarm");
         }
     }
 
@@ -520,8 +556,8 @@ impl AlarmScheduler {
                 let sender = sender.clone();
                 let alarm_data = alarm_data.clone();
                 Box::pin(async move {
-                    if let Err(e) = sender.send(alarm_data.into()).await {
-                        warn!("Failed to trigger alarm. {e}");
+                    if let Err(err) = sender.send(alarm_data.into()).await {
+                        warn!(error = %err, "Failed to trigger scheduled alarm");
                     }
                 }) as Pin<Box<dyn Future<Output = ()> + Send>>
             }
@@ -539,7 +575,14 @@ impl AlarmScheduler {
         self.active_alarms
             .lock()
             .await
-            .insert(alarm_data.id, schedule_id);
+            .insert(alarm_data.id.clone(), schedule_id);
+
+        info!(
+            alarm_id = %alarm_data.id,
+            alarm_name = %alarm_data.name,
+            alarm_time = %alarm_data.time,
+            "Alarm scheduled successfully"
+        );
 
         self.recompute_next_alarm_time().await;
 
@@ -548,7 +591,7 @@ impl AlarmScheduler {
 
     async fn remove(&self, id: &AlarmId) -> anyhow::Result<()> {
         if let Some(ref job_id) = self.active_alarms.lock().await.remove(id) {
-            self.alarm_bus.stop_alarm(id.clone());
+            self.alarm_bus.stop_alarm(id);
 
             self.scheduler
                 .cancel(job_id)
@@ -562,6 +605,7 @@ impl AlarmScheduler {
 
     async fn recompute_next_alarm_time(&self) {
         let Ok(alarms) = self.scheduler.jobs_by_source(Self::SCHEDULER_SOURCE).await else {
+            error!("Failed to get scheduled alarms from scheduler");
             self.display_controller.set_next_alarm(None);
             return;
         };
@@ -574,6 +618,8 @@ impl AlarmScheduler {
             .sorted()
             .next()
             .map(|next_tick| next_tick.with_timezone(timezone.chrono()).fixed_offset());
+
+        info!(next_alarm = ?maybe_next_alarm_dt, "Recomputed next alarm time");
 
         self.display_controller.set_next_alarm(maybe_next_alarm_dt);
     }
@@ -631,7 +677,9 @@ impl AlarmController {
                     // NOTE: Alarm that is not repeatable needs to be deactivated after it was triggered
                     if let Some(alarm) = self_.alarms().await.iter().find(|alarm| alarm.id == id) {
                         if alarm.repeat.is_empty() {
-                            _ = self_.set_enabled(id, false).await;
+                            if let Err(err) = self_.set_enabled(id.clone(), false).await {
+                                warn!(alarm_id = %id, error = ?err, "Failed to disable non-repeating alarm after it was triggered");
+                            }
                         }
                     }
                 }
@@ -649,11 +697,17 @@ impl AlarmController {
         let mut config = self.config_handle.write().await;
         let mut temp_config = config.clone();
 
-        if config
+        if let Some(existing) = config
             .alarms()
             .iter()
-            .any(|existing| existing.time == alarm_data.time)
+            .find(|existing| existing.time == alarm_data.time)
         {
+            warn!(
+                alarm_id = %alarm_data.id,
+                time = %alarm_data.time,
+                existing_alarm_id = %existing.id,
+                "Failed to add alarm: An alarm with the same time already exists"
+            );
             return Err(AlarmError::DuplicateAlarm);
         }
 
@@ -663,26 +717,28 @@ impl AlarmController {
             self.scheduler
                 .schedule(alarm_data.clone())
                 .await
-                .map_err(|e| {
-                    warn!("Failed to schedule alarm, err {e}");
+                .map_err(|err| {
+                    error!(alarm_id = %alarm_id, error = ?err, "Failed to schedule alarm");
                     AlarmError::ScheduleAlarm
                 })?;
         }
 
         temp_config.add_alarm(alarm_data);
 
-        if let Err(e) = temp_config.save().await {
-            warn!("Failed to store alarm, err {e}");
+        if let Err(err) = temp_config.save().await {
+            error!(alarm_id = %alarm_id, error = ?err, "Failed to save alarm configuration");
 
             _ = self
                 .scheduler
                 .remove(&alarm_id)
                 .await
-                .inspect_err(|e| warn!("{:?}", e));
+                .inspect_err(|err| error!(alarm_id = %alarm_id, error = ?err, "Failed to remove alarm from scheduler during rollback"));
 
             return Err(AlarmError::SyncToStorage);
         }
         *config = temp_config;
+
+        info!(alarm_id = %alarm_id, "Alarm created successfully");
 
         Ok(())
     }
@@ -698,19 +754,26 @@ impl AlarmController {
             .iter()
             .any(|existing| existing.id == alarm_id)
         {
+            warn!(alarm_id = %alarm_id, "Failed to update alarm: Alarm not found");
             return Err(AlarmError::NotFound);
         }
 
-        if config
+        if let Some(existing) = config
             .alarms()
             .iter()
-            .any(|existing| existing.time == alarm_data.time && existing.id != alarm_id)
+            .find(|existing| existing.time == alarm_data.time && existing.id != alarm_id)
         {
+            warn!(
+                alarm_id = %alarm_id,
+                time = %alarm_data.time,
+                existing_alarm_id = %existing.id,
+                "Failed to update alarm: An alarm with the same time already exists"
+            );
             return Err(AlarmError::DuplicateAlarm);
         }
 
-        self.scheduler.remove(&alarm_id).await.map_err(|e| {
-            warn!("{:?}", e);
+        self.scheduler.remove(&alarm_id).await.map_err(|err| {
+            warn!(alarm_id = %alarm_id, error = ?err, "Failed to remove alarm from scheduler");
             AlarmError::RemoveAlarm
         })?;
 
@@ -718,27 +781,29 @@ impl AlarmController {
             self.scheduler
                 .schedule(alarm_data.clone())
                 .await
-                .map_err(|e| {
-                    warn!("Failed to schedule alarm, err {e}");
+                .map_err(|err| {
+                    warn!(alarm_id = %alarm_id, error = ?err, "Failed to schedule updated alarm");
                     AlarmError::ScheduleAlarm
                 })?;
         }
 
         temp_config.set_alarm(alarm_data);
 
-        if let Err(e) = temp_config.save().await {
-            warn!("Failed to store alarm, err {e}");
+        if let Err(err) = temp_config.save().await {
+            warn!(alarm_id = %alarm_id, error = ?err, "Failed to save updated alarm configuration");
 
             _ = self
                 .scheduler
                 .remove(&alarm_id)
                 .await
-                .inspect_err(|e| warn!("{:?}", e));
+                .inspect_err(|err| warn!(alarm_id = %alarm_id, error = ?err, "Failed to remove alarm from scheduler during rollback"));
 
             return Err(AlarmError::SyncToStorage);
         }
 
         *config = temp_config;
+
+        info!(alarm_id = %alarm_id, "Alarm updated successfully");
 
         Ok(())
     }
@@ -748,22 +813,25 @@ impl AlarmController {
         let mut temp_config = config.clone();
 
         if !config.alarms().iter().any(|alarm| alarm.id == alarm_id) {
+            warn!(alarm_id = %alarm_id, "Failed to remove alarm: Alarm not found");
             return Err(AlarmError::NotFound);
         }
 
-        self.scheduler.remove(&alarm_id).await.map_err(|e| {
-            warn!("{:?}", e);
+        self.scheduler.remove(&alarm_id).await.map_err(|err| {
+            warn!(alarm_id = %alarm_id, error = ?err, "Failed to remove alarm from scheduler");
             AlarmError::RemoveAlarm
         })?;
 
         temp_config.remove_alarm(&alarm_id);
 
-        temp_config.save().await.map_err(|e| {
-            warn!("Failed to store alarm, err {e}");
+        temp_config.save().await.map_err(|err| {
+            warn!(alarm_id = %alarm_id, error = ?err, "Failed to save configuration after removing alarm");
             AlarmError::SyncToStorage
         })?;
 
         *config = temp_config;
+
+        info!(alarm_id = %alarm_id, "Alarm removed successfully");
 
         Ok(())
     }
@@ -780,12 +848,15 @@ impl AlarmController {
             .alarms()
             .into_iter()
             .find(|alarm| alarm.id == alarm_id)
-            .ok_or(AlarmError::NotFound)?;
+            .ok_or_else(|| {
+                warn!(alarm_id = %alarm_id, "Failed to set alarm enabled state: Alarm not found");
+                AlarmError::NotFound
+            })?;
 
         alarm_data.enabled = enabled;
 
-        self.scheduler.remove(&alarm_data.id).await.map_err(|e| {
-            warn!("{:?}", e);
+        self.scheduler.remove(&alarm_data.id).await.map_err(|err| {
+            warn!(alarm_id = %alarm_id, error = ?err, "Failed to remove alarm from scheduler");
             AlarmError::RemoveAlarm
         })?;
 
@@ -793,26 +864,32 @@ impl AlarmController {
             self.scheduler
                 .schedule(alarm_data.clone())
                 .await
-                .map_err(|e| {
-                    warn!("Failed to schedule alarm, err {e}");
+                .map_err(|err| {
+                    warn!(alarm_id = %alarm_id, error = ?err, "Failed to schedule alarm after enabling");
                     AlarmError::ScheduleAlarm
                 })?;
         }
 
         temp_config.set_alarm(alarm_data);
 
-        if let Err(e) = temp_config.save().await {
-            warn!("Failed to store alarm, err {e}");
+        if let Err(err) = temp_config.save().await {
+            warn!(alarm_id = %alarm_id, error = ?err, enabled = enabled, "Failed to save alarm enabled state");
 
             _ = self
                 .scheduler
                 .remove(&alarm_id)
                 .await
-                .inspect_err(|e| warn!("{:?}", e));
+                .inspect_err(|err| warn!(alarm_id = %alarm_id, error = ?err, "Failed to remove alarm from scheduler during rollback"));
 
             return Err(AlarmError::SyncToStorage);
         }
         *config = temp_config;
+
+        if enabled {
+            info!(alarm_id = %alarm_id, "Alarm enabled successfully");
+        } else {
+            info!(alarm_id = %alarm_id, "Alarm disabled successfully");
+        }
 
         Ok(())
     }
