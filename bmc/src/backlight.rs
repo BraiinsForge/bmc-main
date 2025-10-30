@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use bmc_display::display_driver::DisplayBacklightDriver;
 use tokio::sync::{Mutex, RwLock};
+use tracing::info;
 
 use crate::config::ConfigHandle;
 
@@ -34,6 +35,11 @@ impl<T: DisplayBacklightDriver> DisplayBacklightController<T> {
 
         config_handle.save().await?;
 
+        info!(
+            brightness_pct = value_pct,
+            "Display brightness configuration updated"
+        );
+
         Ok(())
     }
 
@@ -42,6 +48,11 @@ impl<T: DisplayBacklightDriver> DisplayBacklightController<T> {
             .lock()
             .await
             .set_brightness_pct(value_pct)?;
+
+        info!(
+            brightness_pct = value_pct,
+            "Display backlight brightness applied"
+        );
 
         Ok(())
     }
