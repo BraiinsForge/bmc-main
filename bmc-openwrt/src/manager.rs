@@ -29,8 +29,7 @@ use std::{
     path::Path,
 };
 use tokio::{fs, process::Command};
-use tracing::log::debug;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 #[derive(Debug)]
 pub struct Manager {
@@ -73,7 +72,7 @@ impl Manager {
         let bmc_info = match BmcInfo::load() {
             Ok(bmc_info) => Some(bmc_info),
             Err(err) => {
-                error!(?err, "Failed to load BMC info");
+                error!(error = ?err, "Failed to load BMC info");
                 None
             }
         };
@@ -126,7 +125,7 @@ impl Manager {
             .mac
             .clone()
             .unwrap_or_else(|| {
-                error!("Cannot obtain MAC address");
+                error!("Failed to obtain MAC address, using default");
                 MacAddr::default()
             })
             .to_string()
@@ -141,26 +140,33 @@ impl Manager {
     }
 
     async fn configure_wifi_ap(&self) -> Result<(), InitialSetupError> {
-        info!("Setting up WiFi AP for initial setup");
+        let ssid = self.wifi_ssid();
+        info!(ssid = %ssid, "Configuring WiFi AP for initial setup");
         let wifi_manager = self.wifi_manager.as_ref();
-        debug!("Resetting wifi to default");
 
         wifi_manager
             .reset_config()
             .await
+            .inspect_err(|err| error!(error = %err, "Failed to reset WiFi config"))
             .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
         wifi_manager
-            .configure_ap_mode(self.wifi_ssid(), None, EncryptionType::None)
+            .configure_ap_mode(ssid, None, EncryptionType::None)
             .await
+            .inspect_err(|err| error!(error = %err, "Failed to configure WiFi AP mode"))
             .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
         wifi_manager
             .enable_radio(true)
             .await
-            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))
+            .inspect_err(|err| error!(error = %err, "Failed to enable WiFi radio"))
+            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
+
+        info!("WiFi AP configured successfully");
+        Ok(())
     }
 
     async fn disable_captive_portal(&self) -> Result<(), InitialSetupError> {
         debug!("Disabling captive portal configuration");
+
         call_command(
             "sh",
             &[
@@ -168,10 +174,11 @@ impl Manager {
                 ". /lib/functions/bos-factory-default.sh && disable_captive_portal && /etc/init.d/dnsmasq restart",
             ],
         )
-            .await
-            .map_err(|e| InitialSetupError::UnexpectedFailure(format!("Failed to remove captive portal configuration: {e}")))?;
+        .await
+        .inspect_err(|err| error!(error = %err, "Failed to disable captive portal"))
+        .map_err(|err| InitialSetupError::UnexpectedFailure(format!("Failed to disable captive portal: {err}")))?;
 
-        debug!("Captive portal configuration disabled");
+        info!("Captive portal disabled successfully");
         Ok(())
     }
 }
@@ -193,6 +200,12 @@ impl BmcManager for Manager {
     }
 
     async fn upgrade(&self, keep_settings: bool, upgrade_image_path: &Path) -> anyhow::Result<()> {
+        info!(
+            keep_settings = keep_settings,
+            path = %upgrade_image_path.display(),
+            "Starting system upgrade"
+        );
+
         let mut sysupgrade = Command::new(Self::SYSUPGRADE_BIN);
         if !keep_settings {
             sysupgrade.arg(Self::SYSUPGRADE_ARG_NO_SAVE);
@@ -204,15 +217,23 @@ impl BmcManager for Manager {
         let status = handle
             .wait()
             .await
+            .inspect_err(|err| error!(error = %err, "Upgrade process wait failed"))
             .map_err(|_| anyhow!("Invalid firmware image"))?;
 
         if let Some(code) = status.code() {
             match code {
                 // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
-                1 => Err(anyhow!("Invalid firmware image")),
-                _ => Ok(()),
+                1 => {
+                    error!(exit_code = code, "Upgrade failed: invalid firmware image");
+                    Err(anyhow!("Invalid firmware image"))
+                }
+                _ => {
+                    info!("System upgrade completed successfully");
+                    Ok(())
+                }
             }
         } else {
+            error!("Upgrade process terminated without exit code");
             Err(anyhow!("Upgrade failed"))
         }
     }
@@ -221,7 +242,13 @@ impl BmcManager for Manager {
         let is_after_upgrade = Path::new(Self::UPGRADE_RESULT_FILE_PATH).exists();
 
         if is_after_upgrade {
-            _ = fs::remove_file(Self::UPGRADE_RESULT_FILE_PATH).await;
+            if let Err(err) = fs::remove_file(Self::UPGRADE_RESULT_FILE_PATH).await {
+                error!(
+                    error = %err,
+                    path = Self::UPGRADE_RESULT_FILE_PATH,
+                    "Failed to remove upgrade marker file"
+                );
+            }
         }
 
         is_after_upgrade
@@ -239,8 +266,6 @@ impl BmcManager for Manager {
     }
 
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error> {
-        info!("Changing `{ROOT_USERNAME}` password");
-
         let mut shadow_file = ShadowFile::from_file(SHADOW_PATH)?;
         shadow_file.set_password(ROOT_USERNAME, password, PasswordHashType::Md5)?;
 
@@ -248,6 +273,8 @@ impl BmcManager for Manager {
 
         fs::write(&temp_shadow_file_path, shadow_file.to_string()).await?;
         fs::rename(&temp_shadow_file_path, SHADOW_PATH).await?;
+
+        info!(username = ROOT_USERNAME, "System password updated");
 
         Ok(())
     }
@@ -265,6 +292,7 @@ impl BmcManager for Manager {
 
         self.restart_system_service().await?;
 
+        let timezone_for_log = timezone.clone();
         self.timezone_sender.send_if_modified(|current| {
             if *current != timezone {
                 *current = timezone;
@@ -272,6 +300,8 @@ impl BmcManager for Manager {
             }
             false
         });
+
+        info!(timezone = %timezone_for_log, "System timezone updated");
 
         Ok(())
     }
@@ -419,20 +449,35 @@ impl BmcManager for Manager {
     }
 
     async fn wifi_initial_setup(&self, config: WifiNetworkConfig) -> Result<(), InitialSetupError> {
-        debug!(
-            "Connecting to wifi '{}', with password: {:?}",
-            config.ssid, config.password
+        let has_password = config.password.is_some();
+        info!(
+            ssid = %config.ssid,
+            has_password = has_password,
+            encryption = ?config.encryption,
+            "Connecting to WiFi for initial setup"
         );
-        self.wifi_save_and_connect(config.ssid, config.password, config.encryption)
+
+        self.wifi_save_and_connect(config.ssid.clone(), config.password, config.encryption)
             .await
-            .map_err(|e| InitialSetupError::WifiConnectionFailure(e.to_string()))?;
-        debug!("Connection to wifi finished successfully");
+            .inspect_err(|err| {
+                error!(
+                    error = %err,
+                    ssid = %config.ssid,
+                    "Failed to save and connect to WiFi"
+                );
+            })
+            .map_err(|err| InitialSetupError::WifiConnectionFailure(err.to_string()))?;
+
+        info!(ssid = %config.ssid, "WiFi connection established successfully");
 
         self.disable_captive_portal().await?;
 
         self.update_device_state()
             .await
-            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))
+            .inspect_err(|err| error!(error = %err, "Failed to update device state"))
+            .map_err(|err| InitialSetupError::UnexpectedFailure(err.to_string()))?;
+
+        Ok(())
     }
 
     async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
@@ -451,7 +496,9 @@ impl BmcManager for Manager {
 
         impl Drop for DropGuard {
             fn drop(&mut self) {
-                _ = self.wifi_event_sender.send(WifiEvent::ScanEnded);
+                if let Err(err) = self.wifi_event_sender.send(WifiEvent::ScanEnded) {
+                    debug!(error = %err, "Failed to send WiFi scan ended event");
+                }
             }
         }
 
@@ -459,7 +506,9 @@ impl BmcManager for Manager {
             wifi_event_sender: self.wifi_event_sender.clone(),
         };
 
-        _ = self.wifi_event_sender.send(WifiEvent::ScanStarted);
+        if let Err(err) = self.wifi_event_sender.send(WifiEvent::ScanStarted) {
+            debug!(error = %err, "Failed to send WiFi scan started event");
+        }
 
         self.wifi_manager.scan().await
     }
