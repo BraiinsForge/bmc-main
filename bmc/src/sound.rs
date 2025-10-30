@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::config::ConfigHandle;
 use bmc_audio::{Audio, Volume};
@@ -39,11 +39,16 @@ impl SoundController {
 
         config_handle.save().await?;
 
+        info!(volume_pct = value, "Sound volume configuration updated");
+
         Ok(())
     }
 
     pub(crate) async fn set_audio_sound_volume(&self, value: u8) -> anyhow::Result<()> {
         self.audio.write().await.set_volume(Volume::new(value)?);
+
+        info!(volume_pct = value, "Audio sound volume applied");
+
         Ok(())
     }
 
@@ -59,8 +64,12 @@ impl SoundController {
 
     pub(crate) async fn play_until_cancelled(&self, sound: Sounds, token: CancellationToken) {
         while !token.is_cancelled() {
-            if let Err(e) = self.play_sound(sound.clone(), token.clone()).await {
-                warn!("Failed to play sound, err: {e}");
+            if let Err(err) = self.play_sound(sound.clone(), token.clone()).await {
+                warn!(
+                    error = %err,
+                    sound = %sound,
+                    "Failed to play sound"
+                );
                 //NOTE: Sleep for few seconds. Resource can by busy playing other sounds
                 tokio::time::sleep(SLEEP_DURATION).await;
             }
