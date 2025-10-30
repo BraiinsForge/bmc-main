@@ -14,7 +14,7 @@ use bmc_scheduler::JobScheduler;
 use bmc_shared_time::time::Timezone;
 use chrono::NaiveTime;
 use tokio::sync::{Mutex, Notify, RwLock, watch};
-use tracing::warn;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
 
@@ -102,13 +102,19 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                 .set_display_brightness(brightness)
                 .await
             {
-                warn!(?err, "Failed to set display brightness");
+                warn!(
+                    error = %err,
+                    brightness = brightness,
+                    night_mode_active = night_mode_is_active,
+                    "Failed to set display brightness"
+                );
             }
 
             tokio::select! {
                 biased;
                 result = night_mode_receiver.changed() => {
-                    if result.is_err() {
+                    if let Err(err) = result {
+                        info!(error = %err, "Night mode receiver closed, stopping brightness update loop");
                         break;
                     }
                 },
@@ -133,13 +139,19 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             };
 
             if let Err(err) = sound_controller.set_audio_sound_volume(sound_volume).await {
-                warn!(?err, "Failed to set audio sound volume");
+                warn!(
+                    error = %err,
+                    volume = sound_volume,
+                    night_mode_active = night_mode_is_active,
+                    "Failed to set audio sound volume"
+                );
             }
 
             tokio::select! {
                 biased;
                 result = night_mode_receiver.changed() => {
-                    if result.is_err() {
+                    if let Err(err) = result {
+                        info!(error = %err, "Night mode receiver closed, stopping sound volume update loop");
                         break;
                     }
                 },
@@ -161,7 +173,8 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             }
             display_controller.set_night_mode(night_mode_is_active);
 
-            if night_mode_receiver.changed().await.is_err() {
+            if let Err(err) = night_mode_receiver.changed().await {
+                info!(error = %err, "Night mode receiver closed, stopping display update loop");
                 break;
             }
         }
