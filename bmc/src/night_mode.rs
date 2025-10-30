@@ -9,7 +9,7 @@ use bmc_scheduler::scheduler::Task;
 use bmc_shared_time::time::Timezone;
 use chrono::NaiveTime;
 use tokio::sync::{RwLock, watch};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::config::{ConfigHandle, NightModeConfig};
 
@@ -48,7 +48,19 @@ impl NightModeController {
         };
 
         if let Err(err) = this.schedule_jobs(&night_mode).await {
-            error!(?err, "Failed to schedule night-mode jobs");
+            error!(
+                error = %err,
+                enabled = night_mode.enabled,
+                from = %night_mode.from,
+                to = %night_mode.to,
+                "Failed to schedule night mode jobs"
+            );
+        } else {
+            info!(
+                enabled = night_mode.enabled,
+                is_active = is_active,
+                "Night mode controller initialized"
+            );
         }
 
         this
@@ -59,11 +71,27 @@ impl NightModeController {
         mut timezone_receiver: watch::Receiver<Timezone>,
         is_active_sender: watch::Sender<bool>,
     ) {
-        while let Ok(()) = timezone_receiver.changed().await {
-            let night_mode = config_handle.read().await.night_mode();
-            let timezone = timezone_receiver.borrow_and_update().clone();
-            let is_active = night_mode.is_active(&timezone);
-            is_active_sender.send_replace(is_active);
+        loop {
+            match timezone_receiver.changed().await {
+                Ok(()) => {
+                    let night_mode = config_handle.read().await.night_mode();
+                    let timezone = timezone_receiver.borrow_and_update().clone();
+                    let is_active = night_mode.is_active(&timezone);
+                    let previous_state = is_active_sender.send_replace(is_active);
+
+                    if previous_state != is_active {
+                        info!(
+                            timezone = %timezone,
+                            is_active = is_active,
+                            "Night mode state updated due to timezone change"
+                        );
+                    }
+                }
+                Err(err) => {
+                    info!(error = %err, "Timezone receiver closed, stopping night mode update loop");
+                    break;
+                }
+            }
         }
     }
 
@@ -89,6 +117,12 @@ impl NightModeController {
         let is_active = night_mode.is_active(&timezone);
         self.is_active_sender.send_replace(is_active);
 
+        info!(
+            enabled = enabled,
+            is_active = is_active,
+            "Night mode enabled state updated"
+        );
+
         Ok(())
     }
 
@@ -106,6 +140,13 @@ impl NightModeController {
         let is_active = night_mode.is_active(&timezone);
         self.is_active_sender.send_replace(is_active);
 
+        info!(
+            from = %from,
+            to = %to,
+            is_active = is_active,
+            "Night mode interval updated"
+        );
+
         Ok(())
     }
 
@@ -113,6 +154,8 @@ impl NightModeController {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_brightness(value_pct);
         config_handle.save().await?;
+
+        info!(brightness_pct = value_pct, "Night mode brightness updated");
 
         Ok(())
     }
@@ -122,21 +165,27 @@ impl NightModeController {
         config_handle.set_night_mode_sound_volume(sound_volume_pct);
         config_handle.save().await?;
 
+        info!(
+            volume_pct = sound_volume_pct,
+            "Night mode sound volume updated"
+        );
+
         Ok(())
     }
 
     async fn schedule_jobs(&self, night_mode: &NightModeConfig) -> anyhow::Result<()> {
-        debug!("cancel scheduled nightmode jobs");
+        debug!("Cancelling scheduled night mode jobs");
 
         self.scheduler
             .cancel_jobs(Self::NIGHT_MODE_SCHEDULER_SOURCE.to_owned())
             .await;
 
         if !night_mode.enabled {
+            debug!("Night mode disabled, no jobs scheduled");
             return Ok(());
         }
 
-        debug!("schedule nightmode jobs");
+        debug!(from = %night_mode.from, to = %night_mode.to, "Scheduling night mode jobs");
 
         let from_cron = bmc_scheduler::cron::from_naive_time(night_mode.from)?;
         let to_cron = bmc_scheduler::cron::from_naive_time(night_mode.to)?;
@@ -146,10 +195,13 @@ impl NightModeController {
                 Schedule::Cron(from_cron),
                 Task::Async({
                     let is_active_sender = self.is_active_sender.clone();
+                    let from_time = night_mode.from;
                     Box::new(move || {
                         let is_active_sender = is_active_sender.clone();
+                        let from_time = from_time;
                         Box::pin(async move {
                             is_active_sender.send_replace(true);
+                            info!(time = %from_time, "Night mode activated by schedule");
                         })
                     })
                 }),
@@ -162,10 +214,13 @@ impl NightModeController {
                 Schedule::Cron(to_cron),
                 Task::Async({
                     let is_active_sender = self.is_active_sender.clone();
+                    let to_time = night_mode.to;
                     Box::new(move || {
                         let is_active_sender = is_active_sender.clone();
+                        let to_time = to_time;
                         Box::pin(async move {
                             is_active_sender.send_replace(false);
+                            info!(time = %to_time, "Night mode deactivated by schedule");
                         })
                     })
                 }),
