@@ -381,16 +381,18 @@ impl<T: BmcManager> DisplayTasks<T> {
         loop {
             interval.tick().await;
 
-            debug!("Getting bitcoin data...");
+            debug!("Fetching Bitcoin price data");
             let client = Client::new();
             let btc_price_data = match client.get(PRICE_API_URL).timeout(API_TIMEOUT).send().await {
                 Ok(response) => response
                     .json::<BitcoinData>()
                     .await
-                    .map_err(|e| warn!("Failed to parse bitcoin price JSON: {e}"))
+                    .inspect_err(
+                        |err| error!(error = %err, "Failed to parse Bitcoin price JSON response"),
+                    )
                     .unwrap_or_default(),
-                Err(e) => {
-                    warn!("Failed to get bitcoin price from API: {e}");
+                Err(err) => {
+                    warn!(error = %err, "Failed to fetch Bitcoin price data from API");
                     BitcoinData::default()
                 }
             };
@@ -414,7 +416,7 @@ impl<T: BmcManager> DisplayTasks<T> {
         loop {
             interval.tick().await;
 
-            debug!("Getting blockheight data...");
+            debug!("Fetching block height data");
             let client = Client::new();
             let blockheight_data = match client
                 .get(blockheight_data::BLOCK_HEIGHT_API_URL)
@@ -429,13 +431,15 @@ impl<T: BmcManager> DisplayTasks<T> {
                 Ok(response) => response
                     .json::<Vec<BlockheightData>>()
                     .await
-                    .map_err(|e| warn!("Failed to parse blockheight JSON: {e}"))
+                    .inspect_err(
+                        |err| error!(error = %err, "Failed to parse block height JSON response"),
+                    )
                     .unwrap_or_default()
                     .first()
                     .cloned()
                     .unwrap_or_default(),
-                Err(e) => {
-                    warn!("Failed to get blockheight data from API: {e}");
+                Err(err) => {
+                    warn!(error = %err, "Failed to fetch block height data from API");
                     BlockheightData::default()
                 }
             };
@@ -478,15 +482,17 @@ impl<T: BmcManager> DisplayTasks<T> {
         loop {
             interval.tick().await;
 
-            debug!("Getting difficulty data...");
+            debug!("Fetching difficulty data");
             let difficulty_data = match client.get(DIFFICULTY_STATS_URL).send().await {
                 Ok(response) => response
                     .json::<DifficultyData>()
                     .await
-                    .map_err(|e| warn!("Failed to parse difficulty JSON: {e}"))
+                    .inspect_err(
+                        |err| error!(error = %err, "Failed to parse difficulty JSON response"),
+                    )
                     .unwrap_or_default(),
-                Err(e) => {
-                    warn!("Failed to get difficulty data from API: {e}");
+                Err(err) => {
+                    warn!(error = %err, "Failed to fetch difficulty data from API");
                     DifficultyData::default()
                 }
             };
@@ -514,7 +520,7 @@ impl<T: BmcManager> DisplayTasks<T> {
         loop {
             interval.tick().await;
 
-            debug!("Getting hashrate data...");
+            debug!("Fetching hashrate data");
             let hashrate_data = match client
                 .get(HASHRATE_STATS_URL)
                 .query(&[(CURRENCY_API_PARAM, "usd")])
@@ -524,10 +530,12 @@ impl<T: BmcManager> DisplayTasks<T> {
                 Ok(response) => response
                     .json::<HashrateData>()
                     .await
-                    .map_err(|e| warn!("Failed to parse hashrate JSON: {e}"))
+                    .inspect_err(
+                        |err| error!(error = %err, "Failed to parse hashrate JSON response"),
+                    )
                     .unwrap_or_default(),
-                Err(e) => {
-                    warn!("Failed to get hashrate data from API: {e}");
+                Err(err) => {
+                    warn!(error = %err, "Failed to fetch hashrate data from API");
                     HashrateData::default()
                 }
             };
