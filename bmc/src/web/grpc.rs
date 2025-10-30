@@ -28,6 +28,7 @@ use tracing::debug;
 
 mod account_management;
 pub mod authentication;
+mod logging;
 mod metadata;
 mod system;
 use super::{AlarmController, SystemUpgradeService};
@@ -38,6 +39,8 @@ mod network;
 mod scene_management;
 mod shared;
 mod upgrade_service;
+
+use logging::GrpcLoggingLayer;
 
 struct AuthInterceptor<S: SessionManager> {
     pub session_manager: Arc<S>,
@@ -116,6 +119,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         }
     }
 
+    #[expect(clippy::too_many_lines)]
     pub(crate) fn build(self) -> Routes {
         let auth_interceptor = AuthInterceptor {
             session_manager: self.session_manager.clone(),
@@ -185,39 +189,79 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             alarm::AlarmService::new(self.alarm_controller),
         );
 
+        let logging_layer = GrpcLoggingLayer::new();
+
         // GrpcWebLayer is badly named, it's not a "layer", it's re-wrapper for other Services
         // All services requiring authentication have to be wrapped in GrpcWebLayer and use "InterceptorFor"
         Routes::new(GrpcWebLayer::new().layer(reflection_service))
-            .add_service(GrpcWebLayer::new().layer(authentication_service))
-            .add_service(GrpcWebLayer::new().layer(metadata_service))
-            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                configuration_service,
-                auth_interceptor.clone(),
-            )))
-            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                scene_management_service,
-                auth_interceptor.clone(),
-            )))
-            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                account_management_service,
-                auth_interceptor.clone(),
-            )))
-            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                system_service,
-                auth_interceptor.clone(),
-            )))
-            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                network_service,
-                auth_interceptor.clone(),
-            )))
-            .add_service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                upgrade_service,
-                auth_interceptor.clone(),
-            )))
-            .add_service(GrpcWebLayer::new().layer(initial_setup_service))
             .add_service(
-                GrpcWebLayer::new()
-                    .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(authentication_service)),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(metadata_service)),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                        configuration_service,
+                        auth_interceptor.clone(),
+                    ))),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                        scene_management_service,
+                        auth_interceptor.clone(),
+                    ))),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                        account_management_service,
+                        auth_interceptor.clone(),
+                    ))),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                        system_service,
+                        auth_interceptor.clone(),
+                    ))),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                        network_service,
+                        auth_interceptor.clone(),
+                    ))),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                        upgrade_service,
+                        auth_interceptor.clone(),
+                    ))),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(initial_setup_service)),
+            )
+            .add_service(
+                tower::ServiceBuilder::new().layer(logging_layer).service(
+                    GrpcWebLayer::new()
+                        .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
+                ),
             )
     }
 }
