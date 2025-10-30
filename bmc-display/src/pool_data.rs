@@ -117,7 +117,6 @@ impl UserHashrateHistory {
     }
 
     #[must_use]
-    #[expect(clippy::needless_pass_by_value)]
     pub fn graph_units(&self, number_format: NumberFormat) -> ModelRc<SharedString> {
         let max = self
             .slots
@@ -133,7 +132,7 @@ impl UserHashrateHistory {
         ModelRc::new(VecModel::from_iter(
             [max, 2.0 * max / 3.0, max / 3.0, 0.0]
                 .iter()
-                .map(|unit| SharedString::from(number_format.clone().format_number(*unit, 1)))
+                .map(|unit| SharedString::from(number_format.format_number(*unit, 1)))
                 .collect::<Vec<SharedString>>(),
         ))
     }
@@ -300,7 +299,6 @@ impl UserWorkerHistory {
     }
 
     #[must_use]
-    #[expect(clippy::needless_pass_by_value)]
     pub fn graph_units(&self, number_format: NumberFormat) -> ModelRc<SharedString> {
         let max = self
             .slots
@@ -318,13 +316,13 @@ impl UserWorkerHistory {
             #[expect(clippy::integer_division)]
             [max / 1000, 2 * max / 3000, max / 3000, 0]
                 .map(|unit| {
-                    SharedString::from(format!("{}k", number_format.clone().format_number(unit, 1)))
+                    SharedString::from(format!("{}k", number_format.format_number(unit, 1)))
                 })
                 .to_vec()
         } else if max >= 3 {
             #[expect(clippy::integer_division)]
             [max, 2 * max / 3, max / 3, 0]
-                .map(|unit| SharedString::from(number_format.clone().format_number(unit, 0)))
+                .map(|unit| SharedString::from(number_format.format_number(unit, 0)))
                 .to_vec()
         } else {
             [max, 0]
@@ -371,12 +369,12 @@ impl CurrentUserWorkerStats {
     #[must_use]
     pub fn worker_stats(self, number_format: NumberFormat) -> PoolWorkerStatus {
         PoolWorkerStatus {
-            total: SharedString::from(number_format.clone().format_number(
+            total: SharedString::from(number_format.format_number(
                 self.active_workers + self.low_workers + self.offline_workers,
                 0,
             )),
-            active: SharedString::from(number_format.clone().format_number(self.active_workers, 0)),
-            low: SharedString::from(number_format.clone().format_number(self.low_workers, 0)),
+            active: SharedString::from(number_format.format_number(self.active_workers, 0)),
+            low: SharedString::from(number_format.format_number(self.low_workers, 0)),
             offline: SharedString::from(number_format.format_number(self.offline_workers, 0)),
         }
     }

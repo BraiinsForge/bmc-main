@@ -122,7 +122,7 @@ pub async fn run(
             scene_id.clone(),
             widget_id.clone(),
             current_hashrate,
-            number_format.clone(),
+            number_format,
         );
 
         if download_rewards {
@@ -132,7 +132,7 @@ pub async fn run(
                 scene_id.clone(),
                 widget_id.clone(),
                 latest_rewards,
-                number_format.clone(),
+                number_format,
             );
         }
 
@@ -167,7 +167,7 @@ pub async fn run(
                 is_24_format,
                 date_format,
                 hashrate_history,
-                number_format.clone(),
+                number_format,
             );
         }
 
@@ -178,7 +178,7 @@ pub async fn run(
                 scene_id.clone(),
                 widget_id.clone(),
                 workers_stats,
-                number_format.clone(),
+                number_format,
             );
         }
 
@@ -202,7 +202,7 @@ pub async fn run(
                 scene_id.clone(),
                 widget_id.clone(),
                 worker_history,
-                number_format.clone(),
+                number_format,
             );
         }
 

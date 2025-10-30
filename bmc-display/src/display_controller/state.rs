@@ -271,7 +271,7 @@ impl DisplayController {
     pub fn update_btc_price(&self, btc_data: BitcoinData, number_format: NumberFormat) {
         self.in_event_loop(move |main_window| {
             let bitcoin_adapter = BitcoinAdapter::get(&main_window);
-            bitcoin_adapter.set_price(btc_data.price_as_shared(number_format.clone()));
+            bitcoin_adapter.set_price(btc_data.price_as_shared(number_format));
             bitcoin_adapter.set_price_change(btc_data.price_change_as_shared(number_format));
             bitcoin_adapter.set_price_increase(btc_data.increasing_trend());
         });
@@ -338,14 +338,12 @@ impl DisplayController {
     ) {
         self.in_event_loop(move |main_window| {
             let difficulty_adapter = DifficultyAdapter::get(&main_window);
-            difficulty_adapter
-                .set_difficulty(difficulty_data.difficulty_as_shared(number_format.clone()));
-            difficulty_adapter.set_blocks_epoch(difficulty_data.block_epoch(number_format.clone()));
+            difficulty_adapter.set_difficulty(difficulty_data.difficulty_as_shared(number_format));
+            difficulty_adapter.set_blocks_epoch(difficulty_data.block_epoch(number_format));
             difficulty_adapter.set_epoch_block_time(difficulty_data.epoch_block_time());
             difficulty_adapter.set_prev_adjustment_increase(difficulty_data.prev_adjust_increase());
-            difficulty_adapter.set_prev_adjustment_change(
-                difficulty_data.prev_adjust_as_shared(number_format.clone()),
-            );
+            difficulty_adapter
+                .set_prev_adjustment_change(difficulty_data.prev_adjust_as_shared(number_format));
             difficulty_adapter.set_prev_adjustment_time(difficulty_data.prev_adjust_time());
             difficulty_adapter.set_next_adjustment_increase(difficulty_data.next_adjust_increase());
             difficulty_adapter
@@ -358,11 +356,10 @@ impl DisplayController {
         self.in_event_loop(move |main_window| {
             let hashrate_adapter = HashrateAdapter::get(&main_window);
             hashrate_adapter
-                .set_avg_fees_per_block(hashrate_data.avg_fees_per_block(number_format.clone()));
-            hashrate_adapter.set_fees_percent(hashrate_data.fees_percent(number_format.clone()));
-            hashrate_adapter
-                .set_current_hashrate(hashrate_data.current_hashrate(number_format.clone()));
-            hashrate_adapter.set_hashprice(hashrate_data.hashprice(number_format.clone()));
+                .set_avg_fees_per_block(hashrate_data.avg_fees_per_block(number_format));
+            hashrate_adapter.set_fees_percent(hashrate_data.fees_percent(number_format));
+            hashrate_adapter.set_current_hashrate(hashrate_data.current_hashrate(number_format));
+            hashrate_adapter.set_hashprice(hashrate_data.hashprice(number_format));
             hashrate_adapter.set_total_revenue(hashrate_data.total_revenue(number_format));
         });
     }
@@ -542,8 +539,7 @@ impl DisplayController {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
                 widgets_ref.modify(&widget_id, |widget| {
-                    widget.braiins_pool.reward_btc =
-                        latest_rewards.today_reward_btc(number_format.clone());
+                    widget.braiins_pool.reward_btc = latest_rewards.today_reward_btc(number_format);
                     widget.braiins_pool.reward_usd = latest_rewards.today_reward_usd(number_format);
                 });
             }

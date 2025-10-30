@@ -277,9 +277,9 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         Ok(Response::new(GeneralSettingsDataResponse {
             data_collection: Some(data_collection),
-            time_format: map_time_system_to_proto(&localization.time_system).into(),
+            time_format: map_time_system_to_proto(localization.time_system).into(),
             date_format: map_date_format_to_proto(localization.date_format).into(),
-            number_format: map_number_format_to_proto(&localization.number_format).into(),
+            number_format: map_number_format_to_proto(localization.number_format).into(),
             first_day_of_week: map_weekday_to_proto(localization.first_day_of_week).into(),
             temperature_unit: map_temperature_unit_to_proto(&localization.temperature_unit).into(),
             show_seconds_status_bar: Some(localization.show_seconds_in_status_bar),
@@ -507,7 +507,7 @@ impl From<Sounds> for SoundInfo {
     }
 }
 
-fn map_time_system_to_proto(value: &TimeSystem) -> web::TimeFormat {
+fn map_time_system_to_proto(value: TimeSystem) -> web::TimeFormat {
     match value {
         TimeSystem::Hour12 => web::TimeFormat::TimeFormat12Hour,
         TimeSystem::Hour24 => web::TimeFormat::TimeFormat24Hour,
@@ -527,7 +527,7 @@ fn map_date_format_to_proto(value: DateFormat) -> web::DateFormat {
     }
 }
 
-fn map_number_format_to_proto(value: &NumberFormat) -> web::NumberFormat {
+fn map_number_format_to_proto(value: NumberFormat) -> web::NumberFormat {
     match value {
         NumberFormat::SpaceGroupCommaDecimal => web::NumberFormat::SpaceGroupCommaDecimal,
         NumberFormat::CommaGroupDotDecimal => web::NumberFormat::CommaGroupDotDecimal,

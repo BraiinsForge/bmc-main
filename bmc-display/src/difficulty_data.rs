@@ -112,7 +112,7 @@ impl DifficultyData {
             .map_or(NOT_AVAILABLE.into(), |block_epoch| {
                 SharedString::from(format!(
                     "{}/{}",
-                    number_format.clone().format_number(block_epoch, 0),
+                    number_format.format_number(block_epoch, 0),
                     number_format.format_number(BLOCKS_EPOCH, 0),
                 ))
             })

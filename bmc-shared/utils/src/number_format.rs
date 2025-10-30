@@ -3,7 +3,7 @@
 use formato::{FormatOptions, Formato};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default)]
 pub enum NumberFormat {
     #[default]
     SpaceGroupCommaDecimal, // 1 234 567,89
