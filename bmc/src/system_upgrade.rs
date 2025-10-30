@@ -129,17 +129,20 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         };
 
         let platform = self.bmc_manager.platform();
-        let version = self
-            .bmc_manager
-            .version()
-            .await
-            .ok_or(SystemUpgradeError::FailedToDetectCurrentVersion)?;
+        let Some(version) = self.bmc_manager.version().await else {
+            error!("Failed to detect current firmware version");
+            return Err(SystemUpgradeError::FailedToDetectCurrentVersion);
+        };
+
+        info!(platform = %platform, version = %version.full, "Checking for firmware upgrade");
 
         let Some(release_info) = firmware_handle
             .check_for_upgrade(&self.client, platform, version.full)
             .await
+            .inspect_err(|err| error!(error = %err, platform = %platform, "Failed to check for firmware upgrade"))
             .map_err(SystemUpgradeError::UnableToCheckForUpgrade)?
         else {
+            info!("No firmware upgrade available");
             return Ok(None);
         };
 
@@ -152,6 +155,13 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             .lock()
             .await
             .insert(release_info.latest_release.hash.clone(), available_upgrade);
+
+        info!(
+            hash = %release_info.latest_release.hash,
+            version = %release_info.latest_release.version,
+            file_size = release_info.latest_release.file_size,
+            "Firmware upgrade available"
+        );
 
         Ok(Some(release_info))
     }
@@ -166,8 +176,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         let client = self.client.clone();
 
         task::spawn(async move {
+            info!(hash = %hash, "Starting firmware download");
+
             let Ok(firmware_handle_guard) = firmware_handle.try_lock() else {
-                warn!("Upgrade is in progress");
+                warn!("Upgrade already in progress");
                 _ = progress_sender
                     .send(DownloadState::Failed(SystemUpgradeError::UpgradeInProgress));
                 return;
@@ -182,20 +194,20 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             };
 
             let Some(firmware_info) = firmware_info else {
-                warn!("No firmware with hash");
+                warn!(hash = %hash, "Firmware with requested hash not found");
                 _ = progress_sender
                     .send(DownloadState::Failed(SystemUpgradeError::NoImageWithHash));
                 return;
             };
 
-            if let Err(e) = StorageChecker::check_disk_space(&path, firmware_info.file_size) {
-                warn!("Error while checking disk space for upgrade: {}", e);
+            if let Err(err) = StorageChecker::check_disk_space(&path, firmware_info.file_size) {
+                warn!(error = %err, "Insufficient disk space for upgrade");
                 _ = progress_sender.send(DownloadState::Failed(SystemUpgradeError::NotEnoughSpace));
                 return;
             }
 
             let Ok(file_downloader) = FileDownloader::init(&path).await else {
-                warn!("Error creating file to download firmware");
+                warn!("Failed to create file for firmware download");
                 _ = progress_sender.send(DownloadState::Failed(
                     SystemUpgradeError::FailedToDownload(
                         "Unable to create file to download data".to_owned(),
@@ -244,7 +256,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                         firmware_checksum = checksum;
                     }
                     Err(err) => {
-                        warn!("Error while downloading upgrade firmware: {}", &err);
+                        warn!(error = %err, "Failed to download firmware");
 
                         state_service.notify(SystemUpgradeState::Failed);
 
@@ -258,6 +270,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             }
 
             if hash.to_lowercase() == firmware_checksum.to_lowercase() {
+                info!(hash = %firmware_checksum, total_mb, "Firmware download finished successfully");
                 state_service.notify(SystemUpgradeState::DownloadFinished {
                     hash: firmware_checksum.clone(),
                     total_mb,
@@ -266,6 +279,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                     hash: firmware_checksum,
                 });
             } else {
+                warn!(expected = %hash, actual = %firmware_checksum, "Firmware hash mismatch");
                 state_service.notify(SystemUpgradeState::Failed);
                 _ = progress_sender.send(DownloadState::Failed(
                     SystemUpgradeError::DownloadedImageHashMismatch {
@@ -280,6 +294,8 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     }
 
     pub async fn verify_and_upgrade(&self, hash: &str) -> Result<(), SystemUpgradeError> {
+        info!(hash, "Starting firmware verification and upgrade");
+
         let firmware_guard = self
             .firmware_resolver
             .try_lock()
@@ -288,12 +304,13 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         self.state_service
             .notify(SystemUpgradeState::UpgradeStarted);
 
+        info!(hash, "Verifying firmware hash");
         FileDownloader::verify_hash(&self.upgrade_image_path, hash)
             .await
-            .map_err(|e| {
-                warn!("Error when verifying downloaded firmware. {}", e);
+            .map_err(|err| {
+                warn!(hash, error = %err, "Failed to verify downloaded firmware");
                 self.state_service.notify(SystemUpgradeState::Failed);
-                match e {
+                match err {
                     bmc_upgrade::downloader::DownloaderError::HashMismatch { expected, actual } => {
                         SystemUpgradeError::DownloadedImageHashMismatch { expected, actual }
                     }
@@ -303,17 +320,19 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 }
             })?;
 
+        info!(hash, "Firmware verification successful, starting upgrade");
         self.bmc_manager
             .upgrade(true, &self.upgrade_image_path)
             .await
-            .map_err(|e| {
-                warn!("Upgrade was not successful. {}", e);
+            .map_err(|err| {
+                warn!(error = %err, "Upgrade failed");
                 self.state_service.notify(SystemUpgradeState::Failed);
                 SystemUpgradeError::UpgradeFailed
             })?;
 
         drop(firmware_guard);
 
+        info!("Firmware upgrade completed successfully");
         Ok(())
     }
 
@@ -334,18 +353,18 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     }
 
     async fn autoupgrade_trigger(&self) -> anyhow::Result<()> {
-        debug!("Autoupgrade trigger");
+        debug!("Auto-upgrade triggered");
         if let Some(upgrade) = self.check_for_upgrade().await? {
-            info!("Upgrade available: {}", upgrade.latest_release.hash);
+            info!(hash = %upgrade.latest_release.hash, "Upgrade available");
             let download_stream = self.download_firmware(upgrade.latest_release.hash.clone());
 
             if let Some(upgrade_hash) = Self::wait_for_download(download_stream).await {
-                info!("Download complete! : {}", upgrade_hash);
+                info!(hash = %upgrade_hash, "Firmware download completed");
                 self.verify_and_upgrade(&upgrade.latest_release.hash)
                     .await
-                    .map_err(|e| anyhow!(e))
+                    .map_err(|err| anyhow!(err))
             } else {
-                Err(anyhow!("Error while trying to download fw"))
+                Err(anyhow!("Failed to download firmware"))
             }
         } else {
             debug!("No upgrade available");
@@ -397,13 +416,13 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                     downloaded_mb,
                     total_mb,
                 } => {
-                    debug!("FW Download progress: {downloaded_mb} / {total_mb} MB");
+                    debug!(downloaded_mb, total_mb, "Firmware download progress");
                 }
                 DownloadState::Finished { hash } => {
                     return Some(hash);
                 }
-                DownloadState::Failed(e) => {
-                    error!("Error while downloading firmware: {e:?}");
+                DownloadState::Failed(err) => {
+                    error!(error = ?err, "Failed to download firmware");
                     return None;
                 }
             }
