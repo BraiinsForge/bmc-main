@@ -26,7 +26,7 @@ use tokio::sync::{
     RwLock,
     watch::{self, Receiver},
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 const REBOOT_SLEEP_DURATION: Duration = Duration::from_secs(10);
 
@@ -102,25 +102,32 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             match manager.wifi_initial_setup(config).await {
                 Ok(()) => {
                     state_service.notify(InitSetupState::WifiConnectionSuccess);
+                    info!("WiFi initial setup completed successfully");
                 }
                 Err(InitialSetupError::NotSupported) => {
-                    warn!("Initial setup is not supported");
+                    warn!("WiFi initial setup not supported");
                     state_service.notify(InitSetupState::UnexpectedError);
                 }
-                Err(InitialSetupError::UnexpectedFailure(e)) => {
+                Err(InitialSetupError::UnexpectedFailure(err)) => {
                     warn!(
-                        "Unexpected failure during initial setup. Rebooting device. Error: {}",
-                        e
+                        error = %err,
+                        "Unexpected failure during WiFi initial setup, rebooting device"
                     );
                     Self::notify_failure_and_reboot(manager, &state_service).await;
                 }
-                Err(InitialSetupError::WifiConnectionFailure(e)) => {
-                    warn!("Failed to connect to wifi: {}", e);
+                Err(InitialSetupError::WifiConnectionFailure(err)) => {
+                    warn!(
+                        error = %err,
+                        "Failed to connect to WiFi"
+                    );
                     state_service.notify(InitSetupState::WifiConnectionFailed);
 
                     // Revert wifi settings
-                    if let Err(e) = manager.revert_to_initial_setup().await {
-                        warn!("Failed to revert back to initial setup: {}", e);
+                    if let Err(err) = manager.revert_to_initial_setup().await {
+                        warn!(
+                            error = %err,
+                            "Failed to revert to initial setup"
+                        );
                         Self::notify_failure_and_reboot(manager, &state_service).await;
                     }
                 }
@@ -158,11 +165,15 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             .await
             .map_err(DeviceSetupError::SetTimezone)?;
 
+        info!(timezone = %timezone, "Device timezone configured");
+
         if config.system_password.is_some() {
             self.manager
                 .set_password(config.system_password)
                 .await
                 .map_err(|_| DeviceSetupError::SetPassword)?;
+
+            info!("Device system password configured");
         }
         let time_of_day = Utc::now()
             .time()
@@ -174,15 +185,28 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             timezone.chrono_offset(),
         );
 
-        config_guard.set_date_format(config.date_format);
-        config_guard.set_number_format(config.number_format);
-        config_guard.set_time_system(config.time_system);
-        config_guard.set_data_collection(config.data_collection);
+        let date_format = config.date_format;
+        let number_format = config.number_format;
+        let time_system = config.time_system;
+        let data_collection = config.data_collection;
+
+        config_guard.set_date_format(date_format);
+        config_guard.set_number_format(number_format);
+        config_guard.set_time_system(time_system);
+        config_guard.set_data_collection(data_collection);
         config_guard.set_autoupgrade(autoupgrade_config.clone());
         config_guard
             .save()
             .await
             .map_err(DeviceSetupError::SyncConfigData)?;
+
+        info!(
+            date_format = ?date_format,
+            number_format = ?number_format,
+            time_system = ?time_system,
+            data_collection = data_collection,
+            "Device configuration saved"
+        );
 
         self.manager
             .update_device_state()
@@ -196,6 +220,8 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             .autoupgrade_reschedule(autoupgrade_config)
             .await
             .map_err(DeviceSetupError::EnableAutoUpgrade)?;
+
+        info!("Device setup completed successfully");
 
         Ok(())
     }
