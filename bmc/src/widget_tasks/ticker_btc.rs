@@ -8,7 +8,7 @@ use bmc_display::data::{SceneId, TickerTimeFrame, WidgetId};
 use bmc_display::display_controller::DisplayController;
 use reqwest::Client;
 use tokio::time::interval;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 #[instrument(name = "ticker_btc", skip_all, fields(%scene_id, %widget_id))]
 pub async fn run(
@@ -22,7 +22,7 @@ pub async fn run(
     let client = match Client::builder().timeout(API_TIMEOUT).build() {
         Ok(client) => client,
         Err(err) => {
-            warn!(?err, "Failed to create reqwest client, stopping");
+            error!(?err, "Failed to create reqwest client, stopping");
             return;
         }
     };
@@ -32,7 +32,7 @@ pub async fn run(
     loop {
         interval.tick().await;
 
-        debug!("Getting bitcoin history data...");
+        debug!("Fetching Bitcoin history data");
         let request = client
             .get(BTC_HISTORY_API_URL)
             .query(&[(DATA_HISTORY_TIMEFRAME_PARAM, timeframe.to_string())]);
@@ -41,10 +41,12 @@ pub async fn run(
             Ok(response) => response
                 .json::<BtcHistoryData>()
                 .await
-                .map_err(|e| warn!("Failed to parse btc history JSON: {e}"))
+                .inspect_err(
+                    |err| error!(error = %err, "Failed to parse Bitcoin history JSON response"),
+                )
                 .unwrap_or_default(),
-            Err(e) => {
-                warn!("Failed to get btc history data from API: {e}");
+            Err(err) => {
+                warn!(error = %err, "Failed to fetch Bitcoin history data from API");
                 BtcHistoryData::default()
             }
         };
