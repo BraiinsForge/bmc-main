@@ -27,19 +27,9 @@ pub enum SoundEvent {
     Decrease,
 }
 
-// When consumer creates two streams using two e.g. `on_example()` calls, then first stream will be closed,
+// When consumer creates two streams using two e.g. `on_alarm_events()` calls, then first stream will be closed,
 // because Slint does not allow multiple subscribers.
 impl DisplayController {
-    // NOTE: example how to implement callback mapping from sync (slint callback) to async (stream).
-    // TODO: remove after real callback is implemented
-    // pub fn on_example(&self) -> impl Stream<Item = ()> + use<> {
-    //     self.set_callback(|main_window, tx| {
-    //         main_window.on_example(move |payload| {
-    //             let _ = tx.send(payload);
-    //         })
-    //     })
-    // }
-
     pub(super) fn setup_static_callbacks(main_window: &generated::MainWindow) {
         let base_dimensions = main_window.global::<BaseDimensions<'_>>();
 
