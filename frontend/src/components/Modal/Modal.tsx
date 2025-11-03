@@ -5,6 +5,7 @@ import cn from 'clsx';
 import css from './Modal.scss';
 
 import { Modal as BaseComponent, type ModalProps as BaseProps } from '@carbon/react';
+import { PortalContext, type PortalContextValue } from '../PortalContext';
 
 export interface ModalProps extends Omit<BaseProps, 'id'> {
     // Required because it's used for testing
@@ -16,6 +17,9 @@ export interface ModalProps extends Omit<BaseProps, 'id'> {
 }
 
 export class Modal extends Component<ModalProps> {
+    static contextType = PortalContext;
+    declare context: PortalContextValue;
+
     #root: HTMLElement | ShadowRoot;
     #mount: HTMLElement;
 
@@ -62,11 +66,12 @@ export class Modal extends Component<ModalProps> {
                     cancelBodyOverflowShadow && css.cancelBodyOverflowShadow,
                     props.className,
                     !props.onRequestClose && css.hideCloseButton,
+                    this.context.disablePortal && css.inlineModal,
                 )}
                 data-cy={props.id}
             />
         );
 
-        return portal ? createPortal(m, this.#mount) : m;
+        return portal && !this.context.disablePortal ? createPortal(m, this.#mount) : m;
     }
 }

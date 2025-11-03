@@ -8,6 +8,7 @@ export * from './FormWidgetBlockchainData';
 export * from './FormWidgetBraiinsPool';
 export * from './FormWidgetClock';
 export * from './FormWidgetRemoteImage';
+export * from './FormWidgetRemoteWidget';
 export * from './FormWidgetTicker';
 
 export * from './SceneOverviewList';

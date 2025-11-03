@@ -106,6 +106,11 @@ function View(props: ViewProps) {
                     }
 
                     const widget = w as pb.Widget;
+                    let title =
+                        widget?.kind?.value.case === 'remoteWidget'
+                            ? widget.kind.value.value.name
+                            : pb.sceneTitle(intl, widget.kind?.value.case);
+                    title ||= 'N/A';
 
                     return (
                         <Widget
@@ -115,7 +120,7 @@ function View(props: ViewProps) {
                             size={size}
                             position={pos}
                             // Content
-                            title={pb.sceneTitle(intl, widget.kind?.value.case) ?? 'N/A'}
+                            title={title}
                             subtitle={pb.widgetDescription(intl, widget.kind)}
                             // Modification
                             validDropSlots={validDropSlots}

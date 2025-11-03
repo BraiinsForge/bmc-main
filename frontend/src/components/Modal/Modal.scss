@@ -7,6 +7,22 @@
     padding: 0 !important;
 }
 
+.inlineModal {
+    position: relative !important;
+    inset: unset !important;
+    inline-size: auto !important;
+    block-size: auto !important;
+    padding: mini-units(2) !important;
+
+    :global(.cds--modal-container) {
+        position: relative !important;
+        transform: none !important;
+        max-height: none !important;
+        inline-size: auto !important;
+        block-size: auto !important;
+    }
+}
+
 .cancelBodyOverflowShadow :global(.cds--modal-scroll-content) {
     // Carbon now adds some kind of overflow-shadow mask
     // to the modal mody, but we don't want that here.

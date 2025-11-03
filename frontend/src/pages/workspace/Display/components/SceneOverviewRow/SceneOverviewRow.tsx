@@ -1,27 +1,28 @@
-import { useCallback, type DetailedHTMLProps, type HTMLAttributes } from 'react';
-import { useIntl } from 'react-intl';
+import { Component, Fragment, type DetailedHTMLProps, type HTMLAttributes } from 'react';
+import { type IntlShape, useIntl } from 'react-intl';
 
 // Lib
-import { useID } from '@/lib/form';
+import { getID } from '../const';
 import { selfSelect } from '@/lib/react';
 
 // Components
-import { Button } from '@/components';
-import { Toggle, NumberInput, Tag, type TagProps } from '@carbon/react';
+import { Button, CarbonFormField } from '@/components';
+import { SceneTypeIcons, type SceneTypeIconsProps } from '../SceneTypeIcons';
+import { Toggle, NumberInput } from '@carbon/react';
 import {
     Draggable as IconDraggable,
     TrashCan as IconDelete,
-    Edit as IconEdit,
     Copy as IconClone,
+    Restart as IconRestart,
 } from '@carbon/react/icons';
 
 // Styles
-import cn from 'clsx';
+import cn, { type ClassValue } from 'clsx';
 import css from './SceneOverviewRow.scss';
+import { assertUnreachable } from '@/lib/ts.ts';
 
-interface DataProps {
+export interface SceneOverviewRowProps {
     id: string;
-
     enabled: boolean;
     onToggle(id: string, value: boolean): void;
 
@@ -33,109 +34,77 @@ interface DataProps {
     onEdit(id: string): void;
     onClone(id: string): void;
     onDelete(id: string): void;
+    onReload?(id: string): void;
 
-    preview: ReactNode;
+    icon: ReactNode;
     title: ReactNode;
-    tag?: null | {
-        text: NonNullable<ReactNode>;
-        type: TagProps<'div'>['type'];
-        className?: string;
-        style?: CSSProperties;
-    };
     description: ReactNode;
+    type: Pick<SceneTypeIconsProps, 'night' | 'local' | 'cloud'>;
 
     // DnD
     dndRootProps?: DetailedHTMLProps<HTMLAttributes<HTMLDivElement>, HTMLDivElement>;
     dndDragHandleProps?: DetailedHTMLProps<HTMLAttributes<HTMLDivElement>, HTMLDivElement>;
+
+    // Visual, DOM
+    layout: 'card' | 'row';
+    className?: string;
+    style?: CSSProperties;
+    children?: ReactNode;
 }
-export interface SceneOverviewRowProps extends Omit<HTMLAttributes<HTMLDivElement>, keyof DataProps>, DataProps {}
-export function SceneOverviewRow(props: SceneOverviewRowProps) {
-    const {
-        id,
+interface Props extends SceneOverviewRowProps {
+    intl: IntlShape;
+}
 
-        // State
-        enabled,
-        onToggle,
+class View extends Component<Props> {
+    #id = (...suffix: Array<string | number>) => {
+        return getID('scene', 'overview', 'row', this.props.id).get(...suffix);
+    };
 
-        cycleEnabled,
-        cycleDurationValue,
-        cycleDurationDefault,
-        onDurationChange,
+    #toggle = (value: boolean): void => {
+        const { onToggle, id } = this.props;
+        onToggle(id, value);
+    };
+    #durationChange = (_: any, info: { value: string | number }): void => {
+        const { onDurationChange, cycleEnabled, id } = this.props;
+        if (cycleEnabled) onDurationChange(id, String(info.value));
+    };
+    #edit = (): void => {
+        const { onEdit, id } = this.props;
+        onEdit(id);
+    };
+    #clone = (): void => {
+        const { onClone, id } = this.props;
+        onClone(id);
+    };
+    #delete = (): void => {
+        const { onDelete, id } = this.props;
+        onDelete(id);
+    };
+    #reload = (): void => {
+        const { onReload, id } = this.props;
+        if (onReload) onReload(id);
+    };
 
-        onEdit,
-        onClone,
-        onDelete,
+    Handle = (): ReactElement => {
+        const { dndDragHandleProps } = this.props;
 
-        preview,
-        title,
-        tag,
-        description,
-
-        // DnD
-        dndRootProps,
-        dndDragHandleProps,
-
-        // Pass-through
-        className,
-        ...rest
-    } = props;
-    const { formatMessage } = useIntl();
-    const disabled: boolean = enabled === false;
-    const $ = useID('scene', 'overview', 'row', id);
-
-    const handleToggle = useCallback((value: boolean) => onToggle(id, value), [id, onToggle]);
-    const handleDurationChange = useCallback(
-        (_: any, info: { value: string | number }) => {
-            if (cycleEnabled) onDurationChange(id, String(info.value));
-        },
-        [cycleEnabled, id, onDurationChange],
-    );
-    const handleEdit = useCallback(() => onEdit(id), [id, onEdit]);
-    const handleClone = useCallback(() => onClone(id), [id, onClone]);
-    const handleDelete = useCallback(() => onDelete(id), [id, onDelete]);
-
-    return (
-        <div {...rest} {...dndRootProps} className={cn(css.root, disabled && css.disabledRow, className)}>
+        return (
             <div
                 {...dndDragHandleProps}
                 className={cn(css.dragHandle, dndDragHandleProps?.className)}
                 children={<IconDraggable />}
             />
+        );
+    };
+    DurationInput = (props: { label: 'top' | 'none' }): ReactElement => {
+        const { enabled, cycleEnabled, cycleDurationValue, cycleDurationDefault } = this.props;
+        const { formatMessage } = this.props.intl;
 
-            <div className={css.toggle}>
-                <Toggle
-                    id={$('enabled')}
-                    size="md"
-                    labelA={formatMessage({ defaultMessage: 'Off' })}
-                    labelB={formatMessage({ defaultMessage: 'On' })}
-                    toggled={enabled}
-                    onToggle={handleToggle}
-                />
-            </div>
-
-            <div className={css.preview} children={preview} />
-
-            <div className={css.labels}>
-                <div className={css.title}>
-                    <span children={title} />
-                    {tag ? (
-                        <Tag
-                            type={tag.type}
-                            children={tag.text}
-                            style={tag.style}
-                            className={cn(css.tag, tag.className)}
-                            size="sm"
-                        />
-                    ) : null}
-                </div>
-                <div className={css.details} children={description} />
-            </div>
-
+        return (
             <div className={cn(css.duration, !cycleEnabled && css.disabled)}>
-                <label htmlFor={$('duration')} children={formatMessage({ defaultMessage: 'Duration (s)' })} />
                 <NumberInput
-                    disabled={disabled || !cycleEnabled}
-                    id={$('duration')}
+                    disabled={!enabled || !cycleEnabled}
+                    id={this.#id('duration')}
                     min={1}
                     step={5}
                     allowEmpty
@@ -143,45 +112,185 @@ export function SceneOverviewRow(props: SceneOverviewRowProps) {
                     stepStartValue={Number.parseInt(String(cycleDurationDefault || 0), 10)}
                     placeholder={String(cycleDurationDefault)}
                     value={cycleDurationValue ?? ''}
-                    onChange={handleDurationChange}
+                    onChange={this.#durationChange}
                     onFocus={selfSelect}
+                    label={props.label === 'top' ? formatMessage({ defaultMessage: 'Duration (s)' }) : undefined}
                 />
             </div>
+        );
+    };
+    Icon = (): ReactElement => {
+        const { icon } = this.props;
+        return <div className={css.icon} children={icon} />;
+    };
+    Toggler = (props: { labeled?: boolean }): ReactElement => {
+        const { enabled, intl } = this.props;
+        const { formatMessage } = intl;
+        const { labeled } = props;
 
-            <div className={css.actions}>
-                <Button
-                    id={$('edit')}
-                    size="sm"
-                    kind="primary"
-                    hasIconOnly
-                    icon={IconEdit}
-                    tooltipPosition="bottom"
-                    title={formatMessage({ defaultMessage: 'Edit' })}
-                    onClick={handleEdit}
+        return (
+            <div className={css.toggle}>
+                <Toggle
+                    id={this.#id('enabled')}
+                    size="md"
+                    hideLabel={!labeled}
+                    labelA={formatMessage({ defaultMessage: 'Off' })}
+                    labelB={formatMessage({ defaultMessage: 'On' })}
+                    toggled={enabled}
+                    onToggle={this.#toggle}
                 />
+            </div>
+        );
+    };
+    Labels = (props: { types: 'below' | 'inline' }): ReactElement => {
+        const { title, description, type } = this.props;
+        const { types } = props;
+
+        const $types = <SceneTypeIcons {...type} className={css.types} />;
+
+        return (
+            <div className={css.labels}>
+                <div className={css.title}>
+                    <span children={title} />
+                    {types === 'inline' && $types}
+                </div>
+                <div className={css.details} children={description} />
+                {types === 'below' && $types}
+            </div>
+        );
+    };
+    Actions = (): ReactElement => {
+        const { intl, onReload } = this.props;
+        const { formatMessage } = intl;
+
+        return (
+            <div className={css.actions}>
+                {typeof onReload === 'function' && (
+                    <Button
+                        id={this.#id('reload')}
+                        size="sm"
+                        kind="ghost"
+                        hasIconOnly
+                        icon={IconRestart}
+                        tooltipPosition="bottom"
+                        title={formatMessage({ defaultMessage: 'Reload' })}
+                        onClick={this.#reload}
+                    />
+                )}
                 <Button
-                    id={$('clone')}
+                    id={this.#id('clone')}
                     size="sm"
-                    kind="secondary"
+                    kind="ghost"
                     hasIconOnly
                     icon={IconClone}
                     tooltipPosition="bottom"
                     title={formatMessage({ defaultMessage: 'Clone' })}
-                    onClick={handleClone}
+                    onClick={this.#clone}
                 />
                 <Button
-                    id={$('delete')}
+                    id={this.#id('delete')}
                     size="sm"
-                    kind="secondary"
+                    kind="ghost"
                     hasIconOnly
                     icon={IconDelete}
                     tooltipPosition="bottom"
                     title={formatMessage({ defaultMessage: 'Delete' })}
-                    onClick={handleDelete}
+                    onClick={this.#delete}
+                />
+                <Button
+                    id={this.#id('edit')}
+                    size="sm"
+                    kind="primary"
+                    tooltipPosition="bottom"
+                    children={formatMessage({ defaultMessage: 'Edit' })}
+                    onClick={this.#edit}
                 />
             </div>
-        </div>
-    );
+        );
+    };
+
+    #renderRow = (): ReactElement => {
+        const { Handle, DurationInput, Icon, Toggler, Labels, Actions } = this;
+
+        return (
+            <Fragment>
+                <Handle />
+
+                <Toggler labeled />
+
+                <Icon />
+
+                <Labels types="inline" />
+
+                <DurationInput label="none" />
+
+                <Actions />
+            </Fragment>
+        );
+    };
+    #renderCard = (): ReactElement => {
+        const { Handle, DurationInput, Icon, Toggler, Actions, Labels } = this;
+        const { formatMessage } = this.props.intl;
+
+        return (
+            <Fragment>
+                <section className={css.top}>
+                    <Handle />
+
+                    <Icon />
+
+                    <Labels types="below" />
+
+                    <Toggler />
+                </section>
+
+                <section className={css.bottom}>
+                    <DurationInput label="top" />
+
+                    <div className={css.vr} />
+
+                    <CarbonFormField
+                        className={css.actionsWrapper}
+                        labelText={formatMessage({ defaultMessage: 'Actions' })}
+                    >
+                        <Actions />
+                    </CarbonFormField>
+                </section>
+            </Fragment>
+        );
+    };
+
+    render() {
+        const { enabled, dndRootProps, className, style, layout, children } = this.props;
+
+        let content: ReactNode;
+        const classNames: ClassValue[] = [!enabled && css.disabledRow, className];
+        switch (layout) {
+            case 'card':
+                content = this.#renderCard();
+                classNames.push(css.card);
+                break;
+
+            case 'row':
+                content = this.#renderRow();
+                classNames.push(css.row);
+                break;
+
+            default:
+                assertUnreachable(layout, 'layout');
+        }
+
+        return (
+            <div {...dndRootProps} style={style} className={cn(classNames)}>
+                {content}
+                {children}
+            </div>
+        );
+    }
+}
+export function SceneOverviewRow(props: SceneOverviewRowProps) {
+    const intl = useIntl();
+    return <View {...props} intl={intl} />;
 }
 
 export interface SceneOverviewRowSkeletonProps extends HTMLAttributes<HTMLDivElement> {

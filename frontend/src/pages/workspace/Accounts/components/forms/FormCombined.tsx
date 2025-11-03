@@ -52,7 +52,7 @@ export function FormCombined(props: FormCombinedProps) {
                     id={$('name')}
                     labelText={formatMessage({ defaultMessage: 'Type' })}
                     value={type.value ?? ''}
-                    onChange={e => type.onChange(e.target.value as unknown as pb.AccountType)}
+                    onChange={e => type.onChange?.(e.target.value as unknown as pb.AccountType)}
                     disabled={type.disabled}
                     invalid={!!type.error}
                     invalidText={type.error}
@@ -68,7 +68,7 @@ export function FormCombined(props: FormCombinedProps) {
             {connectedWidgetsCount ? (
                 <div className={cn(css.withIcon, css.dimmed)}>
                     <FormattedMessage
-                        defaultMessage="Connected to {count, plural, one {1 display scene} other {# display scenes}}"
+                        defaultMessage="Connected to {count, plural, one {1 display widget} other {# display widgets}}"
                         values={{ count: connectedWidgetsCount }}
                     />
                 </div>

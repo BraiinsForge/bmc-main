@@ -8,26 +8,21 @@
 .header {
     composes: horizontal justified from 'styles/layout.scss';
     margin-block-end: mini-units(3);
+    gap: mini-units(4);
 
     container-type: inline-size;
     width: 100%;
 
-    @media (width <= 600px) {
+    @media (width <= 800px) {
         flex-flow: column nowrap;
         justify-content: start;
+        align-items: start;
         row-gap: mini-units(2);
 
         .headerControls {
+            margin-inline-end: auto;
             justify-content: start;
             flex-flow: row wrap;
-
-            > *,
-            :global(.cds--tooltip),
-            :global(.cds--overflow-menu__wrapper),
-            :global(.cds--overflow-menu) {
-                min-width: 100%;
-                text-align: start !important;
-            }
         }
     }
 }
@@ -39,12 +34,14 @@
     composes: heading-06 from 'styles/carbon/typography.scss';
 }
 .subtitle {
+    composes: body-short-01 from 'styles/carbon/typography.scss';
     margin-top: mini-units(2);
     color: $text-secondary;
+    text-wrap: balance;
 }
 
 .headerControls {
-    composes: flex horizontal center endJustified from 'styles/layout.scss';
+    composes: flex horizontal center endJustified selfEnd from 'styles/layout.scss';
     position: relative;
     gap: mini-units(2);
 }
@@ -119,4 +116,22 @@
 
     background-color: $layer-01;
     color: $text-primary;
+}
+
+//
+// Add scene menu is just a MenuButton component,
+// but the design does not match implementation either
+// and we have to force visuals on the menu items.
+//
+
+.addMenuButton {
+    background-color: $button-secondary;
+    color: $text-primary;
+
+    &:hover {
+        background-color: $button-secondary-hover;
+    }
+    &:active {
+        background-color: $button-secondary-active;
+    }
 }

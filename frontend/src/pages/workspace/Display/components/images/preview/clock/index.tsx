@@ -23,6 +23,6 @@ export function ClockScenePreview(props: ClockScenePreviewProps) {
         //     return <img {...rest} src={require('./clock-digital-flip.png')} alt="Digital flip" />;
 
         default:
-            assertUnreachable(kind, 'clock scene preview');
+            assertUnreachable(kind, 'clock widget preview');
     }
 }

@@ -1,67 +1,131 @@
 @use 'styles/carbon' as *;
+@use 'styles/var/transition';
 
 .dialogBody {
     padding: 0;
+}
 
-    > *:last-child {
-        margin-bottom: 0;
+.tab {
+    composes: horizontal center from 'styles/layout.scss';
+    gap: mini-units(1);
+}
+
+//
+// Widgets grid
+//
+
+.grid {
+    display: grid;
+    container-type: inline-size;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: mini-units(1);
+    margin: mini-units(2) mini-units(2) mini-units(3);
+}
+
+.cell {
+    --color-background: #{$layer-02};
+    --color-border: #{$layer-02};
+
+    display: flex;
+    gap: mini-units(2);
+    padding: mini-units(2);
+
+    border: 1px solid var(--color-border);
+    border-radius: 3px;
+
+    cursor: pointer;
+    appearance: none;
+    background-color: var(--color-background);
+    color: $text-primary;
+    text-align: start;
+
+    transition: all 250ms transition.$ease-in-out;
+
+    &:hover {
+        --color-background: #{$layer-accent-01};
+        --color-border: #{$border-strong};
+    }
+    &:focus {
+        --color-background: #{$layer-accent-01};
+        outline: 1px dotted $focus;
+        outline-offset: -2px;
+    }
+
+    &.skeleton {
+        min-block-size: to-rem(116px);
+        background-color: $layer-02;
+        pointer-events: none;
+    }
+
+    .icon {
+        display: flex;
+        align-items: flex-start;
+    }
+
+    main {
+        display: flex;
+        flex-flow: column nowrap;
+        gap: mini-units(0.5);
+    }
+    .title {
+        @include type-style(heading-03);
+        margin-block-end: mini-units(1);
+        height: to-rem(22px);
+    }
+    .desc {
+        @include type-style(body-short-01);
+        text-wrap: balance;
+        color: $text-secondary;
     }
 }
 
-.list {
+//
+// Remote tab
+//
+
+.remoteSection {
     composes: vertical from 'styles/layout.scss';
-    container-type: inline-size;
-    gap: 1px;
+    gap: mini-units(4);
+    padding: 0 mini-units(2) mini-units(3);
 }
 
-//
-// Row
-//
+.remoteInstall {
+    .remoteIntro {
+        p {
+            @include type-style(body-short-02);
+            color: $text-secondary;
+        }
+    }
 
-.row {
-    padding: mini-units(2);
-    background-color: $layer-01;
-    border-block-start: 1px solid $border-subtle;
+    .remoteInputBox {
+        display: flex;
+        align-items: start;
+        gap: mini-units(2);
 
-    display: grid;
-    column-gap: mini-units(2);
-    grid-template-areas:
-        'icon title       action'
-        'icon description action';
-    grid-template-columns: auto 1fr auto;
+        margin-top: mini-units(2);
+        padding: mini-units(2);
+        background-color: $layer-02;
 
-    @container (width <= 600px) {
-        grid-template-areas:
-            'icon        title       action'
-            'description description description';
-        row-gap: mini-units(2);
+        label {
+            font-weight: bold;
+        }
 
-        .rowIcon svg {
-            block-size: to-rem(40px);
+        // Because the input sibling can have errors, we have to align to top
+        // and offset the button from there, as otherwise it would be misaligned
+        // with the input when error text is present.
+        button {
+            margin-block-start: mini-units(3);
         }
     }
 }
 
-.rowIcon {
-    composes: horizontal start from 'styles/layout.scss';
-    grid-area: icon;
-}
+.remoteRecent {
+    h1 {
+        @include type-style(label-01);
+        color: $text-secondary;
+    }
 
-.rowTitle {
-    composes: horizontal center from 'styles/layout.scss';
-    composes: heading-03 from 'styles/carbon/typography.scss';
-    margin-block-end: mini-units(0.5);
-    grid-area: title;
-}
-
-.rowDescription {
-    composes: body-short-01 from 'styles/carbon/typography.scss';
-    grid-area: description;
-    text-wrap: balance;
-    color: $text-secondary;
-}
-
-.rowAction {
-    grid-area: action;
-    margin-inline-start: mini-units(3);
+    .grid {
+        margin: mini-units(2) 0 0;
+    }
 }

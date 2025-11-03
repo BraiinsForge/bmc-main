@@ -5,6 +5,7 @@ import type * as pb from '@/proto';
 // import { ClockScenePreview } from './clock';
 // import { TickerScenePreview } from './ticker';
 import * as Icons from '@/components/images/icons';
+import { Image } from '@/components/Image';
 
 export interface ScenePreviewProps extends ImgHTMLAttributes<HTMLImageElement> {
     kind: Maybe<pb.WidgetKind['value'] | 'combined'>;
@@ -40,6 +41,18 @@ export function ScenePreview(props: ScenePreviewProps) {
         case 'remoteImage':
             return <Icons.WidgetRemoteImage size={40} />;
 
+        case 'remoteWidget': {
+            return (
+                <Image
+                    src={kind.value.iconUrl}
+                    alt={kind.value.name}
+                    width={40}
+                    height={40}
+                    render={(img, failed) => (failed ? <Icons.WidgetRemoteWidget size={40} /> : img())}
+                />
+            );
+        }
+
         case 'blockchainData':
             return <Icons.WidgetBlockchainData size={40} />;
 
@@ -57,6 +70,6 @@ export function ScenePreview(props: ScenePreviewProps) {
         //     return <img {...rest} src={require('./preview-manager.png')} alt="Preview Manager" />;
 
         default:
-            assertUnreachable(kind, 'scene preview');
+            assertUnreachable(kind, 'widget preview');
     }
 }

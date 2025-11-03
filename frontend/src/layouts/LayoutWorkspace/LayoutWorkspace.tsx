@@ -68,7 +68,7 @@ class Base extends Component<Props, State> {
                 <SideLink
                     icon={IconScreen}
                     url={URLS.pages.display.list}
-                    label={formatMessage({ defaultMessage: 'Display Scenes' })}
+                    label={formatMessage({ defaultMessage: 'Display Widgets' })}
                 />
                 <SideLink
                     icon={IconSettings}

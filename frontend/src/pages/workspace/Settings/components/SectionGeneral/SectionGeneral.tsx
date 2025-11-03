@@ -57,12 +57,12 @@ class View extends Component<Props> {
 
     #dateFormatChange: DropdownProps<pb.DateFormat>['onChange'] = x => {
         const { onChange } = this.props.dateFormat;
-        if (x.selectedItem) onChange(x.selectedItem);
+        if (x.selectedItem) onChange?.(x.selectedItem);
     };
 
     #numberFormatChange: DropdownProps<pb.NumberFormat>['onChange'] = x => {
         const { onChange } = this.props.numberFormat;
-        if (x.selectedItem) onChange(x.selectedItem);
+        if (x.selectedItem) onChange?.(x.selectedItem);
     };
     #numberFormatToString = (x: null | pb.NumberFormat): string => {
         return pb.numberFormatToString(x) ?? 'N/A';
@@ -78,7 +78,7 @@ class View extends Component<Props> {
 
     #weekDayChange: DropdownProps<pb.Weekday>['onChange'] = x => {
         const { onChange } = this.props.firstWeekDay;
-        if (x.selectedItem) onChange(x.selectedItem);
+        if (x.selectedItem) onChange?.(x.selectedItem);
     };
     #weekDayToString = (x: null | pb.Weekday): string => {
         return pb.weekdayToString(this.props.intl, x, true) ?? 'N/A';
@@ -94,7 +94,7 @@ class View extends Component<Props> {
     };
     #timezoneChange: ComboBoxProps<pb.Timezone>['onChange'] = x => {
         const { onChange } = this.props.timezone;
-        if (x.selectedItem) onChange(x.selectedItem);
+        if (x.selectedItem) onChange?.(x.selectedItem);
     };
 
     #reset = async (): Promise<void> => {
@@ -327,7 +327,7 @@ class View extends Component<Props> {
                         title={formatMessage({ defaultMessage: 'Reset to Factory Defaults' })}
                         description={formatMessage({
                             defaultMessage:
-                                'Warning: This will delete all your custom configurations and display scenes.',
+                                'Warning: This will delete all your custom configurations and display widgets.',
                         })}
                     >
                         <Button

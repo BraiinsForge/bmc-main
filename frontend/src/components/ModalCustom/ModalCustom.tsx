@@ -2,6 +2,7 @@ import { Component, createRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { ComposedModal, type ComposedModalProps, ModalHeader, ModalBody, ModalFooter } from '@carbon/react';
+import { PortalContext, type PortalContextValue } from '../PortalContext';
 import { Loading } from '../Loading';
 
 import cn from 'clsx';
@@ -47,6 +48,9 @@ const getInitialState = (): State => ({ clickedInside: false, clickedOutside: fa
 export class ModalCustom extends Component<CustomModalProps> {
     static defaultProps = { portal: true };
     readonly state = getInitialState();
+
+    static contextType = PortalContext;
+    declare context: PortalContextValue;
 
     #root: HTMLElement;
     #mount: HTMLElement;
@@ -178,6 +182,7 @@ export class ModalCustom extends Component<CustomModalProps> {
                 onClose={onClose ? this.#handleClose : undefined}
                 onMouseDown={this.#handleMouseDown}
                 selectorPrimaryFocus={selectorPrimaryFocus}
+                className={cn(rest.className, this.context.disablePortal && css.inlineModal)}
             >
                 {!hideHeader && (title != null || typeof onClose === 'function') && (
                     <ModalHeader
@@ -199,6 +204,6 @@ export class ModalCustom extends Component<CustomModalProps> {
             </ComposedModal>
         );
 
-        return portal ? createPortal(m, this.#mount) : m;
+        return portal && !this.context.disablePortal ? createPortal(m, this.#mount) : m;
     }
 }

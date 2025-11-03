@@ -242,7 +242,6 @@ function Demo() {
         <Component
             scenes={scenes}
             onMove={setScenes}
-            onAdd={action('onAdd')}
             onEdit={action('onEdit')}
             onClone={action('onClone')}
             onDelete={action('onDelete')}

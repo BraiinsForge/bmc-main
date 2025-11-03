@@ -22,7 +22,7 @@ export function TickerScenePreview(props: TickerScenePreviewProps) {
     //         return <img {...rest} src={require('./ticker-candle.png')} alt="Candlestick ticker" />;
     //
     //     default:
-    //         assertUnreachable(kind, 'ticker scene preview');
+    //         assertUnreachable(kind, 'ticker widget preview');
     // }
     //
     // return null;

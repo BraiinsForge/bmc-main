@@ -45,7 +45,7 @@ const $ = getID('display').get;
 class View extends Component<Props> {
     #brightnessChange = (x: { value: number }) => {
         const { value, onChange } = this.props.brightness;
-        onChange(
+        onChange?.(
             pb.create(pb.BrightnessInfoSchema, {
                 value: x.value,
                 min: value?.min,
@@ -56,7 +56,7 @@ class View extends Component<Props> {
     };
     #brightnessNightChange = (x: { value: number }) => {
         const { value, onChange } = this.props.nightBrightness;
-        onChange(
+        onChange?.(
             pb.create(pb.BrightnessInfoSchema, {
                 value: x.value,
                 min: value?.min,

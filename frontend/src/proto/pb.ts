@@ -1,5 +1,6 @@
 export * from '@bufbuild/protobuf/wkt';
 export type { CallOptions } from '@connectrpc/connect';
+export type { JsonObject, JsonValue } from '@bufbuild/protobuf';
 
 export * from './gen/web/account_management_pb';
 export * from './gen/web/alarm_pb';

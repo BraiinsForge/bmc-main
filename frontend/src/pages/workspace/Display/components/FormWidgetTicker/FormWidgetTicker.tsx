@@ -7,7 +7,7 @@ import { Form, type iField, type FormPropsToValuesRec } from '@/lib/form';
 
 // Components
 import { WidgetSizeSelector, type WidgetSizeSelectorProps, CheckYourScreenForPreview } from '../shared';
-import { ModalCustom, InlineNotification } from '@/components';
+import { ModalCustom, InlineNotification, Button } from '@/components';
 import { Dropdown } from '@carbon/react';
 
 // styles
@@ -36,8 +36,8 @@ class View extends Component<Props> {
 
         return {
             ticker: formatMessage({ defaultMessage: 'Ticker' }),
-            addScene: formatMessage({ defaultMessage: 'Add Scene' }),
-            editScene: formatMessage({ defaultMessage: 'Edit Scene' }),
+            addWidget: formatMessage({ defaultMessage: 'Add Widget' }),
+            editWidget: formatMessage({ defaultMessage: 'Edit Widget' }),
         };
     }
 
@@ -77,7 +77,7 @@ class View extends Component<Props> {
                     itemToString={this.#tickerTimeFrameToString}
                     onChange={x => {
                         const v = x.selectedItem;
-                        if (v != null) timeFrame.onChange(v);
+                        if (v != null) timeFrame.onChange?.(v);
                     }}
                     invalid={!!timeFrame.error}
                     invalidText={timeFrame.error}
@@ -98,7 +98,7 @@ class View extends Component<Props> {
             </Form>
         );
 
-        const verb = isEdit ? txt.editScene : txt.addScene;
+        const verb = isEdit ? txt.editWidget : txt.addWidget;
 
         return (
             <ModalCustom
@@ -115,6 +115,14 @@ class View extends Component<Props> {
                 onClose={onClose}
                 // Content
                 children={form}
+                footer={
+                    <Button
+                        id={$('done')}
+                        kind="primary"
+                        children={formatMessage({ defaultMessage: 'Done' })}
+                        onClick={onClose}
+                    />
+                }
             />
         );
     }

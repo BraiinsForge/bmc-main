@@ -1,0 +1,20 @@
+@use 'styles/carbon' as *;
+
+.paramsContainer {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(2);
+}
+
+.arrayContainer {
+    composes: vertical from 'styles/layout.scss';
+
+    .addButton {
+        margin-block: mini-units(1);
+    }
+}
+
+.arrayFieldContainer {
+    composes: horizontal start from 'styles/layout.scss';
+    width: 100%;
+    gap: mini-units(1);
+}

@@ -7,6 +7,22 @@
     }
 }
 
+.inlineModal {
+    position: relative !important;
+    inset: unset !important;
+    inline-size: auto !important;
+    block-size: auto !important;
+    padding: mini-units(2) !important;
+
+    :global(.cds--modal-container) {
+        position: relative !important;
+        transform: none !important;
+        max-height: none !important;
+        inline-size: auto !important;
+        block-size: auto !important;
+    }
+}
+
 .body {
     padding: 1rem;
 

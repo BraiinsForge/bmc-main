@@ -439,7 +439,7 @@ class View extends Component<Props, State> {
                 danger: false,
                 title: confirmStringTitle,
                 cancelLabel: confirmStringCancel,
-                confirmLabel: formatMessage({ defaultMessage: 'Go to display scenes' }),
+                confirmLabel: formatMessage({ defaultMessage: 'Go to display widgets' }),
                 message: (
                     <FormattedMessage
                         defaultMessage="This account is linked to <b>{count, plural, one {1 widget} other {# widgets}}</b>. To delete it, please remove or edit {count, plural, one {that widget} other {those widgets}}."
@@ -460,7 +460,7 @@ class View extends Component<Props, State> {
             confirmLabel: confirmStringTitle,
             message: (
                 <FormattedMessage
-                    defaultMessage="This account isn’t used in any display scenes. You can safely delete {name} now."
+                    defaultMessage="This account isn’t used in any display widgets. You can safely delete {name} now."
                     values={{ name: <strong children={acc.accountName} /> }}
                 />
             ),

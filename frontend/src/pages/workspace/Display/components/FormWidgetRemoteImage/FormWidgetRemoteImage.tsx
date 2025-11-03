@@ -7,7 +7,7 @@ import { AutoSelected } from '@/lib/react';
 import { Form, type iField, type FormPropsToValuesRec } from '@/lib/form';
 
 // Components
-import { ModalCustom, InlineNotification } from '@/components';
+import { ModalCustom, InlineNotification, Button } from '@/components';
 import { WidgetSizeSelector, type WidgetSizeSelectorProps, CheckYourScreenForPreview, BoundComboBox } from '../shared';
 import { TextInput } from '@carbon/react';
 
@@ -50,8 +50,8 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
 
     const txt = {
         remoteImage: formatMessage({ defaultMessage: 'Remote Image' }),
-        addScene: formatMessage({ defaultMessage: 'Add Scene' }),
-        editScene: formatMessage({ defaultMessage: 'Edit Scene' }),
+        addWidget: formatMessage({ defaultMessage: 'Add Widget' }),
+        editWidget: formatMessage({ defaultMessage: 'Edit Widget' }),
     };
     const sizes: Sizes = {
         [pb.WidgetSize.SMALL]: '317x238',
@@ -59,7 +59,7 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
         [pb.WidgetSize.LARGE]: '638x480',
         [pb.WidgetSize.FULL]: '1280x480',
     };
-    const verb = isEdit ? txt.editScene : txt.addScene;
+    const verb = isEdit ? txt.editWidget : txt.addWidget;
 
     const refreshIntervalOptions = pb
         .getRemoteImageRefreshIntervalOptions(intl)
@@ -76,7 +76,7 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
                 labelText={intl.formatMessage({ defaultMessage: 'URL' })}
                 placeholder={intl.formatMessage({ defaultMessage: 'URL' })}
                 value={url.value || ''}
-                onChange={e => url.onChange(e.target.value)}
+                onChange={e => url.onChange?.(e.target.value)}
                 invalid={!!url.error}
                 invalidText={url.error}
                 helperText={
@@ -125,13 +125,21 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
             onClose={onClose}
             // Content
             children={form}
+            footer={
+                <Button
+                    id={$('done')}
+                    kind="primary"
+                    children={formatMessage({ defaultMessage: 'Done' })}
+                    onClick={onClose}
+                />
+            }
         />
     );
 }
 
 function Rules(props: Sizes) {
     const { formatMessage } = useIntl();
-    const b = (chunks: ReactNode) => <strong children={chunks} />;
+    const b = (chunks: ReactNode) => <strong key="b">{chunks}</strong>;
 
     return (
         <div className={css.rules}>

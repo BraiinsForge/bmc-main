@@ -4,7 +4,7 @@
  */
 export function assertUnreachable(x: never, label?: string): never {
     const message = label ? `Unexected ${label} value has been reached!` : 'Unexected value has been reached!';
-    throw new Error(`${message} - ${x}`);
+    throw new Error(`${message} - ${JSON.stringify(x)}`);
 }
 
 /**
@@ -13,5 +13,5 @@ export function assertUnreachable(x: never, label?: string): never {
  */
 export function assertUndefined(x: undefined, label?: string) {
     const message = label ? `Unexected ${label} value has been reached!` : 'Unexected value has been reached!';
-    if (typeof x !== 'undefined') throw new Error(`${message} - ${x}`);
+    if (typeof x !== 'undefined') throw new Error(`${message} - ${JSON.stringify(x)}`);
 }

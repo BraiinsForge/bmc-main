@@ -1,0 +1,33 @@
+@use 'styles/carbon' as *;
+
+.root {
+    composes: inline horizontal center from 'styles/layout.scss';
+    gap: mini-units(0.5);
+}
+
+.pill {
+    $height: to-rem(24px);
+    $padding: mini-units(1);
+    $radius: $padding * 2;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    height: $height;
+    padding-inline: $padding;
+    border-radius: $radius;
+
+    &.night {
+        background-color: $braiins-blue-90;
+        color: $braiins-blue-30;
+    }
+    &.cloud {
+        background-color: $braiins-orange-90;
+        color: $braiins-orange-30;
+    }
+    &.local {
+        background-color: $braiins-teal-80;
+        color: $braiins-teal-30;
+    }
+}

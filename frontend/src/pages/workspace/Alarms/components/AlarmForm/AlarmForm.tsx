@@ -65,7 +65,7 @@ class View extends Component<Props, State> {
 
         const val = value ?? [];
         const res = val.includes(day) ? val.filter(x => x !== day) : [...val, day];
-        onChange(res.sort());
+        onChange?.(res.sort());
     };
 
     private abortPlaying = pb.abort.get();
@@ -102,7 +102,7 @@ class View extends Component<Props, State> {
 
     #alarmSoundChange = (x: { selectedItem: null | pb.SoundInfo }): void => {
         const { sound } = this.props;
-        sound.onChange(x.selectedItem?.id ?? null);
+        sound.onChange?.(x.selectedItem?.id ?? null);
     };
     #alarmSoundToString = (value: null | pb.SoundInfo): string => value?.name ?? '--';
 
@@ -119,7 +119,7 @@ class View extends Component<Props, State> {
                             id={$('time')}
                             labelText={formatMessage({ defaultMessage: 'Time' })}
                             value={time.value ?? ''}
-                            onChange={e => time.onChange(e.target.value)}
+                            onChange={e => time.onChange?.(e.target.value)}
                             invalid={!!time.error}
                             invalidText={time.error}
                             placeholder={formatMessage({ defaultMessage: 'HH:MM' })}
@@ -131,7 +131,7 @@ class View extends Component<Props, State> {
                             id={$('name')}
                             labelText={formatMessage({ defaultMessage: 'Alarm Name (optional)' })}
                             value={name.value ?? ''}
-                            onChange={e => name.onChange(e.target.value)}
+                            onChange={e => name.onChange?.(e.target.value)}
                             invalid={!!name.error}
                             invalidText={name.error}
                             placeholder="---"
@@ -164,16 +164,16 @@ class View extends Component<Props, State> {
 
                 <CarbonFormField className={css.fullWidth} labelText={formatMessage({ defaultMessage: 'Alarm Sound' })}>
                     <div className={css.soundRow}>
-                        <Dropdown<pb.SoundInfo>
+                        <Dropdown<null | pb.SoundInfo>
                             id={$('sound')}
                             className={css.soundDropdown}
                             titleText=""
                             label={formatMessage({ defaultMessage: 'Select a sound…' })}
                             items={sound.options}
-                            selectedItem={sound.options.find(x => x.id === sound.value)}
+                            selectedItem={sound.options.find(x => x.id === sound.value) ?? null}
                             onChange={this.#alarmSoundChange}
                             itemToString={this.#alarmSoundToString}
-                            itemToElement={SoundOptionElement}
+                            itemToElement={soundOptionElement}
                         />
                         <Button
                             id={$('play-selected-sound')}
@@ -209,7 +209,7 @@ class View extends Component<Props, State> {
                             selectedItem={snoozeLimit.value ?? undefined}
                             onChange={x => {
                                 const v = x.selectedItem;
-                                if (v != null) snoozeLimit.onChange(v);
+                                if (v != null) snoozeLimit.onChange?.(v);
                             }}
                             itemToString={x => pb.alarmSnoozeLimitToString(intl, x) ?? 'N/A'}
                         />
@@ -223,7 +223,7 @@ class View extends Component<Props, State> {
                             selectedItem={snoozeDuration.value ?? undefined}
                             onChange={x => {
                                 const v = x.selectedItem;
-                                if (v !== null) snoozeDuration.onChange(v);
+                                if (v !== null) snoozeDuration.onChange?.(v);
                             }}
                             itemToString={x => pb.alarmSnoozeDurationToString(intl, x) ?? 'N/A'}
                         />
@@ -238,6 +238,7 @@ export function AlarmForm(props: AlarmFormProps) {
     return <View {...props} intl={intl} />;
 }
 
-function SoundOptionElement(props: pb.SoundInfo) {
-    return <SoundOption sound={props} />;
+function soundOptionElement(item: null | pb.SoundInfo) {
+    if (!item) return null;
+    return <SoundOption sound={item} />;
 }

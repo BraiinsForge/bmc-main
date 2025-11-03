@@ -1,10 +1,13 @@
 @use '@/styles/carbon' as *;
+@use '@/styles/interaction';
 
 html,
 body {
     margin: 0 !important;
     padding: 0 !important;
     min-height: 100vh !important;
+
+    @include interaction.scrollbar;
 }
 
 // Forcefully remove body background if it isn't marked
@@ -79,5 +82,5 @@ html {
 }
 
 .tint {
-    background: rgba(0 0 0 / 60%);
+    background: rgb(0 0 0 / 60%);
 }

@@ -60,18 +60,18 @@ class View extends Component<Props> {
         const { onChange, value } = this.props.timezone;
 
         // Only update if a new item is selected, prevent clearing on ESC
-        if (x.selectedItem) onChange(x.selectedItem);
+        if (x.selectedItem) onChange?.(x.selectedItem);
         // ESC was pressed - restore the current value
-        else if (x.selectedItem == null && value) onChange(value);
+        else if (x.selectedItem == null && value) onChange?.(value);
     };
 
     #dateFormatChange: DropdownProps<DateFormat>['onChange'] = x => {
         const { onChange } = this.props.dateFormat;
-        if (x.selectedItem) onChange(x.selectedItem);
+        if (x.selectedItem) onChange?.(x.selectedItem);
     };
     #numberFormatChange: DropdownProps<NumberFormat>['onChange'] = x => {
         const { onChange } = this.props.numberFormat;
-        if (x.selectedItem) onChange(x.selectedItem);
+        if (x.selectedItem) onChange?.(x.selectedItem);
     };
 
     #catchEscapeKey = (e: KeyboardEvent<HTMLFormElement>): void => {
@@ -251,7 +251,7 @@ class View extends Component<Props> {
                                 hideLabel
                                 labelText={null}
                                 value={password1.value ?? ''}
-                                onChange={e => password1.onChange(e.target.value)}
+                                onChange={e => password1.onChange?.(e.target.value)}
                                 disabled={password1.disabled}
                                 invalid={!!password1.error}
                                 invalidText={password1.error}
@@ -269,7 +269,7 @@ class View extends Component<Props> {
                                 hideLabel
                                 labelText={null}
                                 value={password2.value ?? ''}
-                                onChange={e => password2.onChange(e.target.value)}
+                                onChange={e => password2.onChange?.(e.target.value)}
                                 disabled={password2.disabled}
                                 invalid={!!password2.error}
                                 invalidText={password2.error}

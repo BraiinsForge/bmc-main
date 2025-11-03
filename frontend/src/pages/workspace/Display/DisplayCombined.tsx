@@ -1,7 +1,7 @@
 import { Component } from 'react';
-import { debounce, cloneDeep } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
+import { debounce, cloneDeep, isPlainObject } from 'es-toolkit';
 import { useParams, useNavigate, type NavigateFunction } from 'react-router';
 
 // Libs
@@ -31,6 +31,7 @@ type FormStateBlockchainData = FormPropsToLocalState<Comp.FormWidgetBlockchainDa
 type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
 type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
 type FormStateRemoteImage = FormPropsToLocalState<Comp.FormWidgetRemoteImageProps>;
+type FormStateRemoteWidget = FormPropsToLocalState<Comp.FormWidgetRemoteWidgetProps>;
 type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 
 // Can be both edit & create dialogs
@@ -47,6 +48,7 @@ type DialogStates = {
     braiinsPool: FormDialogState<FormStateBraiinsPool>;
     clock: FormDialogState<FormStateClock>;
     remoteImage: FormDialogState<FormStateRemoteImage>;
+    remoteWidget: FormDialogState<FormStateRemoteWidget>;
     ticker: FormDialogState<FormStateTicker>;
 };
 function getInitialDialogStates(): DialogStates {
@@ -66,6 +68,7 @@ function getInitialDialogStates(): DialogStates {
         braiinsPool: getForm(),
         clock: getForm(),
         remoteImage: getForm(),
+        remoteWidget: getForm(),
         ticker: getForm(),
     };
 }
@@ -81,22 +84,29 @@ interface State {
 
     accounts: pb.Account[];
     timezones: pb.Timezone[];
+    recentRemoteWidgets: pb.RemoteWidget[];
     scene: null | pb.Scene;
 
     openDialogKind: null | 'scene-select' | keyof DialogStates;
     addPosition: null | pb.WidgetPosition;
     dialogStates: DialogStates;
+    remoteWidgetUrl: {
+        value: string;
+        errors: null | string[];
+    };
 }
 const getInitialState = (): State => ({
     isLoading: false,
 
     accounts: [],
     timezones: [],
+    recentRemoteWidgets: [],
     scene: null,
 
     openDialogKind: null,
     addPosition: null,
     dialogStates: getInitialDialogStates(),
+    remoteWidgetUrl: { value: '', errors: null },
 });
 
 const $ = getID('combined').get;
@@ -114,6 +124,7 @@ class View extends Component<Props, State> {
         this.#loadScene();
         this.#loadMetadata();
         this.#previewOpen();
+        this.#loadRecentRemoteWidgets();
     }
     componentWillUnmount() {
         pb.abort.all(this);
@@ -125,9 +136,10 @@ class View extends Component<Props, State> {
 
         try {
             const { signal } = this.abortLoadMetadata.replace();
+            const reqConf = { signal };
             const [{ timezones }, { accounts }] = await Promise.all([
-                pb.rpc.sys.getTimezoneList({}, { signal }),
-                pb.rpc.accounts.getAllAccounts({}, { signal }),
+                pb.rpc.sys.getTimezoneList({}, reqConf),
+                pb.rpc.accounts.getAllAccounts({}, reqConf),
             ]);
             this.setState({ timezones, accounts });
         } catch ($) {
@@ -135,6 +147,22 @@ class View extends Component<Props, State> {
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to load timezones!' });
+            toast.error(msg);
+        }
+    };
+
+    private abortRecentRemoteWidgetsLoad = pb.abort.get();
+    #loadRecentRemoteWidgets = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.abortRecentRemoteWidgetsLoad.replace();
+            const { recentRemoteWidgets } = await pb.rpc.scenes.getRecentRemoteWidgets({}, { signal });
+            this.setState({ recentRemoteWidgets });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load recent remote widgets!' });
             toast.error(msg);
         }
     };
@@ -246,7 +274,7 @@ class View extends Component<Props, State> {
         this.#loadSceneDebounced();
     };
     #handleAdd = (position: pb.WidgetPosition): void => {
-        this.setState({ openDialogKind: 'scene-select', addPosition: position });
+        this.setState({ openDialogKind: 'scene-select', addPosition: position }, this.#loadRecentRemoteWidgets);
     };
     #handleEdit: Comp.CombinedSceneViewProps['onWidgetEdit'] = (id: string): void => {
         const { formatMessage } = this.props.intl;
@@ -386,6 +414,24 @@ class View extends Component<Props, State> {
                 }));
                 break;
 
+            case 'remoteWidget':
+                this.setState(s => ({
+                    openDialogKind: 'remoteWidget',
+                    dialogStates: {
+                        ...s.dialogStates,
+                        remoteWidget: {
+                            isEdit: true,
+                            widgetID: id,
+                            position,
+                            data: {
+                                errors: null,
+                                values: Comp.unpackRemoteWidgetKind(wkind, widget.size),
+                            },
+                        },
+                    },
+                }));
+                break;
+
             default:
                 assertUndefined(wkind?.value, 'Unknown widget kind!');
         }
@@ -423,12 +469,8 @@ class View extends Component<Props, State> {
     #handleWidgetAdd = async (kind: Comp.SceneKind): Promise<void> => {
         const { sceneId } = this.props;
         const { formatMessage } = this.props.intl;
-        const { openDialogKind, addPosition } = this.state;
+        const { openDialogKind, addPosition, remoteWidgetUrl } = this.state;
 
-        if (kind === 'combined') {
-            toast.error(formatMessage({ defaultMessage: "Can't add a combined scene, aborting!" }));
-            return;
-        }
         if (!addPosition) {
             toast.error(formatMessage({ defaultMessage: "Can't add widget without position, aborting!" }));
             return;
@@ -474,20 +516,56 @@ class View extends Component<Props, State> {
                 $widgetKind = { case: 'remoteImage', value: pb.create(pb.RemoteImageWidgetSchema) };
                 break;
 
+            case 'remoteWidget':
+                $openDialogKind = 'remoteWidget';
+                $widgetKind = {
+                    case: 'remoteWidget',
+                    // At the time of writing, the remote widget is the only one
+                    // that actually reads these values upon creation, so we
+                    // need to provide them and read potential errors.
+                    value: pb.create(pb.RemoteWidgetSchema, { widgetUrl: remoteWidgetUrl.value }),
+                };
+                break;
+
             default:
                 assertUnreachable(kind, 'Unknown widget kind!');
         }
 
         // We are default to `small` size because that is the most un-problematic size
         // and user can change it right away if there is enough space.
-        const { value: widgetID } = await pb.rpc.scenes.addWidget(
-            pb.create(pb.AddWidgetRequestSchema, {
-                sceneId,
-                size,
-                position: addPosition,
-                kind: { value: $widgetKind },
-            }),
-        );
+        //
+        // This can fail with addition of remote widget
+        // because it validates the provided URL.
+        let widgetID: pb.Widget['id'];
+        try {
+            const res = await pb.rpc.scenes.addWidget(
+                pb.create(pb.AddWidgetRequestSchema, {
+                    sceneId,
+                    size,
+                    position: addPosition,
+                    kind: { value: $widgetKind },
+                }),
+            );
+            widgetID = res.value;
+        } catch ($) {
+            const e = pb.parseFormErrors<pb.AddFullscreenSceneRequest>($);
+            const wke = e.fields.widgetKind as Maybe<Rec>;
+
+            // We either manage to parse out errors for the remote widget URL…
+            if (isPlainObject(wke) && 'remoteWidget' in wke && Array.isArray(wke.remoteWidget)) {
+                const errors = wke.remoteWidget as string[];
+                this.setState(s => ({ remoteWidgetUrl: { ...s.remoteWidgetUrl, errors } }));
+            }
+
+            // …or just notify generically that something has failed
+            else {
+                let msg = pb.collectAllErrorsAsFormattedList($);
+                msg ||= formatMessage({ defaultMessage: 'Failed to add display widget!' });
+                toast.error(msg);
+            }
+
+            return;
+        }
 
         // Now that the widget has been added, we need to re-load the scene
         // to get the new widget data (as we only submit the position and type).
@@ -542,6 +620,13 @@ class View extends Component<Props, State> {
                     };
                     break;
 
+                case 'remoteWidget':
+                    dialogStates.remoteWidget.data = {
+                        errors: null,
+                        values: Comp.unpackRemoteWidgetKind(widgetKind, size),
+                    };
+                    break;
+
                 default:
                     widgetKind?.value && assertUnreachable(widgetKind?.value, 'Unknown widget kind!');
             }
@@ -551,7 +636,17 @@ class View extends Component<Props, State> {
         dialogStates[$openDialogKind].position = addPosition;
         dialogStates[$openDialogKind].widgetID = widgetID;
 
-        this.setState({ dialogStates, openDialogKind: $openDialogKind });
+        this.setState({
+            dialogStates,
+            openDialogKind: $openDialogKind,
+            remoteWidgetUrl: { value: '', errors: null },
+        });
+    };
+    #handleWidgetAddRemote = async (): Promise<void> => {
+        this.#handleWidgetAdd('remoteWidget');
+    };
+    #sceneRemoteWidgetUrlChange = (url: string): void => {
+        this.setState({ remoteWidgetUrl: { value: url, errors: null } });
     };
     #openDialogCancel = (): void => this.setState({ openDialogKind: null, dialogStates: getInitialDialogStates() });
 
@@ -692,6 +787,13 @@ class View extends Component<Props, State> {
                 kind = Comp.createRemoteImageWidgetKind(dialogStates.remoteImage.data.values);
                 break;
 
+            case 'remoteWidget':
+                id = dialogStates.remoteWidget.widgetID;
+                size = dialogStates.remoteWidget.data.values.widgetSize ?? size;
+                position = dialogStates.remoteWidget.position;
+                kind = Comp.createRemoteWidgetKind(dialogStates.remoteWidget.data.values);
+                break;
+
             default:
                 assertUnreachable(openDialogKind, 'Unknown open dialog kind!');
         }
@@ -777,7 +879,9 @@ class View extends Component<Props, State> {
             accounts,
             timezones,
             openDialogKind,
-            dialogStates: { clock, ticker, blockHeight, blockchainData, braiinsPool, remoteImage },
+            remoteWidgetUrl,
+            recentRemoteWidgets,
+            dialogStates: { clock, ticker, blockHeight, blockchainData, braiinsPool, remoteImage, remoteWidget },
         } = this.state;
 
         const widgets: pb.Widget[] = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
@@ -834,10 +938,17 @@ class View extends Component<Props, State> {
                 </main>
 
                 <Comp.FormSceneSelect
-                    variant="widget"
                     isOpen={openDialogKind === 'scene-select'}
                     onClose={this.#openDialogCancel}
                     onSelection={this.#handleWidgetAdd}
+                    remoteWidgetUrl={{
+                        value: remoteWidgetUrl.value,
+                        error: pb.renderFieldErrorsAsList(remoteWidgetUrl.errors),
+                        disabled: false,
+                        onChange: this.#sceneRemoteWidgetUrlChange,
+                        onSubmit: this.#handleWidgetAddRemote,
+                    }}
+                    remoteWidgetRecents={recentRemoteWidgets}
                 />
 
                 <Comp.FormWidgetClock
@@ -959,6 +1070,27 @@ class View extends Component<Props, State> {
                     }}
                     url={this.#getField('remoteImage', 'url')}
                     refreshDurationSec={this.#getField('remoteImage', 'refreshDurationSec')}
+                />
+                <Comp.FormWidgetRemoteWidget
+                    isOpen={openDialogKind === 'remoteWidget'}
+                    isEdit={remoteWidget.isEdit}
+                    onClose={this.#openDialogCancel}
+                    error={
+                        openDialogKind === 'remoteWidget'
+                            ? pb.renderFieldErrorsAsList(remoteWidget.data?.errors?.global)
+                            : null
+                    }
+                    // Fields
+                    widgetSize={{
+                        ...this.#getField('remoteWidget', 'widgetSize'),
+                        options: fn.getValidWidgetSizes(widgets, {
+                            id: remoteWidget.widgetID,
+                            position: remoteWidget.position,
+                        }),
+                    }}
+                    url={this.#getField('remoteWidget', 'url')}
+                    name={this.#getField('remoteWidget', 'name')}
+                    params={this.#getField('remoteWidget', 'params')}
                 />
             </div>
         );

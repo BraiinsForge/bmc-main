@@ -22,7 +22,7 @@ export function FormBraiinsPool(props: FormBraiinsPoolProps) {
     const { name, apiKey } = props;
 
     const { formatMessage } = useIntl();
-    const b = (ch: ReactNode): ReactElement => <strong children={ch} />;
+    const b = (ch: ReactNode): ReactElement => <strong key="b">{ch}</strong>;
 
     return (
         <div className={css.form}>
@@ -38,7 +38,7 @@ export function FormBraiinsPool(props: FormBraiinsPoolProps) {
                         defaultMessage="Open your <b>Braiins Pool account</b> and go to <a>Access Profiles</a>"
                         values={{
                             b,
-                            a: ch => <Link external href={URLS.external.pool.accessProfiles} children={ch} />,
+                            a: ch => <Link key="a" external href={URLS.external.pool.accessProfiles} children={ch} />,
                         }}
                     />
                     <FormattedMessage
@@ -66,7 +66,7 @@ export function FormBraiinsPool(props: FormBraiinsPoolProps) {
                     labelText={formatMessage({ defaultMessage: 'Account Name' })}
                     placeholder={formatMessage({ defaultMessage: 'Enter the access profile name' })}
                     value={name.value ?? ''}
-                    onChange={e => name.onChange(e.target.value)}
+                    onChange={e => name.onChange?.(e.target.value)}
                     onFocus={selfSelect}
                     disabled={name.disabled}
                     invalid={!!name.error}
@@ -81,7 +81,7 @@ export function FormBraiinsPool(props: FormBraiinsPoolProps) {
                     labelText={formatMessage({ defaultMessage: 'API Key' })}
                     placeholder={formatMessage({ defaultMessage: 'Enter the API key' })}
                     value={apiKey.value ?? ''}
-                    onChange={e => apiKey.onChange(e.target.value)}
+                    onChange={e => apiKey.onChange?.(e.target.value)}
                     onFocus={selfSelect}
                     disabled={apiKey.disabled}
                     invalid={!!apiKey.error}

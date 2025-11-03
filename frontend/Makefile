@@ -53,9 +53,7 @@ dev:
 
 serve: EXTRA_ARGS ?= ;
 serve:
-	echo $(FACTORY_DEFAULT)
-	cd ..; \
-	cargo run \
+	cd ..; cargo run \
 		--features=winit-skia \
 		--package bmc-mock -- \
 		--address="0.0.0.0:6070" \

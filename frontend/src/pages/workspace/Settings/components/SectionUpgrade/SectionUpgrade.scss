@@ -27,8 +27,12 @@
 
 .facts {
     position: relative;
+
     width: to-rem(558px);
     max-width: 100%;
+    container-type: inline-size;
+
+    @include type-style(body-short-01);
 
     :global(.cds--inline-loading) {
         display: inline-flex;
@@ -52,6 +56,28 @@
         td {
             text-align: end;
         }
+
+        // Reflow on mobile
+        @container (width <= 500px) {
+            display: flex;
+            flex-flow: column nowrap;
+
+            tr {
+                display: flex;
+                flex-flow: column nowrap;
+                margin-block-end: mini-units(2);
+
+                th,
+                td {
+                    height: auto;
+                    line-height: 1.5;
+
+                    width: 100%;
+                    align-self: start;
+                    text-align: start;
+                }
+            }
+        }
     }
 }
 
@@ -67,7 +93,7 @@
 }
 
 .control {
-    margin-top: mini-units(4);
+    margin-top: mini-units(2);
     &:empty {
         display: none;
     }
@@ -93,7 +119,7 @@
 }
 
 .changelog {
-    margin-top: mini-units(6);
+    margin-top: mini-units(4);
 
     .title {
         @include type-style('heading-02');

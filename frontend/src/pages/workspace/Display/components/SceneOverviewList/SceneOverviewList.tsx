@@ -7,20 +7,16 @@ import * as pb from '@/proto';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { getID } from '../../const';
 import { ScenePreview } from '../images';
-import { Add as IconAdd } from '@carbon/react/icons';
-import { Button, type RenderSortableListItemProps, Sortable } from '@/components';
+import { type RenderSortableListItemProps, Sortable } from '@/components';
 import { SceneOverviewRow, SceneOverviewRowSkeleton } from '../SceneOverviewRow';
 
 // Styles
 import cn from 'clsx';
-import colors from '@/styles/colors';
 import css from './SceneOverviewList.scss';
 
 export interface SceneOverviewListProps {
     scenes: pb.Scene[];
-    onAdd(): void;
     onMove(scenes: pb.Scene[], move: { id: string; from: number; into: number }): void;
     onEdit(id: string): void;
     onClone(id: string): void;
@@ -35,13 +31,15 @@ interface Props extends SceneOverviewListProps {
     intl: IntlShape;
 }
 
-const $ = getID('scenes').get;
 class View extends Component<Props> {
     static contextType = AppContext;
     declare context: AppContextType;
 
     componentWillUnmount = () => pb.abort.all(this);
 
+    #isRemote = (x: Maybe<ProtoOneofCase<pb.WidgetKind['value']>>): boolean => {
+        return x === 'remoteWidget' || x === 'remoteImage';
+    };
     #renderItem = (props: RenderSortableListItemProps<pb.Scene>, firstEnabledSceneID: Maybe<pb.Scene['id']>) => {
         const { cycleEnabled, cycleDefaultDuration, onEdit, onToggle, onClone, onDelete, onDurationChange, intl } =
             this.props;
@@ -59,7 +57,11 @@ class View extends Component<Props> {
                 break;
 
             case 'fullscreen':
-                title = pb.sceneTitle(intl, item.kind.value.widget?.kind?.value.case) ?? 'N/A';
+                title =
+                    item.kind.value.widget?.kind?.value.case === 'remoteWidget'
+                        ? item.kind.value.widget.kind.value.value.name
+                        : (pb.sceneTitle(intl, item.kind.value.widget?.kind?.value.case) ?? 'N/A');
+                title ||= 'N/A';
                 description = pb.sceneDescription(intl, item.kind.value.widget) || '';
                 break;
 
@@ -67,29 +69,32 @@ class View extends Component<Props> {
                 assertUnreachable(item.kind, 'scene kind');
         }
 
+        const $kind = item.kind;
+        const isNightModeWidget: boolean = firstEnabledSceneID === item.id;
+        const isRemoteWidgetOrHasOneInside: boolean =
+            ($kind.case === 'fullscreen' && this.#isRemote($kind.value?.widget?.kind?.value.case)) ||
+            ($kind.case === 'combined' && $kind.value.widgets.some(x => this.#isRemote(x.kind?.value.case)));
+        const isLocalWidgetOrHasOneInside: boolean =
+            ($kind.case === 'fullscreen' && !this.#isRemote($kind.value?.widget?.kind?.value.case)) ||
+            ($kind.case === 'combined' && !$kind.value.widgets.some(x => this.#isRemote(x.kind?.value.case)));
+
         return (
             <SceneOverviewRow
                 id={item.id}
                 className={cn(css.line, state.isDragging && css.dragged)}
+                layout="row" // FIXME: "card" layout on small screens
                 enabled={item.enabled}
-                preview={
+                icon={
                     <ScenePreview
                         kind={item.kind.case === 'fullscreen' ? item.kind.value?.widget?.kind?.value : 'combined'}
                     />
                 }
                 title={title}
-                tag={
-                    firstEnabledSceneID === item.id
-                        ? {
-                              type: 'blue',
-                              text: 'Night Mode',
-                              style: {
-                                  color: colors.blue20,
-                                  backgroundColor: colors.blue90,
-                              },
-                          }
-                        : null
-                }
+                type={{
+                    night: isNightModeWidget,
+                    cloud: isRemoteWidgetOrHasOneInside,
+                    local: isLocalWidgetOrHasOneInside,
+                }}
                 description={description}
                 cycleEnabled={cycleEnabled}
                 cycleDurationValue={item.cycleDurationSec}
@@ -108,7 +113,7 @@ class View extends Component<Props> {
     };
 
     render() {
-        const { scenes, onMove, onAdd, intl } = this.props;
+        const { scenes, onMove, intl } = this.props;
 
         const firstEnabledSceneID = scenes.find(x => x.enabled)?.id;
         if (!scenes.length) {
@@ -117,19 +122,7 @@ class View extends Component<Props> {
                     <SceneOverviewRowSkeleton rowCount={3} className={css.skeleton} />
                     <h1
                         className={css.title}
-                        children={intl.formatMessage({ defaultMessage: 'No “Display Scene” yet' })}
-                    />
-                    <h1
-                        className={css.subtitle}
-                        children={intl.formatMessage({ defaultMessage: 'Display Scenes description…' })}
-                    />
-                    <Button
-                        id={$('add-new-scene')}
-                        className={css.button}
-                        kind="primary"
-                        onClick={onAdd}
-                        icon={IconAdd}
-                        children={intl.formatMessage({ defaultMessage: 'Add New Scene' })}
+                        children={intl.formatMessage({ defaultMessage: 'No “Display widget” yet' })}
                     />
                 </div>
             );

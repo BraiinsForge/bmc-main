@@ -114,7 +114,7 @@ export function weekdayToString(intl: IntlShape, x?: null | pb.Weekday, long?: b
             return long ? formatMessage({ defaultMessage: 'Sunday' }) : formatMessage({ defaultMessage: 'Sun' });
 
         default:
-            assertUnreachable(x, 'Scene transition effect');
+            assertUnreachable(x, 'weekday');
     }
 }
 export function weekdayListToString(intl: IntlShape, x: Maybe<pb.Weekday[]>): null | string {
@@ -231,7 +231,7 @@ export function sceneCyclingEffectToString(intl: IntlShape, x?: null | pb.SceneC
             return formatMessage({ defaultMessage: 'Slide' });
 
         default:
-            assertUnreachable(x, 'Scene transition effect');
+            assertUnreachable(x, 'Widget transition effect');
     }
 }
 
@@ -289,7 +289,7 @@ export function tickerTimeFrameToString(intl: IntlShape, x?: null | pb.TickerBtc
             return formatMessage({ defaultMessage: 'All' });
 
         default:
-            assertUnreachable(x, 'Scene transition effect');
+            assertUnreachable(x, 'ticker time frame');
     }
 }
 
@@ -536,7 +536,7 @@ export function braiinsPoolTimeFrameToString(intl: IntlShape, x?: null | Braiins
             return formatMessage({ defaultMessage: '7 Days' });
 
         default:
-            assertUnreachable(x, 'Scene transition effect');
+            assertUnreachable(x, 'pool time frame');
     }
 }
 
@@ -576,6 +576,9 @@ export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.Widget
 
         case 'remoteImage':
             return intl.formatMessage({ defaultMessage: 'Remote Image' });
+
+        case 'remoteWidget':
+            return intl.formatMessage({ defaultMessage: 'Remote Widget' });
 
         default:
             assertUnreachable(kind);
@@ -634,6 +637,9 @@ export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
             const d = val.value satisfies pb.RemoteImageWidget;
             return intl.formatMessage({ defaultMessage: 'URL: {url}' }, { url: d.url || 'N/A' });
         }
+
+        case 'remoteWidget':
+            return val.value.description;
 
         default:
             assertUnreachable(val, 'fullscreen widget kind');

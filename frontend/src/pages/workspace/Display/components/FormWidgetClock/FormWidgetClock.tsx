@@ -15,7 +15,7 @@ import {
     type OptionItem,
     CheckYourScreenForPreview,
 } from '../shared';
-import { ModalCustom, InlineNotification } from '@/components';
+import { ModalCustom, InlineNotification, Button } from '@/components';
 import { CheckboxGroup } from '@carbon/react';
 import { Earth as IconEarth } from '@carbon/react/icons';
 
@@ -70,8 +70,8 @@ class View extends Component<Props> {
 
     #txt = {
         clock: this.props.intl.formatMessage({ defaultMessage: 'Clock' }),
-        addScene: this.props.intl.formatMessage({ defaultMessage: 'Add Scene' }),
-        editScene: this.props.intl.formatMessage({ defaultMessage: 'Edit Scene' }),
+        addWidget: this.props.intl.formatMessage({ defaultMessage: 'Add Widget' }),
+        editWidget: this.props.intl.formatMessage({ defaultMessage: 'Edit Widget' }),
     };
 
     render() {
@@ -171,7 +171,7 @@ class View extends Component<Props> {
             </Form>
         );
 
-        const verb = isEdit ? this.#txt.editScene : this.#txt.addScene;
+        const verb = isEdit ? this.#txt.editWidget : this.#txt.addWidget;
 
         return (
             <ModalCustom
@@ -188,6 +188,14 @@ class View extends Component<Props> {
                 onClose={onClose}
                 // Content
                 children={form}
+                footer={
+                    <Button
+                        id={$('done')}
+                        kind="primary"
+                        children={formatMessage({ defaultMessage: 'Done' })}
+                        onClick={onClose}
+                    />
+                }
             />
         );
     }

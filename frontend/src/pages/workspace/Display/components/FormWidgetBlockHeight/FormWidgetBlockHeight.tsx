@@ -6,7 +6,7 @@ import { getID } from '../const';
 import { Form, type iField, type FormPropsToValuesRec } from '@/lib/form';
 
 // Components
-import { ModalCustom, InlineNotification } from '@/components';
+import { ModalCustom, InlineNotification, Button } from '@/components';
 import {
     BoundToggle,
     WidgetSizeSelector,
@@ -46,8 +46,8 @@ export function FormWidgetBlockHeight(props: FormWidgetBlockHeightProps) {
     }, [intl]);
     const txt = {
         blockHeight: formatMessage({ defaultMessage: 'Block Height' }),
-        addScene: formatMessage({ defaultMessage: 'Add Scene' }),
-        editScene: formatMessage({ defaultMessage: 'Edit Scene' }),
+        addWidget: formatMessage({ defaultMessage: 'Add Widget' }),
+        editWidget: formatMessage({ defaultMessage: 'Edit Widget' }),
     };
 
     const {
@@ -96,7 +96,7 @@ export function FormWidgetBlockHeight(props: FormWidgetBlockHeightProps) {
         </Form>
     );
 
-    const verb = isEdit ? txt.editScene : txt.addScene;
+    const verb = isEdit ? txt.editWidget : txt.addWidget;
 
     return (
         <ModalCustom
@@ -113,6 +113,14 @@ export function FormWidgetBlockHeight(props: FormWidgetBlockHeightProps) {
             onClose={onClose}
             // Content
             children={form}
+            footer={
+                <Button
+                    id={$('done')}
+                    kind="primary"
+                    children={formatMessage({ defaultMessage: 'Done' })}
+                    onClick={onClose}
+                />
+            }
         />
     );
 }

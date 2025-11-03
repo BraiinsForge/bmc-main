@@ -5,135 +5,87 @@ $row-height: to-rem(68px);
 $ctrl-height: to-rem(40px);
 
 .root {
+    // Layout context
     position: relative;
-    display: grid;
-
-    // stretch the labels column
-    grid-template-columns: auto /**/ auto /**/ auto /****/ 1fr /*********/ auto /****/ auto;
-    grid-template-areas: ' handle    toggle    preview     labels      duration     actions';
-
-    // ↑↓ center, ←→ start
-    place-items: center start;
-    gap: mini-units(1) mini-units(3);
-    padding-inline: 0 mini-units(3);
-
     container-type: inline-size;
-    width: 100%;
-    min-height: $row-height;
 
+    // Visuals
     background-color: $layer-01;
     user-select: none;
     color: $text-primary;
+}
 
-    // // Just a slight wrapping of the actions & duration controls
-    // @container (width <= 900px) {
-    //     padding-block: mini-units(2);
-    //
-    //     grid-template-areas:
-    //         'handle    toggle    preview    actions'
-    //         'handle    toggle    labels     duration';
-    //     grid-template-columns: auto auto 1fr auto;
-    // }
-    //
-    // // - stretch the image
-    // // - controls over the image
-    // // - labels & toggle on it's own row
-    // // - duration on it's own row
-    // @container (width <= 800px) {
-    //     padding-inline: 0;
-    //     padding-block: 0 mini-units(3);
-    //
-    //     grid-template-areas:
-    //         'preview    preview'
-    //         'actions    actions'
-    //         'labels     toggle'
-    //         'duration   duration';
-    //     grid-template-columns: 1fr auto;
-    //     grid-template-rows: auto auto;
-    //     row-gap: 0;
-    //
-    //     // Covers the whole width
-    //     .preview {
-    //         width: 100%;
-    //         height: 4 * $row-height;
-    //         place-content: center;
-    //
-    //         // Image now COVERs the whole thing
-    //         img {
-    //             width: 100%;
-    //             height: 100%;
-    //             object-fit: contain;
-    //             object-position: center;
-    //         }
-    //     }
-    //
-    //     // Moves upward over the image
-    //     .actions {
-    //         position: relative;
-    //         z-index: 10;
-    //
-    //         margin-block:
-    //             // shift the action buttons over the image above them
-    //             mini-units(-9)
-    //             // …and space out the bottom a bit. This one now fights the negative top margin, so we gotta go big here too
-    //             mini-units(3);
-    //
-    //         // …and space out a bit more from the right edge
-    //         padding: mini-units(2);
-    //         backdrop-filter: blur(10px);
-    //     }
-    //
-    //     // Toggle now needs it's own spacing from the right edge
-    //     .toggle,
-    //     .duration {
-    //         margin-inline-end: mini-units(2);
-    //     }
-    //
-    //     // the label+input combo now covers the width
-    //     .duration {
-    //         place-self: stretch;
-    //         padding-block-start: mini-units(2);
-    //
-    //         :global(.cds--number) {
-    //             margin-inline-start: auto;
-    //         }
-    //     }
-    //
-    //     .duration,
-    //     .labels {
-    //         margin-inline-start: mini-units(2);
-    //     }
-    //
-    //     // Drag handle gets moved to the upper left corner
-    //     .dragHandle {
-    //         position: absolute;
-    //         top: mini-units(2);
-    //         left: mini-units(2);
-    //         width: to-rem(40px);
-    //         height: to-rem(40px);
-    //
-    //         background-color: $button-secondary;
-    //     }
-    // }
+//
+// Layout variants
+//
 
+.row {
+    composes: root;
+    width: 100%;
+    min-height: $row-height;
+
+    // Grid
+    display: inline-grid;
+    // ↑↓ center, ←→ start
+    place-items: center start;
+    padding-inline: 0 mini-units(3);
+
+    // stretch the labels column
+    grid-template-columns: auto /**/ auto /**/ auto /****/ 1fr /****/ auto /****/ auto;
+    grid-template-areas: ' handle    toggle    icon        labels     duration    actions';
+    gap: mini-units(1) mini-units(3);
+
+    .dragHandle {
+        grid-area: handle;
+        flex-shrink: 0;
+        inline-size: calc($row-height);
+        margin-inline-end: mini-units(-3);
+    }
+
+    .toggle {
+        grid-area: toggle;
+    }
+
+    .icon {
+        grid-area: icon;
+    }
+
+    .labels {
+        grid-area: labels;
+
+        .types {
+            transform: translateY(-15%);
+        }
+    }
+
+    .duration {
+        grid-area: duration;
+    }
+
+    .actions {
+        grid-area: actions;
+        margin-inline: auto 0;
+    }
+
+    /*
     @container (width <= 900px) {
         padding-block: mini-units(2);
         grid-template-areas:
-            'handle  preview labels    actions'
+            'handle  icon labels    actions'
             'handle  toggle  duration  actions';
         grid-template-columns: auto auto 1fr auto;
     }
 
     @container (width <= 600px) {
         grid-template-areas:
-            'preview labels   labels  '
+            'icon labels   labels  '
             'handle  duration duration'
             'handle  toggle   actions';
         grid-template-columns: auto auto 1fr;
         grid-auto-rows: minmax(48px, auto);
         padding-inline: mini-units(1) mini-units(2);
 
-        .preview {
+        .icon {
             margin-inline: auto;
         }
 
@@ -148,7 +100,7 @@ $ctrl-height: to-rem(40px);
 
     @container (width <= 330px) {
         grid-template-areas:
-            'preview  labels'
+            'icon  labels'
             'handle   duration'
             'toggle   actions';
         grid-template-columns: auto 1fr;
@@ -159,26 +111,96 @@ $ctrl-height: to-rem(40px);
             gap: mini-units(1);
         }
     }
+    */
 }
 
-.dragHandle {
-    grid-area: handle;
+.card {
+    composes: root;
 
+    .top {
+        display: flex;
+        flex-flow: row nowrap;
+        align-items: flex-start;
+
+        padding-block: mini-units(2) 0;
+        padding-inline: mini-units(2);
+
+        $box-size: to-rem(40px);
+
+        .dragHandle,
+        .icon {
+            width: $box-size;
+            height: $box-size;
+            flex-shrink: 0;
+            margin-inline: mini-units(-1) mini-units(1);
+        }
+
+        .labels {
+            padding-inline-end: mini-units(2);
+
+            .types {
+                margin-block: mini-units(1);
+            }
+        }
+
+        .toggle {
+            margin-inline-start: auto;
+            // Toggle without label has an extra "margin" on right, so we need to
+            // nudge it a bit forward to visually align with the right edge.
+            transform: translateX(mini-units(1));
+        }
+    }
+
+    .bottom {
+        display: flex;
+        flex-flow: row nowrap;
+        align-items: start;
+        justify-content: space-between;
+        gap: mini-units(2);
+
+        margin-block-start: mini-units(1);
+        border-block-start: 1px solid $border-subtle;
+        padding-block: mini-units(1) mini-units(2);
+        padding-inline: mini-units(2);
+
+        .duration,
+        .actionsWrapper {
+            flex: 1;
+            align-self: start;
+        }
+
+        .actionsWrapper {
+            :global(.cds--label) {
+                align-self: end;
+            }
+            .actions {
+                align-self: end;
+            }
+        }
+
+        .vr {
+            width: 1px;
+            align-self: stretch;
+            margin-inline: auto;
+            background-color: $border-subtle;
+        }
+    }
+}
+
+//
+// Individual elements
+//
+
+.dragHandle {
     composes: selfStretch horizontal centerCenter from 'styles/layout.scss';
-    flex-shrink: 0;
-    inline-size: calc($row-height);
-    margin-inline-end: mini-units(-3);
     cursor: move;
 }
 
 .toggle {
-    grid-area: toggle;
     flex-shrink: 0;
 }
 
-.preview {
-    grid-area: preview;
-
+.icon {
     composes: vertical centerCenter from 'styles/layout.scss';
     overflow: hidden;
     height: calc($row-height - mini-units(2));
@@ -192,7 +214,6 @@ $ctrl-height: to-rem(40px);
 }
 
 .labels {
-    grid-area: labels;
     composes: vertical start from 'styles/layout.scss';
 
     text-align: start;
@@ -207,10 +228,6 @@ $ctrl-height: to-rem(40px);
         gap: mini-units(1);
 
         @include type-style(heading-02);
-
-        .tag {
-            transform: translateY(-1px);
-        }
     }
 
     .details {
@@ -220,7 +237,6 @@ $ctrl-height: to-rem(40px);
 }
 
 .duration {
-    grid-area: duration;
     composes: horizontal center from 'styles/layout.scss';
 
     gap: mini-units(2);
@@ -256,9 +272,6 @@ $ctrl-height: to-rem(40px);
 .actions {
     composes: horizontal from 'styles/layout.scss';
     gap: mini-units(1);
-    grid-area: actions;
-
-    margin-inline: auto 0;
 
     // We need min-height because the buttons have tooltips,
     // which makes them behave wrong in regards to document flow.
@@ -266,6 +279,9 @@ $ctrl-height: to-rem(40px);
 
     button {
         block-size: $ctrl-height;
+        // CDS Colours these with action accent,
+        // so we'll force it to primary text colour
+        color: $text-primary !important;
     }
 }
 
@@ -274,7 +290,7 @@ $ctrl-height: to-rem(40px);
 //
 
 .disabledRow {
-    .preview,
+    .icon,
     .labels *,
     .duration {
         color: $text-secondary;

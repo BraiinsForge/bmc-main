@@ -78,7 +78,7 @@ function Field(props: FieldProps) {
             invalid={!!field.error}
             invalidText={field.error}
             disabled={field.disabled}
-            onChange={e => field.onChange(e.target.value)}
+            onChange={e => field.onChange?.(e.target.value)}
         />
     );
 }

@@ -5,7 +5,7 @@ import { getID } from '../const';
 import { Form, type FormPropsToValuesRec } from '@/lib/form';
 
 // Components
-import { ModalCustom, InlineNotification } from '@/components';
+import { ModalCustom, InlineNotification, Button } from '@/components';
 import { WidgetSizeSelector, type WidgetSizeSelectorProps, CheckYourScreenForPreview } from '../shared';
 
 // styles
@@ -23,15 +23,14 @@ export interface FormWidgetBlockchainDataProps {
 
     style?: CSSProperties;
 }
-
 export function FormWidgetBlockchainData(props: FormWidgetBlockchainDataProps) {
     const intl = useIntl();
     const { formatMessage } = intl;
 
     const txt = {
         blockHeight: formatMessage({ defaultMessage: 'Bitcoin Mining Data' }),
-        addScene: formatMessage({ defaultMessage: 'Add Scene' }),
-        editScene: formatMessage({ defaultMessage: 'Edit Scene' }),
+        addWidget: formatMessage({ defaultMessage: 'Add Widget' }),
+        editWidget: formatMessage({ defaultMessage: 'Edit Widget' }),
     };
 
     const {
@@ -72,7 +71,7 @@ export function FormWidgetBlockchainData(props: FormWidgetBlockchainDataProps) {
         </Form>
     );
 
-    const verb = isEdit ? txt.editScene : txt.addScene;
+    const verb = isEdit ? txt.editWidget : txt.addWidget;
 
     return (
         <ModalCustom
@@ -89,6 +88,14 @@ export function FormWidgetBlockchainData(props: FormWidgetBlockchainDataProps) {
             onClose={onClose}
             // Content
             children={form}
+            footer={
+                <Button
+                    id={$('done')}
+                    kind="primary"
+                    children={formatMessage({ defaultMessage: 'Done' })}
+                    onClick={onClose}
+                />
+            }
         />
     );
 }

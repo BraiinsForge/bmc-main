@@ -456,7 +456,7 @@ class View extends Component<Props, State> {
         const title = intl.formatMessage(
             { defaultMessage: 'Password for {ssid}' },
             {
-                ssid: <code children={wifiCell?.ssid || 'N/A'} />,
+                ssid: <code key="ssid">{wifiCell?.ssid || 'N/A'}</code>,
             },
         );
         const handleClose = () => this.#wifiPasswordDialogToggle(null);
@@ -509,7 +509,7 @@ class View extends Component<Props, State> {
     };
 
     #handleWifiNetworkChange = async (ap: null | pb.WifiNetwork): Promise<void> => {
-        const { onConnectionRequest } = this.props.wifiActiveNetwork;
+        const { onConnectionRequest, onChange } = this.props.wifiActiveNetwork;
         const { wifiManualConnect, wifiPasswordEntry } = getInitialState();
         await setState(this, { wifiConnectionError: null, wifiManualConnect, wifiPasswordEntry });
 
@@ -528,7 +528,7 @@ class View extends Component<Props, State> {
         // Propagate the change upstream
         // and try to connect to the network
         else {
-            this.props.wifiActiveNetwork.onChange(ap);
+            onChange?.(ap);
 
             // If the network is open, we can connect right away
             if (ap.encryptionType === pb.EncryptionType.NONE) {
@@ -635,7 +635,7 @@ class View extends Component<Props, State> {
                                 hideLabel
                                 disabled={hostname.disabled}
                                 value={hostname.value ?? ''}
-                                onChange={e => hostname.onChange(e.target.value)}
+                                onChange={e => hostname.onChange?.(e.target.value)}
                                 invalid={!!hostname.error}
                                 invalidText={hostname.error}
                             />

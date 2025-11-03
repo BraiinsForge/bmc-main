@@ -7,7 +7,7 @@ import { getID } from '../const';
 import { Form, type iField, type FormPropsToValuesRec } from '@/lib/form';
 
 // Components
-import { ModalCustom, InlineNotification, AccountIcon, Datetime } from '@/components';
+import { ModalCustom, InlineNotification, AccountIcon, Datetime, Button } from '@/components';
 import {
     WidgetSizeSelector,
     type WidgetSizeSelectorProps,
@@ -90,8 +90,8 @@ export function FormWidgetBraiinsPool(props: FormWidgetBraiinsPoolProps) {
 
     const txt = {
         braiinsPool: formatMessage({ defaultMessage: 'Braiins Pool' }),
-        addScene: formatMessage({ defaultMessage: 'Add Scene' }),
-        editScene: formatMessage({ defaultMessage: 'Edit Scene' }),
+        addWidget: formatMessage({ defaultMessage: 'Add Widget' }),
+        editWidget: formatMessage({ defaultMessage: 'Edit Widget' }),
     };
 
     const sceneStyles = useOptions(pb.braiinsPoolStyleOptions, pb.braiinsPoolStyleToString);
@@ -104,7 +104,7 @@ export function FormWidgetBraiinsPool(props: FormWidgetBraiinsPoolProps) {
     const handleAccountChange = useCallback(
         (value: null | pb.Account): void => {
             const id = value?.id ?? null;
-            if (id) accountId.onChange(id);
+            if (id) accountId.onChange?.(id);
         },
         [accountId],
     );
@@ -128,7 +128,7 @@ export function FormWidgetBraiinsPool(props: FormWidgetBraiinsPoolProps) {
             <BoundRadioGroup
                 {...sceneStyle}
                 id={$('style')}
-                labelText={formatMessage({ defaultMessage: 'Scene Style' })}
+                labelText={formatMessage({ defaultMessage: 'Widget Style' })}
                 items={sceneStyles}
             />
 
@@ -154,7 +154,7 @@ export function FormWidgetBraiinsPool(props: FormWidgetBraiinsPoolProps) {
         </Form>
     );
 
-    const verb = isEdit ? txt.editScene : txt.addScene;
+    const verb = isEdit ? txt.editWidget : txt.addWidget;
 
     return (
         <ModalCustom
@@ -171,6 +171,14 @@ export function FormWidgetBraiinsPool(props: FormWidgetBraiinsPoolProps) {
             onClose={onClose}
             // Content
             children={form}
+            footer={
+                <Button
+                    id={$('done')}
+                    kind="primary"
+                    children={formatMessage({ defaultMessage: 'Done' })}
+                    onClick={onClose}
+                />
+            }
         />
     );
 }

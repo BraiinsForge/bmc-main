@@ -9,7 +9,7 @@ import type { iField } from '@/lib/form';
 // Components
 import { ButtonSwitch, Checkbox } from '@/components';
 import { RadioButtonGroup, RadioButton, Toggle, ComboBox, Dropdown } from '@carbon/react';
-import { Screen as IconScreen } from '@carbon/react/icons';
+import { Screen as IconScreen, Information as IconInfo } from '@carbon/react/icons';
 
 // Styles
 import css from './shared.scss';
@@ -65,7 +65,7 @@ export function BoundCheckbox(props: BoundCheckboxProps) {
             checked={!!value}
             label={labelText}
             disabled={disabled}
-            onChange={(_, { checked }) => onChange(checked)}
+            onChange={(_, { checked }) => onChange?.(checked)}
             invalid={!!error}
             invalidText={error}
         />
@@ -103,7 +103,7 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
             className={css.comboBox}
             onChange={x => {
                 const v = x.selectedItem?.value;
-                if (v != null) onChange(v);
+                if (v != null) onChange?.(v);
             }}
             itemToString={x => (x?.label ? String(x.label) : '')}
             items={items}
@@ -162,7 +162,7 @@ export function BoundDropdown<T>(props: BoundDropdownProps<T>) {
             // className={css.dropdown}
             onChange={x => {
                 const v = x.selectedItem;
-                if (v != null) onChange(v);
+                if (v != null) onChange?.(v);
             }}
             itemToString={itemToString}
             itemToElement={itemToElement}
@@ -203,7 +203,7 @@ export function BoundRadioGroup<T extends string | number>(props: BoundRadioGrou
             children={items.map(x => (
                 <RadioButton key={x.value} value={x.value} labelText={x.label} checked={value === x.value} />
             ))}
-            onChange={v => onChange(v as T)}
+            onChange={v => onChange?.(v as T)}
             invalid={!!error}
             invalidText={error}
             helperText={helperText}
@@ -246,8 +246,16 @@ export function CheckYourScreenForPreview() {
             <FormattedMessage
                 tagName="span"
                 defaultMessage="<b>Note</b>: Check your device screen to see live preview"
-                values={{ b: ch => <strong children={ch} /> }}
+                values={{ b: ch => <strong key="b">{ch}</strong> }}
             />
+        </div>
+    );
+}
+export function WidgetHasNoParametersToConfigure() {
+    return (
+        <div className={css.note}>
+            <IconInfo size={16} />
+            <FormattedMessage tagName="span" defaultMessage="This widget has no parameters to configure" />
         </div>
     );
 }

@@ -30,7 +30,7 @@ class View extends Component<Props> {
     #handleVolumeChange = (x: { value: number }): void => {
         const { value, onChange } = this.props.soundVolume;
 
-        onChange(
+        onChange?.(
             pb.create(pb.SoundVolumeSchema, {
                 min: value?.min,
                 max: value?.max,
@@ -42,7 +42,7 @@ class View extends Component<Props> {
     #handleNightVolumeChange = (x: { value: number }): void => {
         const { value, onChange } = this.props.soundVolumeNight;
 
-        onChange(
+        onChange?.(
             pb.create(pb.SoundVolumeSchema, {
                 min: value?.min,
                 max: value?.max,

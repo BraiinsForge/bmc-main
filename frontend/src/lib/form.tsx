@@ -13,7 +13,7 @@ export type iForm<SubmitData = void> = {
 export type iField<T, ErrorType = string | ReactElement, ExtraProps extends Rec = Rec> = ExtraProps & {
     value: null | T;
     error?: null | ErrorType;
-    onChange(value: T): void;
+    onChange?(value: T): void;
     disabled?: boolean;
 };
 

@@ -1,5 +1,5 @@
 import { Component, createRef, Fragment } from 'react';
-import { cloneDeep, debounce } from 'es-toolkit';
+import { cloneDeep, debounce, isPlainObject } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
 import { type NavigateFunction, useNavigate } from 'react-router';
@@ -18,10 +18,8 @@ import { URLS } from '@/constants';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { Button } from '@/components';
-import { Dropdown, OverflowMenu, Toggle, Layer } from '@carbon/react';
+import { Dropdown, OverflowMenu, MenuButton, MenuItem, Toggle, Layer } from '@carbon/react';
 import {
-    Add as IconAdd,
     CarouselHorizontal as IconCycle,
     ChevronDown as IconChevronDown,
     ChevronUp as IconChevronUp,
@@ -39,6 +37,7 @@ type FormStateBlockchainData = FormPropsToLocalState<Comp.FormWidgetBlockchainDa
 type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
 type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
 type FormStateRemoteImage = FormPropsToLocalState<Comp.FormWidgetRemoteImageProps>;
+type FormStateRemoteWidget = FormPropsToLocalState<Comp.FormWidgetRemoteWidgetProps>;
 type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
 
 // Can be both edit & create dialogs
@@ -68,6 +67,11 @@ type DialogStates = {
         isEdit: boolean;
         sceneID: string;
     };
+    remoteWidget: {
+        data: FormStateRemoteWidget;
+        isEdit: boolean;
+        sceneID: string;
+    };
     ticker: {
         data: FormStateTicker;
         isEdit: boolean;
@@ -90,6 +94,7 @@ function getInitialDialogStates(): DialogStates {
         braiinsPool: getForm(),
         clock: getForm(),
         remoteImage: getForm(),
+        remoteWidget: getForm(),
         ticker: getForm(),
     };
 }
@@ -105,6 +110,7 @@ interface State {
     scenes: pb.Scene[];
     accounts: pb.Account[];
     timezones: pb.Timezone[];
+    recentRemoteWidgets: pb.RemoteWidget[];
 
     cycle: {
         isOpen: boolean;
@@ -114,6 +120,10 @@ interface State {
     };
 
     openDialogKind: null | 'scene-select' | keyof DialogStates;
+    remoteWidgetUrl: {
+        value: string;
+        errors: null | string[];
+    };
     dialogStates: DialogStates;
 }
 const getInitialState = (): State => ({
@@ -122,6 +132,7 @@ const getInitialState = (): State => ({
     scenes: [],
     accounts: [],
     timezones: [],
+    recentRemoteWidgets: [],
 
     cycle: {
         isOpen: false,
@@ -131,6 +142,7 @@ const getInitialState = (): State => ({
     },
 
     openDialogKind: null,
+    remoteWidgetUrl: { value: '', errors: null },
     dialogStates: getInitialDialogStates(),
 });
 
@@ -156,25 +168,19 @@ class View extends Component<Props, State> {
         this.#windowClickUnsubscribe = unsubscribe;
         this.#loadMetadata();
         this.#loadScenes();
+        this.#loadRecentRemoteWidgets();
     }
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
         pb.abort.all(this);
     }
 
-    #notifyError = (message: string, title?: string): void => {
-        toast.error(message, { title });
-    };
-    #notifySuccess = (message: string, title?: string): void => {
-        toast.success(message, { title });
-    };
-    #notifySuccessDebounced = debounce(this.#notifySuccess, 1e3);
+    #notifySuccessDebounced = debounce(toast.success, 1e3);
     #notifySceneAdded = () => {
         const { formatMessage } = this.props.intl;
-        this.#notifySuccess(
-            formatMessage({ defaultMessage: 'Display Scene Added has been successfully added.' }),
-            formatMessage({ defaultMessage: 'Display Scene Added' }),
-        );
+        toast.success(formatMessage({ defaultMessage: 'Display widget has been successfully added.' }), {
+            title: formatMessage({ defaultMessage: 'Display Widget Added' }),
+        });
     };
 
     private abortLoadMetadata = pb.abort.get();
@@ -204,7 +210,23 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load timezones!' });
-            this.#notifyError(msg);
+            toast.error(msg);
+        }
+    };
+
+    private abortRecentRemoteWidgetsLoad = pb.abort.get();
+    #loadRecentRemoteWidgets = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.abortRecentRemoteWidgetsLoad.replace();
+            const { recentRemoteWidgets } = await pb.rpc.scenes.getRecentRemoteWidgets({}, { signal });
+            this.setState({ recentRemoteWidgets });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load recent remote widgets!' });
+            toast.error(msg);
         }
     };
 
@@ -230,30 +252,25 @@ class View extends Component<Props, State> {
     get #txt() {
         const { formatMessage } = this.props.intl;
         return {
-            title: formatMessage({ defaultMessage: 'Display Scenes' }),
+            title: formatMessage({ defaultMessage: 'Display Widgets' }),
             on: formatMessage({ defaultMessage: 'On' }),
             off: formatMessage({ defaultMessage: 'Off' }),
             cancel: formatMessage({ defaultMessage: 'Cancel' }),
-            addScene: formatMessage({ defaultMessage: 'Add New Scene' }),
+            addNew: formatMessage({ defaultMessage: 'Add New' }),
         };
     }
 
-    #openDialogSceneSelect = (): void => this.setState({ openDialogKind: 'scene-select' });
-    #sceneAddSelectedKind = async (kind: Comp.SceneKind): Promise<void> => {
-        const { navigate } = this.props;
+    #sceneAddChooseKind = (): void => {
+        this.setState({ openDialogKind: 'scene-select' }, this.#loadRecentRemoteWidgets);
+    };
+    #sceneAddFullscreen = async (kind: Comp.SceneKind): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { remoteWidgetUrl } = this.state;
 
         let $kind: pb.WidgetKind['value'];
         let $openDialogKind: NonNullable<State['openDialogKind']>;
 
         switch (kind) {
-            case 'combined': {
-                const response = await pb.rpc.scenes.addCombinedScene({});
-                navigate(URLS.pages.display.combined.getHref(response.value), { replace: false });
-                this.#notifySceneAdded();
-                return;
-            }
-
-            // Full-screen widgets
             case 'clock':
                 $openDialogKind = 'clock';
                 $kind = { case: 'clock', value: pb.create(pb.ClockWidgetSchema) };
@@ -284,17 +301,54 @@ class View extends Component<Props, State> {
                 $kind = { case: 'remoteImage', value: pb.create(pb.RemoteImageWidgetSchema) };
                 break;
 
+            case 'remoteWidget':
+                $openDialogKind = 'remoteWidget';
+                $kind = {
+                    case: 'remoteWidget',
+                    // At the time of writing, the remote widget is the only one
+                    // that actually reads these values upon creation, so we
+                    // need to provide them and read potential errors.
+                    value: pb.create(pb.RemoteWidgetSchema, { widgetUrl: remoteWidgetUrl.value }),
+                };
+                break;
+
             default:
                 assertUnreachable(kind, 'Invalid scene kind!');
         }
 
-        this.#notifySceneAdded();
-        const { value: sceneID } = await pb.rpc.scenes.addFullscreenScene({
-            widgetKind: {
-                $typeName: 'braiins.bmc.web.WidgetKind',
-                value: $kind,
-            },
-        });
+        // When the widget is created, we get back a scene ID
+        // and have to reload the scenes to get the new scene data.
+        //
+        // This can fail with addition of remote widget
+        // because it validates the provided URL.
+        let sceneID: string;
+        try {
+            const res = await pb.rpc.scenes.addFullscreenScene({
+                widgetKind: { $typeName: 'braiins.bmc.web.WidgetKind', value: $kind },
+            });
+            this.#notifySceneAdded();
+            sceneID = res.value;
+        } catch ($) {
+            const e = pb.parseFormErrors<pb.AddFullscreenSceneRequest>($);
+            const wke = e.fields.widgetKind as Maybe<Rec>;
+
+            // We either manage to parse out errors for the remote widget URL…
+            if (isPlainObject(wke) && 'remoteWidget' in wke && Array.isArray(wke.remoteWidget)) {
+                const errors = wke.remoteWidget as string[];
+                this.setState(s => ({
+                    remoteWidgetUrl: { ...s.remoteWidgetUrl, errors },
+                }));
+            }
+
+            // …or just notify generically that something has failed
+            else {
+                let msg = pb.collectAllErrorsAsFormattedList($);
+                msg ||= formatMessage({ defaultMessage: 'Failed to add display widget!' });
+                toast.error(msg);
+            }
+
+            return;
+        }
 
         // Now that the scene has been added, we need to re-load the scenes
         // to get the new scene data to make sure our state is consistent with the server.
@@ -351,20 +405,46 @@ class View extends Component<Props, State> {
                     };
                     break;
 
+                case 'remoteWidget':
+                    dialogStates.remoteWidget.data = {
+                        errors: null,
+                        values: Comp.unpackRemoteWidgetKind(widgetKind, size),
+                    };
+                    break;
+
                 default:
                     widgetKind?.value && assertUnreachable(widgetKind?.value, 'Unknown widget kind!');
             }
         }
 
         dialogStates[$openDialogKind].sceneID = sceneID;
-        await setState(this, { openDialogKind: $openDialogKind, dialogStates });
+        await setState(this, {
+            dialogStates,
+            openDialogKind: $openDialogKind,
+            remoteWidgetUrl: { value: '', errors: null },
+        });
         this.#previewOpen(sceneID);
+    };
+    #sceneAddFullscreenRemote = async (): Promise<void> => {
+        this.#sceneAddFullscreen('remoteWidget');
+    };
+    #sceneAddCombined = async (): Promise<void> => {
+        const { navigate } = this.props;
+
+        const response = await pb.rpc.scenes.addCombinedScene({});
+        navigate(URLS.pages.display.combined.getHref(response.value), { replace: false });
+
+        this.#notifySceneAdded();
     };
 
     #openDialogCancel = (): void => {
         this.abortPreview.abort();
         const { openDialogKind, dialogStates } = getInitialState();
-        this.setState({ openDialogKind, dialogStates });
+        this.setState({
+            openDialogKind,
+            dialogStates,
+            remoteWidgetUrl: { value: '', errors: null },
+        });
     };
 
     #getFormChangeHandler = <
@@ -447,7 +527,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
             const msg: string = formatMessage({ defaultMessage: 'Display preview connection lost!' });
-            this.#notifyError(msg);
+            toast.error(msg);
         }
     };
 
@@ -456,7 +536,7 @@ class View extends Component<Props, State> {
 
         const { openDialogKind, dialogStates } = this.state;
         if (!openDialogKind || !(openDialogKind in dialogStates)) {
-            this.#notifyError(formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }));
+            toast.error(formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }));
             return;
         }
 
@@ -464,20 +544,18 @@ class View extends Component<Props, State> {
         const scene = this.#getScene(data.sceneID);
 
         if (!scene) {
-            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: cannot find the scene value!' }));
+            toast.error(formatMessage({ defaultMessage: 'Widget edit: data not found!' }));
             return;
         }
         if (scene.kind.case !== 'fullscreen') {
-            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: not a fullscreen widget, aborting!' }));
+            toast.error(formatMessage({ defaultMessage: 'Widget edit: not a fullscreen widget, aborting!' }));
             return;
         }
 
         let widgetKind: pb.WidgetKind;
         switch (openDialogKind) {
             case 'scene-select': {
-                this.#notifyError(
-                    formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }),
-                );
+                toast.error(formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }));
                 return;
             }
 
@@ -505,13 +583,17 @@ class View extends Component<Props, State> {
                 widgetKind = Comp.createRemoteImageWidgetKind(dialogStates.remoteImage.data.values);
                 break;
 
+            case 'remoteWidget':
+                widgetKind = Comp.createRemoteWidgetKind(dialogStates.remoteWidget.data.values);
+                break;
+
             default:
                 assertUnreachable(openDialogKind, 'Submit: Invalid dialog kind!');
         }
 
         const widget = scene.kind.value.widget;
         if (!widget) {
-            this.#notifyError(formatMessage({ defaultMessage: 'Scene edit: no widget value, aborting!' }));
+            toast.error(formatMessage({ defaultMessage: 'Scene edit: no widget value, aborting!' }));
             return;
         }
 
@@ -525,7 +607,7 @@ class View extends Component<Props, State> {
                 position: { row: 0, col: 0 },
             });
             await pb.rpc.scenes.updateWidget(payload);
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Widget updated!' }));
+            toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
         } catch ($) {
             // Parse out form specific errors
             const { global, fields } = pb.parseFormErrors($);
@@ -540,17 +622,22 @@ class View extends Component<Props, State> {
             if (global.length) {
                 let msg = pb.renderFieldErrorsAsList(global);
                 msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
-                this.#notifyError(msg);
+                toast.error(msg);
             }
         }
 
         this.#loadScenesDebounced();
     };
     #sceneFullscreenWidgetSubmitDebounced = debounce(this.#sceneFullscreenWidgetSubmit, 300);
+    #sceneRemoteWidgetUrlChange = (url: string): void => {
+        this.setState({ remoteWidgetUrl: { value: url, errors: null } });
+    };
     #sceneAddRender = (): ReactElement => {
         const {
             openDialogKind,
-            dialogStates: { clock, ticker, blockHeight, blockchainData, braiinsPool, remoteImage },
+            remoteWidgetUrl,
+            recentRemoteWidgets,
+            dialogStates: { clock, ticker, blockHeight, blockchainData, braiinsPool, remoteImage, remoteWidget },
             timezones,
             accounts,
         } = this.state;
@@ -559,10 +646,17 @@ class View extends Component<Props, State> {
         return (
             <Fragment>
                 <Comp.FormSceneSelect
-                    variant="scene"
                     isOpen={openDialogKind === 'scene-select'}
                     onClose={cancel}
-                    onSelection={this.#sceneAddSelectedKind}
+                    onSelection={this.#sceneAddFullscreen}
+                    remoteWidgetUrl={{
+                        value: remoteWidgetUrl.value,
+                        error: pb.renderFieldErrorsAsList(remoteWidgetUrl.errors),
+                        disabled: false,
+                        onChange: this.#sceneRemoteWidgetUrlChange,
+                        onSubmit: this.#sceneAddFullscreenRemote,
+                    }}
+                    remoteWidgetRecents={recentRemoteWidgets}
                 />
 
                 <Comp.FormWidgetClock
@@ -654,6 +748,22 @@ class View extends Component<Props, State> {
                     url={this.#getFormFieldStruct('remoteImage', 'url')}
                     refreshDurationSec={this.#getFormFieldStruct('remoteImage', 'refreshDurationSec')}
                 />
+
+                <Comp.FormWidgetRemoteWidget
+                    isOpen={openDialogKind === 'remoteWidget'}
+                    isEdit={openDialogKind === 'remoteWidget' && remoteWidget.isEdit}
+                    onClose={cancel}
+                    error={
+                        openDialogKind === 'remoteWidget'
+                            ? pb.renderFieldErrorsAsList(remoteWidget.data?.errors?.global)
+                            : null
+                    }
+                    // No size selector for the fullscreen widgets we operate with here
+                    widgetSize={null}
+                    url={this.#getFormFieldStruct('remoteWidget', 'url')}
+                    name={this.#getFormFieldStruct('remoteWidget', 'name')}
+                    params={this.#getFormFieldStruct('remoteWidget', 'params')}
+                />
             </Fragment>
         );
     };
@@ -689,13 +799,13 @@ class View extends Component<Props, State> {
                 }),
                 { signal },
             );
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene moved!' }));
+            toast.success(formatMessage({ defaultMessage: 'Widget moved!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to move scene!' });
-            this.#notifyError(msg);
+            msg ||= formatMessage({ defaultMessage: 'Failed to move the widget!' });
+            toast.error(msg);
         }
 
         this.#loadScenesDebounced();
@@ -720,13 +830,13 @@ class View extends Component<Props, State> {
         try {
             const enabled: boolean = this.#getScene(id)?.enabled ?? true;
             await pb.rpc.scenes.updateScene({ id, enabled, cycleDurationSec: valueSeconds }, { signal });
-            this.#notifySuccessDebounced(formatMessage({ defaultMessage: 'Scene duration updated!' }));
+            this.#notifySuccessDebounced(formatMessage({ defaultMessage: 'Widget duration updated!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to update scene duration! Please try again!' });
-            this.#notifyError(msg);
+            msg ||= formatMessage({ defaultMessage: 'Failed to update widget duration! Please try again!' });
+            toast.error(msg);
         }
     }, 500);
 
@@ -757,8 +867,8 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to update scene state!!' });
-            this.#notifyError(msg);
+            msg ||= formatMessage({ defaultMessage: 'Failed to update widget state!' });
+            toast.error(msg);
         }
 
         this.#loadScenesDebounced();
@@ -774,13 +884,13 @@ class View extends Component<Props, State> {
             this.setState(s => ({ scenes: s.scenes.filter(x => x.id !== id) }));
 
             pb.rpc.scenes.removeScene({ value: id }, { signal });
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene deleted!' }));
+            toast.success(formatMessage({ defaultMessage: 'Widget deleted!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to delete scene!' });
-            this.#notifyError(msg);
+            msg ||= formatMessage({ defaultMessage: 'Failed to delete widget!' });
+            toast.error(msg);
         }
 
         this.#loadScenesDebounced();
@@ -806,13 +916,13 @@ class View extends Component<Props, State> {
             });
 
             pb.rpc.scenes.cloneScene({ value: id }, { signal });
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene cloned!' }));
+            toast.success(formatMessage({ defaultMessage: 'Widget cloned!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to clone scene!' });
-            this.#notifyError(msg);
+            msg ||= formatMessage({ defaultMessage: 'Failed to clone the widget!' });
+            toast.error(msg);
         }
 
         this.#loadScenesDebounced();
@@ -939,6 +1049,22 @@ class View extends Component<Props, State> {
                         break;
                     }
 
+                    case 'remoteWidget': {
+                        const ds = getInitialDialogStates();
+                        ds.remoteWidget.sceneID = id;
+                        ds.remoteWidget.isEdit = true;
+                        ds.remoteWidget.data.values = Comp.unpackRemoteWidgetKind(widgetKind, pb.WidgetSize.FULL);
+
+                        this.setState(
+                            // Set state
+                            { openDialogKind: 'remoteWidget', dialogStates: ds },
+                            // ...and open the dialog
+                            () => this.#previewOpen(id),
+                        );
+
+                        break;
+                    }
+
                     default: {
                         assertUndefined(widgetKind?.value, 'Invalid widget kind!');
                     }
@@ -977,13 +1103,13 @@ class View extends Component<Props, State> {
                 }),
                 { signal },
             );
-            this.#notifySuccess(formatMessage({ defaultMessage: 'Scene cycling settings updated!' }));
+            toast.success(formatMessage({ defaultMessage: 'Widget cycling settings updated!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to update scene cycling settings!' });
-            this.#notifyError(msg);
+            msg ||= formatMessage({ defaultMessage: 'Failed to update widget cycling settings!' });
+            toast.error(msg);
         } finally {
             this.#loadScenesDebounced();
         }
@@ -1008,11 +1134,11 @@ class View extends Component<Props, State> {
         const { formatMessage } = intl;
 
         const { cycle } = this.state;
-        const { on, off, addScene } = this.#txt;
+        const txt = this.#txt;
 
         const cycleToggleText: string = formatMessage(
-            { defaultMessage: 'Screen Cycling: {status}' },
-            { status: cycle.isActive ? on : off },
+            { defaultMessage: 'Widget cycling: {status}' },
+            { status: cycle.isActive ? txt.on : txt.off },
         );
 
         return (
@@ -1065,35 +1191,25 @@ class View extends Component<Props, State> {
                                                 }}
                                                 selectorPrimaryFocus="input,button,select"
                                                 size="sm"
-                                            >
-                                                <Layer level={1} children={x.content} />
-                                            </OverflowMenu>
+                                                children={<Layer level={1} children={x.content} />}
+                                            />
                                         </div>
                                     );
                                 }}
                             />
 
-                            {iconLayout && !mobileLayout ? (
-                                <Button
-                                    id={$('add-scene')}
-                                    key="add-scene-button"
-                                    kind="primary"
-                                    onClick={this.#openDialogSceneSelect}
-                                    icon={IconAdd}
-                                    hasIconOnly
-                                    title={addScene}
-                                    tooltipPosition="bottom"
+                            <MenuButton label={txt.addNew} kind="primary" id={$('add-scene')}>
+                                <MenuItem
+                                    label={formatMessage({ defaultMessage: 'Full Screen' })}
+                                    className={css.addMenuButton}
+                                    onClick={this.#sceneAddChooseKind}
                                 />
-                            ) : (
-                                <Button
-                                    id={$('add-scene')}
-                                    key="add-scene-button"
-                                    kind="primary"
-                                    onClick={this.#openDialogSceneSelect}
-                                    icon={IconAdd}
-                                    children={addScene}
+                                <MenuItem
+                                    label={formatMessage({ defaultMessage: 'Combined Scene' })}
+                                    className={css.addMenuButton}
+                                    onClick={this.#sceneAddCombined}
                                 />
-                            )}
+                            </MenuButton>
                         </div>
                     );
                 }}
@@ -1113,7 +1229,10 @@ class View extends Component<Props, State> {
                         <h1 className={css.title} children={this.#txt.title} />
                         <div
                             className={css.subtitle}
-                            children={intl.formatMessage({ defaultMessage: 'Display Scenes description... ' })}
+                            children={intl.formatMessage({
+                                defaultMessage:
+                                    'Configure the content displayed on your Deck. Enable, order, and set durations for each widget to control what’s shown.',
+                            })}
                         />
                     </div>
 
@@ -1123,7 +1242,6 @@ class View extends Component<Props, State> {
                 <main>
                     <Comp.SceneOverviewList
                         scenes={scenes}
-                        onAdd={this.#openDialogSceneSelect}
                         onMove={this.#sceneListMove}
                         onEdit={this.#sceneListEdit}
                         onClone={this.#sceneListClone}
@@ -1191,7 +1309,7 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
                     label={txt.defaultDuration}
                     titleText={txt.defaultDuration}
                     items={pb.sceneCycleDurationOptions}
-                    onChange={x => (x.selectedItem ? duration.onChange(x.selectedItem) : null)}
+                    onChange={x => (x.selectedItem ? duration.onChange?.(x.selectedItem) : null)}
                     selectedItem={duration.value ?? undefined}
                     itemToString={pb.sceneCycleDurationToString}
                     renderSelectedItem={pb.sceneCycleDurationToString}
@@ -1202,7 +1320,7 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
                     label={txt.txEffect}
                     titleText={txt.txEffect}
                     items={pb.sceneCyclingEffectOptions}
-                    onChange={x => (x.selectedItem ? transitionEffect.onChange(x.selectedItem) : null)}
+                    onChange={x => (x.selectedItem ? transitionEffect.onChange?.(x.selectedItem) : null)}
                     selectedItem={transitionEffect.value ?? undefined}
                     itemToString={x => pb.sceneCyclingEffectToString(intl, x) ?? 'N/A'}
                     renderSelectedItem={x => pb.sceneCyclingEffectToString(intl, x) ?? 'N/A'}
