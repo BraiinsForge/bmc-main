@@ -5,7 +5,7 @@ use std::time::Duration;
 use super::data;
 use crate::config::{
     self, BREATHE_PERIOD, ERROR_DURATION, KNIGHT_RIDER_PERIOD, RGB_GREEN, RGB_ORANGE, RGB_RED,
-    RGB_VIOLET60, SOLID_PERIOD, SUCCESS_DURATION,
+    RGB_VIOLET60, RGB_WHITE, SOLID_PERIOD, SUCCESS_DURATION,
 };
 use crate::data::{LedCommand, LedEffect, LedEvent, LedEventPersistence};
 use tokio::sync::mpsc::Sender;
@@ -146,7 +146,7 @@ impl LedIndicatorsState {
             // Preview of the scene
             LedEvent::PreviewScene => {
                 self.scene_persist = Some(LedCommand::SetEffect(
-                    LedEffect::KnightRider(RGB_VIOLET60),
+                    LedEffect::Solid(RGB_WHITE),
                     LedEventPersistence::Persistent,
                     KNIGHT_RIDER_PERIOD,
                 ));

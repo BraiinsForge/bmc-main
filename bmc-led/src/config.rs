@@ -12,6 +12,7 @@ pub const RGB_GREEN: Rgb = Rgb::new(6, 191, 89);
 pub const RGB_RED: Rgb = Rgb::new(255, 20, 33);
 pub const RGB_ORANGE: Rgb = Rgb::new(255, 122, 13);
 pub const RGB_BLACK: Rgb = Rgb::new(0, 0, 0);
+pub const RGB_WHITE: Rgb = Rgb::new(255, 255, 255);
 
 pub const ERROR_DURATION: Duration = Duration::from_millis(2000);
 pub const SUCCESS_DURATION: Duration = Duration::from_millis(2000);
