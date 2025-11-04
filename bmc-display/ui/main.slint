@@ -8,7 +8,7 @@ import { UpgradeDownload, UpgradeProgress, UpgradeSuccess, UpgradeFailed,
     WifiConnectFailed, WifiConnectProgress, Alarm
 } from "screens/screens.slint";
 import { WidgetSize, WidgetKind, Widget } from "widgets/widget.slint";
-import { BaseDimensions } from "widgets/widget-shared.slint";
+import { BaseDimensions, RemoteWidgetState } from "widgets/widget-shared.slint";
 import { WidgetBuilder } from "controls/widget-builder.slint";
 import { Scene } from "widgets/scene.slint";
 import { BraiinsPoolStyle, PoolChartDimensions, PoolWorkerStatus, BraiinsPoolPayouts, PoolPayoutType } from "widgets/categories/braiins-pool.slint";
@@ -25,7 +25,7 @@ import { BottomRollette } from "components/bottom-rollette.slint";
 export { ScreenAdapter, StatusOverlayAdapter, SceneCyclingAdapter, UpgradeDownloadAdapter, DateTime, NotificationAdapter,
     BitcoinAdapter, BlockHeightAdapter, DifficultyAdapter, HashrateAdapter }
 export { InitScreen, ConnectInfoScreen, UpgradeScreen, SignalStrength }
-export { WidgetSize, WidgetKind, Widget }
+export { WidgetSize, WidgetKind, Widget, RemoteWidgetState }
 export { BraiinsPoolStyle, PoolChartDimensions, PoolWorkerStatus, BraiinsPoolPayouts, PoolPayoutType }
 export { BlockchainDataChartDimensions }
 export { Palette, BaseDimensions }

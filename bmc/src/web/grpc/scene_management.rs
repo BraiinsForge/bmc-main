@@ -7,9 +7,9 @@ use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
     AccountId, AddWidgetError, BlockHeightWidget, BraiinsPoolWidget, ClockStyle, ClockWidget,
-    FontStyle, PoolChartTimeFrame, PoolStyle, RemoteImageWidget, RemoveWidgetError, Scene,
-    SceneCycling, SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget, TickerTimeFrame,
-    UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
+    FontStyle, PoolChartTimeFrame, PoolStyle, RemoteImageWidget, RemoteWidget, RemoveWidgetError,
+    Scene, SceneCycling, SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget,
+    TickerTimeFrame, UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
@@ -17,6 +17,7 @@ use bmc_led::data::LedEvent;
 use bmc_shared_time::time::Timezone;
 use futures::StreamExt;
 use futures::stream::BoxStream;
+use reqwest::Client;
 use std::fmt::Display;
 use std::panic;
 use std::str::FromStr;
@@ -29,7 +30,10 @@ use tokio_stream::wrappers::IntervalStream;
 use tonic::{Request, Response, Status};
 use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
 use tooling_std::attach_data::AttachData;
-use tracing::error;
+use tracing::{error, warn};
+use url::Url;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub(crate) struct SceneManagementService<T: BmcManager> {
     config_handle: Arc<RwLock<ConfigHandle>>,
@@ -111,7 +115,7 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         let request = request.into_inner();
 
         let (widget_kind, field_violations) =
-            parse_widget_kind_with_default_params("widget_kind", request.widget_kind);
+            parse_widget_kind_with_default_params("widget_kind", request.widget_kind).await;
 
         if !field_violations.is_empty() {
             return Err(Status::with_error_details(
@@ -607,7 +611,8 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         let (size, field_violations) = parse_widget_size("size", request.size());
         all_field_violations.extend(field_violations);
 
-        let (kind, field_violations) = parse_widget_kind_with_default_params("kind", request.kind);
+        let (kind, field_violations) =
+            parse_widget_kind_with_default_params("kind", request.kind).await;
         all_field_violations.extend(field_violations);
 
         if !all_field_violations.is_empty() {
@@ -1044,7 +1049,7 @@ fn parse_widget_size(
     (maybe_size, field_violations)
 }
 
-fn parse_widget_kind_with_default_params(
+async fn parse_widget_kind_with_default_params(
     field: impl AsRef<str> + Display,
     input: Option<web::WidgetKind>,
 ) -> ParseOutput<WidgetKind> {
@@ -1073,6 +1078,12 @@ fn parse_widget_kind_with_default_params(
             WidgetKind::RemoteImage(RemoteImageWidget::default())
         }
         web::widget_kind::Value::BlockchainData(_) => WidgetKind::BlockchainData,
+        web::widget_kind::Value::RemoteWidget(remote_widget) => {
+            match remote_widget_url_validation(&remote_widget, &mut field_violations).await {
+                Some(kind) => kind,
+                None => return (None, field_violations),
+            }
+        }
     };
 
     (Some(kind), field_violations)
@@ -1126,6 +1137,12 @@ fn parse_widget_kind(
             maybe_kind
         }
         web::widget_kind::Value::BlockchainData(_) => Some(WidgetKind::BlockchainData),
+        web::widget_kind::Value::RemoteWidget(remote_widget_proto) => {
+            let (maybe_kind, field_violations) =
+                parse_remote_widget_kind("remote_widget", remote_widget_proto);
+            all_field_violations.extend(field_violations);
+            maybe_kind
+        }
     };
 
     (maybe_kind, all_field_violations)
@@ -1320,6 +1337,20 @@ fn parse_remote_image_widget_kind(
     (maybe_kind, field_violations)
 }
 
+fn parse_remote_widget_kind(
+    _field: impl AsRef<str> + Display,
+    remote_widget_proto: web::RemoteWidget,
+) -> ParseOutput<WidgetKind> {
+    let field_violations = FieldViolations::new();
+
+    let widget_kind = Some(WidgetKind::RemoteWidget(RemoteWidget {
+        url: remote_widget_proto.url,
+        params: Vec::default(),
+    }));
+
+    (widget_kind, field_violations)
+}
+
 fn map_scene_to_proto(scene: Scene) -> web::Scene {
     let kind = match &scene.kind {
         SceneKind::Fullscreen => web::scene::Kind::Fullscreen(web::scene::Fullscreen {
@@ -1360,6 +1391,7 @@ fn map_widget_to_proto(widget: Widget) -> web::Widget {
         WidgetKind::BraiinsPool(braiins_pool) => map_braiins_pool_to_proto(braiins_pool),
         WidgetKind::RemoteImage(remote_image) => map_remote_image_to_proto(remote_image),
         WidgetKind::BlockchainData => map_blockchain_data_to_proto(),
+        WidgetKind::RemoteWidget(remote_widget) => map_remote_widget_to_proto(remote_widget),
     };
 
     web::Widget {
@@ -1549,10 +1581,72 @@ fn map_remote_image_to_proto(remote_image: RemoteImageWidget) -> web::WidgetKind
     }
 }
 
+fn map_remote_widget_to_proto(remote_widget: RemoteWidget) -> web::WidgetKind {
+    let proto = web::RemoteWidget {
+        url: remote_widget.url,
+    };
+
+    web::WidgetKind {
+        value: Some(web::widget_kind::Value::RemoteWidget(proto)),
+    }
+}
+
 fn map_blockchain_data_to_proto() -> web::WidgetKind {
     web::WidgetKind {
         value: Some(web::widget_kind::Value::BlockchainData(
             web::BlockchainDataWidget {},
         )),
     }
+}
+
+async fn remote_widget_url_validation(
+    remote_widget: &web::RemoteWidget,
+    field_violations: &mut FieldViolations,
+) -> Option<WidgetKind> {
+    let url = remote_widget.url.clone();
+    let mut parsed_url = match Url::parse(&url) {
+        Ok(url) => url,
+        Err(err) => {
+            warn!(?err, "Invalid URL, stopping");
+            field_violations.push("widget_kind.remote_widget", "Invalid URL!");
+            return None;
+        }
+    };
+    match parsed_url.path_segments_mut() {
+        Ok(mut path_segments) => path_segments.push("metadata"),
+        Err(err) => {
+            warn!(?err, "Failed to get path segments");
+            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
+            return None;
+        }
+    };
+
+    let client = match Client::builder().timeout(REQUEST_TIMEOUT).build() {
+        Ok(client) => client,
+        Err(err) => {
+            warn!(?err, "Failed to create reqwest client, stopping");
+            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
+            return None;
+        }
+    };
+
+    match client.get(parsed_url).send().await {
+        Ok(response) => {
+            if !response.status().is_success() {
+                warn!("Failed to get metadata, stopping");
+                field_violations.push("widget_kind.remote_widget", "Unexpected error!");
+                return None;
+            }
+        }
+        Err(err) => {
+            warn!(?err, "Failed to get metadata, stopping");
+            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
+            return None;
+        }
+    }
+
+    Some(WidgetKind::RemoteWidget(RemoteWidget {
+        url,
+        params: Vec::default(),
+    }))
 }

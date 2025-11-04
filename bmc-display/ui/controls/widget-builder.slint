@@ -8,6 +8,7 @@ import { WidgetBlockHeight } from "../widgets/categories/block-height.slint";
 import { WidgetBraiinsPool } from "../widgets/categories/braiins-pool.slint";
 import { WidgetRemoteImage } from "../widgets/categories/remote-image.slint";
 import { WidgetBlockchainData } from "../widgets/categories/blockchain-data.slint";
+import { RemoteWidget } from "../widgets/categories/remote-widget.slint";
 
 component WidgetContainer inherits Rectangle {
     in property <WidgetSize> size;
@@ -74,6 +75,10 @@ export component WidgetBuilder inherits Rectangle {
             if widget.kind == WidgetKind.BlockchainData: WidgetBlockchainData {
                 size: widget.size;
                 data: widget.blockchain-data;
+            }
+            if widget.kind == WidgetKind.RemoteWidget: RemoteWidget {
+                size: widget.size;
+                data: widget.remote-widget;
             }
         }
     }

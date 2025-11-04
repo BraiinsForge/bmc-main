@@ -1,5 +1,14 @@
 import { Theme } from "../style/theme.slint";
 
+export enum RemoteWidgetState {
+    Initial,
+    ConfigurationError,
+    Loading,
+    LoadingSuccess,
+    LoadingError,
+    UnexpectedError,
+}
+
 export enum WidgetSize {
     Small,
     Medium,

@@ -133,6 +133,7 @@ message WidgetKind {
     BraiinsPoolWidget braiins_pool = 4;
     RemoteImageWidget remote_image = 5;
     BlockchainDataWidget blockchain_data = 6;
+    RemoteWidget remote_widget = 7;
   }
 }
 
@@ -220,6 +221,11 @@ message RemoteImageWidget {
   string url = 1;
   // required
   uint32 refresh_duration_sec = 2;
+}
+
+message RemoteWidget {
+  // required
+  string url = 1;
 }
 
 enum SceneCyclingTransition {

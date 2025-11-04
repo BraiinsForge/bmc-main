@@ -205,6 +205,19 @@ impl Default for RemoteImageWidget {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RemoteWidgetParams {
+    key: String,
+    value: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RemoteWidget {
+    // Base URL plus /widget/{id}
+    pub url: String,
+    pub params: Vec<RemoteWidgetParams>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "params")]
 #[serde(rename_all = "snake_case")]
@@ -215,6 +228,7 @@ pub enum WidgetKind {
     BraiinsPool(BraiinsPoolWidget),
     RemoteImage(RemoteImageWidget),
     BlockchainData,
+    RemoteWidget(RemoteWidget),
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -749,6 +763,10 @@ impl From<Widget> for generated::Widget {
             }
             WidgetKind::BlockchainData => {
                 slint_widget.kind = generated::WidgetKind::BlockchainData;
+            }
+            WidgetKind::RemoteWidget(_config) => {
+                slint_widget.kind = generated::WidgetKind::RemoteWidget;
+                slint_widget.remote_widget = generated::RemoteWidgetData::default();
             }
         }
 
