@@ -4,6 +4,7 @@ mod blockchain_data;
 mod braiins_pool;
 mod clock;
 mod remote_image;
+mod remote_widget;
 mod ticker_btc;
 
 use crate::config::ConfigHandle;
@@ -133,6 +134,16 @@ impl WidgetTasks {
                     widget.id.clone(),
                     widget.size,
                     self.config_handle.clone(),
+                )
+                .in_current_span(),
+            )),
+            WidgetKind::RemoteWidget(remote_widget) => Some(spawn(
+                remote_widget::run(
+                    self.display_controller.clone(),
+                    scene_id.clone(),
+                    widget.id.clone(),
+                    widget.size,
+                    remote_widget.url.clone(),
                 )
                 .in_current_span(),
             )),
