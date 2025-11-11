@@ -20,6 +20,7 @@ pub mod metadata;
 pub mod pool_data;
 pub mod proxy;
 pub mod remote_image_data;
+pub mod remote_widget_data;
 mod utils;
 
 pub use slint::{

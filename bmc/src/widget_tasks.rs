@@ -143,7 +143,8 @@ impl WidgetTasks {
                     scene_id.clone(),
                     widget.id.clone(),
                     widget.size,
-                    remote_widget.url.clone(),
+                    self.config_handle.clone(),
+                    remote_widget.widget_url.clone(),
                 )
                 .in_current_span(),
             )),
