@@ -21,6 +21,7 @@ import {
     ComboBox,
     type ComboBoxProps,
 } from '@carbon/react';
+import { Download as IconDownload, Restart as IconRestart } from '@carbon/react/icons';
 
 // Styles
 import css from './SectionGeneral.scss';
@@ -39,6 +40,7 @@ export interface SectionGeneralProps {
     // System actions
     onFactoryReset(): void;
     onSystemReboot(): void;
+    onDownloadSupportArchive(): void;
 
     // Data collection
     // usageData: iField<boolean>;
@@ -134,6 +136,9 @@ class View extends Component<Props> {
             // temperatureUnits,
             numberFormat,
             // usageData,
+
+            // System actions
+            onDownloadSupportArchive,
 
             // HOC
             intl,
@@ -293,6 +298,31 @@ class View extends Component<Props> {
                 </FieldSet>
 
                 <FieldSet title={formatMessage({ defaultMessage: 'System Actions' })}>
+                    <Field title={formatMessage({ defaultMessage: 'Reboot Device' })}>
+                        <Button
+                            id={$('system-reboot')}
+                            kind="tertiary"
+                            icon={IconRestart}
+                            children={formatMessage({ defaultMessage: 'Reboot' })}
+                            onClick={this.#reboot}
+                        />
+                    </Field>
+
+                    <Field
+                        title={formatMessage({ defaultMessage: 'Download Support Archive' })}
+                        description={formatMessage({
+                            defaultMessage: 'Download system diagnostics and logs for troubleshooting.',
+                        })}
+                    >
+                        <Button
+                            id={$('download-support-archive')}
+                            kind="tertiary"
+                            icon={IconDownload}
+                            children={formatMessage({ defaultMessage: 'Download' })}
+                            onClick={onDownloadSupportArchive}
+                        />
+                    </Field>
+
                     <Field
                         title={formatMessage({ defaultMessage: 'Reset to Factory Defaults' })}
                         description={formatMessage({
@@ -302,18 +332,9 @@ class View extends Component<Props> {
                     >
                         <Button
                             id={$('factory-reset')}
-                            kind="secondary"
+                            kind="danger--tertiary"
                             children={formatMessage({ defaultMessage: 'Reset to Defaults' })}
                             onClick={this.#reset}
-                        />
-                    </Field>
-
-                    <Field title={formatMessage({ defaultMessage: 'Reboot Device' })}>
-                        <Button
-                            id={$('system-reboot')}
-                            kind="secondary"
-                            children={formatMessage({ defaultMessage: 'Reboot' })}
-                            onClick={this.#reboot}
                         />
                     </Field>
                 </FieldSet>

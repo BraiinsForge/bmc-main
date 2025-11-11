@@ -48,7 +48,7 @@ impl<T: BmcManager> HttpServer<T> {
     pub(crate) const WIFI_SETUP_URL_ENDPOINT: &str = "/init_connect";
     pub(crate) const DEVICE_SETUP_URL_ENDPOINT: &str = "/init_setup";
     pub(crate) const ROOT_URL_ENDPOINT: &str = "/";
-    const SUPPORT_ARCHIVE: &str = "/support_archive";
+    const SUPPORT_ARCHIVE: &str = "/api/get_support_archive";
 
     pub(crate) fn new(config: ServerConfig, manager: Arc<T>) -> Self {
         Self { config, manager }

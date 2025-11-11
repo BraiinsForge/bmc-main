@@ -1,4 +1,4 @@
-import { defineConfig } from '@rsbuild/core';
+import { defineConfig, type ProxyOptions } from '@rsbuild/core';
 import { pluginReact } from '@rsbuild/plugin-react';
 import { pluginSass } from '@rsbuild/plugin-sass';
 import { pluginSvgr } from '@rsbuild/plugin-svgr';
@@ -8,6 +8,17 @@ import SVGO_CONFIG from './svgo.config.js';
 import SVGR_TEMPLATE from './svgr.template.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
+const proxyConf: ProxyOptions = {
+    target: 'http://localhost:6070',
+    changeOrigin: true,
+    followRedirects: true,
+    // Without this the abort singals do not propagate to the server
+    // which we really need, because for example the play sound RPC
+    // needs to stop the playback when the connection is dropped.
+    onProxyReq: (proxyReq, _, res) => {
+        res.on('close', () => proxyReq.destroy());
+    },
+};
 
 export default defineConfig({
     source: {
@@ -113,17 +124,9 @@ export default defineConfig({
         printUrls: true,
         proxy: {
             // gRPC-web api endpoints
-            '/braiins.bmc': {
-                target: 'http://localhost:6070',
-                changeOrigin: true,
-                followRedirects: true,
-                // Without this the abort singals do not propagate to the server
-                // which we really need, because for example the play sound RPC
-                // needs to stop the playback when the connection is dropped.
-                onProxyReq: (proxyReq, _, res) => {
-                    res.on('close', () => proxyReq.destroy());
-                },
-            },
+            '/braiins.bmc': proxyConf,
+            // REST API endpoints
+            '/api': proxyConf,
         },
     },
 });

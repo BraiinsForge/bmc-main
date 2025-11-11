@@ -32,6 +32,7 @@ export default {
 
         onFactoryReset: action('onFactoryReset'),
         onSystemReboot: action('onSystemReboot'),
+        onDownloadSupportArchive: action('onDownloadSupportArchive'),
 
         // usageData: getArg('usageData', true),
     } satisfies SectionGeneralProps,

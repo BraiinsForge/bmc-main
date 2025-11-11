@@ -10,10 +10,11 @@ import type { iField } from '@/lib/form';
 import { toast } from '@/lib/toast';
 import { assertUnreachable } from '@/lib/ts';
 import { getTimestamp, validateTime } from '@/lib/time';
-import { unloadGuard, Ping, type PingCallback } from '@/lib/dom';
+import { unloadGuard, Ping, type PingCallback, downloadURL } from '@/lib/dom';
 
 // App
 import * as pb from '@/proto';
+import { URLS } from '@/constants';
 import { store, useStore } from '@/store';
 import AppContext, { type AppContextType } from '@/context';
 
@@ -579,6 +580,10 @@ class View extends Component<Props, State> {
         }
     };
 
+    #generalDownloadSupportArchive = (): void => {
+        downloadURL(URLS.api.supportArchive);
+    };
+
     #generalRender = (): ReactNode => {
         const {
             data,
@@ -608,6 +613,7 @@ class View extends Component<Props, State> {
                 // System actions
                 onFactoryReset={this.#generalFactoryReset}
                 onSystemReboot={this.#generalSystemReboot}
+                onDownloadSupportArchive={this.#generalDownloadSupportArchive}
                 // Usage data
                 // usageData={this.#getFieldStruct(dataCollection, this.#generalSetDataCollection)}
             />

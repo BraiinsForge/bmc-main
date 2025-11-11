@@ -23,6 +23,10 @@ export const URLS = {
         accounts: '/accounts',
     },
 
+    api: {
+        supportArchive: '/api/get_support_archive',
+    },
+
     external: {
         academy: 'https://academy.braiins.com/',
         pool: {
