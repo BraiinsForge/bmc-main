@@ -7,9 +7,10 @@ use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
     AccountId, AddWidgetError, BlockHeightWidget, BraiinsPoolWidget, ClockStyle, ClockWidget,
-    FontStyle, PoolChartTimeFrame, PoolStyle, RemoteImageWidget, RemoteWidget, RemoveWidgetError,
-    Scene, SceneCycling, SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget,
-    TickerTimeFrame, UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
+    FontStyle, PoolChartTimeFrame, PoolStyle, RemoteImageWidget, RemoteWidget,
+    RemoteWidgetMetadata, RemoveWidgetError, Scene, SceneCycling, SceneCyclingTransition, SceneId,
+    SceneKind, TickerBtcWidget, TickerTimeFrame, UpdateWidgetError, Widget, WidgetId, WidgetKind,
+    WidgetPosition, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
@@ -17,7 +18,9 @@ use bmc_led::data::LedEvent;
 use bmc_shared_time::time::Timezone;
 use futures::StreamExt;
 use futures::stream::BoxStream;
+use prost_types::{ListValue, Struct, Value as ProstValue, value::Kind as ProstKind};
 use reqwest::Client;
+use serde_json::Value as JsonValue;
 use std::fmt::Display;
 use std::panic;
 use std::str::FromStr;
@@ -846,6 +849,65 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
     }
 
+    async fn get_remote_widget_params(
+        &self,
+        request: Request<web::RemoteWidgetParamsRequest>,
+    ) -> Result<Response<web::RemoteWidgetParamsResponse>, Status> {
+        let request = request.into_inner();
+
+        let mut parsed_url = match Url::parse(&request.widget_url) {
+            Ok(url) => url,
+            Err(err) => {
+                warn!(?err, "Invalid URL");
+                return Err(Status::invalid_argument("Invalid URL"));
+            }
+        };
+
+        match parsed_url.path_segments_mut() {
+            Ok(mut path_segments) => path_segments.push("metadata"),
+            Err(err) => {
+                warn!(?err, "Failed to get path segments");
+                return Err(Status::internal("Failed to get path segment"));
+            }
+        };
+
+        let client = match Client::builder().timeout(REQUEST_TIMEOUT).build() {
+            Ok(client) => client,
+            Err(err) => {
+                warn!(?err, "Failed to create reqwest client");
+                return Err(Status::internal("Failed to create reqwest client"));
+            }
+        };
+
+        let metadata_response = match client.get(parsed_url).send().await {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    warn!("Failed to get metadata");
+                    return Err(Status::failed_precondition("Failed to get metadata"));
+                }
+                response
+            }
+            Err(err) => {
+                warn!(?err, "Failed to get metadata");
+                return Err(Status::failed_precondition("Failed to get metadata"));
+            }
+        };
+
+        let metadata = match metadata_response.json::<RemoteWidgetMetadata>().await {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                warn!(?err, "Failed to parse metadata");
+                return Err(Status::failed_precondition("Failed to parse metadata"));
+            }
+        };
+
+        let response = web::RemoteWidgetParamsResponse {
+            remote_widget_params: Some(map_params_to_protobuf_struct(metadata.params)),
+        };
+
+        Ok(Response::new(response))
+    }
+
     async fn get_scene_cycling(
         &self,
         _request: Request<()>,
@@ -1138,10 +1200,7 @@ fn parse_widget_kind(
         }
         web::widget_kind::Value::BlockchainData(_) => Some(WidgetKind::BlockchainData),
         web::widget_kind::Value::RemoteWidget(remote_widget_proto) => {
-            let (maybe_kind, field_violations) =
-                parse_remote_widget_kind("remote_widget", remote_widget_proto);
-            all_field_violations.extend(field_violations);
-            maybe_kind
+            Some(map_proto_to_remote_widget_kind(remote_widget_proto))
         }
     };
 
@@ -1337,18 +1396,14 @@ fn parse_remote_image_widget_kind(
     (maybe_kind, field_violations)
 }
 
-fn parse_remote_widget_kind(
-    _field: impl AsRef<str> + Display,
-    remote_widget_proto: web::RemoteWidget,
-) -> ParseOutput<WidgetKind> {
-    let field_violations = FieldViolations::new();
-
-    let widget_kind = Some(WidgetKind::RemoteWidget(RemoteWidget {
-        url: remote_widget_proto.url,
-        params: Vec::default(),
-    }));
-
-    (widget_kind, field_violations)
+fn map_proto_to_remote_widget_kind(remote_widget_proto: web::RemoteWidget) -> WidgetKind {
+    WidgetKind::RemoteWidget(RemoteWidget {
+        name: remote_widget_proto.name,
+        description: remote_widget_proto.description,
+        widget_url: remote_widget_proto.widget_url,
+        icon_url: remote_widget_proto.icon_url,
+        params: map_protobuf_struct_to_params(remote_widget_proto.params.unwrap_or_default()),
+    })
 }
 
 fn map_scene_to_proto(scene: Scene) -> web::Scene {
@@ -1583,7 +1638,11 @@ fn map_remote_image_to_proto(remote_image: RemoteImageWidget) -> web::WidgetKind
 
 fn map_remote_widget_to_proto(remote_widget: RemoteWidget) -> web::WidgetKind {
     let proto = web::RemoteWidget {
-        url: remote_widget.url,
+        name: remote_widget.name,
+        description: remote_widget.description,
+        widget_url: remote_widget.widget_url,
+        icon_url: remote_widget.icon_url,
+        params: Some(map_params_to_protobuf_struct(remote_widget.params)),
     };
 
     web::WidgetKind {
@@ -1603,7 +1662,7 @@ async fn remote_widget_url_validation(
     remote_widget: &web::RemoteWidget,
     field_violations: &mut FieldViolations,
 ) -> Option<WidgetKind> {
-    let url = remote_widget.url.clone();
+    let url = remote_widget.widget_url.clone();
     let mut parsed_url = match Url::parse(&url) {
         Ok(url) => url,
         Err(err) => {
@@ -1630,23 +1689,128 @@ async fn remote_widget_url_validation(
         }
     };
 
-    match client.get(parsed_url).send().await {
+    let metadata_response = match client.get(parsed_url.clone()).send().await {
         Ok(response) => {
             if !response.status().is_success() {
                 warn!("Failed to get metadata, stopping");
                 field_violations.push("widget_kind.remote_widget", "Unexpected error!");
                 return None;
             }
+            response
         }
         Err(err) => {
             warn!(?err, "Failed to get metadata, stopping");
             field_violations.push("widget_kind.remote_widget", "Unexpected error!");
             return None;
         }
-    }
+    };
+
+    let metadata = match metadata_response.json::<RemoteWidgetMetadata>().await {
+        Ok(metadata) => metadata,
+        Err(err) => {
+            warn!(?err, "Failed to parse metadata, stopping");
+            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
+            return None;
+        }
+    };
+
+    let icon_url = match parsed_url.join(&metadata.assets.icon) {
+        Ok(url) => url,
+        Err(err) => {
+            warn!(?err, "Failed to add path segments, stopping");
+            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
+            return None;
+        }
+    };
 
     Some(WidgetKind::RemoteWidget(RemoteWidget {
-        url,
-        params: Vec::default(),
+        name: metadata.name,
+        description: metadata.description,
+        widget_url: url,
+        icon_url: icon_url.to_string(),
+        //NOTE: We will serialize only user defined params. No params mean default values.
+        ..Default::default()
     }))
+}
+
+fn json_to_proto_value(v: JsonValue) -> ProstValue {
+    match v {
+        JsonValue::Null => ProstValue {
+            kind: Some(ProstKind::NullValue(0)),
+        },
+        JsonValue::Bool(b) => ProstValue {
+            kind: Some(ProstKind::BoolValue(b)),
+        },
+        JsonValue::Number(n) => ProstValue {
+            kind: Some(ProstKind::NumberValue(n.as_f64().unwrap_or_default())),
+        },
+        JsonValue::String(s) => ProstValue {
+            kind: Some(ProstKind::StringValue(s)),
+        },
+        JsonValue::Array(arr) => {
+            let values = arr.into_iter().map(json_to_proto_value).collect();
+            ProstValue {
+                kind: Some(ProstKind::ListValue(ListValue { values })),
+            }
+        }
+        JsonValue::Object(map) => {
+            let fields = map
+                .into_iter()
+                .map(|(k, v)| (k, json_to_proto_value(v)))
+                .collect();
+            ProstValue {
+                kind: Some(ProstKind::StructValue(Struct { fields })),
+            }
+        }
+    }
+}
+
+fn proto_to_json_value(v: ProstValue) -> JsonValue {
+    match v.kind {
+        None | Some(ProstKind::NullValue(_)) => JsonValue::Null,
+        Some(ProstKind::NumberValue(n)) => {
+            JsonValue::Number(serde_json::Number::from_f64(n).unwrap_or_else(|| 0.into()))
+        }
+        Some(ProstKind::StringValue(s)) => JsonValue::String(s),
+        Some(ProstKind::BoolValue(b)) => JsonValue::Bool(b),
+        Some(ProstKind::ListValue(list)) => {
+            JsonValue::Array(list.values.into_iter().map(proto_to_json_value).collect())
+        }
+        Some(ProstKind::StructValue(s)) => {
+            let mut map = JsonValue::Object(serde_json::Map::default());
+            if let JsonValue::Object(ref mut inner) = map {
+                for (k, v) in s.fields {
+                    inner.insert(k, proto_to_json_value(v));
+                }
+            }
+            map
+        }
+    }
+}
+
+fn map_protobuf_struct_to_params(param: Struct) -> JsonValue {
+    let mut map = serde_json::Map::new();
+
+    for (k, v) in param.fields {
+        map.insert(k, proto_to_json_value(v));
+    }
+
+    JsonValue::Object(map)
+}
+
+fn map_params_to_protobuf_struct(param: JsonValue) -> Struct {
+    if let JsonValue::Object(map) = param {
+        Struct {
+            fields: map
+                .into_iter()
+                .map(|(k, v)| (k, json_to_proto_value(v)))
+                .collect(),
+        }
+    // Parameters in the JSON are key value pairs.
+    // We expect only the Object variant.
+    } else {
+        Struct {
+            fields: std::collections::BTreeMap::default(),
+        }
+    }
 }

@@ -205,17 +205,28 @@ impl Default for RemoteImageWidget {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct RemoteWidgetParams {
-    key: String,
-    value: String,
+#[derive(Debug, Deserialize)]
+pub struct RemoteWidgetAssets {
+    pub icon: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoteWidgetMetadata {
+    pub name: String,
+    pub description: String,
+    pub assets: RemoteWidgetAssets,
+    pub params: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RemoteWidget {
-    // Base URL plus /widget/{id}
-    pub url: String,
-    pub params: Vec<RemoteWidgetParams>,
+    pub name: String,
+    pub description: String,
+    // Base URL plus `/{widget_id}`
+    pub widget_url: String,
+    // Full URL with icon image
+    pub icon_url: String,
+    pub params: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -273,6 +284,19 @@ impl WidgetSize {
             Self::Small | Self::Medium => 238,
             Self::Large | Self::Full => 480,
         }
+    }
+}
+
+impl Display for WidgetSize {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Full => "full",
+            Self::Large => "large",
+            Self::Medium => "medium",
+            Self::Small => "small",
+        };
+
+        f.write_str(value)
     }
 }
 

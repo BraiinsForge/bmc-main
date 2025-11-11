@@ -3,6 +3,7 @@ syntax = "proto3";
 package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
 import "google/protobuf/wrappers.proto";
 
 message Scene {
@@ -224,8 +225,19 @@ message RemoteImageWidget {
 }
 
 message RemoteWidget {
-  // required
-  string url = 1;
+  string name = 1;
+  string description = 2;
+  string widget_url = 3;
+  string icon_url = 4;
+  google.protobuf.Struct params = 5;
+}
+
+message RemoteWidgetParamsRequest {
+  string widget_url = 1;
+}
+
+message RemoteWidgetParamsResponse {
+  google.protobuf.Struct remote_widget_params = 1;
 }
 
 enum SceneCyclingTransition {
@@ -345,6 +357,8 @@ service SceneManagementService {
   rpc UpdateWidget(UpdateWidgetRequest) returns (google.protobuf.Empty);
   // Remove widget by ID.
   rpc RemoveWidget(RemoveWidgetRequest) returns (google.protobuf.Empty);
+  // Get remote widget parameters from server
+  rpc GetRemoteWidgetParams(RemoteWidgetParamsRequest) returns (RemoteWidgetParamsResponse);
   // Get scene cycling
   rpc GetSceneCycling(google.protobuf.Empty) returns (GetSceneCyclingResponse);
   // Set scene cycling
