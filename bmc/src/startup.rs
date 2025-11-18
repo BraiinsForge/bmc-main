@@ -110,10 +110,15 @@ where
             .autoupgrade_init(autoupgrade_config)
             .await;
 
+        let sound_controller =
+            SoundController::new(config_handle.clone(), config.sounds_dir.clone());
+
         let widget_tasks = WidgetTasks::new(
             display_controller.clone(),
             config_handle.clone(),
             manager.watch_timezone_updates(),
+            led_driver.command_sender.clone(),
+            sound_controller.clone(),
         );
 
         for scene in config_handle.read().await.scenes.values() {
@@ -130,9 +135,6 @@ where
             config_handle.clone(),
             system_upgrade_service.clone(),
         );
-
-        let sound_controller =
-            SoundController::new(config_handle.clone(), config.sounds_dir.clone());
 
         let alarm_bus = AlarmBus::new();
 

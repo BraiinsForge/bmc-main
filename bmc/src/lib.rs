@@ -4,6 +4,7 @@ mod alarm;
 mod backlight;
 mod button_manager;
 mod config;
+mod countdown_types;
 mod display_tasks;
 pub mod entry;
 pub mod firmware;
