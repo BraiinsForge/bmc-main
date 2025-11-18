@@ -206,7 +206,8 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                         | WidgetKind::RemoteImage(_)
                         | WidgetKind::BlockchainData
                         | WidgetKind::RemoteWidget(_)
-                        | WidgetKind::HalvingCountdown => None,
+                        | WidgetKind::HalvingCountdown
+                        | WidgetKind::Countdown(_) => None,
                     })
                     .collect();
                 account

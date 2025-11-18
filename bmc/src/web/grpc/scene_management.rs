@@ -2,12 +2,14 @@
 
 use crate::BmcManager;
 use crate::config::ConfigHandle;
+use crate::countdown_types::{CountdownCompletionAction, LedSettings, SoundSettings};
 use crate::led::LedController;
+use crate::sound::Sounds;
 use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
     AccountId, AddWidgetError, BlockHeightWidget, BraiinsPoolWidget, ClockStyle, ClockWidget,
-    FontStyle, PoolChartTimeFrame, PoolStyle, RemoteImageWidget, RemoteWidget,
+    CountdownWidget, FontStyle, PoolChartTimeFrame, PoolStyle, RemoteImageWidget, RemoteWidget,
     RemoteWidgetMetadata, RemoveWidgetError, Scene, SceneCycling, SceneCyclingTransition, SceneId,
     SceneKind, TickerBtcWidget, TickerTimeFrame, UpdateWidgetError, Widget, WidgetId, WidgetKind,
     WidgetPosition, WidgetSize,
@@ -15,6 +17,7 @@ use bmc_display::data::{
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
 use bmc_led::data::LedEvent;
+use bmc_led::data::{LedEffectKind, Rgb};
 use bmc_shared_time::time::Timezone;
 use futures::StreamExt;
 use futures::stream::BoxStream;
@@ -1210,6 +1213,9 @@ async fn parse_widget_kind_with_default_params(
             }
         }
         web::widget_kind::Value::HalvingCountdown(_) => WidgetKind::HalvingCountdown,
+        web::widget_kind::Value::Countdown(_) => {
+            WidgetKind::Countdown(CountdownWidget::default())
+        }
     };
 
     (Some(kind), field_violations)
@@ -1267,6 +1273,12 @@ fn parse_widget_kind(
             Some(map_proto_to_remote_widget_kind(remote_widget_proto))
         }
         web::widget_kind::Value::HalvingCountdown(_) => Some(WidgetKind::HalvingCountdown),
+        web::widget_kind::Value::Countdown(countdown_proto) => {
+            let (maybe_kind, field_violations) =
+                parse_countdown_widget_kind(format!("{field}.countdown"), countdown_proto);
+            all_field_violations.extend(field_violations);
+            maybe_kind
+        }
     };
 
     (maybe_kind, all_field_violations)
@@ -1461,6 +1473,127 @@ fn parse_remote_image_widget_kind(
     (maybe_kind, field_violations)
 }
 
+fn parse_countdown_widget_kind(
+    field: impl AsRef<str> + Display,
+    countdown_proto: web::CountdownWidget,
+) -> ParseOutput<WidgetKind> {
+    use web::FontStyle as FontStyleProto;
+    use web::LedEffect as LedEffectProto;
+
+    let mut field_violations = FieldViolations::new();
+
+    // Validate label is not empty
+    let maybe_label = if countdown_proto.label.trim().is_empty() {
+        field_violations.push(format!("{field}.label"), "Label cannot be empty!");
+        None
+    } else {
+        Some(countdown_proto.label.clone())
+    };
+
+    // Validate target timestamp is positive
+    let maybe_target_timestamp = countdown_proto
+        .target_timestamp
+        .map(|ts| ts.seconds)
+        .filter(|&s| s > 0)
+        .or_else(|| {
+            field_violations.push(
+                format!("{field}.target_timestamp"),
+                "Target timestamp must be positive!",
+            );
+            None
+        });
+
+    // Parse font style
+    let maybe_numbers_font_style = match countdown_proto.numbers_font_style() {
+        FontStyleProto::Unspecified => {
+            field_violations.push(format!("{field}.numbers_font_style"), "Missing value!");
+            None
+        }
+        FontStyleProto::Light => Some(FontStyle::Light),
+        FontStyleProto::Medium => Some(FontStyle::Medium),
+        FontStyleProto::Bold => Some(FontStyle::Bold),
+    };
+
+    // Parse completion action (optional) with nested LedSettings/SoundSettings
+    let completion_action = if let Some(action) = countdown_proto.completion_action {
+        let led = action.led.map(|led_settings| {
+            let effect = match led_settings.effect() {
+                LedEffectProto::Unspecified | LedEffectProto::None => LedEffectKind::None,
+                LedEffectProto::Solid => LedEffectKind::Solid,
+                LedEffectProto::Breathe => LedEffectKind::Breathe,
+                LedEffectProto::Chase => LedEffectKind::Chase,
+                LedEffectProto::KnightRider => LedEffectKind::KnightRider,
+                LedEffectProto::Scan => LedEffectKind::Scan,
+                LedEffectProto::Snake => LedEffectKind::Snake,
+            };
+
+            let color = led_settings.color.map_or(
+                Rgb { r: 0, g: 0, b: 0 },
+                |c| Rgb {
+                    r: c.r.min(255) as u8,
+                    g: c.g.min(255) as u8,
+                    b: c.b.min(255) as u8,
+                },
+            );
+
+            LedSettings { effect, color }
+        });
+
+        let sound = if let Some(sound_settings) = action.sound {
+            match Sounds::from_str(&sound_settings.sound_id) {
+                Ok(sound) =>
+                {
+                    #[expect(clippy::cast_possible_truncation)]
+                    Some(SoundSettings {
+                        sound,
+                        volume: sound_settings.volume.min(100) as u8,
+                    })
+                }
+                Err(_) => {
+                    field_violations.push(
+                        format!("{field}.completion_action.sound.sound_id"),
+                        format!("Unknown sound ID: {}", sound_settings.sound_id),
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Some(CountdownCompletionAction { led, sound })
+    } else {
+        None
+    };
+
+    // Serialize completion_action to JSON for storage in bmc-display's CountdownWidget
+    let completion_action_json =
+        completion_action
+            .as_ref()
+            .and_then(|action| match serde_json::to_value(action) {
+                Ok(v) => Some(v),
+                Err(err) => {
+                    warn!(?err, "Failed to serialize completion action");
+                    None
+                }
+            });
+
+    let maybe_kind = maybe_label
+        .zip(maybe_target_timestamp)
+        .zip(maybe_numbers_font_style)
+        .map(|((label, target_timestamp), numbers_font_style)| {
+            WidgetKind::Countdown(CountdownWidget {
+                label,
+                target_timestamp,
+                background_color: countdown_proto.background_color,
+                numbers_font_style,
+                completion_action: completion_action_json,
+            })
+        });
+
+    (maybe_kind, field_violations)
+}
+
 fn map_proto_to_remote_widget_kind(remote_widget_proto: web::RemoteWidget) -> WidgetKind {
     WidgetKind::RemoteWidget(RemoteWidget {
         name: remote_widget_proto.name,
@@ -1513,6 +1646,7 @@ fn map_widget_to_proto(widget: Widget) -> web::Widget {
         WidgetKind::BlockchainData => map_blockchain_data_to_proto(),
         WidgetKind::RemoteWidget(remote_widget) => map_remote_widget_to_proto(remote_widget),
         WidgetKind::HalvingCountdown => map_halving_countdown_to_proto(),
+        WidgetKind::Countdown(countdown) => map_countdown_to_proto(countdown),
     };
 
     web::Widget {
@@ -1739,6 +1873,68 @@ fn map_halving_countdown_to_proto() -> web::WidgetKind {
         value: Some(web::widget_kind::Value::HalvingCountdown(
             web::HalvingCountdownWidget {},
         )),
+    }
+}
+
+fn map_countdown_to_proto(countdown: CountdownWidget) -> web::WidgetKind {
+    use web::FontStyle as FontStyleProto;
+    use web::LedEffect as LedEffectProto;
+
+    let completion_action = countdown
+        .completion_action
+        .and_then(|json| {
+            serde_json::from_value::<CountdownCompletionAction>(json)
+                .tap_err(|err| warn!(?err, "Failed to deserialize completion action"))
+                .ok()
+        })
+        .map(|action| {
+            let led = action.led.map(|led| {
+                let effect = match led.effect {
+                    LedEffectKind::None => LedEffectProto::None,
+                    LedEffectKind::Solid => LedEffectProto::Solid,
+                    LedEffectKind::Breathe => LedEffectProto::Breathe,
+                    LedEffectKind::Chase => LedEffectProto::Chase,
+                    LedEffectKind::KnightRider => LedEffectProto::KnightRider,
+                    LedEffectKind::Scan => LedEffectProto::Scan,
+                    LedEffectKind::Snake => LedEffectProto::Snake,
+                };
+
+                web::LedSettings {
+                    effect: effect.into(),
+                    color: Some(web::RgbColor {
+                        r: led.color.r.into(),
+                        g: led.color.g.into(),
+                        b: led.color.b.into(),
+                    }),
+                }
+            });
+
+            let sound = action.sound.map(|sound| web::SoundSettings {
+                sound_id: sound.sound.to_string(),
+                volume: sound.volume.into(),
+            });
+
+            web::CountdownCompletionAction { led, sound }
+        });
+
+    let proto = web::CountdownWidget {
+        label: countdown.label,
+        target_timestamp: Some(prost_types::Timestamp {
+            seconds: countdown.target_timestamp,
+            nanos: 0,
+        }),
+        background_color: countdown.background_color,
+        numbers_font_style: match countdown.numbers_font_style {
+            FontStyle::Light => FontStyleProto::Light,
+            FontStyle::Medium => FontStyleProto::Medium,
+            FontStyle::Bold => FontStyleProto::Bold,
+        }
+        .into(),
+        completion_action,
+    };
+
+    web::WidgetKind {
+        value: Some(web::widget_kind::Value::Countdown(proto)),
     }
 }
 
