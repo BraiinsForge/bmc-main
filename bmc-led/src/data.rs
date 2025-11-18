@@ -1,8 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rgb {
     pub r: u8,
     pub g: u8,
@@ -65,4 +66,32 @@ pub enum LedCommand {
     Enable,
     SetBrightness(f32),
     SetEffect(LedEffect, LedEventPersistence, Duration),
+}
+
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedEffectKind {
+    #[default]
+    None,
+    Solid,
+    Breathe,
+    Chase,
+    KnightRider,
+    Scan,
+    Snake,
+}
+
+impl LedEffectKind {
+    #[must_use]
+    pub fn with_color(self, rgb: Rgb) -> LedEffect {
+        match self {
+            Self::None => LedEffect::None,
+            Self::Solid => LedEffect::Solid(rgb),
+            Self::Breathe => LedEffect::Breathe(rgb),
+            Self::Chase => LedEffect::Chase(rgb),
+            Self::KnightRider => LedEffect::KnightRider(rgb),
+            Self::Scan => LedEffect::Scan(rgb),
+            Self::Snake => LedEffect::Snake(rgb),
+        }
+    }
 }

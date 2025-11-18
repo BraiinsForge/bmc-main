@@ -7,7 +7,7 @@ use bmc_shared_time::time::Timezone;
 use chrono::{DateTime, TimeDelta, Utc};
 use indexmap::{IndexMap, indexmap};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use slint::{ModelRc, ToSharedString};
+use slint::{Brush, Color, ModelRc, ToSharedString};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::mem;
@@ -230,6 +230,30 @@ pub struct RemoteWidget {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CountdownWidget {
+    pub label: String,
+    pub target_timestamp: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    pub numbers_font_style: FontStyle,
+    /// Opaque completion action data; parsed by bmc crate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_action: Option<serde_json::Value>,
+}
+
+impl Default for CountdownWidget {
+    fn default() -> Self {
+        Self {
+            label: String::from("Countdown"),
+            target_timestamp: chrono::Utc::now().timestamp() + 3600, // 1 hour from now
+            background_color: None,
+            numbers_font_style: FontStyle::Bold,
+            completion_action: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "params")]
 #[serde(rename_all = "snake_case")]
 pub enum WidgetKind {
@@ -241,6 +265,7 @@ pub enum WidgetKind {
     BlockchainData,
     RemoteWidget(RemoteWidget),
     HalvingCountdown,
+    Countdown(CountdownWidget),
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -797,6 +822,13 @@ impl From<Widget> for generated::Widget {
                 slint_widget.kind = generated::WidgetKind::HalvingCountdown;
                 slint_widget.halving_countdown = generated::WidgetHalvingCountdownData::default();
             }
+            WidgetKind::Countdown(config) => {
+                slint_widget.kind = generated::WidgetKind::Countdown;
+                slint_widget.countdown = generated::WidgetCountdownData {
+                    config: config.into(),
+                    ..generated::WidgetCountdownData::default()
+                }
+            }
         }
 
         slint_widget
@@ -862,6 +894,137 @@ impl From<BraiinsPoolWidget> for generated::WidgetBraiinsPoolConfig {
             },
             // worker_states: value.worker_states,
         }
+    }
+}
+
+impl From<CountdownWidget> for generated::WidgetCountdownConfig {
+    fn from(value: CountdownWidget) -> Self {
+        Self {
+            label: value.label.into(),
+            target_timestamp: value.target_timestamp.try_into().unwrap_or(0),
+            background_color: parse_color_string(value.background_color.as_deref()),
+            numbers_font_style: font_style(value.numbers_font_style),
+        }
+    }
+}
+
+/// Parse a color string into a Slint Brush.
+/// Supports: hex (#RGB, #RRGGBB, #RRGGBBAA), rgb(), rgba(), and CSS color names.
+/// Returns black as default for invalid or empty input.
+pub fn parse_color_string(color: Option<&str>) -> Brush {
+    let Some(color_str) = color else {
+        return Brush::SolidColor(Color::from_rgb_u8(0, 0, 0));
+    };
+
+    let trimmed = color_str.trim();
+    if trimmed.is_empty() {
+        return Brush::SolidColor(Color::from_rgb_u8(0, 0, 0));
+    }
+
+    // Try hex parsing
+    if let Some(hex) = trimmed.strip_prefix('#') {
+        if let Some(color) = parse_hex_color(hex) {
+            return Brush::SolidColor(color);
+        }
+    }
+
+    // Try rgb/rgba parsing
+    if let Some(color) = parse_rgb_color(trimmed) {
+        return Brush::SolidColor(color);
+    }
+
+    // Try CSS color names
+    if let Some(color) = parse_css_color_name(trimmed) {
+        return Brush::SolidColor(color);
+    }
+
+    // Default to black
+    Brush::SolidColor(Color::from_rgb_u8(0, 0, 0))
+}
+
+fn parse_hex_color(hex: &str) -> Option<Color> {
+    match hex.len() {
+        3 => {
+            // #RGB -> #RRGGBB
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
+            Some(Color::from_rgb_u8(r, g, b))
+        }
+        6 => {
+            // #RRGGBB
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some(Color::from_rgb_u8(r, g, b))
+        }
+        8 => {
+            // #RRGGBBAA
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+            Some(Color::from_argb_u8(a, r, g, b))
+        }
+        _ => None,
+    }
+}
+
+fn parse_rgb_color(s: &str) -> Option<Color> {
+    let lower = s.to_lowercase();
+
+    if let Some(inner) = lower.strip_prefix("rgba(").and_then(|s| s.strip_suffix(')')) {
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() == 4 {
+            let r: u8 = parts[0].trim().parse().ok()?;
+            let g: u8 = parts[1].trim().parse().ok()?;
+            let b: u8 = parts[2].trim().parse().ok()?;
+            let a: f32 = parts[3].trim().parse().ok()?;
+            let a_u8 = (a * 255.0).clamp(0.0, 255.0) as u8;
+            return Some(Color::from_argb_u8(a_u8, r, g, b));
+        }
+    }
+
+    if let Some(inner) = lower.strip_prefix("rgb(").and_then(|s| s.strip_suffix(')')) {
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() == 3 {
+            let r: u8 = parts[0].trim().parse().ok()?;
+            let g: u8 = parts[1].trim().parse().ok()?;
+            let b: u8 = parts[2].trim().parse().ok()?;
+            return Some(Color::from_rgb_u8(r, g, b));
+        }
+    }
+
+    None
+}
+
+/// Map color names to values from palette.slint where a match exists,
+/// falling back to standard CSS color values otherwise.
+fn parse_css_color_name(name: &str) -> Option<Color> {
+    match name.to_lowercase().as_str() {
+        // palette.slint exact matches
+        "black" => Some(Color::from_rgb_u8(0, 0, 0)),
+        "white" => Some(Color::from_rgb_u8(255, 255, 255)),
+        // palette.slint named equivalents
+        "red" => Some(Color::from_rgb_u8(0xF9, 0x53, 0x55)), // red-50
+        "green" => Some(Color::from_rgb_u8(0x13, 0xA4, 0x54)), // green-50
+        "blue" => Some(Color::from_rgb_u8(0x24, 0x60, 0xFF)), // blue-60
+        "cyan" | "aqua" => Some(Color::from_rgb_u8(0x56, 0xD8, 0xE0)), // teal-30
+        "orange" => Some(Color::from_rgb_u8(0xFE, 0x84, 0x31)), // orange-40
+        "purple" => Some(Color::from_rgb_u8(0xA7, 0x2D, 0xEA)), // purple-60
+        "gray" | "grey" => Some(Color::from_rgb_u8(0x8D, 0x8D, 0x8D)), // gray-50
+        "darkred" => Some(Color::from_rgb_u8(0xD9, 0x22, 0x2C)), // red-60
+        "darkgreen" => Some(Color::from_rgb_u8(0x16, 0x80, 0x42)), // green-60
+        "darkblue" => Some(Color::from_rgb_u8(0x10, 0x43, 0xCD)), // blue-70
+        "darkgray" | "darkgrey" => Some(Color::from_rgb_u8(0xA8, 0xA8, 0xA8)), // gray-40
+        "lightgray" | "lightgrey" => Some(Color::from_rgb_u8(0xE0, 0xE0, 0xE0)), // gray-20
+        // No palette equivalent — standard CSS values
+        "yellow" => Some(Color::from_rgb_u8(255, 255, 0)),
+        "magenta" | "fuchsia" => Some(Color::from_rgb_u8(255, 0, 255)),
+        "pink" => Some(Color::from_rgb_u8(255, 192, 203)),
+        "brown" => Some(Color::from_rgb_u8(165, 42, 42)),
+        "transparent" => Some(Color::from_argb_u8(0, 0, 0, 0)),
+        _ => None,
     }
 }
 

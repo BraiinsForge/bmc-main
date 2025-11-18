@@ -898,6 +898,7 @@ dependencies = [
  "anyhow",
  "apa102-spi",
  "async-trait",
+ "serde",
  "smart-leds-trait",
  "tokio",
  "tracing",
