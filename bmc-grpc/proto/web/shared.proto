@@ -71,3 +71,22 @@ enum UnitSystem {
   // mph, miles, lbs, etc.
   UNIT_SYSTEM_IMPERIAL = 2;
 }
+
+// RGB color (0-255 per channel)
+message RgbColor {
+  uint32 r = 1; // 0-255
+  uint32 g = 2; // 0-255
+  uint32 b = 3; // 0-255
+}
+
+// LED animation effects
+enum LedEffect {
+  LED_EFFECT_UNSPECIFIED = 0;
+  LED_EFFECT_NONE = 1;
+  LED_EFFECT_SOLID = 2;
+  LED_EFFECT_BREATHE = 3;
+  LED_EFFECT_CHASE = 4;
+  LED_EFFECT_KNIGHT_RIDER = 5;
+  LED_EFFECT_SCAN = 6;
+  LED_EFFECT_SNAKE = 7;
+}
