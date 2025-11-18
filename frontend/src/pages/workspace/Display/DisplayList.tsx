@@ -37,6 +37,7 @@ type FormStateBlockchainData = FormPropsToLocalState<Comp.FormWidgetBlockchainDa
 type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
 type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
 type FormStateHalvingCountdown = FormPropsToLocalState<Comp.FormWidgetHalvingCountdownProps>;
+type FormStateCountdown = FormPropsToLocalState<Comp.FormWidgetCountdownProps>;
 type FormStateRemoteImage = FormPropsToLocalState<Comp.FormWidgetRemoteImageProps>;
 type FormStateRemoteWidget = FormPropsToLocalState<Comp.FormWidgetRemoteWidgetProps>;
 type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
@@ -65,6 +66,11 @@ type DialogStates = {
     };
     halvingCountdown: {
         data: FormStateHalvingCountdown;
+        isEdit: boolean;
+        sceneID: string;
+    };
+    countdown: {
+        data: FormStateCountdown;
         isEdit: boolean;
         sceneID: string;
     };
@@ -100,6 +106,7 @@ function getInitialDialogStates(): DialogStates {
         braiinsPool: getForm(),
         clock: getForm(),
         halvingCountdown: getForm(),
+        countdown: getForm(),
         remoteImage: getForm(),
         remoteWidget: getForm(),
         ticker: getForm(),
@@ -117,6 +124,7 @@ interface State {
     scenes: pb.Scene[];
     accounts: pb.Account[];
     timezones: pb.Timezone[];
+    sounds: pb.SoundInfo[];
     recentRemoteWidgets: pb.RemoteWidget[];
 
     cycle: {
@@ -139,6 +147,7 @@ const getInitialState = (): State => ({
     scenes: [],
     accounts: [],
     timezones: [],
+    sounds: [],
     recentRemoteWidgets: [],
 
     cycle: {
@@ -198,14 +207,16 @@ class View extends Component<Props, State> {
             const { signal } = this.abortLoadMetadata.replace();
             const reqConf = { signal };
 
-            const [{ timezones }, { sceneCycling }, { accounts }] = await Promise.all([
+            const [{ timezones }, { sceneCycling }, { accounts }, { sounds }] = await Promise.all([
                 pb.rpc.sys.getTimezoneList({}, reqConf),
                 pb.rpc.scenes.getSceneCycling({}, reqConf),
                 pb.rpc.accounts.getAllAccounts({}, reqConf),
+                pb.rpc.config.listSounds({}, reqConf),
             ]);
             this.setState(s => ({
                 accounts,
                 timezones,
+                sounds,
                 cycle: {
                     ...s.cycle,
                     effect: sceneCycling?.transition ?? s.cycle.effect,
@@ -324,6 +335,11 @@ class View extends Component<Props, State> {
                 };
                 break;
 
+            case 'countdown':
+                $openDialogKind = 'countdown';
+                $kind = { case: 'countdown', value: pb.create(pb.CountdownWidgetSchema) };
+                break;
+
             default:
                 assertUnreachable(kind, 'Invalid scene kind!');
         }
@@ -428,6 +444,13 @@ class View extends Component<Props, State> {
                     dialogStates.remoteWidget.data = {
                         errors: null,
                         values: Comp.unpackRemoteWidgetKind(widgetKind, size),
+                    };
+                    break;
+
+                case 'countdown':
+                    dialogStates.countdown.data = {
+                        errors: null,
+                        values: Comp.unpackCountdownWidgetKind(widgetKind, size),
                     };
                     break;
 
@@ -610,6 +633,10 @@ class View extends Component<Props, State> {
                 widgetKind = Comp.createRemoteWidgetKind(dialogStates.remoteWidget.data.values);
                 break;
 
+            case 'countdown':
+                widgetKind = Comp.createCountdownWidgetKind(dialogStates.countdown.data.values);
+                break;
+
             default:
                 assertUnreachable(openDialogKind, 'Submit: Invalid dialog kind!');
         }
@@ -667,6 +694,7 @@ class View extends Component<Props, State> {
                 blockchainData,
                 braiinsPool,
                 halvingCountdown,
+                countdown,
                 remoteImage,
                 remoteWidget,
             },
@@ -808,6 +836,33 @@ class View extends Component<Props, State> {
                     url={this.#getFormFieldStruct('remoteWidget', 'url')}
                     name={this.#getFormFieldStruct('remoteWidget', 'name')}
                     params={this.#getFormFieldStruct('remoteWidget', 'params')}
+                />
+
+                <Comp.FormWidgetCountdown
+                    isOpen={openDialogKind === 'countdown'}
+                    isEdit={openDialogKind === 'countdown' && countdown.isEdit}
+                    onClose={cancel}
+                    error={
+                        openDialogKind === 'countdown'
+                            ? pb.renderFieldErrorsAsList(countdown.data?.errors?.global)
+                            : null
+                    }
+                    // No size selector for the fullscreen widgets we operate with here
+                    widgetSize={null}
+                    label={this.#getFormFieldStruct('countdown', 'label')}
+                    targetDate={this.#getFormFieldStruct('countdown', 'targetDate')}
+                    targetTime={this.#getFormFieldStruct('countdown', 'targetTime')}
+                    backgroundColor={this.#getFormFieldStruct('countdown', 'backgroundColor')}
+                    fontStyle={this.#getFormFieldStruct('countdown', 'fontStyle')}
+                    ledEnabled={this.#getFormFieldStruct('countdown', 'ledEnabled')}
+                    ledEffect={this.#getFormFieldStruct('countdown', 'ledEffect')}
+                    ledColorR={this.#getFormFieldStruct('countdown', 'ledColorR')}
+                    ledColorG={this.#getFormFieldStruct('countdown', 'ledColorG')}
+                    ledColorB={this.#getFormFieldStruct('countdown', 'ledColorB')}
+                    soundEnabled={this.#getFormFieldStruct('countdown', 'soundEnabled')}
+                    soundId={this.#getFormFieldStruct('countdown', 'soundId')}
+                    soundVolume={this.#getFormFieldStruct('countdown', 'soundVolume')}
+                    soundOptions={this.state.sounds}
                 />
             </Fragment>
         );
@@ -1122,6 +1177,22 @@ class View extends Component<Props, State> {
                         this.setState(
                             // Set state
                             { openDialogKind: 'remoteWidget', dialogStates: ds },
+                            // ...and open the dialog
+                            () => this.#previewOpen(id),
+                        );
+
+                        break;
+                    }
+
+                    case 'countdown': {
+                        const ds = getInitialDialogStates();
+                        ds.countdown.sceneID = id;
+                        ds.countdown.isEdit = true;
+                        ds.countdown.data.values = Comp.unpackCountdownWidgetKind(widgetKind, pb.WidgetSize.FULL);
+
+                        this.setState(
+                            // Set state
+                            { openDialogKind: 'countdown', dialogStates: ds },
                             // ...and open the dialog
                             () => this.#previewOpen(id),
                         );

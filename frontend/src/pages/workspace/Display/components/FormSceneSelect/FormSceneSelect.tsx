@@ -125,6 +125,15 @@ class View extends Component<Props, State> {
                     })}
                     onSelection={onSelection}
                 />
+
+                <Cell
+                    kind="countdown"
+                    icon={<Icons.WidgetCountdown size={56} />}
+                    description={formatMessage({
+                        defaultMessage: 'Set a countdown timer to a specific date and time.',
+                    })}
+                    onSelection={onSelection}
+                />
             </section>
         );
     }

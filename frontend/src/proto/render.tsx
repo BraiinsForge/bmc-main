@@ -604,6 +604,9 @@ export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.Widget
         case 'halvingCountdown':
             return intl.formatMessage({ defaultMessage: 'Halving Countdown' });
 
+        case 'countdown':
+            return intl.formatMessage({ defaultMessage: 'Countdown' });
+
         default:
             assertUnreachable(kind);
     }
@@ -667,6 +670,11 @@ export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
 
         case 'halvingCountdown':
             return intl.formatMessage({ defaultMessage: 'Countdown to the next Bitcoin halving' });
+
+        case 'countdown': {
+            const d = val.value satisfies pb.CountdownWidget;
+            return intl.formatMessage({ defaultMessage: 'Label: {label}' }, { label: d.label || 'N/A' });
+        }
 
         default:
             assertUnreachable(val, 'fullscreen widget kind');
