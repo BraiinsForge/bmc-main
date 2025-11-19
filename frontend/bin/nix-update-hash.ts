@@ -30,7 +30,10 @@ if (res.ok) {
     echo('>       got: ', chalk.redBright(hashReceived));
     echo('> ');
 
-    const patchedYarnFiles = fs.readFileSync(PATH_YARN_FILES, 'utf-8').replace(hashSpecified, hashReceived);
+    const patchedYarnFiles = fs
+        .readFileSync(PATH_YARN_FILES, 'utf-8')
+        // It can be present multiple times since we do platform specific hashes
+        .replaceAll(hashSpecified, hashReceived);
     fs.writeFileSync(PATH_YARN_FILES, patchedYarnFiles, 'utf-8');
 
     const underlinedFileName: string = chalk.underline(path.basename(PATH_YARN_FILES));

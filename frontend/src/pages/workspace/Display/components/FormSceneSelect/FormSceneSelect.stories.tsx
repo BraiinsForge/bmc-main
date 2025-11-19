@@ -12,39 +12,39 @@ const remoteWidgetRecents: pb.RemoteWidget[] = [
     pb.create(pb.RemoteWidgetSchema, {
         name: 'Exchange Rate',
         description: 'Display real-time currency exchange rates and conversion information',
-        widgetUrl: 'https://widgets.braiinsforge.com/exchange-rate',
-        iconUrl: 'https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71',
+        widgetUrl: 'https://braiinsforge.com/deck/widgets/exchange-rate',
+        iconUrl: 'https://braiinsforge.com/deck/widgets/exchange-rate/icon?rev=ac6224936b035e71',
     }),
     pb.create(pb.RemoteWidgetSchema, {
         name: 'Nameday',
         description: "Shows today's nameday celebrations and upcoming name days in your region",
-        widgetUrl: 'https://widgets.braiinsforge.com/nameday',
-        iconUrl: 'https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8',
+        widgetUrl: 'https://braiinsforge.com/deck/widgets/nameday',
+        iconUrl: 'https://braiinsforge.com/deck/widgets/nameday/icon?rev=baf9fcc58f8e24b8',
     }),
     pb.create(pb.RemoteWidgetSchema, {
         name: 'Financial Ticker List',
         description: 'Track multiple stocks, crypto, and commodities with live price updates and performance metrics',
-        widgetUrl: 'https://widgets.braiinsforge.com/ticker-list',
-        iconUrl: 'https://widgets.braiinsforge.com/ticker-list/icon?rev=265c6ed448a7c013',
+        widgetUrl: 'https://braiinsforge.com/deck/widgets/ticker-list',
+        iconUrl: 'https://braiinsforge.com/deck/widgets/ticker-list/icon?rev=265c6ed448a7c013',
     }),
     pb.create(pb.RemoteWidgetSchema, {
         name: 'Ticker - Single Candlestick',
         description:
             'Visualize price movements with detailed candlestick chart showing open, high, low, and close values',
-        widgetUrl: 'https://widgets.braiinsforge.com/ticker-single-candlestick',
-        iconUrl: 'https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d',
+        widgetUrl: 'https://braiinsforge.com/deck/widgets/ticker-single-candlestick',
+        iconUrl: 'https://braiinsforge.com/deck/widgets/ticker-single-candlestick/icon?rev=37e9e9b0177a093d',
     }),
     pb.create(pb.RemoteWidgetSchema, {
         name: 'Ticker - Single Sparkline',
         description: 'Compact price trend visualization with minimalist sparkline chart for quick insights',
-        widgetUrl: 'https://widgets.braiinsforge.com/ticker-single-sparkline',
-        iconUrl: 'https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446',
+        widgetUrl: 'https://braiinsforge.com/deck/widgets/ticker-single-sparkline',
+        iconUrl: 'https://braiinsforge.com/deck/widgets/ticker-single-sparkline/icon?rev=31e233defb663446',
     }),
     pb.create(pb.RemoteWidgetSchema, {
         name: 'Weather',
         description: 'Current conditions and forecast with temperature, precipitation, and wind information',
-        widgetUrl: 'https://widgets.braiinsforge.com/weather',
-        iconUrl: 'https://widgets.braiinsforge.com/weather/icon?rev=1f494d0a8e5c98d7',
+        widgetUrl: 'https://braiinsforge.com/deck/widgets/weather',
+        iconUrl: 'https://braiinsforge.com/deck/widgets/weather/icon?rev=1f494d0a8e5c98d7',
     }),
 ];
 

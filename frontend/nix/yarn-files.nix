@@ -59,6 +59,15 @@ pkgs.stdenv.mkDerivation {
     dontFixup = true;
 
     outputHashMode = "recursive";
-    outputHash = "sha256-NERwT8mPown9Y+0FNAeQ6muxy9l67HDvbYzTnL+Z6BY=";
+    outputHash =
+      # Platform-specific hashes because yarn/npm binaries differ between platforms
+      # To get the hash for a new platform, set it to pkgs.lib.fakeHash
+      # and run `nix build .#yarnFiles` - nix will tell you the expected hash
+      {
+        "x86_64-linux" = "sha256-IuM4rnTPQ2VisEvb9g3tzEOGqLToGboiRKBmYPulUBU=";
+        "aarch64-linux" = "sha256-IuM4rnTPQ2VisEvb9g3tzEOGqLToGboiRKBmYPulUBU=";
+        "x86_64-darwin" = "sha256-6TfrpGwzwyscZY9J/7KYuRogazH7/VzSXygjK+VzlUo=";
+        "aarch64-darwin" = "sha256-6TfrpGwzwyscZY9J/7KYuRogazH7/VzSXygjK+VzlUo=";
+      }.${pkgs.stdenv.hostPlatform.system} or (throw "Unsupported platform: ${pkgs.stdenv.hostPlatform.system}");
   };
 }

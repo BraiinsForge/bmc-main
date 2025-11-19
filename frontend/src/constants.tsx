@@ -32,6 +32,6 @@ export const URLS = {
         pool: {
             accessProfiles: 'https://pool.braiins.com/settings/access',
         },
-        widgetsDirectory: 'https://widgets.braiinsforge.com',
+        widgetsDirectory: 'https://braiinsforge.com/deck/widgets',
     },
 } as const;
