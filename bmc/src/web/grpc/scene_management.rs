@@ -1213,9 +1213,7 @@ async fn parse_widget_kind_with_default_params(
             }
         }
         web::widget_kind::Value::HalvingCountdown(_) => WidgetKind::HalvingCountdown,
-        web::widget_kind::Value::Countdown(_) => {
-            WidgetKind::Countdown(CountdownWidget::default())
-        }
+        web::widget_kind::Value::Countdown(_) => WidgetKind::Countdown(CountdownWidget::default()),
     };
 
     (Some(kind), field_violations)
@@ -1527,35 +1525,29 @@ fn parse_countdown_widget_kind(
                 LedEffectProto::Snake => LedEffectKind::Snake,
             };
 
-            let color = led_settings.color.map_or(
-                Rgb { r: 0, g: 0, b: 0 },
-                |c| Rgb {
+            let color = led_settings
+                .color
+                .map_or(Rgb { r: 0, g: 0, b: 0 }, |c| Rgb {
                     r: c.r.min(255) as u8,
                     g: c.g.min(255) as u8,
                     b: c.b.min(255) as u8,
-                },
-            );
+                });
 
             LedSettings { effect, color }
         });
 
         let sound = if let Some(sound_settings) = action.sound {
-            match Sounds::from_str(&sound_settings.sound_id) {
-                Ok(sound) =>
-                {
-                    #[expect(clippy::cast_possible_truncation)]
-                    Some(SoundSettings {
-                        sound,
-                        volume: sound_settings.volume.min(100) as u8,
-                    })
-                }
-                Err(_) => {
-                    field_violations.push(
-                        format!("{field}.completion_action.sound.sound_id"),
-                        format!("Unknown sound ID: {}", sound_settings.sound_id),
-                    );
-                    None
-                }
+            if let Ok(sound) = Sounds::from_str(&sound_settings.sound_id) {
+                Some(SoundSettings {
+                    sound,
+                    volume: sound_settings.volume.min(100) as u8,
+                })
+            } else {
+                field_violations.push(
+                    format!("{field}.completion_action.sound.sound_id"),
+                    format!("Unknown sound ID: {}", sound_settings.sound_id),
+                );
+                None
             }
         } else {
             None

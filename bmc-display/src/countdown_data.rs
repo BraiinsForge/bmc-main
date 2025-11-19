@@ -73,6 +73,7 @@ impl CountdownData {
     }
 
     /// Calculate the display format based on remaining seconds
+    #[expect(clippy::integer_division, clippy::modulo_arithmetic)]
     fn calculate_display(remaining_seconds: i64) -> CountdownDisplay {
         const SECONDS_PER_MINUTE: i64 = 60;
         const SECONDS_PER_HOUR: i64 = 3600;

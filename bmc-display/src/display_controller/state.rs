@@ -895,8 +895,7 @@ impl DisplayController {
                     widget.countdown.secondary_value =
                         countdown_data.display.secondary_value.into();
                     widget.countdown.secondary_unit = countdown_data.display.secondary_unit.into();
-                    widget.countdown.tertiary_value =
-                        countdown_data.display.tertiary_value.into();
+                    widget.countdown.tertiary_value = countdown_data.display.tertiary_value.into();
                     widget.countdown.tertiary_unit = countdown_data.display.tertiary_unit.into();
                 });
             }

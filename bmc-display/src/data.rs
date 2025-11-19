@@ -911,6 +911,7 @@ impl From<CountdownWidget> for generated::WidgetCountdownConfig {
 /// Parse a color string into a Slint Brush.
 /// Supports: hex (#RGB, #RRGGBB, #RRGGBBAA), rgb(), rgba(), and CSS color names.
 /// Returns black as default for invalid or empty input.
+#[must_use]
 pub fn parse_color_string(color: Option<&str>) -> Brush {
     let Some(color_str) = color else {
         return Brush::SolidColor(Color::from_rgb_u8(0, 0, 0));
@@ -942,56 +943,65 @@ pub fn parse_color_string(color: Option<&str>) -> Brush {
     Brush::SolidColor(Color::from_rgb_u8(0, 0, 0))
 }
 
+#[expect(clippy::string_slice)]
 fn parse_hex_color(hex: &str) -> Option<Color> {
+    // Hex color strings are always ASCII, so string slicing is safe
     match hex.len() {
         3 => {
             // #RGB -> #RRGGBB
-            let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
-            let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
-            let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
-            Some(Color::from_rgb_u8(r, g, b))
+            let red = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
+            let green = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
+            let blue = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
+            Some(Color::from_rgb_u8(red, green, blue))
         }
         6 => {
             // #RRGGBB
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            Some(Color::from_rgb_u8(r, g, b))
+            let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let green = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let blue = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some(Color::from_rgb_u8(red, green, blue))
         }
         8 => {
             // #RRGGBBAA
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-            Some(Color::from_argb_u8(a, r, g, b))
+            let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let green = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let blue = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            let alpha = u8::from_str_radix(&hex[6..8], 16).ok()?;
+            Some(Color::from_argb_u8(alpha, red, green, blue))
         }
         _ => None,
     }
 }
 
-fn parse_rgb_color(s: &str) -> Option<Color> {
-    let lower = s.to_lowercase();
+fn parse_rgb_color(color_str: &str) -> Option<Color> {
+    let lower = color_str.to_lowercase();
 
-    if let Some(inner) = lower.strip_prefix("rgba(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(inner) = lower
+        .strip_prefix("rgba(")
+        .and_then(|str| str.strip_suffix(')'))
+    {
         let parts: Vec<&str> = inner.split(',').collect();
         if parts.len() == 4 {
-            let r: u8 = parts[0].trim().parse().ok()?;
-            let g: u8 = parts[1].trim().parse().ok()?;
-            let b: u8 = parts[2].trim().parse().ok()?;
-            let a: f32 = parts[3].trim().parse().ok()?;
-            let a_u8 = (a * 255.0).clamp(0.0, 255.0) as u8;
-            return Some(Color::from_argb_u8(a_u8, r, g, b));
+            let red: u8 = parts[0].trim().parse().ok()?;
+            let green: u8 = parts[1].trim().parse().ok()?;
+            let blue: u8 = parts[2].trim().parse().ok()?;
+            let alpha: f32 = parts[3].trim().parse().ok()?;
+            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let alpha_u8 = (alpha * 255.0).clamp(0.0, 255.0) as u8;
+            return Some(Color::from_argb_u8(alpha_u8, red, green, blue));
         }
     }
 
-    if let Some(inner) = lower.strip_prefix("rgb(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(inner) = lower
+        .strip_prefix("rgb(")
+        .and_then(|str| str.strip_suffix(')'))
+    {
         let parts: Vec<&str> = inner.split(',').collect();
         if parts.len() == 3 {
-            let r: u8 = parts[0].trim().parse().ok()?;
-            let g: u8 = parts[1].trim().parse().ok()?;
-            let b: u8 = parts[2].trim().parse().ok()?;
-            return Some(Color::from_rgb_u8(r, g, b));
+            let red: u8 = parts[0].trim().parse().ok()?;
+            let green: u8 = parts[1].trim().parse().ok()?;
+            let blue: u8 = parts[2].trim().parse().ok()?;
+            return Some(Color::from_rgb_u8(red, green, blue));
         }
     }
 

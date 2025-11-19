@@ -18,6 +18,7 @@ const COMPLETION_EFFECT_DURATION: Duration = Duration::from_secs(30);
 /// LED breathing period
 const BREATHE_PERIOD: Duration = Duration::from_millis(4000);
 
+#[expect(clippy::too_many_arguments)]
 #[instrument(name = "countdown", skip_all, fields(%scene_id, %widget_id))]
 pub async fn run(
     display_controller: DisplayController,
