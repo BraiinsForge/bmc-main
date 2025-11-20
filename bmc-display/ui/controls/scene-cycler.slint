@@ -113,10 +113,6 @@ component SceneCyclerSlide inherits Rectangle {
 
         HorizontalLayout {
             property <length> position: -(root.scene-index * root.width);
-            animate position {
-                duration: 300ms;
-                easing: ease-in-out;
-            }
 
             property <length> swipe-offset;
             x: position + swipe-offset;
@@ -124,12 +120,6 @@ component SceneCyclerSlide inherits Rectangle {
             states [
                 swiping when swipe.swiping: {
                     swipe-offset: swipe.current-position.x - swipe.pressed-position.x;
-                    out {
-                        animate swipe-offset {
-                            duration: 300ms;
-                            easing: ease-in-out;
-                        }
-                    }
                 }
             ]
 
@@ -180,12 +170,6 @@ component SceneCyclerFade inherits Rectangle {
                 active when root.scene-index == index: {
                     visible: true;
                     opacity: 1;
-                    in {
-                        animate opacity { duration: 250ms; }
-                    }
-                    out {
-                        animate opacity { duration: 250ms; }
-                    }
                 }
             ]
         }
