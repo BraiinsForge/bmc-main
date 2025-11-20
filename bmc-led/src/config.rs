@@ -8,8 +8,8 @@ pub const LED_COUNT: u8 = 10;
 pub const LED_MAX_BRIGHTNESS: f32 = 1.0;
 
 pub const RGB_VIOLET60: Rgb = Rgb::new(107, 80, 255);
-pub const RGB_GREEN: Rgb = Rgb::new(6, 191, 89);
-pub const RGB_RED: Rgb = Rgb::new(255, 20, 33);
+pub const RGB_GREEN: Rgb = Rgb::new(0, 255, 0);
+pub const RGB_RED: Rgb = Rgb::new(255, 0, 0);
 pub const RGB_ORANGE: Rgb = Rgb::new(255, 122, 13);
 pub const RGB_BLACK: Rgb = Rgb::new(0, 0, 0);
 pub const RGB_WHITE: Rgb = Rgb::new(255, 255, 255);
