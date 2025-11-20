@@ -49,7 +49,7 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
     } = props;
 
     const txt = {
-        remoteImage: formatMessage({ defaultMessage: 'Remote Image' }),
+        image: formatMessage({ defaultMessage: 'Image' }),
         addWidget: formatMessage({ defaultMessage: 'Add Widget' }),
         editWidget: formatMessage({ defaultMessage: 'Edit Widget' }),
     };
@@ -119,7 +119,7 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
             size="sm"
             open={isOpen}
             // Heading
-            title={txt.remoteImage}
+            title={txt.image}
             label={verb}
             // Cancel
             onClose={onClose}

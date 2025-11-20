@@ -8,10 +8,12 @@ export type Param<T extends SchemaAny = SchemaAny> = T & {
     description?: string;
 };
 
+export type Enum<T extends keyof any> = T[] | Record<T, string>;
+
 export interface SchemaString {
     type: 'string';
     default?: string;
-    enum?: string[];
+    enum?: Enum<string>;
     const?: string;
     format?: 'date-time' | 'date' | 'time' | 'email' | 'hostname' | 'ipv4' | 'ipv6' | 'uri' | 'uuid';
     pattern?: string;
@@ -21,7 +23,7 @@ export interface SchemaString {
 export interface SchemaNumber {
     type: 'number';
     default?: number;
-    enum?: [number, ...number[]];
+    enum?: Enum<number>;
     const?: number;
     minimum?: number;
     maximum?: number;
@@ -32,7 +34,7 @@ export interface SchemaNumber {
 export interface SchemaInteger {
     type: 'integer';
     default?: number;
-    enum?: [number, ...number[]];
+    enum?: Enum<number>;
     const?: number;
     minimum?: number;
     maximum?: number;

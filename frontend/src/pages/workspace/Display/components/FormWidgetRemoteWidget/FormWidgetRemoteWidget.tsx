@@ -260,7 +260,7 @@ function Field<F extends t.SchemaAny>(props: FieldProps<F>) {
     const placeholder: undefined | string = x.default != null ? String(x.default) : undefined;
     switch (x.type) {
         case 'string': {
-            if (Array.isArray(x.enum)) {
+            if (x.enum) {
                 let $value = typeof value === 'string' || typeof value === 'number' ? value : null;
                 if (x.default != null && $value == null) $value = x.default;
 
@@ -301,7 +301,7 @@ function Field<F extends t.SchemaAny>(props: FieldProps<F>) {
 
         case 'number':
         case 'integer':
-            if (Array.isArray(x.enum)) {
+            if (x.enum) {
                 let $value = typeof value === 'string' || typeof value === 'number' ? value : null;
                 if (x.default != null && $value == null) $value = x.default;
 
@@ -423,7 +423,7 @@ interface BoundSelectProps {
     id: string;
     label: Maybe<string>;
     helperText: Maybe<string>;
-    options: Array<string | number>;
+    options: t.Enum<string | number>;
     value: Maybe<string | number>;
     onChange(value: string | number): void;
 }
@@ -431,6 +431,10 @@ function BoundSelect(props: BoundSelectProps) {
     const { id, label, helperText, options, value, onChange } = props;
     const { formatMessage } = useIntl();
     type T = string | number;
+
+    const optionsArray = Array.isArray(options)
+        ? options.map(v => ({ value: v, label: String(v) }))
+        : Object.entries(options).map(([value, label]) => ({ value, label }));
 
     return (
         <Select
@@ -442,8 +446,8 @@ function BoundSelect(props: BoundSelectProps) {
             onChange={e => onChange(e.target.value)}
         >
             <SelectItem value="" text={formatMessage({ defaultMessage: '-- Select an option --' })} />
-            {options.map((x, i) => (
-                <SelectItem key={i} value={x} text={String(x)} />
+            {optionsArray.map((opt, i) => (
+                <SelectItem key={i} value={opt.value} text={opt.label} />
             ))}
         </Select>
     );

@@ -143,7 +143,7 @@ async fn load_image(
     widget_width: u32,
     widget_height: u32,
 ) -> Result<SharedImageBuffer> {
-    info!("Sending request to get remote image");
+    info!("Sending request to get image");
 
     let start = Instant::now();
 
@@ -151,7 +151,7 @@ async fn load_image(
         .get(parsed_url.clone())
         .send()
         .await
-        .context("Failed to get remote image")?
+        .context("Failed to get image")?
         .error_for_status()
         .context("Server returned an error")?
         .bytes()

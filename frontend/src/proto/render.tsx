@@ -575,7 +575,7 @@ export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.Widget
             return intl.formatMessage({ defaultMessage: 'Braiins Pool' });
 
         case 'remoteImage':
-            return intl.formatMessage({ defaultMessage: 'Remote Image' });
+            return intl.formatMessage({ defaultMessage: 'Image' });
 
         case 'remoteWidget':
             return intl.formatMessage({ defaultMessage: 'Remote Widget' });
@@ -650,10 +650,13 @@ export function sceneDescription(intl: IntlShape, data: Maybe<MaybeArray<pb.Widg
 
     // Combined scene
     if (Array.isArray(data)) {
-        return data
-            .map(x => sceneTitle(intl, x.kind?.value.case))
-            .filter(Boolean)
-            .join(', ');
+        const res: string[] = [];
+        data.forEach(x => {
+            const r =
+                x.kind?.value.case === 'remoteWidget' ? x.kind.value.value.name : sceneTitle(intl, x.kind?.value.case);
+            if (r) res.push(r);
+        });
+        return res.join(', ');
     }
 
     // Fullscreen widget
