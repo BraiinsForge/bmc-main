@@ -240,6 +240,10 @@ message RemoteWidgetParamsResponse {
   google.protobuf.Struct remote_widget_params = 1;
 }
 
+message RecentRemoteWidgetsResponse {
+  repeated RemoteWidget recent_remote_widgets = 1;
+}
+
 enum SceneCyclingTransition {
   SCENE_CYCLING_TRANSITION_UNSPECIFIED = 0;
   SCENE_CYCLING_TRANSITION_SLIDE = 1;
@@ -359,6 +363,8 @@ service SceneManagementService {
   rpc RemoveWidget(RemoveWidgetRequest) returns (google.protobuf.Empty);
   // Get remote widget parameters from server
   rpc GetRemoteWidgetParams(RemoteWidgetParamsRequest) returns (RemoteWidgetParamsResponse);
+  // Get recently used remote widgets
+  rpc GetRecentRemoteWidgets(google.protobuf.Empty) returns (RecentRemoteWidgetsResponse);
   // Get scene cycling
   rpc GetSceneCycling(google.protobuf.Empty) returns (GetSceneCyclingResponse);
   // Set scene cycling

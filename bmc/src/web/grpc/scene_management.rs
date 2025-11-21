@@ -21,6 +21,7 @@ use futures::stream::BoxStream;
 use prost_types::{ListValue, Struct, Value as ProstValue, value::Kind as ProstKind};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::panic;
 use std::str::FromStr;
@@ -37,6 +38,7 @@ use tracing::{error, warn};
 use url::Url;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const RECENT_REMOTE_WIDGETS: usize = 3;
 
 pub(crate) struct SceneManagementService<T: BmcManager> {
     config_handle: Arc<RwLock<ConfigHandle>>,
@@ -908,6 +910,34 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         Ok(Response::new(response))
     }
 
+    async fn get_recent_remote_widgets(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<web::RecentRemoteWidgetsResponse>, Status> {
+        let config = self.config_handle.read().await;
+        let mut unique = HashSet::new();
+        let recent_remote_widgets: Vec<web::RemoteWidget> = config
+            .scenes
+            .values()
+            .flat_map(|scene| scene.widgets.values().cloned())
+            .filter_map(|w| {
+                if let WidgetKind::RemoteWidget(remote_widget) = w.kind {
+                    Some(remote_widget)
+                } else {
+                    None
+                }
+            })
+            .filter(|remote_widget| unique.insert(remote_widget.name.clone()))
+            .rev()
+            .take(RECENT_REMOTE_WIDGETS)
+            .map(map_remote_widget_to_proto_remote_widget)
+            .collect();
+
+        Ok(Response::new(web::RecentRemoteWidgetsResponse {
+            recent_remote_widgets,
+        }))
+    }
+
     async fn get_scene_cycling(
         &self,
         _request: Request<()>,
@@ -1647,6 +1677,16 @@ fn map_remote_widget_to_proto(remote_widget: RemoteWidget) -> web::WidgetKind {
 
     web::WidgetKind {
         value: Some(web::widget_kind::Value::RemoteWidget(proto)),
+    }
+}
+
+fn map_remote_widget_to_proto_remote_widget(remote_widget: RemoteWidget) -> web::RemoteWidget {
+    web::RemoteWidget {
+        name: remote_widget.name,
+        description: remote_widget.description,
+        widget_url: remote_widget.widget_url,
+        icon_url: remote_widget.icon_url,
+        params: Some(map_params_to_protobuf_struct(remote_widget.params)),
     }
 }
 
