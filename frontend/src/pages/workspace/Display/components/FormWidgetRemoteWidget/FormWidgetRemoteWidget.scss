@@ -18,3 +18,8 @@
     width: 100%;
     gap: mini-units(1);
 }
+
+.footer {
+    composes: selfStretch horizontal from 'styles/layout.scss';
+    width: 100%;
+}

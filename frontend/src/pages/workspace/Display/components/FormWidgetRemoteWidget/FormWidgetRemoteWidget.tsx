@@ -170,7 +170,7 @@ class View extends Component<Props, State> {
                     // @ts-expect-error: No real chance of making this type-safe statically
                     value={values[key]}
                     onChange={val => this.#handleFieldChange(key, val as pb.JsonValue)}
-                    onCommit={this.#valuesPush}
+                    // onCommit={this.#valuesPush}
                 />
             ));
         } else {
@@ -216,12 +216,20 @@ class View extends Component<Props, State> {
                 // Content
                 children={form}
                 footer={
-                    <Button
-                        id={this.#id('done')}
-                        kind="primary"
-                        children={formatMessage({ defaultMessage: 'Done' })}
-                        onClick={onClose}
-                    />
+                    <footer className={css.footer}>
+                        <Button
+                            id={this.#id('Close')}
+                            kind="secondary"
+                            children={formatMessage({ defaultMessage: 'Close' })}
+                            onClick={onClose}
+                        />
+                        <Button
+                            id={this.#id('save')}
+                            kind="primary"
+                            children={formatMessage({ defaultMessage: 'Save Changes' })}
+                            onClick={this.#valuesPush}
+                        />
+                    </footer>
                 }
             />
         );
@@ -243,7 +251,7 @@ interface FieldProps<F extends t.SchemaAny> {
     // so we need to have a separate handler
     // for commit of the whole config
     onChange(value: F['default']): void;
-    onCommit(): void;
+    onCommit?(): void;
 }
 function Field<F extends t.SchemaAny>(props: FieldProps<F>) {
     const { id, name, description, schema: x, value, onChange, onCommit } = props;
@@ -252,7 +260,7 @@ function Field<F extends t.SchemaAny>(props: FieldProps<F>) {
     const changeAndCommit = useCallback(
         (v: F['default']) => {
             onChange(v);
-            setTimeout(onCommit, 100);
+            if (onCommit) setTimeout(onCommit, 100);
         },
         [onChange, onCommit],
     );
