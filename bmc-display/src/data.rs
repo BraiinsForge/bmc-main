@@ -29,7 +29,7 @@ impl Default for SceneCycling {
         Self {
             automatic_cycling_enabled: true,
             automatic_cycling_default_duration: Duration::from_secs(30),
-            transition: SceneCyclingTransition::Slide,
+            transition: SceneCyclingTransition::Fade,
         }
     }
 }
