@@ -28,12 +28,13 @@ NO_DIFF="${CRATE_VERIFY_NO_DIFF:-false}"
 
 # Cleanup on exit
 TMP_ROOT=""
+# shellcheck disable=SC2317 # Function is invoked indirectly via trap
 cleanup() {
-    if [[ -n $TMP_ROOT ]] && [[ -d $TMP_ROOT ]]; then
+    if [[ -n ${TMP_ROOT:-} ]] && [[ -d ${TMP_ROOT:-} ]]; then
         rm -rf "$TMP_ROOT" || true
     fi
 }
-trap 'cleanup || true' EXIT
+trap cleanup EXIT
 
 # Usage function
 usage() {
@@ -86,8 +87,8 @@ EOF
 # Parse arguments
 parse_args() {
     # Use getopt for robust parsing
-    OPTS=$(getopt -o "" --long config:,verbose,summary,no-diff,help -n "$0" -- "$@")
-    if [[ $? -ne 0 ]]; then
+    local OPTS
+    if ! OPTS=$(getopt -o "" --long config:,verbose,summary,no-diff,help -n "$0" -- "$@"); then
         usage
     fi
 
@@ -171,7 +172,9 @@ REPO_CHECKOUT_DIR=""
 
 # Clone or reuse repository
 get_or_clone_repo() {
-    local repo="$1" commit="$2" key="${repo}|${commit}"
+    local repo="$1"
+    local commit="$2"
+    local key="${repo}|${commit}"
 
     # Check if we already have this repo+commit combination
     if [[ -n ${CHECKOUTS[$key]:-} ]]; then
@@ -180,7 +183,8 @@ get_or_clone_repo() {
         return 0
     fi
 
-    local checkout_dir="$TMP_ROOT/checkout_$(echo "$key" | sha256sum | cut -c1-8)"
+    local checkout_dir
+    checkout_dir="$TMP_ROOT/checkout_$(echo "$key" | sha256sum | cut -c1-8)"
     debug "Cloning $repo @ ${commit:0:8} to $checkout_dir"
 
     echo "${BLUE}📥 Cloning $repo @ ${commit:0:8}...${RESET}" >&2
@@ -215,13 +219,14 @@ find_crates() {
 # Get relative path
 get_relative_path() {
     local path="$1" base="$2"
-    echo "${path#$base/}"
+    echo "${path#"$base"/}"
 }
 
 # Add crate to result list based on verification result
 add_crate_result() {
     local result="$1" subtree="$2" crate="$3"
-    local display_path="$subtree/$(get_relative_path "$crate" "$(pwd)/$subtree")"
+    local display_path
+    display_path="$subtree/$(get_relative_path "$crate" "$(pwd)/$subtree")"
 
     case $result in
     0)
@@ -285,13 +290,13 @@ verify_crate() {
             relative_crate="" # No relative path for single crate case
         else
             # Multi-crate case: compute relative path from subtree and apply to upstream_path
-            relative_crate="${local_crate#${subtree}/}"
+            relative_crate="${local_crate#"${subtree}"/}"
             upstream_crate="$upstream_dir/$upstream_path/$relative_crate"
         fi
     else
         # Default behavior: compute path relative to the subtree root
         # For auto-discover mode, we need to strip the subtree prefix to get the relative path
-        relative_crate="${local_crate#${subtree}/}"
+        relative_crate="${local_crate#"${subtree}"/}"
         upstream_crate="$upstream_dir/$relative_crate"
     fi
 
@@ -314,8 +319,10 @@ verify_crate() {
     fi
 
     # Generate hashes
-    local local_hashes="$TMP_ROOT/local_$(echo "$local_crate" | sha256sum | cut -c1-8).hashes"
-    local upstream_hashes="$TMP_ROOT/upstream_$(echo "$local_crate" | sha256sum | cut -c1-8).hashes"
+    local local_hashes
+    local upstream_hashes
+    local_hashes="$TMP_ROOT/local_$(echo "$local_crate" | sha256sum | cut -c1-8).hashes"
+    upstream_hashes="$TMP_ROOT/upstream_$(echo "$local_crate" | sha256sum | cut -c1-8).hashes"
 
     hash_dir "$local_crate" >"$local_hashes"
     hash_dir "$upstream_crate" >"$upstream_hashes"
@@ -378,10 +385,11 @@ main() {
         fi
 
         # Get upstream info
-        local repo=$(get_subtree_info "$subtree" "repo")
-        local commit=$(get_subtree_info "$subtree" "commit")
-        local upstream_path=$(get_subtree_info "$subtree" "upstream_path")
-        local auto_discover=$(get_subtree_info "$subtree" "auto_discover")
+        local repo commit upstream_path auto_discover
+        repo=$(get_subtree_info "$subtree" "repo")
+        commit=$(get_subtree_info "$subtree" "commit")
+        upstream_path=$(get_subtree_info "$subtree" "upstream_path")
+        auto_discover=$(get_subtree_info "$subtree" "auto_discover")
 
         if [[ -z $repo ]] || [[ -z $commit ]]; then
             echo "${YELLOW}⚠️  No configuration found for subtree: $subtree${RESET}"
@@ -402,9 +410,10 @@ main() {
             for failed_crate in "${subtree_crates[@]}"; do
                 ((total_crates++))
                 ((failed_crates++))
-                local display_path="$subtree/$(get_relative_path "$failed_crate" "$(pwd)/$subtree")"
-                failed_list+=("$display_path (upstream clone failed)")
-                echo "${RED}❌ $display_path: upstream repository unavailable${RESET}"
+                local crate_display_path
+                crate_display_path="$subtree/$(get_relative_path "$failed_crate" "$(pwd)/$subtree")"
+                failed_list+=("$crate_display_path (upstream clone failed)")
+                echo "${RED}❌ $crate_display_path: upstream repository unavailable${RESET}"
             done
 
             continue
