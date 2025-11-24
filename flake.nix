@@ -69,6 +69,9 @@
         packages = workspace.packages // {
           frontend = frontend.build;
           yarnFiles = frontend.yarnFiles;
+          shellcheck = pkgs.writeShellScriptBin "shellcheck" ''
+            exec nix run "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git?rev=6071d67e0c5ec498fc88017d36a54bb1b837ad83#shellcheck" "$@" 2>&1
+          '';
         };
 
         devShells = workspace.devShells // {
