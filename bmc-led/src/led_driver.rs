@@ -113,19 +113,11 @@ impl LedIndicatorsState {
                     SOLID_PERIOD,
                 ));
             }
-            LedEvent::WifiNone => {
+            LedEvent::WifiNone | LedEvent::WifiError => {
                 self.wifi_persist = Some(LedCommand::SetEffect(
                     LedEffect::None,
                     LedEventPersistence::Persistent,
                     Duration::from_secs(0),
-                ));
-                self.wifi_temp = None;
-            }
-            LedEvent::WifiError => {
-                self.wifi_persist = Some(LedCommand::SetEffect(
-                    LedEffect::Solid(RGB_RED),
-                    LedEventPersistence::Persistent,
-                    SOLID_PERIOD,
                 ));
                 self.wifi_temp = None;
             }
