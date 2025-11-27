@@ -29,9 +29,7 @@ export const URLS = {
 
     external: {
         academy: 'https://academy.braiins.com/',
-        pool: {
-            accessProfiles: 'https://pool.braiins.com/settings/access',
-        },
-        widgetsDirectory: 'https://braiinsforge.com/deck/widgets',
+        pool: { accessProfiles: 'https://pool.braiins.com/settings/access' },
+        widgetsDirectory: 'https://braiins.com/hardware/braiins-deck-widgets',
     },
 } as const;

@@ -159,7 +159,7 @@ class View extends Component<Props, State> {
                             <TextInput
                                 id={$('remote-widget-url')}
                                 labelText={formatMessage({ defaultMessage: 'Add New Widget with URL' })}
-                                placeholder={new URL('...', URLS.external.widgetsDirectory).href}
+                                placeholder={formatMessage({ defaultMessage: 'Enter URL here...' })}
                                 value={remoteWidgetUrl.value || ''}
                                 onChange={e => remoteWidgetUrl.onChange?.(e.target.value)}
                                 invalid={!!remoteWidgetUrl.error}
