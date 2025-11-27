@@ -1,27 +1,6 @@
 {
   "scenes": [
     {
-      "id": "995a7801-6bd1-44c0-a0dc-057086f209a9",
-      "enabled": true,
-      "kind": "fullscreen",
-      "widgets": [
-        {
-          "id": "2af17019-c60f-4046-80ec-34599462b85c",
-          "row": 0,
-          "col": 0,
-          "size": "full",
-          "kind": "remote_widget",
-          "params": {
-            "name": "Exchange Rate Ticker",
-            "description": "Display exchange rates with sparkline charts for currency pairs.",
-            "widget_url": "http://127.0.0.1:8080/exchange-rate-ticker",
-            "icon_url": "http://127.0.0.1:8080/exchange-rate-ticker/icon?rev=ac6224936b035e71",
-            "params": null
-          }
-        }
-      ]
-    },
-    {
       "id": "bdc48fcf-f232-44a9-9a88-61148736f683",
       "enabled": true,
       "kind": "fullscreen",
@@ -35,8 +14,8 @@
           "params": {
             "name": "Exchange Rate",
             "description": "Display real-time currency exchange rates and conversion information",
-            "widget_url": "http://127.0.0.1:8080/exchange-rate",
-            "icon_url": "http://127.0.0.1:8080/exchange-rate/icon?rev=ac6224936b035e71",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
             "params": null
           }
         }
@@ -56,8 +35,8 @@
           "params": {
             "name": "Nameday",
             "description": "",
-            "widget_url": "http://127.0.0.1:8080/nameday",
-            "icon_url": "",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=265c6ed448a7c013",
             "params": {
               "country": "cz",
               "showDate": true
@@ -80,8 +59,8 @@
           "params": {
             "name": "Financial Ticker List",
             "description": "Track multiple stocks, crypto, and commodities with live price updates and performance metrics",
-            "widget_url": "http://127.0.0.1:8080/ticker-list",
-            "icon_url": "http://127.0.0.1:8080/ticker-list/icon?rev=265c6ed448a7c013",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-list/icon?rev=265c6ed448a7c013",
             "params": null
           }
         }
@@ -101,8 +80,8 @@
           "params": {
             "name": "Ticker - Single Candlestick",
             "description": "Visualize price movements with detailed candlestick chart showing open, high, low, and close values",
-            "widget_url": "http://127.0.0.1:8080/ticker-single-candlestick",
-            "icon_url": "http://127.0.0.1:8080/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
             "params": null
           }
         }
@@ -122,8 +101,8 @@
           "params": {
             "name": "Ticker - Single Sparkline",
             "description": "Compact price trend visualization with minimalist sparkline chart for quick insights",
-            "widget_url": "http://127.0.0.1:8080/ticker-single-sparkline",
-            "icon_url": "http://127.0.0.1:8080/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
             "params": null
           }
         }
@@ -143,8 +122,8 @@
           "params": {
             "name": "Weather",
             "description": "Current conditions and forecast with temperature, precipitation, and wind information",
-            "widget_url": "http://127.0.0.1:8080/weather",
-            "icon_url": "http://127.0.0.1:8080/weather/icon?rev=1f494d0a8e5c98d7",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "https://widgets.braiinsforge.com/weather/icon?rev=1f494d0a8e5c98d7",
             "params": null
           }
         }
@@ -164,7 +143,7 @@
           "params": {
             "name": "Debug Widget",
             "description": "",
-            "widget_url": "http://127.0.0.1:8080/debug",
+            "widget_url": "https://widgets.braiinsforge.com/debug",
             "icon_url": "",
             "params": {
               "booleanParam": true,
@@ -202,7 +181,7 @@
           "params": {
             "name": "Exchange Rate",
             "description": "",
-            "widget_url": "http://127.0.0.1:8080/exchange-rate",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
             "icon_url": "",
             "params": {}
           }
@@ -216,8 +195,8 @@
           "params": {
             "name": "Nameday",
             "description": "Display today’s nameday for the selected country.",
-            "widget_url": "http://127.0.0.1:8080/nameday",
-            "icon_url": "http://127.0.0.1:8080/nameday/icon?rev=baf9fcc58f8e24b8",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
             "params": null
           }
         },
@@ -230,8 +209,8 @@
           "params": {
             "name": "Ticker - Single Candlestick",
             "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
-            "widget_url": "http://127.0.0.1:8080/ticker-single-candlestick",
-            "icon_url": "http://127.0.0.1:8080/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
             "params": null
           }
         },
@@ -244,8 +223,8 @@
           "params": {
             "name": "Ticker - Single Sparkline",
             "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
-            "widget_url": "http://127.0.0.1:8080/ticker-single-sparkline",
-            "icon_url": "http://127.0.0.1:8080/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
             "params": null
           }
         },
@@ -258,8 +237,8 @@
           "params": {
             "name": "Financial Ticker List",
             "description": "Display multiple financial symbols with their prices, changes, and sparkline charts.",
-            "widget_url": "http://127.0.0.1:8080/ticker-list",
-            "icon_url": "http://127.0.0.1:8080/ticker-list/icon?rev=265c6ed448a7c013",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-list/icon?rev=265c6ed448a7c013",
             "params": null
           }
         },
@@ -272,7 +251,7 @@
           "params": {
             "name": "Weather",
             "description": "",
-            "widget_url": "http://127.0.0.1:8080/weather",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
             "icon_url": "",
             "params": {
               "location": "Helsinki"
@@ -288,7 +267,7 @@
           "params": {
             "name": "Financial Ticker List",
             "description": "",
-            "widget_url": "http://127.0.0.1:8080/ticker-list",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
             "icon_url": "",
             "params": {}
           }
@@ -354,38 +333,13 @@
           "params": {
             "name": "Financial Ticker List",
             "description": "Display multiple financial symbols with their prices, changes, and sparkline charts.",
-            "widget_url": "http://127.0.0.1:8080/ticker-list",
-            "icon_url": "http://127.0.0.1:8080/ticker-list/icon?rev=265c6ed448a7c013",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-list/icon?rev=265c6ed448a7c013",
             "params": null
           }
         }
       ]
     }
   ],
-  "accounts": [],
-  "recent_remote_widgets": {
-    "used_widgets": [
-      {
-        "name": "Exchange Rate Ticker",
-        "description": "Display exchange rates with sparkline charts for currency pairs.",
-        "widget_url": "http://127.0.0.1:8080/exchange-rate-ticker",
-        "icon_url": "http://127.0.0.1:8080/exchange-rate-ticker/icon?rev=ac6224936b035e71",
-        "params": null
-      },
-      {
-        "name": "Financial Ticker List",
-        "description": "Display multiple financial symbols with their prices, changes, and sparkline charts.",
-        "widget_url": "http://127.0.0.1:8080/ticker-list",
-        "icon_url": "http://127.0.0.1:8080/ticker-list/icon?rev=265c6ed448a7c013",
-        "params": null
-      },
-      {
-        "name": "Debug Widget",
-        "description": "A widget for debugging purposes",
-        "widget_url": "http://127.0.0.1:8080/debug",
-        "icon_url": "http://127.0.0.1:8080/debug/icon?rev=d6ab46ed0a377b19",
-        "params": null
-      }
-    ]
-  }
+  "accounts": []
 }
