@@ -174,6 +174,11 @@ pub async fn run(
                 if let Some(duration) = error_backoff.next() {
                     interval.reset_after(duration);
                 }
+                display_controller.update_remote_widget(
+                    scene_id.clone(),
+                    widget_id.clone(),
+                    RemoteWidgetState::LoadingError(err),
+                );
             }
         }
     }
