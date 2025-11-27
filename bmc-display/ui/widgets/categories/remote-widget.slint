@@ -20,15 +20,10 @@ export component RemoteWidget inherits Rectangle {
     }
 
     if root.data.state != RemoteWidgetState.Initial && root.data.state != RemoteWidgetState.LoadingSuccess: Rectangle {
-        width: parent.width - 32px;
-        height: parent.height - 32px;
 
         Rectangle {
-            background: Palette.gray-100;
-            opacity: 70%;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Palette.gray-90;
+            background: Palette.black;
+            opacity: 80%;
         }
 
         if root.data.state == RemoteWidgetState.ConfigurationError: VerticalLayout {
@@ -37,7 +32,7 @@ export component RemoteWidget inherits Rectangle {
 
             Text {
                 color: Palette.white;
-                font-size: root.size == WidgetSize.Small ? 24px : 40px;
+                font-size: 20px;
                 font-weight: Theme.font.weight.bold;
                 horizontal-alignment: center;
                 text: "Invalid configuration";
@@ -45,7 +40,7 @@ export component RemoteWidget inherits Rectangle {
 
             Text {
                 color: Palette.white;
-                font-size: root.size == WidgetSize.Small ? 18px : 24px;
+                font-size: 16px;
                 font-weight: Theme.font.weight.regular;
                 horizontal-alignment: center;
                 wrap: word-wrap;
@@ -55,10 +50,10 @@ export component RemoteWidget inherits Rectangle {
 
         if root.data.state == RemoteWidgetState.Loading: Text {
             color: Palette.white;
-            font-size: root.size == WidgetSize.Small ? 24px : 40px;
+            font-size: 20px;
             font-weight: Theme.font.weight.bold;
             horizontal-alignment: center;
-            text: "Loading image";
+            text: "Loading widget";
         }
 
         if root.data.state == RemoteWidgetState.LoadingError: VerticalLayout {
@@ -67,15 +62,15 @@ export component RemoteWidget inherits Rectangle {
 
             Text {
                 color: Palette.white;
-                font-size: root.size == WidgetSize.Small ? 24px : 40px;
+                font-size: 20px;
                 font-weight: Theme.font.weight.bold;
                 horizontal-alignment: center;
-                text: "Failed to load image";
+                text: "Failed to load widget";
             }
 
             Text {
                 color: Palette.white;
-                font-size: root.size == WidgetSize.Small ? 18px : 24px;
+                font-size: 16px;
                 font-weight: Theme.font.weight.regular;
                 horizontal-alignment: center;
                 wrap: word-wrap;
@@ -85,7 +80,7 @@ export component RemoteWidget inherits Rectangle {
 
         if root.data.state == RemoteWidgetState.UnexpectedError: Text {
             color: Palette.white;
-            font-size: root.size == WidgetSize.Small ? 24px : 40px;
+            font-size: 20px;
             font-weight: Theme.font.weight.bold;
             horizontal-alignment: center;
             text: "Unexpected error";
