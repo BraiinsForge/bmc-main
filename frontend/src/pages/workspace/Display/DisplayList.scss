@@ -2,7 +2,7 @@
 @use 'styles/var/shadows';
 
 .root {
-    max-width: to-rem(1200px);
+    max-width: to-rem(1280px);
 }
 
 .header {
@@ -37,7 +37,7 @@
     composes: body-short-01 from 'styles/carbon/typography.scss';
     margin-top: mini-units(2);
     color: $text-secondary;
-    text-wrap: balance;
+    text-wrap: pretty;
 }
 
 .headerControls {

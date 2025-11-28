@@ -1,4 +1,5 @@
-import { Component } from 'react';
+import { Component, useRef, type Ref } from 'react';
+import { useSize } from '@/lib/react';
 import { assertUnreachable } from '@/lib/ts';
 import { useIntl, type IntlShape } from 'react-intl';
 
@@ -29,6 +30,8 @@ export interface SceneOverviewListProps {
 }
 interface Props extends SceneOverviewListProps {
     intl: IntlShape;
+    sizeRef: Ref<HTMLDivElement>;
+    useCardLayout: boolean;
 }
 
 class View extends Component<Props> {
@@ -41,8 +44,17 @@ class View extends Component<Props> {
         return x === 'remoteWidget' || x === 'remoteImage';
     };
     #renderItem = (props: RenderSortableListItemProps<pb.Scene>, firstEnabledSceneID: Maybe<pb.Scene['id']>) => {
-        const { cycleEnabled, cycleDefaultDuration, onEdit, onToggle, onClone, onDelete, onDurationChange, intl } =
-            this.props;
+        const {
+            cycleEnabled,
+            cycleDefaultDuration,
+            onEdit,
+            onToggle,
+            onClone,
+            onDelete,
+            onDurationChange,
+            intl,
+            useCardLayout,
+        } = this.props;
         const { item, state, rootProps, dragHandleProps } = props;
 
         let title: string = 'N/A';
@@ -82,7 +94,7 @@ class View extends Component<Props> {
             <SceneOverviewRow
                 id={item.id}
                 className={cn(css.line, state.isDragging && css.dragged)}
-                layout="row" // FIXME: "card" layout on small screens
+                layout={useCardLayout ? 'card' : 'row'}
                 enabled={item.enabled}
                 icon={
                     <ScenePreview
@@ -113,7 +125,7 @@ class View extends Component<Props> {
     };
 
     render() {
-        const { scenes, onMove, intl } = this.props;
+        const { scenes, onMove, intl, sizeRef } = this.props;
 
         const firstEnabledSceneID = scenes.find(x => x.enabled)?.id;
         if (!scenes.length) {
@@ -130,6 +142,7 @@ class View extends Component<Props> {
 
         return (
             <Sortable<pb.Scene>
+                wrapperRef={sizeRef}
                 className={css.list}
                 items={scenes}
                 onChange={onMove}
@@ -141,5 +154,10 @@ class View extends Component<Props> {
 
 export function SceneOverviewList(props: SceneOverviewListProps) {
     const intl = useIntl();
-    return <View {...props} intl={intl} />;
+
+    const sizeRef = useRef<HTMLDivElement>(null);
+    const size = useSize(sizeRef, 300);
+    const useCardLayout: boolean = !!size && size.width <= 800;
+
+    return <View {...props} intl={intl} sizeRef={sizeRef} useCardLayout={useCardLayout} />;
 }

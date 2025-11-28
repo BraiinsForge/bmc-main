@@ -7,6 +7,7 @@ $ctrl-height: to-rem(40px);
 .root {
     // Layout context
     position: relative;
+    width: 100%;
     container-type: inline-size;
 
     // Visuals
@@ -21,7 +22,6 @@ $ctrl-height: to-rem(40px);
 
 .row {
     composes: root;
-    width: 100%;
     min-height: $row-height;
 
     // Grid

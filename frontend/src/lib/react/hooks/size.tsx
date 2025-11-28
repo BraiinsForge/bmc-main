@@ -1,5 +1,5 @@
-import { useState, useLayoutEffect, type RefObject, useRef } from 'react';
-import useResizeObserver from '@react-hook/resize-observer';
+import { useState, useLayoutEffect, useMemo, type RefObject, useRef } from 'react';
+import { throttle } from 'es-toolkit';
 
 type Ref = RefObject<null | HTMLElement>;
 
@@ -18,19 +18,35 @@ function domRectToFloorRect(rect: DOMRect): Rect {
     };
 }
 
-export function useSize(target: Ref): undefined | Rect {
+export function useSize(target: Ref, throttleMs?: number): undefined | Rect {
     const [size, setSize] = useState<Rect>();
+    const [element, setElement] = useState<HTMLElement | null>(null);
 
-    const element = target.current;
+    const updateSize = useMemo(() => (throttleMs ? throttle(setSize, throttleMs) : setSize), [throttleMs]);
+
+    // Track when the ref gets attached
+    useLayoutEffect(() => {
+        if (target.current !== element) setElement(target.current);
+    });
+
+    // Get initial size when element becomes available
     useLayoutEffect(() => {
         const domRect = element?.getBoundingClientRect();
-        // Floor the values to avoid needless floating updates
         if (domRect) setSize(domRectToFloorRect(domRect));
         else setSize(undefined);
     }, [element]);
 
-    // Where the magic happens
-    useResizeObserver(target, entry => setSize(domRectToFloorRect(entry.contentRect)));
+    // Observe resizes - use element state instead of ref so observer reattaches when element changes
+    useLayoutEffect(() => {
+        if (!element) return;
+
+        const observer = new ResizeObserver(([entry]) => {
+            if (entry) updateSize(domRectToFloorRect(entry.contentRect));
+        });
+        observer.observe(element);
+
+        return () => observer.disconnect();
+    }, [element, updateSize]);
 
     return size;
 }

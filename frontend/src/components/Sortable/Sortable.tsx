@@ -1,4 +1,4 @@
-import type { RefCallback } from 'react';
+import type { RefCallback, Ref } from 'react';
 
 // Drag and drop
 import { CSS } from '@dnd-kit/utilities';
@@ -87,9 +87,10 @@ export interface SortableProps<D extends Datum> {
 
     className?: string;
     style?: CSSProperties;
+    wrapperRef?: Ref<HTMLDivElement>;
 }
 export function Sortable<D extends Datum>(props: SortableProps<D>) {
-    const { items, renderItem, onChange, className, ...rest } = props;
+    const { items, renderItem, onChange, className, style, wrapperRef } = props;
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -112,7 +113,7 @@ export function Sortable<D extends Datum>(props: SortableProps<D>) {
     }
 
     return (
-        <div {...rest} className={cn(css.root, className)}>
+        <div ref={wrapperRef} className={cn(css.root, className)} style={style}>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext
                     items={items}
