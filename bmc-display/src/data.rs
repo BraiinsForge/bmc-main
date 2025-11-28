@@ -560,7 +560,7 @@ impl Scene {
                     return Err(UpdateWidgetError::CannotUpdateWidgetSizeInFullscreenScene);
                 }
 
-                widget.kind = kind;
+                Self::update_widget_kind(&mut widget.kind, kind);
             }
             SceneKind::Combined => {
                 if size == WidgetSize::Full {
@@ -569,7 +569,7 @@ impl Scene {
 
                 widget.position = position;
                 widget.size = size;
-                widget.kind = kind;
+                Self::update_widget_kind(&mut widget.kind, kind);
 
                 Self::validate_widget_placement(
                     &widget,
@@ -612,6 +612,17 @@ impl Scene {
         }
 
         Ok(())
+    }
+
+    fn update_widget_kind(old_kind: &mut WidgetKind, new_kind: WidgetKind) {
+        if let WidgetKind::RemoteWidget(old_params) = old_kind {
+            if let WidgetKind::RemoteWidget(new_params) = new_kind {
+                old_params.params = new_params.params;
+                return;
+            }
+        }
+
+        *old_kind = new_kind;
     }
 }
 
