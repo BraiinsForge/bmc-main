@@ -252,7 +252,7 @@ class View extends Component<Props, State> {
     get #txt() {
         const { formatMessage } = this.props.intl;
         return {
-            title: formatMessage({ defaultMessage: 'Display Widgets' }),
+            title: formatMessage({ defaultMessage: 'Widgets' }),
             on: formatMessage({ defaultMessage: 'On' }),
             off: formatMessage({ defaultMessage: 'Off' }),
             cancel: formatMessage({ defaultMessage: 'Cancel' }),

@@ -5,11 +5,12 @@ import { FormattedMessage } from 'react-intl';
 // App
 import * as pb from '@/proto';
 import type { iField } from '@/lib/form';
+import { useIsTouchDevice } from '@/lib/react';
 
 // Components
 import { ButtonSwitch, Checkbox } from '@/components';
-import { RadioButtonGroup, RadioButton, Toggle, ComboBox, Dropdown } from '@carbon/react';
 import { Screen as IconScreen, Information as IconInfo } from '@carbon/react/icons';
+import { RadioButtonGroup, RadioButton, Toggle, ComboBox, Dropdown, Select, SelectItem } from '@carbon/react';
 
 // Styles
 import css from './shared.scss';
@@ -86,11 +87,33 @@ export interface BoundComboBoxProps<T extends string | number> extends iField<T>
 }
 export function BoundComboBox<T extends string | number>(props: BoundComboBoxProps<T>) {
     const { id, labelText, helperText, decorator, value, items, onChange, disabled, error } = props;
+    const isTouchDevice = useIsTouchDevice();
 
     const selectedItemStruct = useMemo<undefined | OptionItem<T>>(() => {
         const x = items.find(x => x.value === value);
         return x ? { value: x.value, label: x.label } : undefined;
     }, [value, items]);
+
+    // On touch devices, use native select for better UX
+    // (uses OS picker on mobile - iOS wheel, Android spinner)
+    if (isTouchDevice) {
+        return (
+            <Select
+                id={id}
+                labelText={labelText}
+                helperText={helperText}
+                decorator={decorator}
+                value={value ?? undefined}
+                onChange={e => onChange?.(e.target.value as T)}
+                invalid={!!error}
+                invalidText={error}
+                disabled={disabled}
+                children={items.map(item => (
+                    <SelectItem key={item.value} value={item.value} text={String(item.label)} />
+                ))}
+            />
+        );
+    }
 
     return (
         <ComboBox<OptionItem<T>>
