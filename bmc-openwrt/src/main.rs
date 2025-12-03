@@ -1,7 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use std::panic;
-use std::path::Path;
 use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context, Result, anyhow};
@@ -27,9 +26,15 @@ use bmc_upgrade::firmware::FirmwareResolver;
 use slint::platform::software_renderer::RenderingRotation;
 use tracing::{error, info};
 
-/// Known WiFi device paths for different board revisions
+/// Realtek WiFi adapter vendor ID
+const WIFI_VENDOR_ID: &str = "0bda";
+
+/// Shared USB device path (exists on both hubbed and hubless boards)
+const SHARED_USB_DEVICE: &str = "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/";
+
+/// WiFi interface paths for each board type
 const WIFI_PATH_HUBLESS: &str = "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1:1.0/";
-const WIFI_PATH_WITH_HUB: &str =
+const WIFI_PATH_HUBBED: &str =
     "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1.1/3-1.1:1.0/";
 
 #[tokio::main]
@@ -64,15 +69,24 @@ async fn main() -> Result<()> {
         .and_then(|timezone| Timezone::from_str(&timezone).ok())
         .unwrap_or_default();
 
-    let wifi_path = if Path::new(WIFI_PATH_HUBLESS).exists() {
+    // Detect board type by checking vendor ID at shared USB path
+    // - Hubless: 3-1 is the WiFi (vendor 0bda)
+    // - Hubbed: 3-1 is the USB hub, WiFi is at 3-1.1
+    let vendor = std::fs::read_to_string(format!("{SHARED_USB_DEVICE}idVendor"))
+        .map(|v| v.trim().to_owned())
+        .unwrap_or_default();
+
+    info!("Detecting WiFi: {}idVendor = {}", SHARED_USB_DEVICE, vendor);
+
+    let wifi_path = if vendor == WIFI_VENDOR_ID {
+        info!("Hubless board detected, WiFi at {}", WIFI_PATH_HUBLESS);
         WIFI_PATH_HUBLESS
-    } else if Path::new(WIFI_PATH_WITH_HUB).exists() {
-        WIFI_PATH_WITH_HUB
     } else {
-        error!("No WiFi device found at known paths, using default");
-        WIFI_PATH_HUBLESS
+        info!("Hubbed board detected, WiFi at {}", WIFI_PATH_HUBBED);
+        WIFI_PATH_HUBBED
     };
 
+    info!("Using WiFi device path: {}", wifi_path);
     let wifi_manager = Arc::new(OpenwrtWifiManager::new(wifi_path)?);
 
     let manager = Manager::new(
