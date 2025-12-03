@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use std::panic;
+use std::path::Path;
 use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context, Result, anyhow};
@@ -25,6 +26,11 @@ use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;
 use slint::platform::software_renderer::RenderingRotation;
 use tracing::{error, info};
+
+/// Known WiFi device paths for different board revisions
+const WIFI_PATH_HUBLESS: &str = "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1:1.0/";
+const WIFI_PATH_WITH_HUB: &str =
+    "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1.1/3-1.1:1.0/";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -58,9 +64,16 @@ async fn main() -> Result<()> {
         .and_then(|timezone| Timezone::from_str(&timezone).ok())
         .unwrap_or_default();
 
-    let wifi_manager = Arc::new(OpenwrtWifiManager::new(
-        "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1:1.0/", // TODO: This is pre-prod board specific
-    )?);
+    let wifi_path = if Path::new(WIFI_PATH_HUBLESS).exists() {
+        WIFI_PATH_HUBLESS
+    } else if Path::new(WIFI_PATH_WITH_HUB).exists() {
+        WIFI_PATH_WITH_HUB
+    } else {
+        error!("No WiFi device found at known paths, using default");
+        WIFI_PATH_HUBLESS
+    };
+
+    let wifi_manager = Arc::new(OpenwrtWifiManager::new(wifi_path)?);
 
     let manager = Manager::new(
         OpenwrtSessionManager,
