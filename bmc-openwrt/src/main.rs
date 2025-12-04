@@ -87,7 +87,10 @@ async fn main() -> Result<()> {
     };
 
     info!("Using WiFi device path: {}", wifi_path);
-    let wifi_manager = Arc::new(OpenwrtWifiManager::new(wifi_path)?);
+    let wifi_manager = Arc::new(
+        OpenwrtWifiManager::new(wifi_path)
+            .inspect_err(|err| error!(?err, "Failed to initialize WiFi Manager"))?,
+    );
 
     let manager = Manager::new(
         OpenwrtSessionManager,
