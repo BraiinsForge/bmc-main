@@ -380,6 +380,7 @@ class View extends Component<Props, State> {
                                 value={data.password}
                                 invalid={!!errors?.password}
                                 invalidText={errors?.password}
+                                tooltipPosition="left"
                                 onChange={e => {
                                     this.#wifiManualEntryDialogChange('password', e.target.value);
                                 }}

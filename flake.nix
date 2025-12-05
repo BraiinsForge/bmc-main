@@ -50,11 +50,18 @@
           yaml = true;
           copyright = true;
 
-          # Frontend specifies it's own formatting rules
           config.exclude = [
+            # Frontend specifies it's own formatting rules
             "frontend/*"
             # Markdown Files can be distorted when formatted
             "docs/*"
+            # Upstream crates shall be formatted upstream
+            "bmc-shared/ii-net-drv/*"
+            "tooling/crates/index-bmc/*"
+            "tooling/crates/index-common/*"
+            "tooling/idxgen/idxgen-data/*"
+            "tooling/minerctl/minerctl-defs/*"
+            "tooling/tooling-std/*"
           ];
         };
 

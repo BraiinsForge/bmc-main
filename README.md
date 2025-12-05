@@ -27,8 +27,8 @@ cargo run # or 'cargo run -- <ARGS>'
 
 We use by default resource embedding strategy `EmbedResourcesKind::EmbedForSoftwareRenderer` which is slow and generates
 huge Rust file (~50MB).\
-We can switch to `EmbedResourcesKind::EmbedFiles` during development in VSCode/RustRover. This
-strategy generates small Rust file (~820KB).
+We can switch to `EmbedResourcesKind::EmbedFiles` during development in VSCode/RustRover. This strategy generates small
+Rust file (~820KB).
 
 ### RustRover
 
