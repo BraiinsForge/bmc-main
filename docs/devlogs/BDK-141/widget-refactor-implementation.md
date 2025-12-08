@@ -250,8 +250,8 @@ Discover and track available widgets installed on the system.
 
 ### Scope
 - Add `WidgetDiscovery` trait to `bmc-widget` crate for platform abstraction
-- Add `WidgetRegistry` struct to `bmc-widget` crate
-- Implement platform-specific discovery in `bmc-openwrt` and `bmc-mock`
+- Add `PathDiscovery` struct to `bmc-widget` crate for filesystem-based discovery
+- Add `WidgetRegistry` struct to `bmc-widget` crate as a pure data container
 - Provide lookup and listing APIs
 - Handle invalid/duplicate widgets gracefully
 
@@ -259,16 +259,19 @@ Discover and track available widgets installed on the system.
 
 The `bmc-widget` crate defines a `WidgetDiscovery` trait that abstracts widget discovery:
 
-- `WidgetDiscovery::scan_paths()` - Returns list of widget directory paths to scan
+- `WidgetDiscovery::discover()` - Async method returning `Vec<WidgetInfo>`
 
-Platform-specific implementations in `bmc-openwrt` and `bmc-mock`:
+Discovery implementations return loaded `WidgetInfo` directly, handling all loading logic internally.
 
-**bmc-openwrt (ARMv7):**
-- Returns `/usr/lib/bmc-widgets/official/` and `/usr/lib/bmc-widgets/third-party/`
+**PathDiscovery (in bmc-widget):**
+- Reusable filesystem-based discovery
+- Takes a list of paths to scan
+- Handles manifest parsing, binary validation, and error logging
 
-**bmc-mock (x86_64):**
-- Returns path(s) configured via clap CLI argument (e.g., `--widgets-path`)
-- Points to Nix build outputs that follow the same directory structure
+**Platform usage:**
+
+- **bmc-openwrt:** Uses `PathDiscovery::new(vec!["/usr/lib/bmc-widgets/official/", "/usr/lib/bmc-widgets/third-party/"])`
+- **bmc-mock:** Uses `PathDiscovery::new(paths)` where paths come from CLI argument `--widgets-path`
 
 ### Widget Directory Structure
 
@@ -284,19 +287,22 @@ All widgets (both platforms) follow the same structure when built by Nix:
     preview-*.png
 ```
 
-### Widget Loading (Common)
+### Widget Loading
 
-Once discovery returns widget directory paths, common code in `bmc-widget` handles:
-1. Read `manifest.json` from each directory
-2. Parse and validate manifest
-3. Resolve binary path relative to widget directory
-4. Verify binary exists and is executable
-5. Register widget or log warning
+`PathDiscovery` handles all loading internally:
+1. Scan each configured path for subdirectories
+2. Read `manifest.json` from each subdirectory
+3. Parse and validate manifest
+4. Resolve binary path relative to widget directory
+5. Verify binary exists and is executable
+6. Return valid widgets, log warnings for invalid ones
 
 ### API
 
-- `WidgetDiscovery` trait - Platform-specific widget discovery
-- `WidgetRegistry::new(discovery)` - Create registry using discovery implementation
+- `WidgetDiscovery` trait - Platform-agnostic discovery interface
+- `PathDiscovery::new(paths)` - Create filesystem-based discovery
+- `PathDiscovery::discover()` - Scan and return all valid widgets
+- `WidgetRegistry::new(widgets)` - Create registry from widget iterator
 - `WidgetRegistry::get(uid)` - Get widget by UID
 - `WidgetRegistry::list()` - List all available widgets
 - `WidgetRegistry::supports_size(uid, size)` - Check if widget supports a given size
@@ -306,34 +312,50 @@ Once discovery returns widget directory paths, common code in `bmc-widget` handl
 
 - Invalid manifest: Log warning, skip widget, continue scanning
 - Missing binary: Log warning, skip widget
+- Non-executable binary: Log warning, skip widget
 - Duplicate UID: Log warning, keep first found
-- Permission errors: Log warning, skip widget
+- Non-existent scan path: Log warning, continue with other paths
 
 ### Test Cases
 
-1. **Scanning**
-   - Empty directory returns empty registry
-   - Single valid widget
-   - Multiple valid widgets
-   - Mix of valid and invalid widgets
+1. **PathDiscovery (filesystem tests)**
+   - Empty directory returns no widgets
+   - Non-existent path handled gracefully
+   - Single valid widget discovered
+   - Multiple widgets from one path
+   - Multiple scan paths combined
+   - Invalid manifest skipped
+   - Missing binary skipped
+   - Non-executable binary skipped
+   - Files in scan directory ignored (only directories scanned)
+   - Widget paths correctly populated
 
-2. **Lookup**
-   - Get existing widget by UID
+2. **WidgetRegistry (unit tests with mock data)**
+   - Empty registry
+   - Single widget lookup
+   - Multiple widgets
+   - Duplicate UID keeps first
    - Get non-existent widget returns None
+   - Size support check
+   - List all widgets
 
 3. **Error Cases**
    - Directory doesn't exist
    - Invalid manifest JSON
    - Missing binary file
+   - Non-executable binary
 
 ### Success Criteria
 
-- [ ] `WidgetRegistry` scans directories correctly
-- [ ] Invalid widgets logged and skipped
-- [ ] Duplicate UIDs handled
-- [ ] Unit tests with mock filesystem or temp directories
+- [x] `WidgetDiscovery` trait returns `Vec<WidgetInfo>` directly
+- [x] `PathDiscovery` scans directories correctly
+- [x] `WidgetRegistry` accepts widgets directly (decoupled from discovery)
+- [x] Invalid widgets logged and skipped
+- [x] Duplicate UIDs handled
+- [x] Unit tests for registry with mock `WidgetInfo`
+- [x] Integration tests for `PathDiscovery` with temp directories
 
-### Status: Not Started
+### Status: Complete
 
 ---
 
