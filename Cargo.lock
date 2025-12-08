@@ -872,6 +872,8 @@ dependencies = [
 name = "bmc-ipc"
 version = "0.1.0"
 dependencies = [
+ "bmc-shared-time",
+ "bmc-shared-utils",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
