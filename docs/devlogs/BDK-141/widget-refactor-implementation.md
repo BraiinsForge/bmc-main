@@ -165,15 +165,17 @@ Define all types and messages for IPC communication in the `bmc-ipc` crate.
 
 ### Success Criteria
 
-- [ ] All data types implemented with serde derives
-- [ ] All message types from IPC protocol spec implemented
-- [ ] JSON output matches examples in `widget-ipc-protocol.md`
-- [ ] Unit tests pass for serialization/deserialization
+- [x] All data types implemented with serde derives
+- [x] All message types from IPC protocol spec implemented
+- [x] JSON output matches examples in `widget-ipc-protocol.md`
+- [x] Unit tests pass for serialization/deserialization
 
 ### Notes
 
 - No runtime behavior yet - pure data types
 - No changes to existing `bmc` or `bmc-display` crates
+
+### Status: Complete
 
 ---
 
