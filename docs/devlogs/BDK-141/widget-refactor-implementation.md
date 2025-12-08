@@ -35,16 +35,14 @@ Each commit must:
 
 ---
 
-## Stage 1: Protocol Trait Definition
+## Stage 1: IPC Crate Setup
 
 ### Goal
-Create the `bmc-ipc` crate with the abstract `Protocol` trait that defines how messages are encoded/decoded. This establishes the foundation for pluggable protocols.
+Create the `bmc-ipc` crate for IPC communication between the application and widgets.
 
 ### Scope
 - Create new `bmc-ipc` crate
-- Define `Protocol` trait for message encoding/decoding
 - Define error types
-- Add unit tests with a mock protocol implementation
 
 ### Files to Create
 
@@ -53,42 +51,18 @@ bmc-ipc/
   Cargo.toml
   src/
     lib.rs
-    protocol.rs      # Protocol trait definition
-    error.rs         # Error types
 ```
-
-### Protocol Trait
-
-The `Protocol` trait defines two methods:
-- `encode` - Serialize a message to bytes
-- `decode` - Deserialize bytes to a message
-
-Framing (splitting byte streams into discrete messages) is handled separately at the transport layer, not in the protocol trait. This keeps the trait focused on serialization/deserialization.
-
-### Test Cases
-
-1. **Mock Protocol**
-   - Create a simple mock protocol for testing
-   - Verify encode/decode round-trip works
-   - Verify error handling on invalid input
-
-### Success Criteria
-
-- [x] `bmc-ipc` crate created and added to workspace
-- [x] `Protocol` trait defined with encode/decode methods
-- [x] `ProtocolError` type defined
-- [x] Unit tests pass with mock protocol
 
 ### Dependencies
 
-- `serde` for Serialize/DeserializeOwned traits
+- `serde` for serialization traits
 - `thiserror` for error types
 
 ### Status: Complete
 
 ---
 
-## Stage 2: JsonProtocol Implementation
+## Stage 2: JsonLinesCodec Implementation
 
 ### Goal
 Implement a generic JSON Lines codec that combines newline framing with JSON encoding/decoding using `tokio_util::codec`.
@@ -105,16 +79,12 @@ Implement a generic JSON Lines codec that combines newline framing with JSON enc
 ### Test Cases
 
 1. **Encoding**
-   - Verify valid JSON structure
+   - Verify messages encode to JSON with newline delimiter
 
 2. **Decoding**
-   - Parse valid JSON
+   - Parse valid JSON lines
+   - Handle incomplete messages (buffering)
    - Error on malformed JSON
-   - Error on empty input
-
-3. **Round-trip**
-   - Encode then decode simple structs
-   - Verify data integrity preserved
 
 ### Success Criteria
 
@@ -125,6 +95,8 @@ Implement a generic JSON Lines codec that combines newline framing with JSON enc
 ### Dependencies
 
 - `serde_json` for JSON handling
+- `tokio-util` with codec feature
+- `bytes` for BytesMut
 
 ### Status: Complete
 
@@ -371,10 +343,9 @@ All widgets (both platforms) follow the same structure when built by Nix:
 Spawn and manage widget processes with IPC communication.
 
 ### Scope
-- Define `ProcessSpawner` trait for spawning widget processes (allows mocking in tests)
-- Define `WidgetConnection` trait for IPC communication (allows mocking in tests)
-- Implement real spawner using Unix sockets and child processes
-- Handle process lifecycle (start, stop, crash)
+- Define `ProcessSpawner` trait for spawning widget processes
+- Define `WidgetConnection` trait for IPC communication
+- Implement `UnixSpawner` and `UnixConnection` using Unix sockets
 
 ### Trait Abstractions
 
@@ -384,8 +355,6 @@ Spawn and manage widget processes with IPC communication.
 **WidgetConnection trait:**
 - `send(msg)` - Send message to widget
 - `recv()` - Receive message from widget
-- `shutdown()` - Gracefully stop the widget
-- `is_alive()` - Check if connection is still active
 
 **UnixSpawner:**
 - Configurable connection and handshake timeouts
@@ -398,21 +367,19 @@ Spawn and manage widget processes with IPC communication.
 
 ### Spawn Sequence
 
-1. Create socket at `/run/bmc/widgets/<instance-id>.sock`
-2. Spawn binary with `BMC_IPC_SOCKET` env var
-3. Accept connection on socket (timeout: 5s)
-4. Send `init` message
-5. Wait for `ready` message (timeout: 5s)
-6. Return `WidgetProcess` handle
+1. Create socket directory if needed
+2. Remove stale socket if exists
+3. Bind Unix socket at `<socket_dir>/<instance-id>.sock`
+4. Spawn binary with `BMC_IPC_SOCKET` env var
+5. Accept connection on socket (configurable timeout, default 5s)
+6. Send `init` message
+7. Wait for `ready` message (configurable timeout, default 5s)
+8. Return `UnixConnection` handle
 
-### Stop Sequence
+### Shutdown
 
-1. Send `shutdown` message
-2. Wait for process exit (timeout: 2s)
-3. If still running, send SIGTERM
-4. Wait (timeout: 1s)
-5. If still running, send SIGKILL
-6. Clean up socket file
+- Process is killed on drop via `kill_on_drop(true)`
+- Socket file is cleaned up in `Drop` implementation
 
 ### Message Framing
 
@@ -445,11 +412,81 @@ Uses `JsonLinesCodec<WidgetMessage, AppMessage>`:
 - [ ] Graceful and forced shutdown works
 - [ ] Integration tests with mock widget binary
 
+### Status: In Progress
+
+---
+
+## Stage 7: Widget Client SDK
+
+### Goal
+Provide client-side IPC infrastructure for widgets to communicate with the main application.
+
+### Scope
+- Implement `WidgetClient` for socket connection and message handling
+- Provide helpers for common widget patterns
+- Keep in `bmc-widget` crate (widget SDK)
+
+### Crate Organization
+
+The `bmc-widget` crate serves as the widget SDK containing:
+- `manifest.rs` - Widget manifest parsing (already implemented)
+- `client.rs` - New: IPC client for widgets
+
+### WidgetClient
+
+**Purpose:** Connect to the main application and handle IPC protocol.
+
+**API:**
+- `WidgetClient::connect()` - Read `BMC_IPC_SOCKET` env var, connect to socket
+- `WidgetClient::recv() -> AppMessage` - Receive command from application
+- `WidgetClient::send(WidgetMessage)` - Send response to application
+- `WidgetClient::send_ready()` - Convenience method to send Ready message
+- `WidgetClient::send_error(msg, recoverable)` - Convenience method to send Error message
+
+### Connect Sequence (Widget Perspective)
+
+1. Read `BMC_IPC_SOCKET` from environment
+2. Connect to Unix socket
+3. Wait for `Init` message from application
+4. Initialize widget state from init params (size, params, settings)
+5. Send `Ready` message
+6. Enter main loop handling `SettingsUpdate` and `Shutdown` messages
+
+### Error Handling
+
+- Missing `BMC_IPC_SOCKET` env var → exit with error
+- Connection failure → exit with error
+- Unexpected message → send `Error` message with `recoverable: false`
+- Recoverable errors (e.g., network fetch failed) → send `Error` with `recoverable: true`
+
+### Test Cases
+
+1. **Connection**
+   - Connect to socket from env var
+   - Handle missing env var
+   - Handle connection failure
+
+2. **Protocol**
+   - Receive Init message
+   - Send Ready message
+   - Receive SettingsUpdate message
+   - Receive Shutdown message
+
+3. **Error Handling**
+   - Send Error message (recoverable)
+   - Send Error message (non-recoverable)
+
+### Success Criteria
+
+- [ ] `WidgetClient` connects and handles IPC protocol
+- [ ] Unit tests for client connection and message handling
+- [ ] Example usage documented
+
 ### Status: Not Started
 
 ---
 
-## Stage 7: Digital Clock Widget Extraction
+## Stage 8: Digital Clock Widget Extraction
 
 ### Goal
 Extract the digital clock widget as the first standalone widget to validate the architecture.
@@ -560,12 +597,13 @@ bmc-widget-clock/
 
 - Stage 3 (IPC Message Types)
 - Stage 6 (Process Spawner) - for integration testing
+- Stage 7 (Widget Client SDK) - for IPC client
 
 ### Status: Not Started
 
 ---
 
-## Stage 8: IPC Integration in Deck Application
+## Stage 9: IPC Integration in Deck Application
 
 ### Goal
 Integrate widget process management into the main Deck application.
@@ -642,13 +680,13 @@ Integrate widget process management into the main Deck application.
 
 - Stage 5 (Widget Registry)
 - Stage 6 (Process Spawner)
-- Stage 7 (Clock Widget)
+- Stage 8 (Clock Widget)
 
 ### Status: Not Started
 
 ---
 
-## Stage 9: Configuration Migration
+## Stage 10: Configuration Migration
 
 ### Goal
 Migrate existing widget configurations to use widget UIDs.
@@ -717,8 +755,8 @@ If widget UID not found in registry:
 
 ### Dependencies
 
-- Stage 7 (Clock Widget) - for initial UID mapping
-- Stage 8 (Deck Integration) - for runtime testing
+- Stage 8 (Clock Widget) - for initial UID mapping
+- Stage 9 (Deck Integration) - for runtime testing
 
 ### Status: Not Started
 
