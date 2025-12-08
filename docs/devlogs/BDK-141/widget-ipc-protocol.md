@@ -61,11 +61,11 @@ Sent immediately after widget connects. Contains full configuration for the widg
   },
   "settings": {
     "localization": {
-      "dateFormat": "DD.MM.YYYY",
-      "timeFormat": "24h",
-      "numberFormat": "cs-CZ",
-      "temperatureUnit": "celsius",
-      "firstDayOfWeek": "monday"
+      "dateFormat": "DdMmYyyyDot",
+      "timeFormat": "Hour24",
+      "numberFormat": "SpaceGroupCommaDecimal",
+      "temperatureUnit": "Celsius",
+      "firstDayOfWeek": "Monday"
     },
     "timezone": "Europe/Prague",
     "nightMode": false
@@ -98,11 +98,11 @@ Example - localization change (entire object is sent when any field changes):
   "type": "settings_update",
   "key": "localization",
   "value": {
-    "dateFormat": "DD.MM.YYYY",
-    "timeFormat": "24h",
-    "numberFormat": "cs-CZ",
-    "temperatureUnit": "celsius",
-    "firstDayOfWeek": "monday"
+    "dateFormat": "DdMmYyyyDot",
+    "timeFormat": "Hour24",
+    "numberFormat": "SpaceGroupCommaDecimal",
+    "temperatureUnit": "Celsius",
+    "firstDayOfWeek": "Monday"
   }
 }
 ```
@@ -212,19 +212,19 @@ Control LED effect.
 | `duration` | number | Optional duration in milliseconds (omit for persistent) |
 
 Available effects:
-- `Chase`
-- `KnightRider`
-- `Scan`
-- `Snake`
-- `Breathe`
-- `Solid`
+- `chase`
+- `knight_rider`
+- `scan`
+- `snake`
+- `breathe`
+- `solid`
 
 ```json
 {
   "type": "action",
   "name": "led",
   "payload": {
-    "effect": "Breathe",
+    "effect": "breathe",
     "color": { "r": 255, "g": 0, "b": 0 },
     "duration": 5000
   }
