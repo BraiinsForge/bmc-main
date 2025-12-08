@@ -74,15 +74,17 @@ Framing (splitting byte streams into discrete messages) is handled separately at
 
 ### Success Criteria
 
-- [ ] `bmc-ipc` crate created and added to workspace
-- [ ] `Protocol` trait defined with encode/decode methods
-- [ ] `ProtocolError` type defined
-- [ ] Unit tests pass with mock protocol
+- [x] `bmc-ipc` crate created and added to workspace
+- [x] `Protocol` trait defined with encode/decode methods
+- [x] `ProtocolError` type defined
+- [x] Unit tests pass with mock protocol
 
 ### Dependencies
 
 - `serde` for Serialize/DeserializeOwned traits
 - `thiserror` for error types
+
+### Status: Complete
 
 ---
 
