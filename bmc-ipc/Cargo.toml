@@ -6,9 +6,11 @@ edition = "2024"
 [dependencies]
 bmc-shared-time = { workspace = true }
 bmc-shared-utils = { workspace = true }
+bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio-util = { workspace = true, features = ["codec"] }
 
 [lints]
 workspace = true
