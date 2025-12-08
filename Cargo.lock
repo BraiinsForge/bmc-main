@@ -1099,6 +1099,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-widget"
+version = "0.1.0"
+dependencies = [
+ "bmc-ipc",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "uuid",
+]
+
+[[package]]
 name = "borsh"
 version = "1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
