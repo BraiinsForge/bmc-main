@@ -88,23 +88,14 @@ Framing (splitting byte streams into discrete messages) is handled separately at
 
 ---
 
-## Stage 2: JsonLineProtocol Implementation
+## Stage 2: JsonProtocol Implementation
 
 ### Goal
-Implement the newline-delimited JSON protocol as the default `Protocol` implementation.
+Implement the JSON protocol as the default `Protocol` implementation.
 
 ### Scope
-- Implement `JsonLineProtocol` struct
+- Implement `JsonProtocol` struct
 - Add unit tests for JSON encoding/decoding
-
-### Files to Modify/Create
-
-```
-bmc-ipc/
-  src/
-    lib.rs           # Export JsonLineProtocol
-    protocol.rs      # Add JsonLineProtocol implementation
-```
 
 ### Test Cases
 
@@ -122,12 +113,14 @@ bmc-ipc/
 
 ### Success Criteria
 
-- [ ] `JsonLineProtocol` implements `Protocol` trait
-- [ ] Unit tests pass for encoding/decoding
+- [x] `JsonProtocol` implements `Protocol` trait
+- [x] Unit tests pass for encoding/decoding
 
 ### Dependencies
 
 - `serde_json` for JSON handling
+
+### Status: Complete
 
 ---
 
