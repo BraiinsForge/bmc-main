@@ -13,7 +13,7 @@ use crate::timezone_variant::TIMEZONE_VARIANTS;
 const DEFAULT_CHRONO: chrono_tz::Tz = chrono_tz::Etc::GMT;
 const DEFAULT_POSIX: &str = "GMT0";
 
-#[derive(Copy, EnumString, Display, Debug, Serialize, Deserialize, Clone)]
+#[derive(Copy, EnumString, Display, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum TimeSystem {
     #[strum(serialize = "%I:%M")]
     Hour12,
@@ -233,7 +233,7 @@ impl fmt::Display for Offset {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum DateFormat {
     #[default]
     DdMmYyyyDot,
