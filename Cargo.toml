@@ -7,6 +7,7 @@ members = [
     "bmc-display",
     "bmc-gpio",
     "bmc-grpc",
+    "bmc-ipc",
     "bmc-kobject",
     "bmc-led",
     "bmc-mock",
