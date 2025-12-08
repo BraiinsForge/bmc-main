@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::config::{ConfigHandle, TemperatureUnit, UnitSystem};
+use crate::config::{ConfigHandle, UnitSystem};
 use anyhow::{Context, Result, bail};
 use bmc_display::data::{SceneId, WidgetId, WidgetSize};
 use bmc_display::display_controller::DisplayController;
@@ -8,6 +8,7 @@ use bmc_display::remote_widget_data::RemoteWidgetState;
 use bmc_display::{SharedImageBuffer, SharedPixelBuffer};
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
 use bmc_shared_utils::number_format::NumberFormat;
+use bmc_shared_utils::temperature::TemperatureUnit;
 use image::ImageDecoder;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

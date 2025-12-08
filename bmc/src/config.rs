@@ -12,6 +12,7 @@ use bmc_display::data::{
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
+use bmc_shared_utils::temperature::TemperatureUnit;
 use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
 use chrono::{Local, NaiveTime};
 use indexmap::{IndexMap, indexmap};
@@ -719,13 +720,6 @@ impl Default for NightModeConfigData {
             screen_off_timeout_secs: None,
         }
     }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub enum TemperatureUnit {
-    #[default]
-    Celsius,
-    Fahrenheit,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
