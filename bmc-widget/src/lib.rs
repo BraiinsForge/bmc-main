@@ -10,4 +10,4 @@ pub use discovery::{PathDiscovery, WidgetDiscovery};
 pub use error::ManifestError;
 pub use manifest::{Author, Manifest, ParamDefinition, ParamType, SettingKey};
 pub use registry::{RegistryError, WidgetInfo, WidgetRegistry};
-pub use spawner::{ProcessSpawner, SpawnError, WidgetConnection};
+pub use spawner::{ProcessSpawner, SpawnError, UnixConnection, UnixSpawner, WidgetConnection};
