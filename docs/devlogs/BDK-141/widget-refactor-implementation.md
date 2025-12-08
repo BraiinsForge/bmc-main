@@ -91,11 +91,16 @@ Framing (splitting byte streams into discrete messages) is handled separately at
 ## Stage 2: JsonProtocol Implementation
 
 ### Goal
-Implement the JSON protocol as the default `Protocol` implementation.
+Implement a generic JSON Lines codec that combines newline framing with JSON encoding/decoding using `tokio_util::codec`.
 
 ### Scope
-- Implement `JsonProtocol` struct
-- Add unit tests for JSON encoding/decoding
+- Implement generic `JsonLinesCodec<Dec, Enc>` struct using `tokio_util::codec::{Encoder, Decoder}`
+- `Dec` - type to decode from incoming messages
+- `Enc` - type to encode for outgoing messages
+- Use `LinesCodec` for newline framing
+- Use `serde_json` for JSON encoding/decoding
+- Add `CodecError` for error handling
+- Add unit tests
 
 ### Test Cases
 
@@ -113,7 +118,8 @@ Implement the JSON protocol as the default `Protocol` implementation.
 
 ### Success Criteria
 
-- [x] `JsonProtocol` implements `Protocol` trait
+- [x] `JsonLinesCodec<Dec, Enc>` is generic over decode/encode types
+- [x] `CodecError` type defined
 - [x] Unit tests pass for encoding/decoding
 
 ### Dependencies
