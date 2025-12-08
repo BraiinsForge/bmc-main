@@ -195,8 +195,8 @@ Parse and validate widget manifest files (`manifest.json`) according to the spec
 - `Manifest` - uid, version, name, description, author, binary, settings, sizes, params
 - `Author` - name, url
 - `SettingKey` - enum (Localization, Timezone, NightMode)
-- `ParamDefinition` - name, param_type, description, default
-- `ParamType` - enum (String with optional enum values, Boolean, Number with min/max, Array)
+- `ParamDefinition` - name, param_type, description, default, enum_values, min, max
+- `ParamType` - enum (String, Boolean, Number, Array)
 
 ### Validation Rules
 
@@ -228,17 +228,18 @@ Parse and validate widget manifest files (`manifest.json`) according to the spec
 
 ### Success Criteria
 
-- [ ] All manifest types defined with serde derives
-- [ ] `Manifest::from_reader()` parses JSON
-- [ ] Validation errors are descriptive
-- [ ] Unit tests cover all validation rules
+- [x] All manifest types defined with serde derives
+- [x] `Manifest::from_reader()` parses JSON
+- [x] `FromStr` trait implemented for `Manifest`
+- [x] Validation errors are descriptive
+- [x] Unit tests cover all validation rules (7 tests)
 
 ### Dependencies
 
 - `uuid` for UUID parsing
 - `semver` for version parsing
 
-### Status: Not Started
+### Status: Complete
 
 ---
 
