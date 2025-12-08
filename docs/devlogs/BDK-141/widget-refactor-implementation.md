@@ -124,73 +124,21 @@ Implement the JSON protocol as the default `Protocol` implementation.
 
 ---
 
-## Stage 3: Shared Widget Types
+## Stage 3: IPC Message Types
 
 ### Goal
-Define shared types used by both the Deck application and widgets.
+Define all types and messages for IPC communication in the `bmc-ipc` crate.
 
 ### Scope
-- Create new `bmc-shared/widget-types` crate
-- Define shared data types (SizeInfo, Localization, ActionPayload, etc.)
-- Add serialization tests
-
-### Files to Create
-
-```
-bmc-shared/widget-types/
-  Cargo.toml
-  src/
-    lib.rs
-    size.rs          # SizeType, SizeInfo
-    settings.rs      # Localization
-    actions.rs       # ActionPayload (PlaySound, Led, etc.)
-```
-
-### Types to Define
-
-- `SizeType` - enum (Small, Medium, Large, Full)
-- `SizeInfo` - name, width, height
-- `Localization` - dateFormat, timeFormat, numberFormat, temperatureUnit, firstDayOfWeek
-- `ActionPayload` - PlaySound, StopSound, Led, StopLed
-
-### Test Cases
-
-1. **Serialization**
-   - Each type serializes to expected JSON format
-   - JSON field names match spec (camelCase)
-
-2. **Deserialization**
-   - Parse valid JSON for each type
-   - Error on missing required fields
-
-### Success Criteria
-
-- [ ] `bmc-shared/widget-types` crate created and added to workspace
-- [ ] All shared types implemented with serde derives
-- [ ] Unit tests pass for serialization/deserialization
-
----
-
-## Stage 4: IPC Message Types
-
-### Goal
-Define message types for IPC communication, using shared types from `bmc-shared/widget-types`.
-
-### Scope
-- Define message enums and structs in `bmc-ipc`
+- Add types and messages to `bmc-ipc` crate
 - Add serialization tests to verify JSON format matches spec
 
-### Files to Create
+### Data Types
 
-```
-bmc-ipc/
-  src/
-    lib.rs              # Export messages module
-    messages/
-      mod.rs            # Message enums (AppMessage, WidgetMessage)
-      app_to_widget.rs  # Init, SettingsUpdate, Shutdown
-      widget_to_app.rs  # Ready, Error, Action
-```
+- `SizeType` - enum (Small, Medium, Large, Full)
+- `SizeInfo` - size type, width, height
+- `Localization` - dateFormat, timeFormat, numberFormat, temperatureUnit, firstDayOfWeek
+- `ActionPayload` - PlaySound, StopSound, Led, StopLed
 
 ### Message Types
 
@@ -202,76 +150,72 @@ bmc-ipc/
 **Widget to Application (`WidgetMessage`):**
 - `Ready`
 - `Error` - message, recoverable
-- `Action` - name, payload (uses `ActionPayload` from `bmc-shared/widget-types`)
+- `Action` - name, payload
 
 ### Test Cases
 
-1. **Message Serialization**
-   - Each message type serializes to expected JSON format
+1. **Serialization**
+   - Each type serializes to expected JSON format
+   - JSON field names match spec (camelCase)
    - JSON output matches examples in `widget-ipc-protocol.md`
 
-2. **Message Deserialization**
-   - Parse valid JSON for each message type
-   - Error on unknown message type
+2. **Deserialization**
+   - Parse valid JSON for each type
    - Error on missing required fields
-
-3. **Round-trip with JsonLineProtocol**
-   - Encode then decode each message type
-   - Verify all fields preserved
 
 ### Success Criteria
 
+- [ ] All data types implemented with serde derives
 - [ ] All message types from IPC protocol spec implemented
 - [ ] JSON output matches examples in `widget-ipc-protocol.md`
 - [ ] Unit tests pass for serialization/deserialization
 
 ### Notes
 
-- Depends on `bmc-shared/widget-types` for shared types
 - No runtime behavior yet - pure data types
 - No changes to existing `bmc` or `bmc-display` crates
 
 ---
 
-## Stage 5: Widget Manifest Parser
+## Stage 4: Widget Manifest Parser
 
-*To be defined after Stage 4 review*
-
----
-
-## Stage 6: Widget Registry
-
-*To be defined after Stage 4 review*
+*To be defined after Stage 3 review*
 
 ---
 
-## Stage 7: Widget Process Spawner
+## Stage 5: Widget Registry
 
-*To be defined after Stage 4 review*
-
----
-
-## Stage 8: Digital Clock Widget Extraction
-
-*To be defined after Stage 4 review*
+*To be defined after Stage 3 review*
 
 ---
 
-## Stage 9: IPC Integration in Deck Application
+## Stage 6: Widget Process Spawner
 
-*To be defined after Stage 4 review*
-
----
-
-## Stage 10: Configuration Migration
-
-*To be defined after Stage 4 review*
+*To be defined after Stage 3 review*
 
 ---
 
-## Stage 11: Remaining Widget Extraction
+## Stage 7: Digital Clock Widget Extraction
 
-*To be defined after Stage 4 review*
+*To be defined after Stage 3 review*
+
+---
+
+## Stage 8: IPC Integration in Deck Application
+
+*To be defined after Stage 3 review*
+
+---
+
+## Stage 9: Configuration Migration
+
+*To be defined after Stage 3 review*
+
+---
+
+## Stage 10: Remaining Widget Extraction
+
+*To be defined after Stage 3 review*
 
 ---
 
