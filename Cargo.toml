@@ -18,6 +18,7 @@ members = [
     "bmc-shared/*",
     "bmc-support",
     "bmc-upgrade",
+    "bmc-widget",
 ]
 
 [profile.release]
@@ -101,6 +102,7 @@ bmc-button = { path = "bmc-button" }
 bmc-display = { path = "bmc-display" }
 bmc-gpio = { path = "bmc-gpio" }
 bmc-grpc = { path = "bmc-grpc" }
+bmc-ipc = { path = "bmc-ipc" }
 bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led" }
 bmc-mock-display = { path = "bmc-mock-display" }
@@ -114,6 +116,7 @@ bmc-shared-time = { path = "bmc-shared/time" }
 bmc-shared-utils = { path = "bmc-shared/utils" }
 bmc-support = { path = "bmc-support" }
 bmc-upgrade = { path = "bmc-upgrade" }
+bmc-widget = { path = "bmc-widget" }
 bstr = "1.11.3"
 bytes = { version = "1.6.0", default-features = false }
 bytesize = { version = "2.0.1", features = ["serde"] }

@@ -1,0 +1,15 @@
+[package]
+name = "bmc-widget"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bmc-ipc = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true
