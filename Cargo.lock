@@ -874,9 +874,11 @@ version = "0.1.0"
 dependencies = [
  "bmc-shared-time",
  "bmc-shared-utils",
+ "bytes",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1103,12 +1105,14 @@ name = "bmc-widget"
 version = "0.1.0"
 dependencies = [
  "bmc-ipc",
+ "futures",
  "semver",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]

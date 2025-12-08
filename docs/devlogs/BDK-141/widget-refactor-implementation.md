@@ -387,7 +387,14 @@ Spawn and manage widget processes with IPC communication.
 - `shutdown()` - Gracefully stop the widget
 - `is_alive()` - Check if connection is still active
 
-This allows tests to use mock implementations without spawning real processes.
+**UnixSpawner:**
+- Configurable connection and handshake timeouts
+- No generics - uses hardcoded codec type
+
+**UnixConnection:**
+- Wraps `Framed<UnixStream, JsonLinesCodec<WidgetMessage, AppMessage>>`
+- Cleans up socket file on drop
+- No generics - codec type is fixed
 
 ### Spawn Sequence
 
@@ -409,9 +416,10 @@ This allows tests to use mock implementations without spawning real processes.
 
 ### Message Framing
 
-Messages are newline-delimited JSON:
-- Send: Encode message, append `\n`, write to socket
-- Receive: Read until `\n`, decode JSON
+Uses `JsonLinesCodec<WidgetMessage, AppMessage>`:
+- Decodes `WidgetMessage` from widget
+- Encodes `AppMessage` to widget
+- Newline-delimited JSON format
 
 ### Test Cases
 
