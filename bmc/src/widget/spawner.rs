@@ -14,7 +14,7 @@ use tokio_util::codec::Framed;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::WidgetInfo;
+use super::WidgetInfo;
 
 /// Codec type for server-side IPC (decodes WidgetMessage, encodes AppMessage).
 type ServerCodec = JsonLinesCodec<WidgetMessage, AppMessage>;

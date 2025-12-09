@@ -4,10 +4,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use bmc_ipc::SizeType;
+use bmc_widget::{Manifest, ManifestError};
 use tracing::warn;
 use uuid::Uuid;
-
-use crate::{Manifest, ManifestError};
 
 /// Information about a discovered widget.
 #[derive(Debug, Clone)]
@@ -116,7 +115,7 @@ impl WidgetRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Manifest;
+    use bmc_widget::Manifest;
 
     fn make_widget_info(uid: &str, name: &str, sizes: Vec<SizeType>) -> WidgetInfo {
         let manifest = Manifest {
