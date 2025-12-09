@@ -1041,6 +1041,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-shared-slint"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "slint",
+ "slint-build",
+]
+
+[[package]]
 name = "bmc-shared-time"
 version = "0.1.0"
 dependencies = [
