@@ -492,7 +492,7 @@ The `bmc-widget` crate serves as the widget SDK containing:
 Extract the digital clock widget as the first standalone widget to validate the architecture.
 
 ### Scope
-- Create new `bmc-widget-clock` crate
+- Create new `digital-clock` crate
 - Move clock Slint UI
 - Implement IPC client
 - Create manifest.json
