@@ -21,6 +21,7 @@ mod system_manager;
 mod system_upgrade;
 pub mod utils;
 mod web;
+pub mod widget;
 mod widget_tasks;
 
 pub use manager::BmcManager;

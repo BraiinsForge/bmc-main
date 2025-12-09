@@ -3,10 +3,11 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
+use bmc_widget::Manifest;
 use tokio::fs;
 use tracing::warn;
 
-use crate::{Manifest, RegistryError, WidgetInfo};
+use super::{RegistryError, WidgetInfo};
 
 /// Trait for platform-specific widget discovery.
 ///
@@ -174,14 +175,13 @@ mod tests {
 
         let manifest = format!(
             r#"{{
-                "uid": "{}",
+                "uid": "{uid}",
                 "version": "1.0.0",
-                "name": "{}",
+                "name": "{name}",
                 "description": "Test widget",
                 "binary": "widget",
                 "sizes": ["small"]
-            }}"#,
-            uid, name
+            }}"#
         );
 
         std_fs::write(widget_dir.join("manifest.json"), manifest)
