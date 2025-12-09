@@ -1109,10 +1109,14 @@ name = "bmc-widget"
 version = "0.1.0"
 dependencies = [
  "bmc-ipc",
+ "futures",
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.12",
+ "tokio",
+ "tokio-util",
  "uuid",
 ]
 
