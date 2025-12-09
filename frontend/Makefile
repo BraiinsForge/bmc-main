@@ -101,9 +101,13 @@ minify-images: minify-jpg minify-png minify-svg
 intl-extract:
 	yarn run formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json
 
-PHONY: nix-update-hash
+.PHONY: nix-update-hash
 nix-update-hash:
+	# Update yarn-files hash for current platform, and darwin if not on macOS
 	./bin/nix-update-hash.ts
+ifneq ($(shell uname -s),Darwin)
+	./bin/nix-update-hash.ts --darwin
+endif
 
 #
 # Image Minification

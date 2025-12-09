@@ -4,3 +4,15 @@
     composes: vertical from 'styles/layout.scss';
     gap: 4px;
 }
+
+.overlay {
+    opacity: 0.9;
+    cursor: grabbing;
+    filter: drop-shadow(0 4px 8px rgb(0 0 0 / 30%));
+
+    // Remove focus border from drag handles inside overlay
+    [tabindex] {
+        border: none !important;
+        box-shadow: none !important;
+    }
+}

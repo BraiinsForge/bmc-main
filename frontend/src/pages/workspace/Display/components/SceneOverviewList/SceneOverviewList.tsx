@@ -93,7 +93,11 @@ class View extends Component<Props> {
         return (
             <SceneOverviewRow
                 id={item.id}
-                className={cn(css.line, state.isDragging && css.dragged)}
+                className={cn(
+                    css.line,
+                    state.isDragging && css.dragged,
+                    state.isOver && !state.isDragging && css.dropTarget,
+                )}
                 layout={useCardLayout ? 'card' : 'row'}
                 enabled={item.enabled}
                 icon={

@@ -13,13 +13,20 @@
     // because this node is being moved by javascript to follow
     // the mouse and animating that screws up the responsivity.
     transition-timing-function: transition.$ease-in-out;
-    transition-property: opacity, box-shadow;
+    transition-property: opacity, outline-color;
     transition-duration: 150ms;
 
+    // Always have the outline, just transparent when not a drop target
+    outline: 2px dashed transparent;
+    outline-offset: -2px;
+
     &.dragged {
-        z-index: 1000;
-        opacity: 0.85;
-        box-shadow: shadows.$elevation-16dp;
+        // When dragged, the original item becomes a placeholder
+        opacity: 0.4;
+    }
+
+    &.dropTarget {
+        outline-color: $focus;
     }
 }
 

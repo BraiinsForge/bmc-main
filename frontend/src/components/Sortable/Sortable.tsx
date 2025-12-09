@@ -1,16 +1,19 @@
-import type { RefCallback, Ref } from 'react';
+import { useState, useCallback, type RefCallback, type Ref } from 'react';
 
 // Drag and drop
 import { CSS } from '@dnd-kit/utilities';
 import {
     DndContext,
+    DragOverlay,
     closestCenter,
     KeyboardSensor,
     PointerSensor,
     useSensor,
     useSensors,
+    type DragStartEvent,
     type DragEndEvent,
     type DraggableAttributes,
+    type DropAnimation,
 } from '@dnd-kit/core';
 import {
     useSortable,
@@ -20,6 +23,11 @@ import {
     verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
+
+const dropAnimation: DropAnimation = {
+    duration: 150,
+    easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)',
+};
 
 // Styles
 import css from './Sortable.scss';
@@ -39,11 +47,11 @@ export interface RenderSortableListItemProps<D extends Datum> {
         isOver: boolean;
         isDragging: boolean;
     };
-    rootProps: {
+    rootProps?: {
         ref: RefCallback<HTMLElement>;
         style: Pick<CSSProperties, 'transform' | 'transition'>;
     };
-    dragHandleProps: DraggableAttributes & SyntheticListenerMap;
+    dragHandleProps?: DraggableAttributes & SyntheticListenerMap;
 }
 
 export type Item<D extends Datum> = {
@@ -92,34 +100,72 @@ export interface SortableProps<D extends Datum> {
 export function Sortable<D extends Datum>(props: SortableProps<D>) {
     const { items, renderItem, onChange, className, style, wrapperRef } = props;
 
+    const [activeId, setActiveId] = useState<D['id'] | null>(null);
+    const activeIndex = activeId !== null ? items.findIndex(x => x.id === activeId) : -1;
+    const activeItem = activeIndex >= 0 ? items[activeIndex] : null;
+
     const sensors = useSensors(
         useSensor(PointerSensor),
         useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
     );
 
-    function handleDragEnd(e: DragEndEvent) {
-        const idSource = e.active.id;
-        const idTarget = e.over?.id;
+    const handleDragStart = useCallback((e: DragStartEvent) => {
+        setActiveId(e.active.id as D['id']);
+    }, []);
 
-        if (idSource === idTarget) return;
+    const handleDragEnd = useCallback(
+        (e: DragEndEvent) => {
+            setActiveId(null);
 
-        const from = items.findIndex(x => x.id === idSource);
-        const into = items.findIndex(x => x.id === idTarget);
+            const idSource = e.active.id;
+            const idTarget = e.over?.id;
 
-        const updated = arrayMove(items, from, into);
-        const move = { id: idSource, from, into };
+            if (idSource === idTarget) return;
 
-        onChange(updated, move);
-    }
+            const from = items.findIndex(x => x.id === idSource);
+            const into = items.findIndex(x => x.id === idTarget);
+
+            if (from === -1 || into === -1) return;
+
+            const updated = arrayMove(items, from, into);
+            const move = { id: idSource, from, into };
+
+            onChange(updated, move);
+        },
+        [items, onChange],
+    );
+
+    const handleDragCancel = useCallback(() => {
+        setActiveId(null);
+    }, []);
 
     return (
         <div ref={wrapperRef} className={cn(css.root, className)} style={style}>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDragCancel={handleDragCancel}
+            >
                 <SortableContext
                     items={items}
                     strategy={verticalListSortingStrategy}
                     children={items.map((d, i) => <Item index={i} data={d} key={d.id} render={renderItem} />)}
                 />
+
+                <DragOverlay dropAnimation={dropAnimation}>
+                    {activeItem ? (
+                        <div
+                            className={css.overlay}
+                            children={renderItem({
+                                index: activeIndex,
+                                item: activeItem,
+                                state: { isOver: false, isDragging: true },
+                            })}
+                        />
+                    ) : null}
+                </DragOverlay>
             </DndContext>
         </div>
     );

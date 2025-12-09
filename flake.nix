@@ -13,7 +13,7 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, nixlib, fenix, ... }:
-    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-darwin" ] (localSystem:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (localSystem:
       let
         pkgs = import nixpkgs {
           inherit localSystem;
