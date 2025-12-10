@@ -1044,6 +1044,8 @@ name = "bmc-shared-slint"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-shared-time",
+ "chrono",
  "serde",
  "slint",
  "slint-build",
@@ -1128,7 +1130,28 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
+]
+
+[[package]]
+name = "bmc-widget-digital-clock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-ipc",
+ "bmc-shared-slint",
+ "bmc-shared-time",
+ "bmc-widget",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "serde",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
