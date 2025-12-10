@@ -9,6 +9,8 @@ edition = "2024"
 slint-embed-files = []
 
 [dependencies]
+bmc-shared-time.workspace = true
+chrono.workspace = true
 slint.workspace = true
 
 [build-dependencies]
