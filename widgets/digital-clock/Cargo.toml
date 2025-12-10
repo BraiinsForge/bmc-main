@@ -1,0 +1,32 @@
+[package]
+name = "bmc-widget-digital-clock"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# Change `embed_resources` strategy to `EmbedFiles` instead of `EmbedForSoftwareRenderer`.
+# This helps to avoid indexing issues in RustRover, because generated code is much smaller.
+slint-embed-files = []
+standalone = ["slint/backend-winit", "slint/renderer-winit-software"]
+
+[dependencies]
+bmc-ipc.workspace = true
+bmc-shared-slint.workspace = true
+bmc-shared-time.workspace = true
+bmc-widget.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+slint.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+tracing.workspace = true
+
+[build-dependencies]
+anyhow.workspace = true
+serde.workspace = true
+slint-build.workspace = true
+
+[lints]
+workspace = true

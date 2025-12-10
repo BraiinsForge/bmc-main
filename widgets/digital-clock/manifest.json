@@ -1,0 +1,53 @@
+{
+  "uid": "550e8400-e29b-41d4-a716-446655440001",
+  "version": "1.0.0",
+  "name": "Digital Clock",
+  "description": "Digital clock display with customizable font style",
+  "author": {
+    "name": "Braiins",
+    "url": "https://braiins.com"
+  },
+  "binary": "bin/bmc-widget-digital-clock",
+  "settings": [
+    "localization",
+    "timezone",
+    "nightMode"
+  ],
+  "sizes": [
+    "small",
+    "medium",
+    "large",
+    "full"
+  ],
+  "params": {
+    "showSeconds": {
+      "name": "Show Seconds",
+      "type": "boolean",
+      "description": "Display seconds on the clock",
+      "default": true
+    },
+    "showTimezone": {
+      "name": "Show Timezone",
+      "type": "boolean",
+      "description": "Display timezone on the clock",
+      "default": true
+    },
+    "fontStyle": {
+      "name": "Font Style",
+      "type": "string",
+      "description": "Font weight for the time display",
+      "default": "medium",
+      "enum": {
+        "light": "Light",
+        "medium": "Medium",
+        "bold": "Bold"
+      }
+    },
+    "timezone": {
+      "name": "Timezone",
+      "type": "timezone",
+      "description": "Override timezone (e.g. 'America/New_York'). If not set, uses global timezone setting.",
+      "default": null
+    }
+  }
+}

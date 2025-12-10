@@ -19,6 +19,7 @@ members = [
     "bmc-support",
     "bmc-upgrade",
     "bmc-widget",
+    "widgets/*",
 ]
 
 [profile.release]
