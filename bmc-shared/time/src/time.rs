@@ -234,6 +234,7 @@ impl fmt::Display for Offset {
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[repr(u8)]
 pub enum DateFormat {
     #[default]
     DdMmYyyyDot,
@@ -244,6 +245,22 @@ pub enum DateFormat {
     YyyyMDSlash,
     YyyyMmDdDot,
     YyyyMmDdDash,
+}
+
+impl From<u8> for DateFormat {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => Self::DdMmYyyyDot,
+            1 => Self::DdMmYyyySlash,
+            2 => Self::DMYyyySlash,
+            3 => Self::MDYyyySlash,
+            4 => Self::DdMmYyyyDash,
+            5 => Self::YyyyMDSlash,
+            6 => Self::YyyyMmDdDot,
+            7 => Self::YyyyMmDdDash,
+            _ => Self::default(),
+        }
+    }
 }
 
 impl DateFormat {
