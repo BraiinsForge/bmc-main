@@ -181,6 +181,13 @@ impl ParamDefinition {
                     });
                 }
             }
+            ParamType::Timezone => {
+                if !self.default.is_null() && !self.default.is_string() {
+                    return Err(ManifestError::ParamDefaultTypeMismatch {
+                        name: param_name.to_owned(),
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -193,6 +200,7 @@ pub enum ParamType {
     Boolean,
     Number,
     Array,
+    Timezone,
 }
 
 #[cfg(test)]
@@ -348,12 +356,11 @@ mod tests {
             r#"{{
                 "uid": "550e8400-e29b-41d4-a716-446655440000",
                 "version": "1.0.0",
-                "name": "{}",
+                "name": "{long_name}",
                 "description": "Test",
                 "binary": "bin/test",
                 "sizes": ["small"]
-            }}"#,
-            long_name
+            }}"#
         );
         let result = Manifest::from_str(&json);
         assert!(matches!(result, Err(ManifestError::NameTooLong { .. })));
