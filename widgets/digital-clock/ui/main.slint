@@ -1,0 +1,145 @@
+import { Palette } from "@bmc-shared-slint";
+import { Theme } from "@bmc-shared-slint";
+import { WidgetSize } from "@bmc-shared-slint";
+import { FontStyle } from "@bmc-shared-slint";
+import { DateTime } from "@bmc-shared-slint";
+import { WidgetUtils } from "@bmc-shared-slint";
+
+export { DateTime, WidgetSize, FontStyle }
+
+export component DigitalClock inherits Window {
+    in property <WidgetSize> size: WidgetSize.Full;
+    in property <FontStyle> font-style: FontStyle.Medium;
+    in property <bool> show-seconds: false;
+    in property <bool> show-timezone: true;
+    in property <DateTime> datetime;
+
+    property <string> time: datetime.is-24-format ? (show-seconds ? datetime.time-sec-24 : datetime.time-24) : (show-seconds ? datetime.time-sec-12 : datetime.time-12);
+
+    background: Palette.black;
+
+    pure function time-fontsize(size: WidgetSize) -> length {
+        if (WidgetSize.Small == size) {
+            return 64px;
+        } else if (WidgetSize.Medium == size) {
+            return 96px;
+        } else if (WidgetSize.Large == size) {
+            return 120px;
+        } else {
+            return 200px;
+        }
+    }
+
+    if size == WidgetSize.Full: VerticalLayout {
+        // Date + TZ bar
+        HorizontalLayout {
+            alignment: start;
+            padding-left: 32px;
+            padding-right: 32px;
+            padding-top: 32px;
+
+            Text {
+                text: datetime.date;
+                font-size: 32px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-60;
+                horizontal-alignment: left;
+                width: parent.width / 3 - 32px;
+            }
+
+            Text {
+                visible: show-timezone;
+                text: datetime.timezone;
+                font-size: 32px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-60;
+                horizontal-alignment: center;
+                width: parent.width / 3;
+            }
+
+            Rectangle {
+                width: parent.width / 3 - 32px;
+            }
+        }
+
+        // Time
+        HorizontalLayout {
+            alignment: center;
+            HorizontalLayout {
+                width: 228px;
+            }
+
+            HorizontalLayout {
+                Text {
+                    text: time;
+                    font-size: time-fontsize(size);
+                    font-weight: WidgetUtils.font-style-to-font-weight(font-style);
+                    font-family: "Braiins Deck Sans";
+                    color: Palette.white;
+                }
+            }
+
+            HorizontalLayout {
+                width: 228px;
+                padding-left: 25px;
+                if !datetime.is-24-format: Text {
+                    text: datetime.is-pm ? "PM" : "AM";
+                    font-size: 32px;
+                    font-weight: Theme.font.weight.regular;
+                    color: Palette.gray-60;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Spacer
+        Rectangle { }
+    }
+
+    if size != WidgetSize.Full: GridLayout {
+        padding-top: size == WidgetSize.Large ? 90px : size == WidgetSize.Medium ? 20px : 31px;
+        padding-bottom: size == WidgetSize.Large ? 90px : size == WidgetSize.Medium ? 20px : 31px;
+
+        Row {
+            Text {
+                visible: show-timezone;
+                text: datetime.timezone;
+                font-size: 32px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-60;
+                horizontal-alignment: center;
+            }
+        }
+
+        Row {
+            Text {
+                text: time;
+                font-size: time-fontsize(size);
+                font-weight: WidgetUtils.font-style-to-font-weight(font-style);
+                color: Palette.white;
+                horizontal-alignment: center;
+            }
+        }
+
+        Row {
+            Text {
+                visible: !datetime.is-24-format;
+                text: datetime.is-pm ? "PM" : "AM";
+                font-size: 32px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-60;
+                horizontal-alignment: center;
+            }
+        }
+
+        Row {
+            Text {
+                text: datetime.date;
+                font-size: 32px;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-60;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
