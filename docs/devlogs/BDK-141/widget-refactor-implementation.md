@@ -603,84 +603,155 @@ bmc-widget-clock/
 
 ---
 
-## Stage 9: IPC Integration in Deck Application
+## Stage 9: Add Widget System (Alongside Existing)
 
 ### Goal
-Integrate widget process management into the main Deck application.
+Add the new multi-process widget system alongside the existing monolithic Slint display. Both systems run in parallel during this stage.
 
 ### Scope
-- Add widget registry to application startup
-- Replace built-in clock with spawned clock widget
-- Handle IPC messages from widgets
-- Forward actions to appropriate controllers
+- Add `--widgets-path` CLI argument to bmc-mock
+- Add `WidgetRegistry` initialization to startup
+- Create `WidgetManager` for spawning and managing widget processes
+- Wire up settings broadcasting to widgets
+- Wire up action routing from widgets to controllers
+- Existing monolithic display continues to work unchanged
 
-### Integration Points
+---
 
-1. **Startup**
-   - Platform-specific crate (`bmc-openwrt` or `bmc-mock`) creates `WidgetDiscovery` implementation
-   - Initialize `WidgetRegistry` with the discovery implementation
-   - Log available widgets
+### Step 1: Add CLI Argument
 
-2. **Scene Loading**
-   - For each widget instance in config:
-     - Look up widget in registry
-     - Spawn widget process
-     - Track in `WidgetManager`
+**File:** `bmc-mock/src/cli.rs`
 
-3. **Action Handling**
-   - Receive `Action` messages from widgets
-   - Route to appropriate controller:
-     - `play_sound` / `stop_sound` → `SoundController`
-     - `led` / `stop_led` → `LedController`
+- Add `--widgets-path` argument (optional `PathBuf`)
+- When provided, enables the new widget system
 
-4. **Settings Broadcasting**
-   - When system setting changes:
-     - Find widgets subscribed to that setting
-     - Send `settings_update` to each
+---
 
-### WidgetManager
+### Step 2: Add WidgetRegistry Initialization
 
-`WidgetManager` is generic over its dependencies (registry, spawner) to allow mocking in tests:
-- Takes `WidgetRegistry` and `ProcessSpawner` as constructor parameters
-- All platform-specific behavior is injected, not hardcoded
+**File:** `bmc-mock/src/main.rs`
+
+- If `--widgets-path` provided:
+  - Create `PathDiscovery` with the path
+  - Call `discovery.discover()` to find widgets
+  - Create `WidgetRegistry` from discovered widgets
+  - Log available widgets
+- Pass optional `WidgetRegistry` to bmc entry
+
+---
+
+### Step 3: Update bmc Entry Point
+
+**File:** `bmc/src/entry.rs`
+
+- Add optional `WidgetRegistry` parameter
+- Pass it to `App::init()`
+
+---
+
+### Step 4: Create WidgetManager
+
+**File:** `bmc/src/widget_manager.rs` (new)
+
+Responsibilities:
+- Hold `WidgetRegistry` and `ProcessSpawner`
+- Track running widget instances by instance ID
+- Spawn widget processes with IPC sockets
+- Stop widget processes
+- Broadcast settings updates to subscribed widgets
+- Route widget actions to controllers
 
 **API:**
-- `WidgetManager::new(registry, spawner)` - Create with injected dependencies
-- `WidgetManager::spawn_widget(widget_uid, instance_id, size, params, settings)` - Spawn a widget instance
-- `WidgetManager::stop_widget(instance_id)` - Stop a widget instance
-- `WidgetManager::broadcast_settings_update(update)` - Send settings update to subscribed widgets
-- `WidgetManager::handle_widget_messages()` - Stream of messages from all widgets
+- `new(registry, spawner, socket_dir)` - Create with dependencies
+- `spawn_widget(widget_uid, instance_id, size, params, settings)` - Spawn a widget
+- `stop_widget(instance_id)` - Stop a widget
+- `stop_all()` - Stop all widgets
+- `broadcast_settings_update(update)` - Send to subscribed widgets
+- `poll_messages()` - Check for incoming messages from widgets
+
+---
+
+### Step 5: Integrate WidgetManager into App
+
+**File:** `bmc/src/startup.rs`
+
+- Add optional `WidgetManager` field to `App` struct
+- If `WidgetRegistry` provided in init:
+  - Create `UnixSpawner` with socket directory
+  - Create `WidgetManager` with registry and spawner
+- Keep existing `WidgetTasks` unchanged (both systems run in parallel)
+
+---
+
+### Step 6: Wire Up Settings Broadcasting
+
+**File:** `bmc/src/system_manager.rs` (or new file)
+
+- When localization settings change, call `widget_manager.broadcast_settings_update()`
+- When timezone changes, call `widget_manager.broadcast_settings_update()`
+- When night mode changes, call `widget_manager.broadcast_settings_update()`
+
+---
+
+### Step 7: Wire Up Action Routing
+
+**File:** `bmc/src/widget_manager.rs` or `bmc/src/startup.rs`
+
+- Spawn task to poll widget messages
+- When `WidgetMessage::Action` received:
+  - `play_sound` → `SoundController::play()`
+  - `stop_sound` → `SoundController::stop()`
+  - `led` → `LedController::set_effect()`
+  - `stop_led` → `LedController::stop()`
+
+---
+
+### Step 8: Add Cargo Dependencies
+
+**File:** `bmc/Cargo.toml`
+
+- Add `bmc-widget` dependency
+- Add `bmc-ipc` dependency
+
+**File:** `bmc-mock/Cargo.toml`
+
+- Add `bmc-widget` dependency
+
+---
 
 ### Test Cases
 
-1. **Registry Integration**
-   - Registry loads on startup
-   - Widgets discoverable
+1. **Without --widgets-path**
+   - bmc-mock starts normally with existing behavior
+   - No widget processes spawned
 
-2. **Widget Spawning**
-   - Spawn widget from config
-   - Handle spawn failures gracefully
+2. **With --widgets-path**
+   - WidgetRegistry initialized
+   - Available widgets logged
+   - Both old and new systems run
 
-3. **Action Routing**
-   - Sound actions forwarded correctly
-   - LED actions forwarded correctly
+3. **Widget Spawning**
+   - Can manually spawn widget via WidgetManager
+   - IPC handshake completes (init → ready)
 
 4. **Settings Broadcast**
-   - Subscribed widgets receive updates
-   - Non-subscribed widgets don't receive
+   - Timezone change reaches widget
+   - Localization change reaches widget
+   - Night mode change reaches widget
+
+5. **Action Routing**
+   - Widget sound action triggers SoundController
+   - Widget LED action triggers LedController
 
 ### Success Criteria
 
-- [ ] Clock widget spawns from Deck application
-- [ ] Actions route to controllers
-- [ ] Settings broadcast works
-- [ ] Graceful handling of widget crashes
-
-### Dependencies
-
-- Stage 5 (Widget Registry)
-- Stage 6 (Process Spawner)
-- Stage 8 (Clock Widget)
+- [ ] `--widgets-path` argument added to bmc-mock
+- [ ] WidgetRegistry loads widgets from path
+- [ ] WidgetManager can spawn widget processes
+- [ ] IPC handshake works (init → ready)
+- [ ] Settings updates propagate to widgets
+- [ ] Actions from widgets route to controllers
+- [ ] Existing monolithic display still works
 
 ### Status: Not Started
 
