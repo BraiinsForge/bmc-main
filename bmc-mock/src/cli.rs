@@ -80,6 +80,9 @@ pub struct Config {
     /// Path to a main crontab file
     #[clap(long, default_value = None)]
     pub crontab_path: Option<PathBuf>,
+    /// Path to directory containing widget packages
+    #[clap(long, default_value = "./result-widgets")]
+    pub widgets_path: PathBuf,
 }
 
 impl From<Config> for Configuration {
@@ -105,6 +108,7 @@ impl From<Config> for Configuration {
             default_night_mode_volume_pct: value.default_night_mode_volume_pct,
             sounds_dir: value.sounds_dir,
             crontab_path: value.crontab_path,
+            widgets_paths: vec![value.widgets_path],
         }
     }
 }
