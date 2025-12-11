@@ -478,11 +478,11 @@ The `bmc-widget` crate serves as the widget SDK containing:
 
 ### Success Criteria
 
-- [ ] `WidgetClient` connects and handles IPC protocol
-- [ ] Unit tests for client connection and message handling
-- [ ] Example usage documented
+- [x] `WidgetClient` connects and handles IPC protocol
+- [x] Unit tests for client connection and message handling
+- [x] Example usage documented
 
-### Status: Not Started
+### Status: Complete
 
 ---
 
@@ -587,11 +587,11 @@ bmc-widget-clock/
 
 ### Success Criteria
 
-- [ ] Clock widget runs as standalone process
-- [ ] IPC handshake works
-- [ ] Settings updates work
-- [ ] All sizes render correctly
-- [ ] Nix package builds
+- [x] Clock widget runs as standalone process
+- [x] IPC handshake works
+- [x] Settings updates work
+- [x] All sizes render correctly
+- [x] Nix package builds
 
 ### Dependencies
 
@@ -599,7 +599,7 @@ bmc-widget-clock/
 - Stage 6 (Process Spawner) - for integration testing
 - Stage 7 (Widget Client SDK) - for IPC client
 
-### Status: Not Started
+### Status: Complete
 
 ---
 
