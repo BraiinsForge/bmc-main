@@ -12,7 +12,46 @@ let
       path = "./bmc-openwrt";
       packageName = "bmc-openwrt";
     };
+    widget-digital-clock = defineCrate {
+      path = "./widgets/digital-clock";
+      packageName = "bmc-widget-digital-clock";
+    };
   };
+
+  # Build a widget package with the correct directory structure
+  mkWidgetPackage = { name, crate, profile, features ? [ ], wrapWithLibs ? false }:
+    let
+      binary = profile.buildCrate crate { inherit features; };
+      widgetSrc = ./widgets + "/${name}";
+      runtimeLibs = with pkgs; [
+        wayland
+        libxkbcommon
+        xorg.libX11
+        xorg.libXcursor
+        xorg.libXi
+        xorg.libXrandr
+        vulkan-loader
+        libGL
+      ];
+    in
+    pkgs.runCommand "bmc-widget-${name}"
+      {
+        nativeBuildInputs = lib.optionals wrapWithLibs [ pkgs.makeWrapper ];
+      } ''
+      mkdir -p $out/lib/bmc-widgets/${name}/bin
+      cp ${widgetSrc}/manifest.json $out/lib/bmc-widgets/${name}/
+      if ${if wrapWithLibs then "true" else "false"}; then
+        for bin in ${binary}/bin/*; do
+          makeWrapper "$bin" "$out/lib/bmc-widgets/${name}/bin/$(basename $bin)" \
+            --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtimeLibs}
+        done
+      else
+        cp ${binary}/bin/* $out/lib/bmc-widgets/${name}/bin/
+      fi
+      if [ -d "${widgetSrc}/assets" ]; then
+        cp -r ${widgetSrc}/assets $out/lib/bmc-widgets/${name}/
+      fi
+    '';
 
   workspace = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
@@ -77,11 +116,48 @@ let
   armv7lPkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
   bmc-video-play-armv7 = armv7lPkgs.callPackage ./bmc-video/package.nix { };
 
+  # All widget definitions for building
+  widgets = {
+    digital-clock = {
+      crate = crates.widget-digital-clock;
+      features = [ "standalone" ];
+      wrapWithLibs = true;
+    };
+  };
+
+  # Build all widgets and combine into a single output
+  allWidgets = pkgs.symlinkJoin {
+    name = "bmc-widgets";
+    paths = lib.mapAttrsToList
+      (name: widget:
+        mkWidgetPackage {
+          inherit name;
+          inherit (widget) crate;
+          features = widget.features or [ ];
+          wrapWithLibs = widget.wrapWithLibs or false;
+          profile = build-profiles.fast;
+        }
+      )
+      widgets;
+  };
+
 in
 {
   packages = packages // specialPackages // {
     inherit bmc-video-play-armv7;
     bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
+
+    # Individual widget packages
+    widget-digital-clock = mkWidgetPackage {
+      name = "digital-clock";
+      crate = crates.widget-digital-clock;
+      features = [ "standalone" ];
+      wrapWithLibs = true;
+      profile = build-profiles.fast;
+    };
+
+    # All widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
+    widgets = allWidgets;
   };
   devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) build-profiles;
 }

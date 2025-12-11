@@ -35,6 +35,21 @@ nix build -L .#frontend
 cargo run --bin bmc-mock -- --address=0.0.0.0:6070 --www-path=./result
 ```
 
+## Build and run mock with widgets
+
+Build all widgets:
+
+```
+nix build .#widgets -o result-widgets
+```
+
+Build frontend and run mock with widgets:
+
+```
+nix build -L .#frontend
+cargo run --bin bmc-mock -- --address=0.0.0.0:6070 --www-path=./result --widgets-path=./result-widgets/lib/bmc-widgets
+```
+
 ## Run bmc-openwrt on control board
 
 ```shell
