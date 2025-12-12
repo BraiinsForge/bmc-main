@@ -3,9 +3,11 @@
 //! Widget system for discovering, spawning, and managing widget processes.
 
 mod discovery;
+mod manager;
 mod registry;
 mod spawner;
 
 pub use discovery::{PathDiscovery, WidgetDiscovery};
+pub use manager::WidgetManager;
 pub use registry::{RegistryError, WidgetInfo, WidgetRegistry};
-pub use spawner::{ProcessSpawner, SpawnError, UnixConnection, UnixSpawner, WidgetConnection};
+pub use spawner::{SpawnError, UnixConnection, UnixSpawner};
