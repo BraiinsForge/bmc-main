@@ -53,6 +53,7 @@ pub enum SpawnError {
 const BMC_IPC_SOCKET_ENV: &str = "BMC_IPC_SOCKET";
 const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_millis(5000);
 const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(5000);
+const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(5000);
 
 #[derive(Debug)]
 pub struct UnixSpawner {
@@ -137,6 +138,24 @@ impl UnixSpawner {
             WidgetMessage::Error { message, .. } => Err(SpawnError::WidgetInitError(message)),
             other @ WidgetMessage::Action(_) => Err(SpawnError::UnexpectedHandshakeMessage(other)),
         }
+    }
+
+    pub async fn shutdown(&self, connection: &mut UnixConnection) -> Result<(), SpawnError> {
+        connection.send(AppMessage::Shutdown).await?;
+
+        if timeout(DEFAULT_SHUTDOWN_TIMEOUT, connection.child.wait())
+            .await
+            .is_err()
+        {
+            warn!(
+                "widget did not exit within {:?}, killing",
+                DEFAULT_SHUTDOWN_TIMEOUT
+            );
+            connection.child.kill().await.ok();
+        }
+
+        // Socket cleanup happens in UnixConnection::drop
+        Ok(())
     }
 }
 
