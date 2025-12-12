@@ -662,12 +662,13 @@ Responsibilities:
 - Route widget actions to controllers
 
 **API:**
-- `new(registry, spawner, socket_dir)` - Create with dependencies
-- `spawn_widget(widget_uid, instance_id, size, params, settings)` - Spawn a widget
-- `stop_widget(instance_id)` - Stop a widget
-- `stop_all()` - Stop all widgets
-- `broadcast_settings_update(update)` - Send to subscribed widgets
-- `poll_messages()` - Check for incoming messages from widgets
+- [x] `init(widgets_paths)` - Create with paths, does discovery internally
+- [x] `spawn_widget(widget_uid, instance_id, init_msg)` - Spawn a widget
+- [x] `stop_widget(instance_id)` - Stop a widget
+- [ ] `stop_all()` - Stop all widgets
+- [x] `broadcast_settings(update)` - Send to all connected widgets
+- [x] `send_message(instance_id, msg)` - Send message to specific widget
+- [ ] `poll_messages()` - Check for incoming messages from widgets
 
 ---
 
@@ -706,19 +707,6 @@ Responsibilities:
 
 ---
 
-### Step 8: Add Cargo Dependencies
-
-**File:** `bmc/Cargo.toml`
-
-- Add `bmc-widget` dependency
-- Add `bmc-ipc` dependency
-
-**File:** `bmc-mock/Cargo.toml`
-
-- Add `bmc-widget` dependency
-
----
-
 ### Test Cases
 
 1. **Without --widgets-path**
@@ -745,15 +733,15 @@ Responsibilities:
 
 ### Success Criteria
 
-- [ ] `--widgets-path` argument added to bmc-mock
-- [ ] WidgetRegistry loads widgets from path
+- [x] `--widgets-path` argument added to bmc-mock
+- [x] WidgetRegistry loads widgets from path
 - [ ] WidgetManager can spawn widget processes
-- [ ] IPC handshake works (init → ready)
+- [x] IPC handshake works (init → ready)
 - [ ] Settings updates propagate to widgets
 - [ ] Actions from widgets route to controllers
 - [ ] Existing monolithic display still works
 
-### Status: Not Started
+### Status: In Progress
 
 ---
 
