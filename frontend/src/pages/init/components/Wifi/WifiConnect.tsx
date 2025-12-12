@@ -39,7 +39,7 @@ const getInitialState = (): State => ({
     isDone: false,
     isManualEntryActive: false,
     selectedNetwork: null,
-    manualEntryData: pb.create(pb.SetWifiRequestSchema),
+    manualEntryData: pb.create(pb.SetWifiRequestSchema, { encryptionType: pb.EncryptionType.NONE }),
 });
 
 const $ = getID('initial-setup-wifi').get;

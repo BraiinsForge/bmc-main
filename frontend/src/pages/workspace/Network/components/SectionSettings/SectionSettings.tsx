@@ -104,7 +104,7 @@ const getInitialState = (): State => ({
     wifiManualConnect: {
         data: {
             ssid: '',
-            security: pb.EncryptionType.UNSPECIFIED,
+            security: pb.EncryptionType.NONE,
             password: '',
         },
         errors: null,
