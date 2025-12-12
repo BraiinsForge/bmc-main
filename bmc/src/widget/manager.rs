@@ -5,7 +5,7 @@ use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bmc_ipc::AppMessage;
+use bmc_ipc::{AppMessage, SettingUpdate};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -106,5 +106,16 @@ impl WidgetManager {
         })?;
 
         connection.send(msg).await
+    }
+
+    pub async fn broadcast_settings(&self, update: SettingUpdate) {
+        let msg = AppMessage::SettingsUpdate { update };
+        let mut connections = self.connections.write().await;
+
+        for (instance_id, connection) in connections.iter_mut() {
+            if let Err(e) = connection.send(msg.clone()).await {
+                warn!("failed to send settings update to {}: {}", instance_id, e);
+            }
+        }
     }
 }
