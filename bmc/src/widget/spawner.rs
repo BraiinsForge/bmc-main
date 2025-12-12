@@ -72,18 +72,6 @@ impl UnixSpawner {
         }
     }
 
-    #[must_use]
-    pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
-        self.connection_timeout = timeout;
-        self
-    }
-
-    #[must_use]
-    pub fn with_handshake_timeout(mut self, timeout: Duration) -> Self {
-        self.handshake_timeout = timeout;
-        self
-    }
-
     fn socket_path(&self, instance_id: Uuid) -> PathBuf {
         self.socket_dir.join(format!("{instance_id}.sock"))
     }
