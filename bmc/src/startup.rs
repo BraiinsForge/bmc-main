@@ -17,6 +17,7 @@ use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
+use crate::widget::WidgetManager;
 use crate::widget_tasks::WidgetTasks;
 use anyhow::Result;
 use bmc_button::Buttons;
@@ -52,6 +53,8 @@ where
     alarm_controller: AlarmController,
     button_manager: ButtonManager<T>,
     led_controller: LedController<T>,
+    #[expect(dead_code)]
+    widget_manager: WidgetManager,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -189,6 +192,8 @@ where
 
         let button_manager = ButtonManager::new(buttons, manager.clone());
 
+        let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
+
         Ok(Self {
             listener,
             manager,
@@ -205,6 +210,7 @@ where
             alarm_controller,
             button_manager,
             led_controller,
+            widget_manager,
         })
     }
 
@@ -253,11 +259,12 @@ pub struct Configuration {
     pub default_night_mode_volume_pct: u8,
     pub sounds_dir: PathBuf,
     pub crontab_path: Option<PathBuf>,
+    pub widgets_paths: Vec<PathBuf>,
 }
 
 impl Configuration {
-    const UPGRADE_IMAGE_PATH: &'static str = "/tmp/firmware.tar";
-    const CONFIG_PATH: &'static str = "/etc/bmc_config.json";
+    const UPGRADE_IMAGE_PATH: &str = "/tmp/firmware.tar";
+    const CONFIG_PATH: &str = "/etc/bmc_config.json";
     const DEFAULT_BRIGHTNESS_PCT: u8 = 60;
     const DEFAULT_NIGHT_MODE_BRIGHTNESS_PCT: u8 = 25;
     const DEFAULT_VOLUME_PCT: u8 = 60;
@@ -279,6 +286,7 @@ impl Default for Configuration {
             default_night_mode_volume_pct: Self::DEFAULT_NIGHT_MODE_VOLUME_PCT,
             sounds_dir: PathBuf::from(Self::SOUNDS_DIR),
             crontab_path: Some(Self::CRONTAB_PATH.into()),
+            widgets_paths: vec![],
         }
     }
 }
