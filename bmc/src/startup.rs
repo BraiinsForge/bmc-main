@@ -17,7 +17,7 @@ use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
-use crate::widget::WidgetManager;
+use crate::widget::{Coordinator, WidgetManager};
 use crate::widget_tasks::WidgetTasks;
 use anyhow::Result;
 use bmc_button::Buttons;
@@ -54,7 +54,7 @@ where
     button_manager: ButtonManager<T>,
     led_controller: LedController<T>,
     #[expect(dead_code)]
-    widget_manager: WidgetManager,
+    widget_coordinator: Coordinator,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -193,6 +193,22 @@ where
         let button_manager = ButtonManager::new(buttons, manager.clone());
 
         let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
+        let widget_coordinator = Coordinator::new(widget_manager);
+
+        let timezone = manager.timezone();
+        {
+            let config_guard = config_handle.read().await;
+            let localization = config_guard.localization_config();
+            let night_mode_active = config_guard.night_mode().enabled;
+            widget_coordinator
+                .spawn_initial_widgets(
+                    &config_guard.scenes,
+                    &localization,
+                    &timezone,
+                    night_mode_active,
+                )
+                .await;
+        }
 
         Ok(Self {
             listener,
@@ -210,7 +226,7 @@ where
             alarm_controller,
             button_manager,
             led_controller,
-            widget_manager,
+            widget_coordinator,
         })
     }
 
