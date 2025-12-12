@@ -13,6 +13,7 @@ mod led;
 pub mod log;
 pub mod manager;
 mod night_mode;
+pub mod scene;
 pub mod session;
 mod sound;
 mod startup;
