@@ -745,7 +745,130 @@ Responsibilities:
 
 ---
 
-## Stage 10: Configuration Migration
+## Stage 10: Wayland Compositor Integration
+
+### Goal
+Integrate a Wayland compositor into the `bmc` application that directly composites widget processes, replacing the monolithic Slint display.
+
+### Background
+
+The `jan/coordinator-refactor` branch contains a working PoC demonstrating the compositor client approach. This stage evolves that into a full compositor embedded in `bmc`.
+
+### Architecture
+
+BMC **is** the Wayland compositor. It owns the display directly via DRM/KMS and composites widget surfaces.
+
+```
++-------------------------------------------------------------+
+|                      BMC Application                        |
+|  +-------------------------------------------------------+  |
+|  |              Wayland Compositor (smithay)             |  |
+|  |   - DRM/KMS backend for direct display output         |  |
+|  |   - Composites widget surfaces onto framebuffer       |  |
+|  |   - Handles input events (touch, pointer)             |  |
+|  |   - Implements wl_compositor, wl_shm, xdg_shell       |  |
+|  +-------------------------------------------------------+  |
+|         |                |                    |             |
+|  +-------------+  +-------------+  +---------------------+  |
+|  | SceneManager|  |WidgetManager|  | TransitionController|  |
+|  +-------------+  +-------------+  +---------------------+  |
++-------------------------------------------------------------+
+          | Wayland protocol (wl_shm, wl_surface, xdg_shell)
+          v
++----------+  +----------+  +----------+  +----------+
+|  Clock   |  |  Ticker  |  |  Pool    |  |  Image   |
+|  Widget  |  |  Widget  |  |  Widget  |  |  Widget  |
+| (client) |  | (client) |  | (client) |  | (client) |
++----------+  +----------+  +----------+  +----------+
+```
+
+### Key Design Points
+
+- **BMC is the compositor**: No Weston, no intermediate layer
+- **Widgets are Wayland clients**: They connect to BMC's Wayland socket
+- **Direct framebuffer access**: DRM/KMS for display, no GPU compositing needed
+- **Software rendering**: Widgets use Slint SoftwareRenderer, BMC composites in software
+
+### Scope
+
+This stage is divided into sub-stages for incremental progress:
+
+---
+
+### Stage 10.1: Minimal Compositor with Widget Display
+
+**Goal**: BMC acts as a Wayland compositor, spawns one widget, and displays it.
+
+**Scope**:
+- Add `smithay` compositor library to `bmc`
+- Initialize DRM/KMS backend for direct framebuffer access
+- Create Wayland socket for widget connections
+- Spawn digital-clock widget as Wayland client
+- Composite widget surface to display
+
+**Dependencies**:
+- `smithay` for compositor infrastructure
+- `calloop` for event loop integration
+
+**Success Criteria**:
+- [ ] BMC initializes DRM/KMS display
+- [ ] Wayland socket created for clients
+- [ ] Widget spawned with `WAYLAND_DISPLAY` pointing to BMC
+- [ ] Widget surface composited to display (Slint handles Wayland client automatically)
+- [ ] Works on ARMv7 device
+
+### Status: Not Started
+
+---
+
+### Stage 10.2: Grid Layout and Multiple Widgets
+
+**Goal**: Position multiple widgets in a grid layout.
+
+**Scope**:
+- Implement grid layout calculation (4x2 grid, 1280x480 display)
+- Spawn multiple widgets for a scene
+- Position widget surfaces according to grid
+- Handle widget surface commits
+
+**Grid Dimensions**:
+| Size | Grid Cells | Pixels |
+|------|-----------|--------|
+| small | 1x1 | 320x240 |
+| medium | 2x1 | 640x240 |
+| large | 2x2 | 640x480 |
+| full | 4x2 | 1280x480 |
+
+**Success Criteria**:
+- [ ] Multiple widgets spawned
+- [ ] Widgets positioned correctly in grid
+- [ ] All widgets visible simultaneously
+- [ ] No rendering artifacts
+
+### Status: Not Started
+
+---
+
+### Stage 10.3: Scene Transitions
+
+**Goal**: Implement smooth horizontal scrolling between scenes.
+
+**Scope**:
+- Pre-spawn widgets for adjacent scenes
+- Animate surface positions for horizontal scroll
+- Use vsync for smooth 60fps transitions
+- Implement gesture detection for navigation
+
+**Success Criteria**:
+- [ ] Smooth 60fps horizontal scroll
+- [ ] Touch gesture triggers transition
+- [ ] Scene carousel loops correctly
+
+### Status: Not Started
+
+---
+
+## Stage 11: Configuration Migration
 
 ### Goal
 Migrate existing widget configurations to use widget UIDs.
