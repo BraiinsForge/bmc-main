@@ -730,7 +730,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_display::display_driver::DisplayBacklightDriver;
+    use crate::backlight::DisplayBacklightDriver;
     use std::str::FromStr;
 
     #[derive(Debug, Clone)]

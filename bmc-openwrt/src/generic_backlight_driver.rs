@@ -3,7 +3,7 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::bail;
-use bmc_display::display_driver::DisplayBacklightDriver;
+use bmc::backlight::DisplayBacklightDriver;
 use std::io::Error;
 use tracing::info;
 
