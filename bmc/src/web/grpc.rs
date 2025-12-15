@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::BmcManager;
+use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
@@ -10,7 +11,6 @@ use crate::web::SessionManager;
 use crate::web::session::extract_session;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::display_controller::DisplayController;
-use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_grpc::web;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::fmt::Display;
@@ -37,7 +37,8 @@ mod configuration_service;
 mod initial_setup;
 mod led_test;
 mod network;
-mod scene_management;
+// TODO: display refactor
+// mod scene_management;
 mod shared;
 mod upgrade_service;
 
@@ -167,15 +168,16 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 ),
             );
 
-        let scene_management_service =
-            web::scene_management_service_server::SceneManagementServiceServer::new(
-                scene_management::SceneManagementService::new(
-                    self.config_handle.clone(),
-                    self.display_controller,
-                    self.widget_tasks,
-                    self.led_controller.clone(),
-                ),
-            );
+        // TODO: display refactor
+        // let scene_management_service =
+        //     web::scene_management_service_server::SceneManagementServiceServer::new(
+        //         scene_management::SceneManagementService::new(
+        //             self.config_handle.clone(),
+        //             self.display_controller,
+        //             self.widget_tasks,
+        //             self.led_controller.clone(),
+        //         ),
+        //     );
 
         let account_management_service =
             web::account_management_service_server::AccountManagementServiceServer::new(
@@ -213,14 +215,15 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                         auth_interceptor.clone(),
                     ))),
             )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                        scene_management_service,
-                        auth_interceptor.clone(),
-                    ))),
-            )
+            // TODO: display refactor
+            // .add_service(
+            //     tower::ServiceBuilder::new()
+            //         .layer(logging_layer.clone())
+            //         .service(GrpcWebLayer::new().layer(InterceptorFor::new(
+            //             scene_management_service,
+            //             auth_interceptor.clone(),
+            //         ))),
+            // )
             .add_service(
                 tower::ServiceBuilder::new()
                     .layer(logging_layer.clone())

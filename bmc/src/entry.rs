@@ -1,21 +1,20 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::backlight::DisplayBacklightDriver;
 use crate::{App, BmcManager, Configuration};
 use anyhow::Result;
-use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use bmc_led::led_driver::LedDriver;
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::Mutex;
 
 pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
     manager: impl BmcManager,
     config: Configuration,
-    display: DisplayDriver<T>,
+    backlight_driver: Arc<Mutex<T>>,
     led_driver: LedDriver,
     firmware_resolver: FirmwareResolver<U>,
     buttons: Arc<Box<dyn bmc_button::Buttons + Send + Sync>>,
-    screen_activity: Arc<Notify>,
 ) -> Result<()> {
     let manager = Arc::new(manager);
     let session_manager = manager.session_manager();
@@ -24,11 +23,10 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
         config,
         manager,
         session_manager,
-        display,
+        backlight_driver,
         led_driver,
         firmware_resolver,
         buttons,
-        screen_activity,
     )
     .await?;
     app.run().await

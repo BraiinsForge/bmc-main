@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::backlight::DisplayBacklightDriver;
 use crate::{
     backlight::DisplayBacklightController,
     bootloader_config::BootloaderConfig,
@@ -13,7 +14,6 @@ use crate::{
     sound::SoundController,
 };
 use bmc_display::display_controller::DisplayController;
-use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_scheduler::JobScheduler;
 use bmc_shared_time::time::Timezone;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};

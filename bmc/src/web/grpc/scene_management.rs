@@ -1,5 +1,11 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// TODO: display refactor
+// This module needs to be updated to use the new scene types from bmc::scene.
+// Temporarily disabled until the migration is complete.
+
+/*
+
 use crate::BmcManager;
 use crate::config::ConfigHandle;
 use crate::led::LedController;
@@ -1918,3 +1924,4 @@ fn map_params_to_protobuf_struct(param: JsonValue) -> Struct {
         }
     }
 }
+*/

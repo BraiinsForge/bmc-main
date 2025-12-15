@@ -7,6 +7,7 @@ mod no_password;
 mod session;
 
 use crate::alarm::AlarmController;
+use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
@@ -18,7 +19,6 @@ use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
 use bmc_display::display_controller::DisplayController;
-use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},

@@ -3,18 +3,14 @@
 use std::panic;
 use std::{str::FromStr, sync::Arc};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
+use bmc::backlight::DisplayBacklightDriver;
 use bmc::{BmcManager, Configuration};
-use bmc_display::{
-    display_controller::DisplayController,
-    display_driver::{DisplayBacklightDriver, DisplayDriver},
-    metadata::{DisplayMetadata, ResolutionMetadata, UsizeMetadata},
-};
 use bmc_led::led_driver::LedDriverFactory;
 use bmc_openwrt::cli::Parser;
 use bmc_openwrt::{
     button_driver::UEventButtons, generic_backlight_driver::GenericBacklightDriver,
-    linux_drm_platform::LinuxDrmPlatform, manager::Manager, session::OpenwrtSessionManager,
+    manager::Manager, session::OpenwrtSessionManager,
 };
 use bmc_openwrt::{
     cli::Args, led_driver::platform_led_driver::PlatformLedDriver,
@@ -23,8 +19,7 @@ use bmc_openwrt::{
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;
-use slint::platform::software_renderer::RenderingRotation;
-use tokio::sync::Notify;
+use tokio::sync::Mutex;
 use tracing::{error, info};
 
 /// Realtek WiFi adapter vendor ID
@@ -48,18 +43,9 @@ async fn main() -> Result<()> {
 
     let mut backlight_driver = GenericBacklightDriver::new("/sys/class/backlight/display-bl");
     backlight_driver.init()?;
+    let backlight_driver = Arc::new(Mutex::new(backlight_driver));
 
     let led_driver = PlatformLedDriver::new("/dev/spidev0.0");
-
-    //TODO: this will be read from config file or emmc
-    let brightness = UsizeMetadata::new(18, 0, 20);
-    let resolution = ResolutionMetadata::new(1280, 480);
-    let display_metadata = DisplayMetadata::new(brightness, resolution);
-
-    let touch_activity = Arc::new(Notify::new());
-    let display_controller = get_display_controller(display_metadata, touch_activity.clone())?;
-
-    let display_driver = DisplayDriver::init(backlight_driver, display_controller)?;
 
     let config = Configuration::default();
 
@@ -109,66 +95,12 @@ async fn main() -> Result<()> {
     bmc::entry::main(
         manager,
         config,
-        display_driver,
+        backlight_driver,
         led_driver.0,
         firmware_resolver,
         Arc::new(Box::new(UEventButtons)),
-        touch_activity,
     )
     .await?;
 
-    Ok(())
-}
-
-fn get_display_controller(
-    display_metadata: DisplayMetadata,
-    touch_activity: Arc<Notify>,
-) -> Result<DisplayController> {
-    let (ui_handle_sender, ui_handle_receiver) = flume::unbounded();
-
-    // Spawn a thread to initiaize linux platform
-    std::thread::spawn(move || {
-        if let Err(e) = run_slint_platform(&display_metadata, &ui_handle_sender, touch_activity) {
-            error!("{:#}", e);
-        }
-    });
-
-    // Wait for the UI handle to be created
-    ui_handle_receiver
-        .recv()
-        .map_err(|e| anyhow!("Cannot receive slint handle: {:#}", e))
-}
-
-fn run_slint_platform(
-    display_metadata: &DisplayMetadata,
-    ui_handle_sender: &flume::Sender<DisplayController>,
-    touch_activity: Arc<Notify>,
-) -> Result<()> {
-    info!("Setting up slint platform for linux framebuffer display");
-    slint::platform::set_platform(Box::new(
-        LinuxDrmPlatform::new(
-            display_metadata.resolution.height as usize,
-            display_metadata.resolution.width as usize,
-            RenderingRotation::Rotate270,
-            touch_activity,
-        )
-        .context("Cannot create platform")?,
-    ))
-    .map_err(|e| anyhow!("Cannot set platform: {e:#?}"))?;
-
-    // Initialize the UI
-    let (display_controller, main_window) = DisplayController::create(
-        display_metadata.resolution.width,
-        display_metadata.resolution.height,
-    )
-    .context("Cannot initialize ui")?;
-
-    // Send the UI handle to the main thread to create the display controller
-    ui_handle_sender
-        .send(display_controller)
-        .context("Cannot send ui_handle")?;
-
-    // Run the event loop
-    main_window.run().context("Cannot run event loop")?;
     Ok(())
 }
