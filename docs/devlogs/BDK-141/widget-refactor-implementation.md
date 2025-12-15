@@ -406,9 +406,9 @@ Uses `JsonLinesCodec<WidgetMessage, AppMessage>`:
 
 ### Success Criteria
 
-- [ ] Socket creation and cleanup works
-- [ ] Process spawns with correct env vars
-- [ ] Init/ready handshake works
+- [x] Socket creation and cleanup works
+- [x] Process spawns with correct env vars
+- [x] Init/ready handshake works
 - [ ] Graceful and forced shutdown works
 - [ ] Integration tests with mock widget binary
 
@@ -735,11 +735,11 @@ Responsibilities:
 
 - [x] `--widgets-path` argument added to bmc-mock
 - [x] WidgetRegistry loads widgets from path
-- [ ] WidgetManager can spawn widget processes
+- [x] WidgetManager can spawn widget processes
 - [x] IPC handshake works (init → ready)
 - [ ] Settings updates propagate to widgets
 - [ ] Actions from widgets route to controllers
-- [ ] Existing monolithic display still works
+
 
 ### Status: In Progress
 
@@ -812,10 +812,6 @@ If widget UID not found in registry:
 - [ ] All existing configs migrate successfully
 - [ ] Missing widgets handled gracefully
 
-### Dependencies
-
-- Stage 8 (Clock Widget) - for initial UID mapping
-- Stage 9 (Deck Integration) - for runtime testing
 
 ### Status: Not Started
 
