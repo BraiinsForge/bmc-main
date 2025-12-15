@@ -92,54 +92,56 @@ pub async fn run(
         }
     };
 
-    let params = {
-        let config = config_handle.read().await;
-        let user_params = match config
-            .scenes
-            .get(&scene_id)
-            .and_then(|s| s.widgets.get(&widget_id))
-            .and_then(|w| {
-                if let bmc_display::data::WidgetKind::RemoteWidget(remote_widget) = &w.kind {
-                    Some(remote_widget)
-                } else {
-                    display_controller.update_remote_widget(
-                        scene_id.clone(),
-                        widget_id.clone(),
-                        RemoteWidgetState::UnexpectedError,
-                        String::new(),
-                    );
-                    None
-                }
-            }) {
-            Some(remote_widget) if remote_widget.params != serde_json::Value::Null => {
-                remote_widget.params.clone()
-            }
-            Some(_) => serde_json::json!({}),
-            None => return,
-        };
+    // TODO: display refactor - need to get params from new scene types
+    // let params = {
+    //     let config = config_handle.read().await;
+    //     let user_params = match config
+    //         .scenes
+    //         .get(&scene_id)
+    //         .and_then(|s| s.widgets.get(&widget_id))
+    //         .and_then(|w| {
+    //             if let bmc_display::data::WidgetKind::RemoteWidget(remote_widget) = &w.kind {
+    //                 Some(remote_widget)
+    //             } else {
+    //                 display_controller.update_remote_widget(
+    //                     scene_id.clone(),
+    //                     widget_id.clone(),
+    //                     RemoteWidgetState::UnexpectedError,
+    //                     String::new(),
+    //                 );
+    //                 None
+    //             }
+    //         }) {
+    //         Some(remote_widget) if remote_widget.params != serde_json::Value::Null => {
+    //             remote_widget.params.clone()
+    //         }
+    //         Some(_) => serde_json::json!({}),
+    //         None => return,
+    //     };
 
-        let localization = config.localization_config();
-        let timezone = system_timezone_receiver.borrow();
+    //     let localization = config.localization_config();
+    //     let timezone = system_timezone_receiver.borrow();
 
-        // TODO: Ideally, this JSON schema should be generated from protobufs
-        // rather than being hardcoded here.
-        // Start with system prefs as base
-        let mut params = serde_json::json!({
-            "timezone": timezone.iana(),
-            "numberFormat": format_number_format(localization.number_format),
-            "dateFormat": format_date_format(localization.date_format),
-            "timeFormat": format_time_format(localization.time_system),
-            "temperatureUnit": format_temperature_unit(&localization.temperature_unit),
-            "unitSystem": format_unit_system(&localization.unit_system)
-        });
+    //     // TODO: Ideally, this JSON schema should be generated from protobufs
+    //     // rather than being hardcoded here.
+    //     // Start with system prefs as base
+    //     let mut params = serde_json::json!({
+    //         "timezone": timezone.iana(),
+    //         "numberFormat": format_number_format(localization.number_format),
+    //         "dateFormat": format_date_format(localization.date_format),
+    //         "timeFormat": format_time_format(localization.time_system),
+    //         "temperatureUnit": format_temperature_unit(&localization.temperature_unit),
+    //         "unitSystem": format_unit_system(&localization.unit_system)
+    //     });
 
-        // Merge user params on top (user params take precedence)
-        if let (Some(base), Some(user)) = (params.as_object_mut(), user_params.as_object()) {
-            base.extend(user.iter().map(|(k, v)| (k.clone(), v.clone())));
-        }
+    //     // Merge user params on top (user params take precedence)
+    //     if let (Some(base), Some(user)) = (params.as_object_mut(), user_params.as_object()) {
+    //         base.extend(user.iter().map(|(k, v)| (k.clone(), v.clone())));
+    //     }
 
-        params
-    };
+    //     params
+    // };
+    let params = serde_json::json!({});
 
     let invoke_body = InvokeBody {
         size: widget_size.to_string(),

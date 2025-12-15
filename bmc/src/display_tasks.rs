@@ -6,13 +6,13 @@ use crate::initial_setup::InitSetupState;
 use crate::system_manager::SystemManager;
 use crate::system_upgrade::SystemUpgradeState;
 
+use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use bmc_display::bitcoin_data::BitcoinData;
 use bmc_display::blockheight_data::{self, BlockheightData};
 use bmc_display::data::{ConnectInfoScreen, InitScreen, UpgradeScreen};
 use bmc_display::difficulty_data::DifficultyData;
 use bmc_display::display_controller::DisplayController;
-use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_display::hashrate_data::HashrateData;
 use bmc_shared_ii_net::wifi::SignalStrength;
 use bmc_shared_time::time::Timezone;
