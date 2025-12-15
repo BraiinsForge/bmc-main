@@ -71,6 +71,7 @@ let
       minimal_deps = false;
       rustProfile = "fast";
     };
+    # musl profiles for bmc-openwrt (statically linked)
     armv7-release = mkBuildProfile {
       suffix = "armv7";
       minimal_deps = true;
@@ -84,6 +85,21 @@ let
       rustProfile = "dev";
       rustCrossTarget = "armv7-unknown-linux-musleabihf";
       build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
+    };
+    # glibc profiles for widgets (dynamically linked, compatible with system libs)
+    armv7-glibc-release = mkBuildProfile {
+      suffix = "armv7";
+      minimal_deps = true;
+      rustProfile = "release";
+      rustCrossTarget = "armv7-unknown-linux-gnueabihf";
+      build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform;
+    };
+    armv7-glibc-debug = mkBuildProfile {
+      suffix = "armv7";
+      minimal_deps = false;
+      rustProfile = "dev";
+      rustCrossTarget = "armv7-unknown-linux-gnueabihf";
+      build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform;
     };
   };
 
@@ -125,21 +141,29 @@ let
     };
   };
 
-  # Build all widgets and combine into a single output
-  allWidgets = pkgs.symlinkJoin {
+  # Build all widgets for a given profile and combine into a single output
+  # wrapLibs: whether to wrap binaries with LD_LIBRARY_PATH (only for x86, not cross-compiled)
+  mkAllWidgets = { profile, wrapLibs ? false }: pkgs.symlinkJoin {
     name = "bmc-widgets";
     paths = lib.mapAttrsToList
       (name: widget:
         mkWidgetPackage {
-          inherit name;
+          inherit name profile;
           inherit (widget) crate;
           features = widget.features or [ ];
-          wrapWithLibs = widget.wrapWithLibs or false;
-          profile = build-profiles.fast;
+          # Only wrap with libs if requested AND the widget wants it
+          wrapWithLibs = wrapLibs && (widget.wrapWithLibs or false);
         }
       )
       widgets;
   };
+
+  # x86 widgets (for bmc-mock) - need library wrapper for Nix environment
+  allWidgets = mkAllWidgets { profile = build-profiles.fast; wrapLibs = true; };
+
+  # ARM widgets (glibc, dynamically linked) - compatible with system Wayland libs
+  allWidgetsArmv7Release = mkAllWidgets { profile = build-profiles.armv7-glibc-release; };
+  allWidgetsArmv7Debug = mkAllWidgets { profile = build-profiles.armv7-glibc-debug; };
 
 in
 {
@@ -147,7 +171,7 @@ in
     inherit bmc-video-play-armv7;
     bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
 
-    # Individual widget packages
+    # Individual widget packages (x86)
     widget-digital-clock = mkWidgetPackage {
       name = "digital-clock";
       crate = crates.widget-digital-clock;
@@ -158,6 +182,10 @@ in
 
     # All widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
     widgets = allWidgets;
+
+    # ARM widget packages
+    widgets-armv7-release = allWidgetsArmv7Release;
+    widgets-armv7-debug = allWidgetsArmv7Debug;
   };
   devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) build-profiles;
 }
