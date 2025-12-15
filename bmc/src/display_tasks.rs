@@ -6,13 +6,13 @@ use crate::initial_setup::InitSetupState;
 use crate::system_manager::SystemManager;
 use crate::system_upgrade::SystemUpgradeState;
 
+use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use bmc_display::bitcoin_data::BitcoinData;
 use bmc_display::blockheight_data::{self, BlockheightData};
 use bmc_display::data::{ConnectInfoScreen, InitScreen, UpgradeScreen};
 use bmc_display::difficulty_data::DifficultyData;
 use bmc_display::display_controller::DisplayController;
-use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_display::hashrate_data::HashrateData;
 use bmc_shared_ii_net::wifi::SignalStrength;
 use bmc_shared_time::time::Timezone;
@@ -931,42 +931,44 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         display_controller: DisplayController,
         config_handle: Arc<RwLock<ConfigHandle>>,
     ) {
-        let mut receiver = display_controller.on_countdown_dismiss_events();
-        while let Some(event) = receiver.next().await {
-            info!(
-                "Countdown dismissed: scene={}, widget={}",
-                event.scene_id, event.widget_id
-            );
+        // TODO: display refactor - connected_widgets needs new implementation
+        // let mut receiver = display_controller.on_countdown_dismiss_events();
 
-            let scene_id: bmc_display::data::SceneId = match event.scene_id.parse() {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+        // while let Some(event) = receiver.next().await {
+        //     info!(
+        //         "Countdown dismissed: scene={}, widget={}",
+        //         event.scene_id, event.widget_id
+        //     );
 
-            let cycle_duration = {
-                let mut config = config_handle.write().await;
-                let mut temp = config.clone();
-                let Some(scene) = temp.scenes.get_mut(&scene_id) else {
-                    continue;
-                };
-                if !scene.enabled {
-                    continue;
-                }
+        //     let scene_id: bmc_display::data::SceneId = match event.scene_id.parse() {
+        //         Ok(id) => id,
+        //         Err(_) => continue,
+        //     };
 
-                scene.enabled = false;
-                let cycle_duration = scene.cycle_duration;
+        //     let cycle_duration = {
+        //         let mut config = config_handle.write().await;
+        //         let mut temp = config.clone();
+        //         let Some(scene) = temp.scenes.get_mut(&scene_id) else {
+        //             continue;
+        //         };
+        //         if !scene.enabled {
+        //             continue;
+        //         }
 
-                if let Err(err) = temp.save().await {
-                    error!("Failed to save config after countdown dismiss: {err}");
-                    continue;
-                }
-                *config = temp;
-                cycle_duration
-            };
+        //         scene.enabled = false;
+        //         let cycle_duration = scene.cycle_duration;
 
-            display_controller.update_scene(scene_id, false, cycle_duration);
-            display_controller.reset_cycler();
-        }
+        //         if let Err(err) = temp.save().await {
+        //             error!("Failed to save config after countdown dismiss: {err}");
+        //             continue;
+        //         }
+        //         *config = temp;
+        //         cycle_duration
+        //     };
+
+        //     display_controller.update_scene(scene_id, false, cycle_duration);
+        //     display_controller.reset_cycler();
+        // }
     }
 
     async fn run_night_mode_toggle_listener(

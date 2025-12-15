@@ -2,13 +2,12 @@
 
 use crate::{
     alarm::{AlarmData, AlarmId},
+    scene::{Scene, SceneId, SceneKind, WidgetSize, deserialize_scenes, serialize_scenes},
     utils::replace_file,
 };
 use anyhow::{Context, Result, bail};
 use bmc_display::data::{
-    Account, AccountId, BlockHeightWidget, ClockStyle, ClockWidget, Scene, SceneCycling, SceneId,
-    SceneKind, TickerBtcWidget, Widget, WidgetKind, WidgetPosition, WidgetSize,
-    deserialize_accounts, deserialize_scenes, serialize_accounts, serialize_scenes,
+    Account, AccountId, SceneCycling, deserialize_accounts, serialize_accounts,
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
@@ -23,6 +22,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::sync::broadcast;
 use tracing::warn;
+use uuid::Uuid;
 
 const CHANNEL_CAPACITY: usize = 8;
 
@@ -307,50 +307,25 @@ impl Config {
 }
 
 impl Default for Config {
+    // TODO: Refine default scenes after all widgets are migrated to multi-process system.
+    // The original default included: clock fullscreen, ticker_btc fullscreen, and a combined
+    // scene with analog clock, block height, and ticker_btc widgets.
     fn default() -> Self {
-        let clock_fullscreen_scene = Scene::fullscreen(WidgetKind::Clock(ClockWidget::default()));
-        let ticker_btc_fullscreen_scene =
-            Scene::fullscreen(WidgetKind::TickerBtc(TickerBtcWidget::default()));
+        // Digital clock widget type ID from widgets/digital-clock/manifest.json
+        let digital_clock_type_id =
+            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440001").expect("BUG: invalid UUID");
 
-        let combined_scene = {
-            let mut scene = Scene::combined();
-
-            let clock_widget = Widget::new(
-                WidgetKind::Clock({
-                    ClockWidget {
-                        clock_style: ClockStyle::AnalogRect,
-                        ..ClockWidget::default()
-                    }
-                }),
-                WidgetPosition { row: 0, col: 0 },
-                WidgetSize::Medium,
-            );
-
-            let block_height_widget = Widget::new(
-                WidgetKind::BlockHeight(BlockHeightWidget::default()),
-                WidgetPosition { row: 1, col: 0 },
-                WidgetSize::Medium,
-            );
-
-            let ticker_btc_widget = Widget::new(
-                WidgetKind::TickerBtc(TickerBtcWidget::default()),
-                WidgetPosition { row: 0, col: 2 },
-                WidgetSize::Large,
-            );
-
-            scene.widgets = indexmap! {
-                clock_widget.id.clone() => clock_widget,
-                block_height_widget.id.clone() => block_height_widget,
-                ticker_btc_widget.id.clone() => ticker_btc_widget,
-            };
-
-            scene
-        };
+        let clock_fullscreen_scene = Scene::fullscreen(
+            digital_clock_type_id,
+            serde_json::json!({
+                "showSeconds": true,
+                "showTimezone": true,
+                "fontStyle": "medium"
+            }),
+        );
 
         let scenes = indexmap! {
-            clock_fullscreen_scene.id.clone() => clock_fullscreen_scene,
-            ticker_btc_fullscreen_scene.id.clone() => ticker_btc_fullscreen_scene,
-            combined_scene.id.clone() => combined_scene,
+            clock_fullscreen_scene.id => clock_fullscreen_scene,
         };
 
         Self {

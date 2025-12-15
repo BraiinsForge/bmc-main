@@ -3,7 +3,9 @@
 use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
-use bmc_display::data::{Account, AccountId, AccountType, AuthenticationType, WidgetKind};
+use bmc_display::data::{Account, AccountId, AccountType, AuthenticationType};
+// TODO: display refactor - WidgetKind no longer used
+// use bmc_display::data::WidgetKind;
 use bmc_grpc::web;
 use prost_types::Timestamp;
 use reqwest::StatusCode;
@@ -186,30 +188,31 @@ impl web::account_management_service_server::AccountManagementService for Accoun
             .into_values()
             .map(map_account_to_proto)
             .map(|mut account| {
-                account.connected_widgets = config
-                    .scenes
-                    .values()
-                    .flat_map(|scene| scene.widgets.values())
-                    .filter_map(|w| match &w.kind {
-                        WidgetKind::BraiinsPool(pool_widget)
-                            if pool_widget
-                                .account_id
-                                .as_ref()
-                                .is_some_and(|id| id.to_string() == account.id) =>
-                        {
-                            Some(w.id.to_string())
-                        }
-                        WidgetKind::BraiinsPool(_)
-                        | WidgetKind::Clock(_)
-                        | WidgetKind::TickerBtc(_)
-                        | WidgetKind::BlockHeight(_)
-                        | WidgetKind::RemoteImage(_)
-                        | WidgetKind::BlockchainData
-                        | WidgetKind::RemoteWidget(_)
-                        | WidgetKind::HalvingCountdown
-                        | WidgetKind::Countdown(_) => None,
-                    })
-                    .collect();
+                // TODO: display refactor - connected_widgets needs new implementation
+                // account.connected_widgets = config
+                //     .scenes
+                //     .values()
+                //     .flat_map(|scene| scene.widgets.values())
+                //     .filter_map(|w| match &w.kind {
+                //         WidgetKind::BraiinsPool(pool_widget)
+                //             if pool_widget
+                //                 .account_id
+                //                 .as_ref()
+                //                 .is_some_and(|id| id.to_string() == account.id) =>
+                //         {
+                //             Some(w.id.to_string())
+                //         }
+                //         WidgetKind::BraiinsPool(_)
+                //         | WidgetKind::Clock(_)
+                //         | WidgetKind::TickerBtc(_)
+                //         | WidgetKind::BlockHeight(_)
+                //         | WidgetKind::RemoteImage(_)
+                //         | WidgetKind::BlockchainData
+                //         | WidgetKind::RemoteWidget(_)
+                //         | WidgetKind::HalvingCountdown
+                //         | WidgetKind::Countdown(_) => None,
+                //     })
+                //     .collect();
                 account
             })
             .collect();

@@ -4,7 +4,7 @@ use crate::config::{ConfigHandle, UnitSystem};
 use crate::sound::Sounds;
 use crate::system_manager::SystemManager;
 
-use bmc_display::display_driver::DisplayBacklightDriver;
+use crate::backlight::DisplayBacklightDriver;
 use bmc_grpc::web::{
     self, BootSoundSettingsResponse, GeneralSettingsDataResponse, LedSettingsResponse,
     ListSoundsResponse, PlaySoundRequest, SetDateFormatRequest, SetFirstDayOfWeekRequest,

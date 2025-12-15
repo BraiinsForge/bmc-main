@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::alarm::{AlarmBus, AlarmController};
+use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
@@ -21,58 +22,53 @@ use crate::widget::{Coordinator, WidgetManager};
 use crate::widget_tasks::WidgetTasks;
 use anyhow::Result;
 use bmc_button::Buttons;
-use bmc_display::blockheight_data::BlockheightData;
-use bmc_display::display_controller::DisplayController;
-use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use bmc_led::led_driver::LedDriver;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tokio::sync::{RwLock, watch};
 use tracing::info;
 
 #[derive(Debug)]
-pub struct App<T, U, V>
+pub struct App<T, V>
 where
     T: BmcManager,
-    U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
     listener: TcpListener,
     manager: Arc<T>,
     session_manager: Arc<T::SessionManager>,
+    #[expect(dead_code)]
     config: Configuration,
-    display_tasks: DisplayTasks<T, U>,
-    widget_tasks: WidgetTasks,
+    // TODO: display refactor
+    // display_tasks: DisplayTasks<T, U>,
+    // widget_tasks: WidgetTasks,
     system_upgrade_service: SystemUpgradeService<V, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    display_controller: DisplayController,
+    // TODO: display refactor
+    // display_controller: DisplayController,
     initial_setup: InitialSetup<T, V>,
-    system_manager: SystemManager<U>,
-    sound_controller: SoundController,
-    alarm_controller: AlarmController,
     button_manager: ButtonManager<T>,
     led_controller: LedController<T>,
     #[expect(dead_code)]
     widget_coordinator: Coordinator,
 }
 
-impl<T, U, V> App<T, U, V>
+impl<T, V> App<T, V>
 where
     T: BmcManager,
-    U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
-    #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub async fn init(
+    #[expect(clippy::too_many_lines)]
+    pub async fn init<U: DisplayBacklightDriver>(
         config: Configuration,
         manager: Arc<T>,
         session_manager: T::SessionManager,
-        display_driver: DisplayDriver<U>,
+        _backlight_driver: Arc<Mutex<U>>,
         led_driver: LedDriver,
         firmware_resolver: FirmwareResolver<V>,
         buttons: Arc<Box<dyn Buttons + Send + Sync>>,
-        screen_activity: Arc<tokio::sync::Notify>,
     ) -> Result<Self> {
         let listener = TcpListener::bind(config.address).await?;
 
@@ -87,9 +83,10 @@ where
         )
         .await;
 
-        let display_controller = display_driver.display_controller.clone();
-        display_controller.set_scenes(config_handle.scenes.clone());
-        display_controller.set_scene_cycling(config_handle.scene_cycling());
+        // TODO: display refactor
+        // let display_controller = display_driver.display_controller.clone();
+        // display_controller.set_scenes(config_handle.scenes.clone());
+        // display_controller.set_scene_cycling(config_handle.scene_cycling());
 
         let autoupgrade_config = config_handle.autoupgrade();
         let led_enabled = config_handle.led_enabled();
@@ -114,27 +111,25 @@ where
             .autoupgrade_init(autoupgrade_config)
             .await;
 
-        let sound_controller =
-            SoundController::new(config_handle.clone(), config.sounds_dir.clone());
+        // TODO: display refactor - connected_widgets needs new implementation
+        // let sound_controller =
+        //     SoundController::new(config_handle.clone(), config.sounds_dir.clone());
 
-        let (blockheight_sender, blockheight_receiver) = watch::channel(BlockheightData::default());
+        // let widget_tasks = WidgetTasks::new(
+        //     display_controller.clone(),
+        //     config_handle.clone(),
+        //     manager.watch_timezone_updates(),
+        //     led_driver.command_sender.clone(),
+        //     sound_controller.clone(),
+        // );
 
-        let widget_tasks = WidgetTasks::new(
-            display_controller.clone(),
-            config_handle.clone(),
-            manager.watch_timezone_updates(),
-            led_driver.command_sender.clone(),
-            sound_controller.clone(),
-            blockheight_receiver,
-        );
-
-        for scene in config_handle.read().await.scenes.values() {
-            if scene.enabled {
-                widget_tasks
-                    .spawn_all(&scene.id, scene.widgets.values())
-                    .await;
-            }
-        }
+        // for scene in config_handle.read().await.scenes.values() {
+        //     if scene.enabled {
+        //         widget_tasks
+        //             .spawn_all(&scene.id, scene.widgets.values())
+        //             .await;
+        //     }
+        // }
 
         let initial_setup = InitialSetup::new(
             manager.clone(),
@@ -145,15 +140,39 @@ where
 
         let alarm_bus = AlarmBus::new();
 
-        let alarm_controller = AlarmController::init(
-            config_handle.clone(),
-            scheduler.clone(),
-            sound_controller.clone(),
-            display_controller.clone(),
-            alarm_bus.clone(),
-            manager.watch_timezone_updates(),
-        )
-        .await;
+        // TODO: display refactor - AlarmController needs display_controller
+        // let alarm_controller = AlarmController::init(
+        //     config_handle.clone(),
+        //     scheduler.clone(),
+        //     sound_controller.clone(),
+        //     display_controller.clone(),
+        //     alarm_bus.clone(),
+        //     manager.watch_timezone_updates(),
+        // )
+        // .await;
+
+        // TODO: display refactor - SystemManager needs display_controller
+        // let system_manager = SystemManager::init(
+        //     config_handle.clone(),
+        //     manager.watch_timezone_updates(),
+        //     backlight_driver,
+        //     scheduler,
+        //     display_controller.clone(),
+        //     sound_controller.clone(),
+        // )
+        // .await;
+
+        // TODO: display refactor
+        // let display_tasks = DisplayTasks::new(
+        //     display_controller.clone(),
+        //     state_service.subscribe(),
+        //     manager.watch_timezone_updates(),
+        //     initial_setup.subscribe(),
+        //     manager.clone(),
+        //     config_handle.clone(),
+        //     alarm_bus.clone(),
+        //     system_manager.clone(),
+        // );
 
         let (_, last_price_change_24h_receiver) = watch::channel(0.0);
         let (mut led_controller, led_state_sender) = LedController::new(
@@ -161,32 +180,7 @@ where
             manager.clone(),
             last_price_change_24h_receiver,
             led_enabled,
-            alarm_bus.clone(),
-        );
-
-        let system_manager = SystemManager::init(
-            config_handle.clone(),
-            manager.watch_timezone_updates(),
-            display_driver.backlight_driver,
-            scheduler,
-            display_controller.clone(),
-            sound_controller.clone(),
-            led_state_sender.clone(),
-            manager.clone(),
-            screen_activity,
-        )
-        .await;
-
-        let display_tasks = DisplayTasks::new(
-            display_controller.clone(),
-            state_service.subscribe(),
-            manager.watch_timezone_updates(),
-            initial_setup.subscribe(),
-            manager.clone(),
-            config_handle.clone(),
-            alarm_bus.clone(),
-            system_manager.clone(),
-            blockheight_sender,
+            alarm_bus,
         );
 
         led_controller.init(led_driver.command_sender.clone());
@@ -217,15 +211,18 @@ where
             manager,
             session_manager: session_manager.into(),
             config,
-            display_tasks,
-            widget_tasks,
+            // TODO: display refactor
+            // display_tasks,
+            // widget_tasks,
             system_upgrade_service,
             config_handle,
-            display_controller,
+            // TODO: display refactor
+            // display_controller,
             initial_setup,
-            system_manager,
-            sound_controller,
-            alarm_controller,
+            // TODO: display refactor
+            // system_manager,
+            // sound_controller,
+            // alarm_controller,
             button_manager,
             led_controller,
             widget_coordinator,
@@ -236,28 +233,34 @@ where
         let address = self.listener.local_addr()?;
         info!("Starting server on http://{}", address);
 
-        self.display_tasks.spawn();
+        // TODO: display refactor
+        // self.display_tasks.spawn();
 
         tokio::spawn(self.button_manager.run());
 
-        WebService::new(
-            self.manager,
-            self.session_manager,
-            self.config.server_config,
-            self.system_upgrade_service,
-            self.config_handle,
-            self.display_controller,
-            self.widget_tasks,
-            self.initial_setup,
-            self.system_manager,
-            self.sound_controller,
-            self.alarm_controller,
-            self.led_controller,
-        )
-        .run(self.listener)
-        .await?;
+        // TODO: display refactor - WebService needs many display-related components
+        // WebService::new(
+        //     self.manager,
+        //     self.session_manager,
+        //     self.config.server_config,
+        //     self.system_upgrade_service,
+        //     self.config_handle,
+        //     self.display_controller,
+        //     self.widget_tasks,
+        //     self.initial_setup,
+        //     self.system_manager,
+        //     self.sound_controller,
+        //     self.alarm_controller,
+        //     self.led_state_sender,
+        //     self.led_controller,
+        // )
+        // .run(self.listener)
+        // .await?;
 
-        Ok(())
+        // For now, just keep running
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
     }
 
     pub fn port(&self) -> Result<u16> {

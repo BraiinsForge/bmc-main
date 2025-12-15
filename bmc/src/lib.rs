@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 mod alarm;
-mod backlight;
+pub mod backlight;
 pub mod bootloader_config;
 mod button_manager;
 mod config;
