@@ -194,6 +194,7 @@ $ctrl-height: to-rem(40px);
 .dragHandle {
     composes: selfStretch horizontal centerCenter from 'styles/layout.scss';
     cursor: move;
+    touch-action: none;
 }
 
 .toggle {

@@ -8,6 +8,7 @@ import {
     closestCenter,
     KeyboardSensor,
     PointerSensor,
+    TouchSensor,
     useSensor,
     useSensors,
     type DragStartEvent,
@@ -105,7 +106,8 @@ export function Sortable<D extends Datum>(props: SortableProps<D>) {
     const activeItem = activeIndex >= 0 ? items[activeIndex] : null;
 
     const sensors = useSensors(
-        useSensor(PointerSensor),
+        useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+        useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
         useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
     );
 
