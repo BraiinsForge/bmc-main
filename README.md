@@ -50,6 +50,14 @@ nix build -L .#frontend
 cargo run --bin bmc-mock -- --address=0.0.0.0:6070 --www-path=./result --widgets-path=./result-widgets/lib/bmc-widgets
 ```
 
+## Build widgets for OpenWRT device
+
+Build ARM widgets (glibc, dynamically linked):
+
+```
+nix build .#widgets-armv7-release -o result-widgets-arm
+```
+
 ## Run bmc-openwrt on control board
 
 ```shell
