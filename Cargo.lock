@@ -205,6 +205,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "appendlist"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e149dc73cd30538307e7ffa2acd3d2221148eaeed4871f246657b1c3eaa1cbd2"
+
+[[package]]
+name = "approx"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f2a05fd1bd10b2527e20a2cd32d8873d115b8b39fe219ee25f42a8aca6ba278"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -429,6 +444,12 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "atomic_float"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "628d228f918ac3b82fe590352cc719d30664a0c13ca3a60266fe02c7132d480a"
 
 [[package]]
 name = "auto_enums"
@@ -821,6 +842,24 @@ dependencies = [
  "async-stream",
  "futures",
  "tokio",
+]
+
+[[package]]
+name = "bmc-compositor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "calloop 0.14.2",
+ "drm 0.14.1",
+ "drm-fourcc",
+ "gbm 0.17.0",
+ "input",
+ "libc",
+ "smithay",
+ "smithay-drm-extras",
+ "tracing",
+ "tracing-subscriber",
+ "udev",
 ]
 
 [[package]]
@@ -1295,6 +1334,7 @@ version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10929724661d1c43856fd87c7a127ae944ec55579134fb485e4136fb6a46fdcb"
 dependencies = [
+ "async-task",
  "bitflags 2.9.0",
  "polling",
  "rustix 0.38.44",
@@ -1389,6 +1429,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ced0551234e87afee12411d535648dd89d2e7f34c78b753395567aff3d447ff"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "cgmath"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a98d30140e3296250832bbaaff83b27dcd6fa3cc70fb6f1f3e5c9c0023b5317"
+dependencies = [
+ "approx",
+ "num-traits",
 ]
 
 [[package]]
@@ -1803,9 +1853,9 @@ checksum = "1f791803201ab277ace03903de1594460708d2d54df6053f2d9e82f592b19e3b"
 
 [[package]]
 name = "cursor-icon"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96a6ac251f4a2aca6b3f91340350eab87ae57c3f127ffeb585e92bd336717991"
+checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "darling"
@@ -2632,6 +2682,19 @@ dependencies = [
 
 [[package]]
 name = "gbm"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93b5a9807a62b960cef14e1213798e665d1c11cfc2bdbe732ee63b3893e4487f"
+dependencies = [
+ "bitflags 2.9.0",
+ "drm 0.14.1",
+ "drm-fourcc",
+ "gbm-sys 0.3.1",
+ "libc",
+]
+
+[[package]]
+name = "gbm"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce852e998d3ca5e4a97014fb31c940dc5ef344ec7d364984525fd11e8a547e6a"
@@ -2639,7 +2702,18 @@ dependencies = [
  "bitflags 2.9.0",
  "drm 0.14.1",
  "drm-fourcc",
- "gbm-sys",
+ "gbm-sys 0.4.0",
+ "libc",
+ "wayland-backend",
+ "wayland-server",
+]
+
+[[package]]
+name = "gbm-sys"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9cc2f64de9fa707b5c6b2d2f10d7a7e49e845018a9f5685891eb40d3bab2538"
+dependencies = [
  "libc",
 ]
 
@@ -3280,7 +3354,7 @@ dependencies = [
  "bytemuck",
  "calloop 0.14.2",
  "drm 0.14.1",
- "gbm",
+ "gbm 0.18.0",
  "glutin",
  "i-slint-common",
  "i-slint-core",
@@ -4181,9 +4255,9 @@ checksum = "2a385b1be4e5c3e362ad2ffa73c392e53f031eaa5b7d648e64cd87f27f6063d7"
 
 [[package]]
 name = "linux-raw-sys"
-version = "0.9.3"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe7db12097d22ec582439daf8618b8fdd1a7bef6270e9af3b1ebcd30893cf413"
+checksum = "df1d3c3b53da64cf5760482273a98e575c651a67eec7f77df96b5b642de8f039"
 
 [[package]]
 name = "litemap"
@@ -6254,15 +6328,15 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.0.5"
+version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d97817398dd4bb2e6da002002db259209759911da105da92bec29ccb12cf58bf"
+checksum = "cd15f8a2c5551a84d56efdc1cd049089e409ac19a3072d5037a17fd70719ff3e"
 dependencies = [
  "bitflags 2.9.0",
  "errno",
  "libc",
- "linux-raw-sys 0.9.3",
- "windows-sys 0.59.0",
+ "linux-raw-sys 0.11.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6777,6 +6851,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "smithay"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "740cea6927892bc182d5bf70c8f79806c8bc9f68f2fb96e55a30be171b63af98"
+dependencies = [
+ "appendlist",
+ "atomic_float",
+ "bitflags 2.9.0",
+ "calloop 0.14.2",
+ "cc",
+ "cgmath",
+ "cursor-icon",
+ "downcast-rs",
+ "drm 0.14.1",
+ "drm-ffi 0.9.0",
+ "drm-fourcc",
+ "errno",
+ "gbm 0.18.0",
+ "gl_generator",
+ "glow",
+ "indexmap",
+ "input",
+ "libc",
+ "libloading",
+ "pkg-config",
+ "profiling",
+ "rand 0.9.1",
+ "rustix 1.1.2",
+ "sha2",
+ "smallvec",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tracing",
+ "udev",
+ "wayland-backend",
+ "wayland-protocols 0.32.8",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
+ "wayland-server",
+ "wayland-sys 0.31.6",
+ "xkbcommon",
+]
+
+[[package]]
 name = "smithay-client-toolkit"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6810,6 +6928,15 @@ dependencies = [
  "libc",
  "smithay-client-toolkit",
  "wayland-backend",
+]
+
+[[package]]
+name = "smithay-drm-extras"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa68109eb23955c216dadb780b0a82e5b0d1dd4b649d4a52b59100eb83a30e96"
+dependencies = [
+ "drm 0.14.1",
 ]
 
 [[package]]
@@ -7154,7 +7281,7 @@ dependencies = [
  "fastrand",
  "getrandom 0.3.2",
  "once_cell",
- "rustix 1.0.5",
+ "rustix 1.1.2",
  "windows-sys 0.60.2",
 ]
 
@@ -8279,6 +8406,20 @@ dependencies = [
  "wayland-backend",
  "wayland-client 0.31.10",
  "wayland-scanner 0.31.6",
+ "wayland-server",
+]
+
+[[package]]
+name = "wayland-protocols-misc"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "635cf2968bd88599445b25a2eeef655d463bb04f9aed04e4bf8c2018f3d4fc41"
+dependencies = [
+ "bitflags 2.9.0",
+ "wayland-backend",
+ "wayland-protocols 0.32.8",
+ "wayland-scanner 0.31.6",
+ "wayland-server",
 ]
 
 [[package]]
@@ -8305,6 +8446,7 @@ dependencies = [
  "wayland-client 0.31.10",
  "wayland-protocols 0.32.8",
  "wayland-scanner 0.31.6",
+ "wayland-server",
 ]
 
 [[package]]
@@ -8330,6 +8472,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wayland-server"
+version = "0.31.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "485dfb8ccf0daa0d34625d34e6ac15f99e550a7999b6fd88a0835ccd37655785"
+dependencies = [
+ "bitflags 2.9.0",
+ "downcast-rs",
+ "rustix 0.38.44",
+ "wayland-backend",
+ "wayland-scanner 0.31.6",
+]
+
+[[package]]
 name = "wayland-sys"
 version = "0.29.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8347,7 +8502,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbcebb399c77d5aa9fa5db874806ee7b4eba4e73650948e8f93963f128896615"
 dependencies = [
  "dlib",
+ "libc",
  "log",
+ "memoffset 0.9.1",
  "once_cell",
  "pkg-config",
 ]
@@ -9144,7 +9301,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af3a19837351dc82ba89f8a125e22a3c475f05aba604acc023d62b2739ae2909"
 dependencies = [
  "libc",
- "rustix 1.0.5",
+ "rustix 1.1.2",
 ]
 
 [[package]]
