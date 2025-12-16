@@ -5,6 +5,14 @@ edition = "2024"
 authors = ["Braiins Systems s.r.o."]
 description = "Wayland compositor for BMC widget display"
 
+[[bin]]
+name = "bmc-compositor"
+path = "src/main.rs"
+
+[[bin]]
+name = "bmc-compositor-egl"
+path = "src/main_egl.rs"
+
 [dependencies]
 anyhow.workspace = true
 calloop.workspace = true

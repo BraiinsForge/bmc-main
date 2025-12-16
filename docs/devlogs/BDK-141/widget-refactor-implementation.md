@@ -817,7 +817,286 @@ This stage is divided into sub-stages for incremental progress:
 - [ ] Widget surface composited to display (Slint handles Wayland client automatically)
 - [ ] Works on ARMv7 device
 
-### Status: Not Started
+### Status: In Progress
+
+### Implementation Notes (Stage 10.1)
+
+This section documents the current state of Stage 10.1 implementation for future continuation.
+
+#### What Has Been Done
+
+1. **Compositor Crate Structure Created** (`bmc-compositor/`)
+   - `Cargo.toml` - Dependencies configured (smithay 0.7.0, calloop, drm, gbm, libseat, udev, etc.)
+   - `src/lib.rs` - Exports `drm_backend` and `state` modules
+   - `src/main.rs` - Entry point with logging initialization and DRM backend setup skeleton
+   - `src/drm_backend.rs` - DRM/KMS backend skeleton with LibSeat session initialization
+   - `src/state.rs` - Wayland compositor state with protocol handlers
+
+2. **Fixed `CompositorHandler::client_compositor_state`**
+   - Changed parameter from `ClientId` to `Client` (smithay 0.7.0 API)
+   - Implemented proper `ClientState` struct with `CompositorClientState`
+   - Added `client.get_data::<ClientState>()` pattern for per-client state tracking
+
+3. **Fixed `smithay-drm-extras` Dependency Conflict**
+   - System has `libdisplay-info-0.3.0` but crate expected `< 0.3.0`
+   - Fixed by setting `default-features = false` in `Cargo.toml` to disable `display_info` feature
+   - Change in root `Cargo.toml`: `smithay-drm-extras = { version = "0.1.0", default-features = false }`
+
+4. **Fixed All Compilation Errors** (Compositor now builds cleanly)
+   - Added `BufferHandler` implementation for `Compositor`
+   - Imported `Resource` trait for `surface.id()` method
+   - Added `SelectionHandler` implementation (required by `DataDeviceHandler`)
+   - Fixed `OFlags` import (use `smithay::reexports::rustix::fs::OFlags`)
+   - Fixed `DrmDeviceFd::new()` call (needs `.into()` for `DeviceFd` conversion)
+   - Fixed `Serial` type import (use `smithay::utils::Serial`)
+   - Added `udev` crate dependency for GPU discovery
+
+5. **Code Passes Clippy and Formatting**
+   - All clippy warnings resolved
+   - Code formatted with `nix fmt`
+
+#### Current State
+
+The compositor crate **compiles successfully** with `nix develop --command cargo clippy -p bmc-compositor -- -D warnings`.
+
+The following protocol handlers are implemented in `state.rs`:
+- `CompositorHandler` - Surface creation and commits
+- `ShmHandler` - Shared memory buffers
+- `BufferHandler` - Buffer lifecycle
+- `SeatHandler` - Input handling (keyboard, pointer, touch)
+- `XdgShellHandler` - Window management
+- `SelectionHandler` - Copy/paste support
+- `DataDeviceHandler` - Drag and drop
+
+#### Next Steps to Complete Stage 10.1
+
+1. **Complete DRM device initialization in `drm_backend.rs`:**
+   - Find and configure connectors
+   - Set up CRTC (display controller)
+   - Configure display mode (1280x480 for the Braiins Deck display)
+   - Initialize framebuffer
+
+2. **Switch to software renderer:**
+   - Replace `GlowRenderer` with `PixmanRenderer` for CPU-based rendering
+   - ARMv7 target doesn't have GPU, so software rendering is required
+   - May need to add `renderer_pixman` feature to smithay in `Cargo.toml`
+
+3. **Create Wayland display socket:**
+   - Initialize `wayland_server::Display`
+   - Create socket for widget clients to connect
+   - Set up client connection handling with `ClientState::default()`
+
+4. **Implement basic render loop:**
+   - Handle surface commits
+   - Composite surfaces to framebuffer
+   - Use vsync for smooth rendering
+
+5. **Spawn widget as Wayland client:**
+   - Set `WAYLAND_DISPLAY` environment variable when spawning widget
+   - Verify widget connects and renders
+
+#### Key Files Reference
+
+| File | Purpose |
+|------|---------|
+| `bmc-compositor/src/state.rs` | Compositor state and Wayland protocol handlers |
+| `bmc-compositor/src/drm_backend.rs` | DRM/KMS display backend |
+| `bmc-compositor/src/main.rs` | Entry point |
+| `Cargo.toml` (root) | Smithay dependency configuration |
+
+#### Smithay Documentation References
+
+- [CompositorHandler trait](https://smithay.github.io/smithay/smithay/wayland/compositor/trait.CompositorHandler.html)
+- [Anvil reference compositor](https://github.com/Smithay/smithay/tree/master/anvil) - Use as implementation reference
+- [smithay-drm-extras](https://crates.io/crates/smithay-drm-extras) - DRM utilities
+
+#### Build Commands
+
+```bash
+# Native x86 development (requires nix develop for system dependencies)
+nix develop --command cargo check -p bmc-compositor
+nix develop --command cargo clippy -p bmc-compositor -- -D warnings
+
+# ARMv7 cross-compilation (glibc, NOT musl - compositor requires dynamic linking)
+nix develop .#armv7-glibc-release --command cargo check -p bmc-compositor
+```
+
+#### ARMv7 Cross-Compilation Notes
+
+- **Must use glibc profile**, not musl - compositor dependencies (libinput, libseat, etc.) don't support static linking
+- Changed `libseat` → `seatd` in `workspace.nix` `targetDeps` for cross-compilation compatibility
+- First build of cross-compilation environment takes significant time (building ARM toolchain)
+- The compositor will be dynamically linked, similar to widgets
+
+#### EGL/GPU Rendering Attempts and Findings
+
+The STM32MP157 SoC has a split GPU/display architecture:
+- **GPU**: Vivante GC400 (etnaviv driver) - `/dev/dri/card0` and `/dev/dri/renderD128`
+- **Display**: STM32 LTDC display controller - `/dev/dri/card1`
+- **Panel**: MIPI-DSI, Sitronix ST7703, 600x1280 @ 63Hz (only 480x1280 visible)
+
+**What Works**:
+1. EGL initialization on GPU (etnaviv) via GBM - ✓
+2. OpenGL ES 2.0 context creation - ✓
+3. GLES renderer creation (Vivante GC400) - ✓
+4. GBM buffer allocation on GPU with empty flags - ✓
+5. DMA-BUF export from GPU buffers - ✓
+
+**What Fails (with detailed logs)**:
+
+1. **GBM device creation on display (stm32-ltdc)** - ❌
+   ```
+   Failed to create display GBM device: Device is not a GBM compatible device
+   ```
+   - stm32-ltdc is a simple display controller without GBM support
+   - GBM requires GPU-like buffer management which LTDC doesn't have
+
+2. **PRIME import from GPU to display** - ❌
+   ```
+   GBM buffer object allocated on GPU
+   DMA-BUF exported: 1 planes, format DrmFormat { code: DrmFourcc(XR24), modifier: Linear }
+   Importing DMA-BUF: fd=19, stride=1920, format=DrmFourcc(XR24), size=480x1280
+   ERROR: Failed to import DMA-BUF as GEM handle (PRIME import)
+   ```
+   - stm32-ltdc's DRM driver doesn't implement `drm_gem_prime_import`
+   - The LTDC is a display-only device with no buffer management capability
+   - It can only scanout buffers allocated on itself (dumb buffers)
+
+3. **GBM buffer allocation with SCANOUT flag on GPU** - ❌
+   ```
+   GBM allocation failed: Os { code: 22, kind: InvalidInput, message: "Invalid argument" }, 
+   size=480x1280, format=Xrgb8888
+   ```
+   - `/dev/dri/renderD128` is a render-only node
+   - Render nodes don't support SCANOUT flag (that's for display)
+   - etnaviv render node only supports rendering operations
+
+4. **GBM buffer allocation with RENDERING flag on GPU** - ❌
+   ```
+   GBM allocation failed: Os { code: 22, kind: InvalidInput, message: "Invalid argument" }, 
+   size=480x1280, format=Argb8888
+   ```
+   - Same EINVAL error with RENDERING flag
+   - The flag itself may not be the issue
+
+5. **Smithay GbmAllocator with various flags** - ❌
+   ```
+   GBM allocation failed: Os { code: 22, kind: InvalidInput, message: "Invalid argument" }
+   ```
+   - Tried: `GbmBufferFlags::SCANOUT`, `GbmBufferFlags::RENDERING`, `GbmBufferFlags::empty()`
+   - Smithay's allocator may add internal flags or modifiers
+
+6. **Raw gbm_bo_create with empty flags** - ✓ (partial success)
+   ```
+   GBM buffer object allocated on GPU
+   DMA-BUF exported: 1 planes, format DrmFormat { code: DrmFourcc(XR24), modifier: Linear }
+   ```
+   - Buffer allocation works!
+   - DMA-BUF export works!
+   - But then PRIME import to display fails (see #2 above)
+
+**Approaches Tried**:
+
+| Approach | Allocation | Export | Import | Scanout | Notes |
+|----------|------------|--------|--------|---------|-------|
+| GPU GBM → PRIME import to display | ✓ | ✓ | ❌ | - | stm32-ltdc can't PRIME import |
+| Display GBM → import to GPU | ❌ | - | - | - | stm32-ltdc has no GBM support |
+| Smithay GbmAllocator (SCANOUT) | ❌ | - | - | - | EINVAL on render node |
+| Smithay GbmAllocator (RENDERING) | ❌ | - | - | - | EINVAL on render node |
+| Smithay GbmAllocator (empty) | ❌ | - | - | - | EINVAL |
+| Raw gbm_bo_create (empty flags) | ✓ | ✓ | ❌ | - | Works but can't import |
+
+**Root Cause Analysis**:
+
+The stm32-ltdc display controller is a **simple framebuffer scanout engine**:
+- It reads pixels from memory and sends them to the display
+- It does NOT have:
+  - GBM support (no GPU-style buffer management)
+  - PRIME import capability (can't import foreign buffers)
+  - Any buffer allocation beyond dumb buffers
+- It only supports:
+  - Dumb buffers (allocated via `DRM_IOCTL_MODE_CREATE_DUMB`)
+  - CMA (Contiguous Memory Allocator) backed memory
+  - Direct scanout of its own allocated buffers
+
+The Vivante GC400 GPU (etnaviv):
+- Full GBM and EGL support
+- Can allocate buffers and render to them
+- Can export buffers as DMA-BUF
+- **But**: its buffers can't be imported by stm32-ltdc for scanout
+
+**This is a fundamental hardware limitation** - the two devices can't share buffers in the GPU→display direction.
+
+**Working Solution: Dumb Buffer with PRIME Export**
+
+The standard approach for split GPU/display embedded systems works:
+
+1. **Allocate dumb buffer on display device** (stm32-ltdc)
+   - Uses `DRM_IOCTL_MODE_CREATE_DUMB` - CMA-backed, scanout-capable
+2. **PRIME export as DMA-BUF**
+   - `drm_prime_handle_to_fd()` exports the buffer as a file descriptor
+3. **Import DMA-BUF into GPU's EGL context**
+   - Build `Dmabuf` descriptor with the exported fd
+   - GPU can now render to this buffer via OpenGL ES
+4. **Create framebuffer on display device**
+   - `add_framebuffer()` registers the dumb buffer for scanout
+5. **GPU renders, display scans out**
+   - Buffer is already on the display device - no copy needed!
+
+**Implementation** (in `bmc-compositor/src/render_egl.rs`):
+
+```rust
+fn allocate_buffer(&mut self) -> Result<RenderBuffer> {
+    // Step 1: Create dumb buffer on display device (CMA-backed)
+    let dumb_buffer = self.display_drm.create_dumb_buffer(
+        (self.width, self.height),
+        DrmFourcc::Xrgb8888,
+        32,
+    )?;
+
+    // Step 2: PRIME export as DMA-BUF
+    let dmabuf_fd = self.display_drm
+        .buffer_to_prime_fd(dumb_buffer.handle(), 0)?;
+
+    // Step 3: Build Dmabuf descriptor for GPU import
+    let mut builder = Dmabuf::builder(
+        (self.width as i32, self.height as i32).into(),
+        DrmFourcc::Xrgb8888,
+        DrmModifier::Linear,
+        DmabufFlags::empty(),
+    );
+    builder.add_plane(dmabuf_fd, 0, 0, dumb_buffer.pitch());
+    let dmabuf = builder.build()?;
+
+    // Step 4: Create framebuffer on display device
+    let fb = self.display_drm.add_framebuffer(&dumb_buffer, 24, 32)?;
+
+    Ok(RenderBuffer { dumb_buffer, dmabuf, fb })
+}
+```
+
+**Why This Works**:
+- stm32-ltdc supports PRIME *export* (just not import)
+- The buffer is allocated on display memory (CMA), so scanout works directly
+- GPU imports the buffer via DMA-BUF and renders to it
+- No CPU copy needed - true zero-copy GPU-accelerated rendering
+
+**Verified Working**:
+- Compositor displays dark background with GPU rendering
+- Digital clock widget connects as Wayland client and displays correctly
+- Full pipeline: Widget → Wayland → Compositor → GPU render → Display scanout
+
+**Environment Variables for Running on Device**:
+```bash
+export LD_LIBRARY_PATH=$(find /nix/store -maxdepth 3 -type d -name "lib" -path "*armv7l*gnueabihf*" 2>/dev/null | tr '\n' ':')
+export GBM_BACKENDS_PATH=/nix/store/.../mesa-.../lib/gbm
+export LIBGL_DRIVERS_PATH=/nix/store/.../mesa-.../lib/dri
+export __EGL_VENDOR_LIBRARY_FILENAMES=/nix/store/.../mesa-.../share/glvnd/egl_vendor.d/50_mesa.json
+export GLIBC_LD=/nix/store/.../glibc-.../lib/ld-linux-armhf.so.3
+
+# Run compositor
+$GLIBC_LD --library-path $LD_LIBRARY_PATH /path/to/bmc-compositor-egl
+```
 
 ---
 

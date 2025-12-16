@@ -69,17 +69,18 @@ impl SoftwareFramebuffer {
     }
 
     /// Get the framebuffer handle for scanout
+    #[must_use]
     pub fn framebuffer(&self) -> framebuffer::Handle {
         self.fb
     }
 
     /// Get buffer dimensions
+    #[must_use]
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
     }
 
     /// Map the buffer for CPU access and fill with a solid color
-    #[allow(dead_code)]
     pub fn fill_color(&mut self, drm: &DrmDevice, r: u8, g: u8, b: u8) -> Result<()> {
         let mut mapping = drm
             .map_dumb_buffer(&mut self.buffer)
@@ -101,7 +102,6 @@ impl SoftwareFramebuffer {
     }
 
     /// Map the buffer for CPU access and draw a test pattern
-    #[allow(dead_code)]
     pub fn draw_test_pattern(&mut self, drm: &DrmDevice, frame: u32) -> Result<()> {
         let mut mapping = drm
             .map_dumb_buffer(&mut self.buffer)
@@ -111,7 +111,15 @@ impl SoftwareFramebuffer {
         for y in 0..self.height {
             for x in 0..self.width {
                 // Create moving color bars
+                #[expect(
+                    clippy::integer_division,
+                    reason = "intentional integer division for bar sizing"
+                )]
                 let bar_width = self.width / 8;
+                #[expect(
+                    clippy::integer_division,
+                    reason = "intentional integer division for bar index"
+                )]
                 let bar_index = ((x + frame) / bar_width) % 8;
 
                 let (r, g, b): (u8, u8, u8) = match bar_index {
@@ -163,7 +171,11 @@ impl SoftwareFramebuffer {
             .context("Failed to map dumb buffer")?;
 
         // Access the SHM buffer contents
-        let result = shm::with_buffer_contents(&buffer, |ptr, len, data| {
+        #[expect(
+            clippy::cast_sign_loss,
+            reason = "SHM buffer dimensions are always positive"
+        )]
+        let result = shm::with_buffer_contents(buffer, |ptr, len, data| {
             let src_width = data.width as u32;
             let src_height = data.height as u32;
             let src_stride = data.stride as u32;
@@ -182,12 +194,14 @@ impl SoftwareFramebuffer {
 
             // Copy pixels, handling format conversion
             // Cast to i32 for offset math (display dimensions are always small enough)
+            #[expect(clippy::cast_possible_wrap, reason = "display dimensions are small")]
             let dst_width = self.width as i32;
+            #[expect(clippy::cast_possible_wrap, reason = "display dimensions are small")]
             let dst_height = self.height as i32;
 
             // Handle different pixel formats
             let bytes_per_pixel: u32 = match format {
-                Some(Fourcc::Argb8888) | Some(Fourcc::Xrgb8888) => 4,
+                Some(Fourcc::Argb8888 | Fourcc::Xrgb8888) => 4,
                 Some(Fourcc::Rgb888) => 3,
                 _ => {
                     tracing::warn!("Unsupported format: {:?}", format);
@@ -199,6 +213,7 @@ impl SoftwareFramebuffer {
             let src_data = unsafe { std::slice::from_raw_parts(ptr, len) };
 
             // Copy each pixel with offset and optional rotation
+            #[expect(clippy::cast_possible_wrap, reason = "pixel coordinates are small")]
             for src_y in 0..src_height {
                 for src_x in 0..src_width {
                     // Calculate destination position with offset and optional 90° rotation
@@ -218,13 +233,15 @@ impl SoftwareFramebuffer {
 
                     let src_idx =
                         src_offset + (src_y * src_stride + src_x * bytes_per_pixel) as usize;
+                    // dst_x and dst_y are guaranteed non-negative here due to bounds check above
+                    #[expect(clippy::cast_sign_loss, reason = "bounds checked above")]
                     let dst_idx = (dst_y as u32 * self.pitch + dst_x as u32 * self.bpp) as usize;
 
                     if src_idx + bytes_per_pixel as usize <= src_data.len()
                         && dst_idx + 4 <= mapping.len()
                     {
                         match format {
-                            Some(Fourcc::Argb8888) | Some(Fourcc::Xrgb8888) => {
+                            Some(Fourcc::Argb8888 | Fourcc::Xrgb8888) => {
                                 // Direct copy for matching formats
                                 mapping[dst_idx..dst_idx + 4]
                                     .copy_from_slice(&src_data[src_idx..src_idx + 4]);
@@ -300,8 +317,7 @@ impl RenderState {
         let planes = surface.planes();
         let primary_plane = planes
             .primary
-            .iter()
-            .next()
+            .first()
             .context("No primary plane available")?
             .handle;
 
@@ -362,6 +378,7 @@ impl RenderState {
         // After 90° CCW rotation: src(x,y) -> dst(y, width-1-x)
         // To move left-right on screen, offset Y (which becomes dst X after rotation)
         let offset_x = 0;
+        #[expect(clippy::cast_possible_truncation, reason = "animation offset is small")]
         let offset_y = self.animation_x as i32;
 
         // Draw the buffer if available (with 90° rotation for portrait panel)
@@ -413,12 +430,12 @@ impl RenderState {
         // Use commit for initial frame, page_flip for subsequent
         if self.frame_count == 0 {
             self.surface
-                .commit([plane_state].into_iter(), true)
+                .commit([plane_state], true)
                 .context("Failed to commit initial frame")?;
             tracing::info!("Initial frame committed successfully");
             self.flip_pending = true;
         } else {
-            match self.surface.page_flip([plane_state].into_iter(), true) {
+            match self.surface.page_flip([plane_state], true) {
                 Ok(()) => {
                     self.flip_pending = true;
                 }
@@ -443,6 +460,7 @@ impl RenderState {
     }
 
     /// Check if a flip is pending
+    #[must_use]
     pub fn is_flip_pending(&self) -> bool {
         self.flip_pending
     }
