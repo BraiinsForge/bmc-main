@@ -4,6 +4,7 @@ members = [
     "bmc",
     "bmc-audio",
     "bmc-button",
+    "bmc-compositor",
     "bmc-display",
     "bmc-gpio",
     "bmc-grpc",
@@ -131,6 +132,22 @@ data-encoding = "2.6.0"
 dialoguer = "0.11.0"
 dirs = "6.0.0"
 drm = "0.14.1"
+drm-fourcc = "2.2.0"
+gbm = { version = "0.17.0", default-features = false, features = ["drm-support"] }
+calloop = { version = "0.14.2", features = ["executor"] }
+input = "0.9.1"
+libc = "0.2"
+libseat = "0.2.4"
+smithay = { version = "0.7.0", default-features = false, features = [
+    "backend_drm",
+    "backend_gbm",
+    "backend_libinput",
+    "backend_udev",
+    "renderer_glow",
+    "use_system_lib",
+    "wayland_frontend",
+] }
+smithay-drm-extras = { version = "0.1.0", default-features = false }
 embedded-hal = { version = "1.0.0" }
 embedded-hal-async = { version = "1.0.0" }
 enum-assoc = "1.2.4"
@@ -225,6 +242,7 @@ tower-cookies = "0.11.0"
 tower-http = "0.6.2"
 tracing = { version = "0.1.41", default-features = false }
 tracing-subscriber = "0.3.19"
+udev = "0.9"
 url = { version = "2.5.4", features = ["serde"] }
 uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
 ux = { version = "0.1.6" }

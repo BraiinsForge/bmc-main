@@ -60,6 +60,16 @@ let
     # packages that will be cross-compiled for target arch
     targetDeps = _build_pkgs: [
       # openssl.dev
+      # Compositor dependencies
+      wayland
+      libxkbcommon
+      libinput
+      seatd
+      udev
+      libdrm
+      mesa
+      libgbm
+      libGL
     ];
     # environment variables (from commonDeps)
     inherit (commonDeps) env;
