@@ -7,4 +7,5 @@
 
 pub mod drm_backend;
 pub mod render;
+pub mod render_egl;
 pub mod state;
