@@ -321,6 +321,7 @@ impl DrmBackendState {
     }
 
     /// Get the device state
+    #[must_use]
     pub fn device(&self) -> Option<&DeviceState> {
         self.device.as_ref()
     }
@@ -333,6 +334,7 @@ impl DrmBackendState {
 
 impl DeviceState {
     /// Get display size
+    #[must_use]
     pub fn display_size(&self) -> Option<Size<i32, Physical>> {
         self.mode
             .map(|m| Size::from((i32::from(m.size().0), i32::from(m.size().1))))

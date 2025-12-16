@@ -30,6 +30,10 @@ struct AppState {
     listening_socket: ListeningSocket,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "main function orchestrates initialization"
+)]
 fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::registry()
@@ -188,7 +192,11 @@ fn main() -> Result<()> {
         }
 
         // Send frame callbacks to clients so they can render next frame
-        // Use monotonic time in milliseconds
+        // Use monotonic time in milliseconds (wrapping is fine for frame callbacks)
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "wrapping is acceptable for frame time"
+        )]
         let time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u32)

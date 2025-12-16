@@ -1,0 +1,47 @@
+{
+  "scenes": [
+    {
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "c1a2b3c4-d5e6-4f7a-8b9c-0d1e2f3a4b5c",
+          "row": 0,
+          "col": 0,
+          "size": "small",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440001",
+          "params": {
+            "showSeconds": true,
+            "showTimezone": true,
+            "fontStyle": "light"
+          }
+        },
+        {
+          "id": "d2b3c4d5-e6f7-4a8b-9c0d-1e2f3a4b5c6d",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440001",
+          "params": {
+            "showSeconds": false,
+            "showTimezone": true,
+            "fontStyle": "medium"
+          }
+        },
+        {
+          "id": "e3c4d5e6-f7a8-4b9c-0d1e-2f3a4b5c6d7e",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440001",
+          "params": {
+            "showSeconds": true,
+            "showTimezone": true,
+            "fontStyle": "bold"
+          }
+        }
+      ]
+    }
+  ]
+}
