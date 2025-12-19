@@ -29,8 +29,7 @@ use smithay::{
         drm::{DrmDevice, DrmDeviceFd, DrmSurface, PlaneConfig, PlaneState},
         egl::{EGLContext, EGLDisplay},
         renderer::{
-            Bind, Color32F, Frame, ImportMemWl, Renderer, Texture,
-            gles::{GlesRenderer, GlesTexProgram, Uniform, UniformName, UniformType},
+            Bind, Color32F, Frame, ImportDma, ImportMemWl, Renderer, Texture, gles::GlesRenderer,
         },
     },
     reexports::{
@@ -44,46 +43,17 @@ use smithay::{
         wayland_server::protocol::wl_buffer::WlBuffer,
     },
     utils::{Buffer as BufferCoord, Physical, Rectangle, Size, Transform},
+    wayland::dmabuf::get_dmabuf,
 };
 use std::{fs::OpenOptions, os::unix::io::OwnedFd, path::Path};
 
-/// Custom rotation shader - rotates texture around its center
-const ROTATION_SHADER: &str = r#"
-//_DEFINES
-precision mediump float;
+/// Logical display dimensions (what widgets see - landscape orientation)
+pub const LOGICAL_WIDTH: u32 = 1280;
+pub const LOGICAL_HEIGHT: u32 = 480;
 
-uniform float rotation_angle;
-
-varying vec2 v_coords;
-uniform sampler2D tex;
-
-void main() {
-    // Get center-relative coordinates (-0.5 to 0.5)
-    vec2 centered = v_coords - vec2(0.5, 0.5);
-
-    // Rotate around center
-    float cos_a = cos(rotation_angle);
-    float sin_a = sin(rotation_angle);
-    vec2 rotated = vec2(
-        centered.x * cos_a - centered.y * sin_a,
-        centered.x * sin_a + centered.y * cos_a
-    );
-
-    // Back to texture coordinates (0 to 1)
-    vec2 tex_coords = rotated + vec2(0.5, 0.5);
-
-    // Sample with transparency for out-of-bounds
-    if (tex_coords.x < 0.0 || tex_coords.x > 1.0 || tex_coords.y < 0.0 || tex_coords.y > 1.0) {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
-    } else {
-        gl_FragColor = texture2D(tex, tex_coords);
-    }
-}
-"#;
-
-/// Display dimensions (after 90° rotation from 600x1280 portrait panel)
-pub const DISPLAY_WIDTH: u32 = 1280;
-pub const DISPLAY_HEIGHT: u32 = 480;
+/// Physical buffer dimensions (portrait panel, before rotation)
+pub const PHYSICAL_WIDTH: u32 = 480;
+pub const PHYSICAL_HEIGHT: u32 = 1280;
 
 /// EGL render state for split GPU/display architecture
 #[expect(
@@ -124,10 +94,6 @@ pub struct EglRenderState {
     frame_count: u32,
     /// Whether a page flip is pending
     flip_pending: bool,
-
-    // Shaders
-    /// Custom rotation shader for arbitrary angle rotation
-    rotation_shader: Option<GlesTexProgram>,
 }
 
 /// A render buffer with its associated handles
@@ -179,26 +145,10 @@ impl EglRenderState {
         tracing::info!("EGL context created");
 
         // Create OpenGL ES renderer
-        let mut renderer =
+        let renderer =
             unsafe { GlesRenderer::new(egl_context) }.context("Failed to create GLES renderer")?;
 
         tracing::info!("GLES renderer created");
-
-        // Compile custom rotation shader
-        let rotation_shader = match renderer.compile_custom_texture_shader(
-            ROTATION_SHADER,
-            &[UniformName::new("rotation_angle", UniformType::_1f)],
-        ) {
-            Ok(shader) => {
-                tracing::info!("Rotation shader compiled successfully");
-                Some(shader)
-            }
-            Err(e) => {
-                tracing::warn!("Failed to compile rotation shader: {:?}", e);
-                None
-            }
-        };
-
         tracing::info!("GPU GBM device ready for buffer allocation");
 
         // === Initialize display device (for scanout only) ===
@@ -269,7 +219,6 @@ impl EglRenderState {
             height,
             frame_count: 0,
             flip_pending: false,
-            rotation_shader,
         })
     }
 
@@ -428,12 +377,28 @@ impl EglRenderState {
         let (mut dmabuf, fb) = self.ensure_buffer(back_slot)?;
 
         // Import client texture BEFORE starting the frame (to avoid borrow conflicts)
+        // Try DMA-BUF first (for GPU-rendered widgets), then fall back to SHM
         let client_texture = if let Some(buffer) = client_buffer {
-            match self.renderer.import_shm_buffer(buffer, None, &[]) {
-                Ok(texture) => Some(texture),
-                Err(e) => {
-                    tracing::warn!("Failed to import SHM buffer: {:?}", e);
-                    None
+            // First try DMA-BUF import (get_dmabuf returns Result)
+            if let Ok(dmabuf) = get_dmabuf(buffer) {
+                match self.renderer.import_dmabuf(dmabuf, None) {
+                    Ok(texture) => {
+                        tracing::debug!("Successfully imported DMA-BUF texture");
+                        Some(texture)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to import DMA-BUF: {:?}", e);
+                        None
+                    }
+                }
+            } else {
+                // Fall back to SHM buffer
+                match self.renderer.import_shm_buffer(buffer, None, &[]) {
+                    Ok(texture) => Some(texture),
+                    Err(e) => {
+                        tracing::warn!("Failed to import SHM buffer: {:?}", e);
+                        None
+                    }
                 }
             }
         } else {
@@ -466,7 +431,7 @@ impl EglRenderState {
 
         // Render client texture if we have one
         if let Some(ref texture) = client_texture {
-            // Get texture dimensions (widget renders in landscape: 1280x480)
+            // Get texture dimensions (widget sends 1280x480 landscape)
             let tex_size = texture.size();
 
             // Source rectangle (full texture) - needs f64 for Buffer coordinates
@@ -475,50 +440,31 @@ impl EglRenderState {
                 (f64::from(tex_size.w), f64::from(tex_size.h)),
             );
 
-            // Animation time
-            let time = f64::from(self.frame_count) * 0.016;
+            // Destination: rotated to fit physical buffer (480x1280)
+            // Widget's 1280x480 becomes 480x1280 after 90° CW rotation
+            // After Transform::_90, width and height are swapped in the output
+            let dst = Rectangle::from_loc_and_size((0, 0), (tex_size.h, tex_size.w));
 
-            // Rotation speed (radians per second) - full rotation every ~2 seconds
-            let rotation_speed = 3.0;
-            #[expect(clippy::cast_possible_truncation, reason = "angle fits in f32")]
-            let rotation_angle = (time * rotation_speed) as f32;
-
-            // After Transform::_270, texture 1280x480 becomes 480x1280 in buffer
-            // Place full size at origin
-            let dst_w = tex_size.h; // 480 -> width after rotation
-            let dst_h = tex_size.w; // 1280 -> height after rotation
-            let dst = Rectangle::from_loc_and_size((0, 0), (dst_w, dst_h));
-
-            tracing::info!(
-                "Rotate: frame={}, angle={:.2} rad, dst={}x{}",
-                self.frame_count,
-                rotation_angle,
-                dst_w,
-                dst_h
+            tracing::debug!(
+                "Rendering client texture: {}x{} -> {}x{} with 270° rotation",
+                tex_size.w,
+                tex_size.h,
+                tex_size.h,
+                tex_size.w
             );
 
-            // Render with custom rotation shader if available, otherwise fallback
-            let (shader, uniforms): (Option<&GlesTexProgram>, Vec<Uniform<'_>>) =
-                if let Some(ref shader) = self.rotation_shader {
-                    (
-                        Some(shader),
-                        vec![Uniform::new("rotation_angle", rotation_angle)],
-                    )
-                } else {
-                    (None, vec![])
-                };
-
-            // Render the texture with 90° CCW base rotation + custom shader rotation
+            // Render with 270° rotation (90° CCW)
+            // Widget renders landscape (1280x480), we rotate to portrait (480x1280)
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,             // src (full texture)
-                dst,             // dst (rotated dimensions)
+                dst,             // dst (swapped dimensions for rotation)
                 &[dst],          // damage
                 &[],             // opaque_regions
-                Transform::_270, // 90° CCW base rotation for display orientation
+                Transform::_270, // 270° rotation (90° CCW)
                 1.0,             // alpha
-                shader,          // custom rotation shader
-                &uniforms,       // rotation angle uniform
+                None,            // no custom shader
+                &[],             // no uniforms
             ) {
                 tracing::warn!("Failed to render texture: {:?}", e);
             }
@@ -527,6 +473,14 @@ impl EglRenderState {
         // Finish rendering
         let _sync = frame.finish().context("Failed to finish frame")?;
         drop(framebuffer);
+
+        // Ensure GPU rendering is complete before page flip
+        // This is critical for split GPU/display architectures where cache coherency isn't automatic
+        unsafe {
+            self.renderer.with_context(|gl| {
+                gl.Finish();
+            })?;
+        }
 
         // Queue page flip
         self.queue_page_flip(fb)?;
@@ -595,10 +549,18 @@ impl EglRenderState {
         self.flip_pending
     }
 
-    /// Get display dimensions
+    /// Get physical buffer dimensions (what we render to)
     #[must_use]
-    pub fn display_size(&self) -> (u32, u32) {
+    pub fn physical_size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// Get logical display dimensions (what widgets should use)
+    /// This is the rotated view - widgets see a 1280x480 landscape display
+    #[must_use]
+    pub fn logical_size(&self) -> (u32, u32) {
+        // Swap dimensions: physical 480x1280 becomes logical 1280x480
+        (self.height, self.width)
     }
 
     /// Get the display DRM device (for event loop integration)
