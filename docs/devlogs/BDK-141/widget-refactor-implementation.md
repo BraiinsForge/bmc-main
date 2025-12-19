@@ -788,6 +788,7 @@ BMC **is** the Wayland compositor. It owns the display directly via DRM/KMS and 
 - **Widgets are Wayland clients**: They connect to BMC's Wayland socket
 - **Direct framebuffer access**: DRM/KMS for display, no GPU compositing needed
 - **Software rendering**: Widgets use Slint SoftwareRenderer, BMC composites in software
+- **Frame callback optimization**: Only send frame callbacks to visible surfaces. When a widget is not displayed (e.g., on a different scene), the compositor should stop sending frame callbacks. This causes the Wayland client (Slint widget) to automatically stop rendering, saving CPU. The Wayland protocol is designed this way - clients wait for frame callbacks before rendering, so withholding callbacks naturally throttles hidden widgets to 0 FPS.
 
 ### Scope
 

@@ -3,7 +3,9 @@
 //! Compositor state management
 
 use smithay::{
-    delegate_compositor, delegate_data_device, delegate_seat, delegate_shm, delegate_xdg_shell,
+    backend::allocator::{Buffer, Format, Fourcc, Modifier, dmabuf::Dmabuf},
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_seat, delegate_shm,
+    delegate_xdg_shell,
     input::{SeatHandler, SeatState},
     reexports::wayland_server::{
         Client, Display, DisplayHandle, Resource,
@@ -16,6 +18,7 @@ use smithay::{
             BufferAssignment, CompositorClientState, CompositorHandler, CompositorState,
             SurfaceAttributes, with_states,
         },
+        dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         selection::{
             SelectionHandler,
             data_device::{
@@ -41,6 +44,12 @@ pub struct Compositor {
 
     /// Shared memory state for client buffers
     pub shm_state: ShmState,
+
+    /// DMA-BUF state for GPU buffer sharing
+    pub dmabuf_state: DmabufState,
+
+    /// DMA-BUF global (kept for lifetime)
+    pub dmabuf_global: DmabufGlobal,
 
     /// XDG shell state for window management
     pub xdg_shell_state: XdgShellState,
@@ -73,6 +82,22 @@ impl Compositor {
 
         let compositor_state = CompositorState::new::<Self>(&display_handle);
         let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
+
+        // Initialize DMA-BUF support for GPU buffer sharing
+        // Support common formats with linear modifier (required for cross-device sharing)
+        let dmabuf_formats = [
+            Format {
+                code: Fourcc::Xrgb8888,
+                modifier: Modifier::Linear,
+            },
+            Format {
+                code: Fourcc::Argb8888,
+                modifier: Modifier::Linear,
+            },
+        ];
+        let mut dmabuf_state = DmabufState::new();
+        let dmabuf_global = dmabuf_state.create_global::<Self>(&display_handle, dmabuf_formats);
+
         let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
         let mut seat_state = SeatState::new();
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
@@ -84,6 +109,8 @@ impl Compositor {
             display_handle,
             compositor_state,
             shm_state,
+            dmabuf_state,
+            dmabuf_global,
             xdg_shell_state,
             seat_state,
             data_device_state,
@@ -159,6 +186,31 @@ impl ShmHandler for Compositor {
 impl BufferHandler for Compositor {
     fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {
         // Nothing to do - we don't track buffers explicitly
+    }
+}
+
+// DMA-BUF handler - for GPU buffer sharing
+impl DmabufHandler for Compositor {
+    fn dmabuf_state(&mut self) -> &mut DmabufState {
+        &mut self.dmabuf_state
+    }
+
+    fn dmabuf_imported(
+        &mut self,
+        _global: &DmabufGlobal,
+        dmabuf: Dmabuf,
+        notifier: ImportNotifier,
+    ) {
+        // Accept all DMA-BUF imports - we don't actually import into GPU
+        // since we're doing direct scanout or software compositing
+        tracing::debug!(
+            "DMA-BUF imported: {}x{}, format={:?}",
+            dmabuf.width(),
+            dmabuf.height(),
+            dmabuf.format()
+        );
+        // Signal successful import
+        let _ = notifier.successful::<Compositor>();
     }
 }
 
@@ -271,6 +323,7 @@ impl ClientData for ClientState {
 // Delegate macros to wire up the protocol handlers
 delegate_compositor!(Compositor);
 delegate_shm!(Compositor);
+delegate_dmabuf!(Compositor);
 delegate_seat!(Compositor);
 delegate_xdg_shell!(Compositor);
 delegate_data_device!(Compositor);

@@ -65,17 +65,29 @@ fn main() -> Result<()> {
     let render_state = EglRenderState::new(Path::new(&gpu_path), Path::new(&display_path))
         .context("Failed to initialize EGL render state")?;
 
-    let (width, height) = render_state.display_size();
-    tracing::info!("Display configured: {}x{}", width, height);
+    let (physical_width, physical_height) = render_state.physical_size();
+    let (logical_width, logical_height) = render_state.logical_size();
+    tracing::info!(
+        "Display configured: {}x{} physical, {}x{} logical (rotated)",
+        physical_width,
+        physical_height,
+        logical_width,
+        logical_height
+    );
 
     // Create Wayland display
     let mut display: Display<Compositor> =
         Display::new().context("Failed to create Wayland display")?;
 
-    // Create compositor state
-    let compositor = Compositor::new(&display, width, height);
+    // Create compositor state with LOGICAL dimensions (what widgets see)
+    // Widgets render to 1280x480 landscape, compositor rotates to 480x1280 physical
+    let compositor = Compositor::new(&display, logical_width, logical_height);
 
-    tracing::info!("Compositor state created for {}x{} display", width, height);
+    tracing::info!(
+        "Compositor advertising {}x{} to widgets",
+        logical_width,
+        logical_height
+    );
 
     // Create Wayland socket
     let listening_socket =
