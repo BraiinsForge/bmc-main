@@ -1,0 +1,42 @@
+[package]
+name = "bmc-widget-flip-clock"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Wayland
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+
+# OpenGL ES - use smithay's EGL wrapper which handles platform selection properly
+glow = "0.16"
+smithay = { workspace = true, default-features = false, features = ["backend_egl", "renderer_glow"] }
+
+# Buffer management
+gbm = { workspace = true }
+drm-fourcc = { workspace = true }
+
+# Event loop
+calloop = { workspace = true }
+calloop-wayland-source = "0.3"
+
+# Time
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+
+# Font rendering
+ab_glyph = "0.2"
+
+# 2D tessellation for 3D extrusion
+lyon = "1.0"
+
+# Utilities
+anyhow = { workspace = true }
+bytemuck = { version = "1.14", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[lints]
+workspace = true
