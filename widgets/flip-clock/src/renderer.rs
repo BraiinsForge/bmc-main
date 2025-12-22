@@ -41,6 +41,68 @@ void main() {
 }
 ";
 
+/// Fragment shader for partial gradient (for flaps)
+/// Renders a portion of the full gradient by offsetting texture coordinates
+const FRAGMENT_SHADER_GRADIENT_PARTIAL: &str = r"#version 100
+precision mediump float;
+varying vec2 v_texcoord;
+uniform vec4 u_color1;
+uniform vec4 u_color2;
+uniform vec4 u_color3;
+uniform vec4 u_color4;
+uniform vec4 u_color5;
+uniform vec4 u_color6;
+uniform vec4 u_color7;
+uniform vec4 u_color8;
+uniform float u_stop1;
+uniform float u_stop2;
+uniform float u_stop3;
+uniform float u_stop4;
+uniform float u_stop5;
+uniform float u_stop6;
+uniform float u_stop7;
+uniform float u_y_offset; // vertical offset (0.0 to 1.0)
+uniform float u_y_scale;  // vertical scale (portion of gradient to show)
+
+void main() {
+    // Remap texture coordinate to show only a portion of the gradient
+    float t = u_y_offset + v_texcoord.y * u_y_scale;
+    vec4 color;
+
+    // Same gradient logic as full gradient
+    if (t > u_stop1) {
+        float local_t = (t - u_stop1) / (1.0 - u_stop1);
+        color = mix(u_color2, u_color1, local_t);
+    } else if (t > u_stop2) {
+        float local_t = (t - u_stop2) / (u_stop1 - u_stop2);
+        color = mix(u_color3, u_color2, local_t);
+    } else if (t > u_stop3) {
+        float local_t = (t - u_stop3) / (u_stop2 - u_stop3);
+        color = mix(u_color4, u_color3, local_t);
+    } else if (t > u_stop4) {
+        float local_t = (t - u_stop4) / (u_stop3 - u_stop4);
+        color = mix(u_color5, u_color4, local_t);
+    } else if (t > u_stop5) {
+        float local_t = (t - u_stop5) / (u_stop4 - u_stop5);
+        color = mix(u_color6, u_color5, local_t);
+    } else if (t > u_stop6) {
+        float local_t = (t - u_stop6) / (u_stop5 - u_stop6);
+        color = mix(u_color7, u_color6, local_t);
+    } else if (t > u_stop7) {
+        float local_t = (t - u_stop7) / (u_stop6 - u_stop7);
+        color = mix(u_color8, u_color7, local_t);
+    } else {
+        color = u_color8;
+    }
+
+    // Dithering
+    float dither = fract(dot(gl_FragCoord.xy, vec2(0.25, 0.75))) - 0.5;
+    color.rgb += dither / 64.0;
+
+    gl_FragColor = color;
+}
+";
+
 /// Fragment shader for smooth gradient with dithering
 const FRAGMENT_SHADER_GRADIENT_4: &str = r"#version 100
 precision mediump float;
@@ -118,6 +180,8 @@ pub struct Renderer {
     textured_program: glow::Program,
     /// Shader program for gradient rendering (8-stop with dithering)
     gradient_4_program: glow::Program,
+    /// Shader program for partial gradient (for flaps)
+    gradient_partial_program: glow::Program,
     /// Shader program for rounded rectangles
     rounded_program: glow::Program,
     /// Vertex buffer for quad geometry
@@ -275,7 +339,11 @@ impl Renderer {
 
         let gradient_4_program =
             Self::create_program(gl, VERTEX_SHADER, FRAGMENT_SHADER_GRADIENT_4)
-                .context("Failed to create 4-stop gradient shader program")?;
+                .context("Failed to create gradient shader program")?;
+
+        let gradient_partial_program =
+            Self::create_program(gl, VERTEX_SHADER, FRAGMENT_SHADER_GRADIENT_PARTIAL)
+                .context("Failed to create partial gradient shader program")?;
 
         let rounded_program = Self::create_program(gl, VERTEX_SHADER, FRAGMENT_SHADER_ROUNDED)
             .context("Failed to create rounded shader program")?;
@@ -312,6 +380,7 @@ impl Renderer {
             solid_program,
             textured_program,
             gradient_4_program,
+            gradient_partial_program,
             rounded_program,
             vbo,
             width,
@@ -573,6 +642,81 @@ impl Renderer {
             gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, 20, 0);
 
             let tex_loc = gl.get_attrib_location(self.solid_program, "a_texcoord");
+            if let Some(loc) = tex_loc {
+                gl.enable_vertex_attrib_array(loc);
+                gl.vertex_attrib_pointer_f32(loc, 2, glow::FLOAT, false, 20, 12);
+            }
+
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+        }
+    }
+
+    /// Draw a flipping panel with partial gradient (shows portion of full gradient)
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw_flap_gradient_partial(
+        &self,
+        gl: &glow::Context,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        angle: f32,
+        extends_up: bool,
+        colors: &[[f32; 4]],
+        stops: &[f32],
+        y_offset: f32, // where this portion starts in full gradient (0.0 to 1.0)
+        y_scale: f32,  // how much of gradient to show (e.g., 0.5 for half)
+    ) {
+        let projection = self.projection();
+
+        let y_offset_pos = if extends_up {
+            height / 2.0
+        } else {
+            -height / 2.0
+        };
+
+        let model = Mat4::translate(x, y, 0.0)
+            .mul(&Mat4::rotate_x(angle))
+            .mul(&Mat4::translate(0.0, y_offset_pos, 0.0))
+            .mul(&Mat4::scale(width, height, 1.0));
+        let mvp = projection.mul(&model);
+
+        unsafe {
+            gl.use_program(Some(self.gradient_partial_program));
+
+            let mvp_loc = gl.get_uniform_location(self.gradient_partial_program, "u_mvp");
+            gl.uniform_matrix_4_f32_slice(mvp_loc.as_ref(), false, mvp.as_array());
+
+            // Set color uniforms
+            for (i, color) in colors.iter().enumerate() {
+                let uniform_name = format!("u_color{}", i + 1);
+                let loc = gl.get_uniform_location(self.gradient_partial_program, &uniform_name);
+                gl.uniform_4_f32(loc.as_ref(), color[0], color[1], color[2], color[3]);
+            }
+
+            // Set stop positions
+            for (i, &stop) in stops.iter().enumerate() {
+                let uniform_name = format!("u_stop{}", i + 1);
+                let loc = gl.get_uniform_location(self.gradient_partial_program, &uniform_name);
+                gl.uniform_1_f32(loc.as_ref(), stop);
+            }
+
+            // Set offset and scale for partial gradient
+            let offset_loc = gl.get_uniform_location(self.gradient_partial_program, "u_y_offset");
+            gl.uniform_1_f32(offset_loc.as_ref(), y_offset);
+
+            let scale_loc = gl.get_uniform_location(self.gradient_partial_program, "u_y_scale");
+            gl.uniform_1_f32(scale_loc.as_ref(), y_scale);
+
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+
+            let pos_loc = gl
+                .get_attrib_location(self.gradient_partial_program, "a_position")
+                .expect("BUG: a_position attribute not found");
+            gl.enable_vertex_attrib_array(pos_loc);
+            gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, 20, 0);
+
+            let tex_loc = gl.get_attrib_location(self.gradient_partial_program, "a_texcoord");
             if let Some(loc) = tex_loc {
                 gl.enable_vertex_attrib_array(loc);
                 gl.vertex_attrib_pointer_f32(loc, 2, glow::FLOAT, false, 20, 12);
