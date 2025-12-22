@@ -283,9 +283,17 @@ impl WaylandClient {
                     prev_seconds % 10,
                 ];
 
-                // Animation progress: flip happens in first 0.3 seconds after digit change
-                let flip_duration = 0.3;
-                let flip_progress = (subsec / flip_duration).min(1.0);
+                // Animation progress: flip happens in first 0.35 seconds after digit change
+                let flip_duration = 0.35;
+                let flip_progress_linear = (subsec / flip_duration).min(1.0);
+
+                // Add easing for smooth, natural motion (ease-in-out cubic)
+                // Accelerates at start, decelerates at end like a real mechanical flip
+                let flip_progress = if flip_progress_linear < 0.5 {
+                    4.0 * flip_progress_linear * flip_progress_linear * flip_progress_linear
+                } else {
+                    1.0 - (-2.0 * flip_progress_linear + 2.0).powi(3) / 2.0
+                };
 
                 // Enable blending for digit textures (white on transparent)
                 unsafe {
