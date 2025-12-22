@@ -41,12 +41,85 @@ void main() {
 }
 ";
 
+/// Fragment shader for smooth gradient with dithering
+const FRAGMENT_SHADER_GRADIENT_4: &str = r"#version 100
+precision mediump float;
+varying vec2 v_texcoord;
+uniform vec4 u_color1;
+uniform vec4 u_color2;
+uniform vec4 u_color3;
+uniform vec4 u_color4;
+uniform vec4 u_color5;
+uniform vec4 u_color6;
+uniform vec4 u_color7;
+uniform vec4 u_color8;
+uniform float u_stop1;
+uniform float u_stop2;
+uniform float u_stop3;
+uniform float u_stop4;
+uniform float u_stop5;
+uniform float u_stop6;
+uniform float u_stop7;
+
+void main() {
+    float t = v_texcoord.y;
+    vec4 color;
+
+    if (t > u_stop1) {
+        color = mix(u_color2, u_color1, (t - u_stop1) / (1.0 - u_stop1));
+    } else if (t > u_stop2) {
+        color = mix(u_color3, u_color2, (t - u_stop2) / (u_stop1 - u_stop2));
+    } else if (t > u_stop3) {
+        color = mix(u_color4, u_color3, (t - u_stop3) / (u_stop2 - u_stop3));
+    } else if (t > u_stop4) {
+        color = mix(u_color5, u_color4, (t - u_stop4) / (u_stop3 - u_stop4));
+    } else if (t > u_stop5) {
+        color = mix(u_color6, u_color5, (t - u_stop5) / (u_stop4 - u_stop5));
+    } else if (t > u_stop6) {
+        color = mix(u_color7, u_color6, (t - u_stop6) / (u_stop5 - u_stop6));
+    } else if (t > u_stop7) {
+        color = mix(u_color8, u_color7, (t - u_stop7) / (u_stop6 - u_stop7));
+    } else {
+        color = u_color8;
+    }
+
+    // Dithering using Bayer-like pattern for better quality
+    float dither = fract(dot(gl_FragCoord.xy, vec2(0.25, 0.75))) - 0.5;
+    color.rgb += dither / 64.0; // Subtle noise
+
+    gl_FragColor = color;
+}
+";
+
+/// Fragment shader for rounded rectangle (SDF-based)
+const FRAGMENT_SHADER_ROUNDED: &str = r"#version 100
+precision mediump float;
+varying vec2 v_texcoord;
+uniform vec4 u_color;
+
+void main() {
+    // Convert to centered coordinates (-0.5 to 0.5)
+    vec2 pos = v_texcoord - vec2(0.5, 0.5);
+
+    // Ellipse distance: scale coordinates then check circle distance
+    float dist = length(pos * 2.0) - 1.0;
+
+    // Anti-aliased edge
+    float alpha = smoothstep(0.05, -0.05, dist);
+    gl_FragColor = vec4(u_color.rgb, u_color.a * alpha);
+}
+";
+
 /// OpenGL ES renderer
 pub struct Renderer {
     /// Shader program for solid colors
     solid_program: glow::Program,
     /// Shader program for textured rendering
     textured_program: glow::Program,
+    /// Shader program for gradient rendering (8-stop with dithering)
+    gradient_4_program: glow::Program,
+    /// Shader program for rounded rectangles
+    rounded_program: glow::Program,
     /// Vertex buffer for quad geometry
     vbo: glow::Buffer,
     /// Current viewport dimensions
@@ -200,6 +273,13 @@ impl Renderer {
         let textured_program = Self::create_program(gl, VERTEX_SHADER, FRAGMENT_SHADER_TEXTURED)
             .context("Failed to create textured shader program")?;
 
+        let gradient_4_program =
+            Self::create_program(gl, VERTEX_SHADER, FRAGMENT_SHADER_GRADIENT_4)
+                .context("Failed to create 4-stop gradient shader program")?;
+
+        let rounded_program = Self::create_program(gl, VERTEX_SHADER, FRAGMENT_SHADER_ROUNDED)
+            .context("Failed to create rounded shader program")?;
+
         // Create vertex buffer for quad (position + texcoord)
         // Quad vertices: 2 triangles forming a rectangle
         // Layout: x, y, z, u, v
@@ -231,6 +311,8 @@ impl Renderer {
         Ok(Self {
             solid_program,
             textured_program,
+            gradient_4_program,
+            rounded_program,
             vbo,
             width,
             height,
@@ -309,7 +391,61 @@ impl Renderer {
         )
     }
 
-    /// Draw a colored rectangle
+    /// Draw a rectangle with 8-stop vertical gradient
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw_rect_gradient_4(
+        &self,
+        gl: &glow::Context,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        colors: &[[f32; 4]], // 8 colors
+        stops: &[f32],       // 7 stop positions
+    ) {
+        let projection = self.projection();
+        let model = Mat4::translate(x, y, 0.0).mul(&Mat4::scale(width, height, 1.0));
+        let mvp = projection.mul(&model);
+
+        unsafe {
+            gl.use_program(Some(self.gradient_4_program));
+
+            let mvp_loc = gl.get_uniform_location(self.gradient_4_program, "u_mvp");
+            gl.uniform_matrix_4_f32_slice(mvp_loc.as_ref(), false, mvp.as_array());
+
+            // Set color uniforms
+            for (i, color) in colors.iter().enumerate() {
+                let uniform_name = format!("u_color{}", i + 1);
+                let loc = gl.get_uniform_location(self.gradient_4_program, &uniform_name);
+                gl.uniform_4_f32(loc.as_ref(), color[0], color[1], color[2], color[3]);
+            }
+
+            // Set stop positions
+            for (i, &stop) in stops.iter().enumerate() {
+                let uniform_name = format!("u_stop{}", i + 1);
+                let loc = gl.get_uniform_location(self.gradient_4_program, &uniform_name);
+                gl.uniform_1_f32(loc.as_ref(), stop);
+            }
+
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+
+            let pos_loc = gl
+                .get_attrib_location(self.gradient_4_program, "a_position")
+                .expect("BUG: a_position attribute not found");
+            gl.enable_vertex_attrib_array(pos_loc);
+            gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, 20, 0);
+
+            let tex_loc = gl.get_attrib_location(self.gradient_4_program, "a_texcoord");
+            if let Some(loc) = tex_loc {
+                gl.enable_vertex_attrib_array(loc);
+                gl.vertex_attrib_pointer_f32(loc, 2, glow::FLOAT, false, 20, 12);
+            }
+
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+        }
+    }
+
+    /// Draw a rectangle with vertical gradient
     pub fn draw_rect(
         &self,
         gl: &glow::Context,
@@ -350,6 +486,47 @@ impl Renderer {
             }
 
             // Draw quad
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+        }
+    }
+
+    /// Draw an ellipse (pill/capsule shape)
+    pub fn draw_rounded_rect(
+        &self,
+        gl: &glow::Context,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: [f32; 4],
+    ) {
+        let projection = self.projection();
+        let model = Mat4::translate(x, y, 0.0).mul(&Mat4::scale(width, height, 1.0));
+        let mvp = projection.mul(&model);
+
+        unsafe {
+            gl.use_program(Some(self.rounded_program));
+
+            let mvp_loc = gl.get_uniform_location(self.rounded_program, "u_mvp");
+            gl.uniform_matrix_4_f32_slice(mvp_loc.as_ref(), false, mvp.as_array());
+
+            let color_loc = gl.get_uniform_location(self.rounded_program, "u_color");
+            gl.uniform_4_f32(color_loc.as_ref(), color[0], color[1], color[2], color[3]);
+
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+
+            let pos_loc = gl
+                .get_attrib_location(self.rounded_program, "a_position")
+                .expect("BUG: a_position attribute not found");
+            gl.enable_vertex_attrib_array(pos_loc);
+            gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, 20, 0);
+
+            let tex_loc = gl.get_attrib_location(self.rounded_program, "a_texcoord");
+            if let Some(loc) = tex_loc {
+                gl.enable_vertex_attrib_array(loc);
+                gl.vertex_attrib_pointer_f32(loc, 2, glow::FLOAT, false, 20, 12);
+            }
+
             gl.draw_arrays(glow::TRIANGLES, 0, 6);
         }
     }
@@ -405,6 +582,74 @@ impl Renderer {
         }
     }
 
+    /// Draw a flipping panel with 8-stop gradient for split-flap animation
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw_flap_gradient_4(
+        &self,
+        gl: &glow::Context,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        angle: f32,
+        extends_up: bool,
+        colors: &[[f32; 4]],
+        stops: &[f32],
+    ) {
+        let projection = self.projection();
+
+        let y_offset = if extends_up {
+            height / 2.0
+        } else {
+            -height / 2.0
+        };
+
+        let model = Mat4::translate(x, y, 0.0)
+            .mul(&Mat4::rotate_x(angle))
+            .mul(&Mat4::translate(0.0, y_offset, 0.0))
+            .mul(&Mat4::scale(width, height, 1.0));
+        let mvp = projection.mul(&model);
+
+        unsafe {
+            gl.use_program(Some(self.gradient_4_program));
+
+            let mvp_loc = gl.get_uniform_location(self.gradient_4_program, "u_mvp");
+            gl.uniform_matrix_4_f32_slice(mvp_loc.as_ref(), false, mvp.as_array());
+
+            // Set color uniforms
+            for (i, color) in colors.iter().enumerate() {
+                let uniform_name = format!("u_color{}", i + 1);
+                let loc = gl.get_uniform_location(self.gradient_4_program, &uniform_name);
+                gl.uniform_4_f32(loc.as_ref(), color[0], color[1], color[2], color[3]);
+            }
+
+            // Set stop positions
+            for (i, &stop) in stops.iter().enumerate() {
+                let uniform_name = format!("u_stop{}", i + 1);
+                let loc = gl.get_uniform_location(self.gradient_4_program, &uniform_name);
+                gl.uniform_1_f32(loc.as_ref(), stop);
+            }
+
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+
+            let pos_loc = gl
+                .get_attrib_location(self.gradient_4_program, "a_position")
+                .expect("BUG: a_position attribute not found");
+            gl.enable_vertex_attrib_array(pos_loc);
+            gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, 20, 0);
+
+            let tex_loc = gl.get_attrib_location(self.gradient_4_program, "a_texcoord");
+            if let Some(loc) = tex_loc {
+                gl.enable_vertex_attrib_array(loc);
+                gl.vertex_attrib_pointer_f32(loc, 2, glow::FLOAT, false, 20, 12);
+            }
+
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+        }
+    }
+
+    /// Draw a flipping panel with gradient for split-flap animation
+    #[expect(clippy::too_many_arguments)]
     /// Draw a flipping panel for split-flap animation
     /// The flap rotates around a hinge at y=0 (center of the digit).
     /// - x: center x position
@@ -480,6 +725,27 @@ impl Renderer {
         top_half: bool,
         flip_v: bool,
     ) {
+        self.draw_textured_flap_split(
+            gl, x, y, width, height, angle, extends_up, texture, top_half, flip_v, 0.5,
+        );
+    }
+
+    /// Draw a textured flap with custom split point
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw_textured_flap_split(
+        &self,
+        gl: &glow::Context,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        angle: f32,
+        extends_up: bool,
+        texture: glow::Texture,
+        top_half: bool,
+        flip_v: bool,
+        split_point: f32,
+    ) {
         let projection = self.projection();
 
         let y_offset = if extends_up {
@@ -494,7 +760,14 @@ impl Renderer {
             .mul(&Mat4::scale(width, height, 1.0));
         let mvp = projection.mul(&model);
 
-        self.draw_textured_quad_half_with_mvp_flip(gl, &mvp, texture, top_half, flip_v);
+        self.draw_textured_quad_half_with_mvp_split(
+            gl,
+            &mvp,
+            texture,
+            top_half,
+            split_point,
+            flip_v,
+        );
     }
 
     /// Draw a textured half-rectangle (top or bottom half of the texture)
@@ -509,11 +782,34 @@ impl Renderer {
         texture: glow::Texture,
         top_half: bool,
     ) {
+        self.draw_textured_half_rect_split(gl, x, y, width, height, texture, top_half, 0.5);
+    }
+
+    /// Draw a textured half-rectangle with custom split point
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw_textured_half_rect_split(
+        &self,
+        gl: &glow::Context,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        texture: glow::Texture,
+        top_half: bool,
+        split_point: f32,
+    ) {
         let projection = self.projection();
         let model = Mat4::translate(x, y, 0.0).mul(&Mat4::scale(width, height, 1.0));
         let mvp = projection.mul(&model);
 
-        self.draw_textured_quad_half_with_mvp(gl, &mvp, texture, top_half);
+        self.draw_textured_quad_half_with_mvp_split(
+            gl,
+            &mvp,
+            texture,
+            top_half,
+            split_point,
+            false,
+        );
     }
 
     /// Helper to draw a textured quad with a given MVP matrix
@@ -556,7 +852,94 @@ impl Renderer {
         texture: glow::Texture,
         top_half: bool,
     ) {
-        self.draw_textured_quad_half_with_mvp_flip(gl, mvp, texture, top_half, false);
+        self.draw_textured_quad_half_with_mvp_split(gl, mvp, texture, top_half, 0.5, false);
+    }
+
+    /// Helper to draw half of a textured quad with custom split point
+    fn draw_textured_quad_half_with_mvp_split(
+        &self,
+        gl: &glow::Context,
+        mvp: &Mat4,
+        texture: glow::Texture,
+        top_half: bool,
+        split_point: f32,
+        flip_v: bool,
+    ) {
+        // Create custom vertices for half texture
+        // split_point: where to split (0.5 = middle, <0.5 = more bottom, >0.5 = more top)
+        let (mut v_start, mut v_end) = if top_half {
+            (0.0, split_point)
+        } else {
+            (split_point, 1.0)
+        };
+
+        // Flip vertically if requested (swap v coordinates)
+        if flip_v {
+            std::mem::swap(&mut v_start, &mut v_end);
+        }
+
+        #[rustfmt::skip]
+        let vertices: [f32; 30] = [
+            // Triangle 1
+            -0.5, -0.5, 0.0,  0.0, v_end,   // bottom-left
+             0.5, -0.5, 0.0,  1.0, v_end,   // bottom-right
+             0.5,  0.5, 0.0,  1.0, v_start, // top-right
+            // Triangle 2
+            -0.5, -0.5, 0.0,  0.0, v_end,   // bottom-left
+             0.5,  0.5, 0.0,  1.0, v_start, // top-right
+            -0.5,  0.5, 0.0,  0.0, v_start, // top-left
+        ];
+
+        unsafe {
+            gl.use_program(Some(self.textured_program));
+
+            let mvp_loc = gl.get_uniform_location(self.textured_program, "u_mvp");
+            gl.uniform_matrix_4_f32_slice(mvp_loc.as_ref(), false, mvp.as_array());
+
+            // Bind texture
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            let tex_loc = gl.get_uniform_location(self.textured_program, "u_texture");
+            gl.uniform_1_i32(tex_loc.as_ref(), 0);
+
+            // Upload custom vertices to VBO
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+            gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                bytemuck::cast_slice(&vertices),
+                glow::DYNAMIC_DRAW,
+            );
+
+            let pos_loc = gl
+                .get_attrib_location(self.textured_program, "a_position")
+                .expect("BUG: a_position attribute not found");
+            gl.enable_vertex_attrib_array(pos_loc);
+            gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, 20, 0);
+
+            let tex_coord_loc = gl
+                .get_attrib_location(self.textured_program, "a_texcoord")
+                .expect("BUG: a_texcoord attribute not found");
+            gl.enable_vertex_attrib_array(tex_coord_loc);
+            gl.vertex_attrib_pointer_f32(tex_coord_loc, 2, glow::FLOAT, false, 20, 12);
+
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+
+            // Restore original vertices
+            #[rustfmt::skip]
+            let orig_vertices: [f32; 30] = [
+                -0.5, -0.5, 0.0,  0.0, 1.0,
+                 0.5, -0.5, 0.0,  1.0, 1.0,
+                 0.5,  0.5, 0.0,  1.0, 0.0,
+                -0.5, -0.5, 0.0,  0.0, 1.0,
+                 0.5,  0.5, 0.0,  1.0, 0.0,
+                -0.5,  0.5, 0.0,  0.0, 0.0,
+            ];
+            gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                bytemuck::cast_slice(&orig_vertices),
+                glow::STATIC_DRAW,
+            );
+        }
     }
 
     /// Helper to draw half of a textured quad with optional vertical flip
