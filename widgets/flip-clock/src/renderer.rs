@@ -63,10 +63,13 @@ uniform float u_stop6;
 uniform float u_stop7;
 uniform float u_y_offset; // vertical offset (0.0 to 1.0)
 uniform float u_y_scale;  // vertical scale (portion of gradient to show)
+uniform float u_flip;     // 1.0 = normal, -1.0 = flipped
 
 void main() {
     // Remap texture coordinate to show only a portion of the gradient
-    float t = u_y_offset + v_texcoord.y * u_y_scale;
+    // When u_flip = -1.0, reverse the gradient direction (for back of flap)
+    float tex_y = u_flip > 0.0 ? v_texcoord.y : (1.0 - v_texcoord.y);
+    float t = u_y_offset + tex_y * u_y_scale;
     vec4 color;
 
     // Same gradient logic as full gradient
@@ -666,6 +669,7 @@ impl Renderer {
         stops: &[f32],
         y_offset: f32, // where this portion starts in full gradient (0.0 to 1.0)
         y_scale: f32,  // how much of gradient to show (e.g., 0.5 for half)
+        flip: bool,    // flip gradient vertically (for back of flap)
     ) {
         let projection = self.projection();
 
@@ -707,6 +711,9 @@ impl Renderer {
 
             let scale_loc = gl.get_uniform_location(self.gradient_partial_program, "u_y_scale");
             gl.uniform_1_f32(scale_loc.as_ref(), y_scale);
+
+            let flip_loc = gl.get_uniform_location(self.gradient_partial_program, "u_flip");
+            gl.uniform_1_f32(flip_loc.as_ref(), if flip { -1.0 } else { 1.0 });
 
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
 

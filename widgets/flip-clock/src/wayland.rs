@@ -582,8 +582,9 @@ impl WaylandClient {
                                     false,
                                     &gradient_colors,
                                     &gradient_stops,
-                                    0.5, // start at 50% of gradient (center)
-                                    0.5, // show top 50% (from center to top)
+                                    0.5,   // start at 50% of gradient (center)
+                                    0.5,   // show top 50% (from center to top)
+                                    false, // normal gradient direction
                                 );
                                 renderer.draw_textured_flap_split(
                                     gl,
@@ -600,6 +601,7 @@ impl WaylandClient {
                                 );
                             } else {
                                 // Second half: show bottom portion of gradient (0% to 50%)
+                                // Flip gradient because we're viewing the back of the flap
                                 renderer.draw_flap_gradient_partial(
                                     gl,
                                     x,
@@ -610,8 +612,9 @@ impl WaylandClient {
                                     false,
                                     &gradient_colors,
                                     &gradient_stops,
-                                    0.0, // start at 0% of gradient (bottom)
-                                    0.5, // show bottom 50% (from bottom to center)
+                                    0.0,  // start at 0% of gradient (bottom)
+                                    0.5,  // show bottom 50% (from bottom to center)
+                                    true, // flip gradient (viewing back of flap)
                                 );
                                 renderer.draw_textured_flap_split(
                                     gl,
