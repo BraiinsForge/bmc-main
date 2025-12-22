@@ -222,8 +222,8 @@ impl WaylandClient {
                 // Begin frame
                 egl.begin_frame()?;
 
-                // Clear to dark background
-                egl.clear(0.05, 0.05, 0.1, 1.0);
+                // Clear to black background
+                egl.clear(0.0, 0.0, 0.0, 1.0);
 
                 // Get GL context for rendering
                 let gl = egl.gl();
@@ -236,13 +236,14 @@ impl WaylandClient {
                 // For 1280x480: aspect = 2.67, so height = 1.0 / 2.67 = 0.375 units
 
                 // Draw 6 digit panels (HH:MM:SS layout) - horizontal row
-                // Fill the whole display width (1.0 units) with some margin
-                let total_available_width = 1.5; // spread across full width
-                let colon_width = 0.08; // Width of colon section
-                let gap = 0.10; // Large gap between panels
-                // 6 panels + 2 colons + 7 gaps = total width
-                let panel_width = (total_available_width - 2.0 * colon_width - 7.0 * gap) / 6.0;
-                let panel_height = 0.35; // Height to fit display
+                // Panel dimensions: 200x257 pixels (design spec for HH:MM)
+                // Scale down 85% to fit 6 digits (HH:MM:SS) without squishing
+                let scale_factor = 0.85;
+                let panel_height = (257.0 * scale_factor) / 480.0;
+                let panel_width = (200.0 * scale_factor) / 480.0;
+
+                let colon_width = 0.05; // Width allocated for colon
+                let gap = 0.02; // Small gap between panels
 
                 // Total width: 6 panels + 2 colons + gaps
                 let total_width = 6.0 * panel_width + 2.0 * colon_width + 7.0 * gap;
@@ -297,24 +298,43 @@ impl WaylandClient {
                 for i in 0..6 {
                     // Add colon after HH (index 2) and MM (index 4)
                     if i == 2 || i == 4 {
-                        // Draw colon (two small squares stacked vertically)
+                        // Draw colon - two rounded rectangles stacked vertically
+                        // From SVG: 19x60 viewbox, two pills at y=0-19.74 and y=40.26-60
                         let colon_x = x - panel_width / 2.0 - gap - colon_width / 2.0;
-                        let dot_size = 0.025;
-                        renderer.draw_rect(
+
+                        // Scale to match our coordinate system
+                        // SVG: 19 wide, each pill ~19.74 tall
+                        let pill_width = colon_width * 0.8;
+                        let pill_height = pill_width * (19.74 / 19.0);
+
+                        // SVG spacing: top pill at 9.87, bottom pill at 50.13 (center positions)
+                        // Total height 60, so normalized: top at 0.165, bottom at -0.165
+                        let pill_spacing = pill_height * 1.5;
+
+                        let colon_color = [
+                            f32::from(0xC6_u8) / 255.0,
+                            f32::from(0xC6_u8) / 255.0,
+                            f32::from(0xC6_u8) / 255.0,
+                            1.0,
+                        ]; // #C6C6C6
+
+                        // Upper pill
+                        renderer.draw_rounded_rect(
                             gl,
                             colon_x,
-                            0.05, // upper dot
-                            dot_size,
-                            dot_size,
-                            [0.7, 0.7, 0.7, 1.0],
+                            pill_spacing / 2.0,
+                            pill_width,
+                            pill_height,
+                            colon_color,
                         );
-                        renderer.draw_rect(
+                        // Lower pill
+                        renderer.draw_rounded_rect(
                             gl,
                             colon_x,
-                            -0.05, // lower dot
-                            dot_size,
-                            dot_size,
-                            [0.7, 0.7, 0.7, 1.0],
+                            -pill_spacing / 2.0,
+                            pill_width,
+                            pill_height,
+                            colon_color,
                         );
                     }
 
@@ -409,104 +429,242 @@ impl WaylandClient {
                             gl.disable(glow::DEPTH_TEST);
                         }
                     } else {
-                        // 2D flat mode - split-flap animation with textures
-                        let half_height = panel_height / 2.0;
+                        // 2D flat mode - classic split-flap display design
+                        // Panel aspect ratio: 200x257 (width x height)
+                        let aspect_ratio = 257.0 / 200.0;
+                        let adjusted_panel_height = panel_width * aspect_ratio;
+                        let half_height = adjusted_panel_height / 2.0;
+
+                        // Dividing line: 4px converted to normalized coordinates
+                        // Assuming panel_width corresponds to ~200px, 4px = 4/200 = 0.02 of panel_width
+                        let gap_height = panel_width * 4.0 / 200.0;
+                        let border_width = 0.008; // thin border around panel
+
+                        // Split point for digit texture (< 0.5 makes top smaller)
+                        let split_point = 0.45;
+
+                        // 8-stop gradient for ultra-smooth transitions
+                        // Base: #272727 (0%) -> #0F0F0F (48.51%) -> #1C1C1C (50.44%) -> #101010 (85.69%)
+                        // With interpolated stops for smoothness
+                        let gradient_colors = [
+                            [
+                                f32::from(0x27_u8) / 255.0,
+                                f32::from(0x27_u8) / 255.0,
+                                f32::from(0x27_u8) / 255.0,
+                                1.0,
+                            ], // 0%: #272727
+                            [
+                                f32::from(0x1B_u8) / 255.0,
+                                f32::from(0x1B_u8) / 255.0,
+                                f32::from(0x1B_u8) / 255.0,
+                                1.0,
+                            ], // 25%: interpolated
+                            [
+                                f32::from(0x0F_u8) / 255.0,
+                                f32::from(0x0F_u8) / 255.0,
+                                f32::from(0x0F_u8) / 255.0,
+                                1.0,
+                            ], // 48.51%: #0F0F0F
+                            [
+                                f32::from(0x16_u8) / 255.0,
+                                f32::from(0x16_u8) / 255.0,
+                                f32::from(0x16_u8) / 255.0,
+                                1.0,
+                            ], // 49.5%: interpolated
+                            [
+                                f32::from(0x1C_u8) / 255.0,
+                                f32::from(0x1C_u8) / 255.0,
+                                f32::from(0x1C_u8) / 255.0,
+                                1.0,
+                            ], // 50.44%: #1C1C1C
+                            [
+                                f32::from(0x18_u8) / 255.0,
+                                f32::from(0x18_u8) / 255.0,
+                                f32::from(0x18_u8) / 255.0,
+                                1.0,
+                            ], // 65%: interpolated
+                            [
+                                f32::from(0x14_u8) / 255.0,
+                                f32::from(0x14_u8) / 255.0,
+                                f32::from(0x14_u8) / 255.0,
+                                1.0,
+                            ], // 75%: interpolated
+                            [
+                                f32::from(0x10_u8) / 255.0,
+                                f32::from(0x10_u8) / 255.0,
+                                f32::from(0x10_u8) / 255.0,
+                                1.0,
+                            ], // 85.69%: #101010
+                        ];
+                        let gradient_stops = [
+                            1.0 - 0.25,
+                            1.0 - 0.4851,
+                            1.0 - 0.495,
+                            1.0 - 0.5044,
+                            1.0 - 0.65,
+                            1.0 - 0.75,
+                            1.0 - 0.8569,
+                        ];
+
+                        let frame_color = [0.15, 0.15, 0.15, 1.0]; // dark gray frame
+
+                        // Draw panel frame (border around entire digit)
+                        renderer.draw_rect(
+                            gl,
+                            x,
+                            0.0,
+                            panel_width + border_width * 2.0,
+                            adjusted_panel_height + border_width * 2.0,
+                            frame_color,
+                        );
 
                         if digit_changed && flip_progress < 1.0 {
                             // Split-flap animation in progress
                             let angle = flip_progress * std::f32::consts::PI;
 
-                            // 1. Draw bottom half panel background (NEW digit revealed)
-                            renderer.draw_rect(
+                            // Draw ONE full-height background panel with 4-stop gradient
+                            renderer.draw_rect_gradient_4(
                                 gl,
                                 x,
-                                -panel_height / 4.0,
+                                0.0, // centered
                                 panel_width,
-                                half_height,
-                                panel_color,
+                                adjusted_panel_height, // full height
+                                &gradient_colors,
+                                &gradient_stops,
                             );
-                            // Draw NEW digit's bottom half
-                            renderer.draw_textured_half_rect(
+
+                            // Draw static bottom half digit (NEW digit revealed as flap falls)
+                            renderer.draw_textured_half_rect_split(
                                 gl,
                                 x,
-                                -panel_height / 4.0,
+                                -gap_height / 2.0 - half_height / 2.0,
                                 panel_width,
                                 half_height,
                                 digit_textures.get(current_digit),
                                 false, // bottom half of texture
+                                split_point,
                             );
 
-                            // 2. Draw top half panel background (OLD digit stays)
-                            renderer.draw_rect(
+                            // Draw static top half digit (OLD digit, stays until flap covers)
+                            renderer.draw_textured_half_rect_split(
                                 gl,
                                 x,
-                                panel_height / 4.0,
-                                panel_width,
-                                half_height,
-                                panel_color,
-                            );
-                            // Draw OLD digit's top half
-                            renderer.draw_textured_half_rect(
-                                gl,
-                                x,
-                                panel_height / 4.0,
+                                gap_height / 2.0 + half_height / 2.0,
                                 panel_width,
                                 half_height,
                                 digit_textures.get(prev_digit),
                                 true, // top half of texture
+                                split_point,
                             );
 
-                            // 3. Draw the falling flap (hinged at top, rotates down)
-                            renderer.draw_flap(
-                                gl,
-                                x,
-                                0.0, // hinge at center
-                                panel_width,
-                                half_height,
-                                -angle, // negative to flip from top down
-                                false,  // extends downward from hinge (hinge is at top)
-                                panel_color,
-                            );
-                            // Draw digit on the flap
+                            // Flipping flap with gradient and digit
                             if angle < std::f32::consts::FRAC_PI_2 {
-                                // First half: show old digit's bottom half (appears as top when flap is up)
-                                renderer.draw_textured_flap(
+                                // First half: flap showing top half of gradient
+                                renderer.draw_flap_gradient_4(
                                     gl,
                                     x,
                                     0.0,
                                     panel_width,
                                     half_height,
                                     -angle,
-                                    false, // hinge at top edge
+                                    false,
+                                    &gradient_colors,
+                                    &gradient_stops,
+                                );
+                                renderer.draw_textured_flap_split(
+                                    gl,
+                                    x,
+                                    0.0,
+                                    panel_width,
+                                    half_height,
+                                    -angle,
+                                    false,
                                     digit_textures.get(prev_digit),
                                     false, // bottom half of texture
-                                    false, // no flip
+                                    false,
+                                    split_point,
                                 );
                             } else {
-                                // Second half: show new digit's top half (viewing back of flap)
-                                renderer.draw_textured_flap(
+                                // Second half: flap showing bottom half of gradient
+                                renderer.draw_flap_gradient_4(
                                     gl,
                                     x,
                                     0.0,
                                     panel_width,
                                     half_height,
                                     -angle,
-                                    false, // hinge at top edge
+                                    false,
+                                    &gradient_colors,
+                                    &gradient_stops,
+                                );
+                                renderer.draw_textured_flap_split(
+                                    gl,
+                                    x,
+                                    0.0,
+                                    panel_width,
+                                    half_height,
+                                    -angle,
+                                    false,
                                     digit_textures.get(current_digit),
                                     true, // top half of texture
-                                    true, // flip vertically (viewing back)
+                                    true, // flip vertically
+                                    split_point,
                                 );
                             }
-                        } else {
-                            // Static digit - draw full panel with textured digit
-                            renderer.draw_rect(gl, x, 0.0, panel_width, panel_height, panel_color);
-                            renderer.draw_textured_rect(
+
+                            // Draw center split line (visible gap between halves)
+                            renderer.draw_rect(
                                 gl,
                                 x,
                                 0.0,
+                                panel_width + border_width,
+                                gap_height,
+                                [0.0, 0.0, 0.0, 1.0], // black gap
+                            );
+                        } else {
+                            // Static digit - draw ONE full background with 4-stop gradient
+                            renderer.draw_rect_gradient_4(
+                                gl,
+                                x,
+                                0.0, // centered
                                 panel_width,
-                                panel_height,
+                                adjusted_panel_height, // full height
+                                &gradient_colors,
+                                &gradient_stops,
+                            );
+
+                            // Draw top half of digit
+                            renderer.draw_textured_half_rect_split(
+                                gl,
+                                x,
+                                gap_height / 2.0 + half_height / 2.0,
+                                panel_width,
+                                half_height,
                                 digit_textures.get(current_digit),
+                                true, // top half of texture
+                                split_point,
+                            );
+
+                            // Draw bottom half of digit
+                            renderer.draw_textured_half_rect_split(
+                                gl,
+                                x,
+                                -gap_height / 2.0 - half_height / 2.0,
+                                panel_width,
+                                half_height,
+                                digit_textures.get(current_digit),
+                                false, // bottom half of texture
+                                split_point,
+                            );
+
+                            // Center split line (4px gap)
+                            renderer.draw_rect(
+                                gl,
+                                x,
+                                0.0,
+                                panel_width + border_width,
+                                gap_height,
+                                [0.0, 0.0, 0.0, 1.0], // black gap
                             );
                         }
                     }
