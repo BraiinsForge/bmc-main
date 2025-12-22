@@ -486,7 +486,84 @@ The `bmc-widget` crate serves as the widget SDK containing:
 
 ---
 
-## Stage 8: Digital Clock Widget Extraction
+## Stage 8: Wayland Compositor Core
+
+### Goal
+
+Create a standalone Wayland compositor that can display widget surfaces on the embedded device using EGL/GPU rendering.
+
+### Background
+
+The `bmc-compositor` crate contains a working Wayland compositor using Smithay. It runs on ARMv7 with the STM32MP157 SoC's split GPU/display architecture (Vivante GC400 GPU + STM32 LTDC display controller).
+
+### What Was Implemented
+
+1. **Compositor Crate Structure** (`bmc-compositor/`)
+   - Smithay-based Wayland server with protocol handlers
+   - DRM/KMS backend for direct display output
+   - EGL rendering with split GPU/display architecture
+   - Frame callback handling for widget synchronization
+
+2. **Protocol Handlers** (`bmc-compositor/src/state.rs`)
+   - `CompositorHandler` - Surface creation and commits
+   - `ShmHandler` - Shared memory buffers
+   - `BufferHandler` - Buffer lifecycle
+   - `SeatHandler` - Input handling (keyboard, pointer, touch)
+   - `XdgShellHandler` - Window management
+   - `SelectionHandler` - Copy/paste support
+   - `DataDeviceHandler` - Drag and drop
+
+3. **EGL Rendering** (`bmc-compositor/src/render_egl.rs`)
+   - Dumb buffer allocation on display device (CMA-backed)
+   - PRIME export as DMA-BUF
+   - GPU import and rendering via OpenGL ES
+   - Zero-copy buffer sharing between GPU and display
+   - 90° rotation for portrait panel in landscape mode
+
+4. **DRM Backend** (`bmc-compositor/src/drm_backend.rs`)
+   - Device discovery via udev
+   - Display mode configuration (480x1280 physical, 1280x480 logical)
+   - CRTC and connector selection
+   - Page flip handling
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `bmc-compositor/src/state.rs` | Wayland protocol state and handlers |
+| `bmc-compositor/src/render_egl.rs` | EGL render pipeline |
+| `bmc-compositor/src/drm_backend.rs` | DRM device management |
+| `bmc-compositor/src/main_egl.rs` | EGL compositor entry point |
+| `bmc-compositor/src/main.rs` | Software renderer entry point |
+
+### Build Commands
+
+```bash
+# ARMv7 cross-compilation (must use glibc, not musl)
+nix develop .#armv7-glibc-release --command cargo build -p bmc-compositor --bin bmc-compositor-egl --release
+```
+
+### Hardware Notes
+
+- **GPU**: Vivante GC400 (etnaviv driver) - `/dev/dri/renderD128`
+- **Display**: STM32 LTDC controller - `/dev/dri/card1`
+- **Panel**: MIPI-DSI, 600x1280 @ 63Hz (480x1280 visible)
+- **Buffer sharing**: Display allocates dumb buffers, PRIME exports to GPU for rendering
+
+### Success Criteria
+
+- [x] Compositor builds for ARMv7
+- [x] DRM/KMS display initialization works
+- [x] Wayland socket created for clients
+- [x] Widget surfaces composited to display
+- [x] Frame callbacks sent to widgets
+- [x] Works on actual device
+
+### Status: Complete
+
+---
+
+## Stage 9: Digital Clock Widget Extraction
 
 ### Goal
 Extract the digital clock widget as the first standalone widget to validate the architecture.
@@ -603,7 +680,7 @@ bmc-widget-clock/
 
 ---
 
-## Stage 9: Add Widget System (Alongside Existing)
+## Stage 10: Add Widget System (Alongside Existing)
 
 ### Goal
 Add the new multi-process widget system alongside the existing monolithic Slint display. Both systems run in parallel during this stage.
@@ -745,410 +822,278 @@ Responsibilities:
 
 ---
 
-## Stage 10: Wayland Compositor Integration
+## Stage 11: Compositor Trait Abstraction
 
 ### Goal
-Integrate a Wayland compositor into the `bmc` application that directly composites widget processes, replacing the monolithic Slint display.
 
-### Background
-
-The `jan/coordinator-refactor` branch contains a working PoC demonstrating the compositor client approach. This stage evolves that into a full compositor embedded in `bmc`.
-
-### Architecture
-
-BMC **is** the Wayland compositor. It owns the display directly via DRM/KMS and composites widget surfaces.
-
-```
-+-------------------------------------------------------------+
-|                      BMC Application                        |
-|  +-------------------------------------------------------+  |
-|  |              Wayland Compositor (smithay)             |  |
-|  |   - DRM/KMS backend for direct display output         |  |
-|  |   - Composites widget surfaces onto framebuffer       |  |
-|  |   - Handles input events (touch, pointer)             |  |
-|  |   - Implements wl_compositor, wl_shm, xdg_shell       |  |
-|  +-------------------------------------------------------+  |
-|         |                |                    |             |
-|  +-------------+  +-------------+  +---------------------+  |
-|  | SceneManager|  |WidgetManager|  | TransitionController|  |
-|  +-------------+  +-------------+  +---------------------+  |
-+-------------------------------------------------------------+
-          | Wayland protocol (wl_shm, wl_surface, xdg_shell)
-          v
-+----------+  +----------+  +----------+  +----------+
-|  Clock   |  |  Ticker  |  |  Pool    |  |  Image   |
-|  Widget  |  |  Widget  |  |  Widget  |  |  Widget  |
-| (client) |  | (client) |  | (client) |  | (client) |
-+----------+  +----------+  +----------+  +----------+
-```
-
-### Key Design Points
-
-- **BMC is the compositor**: No Weston, no intermediate layer
-- **Widgets are Wayland clients**: They connect to BMC's Wayland socket
-- **Direct framebuffer access**: DRM/KMS for display, no GPU compositing needed
-- **Software rendering**: Widgets use Slint SoftwareRenderer, BMC composites in software
-- **Frame callback optimization**: Only send frame callbacks to visible surfaces. When a widget is not displayed (e.g., on a different scene), the compositor should stop sending frame callbacks. This causes the Wayland client (Slint widget) to automatically stop rendering, saving CPU. The Wayland protocol is designed this way - clients wait for frame callbacks before rendering, so withholding callbacks naturally throttles hidden widgets to 0 FPS.
+Define a compositor interface trait in `bmc` that abstracts away the implementation details, allowing different backends (EGL for ARMv7, mock for x86 development).
 
 ### Scope
 
-This stage is divided into sub-stages for incremental progress:
+- Define `CompositorHandle` trait in `bmc` crate
+- Define supporting types for widget display configuration
+- No implementation yet - just the interface
 
----
+### Files to Create/Modify
 
-### Stage 10.1: Minimal Compositor with Widget Display
+- `bmc/src/compositor.rs` (new) - Trait definition
+- `bmc/src/lib.rs` - Export compositor module
 
-**Goal**: BMC acts as a Wayland compositor, spawns one widget, and displays it.
+### Trait Design
 
-**Scope**:
-- Add `smithay` compositor library to `bmc`
-- Initialize DRM/KMS backend for direct framebuffer access
-- Create Wayland socket for widget connections
-- Spawn digital-clock widget as Wayland client
-- Composite widget surface to display
+The `CompositorHandle` trait provides the interface between the main application and the compositor:
 
-**Dependencies**:
-- `smithay` for compositor infrastructure
-- `calloop` for event loop integration
+| Method | Description |
+|--------|-------------|
+| `start()` | Start the compositor (creates Wayland socket, initializes display) |
+| `wayland_display()` | Get the Wayland display socket path for widgets |
+| `register_widget()` | Register a widget with position and size configuration |
+| `unregister_widget()` | Unregister a widget when its process stops |
+| `set_active_scene()` | Set which widgets are visible and where |
+| `action_receiver()` | Get channel receiver for widget actions (sound, LED) |
+| `shutdown()` | Shutdown the compositor |
 
-**Success Criteria**:
-- [ ] BMC initializes DRM/KMS display
-- [ ] Wayland socket created for clients
-- [ ] Widget spawned with `WAYLAND_DISPLAY` pointing to BMC
-- [ ] Widget surface composited to display (Slint handles Wayland client automatically)
-- [ ] Works on ARMv7 device
+### Supporting Types
 
-### Status: In Progress
+- `WidgetDisplayConfig` - Position (x, y) and size (width, height) for a widget
+- `SceneLayout` - List of widgets with their display configurations
+- `WidgetAction` - Action request from a widget (instance_id + action payload)
 
-### Implementation Notes (Stage 10.1)
+### Success Criteria
 
-This section documents the current state of Stage 10.1 implementation for future continuation.
-
-#### What Has Been Done
-
-1. **Compositor Crate Structure Created** (`bmc-compositor/`)
-   - `Cargo.toml` - Dependencies configured (smithay 0.7.0, calloop, drm, gbm, libseat, udev, etc.)
-   - `src/lib.rs` - Exports `drm_backend` and `state` modules
-   - `src/main.rs` - Entry point with logging initialization and DRM backend setup skeleton
-   - `src/drm_backend.rs` - DRM/KMS backend skeleton with LibSeat session initialization
-   - `src/state.rs` - Wayland compositor state with protocol handlers
-
-2. **Fixed `CompositorHandler::client_compositor_state`**
-   - Changed parameter from `ClientId` to `Client` (smithay 0.7.0 API)
-   - Implemented proper `ClientState` struct with `CompositorClientState`
-   - Added `client.get_data::<ClientState>()` pattern for per-client state tracking
-
-3. **Fixed `smithay-drm-extras` Dependency Conflict**
-   - System has `libdisplay-info-0.3.0` but crate expected `< 0.3.0`
-   - Fixed by setting `default-features = false` in `Cargo.toml` to disable `display_info` feature
-   - Change in root `Cargo.toml`: `smithay-drm-extras = { version = "0.1.0", default-features = false }`
-
-4. **Fixed All Compilation Errors** (Compositor now builds cleanly)
-   - Added `BufferHandler` implementation for `Compositor`
-   - Imported `Resource` trait for `surface.id()` method
-   - Added `SelectionHandler` implementation (required by `DataDeviceHandler`)
-   - Fixed `OFlags` import (use `smithay::reexports::rustix::fs::OFlags`)
-   - Fixed `DrmDeviceFd::new()` call (needs `.into()` for `DeviceFd` conversion)
-   - Fixed `Serial` type import (use `smithay::utils::Serial`)
-   - Added `udev` crate dependency for GPU discovery
-
-5. **Code Passes Clippy and Formatting**
-   - All clippy warnings resolved
-   - Code formatted with `nix fmt`
-
-#### Current State
-
-The compositor crate **compiles successfully** with `nix develop --command cargo clippy -p bmc-compositor -- -D warnings`.
-
-The following protocol handlers are implemented in `state.rs`:
-- `CompositorHandler` - Surface creation and commits
-- `ShmHandler` - Shared memory buffers
-- `BufferHandler` - Buffer lifecycle
-- `SeatHandler` - Input handling (keyboard, pointer, touch)
-- `XdgShellHandler` - Window management
-- `SelectionHandler` - Copy/paste support
-- `DataDeviceHandler` - Drag and drop
-
-#### Next Steps to Complete Stage 10.1
-
-1. **Complete DRM device initialization in `drm_backend.rs`:**
-   - Find and configure connectors
-   - Set up CRTC (display controller)
-   - Configure display mode (1280x480 for the Braiins Deck display)
-   - Initialize framebuffer
-
-2. **Switch to software renderer:**
-   - Replace `GlowRenderer` with `PixmanRenderer` for CPU-based rendering
-   - ARMv7 target doesn't have GPU, so software rendering is required
-   - May need to add `renderer_pixman` feature to smithay in `Cargo.toml`
-
-3. **Create Wayland display socket:**
-   - Initialize `wayland_server::Display`
-   - Create socket for widget clients to connect
-   - Set up client connection handling with `ClientState::default()`
-
-4. **Implement basic render loop:**
-   - Handle surface commits
-   - Composite surfaces to framebuffer
-   - Use vsync for smooth rendering
-
-5. **Spawn widget as Wayland client:**
-   - Set `WAYLAND_DISPLAY` environment variable when spawning widget
-   - Verify widget connects and renders
-
-#### Key Files Reference
-
-| File | Purpose |
-|------|---------|
-| `bmc-compositor/src/state.rs` | Compositor state and Wayland protocol handlers |
-| `bmc-compositor/src/drm_backend.rs` | DRM/KMS display backend |
-| `bmc-compositor/src/main.rs` | Entry point |
-| `Cargo.toml` (root) | Smithay dependency configuration |
-
-#### Smithay Documentation References
-
-- [CompositorHandler trait](https://smithay.github.io/smithay/smithay/wayland/compositor/trait.CompositorHandler.html)
-- [Anvil reference compositor](https://github.com/Smithay/smithay/tree/master/anvil) - Use as implementation reference
-- [smithay-drm-extras](https://crates.io/crates/smithay-drm-extras) - DRM utilities
-
-#### Build Commands
-
-```bash
-# Native x86 development (requires nix develop for system dependencies)
-nix develop --command cargo check -p bmc-compositor
-nix develop --command cargo clippy -p bmc-compositor -- -D warnings
-
-# ARMv7 cross-compilation (glibc, NOT musl - compositor requires dynamic linking)
-nix develop .#armv7-glibc-release --command cargo check -p bmc-compositor
-```
-
-#### ARMv7 Cross-Compilation Notes
-
-- **Must use glibc profile**, not musl - compositor dependencies (libinput, libseat, etc.) don't support static linking
-- Changed `libseat` → `seatd` in `workspace.nix` `targetDeps` for cross-compilation compatibility
-- First build of cross-compilation environment takes significant time (building ARM toolchain)
-- The compositor will be dynamically linked, similar to widgets
-
-#### EGL/GPU Rendering Attempts and Findings
-
-The STM32MP157 SoC has a split GPU/display architecture:
-- **GPU**: Vivante GC400 (etnaviv driver) - `/dev/dri/card0` and `/dev/dri/renderD128`
-- **Display**: STM32 LTDC display controller - `/dev/dri/card1`
-- **Panel**: MIPI-DSI, Sitronix ST7703, 600x1280 @ 63Hz (only 480x1280 visible)
-
-**What Works**:
-1. EGL initialization on GPU (etnaviv) via GBM - ✓
-2. OpenGL ES 2.0 context creation - ✓
-3. GLES renderer creation (Vivante GC400) - ✓
-4. GBM buffer allocation on GPU with empty flags - ✓
-5. DMA-BUF export from GPU buffers - ✓
-
-**What Fails (with detailed logs)**:
-
-1. **GBM device creation on display (stm32-ltdc)** - ❌
-   ```
-   Failed to create display GBM device: Device is not a GBM compatible device
-   ```
-   - stm32-ltdc is a simple display controller without GBM support
-   - GBM requires GPU-like buffer management which LTDC doesn't have
-
-2. **PRIME import from GPU to display** - ❌
-   ```
-   GBM buffer object allocated on GPU
-   DMA-BUF exported: 1 planes, format DrmFormat { code: DrmFourcc(XR24), modifier: Linear }
-   Importing DMA-BUF: fd=19, stride=1920, format=DrmFourcc(XR24), size=480x1280
-   ERROR: Failed to import DMA-BUF as GEM handle (PRIME import)
-   ```
-   - stm32-ltdc's DRM driver doesn't implement `drm_gem_prime_import`
-   - The LTDC is a display-only device with no buffer management capability
-   - It can only scanout buffers allocated on itself (dumb buffers)
-
-3. **GBM buffer allocation with SCANOUT flag on GPU** - ❌
-   ```
-   GBM allocation failed: Os { code: 22, kind: InvalidInput, message: "Invalid argument" }, 
-   size=480x1280, format=Xrgb8888
-   ```
-   - `/dev/dri/renderD128` is a render-only node
-   - Render nodes don't support SCANOUT flag (that's for display)
-   - etnaviv render node only supports rendering operations
-
-4. **GBM buffer allocation with RENDERING flag on GPU** - ❌
-   ```
-   GBM allocation failed: Os { code: 22, kind: InvalidInput, message: "Invalid argument" }, 
-   size=480x1280, format=Argb8888
-   ```
-   - Same EINVAL error with RENDERING flag
-   - The flag itself may not be the issue
-
-5. **Smithay GbmAllocator with various flags** - ❌
-   ```
-   GBM allocation failed: Os { code: 22, kind: InvalidInput, message: "Invalid argument" }
-   ```
-   - Tried: `GbmBufferFlags::SCANOUT`, `GbmBufferFlags::RENDERING`, `GbmBufferFlags::empty()`
-   - Smithay's allocator may add internal flags or modifiers
-
-6. **Raw gbm_bo_create with empty flags** - ✓ (partial success)
-   ```
-   GBM buffer object allocated on GPU
-   DMA-BUF exported: 1 planes, format DrmFormat { code: DrmFourcc(XR24), modifier: Linear }
-   ```
-   - Buffer allocation works!
-   - DMA-BUF export works!
-   - But then PRIME import to display fails (see #2 above)
-
-**Approaches Tried**:
-
-| Approach | Allocation | Export | Import | Scanout | Notes |
-|----------|------------|--------|--------|---------|-------|
-| GPU GBM → PRIME import to display | ✓ | ✓ | ❌ | - | stm32-ltdc can't PRIME import |
-| Display GBM → import to GPU | ❌ | - | - | - | stm32-ltdc has no GBM support |
-| Smithay GbmAllocator (SCANOUT) | ❌ | - | - | - | EINVAL on render node |
-| Smithay GbmAllocator (RENDERING) | ❌ | - | - | - | EINVAL on render node |
-| Smithay GbmAllocator (empty) | ❌ | - | - | - | EINVAL |
-| Raw gbm_bo_create (empty flags) | ✓ | ✓ | ❌ | - | Works but can't import |
-
-**Root Cause Analysis**:
-
-The stm32-ltdc display controller is a **simple framebuffer scanout engine**:
-- It reads pixels from memory and sends them to the display
-- It does NOT have:
-  - GBM support (no GPU-style buffer management)
-  - PRIME import capability (can't import foreign buffers)
-  - Any buffer allocation beyond dumb buffers
-- It only supports:
-  - Dumb buffers (allocated via `DRM_IOCTL_MODE_CREATE_DUMB`)
-  - CMA (Contiguous Memory Allocator) backed memory
-  - Direct scanout of its own allocated buffers
-
-The Vivante GC400 GPU (etnaviv):
-- Full GBM and EGL support
-- Can allocate buffers and render to them
-- Can export buffers as DMA-BUF
-- **But**: its buffers can't be imported by stm32-ltdc for scanout
-
-**This is a fundamental hardware limitation** - the two devices can't share buffers in the GPU→display direction.
-
-**Working Solution: Dumb Buffer with PRIME Export**
-
-The standard approach for split GPU/display embedded systems works:
-
-1. **Allocate dumb buffer on display device** (stm32-ltdc)
-   - Uses `DRM_IOCTL_MODE_CREATE_DUMB` - CMA-backed, scanout-capable
-2. **PRIME export as DMA-BUF**
-   - `drm_prime_handle_to_fd()` exports the buffer as a file descriptor
-3. **Import DMA-BUF into GPU's EGL context**
-   - Build `Dmabuf` descriptor with the exported fd
-   - GPU can now render to this buffer via OpenGL ES
-4. **Create framebuffer on display device**
-   - `add_framebuffer()` registers the dumb buffer for scanout
-5. **GPU renders, display scans out**
-   - Buffer is already on the display device - no copy needed!
-
-**Implementation** (in `bmc-compositor/src/render_egl.rs`):
-
-```rust
-fn allocate_buffer(&mut self) -> Result<RenderBuffer> {
-    // Step 1: Create dumb buffer on display device (CMA-backed)
-    let dumb_buffer = self.display_drm.create_dumb_buffer(
-        (self.width, self.height),
-        DrmFourcc::Xrgb8888,
-        32,
-    )?;
-
-    // Step 2: PRIME export as DMA-BUF
-    let dmabuf_fd = self.display_drm
-        .buffer_to_prime_fd(dumb_buffer.handle(), 0)?;
-
-    // Step 3: Build Dmabuf descriptor for GPU import
-    let mut builder = Dmabuf::builder(
-        (self.width as i32, self.height as i32).into(),
-        DrmFourcc::Xrgb8888,
-        DrmModifier::Linear,
-        DmabufFlags::empty(),
-    );
-    builder.add_plane(dmabuf_fd, 0, 0, dumb_buffer.pitch());
-    let dmabuf = builder.build()?;
-
-    // Step 4: Create framebuffer on display device
-    let fb = self.display_drm.add_framebuffer(&dumb_buffer, 24, 32)?;
-
-    Ok(RenderBuffer { dumb_buffer, dmabuf, fb })
-}
-```
-
-**Why This Works**:
-- stm32-ltdc supports PRIME *export* (just not import)
-- The buffer is allocated on display memory (CMA), so scanout works directly
-- GPU imports the buffer via DMA-BUF and renders to it
-- No CPU copy needed - true zero-copy GPU-accelerated rendering
-
-**Verified Working**:
-- Compositor displays dark background with GPU rendering
-- Digital clock widget connects as Wayland client and displays correctly
-- Full pipeline: Widget → Wayland → Compositor → GPU render → Display scanout
-
-**Environment Variables for Running on Device**:
-```bash
-export LD_LIBRARY_PATH=$(find /nix/store -maxdepth 3 -type d -name "lib" -path "*armv7l*gnueabihf*" 2>/dev/null | tr '\n' ':')
-export GBM_BACKENDS_PATH=/nix/store/.../mesa-.../lib/gbm
-export LIBGL_DRIVERS_PATH=/nix/store/.../mesa-.../lib/dri
-export __EGL_VENDOR_LIBRARY_FILENAMES=/nix/store/.../mesa-.../share/glvnd/egl_vendor.d/50_mesa.json
-export GLIBC_LD=/nix/store/.../glibc-.../lib/ld-linux-armhf.so.3
-
-# Run compositor
-$GLIBC_LD --library-path $LD_LIBRARY_PATH /path/to/bmc-compositor-egl
-```
-
----
-
-### Stage 10.2: Grid Layout and Multiple Widgets
-
-**Goal**: Position multiple widgets in a grid layout.
-
-**Scope**:
-- Implement grid layout calculation (4x2 grid, 1280x480 display)
-- Spawn multiple widgets for a scene
-- Position widget surfaces according to grid
-- Handle widget surface commits
-
-**Grid Dimensions**:
-| Size | Grid Cells | Pixels |
-|------|-----------|--------|
-| small | 1x1 | 320x240 |
-| medium | 2x1 | 640x240 |
-| large | 2x2 | 640x480 |
-| full | 4x2 | 1280x480 |
-
-**Success Criteria**:
-- [ ] Multiple widgets spawned
-- [ ] Widgets positioned correctly in grid
-- [ ] All widgets visible simultaneously
-- [ ] No rendering artifacts
+- [ ] `CompositorHandle` trait defined with all necessary methods
+- [ ] Supporting types defined
+- [ ] Trait is `Send + Sync` for thread-safe access
+- [ ] No implementation yet - just the interface
 
 ### Status: Not Started
 
 ---
 
-### Stage 10.3: Scene Transitions
+## Stage 12: EGL Compositor Implementation in bmc-openwrt
 
-**Goal**: Implement smooth horizontal scrolling between scenes.
+### Goal
 
-**Scope**:
-- Pre-spawn widgets for adjacent scenes
-- Animate surface positions for horizontal scroll
-- Use vsync for smooth 60fps transitions
-- Implement gesture detection for navigation
+Implement `CompositorHandle` trait for ARMv7 using the existing bmc-compositor code. The compositor runs in a dedicated thread within the bmc-openwrt process.
 
-**Success Criteria**:
-- [ ] Smooth 60fps horizontal scroll
-- [ ] Touch gesture triggers transition
-- [ ] Scene carousel loops correctly
+### Scope
+
+- Create `EglCompositor` struct that implements `CompositorHandle`
+- Run compositor event loop in a dedicated thread
+- Communicate between main thread and compositor via channels
+- Reuse existing code from `bmc-compositor` crate
+
+### Files to Create/Modify
+
+- `bmc-openwrt/src/compositor.rs` (new) - EglCompositor implementation
+- `bmc-openwrt/src/main.rs` - Initialize and pass compositor to App
+
+### Implementation Approach
+
+The `EglCompositor` wraps the compositor thread and provides channel-based communication:
+
+| Component | Purpose |
+|-----------|---------|
+| `compositor_thread` | Handle to the compositor thread |
+| `command_tx` | Channel to send commands to compositor |
+| `action_rx` | Channel to receive widget actions |
+| `wayland_display` | Path to Wayland socket |
+
+Commands sent to compositor:
+- `RegisterWidget` - Register widget with position/size
+- `UnregisterWidget` - Remove widget
+- `SetActiveScene` - Update visible widgets
+- `Shutdown` - Stop compositor
+
+### Key Integration Points
+
+- PID matching for widget identification (compositor reads socket credentials)
+- Scene layout determines widget visibility and positioning
+- Frame callbacks only sent to visible widgets
+
+### Success Criteria
+
+- [ ] EglCompositor implements CompositorHandle
+- [ ] Compositor runs in dedicated thread
+- [ ] Widget registration/unregistration works
+- [ ] Action channel receives widget requests
+- [ ] Scene layout updates work
 
 ### Status: Not Started
 
 ---
 
-## Stage 11: Configuration Migration
+## Stage 13: Coordinator-Compositor Integration
+
+### Goal
+
+Connect the WidgetCoordinator to the compositor so spawned widgets can render.
+
+### Scope
+
+- Add compositor reference to Coordinator
+- Pass WAYLAND_DISPLAY to spawned widgets
+- Register widgets with compositor before spawning
+- Unregister widgets when stopped
+
+### Files to Modify
+
+- `bmc/src/widget/coordinator.rs` - Add compositor reference
+- `bmc/src/widget/manager.rs` - Pass WAYLAND_DISPLAY to spawned widgets
+- `bmc/src/entry.rs` - Wire up compositor to app
+
+### Widget Spawn Flow
+
+1. Calculate widget position from scene layout
+2. Register widget with compositor (reserves position)
+3. Spawn widget process with `WAYLAND_DISPLAY` env var
+4. Widget connects to compositor's Wayland socket
+5. Compositor matches by PID
+6. Widget renders to its surface
+
+### Success Criteria
+
+- [ ] Coordinator holds compositor reference
+- [ ] Widgets spawned with WAYLAND_DISPLAY env var
+- [ ] Widget registration happens before process spawn
+- [ ] Widget unregistration on process stop
+
+### Status: Not Started
+
+---
+
+## Stage 14: Scene Management
+
+### Goal
+
+Implement scene switching while keeping all widgets running. Compositor controls visibility via frame callbacks.
+
+### Scope
+
+- Scene switching updates compositor's active layout
+- Hidden widgets stop receiving frame callbacks
+- Compositor sends "out of scope" signal to hidden widgets
+- Widgets resume when visible again
+
+### Frame Callback Optimization
+
+- Only visible widgets receive frame callbacks
+- Hidden widgets receive visibility event and pause rendering
+- Standard Wayland pattern - clients wait for frame callbacks
+- Saves CPU when widgets are not displayed
+
+### Success Criteria
+
+- [ ] Scene switching works
+- [ ] All widgets remain running across scene changes
+- [ ] Hidden widgets stop rendering (no frame callbacks)
+- [ ] Widgets resume rendering when visible again
+
+### Status: Not Started
+
+---
+
+## Stage 15: Action Routing (Sound/LED)
+
+### Goal
+
+Route widget action requests to hardware controllers.
+
+### Scope
+
+- Spawn action handler task in background
+- Receive actions from compositor's action channel
+- Route to appropriate controller
+
+### Action Types
+
+| Action | Controller |
+|--------|------------|
+| `PlaySound` | SoundController |
+| `StopSound` | SoundController |
+| `Led` | LedController |
+| `StopLed` | LedController |
+
+### Files to Modify
+
+- `bmc/src/entry.rs` - Spawn action handler task
+- `bmc/src/widget/action_handler.rs` (new) - Process widget actions
+
+### Success Criteria
+
+- [ ] Action handler task runs in background
+- [ ] Sound actions trigger SoundController
+- [ ] LED actions trigger LedController
+
+### Status: Not Started
+
+---
+
+## Stage 16: Wayland Protocol Extension for Widget Communication
+
+### Goal
+
+Replace the custom JSON-over-Unix-socket IPC with a proper Wayland protocol extension (`bmc_widget_v1`) for compositor-widget communication.
+
+### Background
+
+The JSON IPC is non-standard and requires widget developers to implement custom parsing. A Wayland protocol extension:
+- Uses a single protocol for all communication
+- Provides type-safe, versioned messages
+- Generates client bindings automatically via `wayland-scanner`
+- Is the standard approach for Wayland compositors
+
+### Protocol Structure
+
+**`bmc_widget_manager_v1`** (global singleton):
+- Bound by widgets to access BMC functionality
+- Provides `get_widget_surface` request
+
+**`bmc_widget_surface_v1`** (per-surface):
+
+| Direction | Message | Description |
+|-----------|---------|-------------|
+| Compositor → Widget | `configure` | Widget size and type |
+| Compositor → Widget | `params` | JSON widget parameters |
+| Compositor → Widget | `setting` | System setting update |
+| Compositor → Widget | `visibility` | Widget visible/hidden |
+| Compositor → Widget | `shutdown` | Graceful shutdown |
+| Widget → Compositor | `ack_configure` | Acknowledge configure |
+| Widget → Compositor | `error` | Report error |
+| Widget → Compositor | `action` | Request system action |
+
+### Widget Identification
+
+PID matching via Wayland socket credentials:
+1. BMC spawns widget, records PID
+2. Widget connects to Wayland
+3. Compositor reads client PID from socket
+4. Compositor matches PID to pending spawn
+
+### Implementation Stages
+
+| Sub-stage | Description |
+|-----------|-------------|
+| 16.1 | Protocol XML definition |
+| 16.2 | Protocol crate setup (`bmc-widget-protocol`) |
+| 16.3 | Compositor protocol implementation |
+| 16.4 | Widget client library |
+| 16.5 | Widget integration (digital-clock) |
+| 16.6 | Migration and cleanup |
+
+### Success Criteria
+
+- [ ] Protocol XML validates with wayland-scanner
+- [ ] Compositor implements protocol handlers
+- [ ] Widget client library works
+- [ ] digital-clock uses Wayland protocol
+- [ ] JSON IPC deprecated
+
+### Status: Not Started
+
+---
+
+## Stage 17: Configuration Migration
 
 ### Goal
 Migrate existing widget configurations to use widget UIDs.
@@ -1235,25 +1180,14 @@ If widget UID not found in registry:
 | `bmc/src/web/grpc/scene_management.rs` | Scene management gRPC API |
 | `bmc-display/ui/widgets/clock.slint` | Clock widget Slint UI |
 
-### Widget Task Data Flow (Current)
+### Key Files in New Architecture
 
-```
-Clock task (bmc/src/widget_tasks/clock.rs)
-  → display_controller.update_clock_widget()
-    → Slint IndexMapModel update
-      → UI reactive render
-```
-
-### Widget Task Data Flow (Target)
-
-```
-Clock widget process (standalone binary)
-  → IPC socket write (action/ready/error)
-    → Deck application IPC handler
-      → Forward to appropriate controller
-
-Deck application
-  → IPC socket write (init/settings_update/shutdown)
-    → Clock widget process receives
-      → Updates internal state and renders
-```
+| File | Purpose |
+|------|---------|
+| `bmc-compositor/src/state.rs` | Wayland compositor state and protocol handlers |
+| `bmc-compositor/src/render_egl.rs` | EGL render pipeline for ARMv7 |
+| `bmc/src/compositor.rs` | CompositorHandle trait definition |
+| `bmc/src/widget/coordinator.rs` | Widget lifecycle orchestration |
+| `bmc/src/widget/manager.rs` | Widget process spawning |
+| `bmc-openwrt/src/compositor.rs` | EglCompositor implementation |
+| `widgets/digital-clock/` | Standalone digital clock widget |
