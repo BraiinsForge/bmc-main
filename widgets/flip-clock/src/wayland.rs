@@ -533,12 +533,16 @@ impl WaylandClient {
                                 &gradient_stops,
                             );
 
+                            // Digit texture aspect ratio: 128:256 = 1:2
+                            // Scale digit width to maintain proportions (narrower than panel)
+                            let digit_scale = 0.7; // make digits narrower
+
                             // Draw static bottom half digit (NEW digit revealed as flap falls)
                             renderer.draw_textured_half_rect_split(
                                 gl,
                                 x,
                                 -gap_height / 2.0 - half_height / 2.0,
-                                panel_width,
+                                panel_width * digit_scale,
                                 half_height,
                                 digit_textures.get(current_digit),
                                 false, // bottom half of texture
@@ -550,7 +554,7 @@ impl WaylandClient {
                                 gl,
                                 x,
                                 gap_height / 2.0 + half_height / 2.0,
-                                panel_width,
+                                panel_width * digit_scale,
                                 half_height,
                                 digit_textures.get(prev_digit),
                                 true, // top half of texture
@@ -577,7 +581,7 @@ impl WaylandClient {
                                     gl,
                                     x,
                                     0.0,
-                                    panel_width,
+                                    panel_width * digit_scale,
                                     half_height,
                                     -angle,
                                     false,
@@ -605,7 +609,7 @@ impl WaylandClient {
                                     gl,
                                     x,
                                     0.0,
-                                    panel_width,
+                                    panel_width * digit_scale,
                                     half_height,
                                     -angle,
                                     false,
@@ -637,12 +641,16 @@ impl WaylandClient {
                                 &gradient_stops,
                             );
 
+                            // Digit texture aspect ratio: 128:256 = 1:2
+                            // Scale digit width to maintain proportions
+                            let digit_scale = 0.7;
+
                             // Draw top half of digit
                             renderer.draw_textured_half_rect_split(
                                 gl,
                                 x,
                                 gap_height / 2.0 + half_height / 2.0,
-                                panel_width,
+                                panel_width * digit_scale,
                                 half_height,
                                 digit_textures.get(current_digit),
                                 true, // top half of texture
@@ -654,7 +662,7 @@ impl WaylandClient {
                                 gl,
                                 x,
                                 -gap_height / 2.0 - half_height / 2.0,
-                                panel_width,
+                                panel_width * digit_scale,
                                 half_height,
                                 digit_textures.get(current_digit),
                                 false, // bottom half of texture
