@@ -559,8 +559,8 @@ impl WaylandClient {
 
                             // Flipping flap with gradient and digit
                             if angle < std::f32::consts::FRAC_PI_2 {
-                                // First half: flap showing top half of gradient
-                                renderer.draw_flap_gradient_4(
+                                // First half: show top portion of gradient (50% to 100%)
+                                renderer.draw_flap_gradient_partial(
                                     gl,
                                     x,
                                     0.0,
@@ -570,6 +570,8 @@ impl WaylandClient {
                                     false,
                                     &gradient_colors,
                                     &gradient_stops,
+                                    0.5, // start at 50% of gradient (center)
+                                    0.5, // show top 50% (from center to top)
                                 );
                                 renderer.draw_textured_flap_split(
                                     gl,
@@ -585,8 +587,8 @@ impl WaylandClient {
                                     split_point,
                                 );
                             } else {
-                                // Second half: flap showing bottom half of gradient
-                                renderer.draw_flap_gradient_4(
+                                // Second half: show bottom portion of gradient (0% to 50%)
+                                renderer.draw_flap_gradient_partial(
                                     gl,
                                     x,
                                     0.0,
@@ -596,6 +598,8 @@ impl WaylandClient {
                                     false,
                                     &gradient_colors,
                                     &gradient_stops,
+                                    0.0, // start at 0% of gradient (bottom)
+                                    0.5, // show bottom 50% (from bottom to center)
                                 );
                                 renderer.draw_textured_flap_split(
                                     gl,
