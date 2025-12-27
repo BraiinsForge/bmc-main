@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 
 use qrcode_generator::QrCodeEcc;
 use slint::{Image, Rgb8Pixel, SharedPixelBuffer};
@@ -11,6 +11,9 @@ const QR_CODE_URL_PREFIX: &str = "http://";
 // NOTE: Shorter string should have more points in QR code in order to have the same size as the QR code generated from longer string
 const QR_CODE_SIZE_SHORT: u32 = 100;
 const QR_CODE_SIZE_LONG: u32 = 86;
+
+/// Fixed IP address used in AP mode during initial setup (configured in OpenWrt network layer)
+pub const AP_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 21));
 
 pub(crate) fn ip_as_qrcode(ip: Option<IpAddr>) -> Image {
     let qr_size = match ip {

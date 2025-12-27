@@ -28,6 +28,8 @@ export global NotificationAdapter {
 export global WifiAdapter {
     in property <string> ssid;
     in property <SignalStrength> signal_strength;
+    in property <string> ap_ip;
+    in property <image> ap_ip_qr_code;
 }
 
 export global ConnectionAdapter {
