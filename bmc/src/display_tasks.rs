@@ -306,6 +306,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                         tokio::time::sleep(SCREEN_DURATION).await;
                         let ssid = manager.wifi_ssid();
                         display_controller.set_wifi_ssid(ssid);
+                        display_controller.set_ap_qr_code();
                         display_controller.set_init_screen(Some(InitScreen::SetupStart));
                     }
                     InitSetupState::UnexpectedError => {
@@ -329,6 +330,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             crate::manager::BmcState::FactoryDefault => {
                 let ssid = manager.wifi_ssid();
                 display_controller.set_wifi_ssid(ssid);
+                display_controller.set_ap_qr_code();
                 display_controller.set_init_screen(Some(InitScreen::SetupStart));
                 // NOTE: init_screen will be turned off in `run_initial_setup_listener`
 
