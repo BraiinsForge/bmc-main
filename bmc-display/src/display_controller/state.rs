@@ -940,6 +940,14 @@ impl DisplayController {
         });
     }
 
+    pub fn set_ap_qr_code(&self) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let wifi_adapter = WifiAdapter::get(&main_window);
+            wifi_adapter.set_ap_ip(utils::AP_IP.to_string().into());
+            wifi_adapter.set_ap_ip_qr_code(utils::ip_as_qrcode(Some(utils::AP_IP)));
+        });
+    }
+
     pub fn set_wifi_signal_strength(&self, signal_strength: SignalStrength) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
             let wifi_adapter = WifiAdapter::get(&main_window);
