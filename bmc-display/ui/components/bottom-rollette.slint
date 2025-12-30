@@ -1,6 +1,6 @@
 import { Palette } from "../style/palette.slint";
 import { SoundAdapter, BrightnessAdapter } from "../controls/adapters.slint";
-import { NightModeAdapter } from "../controls/adapters.slint";
+import { NightModeAdapter, WifiReconfigAdapter } from "../controls/adapters.slint";
 import { ConnectionAdapter, WifiAdapter } from "../controls/adapters.slint";
 import { Images } from "../style/images.slint";
 import { Theme } from "../style/theme.slint";
@@ -156,9 +156,9 @@ export component BottomRollette inherits Rectangle {
 
             // Bottom section - circle controls
             HorizontalLayout {
-                padding-left: 122px;
-                padding-right: 55px;
-                spacing: 68px;
+                padding-left: 60px;
+                padding-right: 40px;
+                spacing: 40px;
 
                 VerticalLayout {
                     HorizontalLayout {
@@ -314,6 +314,43 @@ export component BottomRollette inherits Rectangle {
                         padding-top: 8px;
                         Text {
                             text: "your device";
+                            color: Palette.gray-50;
+                            font-size: 24px;
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    HorizontalLayout {
+                        alignment: center;
+                        CircleIcon {
+                            icon_source: Images.wifi-problem;
+                            clicked => {
+                                WifiReconfigAdapter.trigger_reconfig();
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 24px;
+                    }
+
+                    Rectangle {
+                        height: 31px;
+                        width: 140px;
+                        Text {
+                            text: "Reconfigure";
+                            color: Palette.white;
+                            font-weight: Theme.font.weight.bold;
+                            font-size: 24px;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        padding-top: 8px;
+                        Text {
+                            text: "WiFi";
                             color: Palette.gray-50;
                             font-size: 24px;
                         }
