@@ -149,7 +149,11 @@ impl<T: BmcManager> HttpServer<T> {
     async fn wifi_setup_index_handler(
         State(IndexState { storage, manager }): State<IndexState<T>>,
     ) -> Response {
-        if manager.device_state().await != BmcState::FactoryDefault {
+        let state = manager.device_state().await;
+        if !matches!(
+            state,
+            BmcState::FactoryDefault | BmcState::WifiReconfiguration
+        ) {
             return (
                 StatusCode::PERMANENT_REDIRECT,
                 [(http::header::LOCATION.as_str(), "/")],
