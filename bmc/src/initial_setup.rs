@@ -174,7 +174,11 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             Err(err) => {
                 warn!(error = %err, ssid = %ssid, "Failed to connect to WiFi during reconfiguration");
                 state_service.notify(InitSetupState::WifiConnectionFailed);
-                // Stay in reconfig mode so user can try again
+
+                // Re-enable AP so user can try again
+                if let Err(err) = manager.enter_wifi_reconfiguration().await {
+                    warn!(error = %err, "Failed to re-enable WiFi AP after failed connection");
+                }
             }
         }
     }
