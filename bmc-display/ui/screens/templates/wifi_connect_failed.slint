@@ -1,6 +1,8 @@
 import { InitSetupTemplate } from "../templates/init_setup.slint";
 import { Images } from "../../style/images.slint";
-import { WifiAdapter } from "../../controls/adapters.slint";
+import { Palette } from "../../style/palette.slint";
+import { Theme } from "../../style/theme.slint";
+import { WifiAdapter, WifiReconfigAdapter } from "../../controls/adapters.slint";
 
 export component WifiConnectFailed inherits InitSetupTemplate {
     in property <string> header_title;
@@ -12,4 +14,34 @@ export component WifiConnectFailed inherits InitSetupTemplate {
     icon_text_subtitle: WifiAdapter.ssid;
     icon_text_image_visible: true;
     icon_text_image: Images.wifi-error;
+
+    HorizontalLayout {
+        padding-top: 24px;
+        padding-bottom: 80px;
+        alignment: center;
+
+        TouchArea {
+            width: 280px;
+            height: 56px;
+            clicked => {
+                WifiReconfigAdapter.trigger_reconfig();
+            }
+
+            Rectangle {
+                width: 100%;
+                height: 100%;
+                background: Palette.violet-50;
+                border-radius: 8px;
+
+                Text {
+                    text: "Reconfigure WiFi";
+                    color: Palette.white;
+                    font-size: 24px;
+                    font-weight: Theme.font.weight.semi-bold;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
 }

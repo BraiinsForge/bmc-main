@@ -149,6 +149,21 @@ impl DisplayController {
         UnboundedReceiverStream::new(rx)
     }
 
+    #[must_use]
+    pub fn on_wifi_reconfig_events(&self) -> UnboundedReceiverStream<()> {
+        let (tx, rx) = unbounded_channel();
+
+        self.in_event_loop(move |main_window| {
+            let wifi_reconfig_adapter = main_window.global::<generated::WifiReconfigAdapter<'_>>();
+
+            wifi_reconfig_adapter.on_trigger_reconfig(move || {
+                debug!("WiFi reconfigure clicked!");
+                _ = tx.send(());
+            });
+        });
+        UnboundedReceiverStream::new(rx)
+    }
+
     #[expect(unused)]
     fn set_unbounded_callback<T, F>(&self, func: F) -> UnboundedReceiverStream<T>
     where
