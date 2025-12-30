@@ -181,6 +181,60 @@ impl Manager {
         info!("Captive portal disabled successfully");
         Ok(())
     }
+
+    async fn enable_captive_portal(&self) -> Result<(), InitialSetupError> {
+        debug!("Enabling captive portal configuration");
+
+        call_command(
+            "sh",
+            &[
+                "-c",
+                ". /lib/functions/bos-factory-default.sh && enable_captive_portal $FACTORY_DEFAULT_AP_IP_ADDR && /etc/init.d/dnsmasq restart",
+            ],
+        )
+        .await
+        .inspect_err(|err| error!(error = %err, "Failed to enable captive portal"))
+        .map_err(|err| InitialSetupError::UnexpectedFailure(format!("Failed to enable captive portal: {err}")))?;
+
+        info!("Captive portal enabled successfully");
+        Ok(())
+    }
+
+    async fn set_wifi_reconfig_flag(&self) -> Result<(), InitialSetupError> {
+        call_command(
+            "sh",
+            &[
+                "-c",
+                ". /lib/functions/bos-defaults.sh && set_wifi_reconfig",
+            ],
+        )
+        .await
+        .inspect_err(|err| error!(error = %err, "Failed to set wifi reconfig flag"))
+        .map_err(|err| {
+            InitialSetupError::UnexpectedFailure(format!("Failed to set wifi reconfig flag: {err}"))
+        })?;
+
+        Ok(())
+    }
+
+    async fn unset_wifi_reconfig_flag(&self) -> Result<(), InitialSetupError> {
+        call_command(
+            "sh",
+            &[
+                "-c",
+                ". /lib/functions/bos-defaults.sh && unset_wifi_reconfig",
+            ],
+        )
+        .await
+        .inspect_err(|err| error!(error = %err, "Failed to unset wifi reconfig flag"))
+        .map_err(|err| {
+            InitialSetupError::UnexpectedFailure(format!(
+                "Failed to unset wifi reconfig flag: {err}"
+            ))
+        })?;
+
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -338,6 +392,41 @@ impl BmcManager for Manager {
         )
         .await
         .is_ok()
+    }
+
+    async fn is_wifi_reconfig(&self) -> bool {
+        call_command(
+            "sh",
+            &["-c", ". /lib/functions/bos-defaults.sh && is_wifi_reconfig"],
+        )
+        .await
+        .is_ok()
+    }
+
+    async fn enter_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
+        info!("Entering WiFi reconfiguration mode");
+
+        self.set_wifi_reconfig_flag().await?;
+        self.configure_wifi_ap().await?;
+        self.enable_captive_portal().await?;
+
+        info!("WiFi reconfiguration mode enabled");
+        Ok(())
+    }
+
+    async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
+        if !self.is_wifi_reconfig().await {
+            debug!("Not in WiFi reconfiguration mode, nothing to exit");
+            return Ok(());
+        }
+
+        info!("Exiting WiFi reconfiguration mode");
+
+        self.disable_captive_portal().await?;
+        self.unset_wifi_reconfig_flag().await?;
+
+        info!("WiFi reconfiguration mode disabled");
+        Ok(())
     }
 
     async fn hostname(&self) -> Option<String> {
@@ -522,8 +611,12 @@ impl BmcManager for Manager {
     }
 
     async fn device_state(&self) -> BmcState {
+        // check wifi reconfiguration flag first (highest priority for operational devices)
+        if self.is_wifi_reconfig().await {
+            BmcState::WifiReconfiguration
+        }
         // check factory default flag
-        if self.is_factory_default().await {
+        else if self.is_factory_default().await {
             BmcState::FactoryDefault
         }
         // check flag if setup is pending
@@ -560,6 +653,21 @@ impl BmcManager for Manager {
                 .await
                 .map_err(|e| anyhow!("Failed to remove setup pending flag, error: {}", e))
             }
+            BmcState::WifiReconfiguration => {
+                // Remove wifi reconfig flag (return to Operational)
+                // NOTE: Intentionally duplicates unset_wifi_reconfig_flag() to match
+                // the pattern used by other states (FactoryDefault, SetupPending) and
+                // to avoid error type conversion from InitialSetupError to anyhow::Error
+                call_command(
+                    "sh",
+                    &[
+                        "-c",
+                        ". /lib/functions/bos-defaults.sh && unset_wifi_reconfig",
+                    ],
+                )
+                .await
+                .map_err(|e| anyhow!("Failed to remove wifi reconfig flag, error: {}", e))
+            }
             BmcState::Operational => Ok(()),
         }
     }
@@ -570,7 +678,11 @@ impl BmcManager for Manager {
     }
 
     async fn init_wifi_ap(&self) -> Result<(), Self::Error> {
-        if self.is_factory_default().await {
+        let state = self.device_state().await;
+        if matches!(
+            state,
+            BmcState::FactoryDefault | BmcState::WifiReconfiguration
+        ) {
             self.configure_wifi_ap()
                 .await
                 .map_err(|e| self::Error::InitialSetupWifiAp(e.to_string()))?;
