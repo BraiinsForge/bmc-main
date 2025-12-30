@@ -52,6 +52,18 @@ where
         }
         Ok(())
     }
+
+    async fn check_wifi_setup_precondition(&self) -> Result<BmcState, Status> {
+        let current_state = self.manager.device_state().await;
+        if current_state != BmcState::FactoryDefault
+            && current_state != BmcState::WifiReconfiguration
+        {
+            return Err(Status::failed_precondition(format!(
+                "Function is only available when the device is in 'factory default' or 'wifi reconfiguration' state. Current state is '{current_state}'.",
+            )));
+        }
+        Ok(current_state)
+    }
 }
 
 #[async_trait::async_trait]
@@ -61,13 +73,13 @@ where
     F: FirmwareIndex,
 {
     async fn set_wifi(&self, request: Request<SetWifiRequest>) -> Result<Response<()>, Status> {
-        self.check_precondition(BmcState::FactoryDefault).await?;
+        let state = self.check_wifi_setup_precondition().await?;
 
         let request = request.into_inner();
-
         let config = try_into_wifi_network_config(request)?;
+        let is_reconfig = state == BmcState::WifiReconfiguration;
 
-        match self.initial_setup.connect_to_wifi(config) {
+        match self.initial_setup.connect_to_wifi(config, is_reconfig) {
             Ok(()) => Ok(Response::new(())),
             Err(e) => match e {
                 WifiSetupError::InProgress => {
@@ -78,7 +90,7 @@ where
     }
 
     async fn scan_wifi(&self, _request: Request<()>) -> Result<Response<ScanWifiResponse>, Status> {
-        self.check_precondition(BmcState::FactoryDefault).await?;
+        self.check_wifi_setup_precondition().await?;
 
         Ok(Response::new(
             scan_wifi_response(self.manager.clone()).await?,
