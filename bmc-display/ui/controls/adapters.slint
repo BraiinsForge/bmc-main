@@ -96,5 +96,6 @@ export global NightModeAdapter {
 }
 
 export global WifiReconfigAdapter {
+    in property <bool> is_factory_default: false;
     callback trigger_reconfig;
 }

@@ -687,6 +687,12 @@ impl BmcManager for Manager {
                 .await
                 .map_err(|e| self::Error::InitialSetupWifiAp(e.to_string()))?;
         }
+        // Enable captive portal for wifi reconfig (factory default has it pre-configured)
+        if state == BmcState::WifiReconfiguration {
+            self.enable_captive_portal()
+                .await
+                .map_err(|e| self::Error::InitialSetupWifiAp(e.to_string()))?;
+        }
         Ok(())
     }
 

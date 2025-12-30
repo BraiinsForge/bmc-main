@@ -948,6 +948,13 @@ impl DisplayController {
         });
     }
 
+    pub fn set_is_factory_default(&self, is_factory_default: bool) {
+        self.in_event_loop(move |main_window: generated::MainWindow| {
+            let adapter = generated::WifiReconfigAdapter::get(&main_window);
+            adapter.set_is_factory_default(is_factory_default);
+        });
+    }
+
     pub fn set_wifi_signal_strength(&self, signal_strength: SignalStrength) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
             let wifi_adapter = WifiAdapter::get(&main_window);

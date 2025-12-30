@@ -345,6 +345,10 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
     async fn run_init_display_screen(display_controller: DisplayController, manager: Arc<T>) {
         let state = manager.device_state().await;
 
+        // Set factory default flag for UI (controls visibility of WiFi reconfig button)
+        display_controller
+            .set_is_factory_default(matches!(state, crate::manager::BmcState::FactoryDefault));
+
         match state {
             crate::manager::BmcState::FactoryDefault => {
                 let ssid = manager.wifi_ssid();
@@ -399,6 +403,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                 // WiFi reconfiguration mode - show setup start screen (AP mode active)
                 let ssid = manager.wifi_ssid();
                 display_controller.set_wifi_ssid(ssid);
+                display_controller.set_ap_qr_code();
                 display_controller.set_init_screen(Some(InitScreen::SetupStart));
                 // NOTE: init_screen will be turned off in `run_initial_setup_listener`
             }
@@ -654,7 +659,11 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         while wifi_reconfig_receiver.next().await.is_some() {
             info!("WiFi reconfigure event received");
 
-            // Guard against multiple clicks - skip if already in reconfig mode
+            // Guard against triggering reconfig during initial setup or if already in reconfig mode
+            if manager.is_factory_default().await {
+                debug!("Device in factory default state, ignoring reconfig click");
+                continue;
+            }
             if manager.is_wifi_reconfig().await {
                 debug!("Already in WiFi reconfiguration mode, ignoring click");
                 continue;
@@ -665,6 +674,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                     info!("Entered WiFi reconfiguration mode");
                     let ssid = manager.wifi_ssid();
                     display_controller.set_wifi_ssid(ssid);
+                    display_controller.set_ap_qr_code();
                     display_controller.set_init_screen(Some(InitScreen::SetupStart));
 
                     // Spawn timeout task that reverts to Operational if user doesn't complete setup
