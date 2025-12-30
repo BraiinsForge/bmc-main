@@ -83,7 +83,10 @@ impl<S, T: BmcManager> CaptivePortalMiddleware<S, T> {
 
         match (state, uri_path) {
             (_, HttpServer::<T>::ROOT_URL_ENDPOINT)
-            | (&BmcState::FactoryDefault | &BmcState::WifiReconfiguration, HttpServer::<T>::DEVICE_SETUP_URL_ENDPOINT)
+            | (
+                &BmcState::FactoryDefault | &BmcState::WifiReconfiguration,
+                HttpServer::<T>::DEVICE_SETUP_URL_ENDPOINT,
+            )
             | (&BmcState::SetupPending, HttpServer::<T>::WIFI_SETUP_URL_ENDPOINT) => {
                 return true;
             }

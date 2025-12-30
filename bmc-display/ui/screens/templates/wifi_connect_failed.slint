@@ -15,7 +15,8 @@ export component WifiConnectFailed inherits InitSetupTemplate {
     icon_text_image_visible: true;
     icon_text_image: Images.wifi-error;
 
-    HorizontalLayout {
+    // Only show reconfigure button when NOT in factory default (initial setup) mode
+    if !WifiReconfigAdapter.is_factory_default: HorizontalLayout {
         padding-top: 24px;
         padding-bottom: 80px;
         alignment: center;
