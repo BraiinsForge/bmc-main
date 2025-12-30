@@ -167,6 +167,26 @@ impl bmc::BmcManager for Manager {
         self.mockfs.setup_pending().exists()
     }
 
+    async fn is_wifi_reconfig(&self) -> bool {
+        self.mockfs.wifi_reconfig().exists()
+    }
+
+    async fn enter_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
+        info!("Entering WiFi reconfiguration mode (mock)");
+        self.mockfs
+            .add_or_remove_flag(true, &self.mockfs.wifi_reconfig())
+            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
+        info!("Exiting WiFi reconfiguration mode (mock)");
+        self.mockfs
+            .add_or_remove_flag(false, &self.mockfs.wifi_reconfig())
+            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
+        Ok(())
+    }
+
     async fn hostname(&self) -> Option<String> {
         Some(self.hostname.clone())
     }
@@ -281,7 +301,9 @@ impl bmc::BmcManager for Manager {
     }
 
     async fn device_state(&self) -> BmcState {
-        if self.is_factory_default().await {
+        if self.is_wifi_reconfig().await {
+            BmcState::WifiReconfiguration
+        } else if self.is_factory_default().await {
             BmcState::FactoryDefault
         } else if self.is_setup_pending().await {
             BmcState::SetupPending
@@ -301,6 +323,10 @@ impl bmc::BmcManager for Manager {
             BmcState::SetupPending => {
                 self.mockfs
                     .add_or_remove_flag(false, &self.mockfs.setup_pending())?;
+            }
+            BmcState::WifiReconfiguration => {
+                self.mockfs
+                    .add_or_remove_flag(false, &self.mockfs.wifi_reconfig())?;
             }
             BmcState::Operational => (),
         }

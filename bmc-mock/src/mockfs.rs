@@ -15,6 +15,7 @@ impl MockFs {
     const UPGRADE_RESULT_FILE: &str = "etc/upgrade_result";
     const FACTORY_DEFAULT_FILE: &str = "etc/factory-default";
     const DEVICE_SETUP_PENDING_FILE: &str = "etc/setup-pending";
+    const WIFI_RECONFIG_FILE: &str = "etc/wifi-reconfig";
     const WIFI_STATUS_FILE: &str = "etc/is_wifi_enabled";
 
     pub fn new(template_dir: impl AsRef<Path>, runtime_dir: impl AsRef<Path>) -> Self {
@@ -53,6 +54,11 @@ impl MockFs {
     #[must_use]
     pub fn setup_pending(&self) -> PathBuf {
         self.build_mockfs_path(Self::DEVICE_SETUP_PENDING_FILE)
+    }
+
+    #[must_use]
+    pub fn wifi_reconfig(&self) -> PathBuf {
+        self.build_mockfs_path(Self::WIFI_RECONFIG_FILE)
     }
 
     fn build_mockfs_path<P: AsRef<Path>>(&self, path: P) -> PathBuf {
