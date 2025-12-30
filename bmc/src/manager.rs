@@ -55,6 +55,15 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     // Checks if the system is in setup pending state
     async fn is_setup_pending(&self) -> bool;
 
+    // Checks if the system is in wifi reconfiguration state
+    async fn is_wifi_reconfig(&self) -> bool;
+
+    // Enters wifi reconfiguration mode (enables AP + captive portal without factory reset)
+    async fn enter_wifi_reconfiguration(&self) -> Result<(), InitialSetupError>;
+
+    // Exits wifi reconfiguration mode and returns to operational
+    async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError>;
+
     async fn hostname(&self) -> Option<String>;
 
     fn mac_address(&self) -> Option<String>;
@@ -116,6 +125,8 @@ pub enum BmcState {
     SetupPending,
     #[strum(serialize = "operational")]
     Operational,
+    #[strum(serialize = "wifi reconfiguration")]
+    WifiReconfiguration,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
