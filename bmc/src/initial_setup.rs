@@ -85,7 +85,11 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         }
     }
 
-    pub(crate) fn connect_to_wifi(&self, config: WifiNetworkConfig) -> Result<(), WifiSetupError> {
+    pub(crate) fn connect_to_wifi(
+        &self,
+        config: WifiNetworkConfig,
+        is_reconfig: bool,
+    ) -> Result<(), WifiSetupError> {
         self.in_progress
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .map_err(|_| WifiSetupError::InProgress)?;
@@ -99,44 +103,80 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
                 wifi_ssid: config.ssid.clone(),
             });
 
-            match manager.wifi_initial_setup(config).await {
-                Ok(()) => {
-                    state_service.notify(InitSetupState::WifiConnectionSuccess);
-                    info!("WiFi initial setup completed successfully");
-                }
-                Err(InitialSetupError::NotSupported) => {
-                    warn!("WiFi initial setup not supported");
-                    state_service.notify(InitSetupState::UnexpectedError);
-                }
-                Err(InitialSetupError::UnexpectedFailure(err)) => {
-                    warn!(
-                        error = %err,
-                        "Unexpected failure during WiFi initial setup, rebooting device"
-                    );
-                    Self::notify_failure_and_reboot(manager, &state_service).await;
-                }
-                Err(InitialSetupError::WifiConnectionFailure(err)) => {
-                    warn!(
-                        error = %err,
-                        "Failed to connect to WiFi"
-                    );
-                    state_service.notify(InitSetupState::WifiConnectionFailed);
-
-                    // Revert wifi settings
-                    if let Err(err) = manager.revert_to_initial_setup().await {
-                        warn!(
-                            error = %err,
-                            "Failed to revert to initial setup"
-                        );
-                        Self::notify_failure_and_reboot(manager, &state_service).await;
-                    }
-                }
+            if is_reconfig {
+                Self::handle_wifi_reconfig(manager, config, &state_service).await;
+            } else {
+                Self::handle_wifi_initial_setup(manager, config, &state_service).await;
             }
 
             in_progress.store(false, Ordering::Release);
         });
 
         Ok(())
+    }
+
+    async fn handle_wifi_initial_setup(
+        manager: Arc<T>,
+        config: WifiNetworkConfig,
+        state_service: &StateService,
+    ) {
+        match manager.wifi_initial_setup(config).await {
+            Ok(()) => {
+                state_service.notify(InitSetupState::WifiConnectionSuccess);
+                info!("WiFi initial setup completed successfully");
+            }
+            Err(InitialSetupError::NotSupported) => {
+                warn!("WiFi initial setup not supported");
+                state_service.notify(InitSetupState::UnexpectedError);
+            }
+            Err(InitialSetupError::UnexpectedFailure(err)) => {
+                warn!(
+                    error = %err,
+                    "Unexpected failure during WiFi initial setup, rebooting device"
+                );
+                Self::notify_failure_and_reboot(manager, state_service).await;
+            }
+            Err(InitialSetupError::WifiConnectionFailure(err)) => {
+                warn!(error = %err, "Failed to connect to WiFi");
+                state_service.notify(InitSetupState::WifiConnectionFailed);
+
+                // Revert wifi settings
+                if let Err(err) = manager.revert_to_initial_setup().await {
+                    warn!(error = %err, "Failed to revert to initial setup");
+                    Self::notify_failure_and_reboot(manager, state_service).await;
+                }
+            }
+        }
+    }
+
+    async fn handle_wifi_reconfig(
+        manager: Arc<T>,
+        config: WifiNetworkConfig,
+        state_service: &StateService,
+    ) {
+        // For reconfiguration, we connect and then exit reconfig mode (return to Operational)
+        let ssid = config.ssid.clone();
+        match manager
+            .wifi_save_and_connect(config.ssid, config.password, config.encryption)
+            .await
+        {
+            Ok(()) => {
+                info!(ssid = %ssid, "WiFi reconfiguration connection successful");
+                // Exit reconfiguration mode (disables captive portal, removes flag)
+                if let Err(err) = manager.exit_wifi_reconfiguration().await {
+                    warn!(error = %err, "Failed to exit wifi reconfiguration mode");
+                    state_service.notify(InitSetupState::UnexpectedError);
+                    return;
+                }
+                state_service.notify(InitSetupState::WifiReconfigSuccess);
+                info!("WiFi reconfiguration completed successfully");
+            }
+            Err(err) => {
+                warn!(error = %err, ssid = %ssid, "Failed to connect to WiFi during reconfiguration");
+                state_service.notify(InitSetupState::WifiConnectionFailed);
+                // Stay in reconfig mode so user can try again
+            }
+        }
     }
 
     async fn notify_failure_and_reboot(manager: Arc<T>, state_service: &StateService) {
@@ -254,6 +294,7 @@ pub enum InitSetupState {
     ConnectingToWifi { wifi_ssid: String },
     WifiConnectionSuccess,
     WifiConnectionFailed,
+    WifiReconfigSuccess,
     UnexpectedError,
     DeviceSetupSuccess,
 }
