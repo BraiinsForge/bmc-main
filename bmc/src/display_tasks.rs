@@ -37,6 +37,7 @@ const ERROR_SCREEN_DURATION: Duration = Duration::from_secs(5);
 const CHECK_IP_ATTEMPTS: u8 = 10;
 const CHECK_IP_WAIT_DURATION: Duration = Duration::from_secs(2);
 const DEFAULT_ALARM_LABEL: &str = "Alarm";
+const WIFI_RECONFIG_TIMEOUT: Duration = Duration::from_secs(5 * 60); // 5 minutes
 
 #[derive(Debug)]
 pub(crate) struct DisplayTasks<T: BmcManager, U: DisplayBacklightDriver> {
@@ -131,6 +132,12 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         ));
 
         tokio::spawn(Self::run_restart_event_listener(
+            display_controller.clone(),
+            manager.clone(),
+        ));
+
+        // NOTE: WiFi reconfigure button clicked - enter WiFi reconfiguration mode
+        tokio::spawn(Self::run_wifi_reconfig_event_listener(
             display_controller.clone(),
             manager.clone(),
         ));
@@ -318,6 +325,18 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                         display_controller.set_scene_cycler_screen(true);
                         display_controller.set_init_screen(None);
                     }
+                    InitSetupState::WifiReconfigSuccess => {
+                        // WiFi reconfiguration succeeded - return to normal operation
+                        display_controller.set_init_screen(Some(InitScreen::SetupWifiConnected));
+                        tokio::time::sleep(SCREEN_DURATION).await;
+                        // Update IP address for bottom rollette after WiFi change
+                        // Small delay to allow DHCP to assign new IP
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        let ip = manager.ip_address().await;
+                        display_controller.set_connect_ip_qr_code(ip);
+                        display_controller.set_scene_cycler_screen(true);
+                        display_controller.set_init_screen(None);
+                    }
                 }
             }
         }
@@ -375,6 +394,13 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                 tokio::time::sleep(duration).await;
                 display_controller.set_scene_cycler_screen(true);
                 display_controller.set_connect_info_screen(None);
+            }
+            crate::manager::BmcState::WifiReconfiguration => {
+                // WiFi reconfiguration mode - show setup start screen (AP mode active)
+                let ssid = manager.wifi_ssid();
+                display_controller.set_wifi_ssid(ssid);
+                display_controller.set_init_screen(Some(InitScreen::SetupStart));
+                // NOTE: init_screen will be turned off in `run_initial_setup_listener`
             }
         }
     }
@@ -616,6 +642,51 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
 
             if let Err(e) = manager.reboot().await {
                 error!("Failed to reboot: {:?}", e);
+            }
+        }
+    }
+
+    async fn run_wifi_reconfig_event_listener(
+        display_controller: DisplayController,
+        manager: Arc<T>,
+    ) {
+        let mut wifi_reconfig_receiver = display_controller.on_wifi_reconfig_events();
+        while wifi_reconfig_receiver.next().await.is_some() {
+            info!("WiFi reconfigure event received");
+
+            // Guard against multiple clicks - skip if already in reconfig mode
+            if manager.is_wifi_reconfig().await {
+                debug!("Already in WiFi reconfiguration mode, ignoring click");
+                continue;
+            }
+
+            match manager.enter_wifi_reconfiguration().await {
+                Ok(()) => {
+                    info!("Entered WiFi reconfiguration mode");
+                    let ssid = manager.wifi_ssid();
+                    display_controller.set_wifi_ssid(ssid);
+                    display_controller.set_init_screen(Some(InitScreen::SetupStart));
+
+                    // Spawn timeout task that reverts to Operational if user doesn't complete setup
+                    let manager_clone = manager.clone();
+                    let display_clone = display_controller.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(WIFI_RECONFIG_TIMEOUT).await;
+
+                        // Check if still in reconfig mode (user didn't complete setup)
+                        if manager_clone.is_wifi_reconfig().await {
+                            warn!("WiFi reconfiguration timeout - reverting to Operational");
+                            if let Err(e) = manager_clone.exit_wifi_reconfiguration().await {
+                                error!("Failed to exit WiFi reconfiguration: {:?}", e);
+                            }
+                            display_clone.set_init_screen(None);
+                            display_clone.set_scene_cycler_screen(true);
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("Failed to enter WiFi reconfiguration: {:?}", e);
+                }
             }
         }
     }
