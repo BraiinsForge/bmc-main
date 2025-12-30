@@ -5,6 +5,7 @@ import { ConnectionAdapter, WifiAdapter } from "../controls/adapters.slint";
 import { Images } from "../style/images.slint";
 import { Theme } from "../style/theme.slint";
 import { CircleIcon } from "./circle-icon.slint";
+import { LongPressCircleIcon } from "./long-press-circle-icon.slint";
 import { WifiIndicator } from "./wifi-indicator.slint";
 
 export component BottomRollette inherits Rectangle {
@@ -323,9 +324,9 @@ export component BottomRollette inherits Rectangle {
                 VerticalLayout {
                     HorizontalLayout {
                         alignment: center;
-                        CircleIcon {
+                        LongPressCircleIcon {
                             icon_source: Images.wifi-problem;
-                            clicked => {
+                            activated => {
                                 WifiReconfigAdapter.trigger_reconfig();
                             }
                         }
@@ -339,7 +340,7 @@ export component BottomRollette inherits Rectangle {
                         height: 31px;
                         width: 140px;
                         Text {
-                            text: "Reconfigure";
+                            text: "Reset WiFi";
                             color: Palette.white;
                             font-weight: Theme.font.weight.bold;
                             font-size: 24px;
@@ -350,7 +351,7 @@ export component BottomRollette inherits Rectangle {
                     Rectangle {
                         padding-top: 8px;
                         Text {
-                            text: "WiFi";
+                            text: "hold 3 seconds";
                             color: Palette.gray-50;
                             font-size: 24px;
                         }
