@@ -1,19 +1,21 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::config::ConfigHandle;
+use crate::config::{ConfigHandle, TemperatureUnit};
 use anyhow::{Context, Result, bail};
 use backon::{BackoffBuilder, ExponentialBuilder};
 use bmc_display::data::{SceneId, WidgetId, WidgetSize};
 use bmc_display::display_controller::DisplayController;
 use bmc_display::remote_widget_data::RemoteWidgetState;
 use bmc_display::{SharedImageBuffer, SharedPixelBuffer};
+use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
+use bmc_shared_utils::number_format::NumberFormat;
 use image::ImageDecoder;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{Instrument, info, instrument, warn};
 use url::Url;
@@ -41,6 +43,7 @@ pub async fn run(
     widget_id: WidgetId,
     widget_size: WidgetSize,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    system_timezone_receiver: watch::Receiver<Timezone>,
     url: String,
 ) {
     let error_backoff_builder = ExponentialBuilder::new()
@@ -95,7 +98,7 @@ pub async fn run(
 
     let params = {
         let config = config_handle.read().await;
-        match config
+        let user_params = match config
             .scenes
             .get(&scene_id)
             .and_then(|s| s.widgets.get(&widget_id))
@@ -116,7 +119,28 @@ pub async fn run(
             }
             Some(_) => serde_json::json!({}),
             None => return,
+        };
+
+        let localization = config.localization_config();
+        let timezone = system_timezone_receiver.borrow();
+
+        // TODO: Ideally, this JSON schema should be generated from protobufs
+        // rather than being hardcoded here.
+        // Start with system prefs as base
+        let mut params = serde_json::json!({
+            "timezone": timezone.iana(),
+            "numberFormat": format_number_format(localization.number_format),
+            "dateFormat": format_date_format(localization.date_format),
+            "timeFormat": format_time_format(localization.time_system),
+            "temperatureUnit": format_temperature_unit(&localization.temperature_unit)
+        });
+
+        // Merge user params on top (user params take precedence)
+        if let (Some(base), Some(user)) = (params.as_object_mut(), user_params.as_object()) {
+            base.extend(user.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
+
+        params
     };
 
     let invoke_body = InvokeBody {
@@ -124,6 +148,8 @@ pub async fn run(
         widget_version: String::new(),
         params,
     };
+
+    // info!(?invoke_body, "Remote widget invoke body"); for debugging
 
     // NOTE: intentionally initialized here, not at the beginning of the async block.
     // This way it will be dropped only when task is aborted.
@@ -269,5 +295,41 @@ impl Drop for ResetToInitialStateDropGuard {
             self.widget_id.clone(),
             RemoteWidgetState::Initial,
         );
+    }
+}
+
+fn format_number_format(value: NumberFormat) -> &'static str {
+    match value {
+        NumberFormat::SpaceGroupCommaDecimal => "NUMBER_FORMAT_SPACE_GROUP_COMMA_DECIMAL",
+        NumberFormat::CommaGroupDotDecimal => "NUMBER_FORMAT_COMMA_GROUP_DOT_DECIMAL",
+        NumberFormat::DotGroupCommaDecimal => "NUMBER_FORMAT_DOT_GROUP_COMMA_DECIMAL",
+        NumberFormat::SpaceGroupDotDecimal => "NUMBER_FORMAT_SPACE_GROUP_DOT_DECIMAL",
+    }
+}
+
+fn format_time_format(value: TimeSystem) -> &'static str {
+    match value {
+        TimeSystem::Hour12 => "TIME_FORMAT_12_HOUR",
+        TimeSystem::Hour24 => "TIME_FORMAT_24_HOUR",
+    }
+}
+
+fn format_date_format(value: DateFormat) -> &'static str {
+    match value {
+        DateFormat::DdMmYyyyDot => "DATE_FORMAT_DD_MM_YYYY_DOT",
+        DateFormat::DdMmYyyySlash => "DATE_FORMAT_DD_MM_YYYY_SLASH",
+        DateFormat::DMYyyySlash => "DATE_FORMAT_D_M_YYYY_SLASH",
+        DateFormat::MDYyyySlash => "DATE_FORMAT_M_D_YYYY_SLASH",
+        DateFormat::DdMmYyyyDash => "DATE_FORMAT_DD_MM_YYYY_DASH",
+        DateFormat::YyyyMDSlash => "DATE_FORMAT_YYYY_M_D_SLASH",
+        DateFormat::YyyyMmDdDot => "DATE_FORMAT_YYYY_MM_DD_DOT",
+        DateFormat::YyyyMmDdDash => "DATE_FORMAT_YYYY_MM_DD_DASH",
+    }
+}
+
+fn format_temperature_unit(value: &TemperatureUnit) -> &'static str {
+    match value {
+        TemperatureUnit::Celsius => "TEMPERATURE_UNIT_CELSIUS",
+        TemperatureUnit::Fahrenheit => "TEMPERATURE_UNIT_FAHRENHEIT",
     }
 }

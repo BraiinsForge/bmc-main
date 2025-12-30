@@ -144,6 +144,7 @@ impl WidgetTasks {
                     widget.id.clone(),
                     widget.size,
                     self.config_handle.clone(),
+                    self.system_timezone_receiver.clone(),
                     remote_widget.widget_url.clone(),
                 )
                 .in_current_span(),
