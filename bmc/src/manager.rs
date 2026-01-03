@@ -59,7 +59,7 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     async fn is_wifi_reconfig(&self) -> bool;
 
     // Enters wifi reconfiguration mode (enables AP + captive portal without factory reset)
-    async fn enter_wifi_reconfiguration(&self) -> Result<(), InitialSetupError>;
+    async fn enter_wifi_reconfig(&self) -> Result<(), InitialSetupError>;
 
     // Exits wifi reconfiguration mode and returns to operational
     async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError>;
