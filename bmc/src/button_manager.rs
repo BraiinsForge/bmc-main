@@ -31,10 +31,10 @@ use tokio_stream::StreamExt;
 use tracing::info;
 use tracing::log::warn;
 
-/// Maximum number of seconds to hold the button for to perform reboot
-const REBOOT_MAX_HOLD_DURATION: Duration = Duration::from_secs(5);
-/// Maximum number of seconds to hold the button for to perform factory reset
-const FRESET_MAX_HOLD_DURATION: Duration = Duration::from_secs(10);
+/// Maximum hold duration to trigger a reboot (0-2 seconds)
+const REBOOT_MAX_HOLD_DURATION: Duration = Duration::from_secs(2);
+/// Minimum hold duration to trigger a factory reset (5+ seconds)
+const FACTORY_RESET_MIN_HOLD_DURATION: Duration = Duration::from_secs(5);
 
 /// Button current state enum up/down, with holding time
 #[derive(Clone, Debug)]
@@ -136,23 +136,27 @@ where
         }
     }
 
-    /// Function to handle reset button
+    /// Reset button has 2 roles: this function handles reboot and factory reset
+    /// based on how long the button is held down.
     pub async fn handle_reset_button(&self, pressed_at: Instant) {
-        if pressed_at.elapsed() < REBOOT_MAX_HOLD_DURATION {
+        let elapsed = pressed_at.elapsed();
+
+        if elapsed <= REBOOT_MAX_HOLD_DURATION {
             info!("Rebooting the system");
             if let Err(e) = self.bmc_manager.reboot().await {
                 warn!("Error while rebooting: {e}");
             }
-        } else if pressed_at.elapsed() < FRESET_MAX_HOLD_DURATION {
-            // Factory reset
-            info!("Performing factory soft reset");
+        } else if elapsed >= FACTORY_RESET_MIN_HOLD_DURATION {
+            info!("Performing factory reset");
             if let Err(e) = self.bmc_manager.factory_reset(false).await {
-                warn!("Error while factory soft reset: {e}");
+                warn!("Error while performing factory reset: {e}");
             }
         } else {
-            warn!(
-                "Reset button pressed for more than {} seconds, ignoring",
-                FRESET_MAX_HOLD_DURATION.as_secs()
+            info!(
+                "Reset button pressed for {} seconds (between {}-{}s), ignoring",
+                elapsed.as_secs(),
+                REBOOT_MAX_HOLD_DURATION.as_secs(),
+                FACTORY_RESET_MIN_HOLD_DURATION.as_secs()
             );
         }
     }
