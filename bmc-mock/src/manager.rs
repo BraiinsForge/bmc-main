@@ -171,7 +171,7 @@ impl bmc::BmcManager for Manager {
         self.mockfs.wifi_reconfig().exists()
     }
 
-    async fn enter_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
+    async fn enter_wifi_reconfig(&self) -> Result<(), InitialSetupError> {
         info!("Entering WiFi reconfiguration mode (mock)");
         self.mockfs
             .add_or_remove_flag(true, &self.mockfs.wifi_reconfig())

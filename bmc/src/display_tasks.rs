@@ -702,7 +702,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
     }
 
     async fn enter_wifi_reconfig(display_controller: &DisplayController, manager: &Arc<T>) {
-        match manager.enter_wifi_reconfiguration().await {
+        match manager.enter_wifi_reconfig().await {
             Ok(()) => {
                 info!("Entered WiFi reconfiguration mode");
                 let ssid = manager.wifi_ssid();

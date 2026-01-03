@@ -403,7 +403,7 @@ impl BmcManager for Manager {
         .is_ok()
     }
 
-    async fn enter_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
+    async fn enter_wifi_reconfig(&self) -> Result<(), InitialSetupError> {
         info!("Entering WiFi reconfiguration mode");
 
         self.set_wifi_reconfig_flag().await?;
