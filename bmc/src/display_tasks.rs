@@ -673,7 +673,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                 continue;
             }
 
-            Self::enter_wifi_reconfig(&display_controller, &manager).await;
+            Self::enter_wifi_reconfig_with_display_controller(&display_controller, &manager).await;
         }
     }
 
@@ -697,11 +697,14 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                 let _ = manager.exit_wifi_reconfiguration().await;
             }
 
-            Self::enter_wifi_reconfig(&display_controller, &manager).await;
+            Self::enter_wifi_reconfig_with_display_controller(&display_controller, &manager).await;
         }
     }
 
-    async fn enter_wifi_reconfig(display_controller: &DisplayController, manager: &Arc<T>) {
+    async fn enter_wifi_reconfig_with_display_controller(
+        display_controller: &DisplayController,
+        manager: &Arc<T>,
+    ) {
         match manager.enter_wifi_reconfig().await {
             Ok(()) => {
                 info!("Entered WiFi reconfiguration mode");
