@@ -327,7 +327,7 @@ export component BottomRollette inherits Rectangle {
                         LongPressCircleIcon {
                             icon_source: Images.wifi-problem;
                             activated => {
-                                WifiReconfigAdapter.trigger_reconfig();
+                                WifiReconfigAdapter.trigger_reconfig_restart();
                             }
                         }
                     }

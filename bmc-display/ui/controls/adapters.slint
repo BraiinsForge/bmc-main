@@ -97,5 +97,6 @@ export global NightModeAdapter {
 
 export global WifiReconfigAdapter {
     in property <bool> is_factory_default: false;
-    callback trigger_reconfig;
+    callback trigger_reconfig;          // WiFi failed screen - guards against spam
+    callback trigger_reconfig_restart;  // Bottom rollette - allows clean restart
 }
