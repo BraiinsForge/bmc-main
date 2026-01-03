@@ -37,7 +37,7 @@ const ERROR_SCREEN_DURATION: Duration = Duration::from_secs(5);
 const CHECK_IP_ATTEMPTS: u8 = 10;
 const CHECK_IP_WAIT_DURATION: Duration = Duration::from_secs(2);
 const DEFAULT_ALARM_LABEL: &str = "Alarm";
-const WIFI_RECONFIG_TIMEOUT: Duration = Duration::from_secs(5 * 60); // 5 minutes
+const WIFI_RECONFIG_TIMEOUT: Duration = Duration::from_secs(8 * 60); // 8 minutes
 
 #[derive(Debug)]
 pub(crate) struct DisplayTasks<T: BmcManager, U: DisplayBacklightDriver> {
