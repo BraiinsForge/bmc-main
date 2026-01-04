@@ -368,7 +368,11 @@ impl bmc::BmcManager for Manager {
         };
 
         let iface_data = IfaceData {
-            ip: Some("192.168.1.100".parse().unwrap()),
+            ip: Some(
+                "192.168.1.100"
+                    .parse()
+                    .expect("BUG: hardcoded IP should always parse"),
+            ),
             mac: Some(MacAddr::new(0x00, 0x11, 0x22, 0x33, 0x44, 0x55)),
         };
 
