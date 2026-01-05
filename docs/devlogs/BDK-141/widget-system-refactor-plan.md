@@ -11,10 +11,10 @@ This document outlines the refactoring of BMC from a monolithic Slint applicatio
 - Single event loop for all UI updates
 
 ### Target Architecture
-- Main Deck application acts as a Wayland compositor
-- Each widget is a separate Wayland application
+- Main Deck application embeds a Wayland compositor
+- Each widget is a separate Wayland client application
 - Widgets are installable packages (Nix packages)
-- IPC via Unix sockets for communication
+- Communication via custom Wayland protocol extension
 - Widget registry for discovery and management
 
 ---
@@ -120,16 +120,16 @@ Spawn, monitor, and terminate widget processes.
 
 ### Spawn Sequence
 1. Look up widget in registry
-2. Create IPC socket at `/run/bmc/widgets/<instance-id>.sock`
-3. Spawn binary with environment variable `BMC_IPC_SOCKET`
-4. Accept connection on IPC socket
-5. Send `init` message with size, params, settings
-6. Wait for `ready` message (timeout: 5 seconds)
+2. Spawn binary with environment variable `WAYLAND_DISPLAY` pointing to compositor socket
+3. Widget connects to Wayland compositor
+4. Compositor identifies widget by PID (from socket credentials)
+5. Compositor sends configuration via Wayland protocol extension (size, params, settings)
+6. Widget acknowledges configuration and starts rendering
 7. Mark widget as ready
 
 ### Lifecycle Operations
 - **Start** - Spawn process for instance
-- **Stop** - Send `shutdown` message, wait for exit, kill if timeout
+- **Stop** - Send shutdown via Wayland protocol, wait for exit, kill if timeout
 
 ### Crash Handling
 - Monitor process exit
@@ -137,37 +137,43 @@ Spawn, monitor, and terminate widget processes.
 - After N failures, mark widget as failed
 
 ### Cleanup
-- On widget stop: Close socket, delete socket file
+- On widget stop: Compositor unregisters widget surface
 - On application exit: Stop all widgets gracefully
 
 ---
 
-## 5. IPC Communication
+## 5. Widget Communication (Wayland Protocol Extension)
 
 ### Purpose
-Bidirectional communication between Deck application and widget processes.
+Bidirectional communication between compositor and widget processes via custom Wayland protocol.
 
-### Outbound Messages (Application → Widget)
-- `init` - Initial configuration on startup
-- `settings_update` - When system setting changes (sends all settings of the same category, e.g., all localization settings or night mode state)
-- `shutdown` - Before terminating widget
+### Protocol: `bmc_widget_v1`
 
-### Inbound Messages (Widget → Application)
-- `ready` - Widget initialized and ready to display
-- `error` - Widget encountered an error
-- `action` - Widget requests system action (sound, LED)
+Communication happens through a Wayland protocol extension that provides:
+
+**Compositor → Widget:**
+- `configure` - Widget size and type
+- `params` - Widget instance parameters (JSON)
+- `setting` - System setting update
+- `visibility` - Widget visible/hidden state
+- `shutdown` - Graceful shutdown request
+
+**Widget → Compositor:**
+- `ack_configure` - Acknowledge configuration
+- `error` - Report error condition
+- `action` - Request system action (sound, LED)
 
 ### Action Handling
-When widget sends action:
+When widget sends action request:
 - `play_sound` → Forward to SoundController
 - `stop_sound` → Forward to SoundController
 - `led` → Forward to LedController
 - `stop_led` → Forward to LedController
 
-### Broadcast Updates
+### Settings Broadcast
 When system setting changes:
 1. Get list of widgets subscribed to that setting (from manifest)
-2. Send `settings_update` to each subscribed widget
+2. Send `setting` event to each subscribed widget via Wayland protocol
 
 ---
 
@@ -244,7 +250,7 @@ Each widget will have a unique UID (UUID v4) generated during creation.
 
 ### Shared Library
 Create `bmc-widget-sdk` crate with:
-- IPC protocol implementation
+- Wayland protocol client implementation
 - Common utilities
 - Slint helpers
 
@@ -319,4 +325,5 @@ Update gRPC API to support standalone widgets.
 ## Related Documents
 
 - [Widget Manifest](widget-manifest.md) - Manifest schema specification
-- [Widget IPC Protocol](widget-ipc-protocol.md) - IPC message format specification
+- [Widget IPC Protocol](widget-ipc-protocol.md) - Legacy IPC protocol (outdated, replaced by Wayland protocol extension)
+- [Widget Refactor Implementation](widget-refactor-implementation.md) - Detailed implementation plan
