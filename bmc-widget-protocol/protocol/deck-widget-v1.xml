@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="deck_widget_v1">
+  <copyright>
+    Copyright (C) 2025 Braiins Systems s.r.o.
+    SPDX-License-Identifier: MIT
+  </copyright>
+
+  <interface name="deck_widget_manager_v1" version="1">
+    <description summary="Deck widget manager">
+      Global interface for Deck widget management. Widgets bind to this
+      interface to register themselves with the compositor.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroy the widget manager. Does not affect existing widget surfaces.
+      </description>
+    </request>
+
+    <request name="get_widget_surface">
+      <description summary="create a widget surface">
+        Create a deck_widget_surface_v1 for the given wl_surface.
+        The instance_id must match the DECK_INSTANCE_ID environment variable
+        and is used by the compositor to identify this widget for positioning.
+        The surface must not already have a role.
+      </description>
+      <arg name="id" type="new_id" interface="deck_widget_surface_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="instance_id" type="string" summary="widget instance identifier"/>
+    </request>
+
+    <enum name="error">
+      <entry name="role" value="0" summary="surface already has a role"/>
+      <entry name="invalid_instance" value="1" summary="unknown instance_id"/>
+    </enum>
+  </interface>
+
+  <interface name="deck_widget_surface_v1" version="1">
+    <description summary="Deck widget surface">
+      Interface for a widget surface. Initial configuration (size, params,
+      settings) is received via environment variables. This protocol handles
+      runtime communication: settings updates, shutdown, and action requests.
+      Widget readiness is detected when the first buffer is committed.
+    </description>
+
+    <!-- Requests (Widget → Compositor) -->
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the widget surface">
+        Destroy the widget surface role. The wl_surface remains valid.
+      </description>
+    </request>
+
+    <request name="request_action">
+      <description summary="request a system action">
+        Request the compositor to perform a system action (sound, LED).
+        The payload is JSON-encoded action data.
+      </description>
+      <arg name="action_type" type="uint" enum="action_type"/>
+      <arg name="payload" type="string" summary="JSON payload"/>
+    </request>
+
+    <!-- Events (Compositor → Widget) -->
+
+    <event name="setting">
+      <description summary="system setting update">
+        Sent when a system setting changes at runtime.
+      </description>
+      <arg name="setting_type" type="uint" enum="setting_type"/>
+      <arg name="value" type="string" summary="JSON-encoded value"/>
+    </event>
+
+    <event name="shutdown">
+      <description summary="request graceful shutdown">
+        Sent when the widget should shut down gracefully.
+        Widget should clean up and exit.
+      </description>
+    </event>
+
+    <!-- Enums -->
+
+    <enum name="setting_type">
+      <entry name="timezone" value="0" summary="timezone setting"/>
+      <entry name="localization" value="1" summary="localization settings"/>
+      <entry name="night_mode" value="2" summary="night mode state"/>
+    </enum>
+
+    <enum name="action_type">
+      <entry name="play_sound" value="0" summary="play a sound"/>
+      <entry name="stop_sound" value="1" summary="stop sound"/>
+      <entry name="led" value="2" summary="set LED effect"/>
+      <entry name="stop_led" value="3" summary="stop LED effect"/>
+    </enum>
+  </interface>
+</protocol>
