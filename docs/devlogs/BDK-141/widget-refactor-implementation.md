@@ -826,221 +826,87 @@ Responsibilities:
 
 ### Goal
 
-Define a compositor interface trait in `bmc` that abstracts away the implementation details, allowing different backends (EGL for ARMv7, mock for x86 development).
+Define a compositor interface trait in `bmc` that abstracts away the implementation details, allowing different backends (EGL for ARMv7, mock/no-op for x86 development).
 
 ### Scope
 
-- Define `CompositorHandle` trait in `bmc` crate
-- Define supporting types for widget display configuration
+- Define `Compositor` trait in `bmc` crate
+- Define minimal supporting types for widget display configuration
+- Trait must support async operations and be thread-safe
 - No implementation yet - just the interface
 
 ### Files to Create/Modify
 
-- `bmc/src/compositor.rs` (new) - Trait definition
+- `bmc/src/compositor.rs` (new) - Trait definition and types
 - `bmc/src/lib.rs` - Export compositor module
 
 ### Trait Design
 
-The `CompositorHandle` trait provides the interface between the main application and the compositor:
+The `Compositor` trait provides the interface between the main application and the compositor:
 
 | Method | Description |
 |--------|-------------|
-| `start()` | Start the compositor (creates Wayland socket, initializes display) |
-| `wayland_display()` | Get the Wayland display socket path for widgets |
-| `register_widget()` | Register a widget with position and size configuration |
+| `start()` | Start the compositor, returns the Wayland display socket name |
+| `wayland_display()` | Get the Wayland display socket name for widgets |
+| `register_widget()` | Register a widget with instance_id and position (before spawning) |
 | `unregister_widget()` | Unregister a widget when its process stops |
-| `set_active_scene()` | Set which widgets are visible and where |
-| `action_receiver()` | Get channel receiver for widget actions (sound, LED) |
+| `set_active_scene()` | Set which widgets are visible and their positions |
+| `broadcast_setting()` | Send a setting update to all connected widgets |
+| `action_receiver()` | Get a channel receiver for widget actions (sound, LED requests) |
+| `event_receiver()` | Get a channel receiver for compositor events (widget ready, disconnected) |
 | `shutdown()` | Shutdown the compositor |
+
+### Usage
+
+The compositor is passed to `Coordinator` as `Arc<dyn Compositor>`. This allows:
+- Shared ownership between Coordinator, App, and other components
+- Thread-safe access from async tasks
+- Runtime polymorphism for different backends (EGL on ARMv7, mock on x86)
 
 ### Supporting Types
 
-- `WidgetDisplayConfig` - Position (x, y) and size (width, height) for a widget
-- `SceneLayout` - List of widgets with their display configurations
-- `WidgetAction` - Action request from a widget (instance_id + action payload)
+| Type | Description |
+|------|-------------|
+| `SceneLayout` | List of widget placements with instance_id, position (x,y), size (w,h), and visibility |
+| `WidgetAction` | Action request from a widget: instance_id and action payload (reuses `ActionPayload` from bmc-ipc) |
+| `CompositorEvent` | Event from compositor: `WidgetReady { instance_id }`, `WidgetDisconnected { instance_id }` |
+| `CompositorError` | Error enum for compositor operations |
+
+### Threading Model
+
+The compositor implementation runs in a **separate thread** (not a tokio task). This is because:
+
+1. **Smithay uses calloop**: The `bmc-compositor` code uses smithay's calloop event loop, which is synchronous and blocking. Calloop is designed for Wayland compositors and integrates with DRM, libinput, and other low-level Linux APIs.
+
+2. **Incompatible with tokio**: Calloop's blocking event loop cannot run inside tokio's cooperative async runtime without blocking the executor.
+
+3. **Clean separation**: The compositor thread handles rendering and Wayland protocol; the main tokio runtime handles business logic and web services. Communication via channels is simple and the message rate is low (scene changes, widget registrations).
+
+Implementations should use `std::thread::spawn` or `tokio::task::spawn_blocking` to run the compositor loop.
 
 ### Success Criteria
 
-- [ ] `CompositorHandle` trait defined with all necessary methods
-- [ ] Supporting types defined
+- [ ] `Compositor` trait defined with async methods
+- [ ] Supporting types defined (minimal set)
 - [ ] Trait is `Send + Sync` for thread-safe access
-- [ ] No implementation yet - just the interface
+- [ ] Error types defined
 
 ### Status: Not Started
 
 ---
 
-## Stage 12: EGL Compositor Implementation in bmc-openwrt
+## Stage 12: Wayland Protocol Extension for Widget Communication
 
 ### Goal
 
-Implement `CompositorHandle` trait for ARMv7 using the existing bmc-compositor code. The compositor runs in a dedicated thread within the bmc-openwrt process.
-
-### Scope
-
-- Create `EglCompositor` struct that implements `CompositorHandle`
-- Run compositor event loop in a dedicated thread
-- Communicate between main thread and compositor via channels
-- Reuse existing code from `bmc-compositor` crate
-
-### Files to Create/Modify
-
-- `bmc-openwrt/src/compositor.rs` (new) - EglCompositor implementation
-- `bmc-openwrt/src/main.rs` - Initialize and pass compositor to App
-
-### Implementation Approach
-
-The `EglCompositor` wraps the compositor thread and provides channel-based communication:
-
-| Component | Purpose |
-|-----------|---------|
-| `compositor_thread` | Handle to the compositor thread |
-| `command_tx` | Channel to send commands to compositor |
-| `action_rx` | Channel to receive widget actions |
-| `wayland_display` | Path to Wayland socket |
-
-Commands sent to compositor:
-- `RegisterWidget` - Register widget with position/size
-- `UnregisterWidget` - Remove widget
-- `SetActiveScene` - Update visible widgets
-- `Shutdown` - Stop compositor
-
-### Key Integration Points
-
-- PID matching for widget identification (compositor reads socket credentials)
-- Scene layout determines widget visibility and positioning
-- Frame callbacks only sent to visible widgets
-
-### Success Criteria
-
-- [ ] EglCompositor implements CompositorHandle
-- [ ] Compositor runs in dedicated thread
-- [ ] Widget registration/unregistration works
-- [ ] Action channel receives widget requests
-- [ ] Scene layout updates work
-
-### Status: Not Started
-
----
-
-## Stage 13: Coordinator-Compositor Integration
-
-### Goal
-
-Connect the WidgetCoordinator to the compositor so spawned widgets can render.
-
-### Scope
-
-- Add compositor reference to Coordinator
-- Pass WAYLAND_DISPLAY to spawned widgets
-- Register widgets with compositor before spawning
-- Unregister widgets when stopped
-
-### Files to Modify
-
-- `bmc/src/widget/coordinator.rs` - Add compositor reference
-- `bmc/src/widget/manager.rs` - Pass WAYLAND_DISPLAY to spawned widgets
-- `bmc/src/entry.rs` - Wire up compositor to app
-
-### Widget Spawn Flow
-
-1. Calculate widget position from scene layout
-2. Register widget with compositor (reserves position)
-3. Spawn widget process with `WAYLAND_DISPLAY` env var
-4. Widget connects to compositor's Wayland socket
-5. Compositor matches by PID
-6. Widget renders to its surface
-
-### Success Criteria
-
-- [ ] Coordinator holds compositor reference
-- [ ] Widgets spawned with WAYLAND_DISPLAY env var
-- [ ] Widget registration happens before process spawn
-- [ ] Widget unregistration on process stop
-
-### Status: Not Started
-
----
-
-## Stage 14: Scene Management
-
-### Goal
-
-Implement scene switching while keeping all widgets running. Compositor controls visibility via frame callbacks.
-
-### Scope
-
-- Scene switching updates compositor's active layout
-- Hidden widgets stop receiving frame callbacks
-- Compositor sends "out of scope" signal to hidden widgets
-- Widgets resume when visible again
-
-### Frame Callback Optimization
-
-- Only visible widgets receive frame callbacks
-- Hidden widgets receive visibility event and pause rendering
-- Standard Wayland pattern - clients wait for frame callbacks
-- Saves CPU when widgets are not displayed
-
-### Success Criteria
-
-- [ ] Scene switching works
-- [ ] All widgets remain running across scene changes
-- [ ] Hidden widgets stop rendering (no frame callbacks)
-- [ ] Widgets resume rendering when visible again
-
-### Status: Not Started
-
----
-
-## Stage 15: Action Routing (Sound/LED)
-
-### Goal
-
-Route widget action requests to hardware controllers.
-
-### Scope
-
-- Spawn action handler task in background
-- Receive actions from compositor's action channel
-- Route to appropriate controller
-
-### Action Types
-
-| Action | Controller |
-|--------|------------|
-| `PlaySound` | SoundController |
-| `StopSound` | SoundController |
-| `Led` | LedController |
-| `StopLed` | LedController |
-
-### Files to Modify
-
-- `bmc/src/entry.rs` - Spawn action handler task
-- `bmc/src/widget/action_handler.rs` (new) - Process widget actions
-
-### Success Criteria
-
-- [ ] Action handler task runs in background
-- [ ] Sound actions trigger SoundController
-- [ ] LED actions trigger LedController
-
-### Status: Not Started
-
----
-
-## Stage 16: Wayland Protocol Extension for Widget Communication
-
-### Goal
-
-Replace the custom JSON-over-Unix-socket IPC with a proper Wayland protocol extension (`bmc_widget_v1`) for compositor-widget communication.
+Implement a Wayland protocol extension (`bmc_widget_v1`) for compositor-widget communication. This replaces the need for separate JSON IPC sockets.
 
 ### Background
 
-The JSON IPC is non-standard and requires widget developers to implement custom parsing. A Wayland protocol extension:
-- Uses a single protocol for all communication
+A Wayland protocol extension:
+- Uses a single connection for all communication (rendering + messages)
 - Provides type-safe, versioned messages
-- Generates client bindings automatically via `wayland-scanner`
+- Generates client/server bindings automatically via `wayland-scanner`
 - Is the standard approach for Wayland compositors
 
 ### Protocol Structure
@@ -1053,47 +919,722 @@ The JSON IPC is non-standard and requires widget developers to implement custom 
 
 | Direction | Message | Description |
 |-----------|---------|-------------|
-| Compositor → Widget | `configure` | Widget size and type |
-| Compositor → Widget | `params` | JSON widget parameters |
-| Compositor → Widget | `setting` | System setting update |
-| Compositor → Widget | `visibility` | Widget visible/hidden |
-| Compositor → Widget | `shutdown` | Graceful shutdown |
-| Widget → Compositor | `ack_configure` | Acknowledge configure |
-| Widget → Compositor | `error` | Report error |
-| Widget → Compositor | `action` | Request system action |
+| Compositor → Widget | `setting` | System setting update (timezone, localization, night mode) |
+| Compositor → Widget | `shutdown` | Graceful shutdown request |
+| Widget → Compositor | `request_action` | Request system action (sound, LED) |
+
+Note: Initial configuration (size, params, settings) is passed via environment variables. Widget readiness is implicit when the first buffer is committed (standard Wayland behavior).
+
+### Widget Configuration via Environment Variables
+
+Widgets receive all initial configuration via environment variables set by the coordinator:
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `WAYLAND_DISPLAY` | Wayland compositor socket | `wayland-bmc` |
+| `XDG_RUNTIME_DIR` | Runtime directory | `/run` |
+| `BMC_INSTANCE_ID` | Unique instance identifier | `clock-abc123` |
+| `BMC_SIZE_TYPE` | Widget size category | `small`, `medium`, `large`, `full` |
+| `BMC_WIDTH` | Widget width in pixels | `320` |
+| `BMC_HEIGHT` | Widget height in pixels | `240` |
+| `BMC_PARAMS` | Widget-specific parameters (JSON) | `{"style":"digital"}` |
+| `BMC_TIMEZONE` | Current timezone | `Europe/Prague` |
+| `BMC_NIGHT_MODE` | Night mode state | `0` or `1` |
+| `BMC_LOCALIZATION` | Localization settings (JSON) | `{"dateFormat":"DD.MM.YYYY",...}` |
+
+This approach:
+- Simplifies the protocol (no configure/params events needed for initial setup)
+- Widget has complete configuration at startup (size, params, settings)
+- No PID matching or identification handshake required
+- Compositor only needs to handle runtime changes (settings, shutdown)
 
 ### Widget Identification
 
-PID matching via Wayland socket credentials:
-1. BMC spawns widget, records PID
-2. Widget connects to Wayland
-3. Compositor reads client PID from socket
-4. Compositor matches PID to pending spawn
+Widget passes its instance ID when binding to the protocol:
 
-### Implementation Stages
+1. Coordinator spawns widget with environment variables (size, params, settings, instance_id)
+2. Widget reads configuration from environment
+3. Widget connects to Wayland, binds `bmc_widget_manager_v1`
+4. Widget calls `get_widget_surface(surface, instance_id)`
+5. Compositor uses instance_id to look up position for rendering
 
-| Sub-stage | Description |
-|-----------|-------------|
-| 16.1 | Protocol XML definition |
-| 16.2 | Protocol crate setup (`bmc-widget-protocol`) |
-| 16.3 | Compositor protocol implementation |
-| 16.4 | Widget client library |
-| 16.5 | Widget integration (digital-clock) |
-| 16.6 | Migration and cleanup |
+### Protocol Versioning
 
-### Success Criteria
+Wayland protocols use interface versioning for backward compatibility (this follows the standard Wayland versioning scheme):
+
+- Each interface has a `version` attribute (starts at 1)
+- New requests/events can only be added at the end of the interface
+- New enum entries can only be added at the end of enums
+- Requests/events have a `since` attribute indicating minimum version required
+
+**Adding new features:**
+
+1. **New setting type**: Add entry to `setting_type` enum, increment interface version, add `since="2"` to the new entry. Old widgets ignore unknown setting types.
+
+2. **New action type**: Add entry to `action_type` enum, increment interface version. Old compositor ignores unknown action types.
+
+3. **New event** (e.g., `reconfigure`): Add at end of interface with `since="2"`. Compositor only sends to widgets that bound version 2+.
+
+4. **New request** (e.g., `request_focus`): Add at end of interface with `since="2"`. Widget checks bound version before calling.
+
+**Version negotiation**: When widget binds to `bmc_widget_manager_v1`, it specifies the maximum version it supports. Compositor uses the minimum of (advertised version, requested version). Both sides only use features available in the negotiated version.
+
+---
+
+### Sub-stage 12.1: Protocol XML Definition
+
+#### Goal
+Define the BMC widget protocol in Wayland XML format.
+
+#### File to Create
+- `bmc-widget-protocol/protocol/bmc-widget-v1.xml`
+
+#### Protocol Elements
+
+**`bmc_widget_manager_v1`** (global):
+
+| Element | Type | Required | Description |
+|---------|------|----------|-------------|
+| `destroy` | request | Yes | Standard cleanup, allows unbinding from global |
+| `get_widget_surface` | request | Yes | Associates protocol with a `wl_surface`, includes `instance_id` for compositor to identify widget |
+| `error` enum | enum | Yes | Error codes for invalid operations |
+
+**`bmc_widget_surface_v1`** (per-surface):
+
+| Element | Type | Required | Description |
+|---------|------|----------|-------------|
+| `destroy` | request | Yes | Standard cleanup |
+| `request_action` | request | Yes | Core feature - sound/LED control |
+| `setting` | event | Yes | Core feature - settings updates (timezone, localization, night mode) |
+| `shutdown` | event | Yes | Graceful termination signal |
+| `setting_type` enum | enum | Yes | Needed for `setting` event |
+| `action_type` enum | enum | Yes | Needed for `request_action` |
+
+Note: Initial configuration (size, params, settings) is passed via environment variables. Widget readiness is detected by first buffer commit (standard Wayland behavior).
+
+#### Protocol Definition
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="bmc_widget_v1">
+  <copyright>
+    Copyright (C) 2025 Braiins Systems s.r.o.
+    SPDX-License-Identifier: MIT
+  </copyright>
+
+  <interface name="bmc_widget_manager_v1" version="1">
+    <description summary="BMC widget manager">
+      Global interface for BMC widget management. Widgets bind to this
+      interface to register themselves with the compositor.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroy the widget manager. Does not affect existing widget surfaces.
+      </description>
+    </request>
+
+    <request name="get_widget_surface">
+      <description summary="create a widget surface">
+        Create a bmc_widget_surface_v1 for the given wl_surface.
+        The instance_id must match the BMC_INSTANCE_ID environment variable
+        and is used by the compositor to identify this widget for positioning.
+        The surface must not already have a role.
+      </description>
+      <arg name="id" type="new_id" interface="bmc_widget_surface_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="instance_id" type="string" summary="widget instance identifier"/>
+    </request>
+
+    <enum name="error">
+      <entry name="role" value="0" summary="surface already has a role"/>
+      <entry name="invalid_instance" value="1" summary="unknown instance_id"/>
+    </enum>
+  </interface>
+
+  <interface name="bmc_widget_surface_v1" version="1">
+    <description summary="BMC widget surface">
+      Interface for a widget surface. Initial configuration (size, params,
+      settings) is received via environment variables. This protocol handles
+      runtime communication: settings updates, shutdown, and action requests.
+      Widget readiness is detected when the first buffer is committed.
+    </description>
+
+    <!-- Requests (Widget → Compositor) -->
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the widget surface">
+        Destroy the widget surface role. The wl_surface remains valid.
+      </description>
+    </request>
+
+    <request name="request_action">
+      <description summary="request a system action">
+        Request the compositor to perform a system action (sound, LED).
+        The payload is JSON-encoded action data.
+      </description>
+      <arg name="action_type" type="uint" enum="action_type"/>
+      <arg name="payload" type="string" summary="JSON payload"/>
+    </request>
+
+    <!-- Events (Compositor → Widget) -->
+
+    <event name="setting">
+      <description summary="system setting update">
+        Sent when a system setting changes at runtime.
+      </description>
+      <arg name="setting_type" type="uint" enum="setting_type"/>
+      <arg name="value" type="string" summary="JSON-encoded value"/>
+    </event>
+
+    <event name="shutdown">
+      <description summary="request graceful shutdown">
+        Sent when the widget should shut down gracefully.
+        Widget should clean up and exit.
+      </description>
+    </event>
+
+    <!-- Enums -->
+
+    <enum name="setting_type">
+      <entry name="timezone" value="0" summary="timezone setting"/>
+      <entry name="localization" value="1" summary="localization settings"/>
+      <entry name="night_mode" value="2" summary="night mode state"/>
+    </enum>
+
+    <enum name="action_type">
+      <entry name="play_sound" value="0" summary="play a sound"/>
+      <entry name="stop_sound" value="1" summary="stop sound"/>
+      <entry name="led" value="2" summary="set LED effect"/>
+      <entry name="stop_led" value="3" summary="stop LED effect"/>
+    </enum>
+  </interface>
+</protocol>
+```
+
+#### Success Criteria
+- [ ] XML validates with `wayland-scanner --strict`
+- [ ] All messages documented
+- [ ] Enums cover all needed values
+
+---
+
+### Sub-stage 12.2: Protocol Crate Setup
+
+#### Goal
+Create a Rust crate that generates client and server bindings from the protocol XML.
+
+#### Files to Create
+
+```
+bmc-widget-protocol/
+  Cargo.toml
+  build.rs
+  protocol/
+    bmc-widget-v1.xml
+  src/
+    lib.rs
+```
+
+#### Cargo.toml Dependencies
+
+- `wayland-scanner` - Build dependency for code generation
+- `wayland-client` - Client-side bindings (for widgets)
+- `wayland-server` - Server-side bindings (for compositor)
+- `wayland-backend` - Shared backend types
+- `wayland-protocols` - Core protocol types (for `wl_surface`)
+
+#### Code Generation
+
+The `build.rs` uses `wayland-scanner` procedural macros at build time.
+The `lib.rs` exposes two modules:
+- `client` - For widgets to use
+- `server` - For compositor to use
+
+Both modules use `wayland_scanner::generate_client_code!` and `wayland_scanner::generate_server_code!` macros.
+
+#### Success Criteria
+- [ ] Crate compiles
+- [ ] Client bindings generated
+- [ ] Server bindings generated
+- [ ] Types are re-exported cleanly
+
+---
+
+### Sub-stage 12.3: Compositor Protocol Implementation
+
+#### Goal
+Implement the protocol handlers in the compositor (bmc-openwrt).
+
+#### Files to Modify
+- `bmc-openwrt/src/compositor/` - Add protocol handling
+
+#### Implementation Steps
+
+1. **Register the global**: Add `bmc_widget_manager_v1` to compositor's global list
+2. **Handle bind**: When widget binds, create manager instance
+3. **Handle get_widget_surface**: Associate `bmc_widget_surface_v1` with `wl_surface`, extract `instance_id`
+4. **Match instance_id**: Look up registered widget by instance_id, associate surface with position
+5. **Detect readiness**: When widget commits first buffer, mark as ready
+6. **Handle request_action**: Forward to action channel
+7. **Send setting**: When settings change, broadcast to all widgets
+8. **Send shutdown**: When widget should terminate
+9. **Handle disconnect**: Detect client disconnect, notify coordinator
+
+#### Protocol State
+
+The compositor needs to track:
+- Pending widget registrations (by instance_id, from coordinator)
+- Active widget surfaces (by instance_id, after widget connects)
+
+#### Success Criteria
+- [ ] Global advertised to clients
+- [ ] Widget surfaces created correctly
+- [ ] Instance ID matching works
+- [ ] Actions forwarded to channel
+- [ ] Settings broadcast works
+
+---
+
+### Sub-stage 12.4: Widget Client Library Update
+
+#### Goal
+Update `bmc-widget` crate to provide a Wayland-based client API.
+
+#### Files to Modify
+- `bmc-widget/Cargo.toml` - Add `bmc-widget-protocol` dependency
+- `bmc-widget/src/lib.rs` - Export new client module
+- `bmc-widget/src/wayland_client.rs` (new) - Wayland client implementation
+- `bmc-widget/src/env.rs` (new) - Environment variable helpers
+
+#### New API
+
+The `bmc-widget` crate provides helpers for widgets:
+
+**Environment variable helpers:**
+
+| Function | Description |
+|----------|-------------|
+| `read_instance_id()` | Read `BMC_INSTANCE_ID` from environment |
+| `read_size()` | Read `BMC_SIZE_TYPE`, `BMC_WIDTH`, `BMC_HEIGHT` from environment |
+| `read_params<T>()` | Read and parse `BMC_PARAMS` as JSON |
+| `read_settings()` | Read `BMC_TIMEZONE`, `BMC_NIGHT_MODE`, `BMC_LOCALIZATION` from environment |
+
+**Wayland protocol helpers:**
+
+| Function/Method | Description |
+|-----------------|-------------|
+| `bind_widget_manager()` | Bind to `bmc_widget_manager_v1` global |
+| `get_widget_surface()` | Create widget surface with instance_id |
+| `request_action()` | Request sound/LED action |
+
+Widgets handle events (`setting`, `shutdown`) via standard Wayland event dispatch. Widget readiness is implicit when the first buffer is committed.
+
+**Note on Slint widgets**: Slint manages its own Wayland connection internally and doesn't expose it. Slint widgets will need to create a separate Wayland connection to bind to `bmc_widget_manager_v1` and handle our protocol events (`setting`, `shutdown`). This means running two event loops or integrating the protocol connection into Slint's event loop via a timer or file descriptor watch.
+
+#### Success Criteria
+- [ ] Environment variable helpers work (size, params, settings)
+- [ ] Widget can bind to `bmc_widget_manager_v1`
+- [ ] Widget surface created with instance_id
+- [ ] Actions can be requested
+- [ ] Setting events received
+- [ ] Shutdown event handled
+
+---
+
+### Sub-stage 12.5: Widget Integration (digital-clock)
+
+#### Goal
+Migrate the digital-clock widget to use environment variables and Wayland protocol.
+
+#### Files to Modify
+- `widgets/digital-clock/Cargo.toml` - Update dependencies
+- `widgets/digital-clock/src/main.rs` - Use new client API
+
+#### Migration Steps
+
+1. Remove `BMC_IPC_SOCKET` environment variable usage and JSON IPC client
+2. Read size, params, and initial settings from environment variables
+3. Initialize Slint UI at correct size with initial settings
+4. Create separate Wayland connection for BMC protocol
+5. Bind to `bmc_widget_manager_v1`, call `get_widget_surface(surface, instance_id)`
+6. Commit first buffer (compositor detects widget is ready)
+7. Handle `setting` events for runtime timezone/localization/night_mode changes
+8. Handle `shutdown` event for graceful termination
+
+#### Testing
+
+1. Spawn digital-clock with correct environment variables
+2. Verify widget reads size from environment and renders correctly
+3. Verify widget connects to compositor and calls `set_ready()`
+4. Change timezone, verify setting event received and UI updates
+5. Verify shutdown works
+
+#### Success Criteria
+- [ ] digital-clock reads config from environment variables
+- [ ] digital-clock uses Wayland protocol for runtime events
+- [ ] No JSON IPC socket used
+- [ ] All settings updates work
+- [ ] Graceful shutdown works
+- [ ] Widget renders correctly at all sizes
+
+---
+
+### Overall Success Criteria
 
 - [ ] Protocol XML validates with wayland-scanner
 - [ ] Compositor implements protocol handlers
-- [ ] Widget client library works
-- [ ] digital-clock uses Wayland protocol
-- [ ] JSON IPC deprecated
+- [ ] Widget client library works (env helpers + protocol)
+- [ ] digital-clock uses environment variables + Wayland protocol
+- [ ] JSON IPC removed
+
+### Dependencies
+
+- Stage 11 (Compositor Trait Abstraction)
 
 ### Status: Not Started
 
 ---
 
-## Stage 17: Configuration Migration
+## Stage 13: EGL Compositor Implementation in bmc-openwrt
+
+### Goal
+
+Implement `Compositor` trait for ARMv7 using the existing `bmc-compositor` crate code. The compositor runs in a dedicated thread within the `bmc-openwrt` process.
+
+### Background
+
+The `bmc-compositor` crate (Stage 8) contains a working Wayland compositor POC. This stage integrates it into `bmc-openwrt` as a library, implementing the `Compositor` trait from Stage 11 and the Wayland protocol extension from Stage 12.
+
+### Scope
+
+- Create `EglCompositor` struct in `bmc-openwrt` that implements `Compositor` trait
+- Run compositor event loop in a dedicated thread (uses calloop, not tokio)
+- Communicate between async main thread and compositor thread via channels
+- Implement `bmc_widget_v1` protocol handlers from Stage 12
+- Reuse rendering code from `bmc-compositor` crate
+- Only EGL renderer for now (no software fallback needed)
+
+### Architecture
+
+The main application runs on tokio async runtime. The compositor runs in a separate thread with its own calloop event loop. Communication happens via channels:
+
+- **Main → Compositor**: Commands (register widget, set scene, broadcast setting, shutdown)
+- **Compositor → Main**: Events (widget ready, widget disconnected, actions)
+
+### Files to Create/Modify
+
+**New files:**
+- `bmc-openwrt/src/compositor/mod.rs` - Module exports
+- `bmc-openwrt/src/compositor/egl_compositor.rs` - `EglCompositor` implementation
+- `bmc-openwrt/src/compositor/commands.rs` - Command/event types for thread communication
+- `bmc-openwrt/src/compositor/protocol.rs` - `bmc_widget_v1` protocol handlers
+
+**Modified files:**
+- `bmc-openwrt/src/lib.rs` - Export compositor module
+- `bmc-openwrt/src/main.rs` - Initialize compositor and pass to App
+- `bmc-openwrt/Cargo.toml` - Add dependencies on `bmc-compositor` and `bmc-widget-protocol`
+
+### Widget Spawn and Registration Flow
+
+1. Coordinator determines widget size from scene configuration (small/medium/large/full)
+2. Coordinator calculates pixel dimensions from grid position
+3. Coordinator calls `compositor.register_widget(instance_id, position)` to register expected widget
+4. Coordinator spawns widget with environment variables:
+   - `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR` - Wayland connection
+   - `BMC_INSTANCE_ID` - Widget instance identifier
+   - `BMC_SIZE_TYPE` - Size category (small/medium/large/full)
+   - `BMC_WIDTH`, `BMC_HEIGHT` - Pixel dimensions
+   - `BMC_PARAMS` - JSON widget parameters
+   - `BMC_TIMEZONE`, `BMC_NIGHT_MODE`, `BMC_LOCALIZATION` - Initial settings
+5. Widget reads configuration from environment, initializes UI with correct size and settings
+6. Widget connects to Wayland, binds `bmc_widget_manager_v1`
+7. Widget calls `get_widget_surface(surface, instance_id)`
+8. Compositor matches `instance_id` to registered widget, associates surface with position
+9. Widget commits first buffer (compositor detects widget is ready)
+10. Compositor starts sending frame callbacks, widget is now visible
+
+### Widget Disconnect Detection
+
+The compositor detects widget disconnects via Smithay's client lifecycle callbacks:
+
+1. **Client disconnect**: When a Wayland client disconnects (exit, crash, or connection close), Smithay invokes the `ClientData::disconnected()` callback
+2. **Surface cleanup**: The compositor's `CompositorHandler::destroyed()` is called for each surface owned by the client
+3. **Instance lookup**: Compositor looks up instance_id from the destroyed surface
+4. **Event dispatch**: Compositor sends `WidgetDisconnected { instance_id, reason }` event to coordinator via channel
+5. **Logging**: Coordinator logs the disconnect with widget details (instance_id, widget UID, exit reason if available)
+
+### Error Handling
+
+Widget crashes must be detected and handled:
+
+- Compositor detects client disconnect (Wayland client gone)
+- Compositor sends `WidgetDisconnected` event to main app via channel
+- Coordinator receives event and logs the crash
+- Coordinator may attempt to respawn the widget (configurable retry policy)
+- After N failed attempts, coordinator marks widget as failed and logs error
+
+### Success Criteria
+
+- [ ] `EglCompositor` implements `Compositor` trait
+- [ ] Compositor runs in dedicated thread with calloop
+- [ ] `bmc_widget_v1` protocol handlers work
+- [ ] Commands flow from main thread to compositor (register, set scene, broadcast setting, shutdown)
+- [ ] Events flow from compositor to main thread (widget ready, widget disconnected)
+- [ ] Actions flow from compositor to main thread (sound, LED requests)
+- [ ] Instance ID based widget identification works
+- [ ] Widget surfaces display correctly
+- [ ] Widget disconnects detected and reported
+- [ ] Graceful shutdown works
+
+### Dependencies
+
+- Stage 8 (Wayland Compositor Core) - reuses `bmc-compositor` code
+- Stage 11 (Compositor Trait) - implements the trait
+- Stage 12 (Wayland Protocol Extension) - implements protocol handlers
+
+### Status: Not Started
+
+---
+
+## Stage 14: Coordinator-Compositor Integration
+
+### Goal
+
+Connect the `WidgetCoordinator` to the compositor so spawned widgets can render to the display.
+
+### Scope
+
+- Add compositor reference to `Coordinator`
+- Pass all configuration via environment variables to spawned widgets
+- Register widgets with compositor before spawning (position only)
+- Unregister widgets when stopped
+- Handle widget crash events from compositor
+
+### Files to Modify
+
+- `bmc/src/widget/coordinator.rs` - Add compositor, update spawn flow
+- `bmc/src/widget/manager.rs` - Build environment variables for spawning
+- `bmc/src/widget/spawner.rs` - Pass environment variables to child process
+- `bmc/src/startup.rs` - Wire compositor to coordinator
+- `bmc/src/entry.rs` - Accept compositor parameter
+
+### Widget Spawn Flow
+
+1. Coordinator calculates widget position and size from grid layout
+2. Coordinator calls `compositor.register_widget(instance_id, position)` - registers expected widget
+3. Coordinator spawns widget process with environment variables:
+   - `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR` - Wayland connection
+   - `BMC_INSTANCE_ID` - Widget instance identifier
+   - `BMC_SIZE_TYPE` - Size category
+   - `BMC_WIDTH`, `BMC_HEIGHT` - Pixel dimensions
+   - `BMC_PARAMS` - JSON widget parameters
+   - `BMC_TIMEZONE`, `BMC_NIGHT_MODE`, `BMC_LOCALIZATION` - Initial settings
+4. Widget reads configuration from environment, initializes UI with correct size and settings
+5. Widget connects to Wayland, calls `get_widget_surface(surface, instance_id)`
+6. Compositor matches instance_id to registered widget
+7. Widget commits first buffer (compositor detects widget is ready)
+8. Compositor starts rendering widget at registered position
+
+### Widget Crash Handling
+
+1. Compositor detects widget disconnect (Wayland client gone)
+2. Compositor sends `WidgetDisconnected { instance_id, reason }` event
+3. Coordinator receives event via channel
+4. Coordinator logs the crash with widget details
+5. Coordinator checks retry policy (e.g., max 3 retries with backoff)
+6. If retries remaining: respawn widget with same environment variables
+7. If retries exhausted: mark widget as failed, notify user via logs/UI
+
+### Success Criteria
+
+- [ ] Coordinator holds compositor reference
+- [ ] Widgets spawned with all config via environment variables
+- [ ] Widget registration includes position
+- [ ] Widget receives correct size via `BMC_WIDTH`/`BMC_HEIGHT` env vars
+- [ ] Widget surfaces appear on display at correct position
+- [ ] Widget crashes detected and handled with retry
+- [ ] Widget unregistration on process stop
+
+### Dependencies
+
+- Stage 11 (Compositor Trait)
+- Stage 12 (Wayland Protocol Extension)
+- Stage 13 (EGL Compositor Implementation)
+
+### Status: Not Started
+
+---
+
+## Stage 15: Scene Management
+
+### Goal
+
+Implement scene switching while keeping all widgets running. The compositor controls visibility via frame callbacks and widget positioning.
+
+### Scope
+
+- Scene switching updates compositor's active layout via `set_active_scene()`
+- Hidden widgets stop receiving frame callbacks (standard Wayland pattern)
+- Visible widgets are positioned according to scene layout
+- All widget processes remain running across scene switches
+
+### Scene Layout System
+
+The display is a 4×2 grid (1280×480 pixels):
+
+| Column 0 | Column 1 | Column 2 | Column 3 |
+|----------|----------|----------|----------|
+| (0,0) | (1,0) | (2,0) | (3,0) |
+| (0,1) | (1,1) | (2,1) | (3,1) |
+
+Each cell is 320×240 pixels.
+
+Widget sizes map to grid cells:
+
+| Size | Grid Cells | Pixels |
+|------|------------|--------|
+| Small | 1×1 | 320×240 |
+| Medium | 2×1 | 640×240 |
+| Large | 2×2 | 640×480 |
+| Full | 4×2 | 1280×480 |
+
+### Scene Switching Flow
+
+1. User triggers scene switch (gesture/button)
+2. Coordinator builds `SceneLayout` from scene configuration
+3. Coordinator calls `compositor.set_active_scene(layout)`
+4. Compositor updates internal state (marks widgets visible/hidden, updates positions)
+5. On next frame: render visible widgets, send frame callbacks only to visible widgets
+6. Hidden widgets naturally pause (waiting for callback that won't come)
+
+### Visibility Signaling
+
+The standard Wayland mechanism for visibility is **frame callbacks**:
+
+1. **Widget becomes hidden**: Compositor stops sending frame callbacks. Widget naturally pauses (blocks waiting for callback that won't come).
+
+2. **Widget becomes visible**: Compositor resumes sending frame callbacks. Widget receives callback and resumes rendering.
+
+This is the standard Wayland pattern - compositors should avoid signaling frame callbacks if the surface is not visible. The `wl_surface.enter`/`wl_surface.leave` events are for output tracking, not visibility.
+
+### Success Criteria
+
+- [ ] `Coordinator.set_active_scene()` sends layout to compositor
+- [ ] Compositor positions widgets according to layout
+- [ ] Only visible widgets receive frame callbacks
+- [ ] Hidden widgets pause rendering (power savings)
+- [ ] Scene transitions are smooth
+- [ ] All widget processes remain running across scene switches
+
+### Dependencies
+
+- Stage 13 (EGL Compositor Implementation)
+- Stage 14 (Coordinator-Compositor Integration)
+
+### Status: Not Started
+
+---
+
+## Stage 16: Settings Broadcasting to Widgets
+
+### Goal
+
+Propagate system settings changes (timezone, localization, night mode) to all running widgets via the Wayland protocol extension.
+
+### Scope
+
+- When settings change, coordinator sends update to compositor
+- Compositor broadcasts `setting` event to all widgets via `bmc_widget_surface_v1`
+- Widgets update their state without restart
+
+### Settings Types
+
+| Setting | When Changed | Example |
+|---------|--------------|---------|
+| Timezone | User changes timezone | `Europe/Prague` → `America/New_York` |
+| Localization | User changes date/time format | 24h → 12h format |
+| Night Mode | Automatic or manual toggle | Brightness/color adjustment |
+
+### Integration Points
+
+Settings changes originate from:
+- `SystemManager` - timezone updates
+- `LocalizationConfig` - format preferences
+- `NightModeController` - night mode state
+
+Each needs to call `coordinator.broadcast_settings_update()` when settings change.
+
+### Files to Modify
+
+- `bmc/src/startup.rs` - Wire settings change handlers to coordinator
+- `bmc/src/widget/coordinator.rs` - Add broadcast method
+
+### Success Criteria
+
+- [ ] Timezone changes propagate to widgets
+- [ ] Localization changes propagate to widgets
+- [ ] Night mode changes propagate to widgets
+- [ ] Widgets update display without restart
+
+### Dependencies
+
+- Stage 12 (Wayland Protocol Extension)
+
+### Status: Not Started
+
+---
+
+## Stage 17: Action Routing (Sound/LED)
+
+### Goal
+
+Route widget action requests to hardware controllers.
+
+### Scope
+
+- Spawn action handler task in background
+- Receive actions from compositor's action channel (via Wayland protocol)
+- Route to appropriate controller
+- Handle errors gracefully (log but don't crash)
+
+### Action Flow
+
+1. Widget sends `action` request via `bmc_widget_surface_v1` Wayland protocol
+2. Compositor forwards action to main app via action channel
+3. ActionHandler receives action from channel
+4. ActionHandler routes to appropriate controller based on action type
+
+### Action Types
+
+| Action | Controller Method |
+|--------|-------------------|
+| `PlaySound` | `SoundController::play()` |
+| `StopSound` | `SoundController::stop()` |
+| `Led` | `LedController::set_effect()` |
+| `StopLed` | `LedController::stop()` |
+
+### Files to Create/Modify
+
+- `bmc/src/widget/action_handler.rs` (new) - Action routing logic
+- `bmc/src/startup.rs` - Spawn action handler task with controller references
+
+### Success Criteria
+
+- [ ] ActionHandler spawned as background task
+- [ ] Sound actions trigger SoundController
+- [ ] LED actions trigger LedController
+- [ ] Errors logged but don't crash handler
+
+### Dependencies
+
+- Stage 12 (Wayland Protocol Extension)
+
+### Status: Not Started
+
+---
+
+## Stage 18: Configuration Migration
 
 ### Goal
 Migrate existing widget configurations to use widget UIDs.
@@ -1165,6 +1706,21 @@ If widget UID not found in registry:
 
 ---
 
+## Future Work (TBA)
+
+### Touch Input for Scene Swiping
+
+Touch input handling for scene navigation (swipe gestures) is planned for a future stage. This will involve:
+
+- Integrating libinput touch events in the compositor
+- Detecting swipe gestures (direction, velocity)
+- Triggering scene transitions in coordinator
+- Visual feedback during swipe (partial scene reveal)
+
+Implementation details to be determined after core widget system is complete.
+
+---
+
 ## Appendix: Current Code References
 
 ### Key Files in Current Architecture
@@ -1184,10 +1740,12 @@ If widget UID not found in registry:
 
 | File | Purpose |
 |------|---------|
-| `bmc-compositor/src/state.rs` | Wayland compositor state and protocol handlers |
-| `bmc-compositor/src/render_egl.rs` | EGL render pipeline for ARMv7 |
-| `bmc/src/compositor.rs` | CompositorHandle trait definition |
+| `bmc-compositor/src/state.rs` | Wayland compositor state and protocol handlers (POC) |
+| `bmc-compositor/src/render_egl.rs` | EGL render pipeline for ARMv7 (POC) |
+| `bmc/src/compositor.rs` | Compositor trait definition (Stage 11) |
 | `bmc/src/widget/coordinator.rs` | Widget lifecycle orchestration |
 | `bmc/src/widget/manager.rs` | Widget process spawning |
-| `bmc-openwrt/src/compositor.rs` | EglCompositor implementation |
+| `bmc/src/widget/action_handler.rs` | Widget action routing (Stage 17) |
+| `bmc-widget-protocol/` | Wayland protocol extension (Stage 12) |
+| `bmc-openwrt/src/compositor/` | EglCompositor implementation (Stage 13) |
 | `widgets/digital-clock/` | Standalone digital clock widget |
