@@ -1,5 +1,7 @@
 # Widget IPC Protocol Specification
 
+> **OUTDATED**: This document describes the JSON-over-Unix-socket IPC protocol which is being replaced by a Wayland protocol extension. Widget-compositor communication will be handled via a custom Wayland protocol (`bmc_widget_v1`). See [Stage 16 in widget-refactor-implementation.md](widget-refactor-implementation.md#stage-16-wayland-protocol-extension-for-widget-communication) for the new approach.
+
 This document defines the IPC protocol for communication between the main Deck application and widget instances.
 
 ## Overview
