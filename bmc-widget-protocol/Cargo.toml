@@ -1,0 +1,16 @@
+[package]
+name = "bmc-widget-protocol"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Wayland protocol extension for Deck widget communication"
+
+[dependencies]
+wayland-backend.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true
+wayland-scanner.workspace = true
+wayland-server.workspace = true
+
+[lints]
+workspace = true

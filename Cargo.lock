@@ -1218,6 +1218,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-widget-protocol"
+version = "0.1.0"
+dependencies = [
+ "wayland-backend",
+ "wayland-client 0.31.10",
+ "wayland-protocols 0.32.8",
+ "wayland-scanner 0.31.6",
+ "wayland-server",
+]
+
+[[package]]
 name = "borsh"
 version = "1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
