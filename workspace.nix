@@ -53,14 +53,29 @@ let
       fi
     '';
 
-  workspace = pkgs.ii.rust.mkWorkspaceConfig {
+  # Minimal workspace config for musl profiles (bmc-openwrt, statically linked)
+  workspaceMinimal = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
     # packages that can be executed during compilation (from commonDeps)
     nativeDeps = _pkgs: commonDeps.buildDeps;
-    # packages that will be cross-compiled for target arch
+    # minimal deps for static linking
     targetDeps = _build_pkgs: [
       # openssl.dev
-      # Compositor dependencies
+    ];
+    env = {
+      FONTCONFIG_FILE = pkgs.makeFontsConf {
+        fontDirectories = [ pkgs.corefonts ];
+      };
+    };
+  };
+
+  # Full workspace config for glibc profiles (widgets, compositor)
+  workspace = pkgs.ii.rust.mkWorkspaceConfig {
+    src = ./.;
+    nativeDeps = _pkgs: commonDeps.buildDeps;
+    # packages that will be cross-compiled for target arch
+    targetDeps = build_pkgs: with build_pkgs; [
+      # Compositor dependencies (require dynamic linking)
       wayland
       libxkbcommon
       libinput
@@ -75,36 +90,36 @@ let
     inherit (commonDeps) env;
   };
 
-  build-profiles = with workspace; {
+  build-profiles = {
     # fast profile (no cross compilation, non-portable binaries)
-    fast = mkBuildProfile {
+    fast = workspace.mkBuildProfile {
       minimal_deps = false;
       rustProfile = "fast";
     };
     # musl profiles for bmc-openwrt (statically linked)
-    armv7-release = mkBuildProfile {
+    armv7-release = workspaceMinimal.mkBuildProfile {
       suffix = "armv7";
       minimal_deps = true;
       rustProfile = "release";
       rustCrossTarget = "armv7-unknown-linux-musleabihf";
       build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
     };
-    armv7-debug = mkBuildProfile {
+    armv7-debug = workspaceMinimal.mkBuildProfile {
       suffix = "armv7";
       minimal_deps = false;
       rustProfile = "dev";
       rustCrossTarget = "armv7-unknown-linux-musleabihf";
       build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
     };
-    # glibc profiles for widgets (dynamically linked, compatible with system libs)
-    armv7-glibc-release = mkBuildProfile {
+    # glibc profiles for widgets/compositor (dynamically linked)
+    armv7-glibc-release = workspace.mkBuildProfile {
       suffix = "armv7";
       minimal_deps = true;
       rustProfile = "release";
       rustCrossTarget = "armv7-unknown-linux-gnueabihf";
       build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform;
     };
-    armv7-glibc-debug = mkBuildProfile {
+    armv7-glibc-debug = workspace.mkBuildProfile {
       suffix = "armv7";
       minimal_deps = false;
       rustProfile = "dev";
@@ -118,7 +133,7 @@ let
     ({
       # NOTE: Update README.md when changing these sets!
       arch = [
-        "armv7"
+        "armv7-glibc"
       ];
       profile = [
         "release"
