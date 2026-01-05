@@ -20,6 +20,7 @@ members = [
     "bmc-support",
     "bmc-upgrade",
     "bmc-widget",
+    "bmc-widget-protocol",
     "widgets/*",
 ]
 
@@ -120,6 +121,7 @@ bmc-shared-utils = { path = "bmc-shared/utils" }
 bmc-support = { path = "bmc-support" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bmc-widget = { path = "bmc-widget" }
+bmc-widget-protocol = { path = "bmc-widget-protocol" }
 bstr = "1.11.3"
 bytes = { version = "1.6.0", default-features = false }
 bytesize = { version = "2.0.1", features = ["serde"] }
@@ -246,6 +248,11 @@ udev = "0.9"
 url = { version = "2.5.4", features = ["serde"] }
 uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
 ux = { version = "0.1.6" }
+wayland-backend = "0.3"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "server"] }
+wayland-scanner = "0.31"
+wayland-server = "0.31"
 wl-nl80211 = "0.3.2"
 sysfs_gpio = "0.6.1"
 gpiod = "0.2.3"

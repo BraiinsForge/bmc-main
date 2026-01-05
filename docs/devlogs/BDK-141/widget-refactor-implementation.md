@@ -899,7 +899,7 @@ Implementations should use `std::thread::spawn` or `tokio::task::spawn_blocking`
 
 ### Goal
 
-Implement a Wayland protocol extension (`bmc_widget_v1`) for compositor-widget communication. This replaces the need for separate JSON IPC sockets.
+Implement a Wayland protocol extension (`deck_widget_v1`) for compositor-widget communication. This replaces the need for separate JSON IPC sockets.
 
 ### Background
 
@@ -911,11 +911,11 @@ A Wayland protocol extension:
 
 ### Protocol Structure
 
-**`bmc_widget_manager_v1`** (global singleton):
+**`deck_widget_manager_v1`** (global singleton):
 - Bound by widgets to access BMC functionality
 - Provides `get_widget_surface` request
 
-**`bmc_widget_surface_v1`** (per-surface):
+**`deck_widget_surface_v1`** (per-surface):
 
 | Direction | Message | Description |
 |-----------|---------|-------------|
@@ -933,14 +933,14 @@ Widgets receive all initial configuration via environment variables set by the c
 |----------|---------|---------|
 | `WAYLAND_DISPLAY` | Wayland compositor socket | `wayland-bmc` |
 | `XDG_RUNTIME_DIR` | Runtime directory | `/run` |
-| `BMC_INSTANCE_ID` | Unique instance identifier | `clock-abc123` |
-| `BMC_SIZE_TYPE` | Widget size category | `small`, `medium`, `large`, `full` |
-| `BMC_WIDTH` | Widget width in pixels | `320` |
-| `BMC_HEIGHT` | Widget height in pixels | `240` |
-| `BMC_PARAMS` | Widget-specific parameters (JSON) | `{"style":"digital"}` |
-| `BMC_TIMEZONE` | Current timezone | `Europe/Prague` |
-| `BMC_NIGHT_MODE` | Night mode state | `0` or `1` |
-| `BMC_LOCALIZATION` | Localization settings (JSON) | `{"dateFormat":"DD.MM.YYYY",...}` |
+| `DECK_INSTANCE_ID` | Unique instance identifier | `clock-abc123` |
+| `DECK_SIZE_TYPE` | Widget size category | `small`, `medium`, `large`, `full` |
+| `DECK_WIDTH` | Widget width in pixels | `320` |
+| `DECK_HEIGHT` | Widget height in pixels | `240` |
+| `DECK_PARAMS` | Widget-specific parameters (JSON) | `{"style":"digital"}` |
+| `DECK_TIMEZONE` | Current timezone | `Europe/Prague` |
+| `DECK_NIGHT_MODE` | Night mode state | `0` or `1` |
+| `DECK_LOCALIZATION` | Localization settings (JSON) | `{"dateFormat":"DD.MM.YYYY",...}` |
 
 This approach:
 - Simplifies the protocol (no configure/params events needed for initial setup)
@@ -954,7 +954,7 @@ Widget passes its instance ID when binding to the protocol:
 
 1. Coordinator spawns widget with environment variables (size, params, settings, instance_id)
 2. Widget reads configuration from environment
-3. Widget connects to Wayland, binds `bmc_widget_manager_v1`
+3. Widget connects to Wayland, binds `deck_widget_manager_v1`
 4. Widget calls `get_widget_surface(surface, instance_id)`
 5. Compositor uses instance_id to look up position for rendering
 
@@ -977,7 +977,7 @@ Wayland protocols use interface versioning for backward compatibility (this foll
 
 4. **New request** (e.g., `request_focus`): Add at end of interface with `since="2"`. Widget checks bound version before calling.
 
-**Version negotiation**: When widget binds to `bmc_widget_manager_v1`, it specifies the maximum version it supports. Compositor uses the minimum of (advertised version, requested version). Both sides only use features available in the negotiated version.
+**Version negotiation**: When widget binds to `deck_widget_manager_v1`, it specifies the maximum version it supports. Compositor uses the minimum of (advertised version, requested version). Both sides only use features available in the negotiated version.
 
 ---
 
@@ -991,7 +991,7 @@ Define the BMC widget protocol in Wayland XML format.
 
 #### Protocol Elements
 
-**`bmc_widget_manager_v1`** (global):
+**`deck_widget_manager_v1`** (global):
 
 | Element | Type | Required | Description |
 |---------|------|----------|-------------|
@@ -999,7 +999,7 @@ Define the BMC widget protocol in Wayland XML format.
 | `get_widget_surface` | request | Yes | Associates protocol with a `wl_surface`, includes `instance_id` for compositor to identify widget |
 | `error` enum | enum | Yes | Error codes for invalid operations |
 
-**`bmc_widget_surface_v1`** (per-surface):
+**`deck_widget_surface_v1`** (per-surface):
 
 | Element | Type | Required | Description |
 |---------|------|----------|-------------|
@@ -1016,13 +1016,13 @@ Note: Initial configuration (size, params, settings) is passed via environment v
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<protocol name="bmc_widget_v1">
+<protocol name="deck_widget_v1">
   <copyright>
     Copyright (C) 2025 Braiins Systems s.r.o.
     SPDX-License-Identifier: MIT
   </copyright>
 
-  <interface name="bmc_widget_manager_v1" version="1">
+  <interface name="deck_widget_manager_v1" version="1">
     <description summary="BMC widget manager">
       Global interface for BMC widget management. Widgets bind to this
       interface to register themselves with the compositor.
@@ -1036,12 +1036,12 @@ Note: Initial configuration (size, params, settings) is passed via environment v
 
     <request name="get_widget_surface">
       <description summary="create a widget surface">
-        Create a bmc_widget_surface_v1 for the given wl_surface.
-        The instance_id must match the BMC_INSTANCE_ID environment variable
+        Create a deck_widget_surface_v1 for the given wl_surface.
+        The instance_id must match the DECK_INSTANCE_ID environment variable
         and is used by the compositor to identify this widget for positioning.
         The surface must not already have a role.
       </description>
-      <arg name="id" type="new_id" interface="bmc_widget_surface_v1"/>
+      <arg name="id" type="new_id" interface="deck_widget_surface_v1"/>
       <arg name="surface" type="object" interface="wl_surface"/>
       <arg name="instance_id" type="string" summary="widget instance identifier"/>
     </request>
@@ -1052,7 +1052,7 @@ Note: Initial configuration (size, params, settings) is passed via environment v
     </enum>
   </interface>
 
-  <interface name="bmc_widget_surface_v1" version="1">
+  <interface name="deck_widget_surface_v1" version="1">
     <description summary="BMC widget surface">
       Interface for a widget surface. Initial configuration (size, params,
       settings) is received via environment variables. This protocol handles
@@ -1171,9 +1171,9 @@ Implement the protocol handlers in the compositor (bmc-openwrt).
 
 #### Implementation Steps
 
-1. **Register the global**: Add `bmc_widget_manager_v1` to compositor's global list
+1. **Register the global**: Add `deck_widget_manager_v1` to compositor's global list
 2. **Handle bind**: When widget binds, create manager instance
-3. **Handle get_widget_surface**: Associate `bmc_widget_surface_v1` with `wl_surface`, extract `instance_id`
+3. **Handle get_widget_surface**: Associate `deck_widget_surface_v1` with `wl_surface`, extract `instance_id`
 4. **Match instance_id**: Look up registered widget by instance_id, associate surface with position
 5. **Detect readiness**: When widget commits first buffer, mark as ready
 6. **Handle request_action**: Forward to action channel
@@ -1215,26 +1215,26 @@ The `bmc-widget` crate provides helpers for widgets:
 
 | Function | Description |
 |----------|-------------|
-| `read_instance_id()` | Read `BMC_INSTANCE_ID` from environment |
-| `read_size()` | Read `BMC_SIZE_TYPE`, `BMC_WIDTH`, `BMC_HEIGHT` from environment |
-| `read_params<T>()` | Read and parse `BMC_PARAMS` as JSON |
-| `read_settings()` | Read `BMC_TIMEZONE`, `BMC_NIGHT_MODE`, `BMC_LOCALIZATION` from environment |
+| `read_instance_id()` | Read `DECK_INSTANCE_ID` from environment |
+| `read_size()` | Read `DECK_SIZE_TYPE`, `DECK_WIDTH`, `DECK_HEIGHT` from environment |
+| `read_params<T>()` | Read and parse `DECK_PARAMS` as JSON |
+| `read_settings()` | Read `DECK_TIMEZONE`, `DECK_NIGHT_MODE`, `DECK_LOCALIZATION` from environment |
 
 **Wayland protocol helpers:**
 
 | Function/Method | Description |
 |-----------------|-------------|
-| `bind_widget_manager()` | Bind to `bmc_widget_manager_v1` global |
+| `bind_widget_manager()` | Bind to `deck_widget_manager_v1` global |
 | `get_widget_surface()` | Create widget surface with instance_id |
 | `request_action()` | Request sound/LED action |
 
 Widgets handle events (`setting`, `shutdown`) via standard Wayland event dispatch. Widget readiness is implicit when the first buffer is committed.
 
-**Note on Slint widgets**: Slint manages its own Wayland connection internally and doesn't expose it. Slint widgets will need to create a separate Wayland connection to bind to `bmc_widget_manager_v1` and handle our protocol events (`setting`, `shutdown`). This means running two event loops or integrating the protocol connection into Slint's event loop via a timer or file descriptor watch.
+**Note on Slint widgets**: Slint manages its own Wayland connection internally and doesn't expose it. Slint widgets will need to create a separate Wayland connection to bind to `deck_widget_manager_v1` and handle our protocol events (`setting`, `shutdown`). This means running two event loops or integrating the protocol connection into Slint's event loop via a timer or file descriptor watch.
 
 #### Success Criteria
 - [ ] Environment variable helpers work (size, params, settings)
-- [ ] Widget can bind to `bmc_widget_manager_v1`
+- [ ] Widget can bind to `deck_widget_manager_v1`
 - [ ] Widget surface created with instance_id
 - [ ] Actions can be requested
 - [ ] Setting events received
@@ -1257,7 +1257,7 @@ Migrate the digital-clock widget to use environment variables and Wayland protoc
 2. Read size, params, and initial settings from environment variables
 3. Initialize Slint UI at correct size with initial settings
 4. Create separate Wayland connection for BMC protocol
-5. Bind to `bmc_widget_manager_v1`, call `get_widget_surface(surface, instance_id)`
+5. Bind to `deck_widget_manager_v1`, call `get_widget_surface(surface, instance_id)`
 6. Commit first buffer (compositor detects widget is ready)
 7. Handle `setting` events for runtime timezone/localization/night_mode changes
 8. Handle `shutdown` event for graceful termination
@@ -1311,7 +1311,7 @@ The `bmc-compositor` crate (Stage 8) contains a working Wayland compositor POC. 
 - Create `EglCompositor` struct in `bmc-openwrt` that implements `Compositor` trait
 - Run compositor event loop in a dedicated thread (uses calloop, not tokio)
 - Communicate between async main thread and compositor thread via channels
-- Implement `bmc_widget_v1` protocol handlers from Stage 12
+- Implement `deck_widget_v1` protocol handlers from Stage 12
 - Reuse rendering code from `bmc-compositor` crate
 - Only EGL renderer for now (no software fallback needed)
 
@@ -1328,7 +1328,7 @@ The main application runs on tokio async runtime. The compositor runs in a separ
 - `bmc-openwrt/src/compositor/mod.rs` - Module exports
 - `bmc-openwrt/src/compositor/egl_compositor.rs` - `EglCompositor` implementation
 - `bmc-openwrt/src/compositor/commands.rs` - Command/event types for thread communication
-- `bmc-openwrt/src/compositor/protocol.rs` - `bmc_widget_v1` protocol handlers
+- `bmc-openwrt/src/compositor/protocol.rs` - `deck_widget_v1` protocol handlers
 
 **Modified files:**
 - `bmc-openwrt/src/lib.rs` - Export compositor module
@@ -1342,13 +1342,13 @@ The main application runs on tokio async runtime. The compositor runs in a separ
 3. Coordinator calls `compositor.register_widget(instance_id, position)` to register expected widget
 4. Coordinator spawns widget with environment variables:
    - `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR` - Wayland connection
-   - `BMC_INSTANCE_ID` - Widget instance identifier
-   - `BMC_SIZE_TYPE` - Size category (small/medium/large/full)
-   - `BMC_WIDTH`, `BMC_HEIGHT` - Pixel dimensions
-   - `BMC_PARAMS` - JSON widget parameters
-   - `BMC_TIMEZONE`, `BMC_NIGHT_MODE`, `BMC_LOCALIZATION` - Initial settings
+   - `DECK_INSTANCE_ID` - Widget instance identifier
+   - `DECK_SIZE_TYPE` - Size category (small/medium/large/full)
+   - `DECK_WIDTH`, `DECK_HEIGHT` - Pixel dimensions
+   - `DECK_PARAMS` - JSON widget parameters
+   - `DECK_TIMEZONE`, `DECK_NIGHT_MODE`, `DECK_LOCALIZATION` - Initial settings
 5. Widget reads configuration from environment, initializes UI with correct size and settings
-6. Widget connects to Wayland, binds `bmc_widget_manager_v1`
+6. Widget connects to Wayland, binds `deck_widget_manager_v1`
 7. Widget calls `get_widget_surface(surface, instance_id)`
 8. Compositor matches `instance_id` to registered widget, associates surface with position
 9. Widget commits first buffer (compositor detects widget is ready)
@@ -1378,7 +1378,7 @@ Widget crashes must be detected and handled:
 
 - [ ] `EglCompositor` implements `Compositor` trait
 - [ ] Compositor runs in dedicated thread with calloop
-- [ ] `bmc_widget_v1` protocol handlers work
+- [ ] `deck_widget_v1` protocol handlers work
 - [ ] Commands flow from main thread to compositor (register, set scene, broadcast setting, shutdown)
 - [ ] Events flow from compositor to main thread (widget ready, widget disconnected)
 - [ ] Actions flow from compositor to main thread (sound, LED requests)
@@ -1425,11 +1425,11 @@ Connect the `WidgetCoordinator` to the compositor so spawned widgets can render 
 2. Coordinator calls `compositor.register_widget(instance_id, position)` - registers expected widget
 3. Coordinator spawns widget process with environment variables:
    - `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR` - Wayland connection
-   - `BMC_INSTANCE_ID` - Widget instance identifier
-   - `BMC_SIZE_TYPE` - Size category
-   - `BMC_WIDTH`, `BMC_HEIGHT` - Pixel dimensions
-   - `BMC_PARAMS` - JSON widget parameters
-   - `BMC_TIMEZONE`, `BMC_NIGHT_MODE`, `BMC_LOCALIZATION` - Initial settings
+   - `DECK_INSTANCE_ID` - Widget instance identifier
+   - `DECK_SIZE_TYPE` - Size category
+   - `DECK_WIDTH`, `DECK_HEIGHT` - Pixel dimensions
+   - `DECK_PARAMS` - JSON widget parameters
+   - `DECK_TIMEZONE`, `DECK_NIGHT_MODE`, `DECK_LOCALIZATION` - Initial settings
 4. Widget reads configuration from environment, initializes UI with correct size and settings
 5. Widget connects to Wayland, calls `get_widget_surface(surface, instance_id)`
 6. Compositor matches instance_id to registered widget
@@ -1451,7 +1451,7 @@ Connect the `WidgetCoordinator` to the compositor so spawned widgets can render 
 - [ ] Coordinator holds compositor reference
 - [ ] Widgets spawned with all config via environment variables
 - [ ] Widget registration includes position
-- [ ] Widget receives correct size via `BMC_WIDTH`/`BMC_HEIGHT` env vars
+- [ ] Widget receives correct size via `DECK_WIDTH`/`DECK_HEIGHT` env vars
 - [ ] Widget surfaces appear on display at correct position
 - [ ] Widget crashes detected and handled with retry
 - [ ] Widget unregistration on process stop
@@ -1545,7 +1545,7 @@ Propagate system settings changes (timezone, localization, night mode) to all ru
 ### Scope
 
 - When settings change, coordinator sends update to compositor
-- Compositor broadcasts `setting` event to all widgets via `bmc_widget_surface_v1`
+- Compositor broadcasts `setting` event to all widgets via `deck_widget_surface_v1`
 - Widgets update their state without restart
 
 ### Settings Types
@@ -1600,7 +1600,7 @@ Route widget action requests to hardware controllers.
 
 ### Action Flow
 
-1. Widget sends `action` request via `bmc_widget_surface_v1` Wayland protocol
+1. Widget sends `action` request via `deck_widget_surface_v1` Wayland protocol
 2. Compositor forwards action to main app via action channel
 3. ActionHandler receives action from channel
 4. ActionHandler routes to appropriate controller based on action type
