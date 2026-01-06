@@ -1374,16 +1374,86 @@ Widget crashes must be detected and handled:
 - Coordinator may attempt to respawn the widget (configurable retry policy)
 - After N failed attempts, coordinator marks widget as failed and logs error
 
+### Third-Party Client Support (xdg_toplevel)
+
+The compositor must support both our custom `deck_widget_surface_v1` protocol and standard `xdg_toplevel` for third-party Wayland clients (e.g., Slint applications using winit backend).
+
+#### Why Both Protocols
+
+- **deck_widget_surface_v1**: Our widgets use this protocol. Widget sends `instance_id` explicitly via `get_widget_surface()`.
+- **xdg_toplevel**: Standard desktop window protocol. Third-party apps (including Slint with winit) use this by default. No `instance_id` mechanism exists.
+
+A `wl_surface` can only have **one role** - either `deck_widget_surface_v1` or `xdg_toplevel`, never both.
+
+#### Registration Flow for Third-Party Clients
+
+Since `xdg_toplevel` clients cannot send an `instance_id`, the compositor identifies them by PID:
+
+1. Coordinator spawns third-party app, knows the PID
+2. Coordinator calls `compositor.register_widget(instance_id, position, pid)` with the process PID
+3. Third-party app connects to Wayland, creates `xdg_toplevel`
+4. Compositor extracts client PID from Wayland connection (`Client::credentials()`)
+5. Compositor matches PID to registered widget, associates surface with position
+6. Compositor sends `configure` event telling client its size
+7. Client renders and commits buffer
+
+#### xdg_toplevel Protocol Requirements
+
+For `xdg_toplevel` clients, the compositor must implement the configure sequence:
+
+1. Send `xdg_toplevel.configure(width, height, states)` - tells client what size to use
+2. Send `xdg_surface.configure(serial)` - marks end of configure sequence
+3. Client renders at that size
+4. Client sends `ack_configure(serial)` - acknowledges the configure
+
+Without this sequence, third-party clients won't draw - they wait for the compositor to tell them their size.
+
+#### What xdg_toplevel Features to Implement
+
+| Feature | Required | Notes |
+|---------|----------|-------|
+| `configure` sequence | Yes | Client won't render without it |
+| `set_title` / `set_app_id` | Receive only | Useful for logging, can ignore |
+| `move` / `resize` requests | No | Compositor controls positioning |
+| `set_min_size` / `set_max_size` | No | Can ignore |
+| `set_fullscreen` / `set_maximized` | No | Can ignore |
+
+#### Compositor State for Both Protocols
+
+```rust
+pub struct CompositorState {
+    // Widget positions (both protocols use this)
+    widget_positions: HashMap<InstanceId, Position>,
+
+    // For deck_widget_surface_v1 clients (instance_id from protocol)
+    deck_widgets: HashMap<InstanceId, WlSurface>,
+
+    // For xdg_toplevel clients (instance_id from PID lookup)
+    pid_to_instance: HashMap<u32, InstanceId>,
+    xdg_surfaces: HashMap<InstanceId, XdgToplevel>,
+}
+```
+
+#### Rendering
+
+Both surface types feed into the same rendering pipeline. The compositor:
+1. Iterates all surfaces with committed content
+2. Looks up position by `instance_id` (from protocol for deck widgets, from PID for xdg)
+3. Renders at the assigned position
+
 ### Success Criteria
 
 - [ ] `EglCompositor` implements `Compositor` trait
 - [ ] Compositor runs in dedicated thread with calloop
 - [ ] `deck_widget_v1` protocol handlers work
+- [ ] `xdg_shell` protocol handlers work (for third-party clients)
+- [ ] Third-party clients identified by PID matching
+- [ ] xdg_toplevel configure sequence implemented
 - [ ] Commands flow from main thread to compositor (register, set scene, broadcast setting, shutdown)
 - [ ] Events flow from compositor to main thread (widget ready, widget disconnected)
 - [ ] Actions flow from compositor to main thread (sound, LED requests)
 - [ ] Instance ID based widget identification works
-- [ ] Widget surfaces display correctly
+- [ ] Widget surfaces display correctly (both deck_widget and xdg_toplevel)
 - [ ] Widget disconnects detected and reported
 - [ ] Graceful shutdown works
 
@@ -1706,18 +1776,120 @@ If widget UID not found in registry:
 
 ---
 
-## Future Work (TBA)
+## Stage 19: Scene Transition Animation
 
-### Touch Input for Scene Swiping
+### Goal
 
-Touch input handling for scene navigation (swipe gestures) is planned for a future stage. This will involve:
+Implement smooth swipe-based scene transitions with animated visual feedback.
 
-- Integrating libinput touch events in the compositor
-- Detecting swipe gestures (direction, velocity)
-- Triggering scene transitions in coordinator
-- Visual feedback during swipe (partial scene reveal)
+### Background
 
-Implementation details to be determined after core widget system is complete.
+Scene switching should feel fluid and responsive. When the user swipes, both the current and next scene should be visible during the transition, sliding in the direction of the swipe.
+
+### Approach: Compositor-Side Scene Rendering
+
+The cleanest approach is to handle transitions entirely in the compositor. Widgets are unaware of transitions - they just render normally. The compositor:
+
+1. Renders each scene's widgets to an offscreen framebuffer
+2. During swipe: composites both framebuffers with offset based on finger position
+3. After swipe completes: updates active scene, stops rendering old scene
+
+This keeps widget code simple and allows smooth 60fps animations.
+
+### Transition Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| **Swipe** | Scenes slide horizontally following finger | User-initiated navigation |
+| **Fade** | Cross-fade between scenes | Programmatic scene change, timeout |
+
+### Compositor State for Transitions
+
+The compositor needs to track:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transition_state` | enum | `None`, `Swiping`, `Settling`, or `Fading` |
+| `transition_type` | enum | `Swipe` or `Fade` |
+| `from_scene` | SceneId | Scene being transitioned away from |
+| `to_scene` | SceneId | Scene being transitioned to |
+| `progress` | f32 | 0.0 = from_scene fully visible, 1.0 = to_scene fully visible |
+| `direction` | enum | `Left` or `Right` (for swipe only) |
+| `velocity` | f32 | For momentum-based settling after touch up |
+
+### Rendering Pipeline
+
+**Normal (no transition):**
+1. Render visible widgets directly to display framebuffer
+
+**During swipe:**
+1. Render `from_scene` widgets to offscreen buffer A
+2. Render `to_scene` widgets to offscreen buffer B
+3. Composite both buffers to display:
+   - Buffer A offset by `progress * screen_width` in swipe direction
+   - Buffer B follows behind
+
+**During fade:**
+1. Render `from_scene` widgets to offscreen buffer A
+2. Render `to_scene` widgets to offscreen buffer B
+3. Composite both buffers to display with alpha blending:
+   - Buffer A with alpha = `1.0 - progress`
+   - Buffer B with alpha = `progress`
+
+**After transition:**
+1. Update `active_scene` to the final scene
+2. Return to normal rendering
+3. Hidden scene's widgets stop receiving frame callbacks
+
+### Touch Input Integration
+
+Touch events flow through libinput → compositor:
+
+1. **Touch down**: Record start position, prepare transition if near edge or gesture detected
+2. **Touch move**: Update `progress` based on finger delta, re-render
+3. **Touch up**: Calculate velocity, start settling animation or snap back
+
+### Settling Animation
+
+When finger lifts:
+- If `progress > 0.5` or velocity is high enough → animate to completion
+- If `progress < 0.5` and low velocity → animate back to start (cancel)
+
+Use easing function (e.g., ease-out) for smooth deceleration.
+
+### Files to Modify
+
+- `bmc-openwrt/src/compositor/state.rs` - Add `TransitionState`, scene framebuffers
+- `bmc-openwrt/src/compositor/render_egl.rs` - Offscreen rendering, compositing
+- `bmc-openwrt/src/compositor/input.rs` (new) - Touch event handling
+- `bmc-openwrt/src/compositor/egl_compositor.rs` - Integrate touch events into event loop
+
+### Framebuffer Management
+
+Options for offscreen buffers:
+1. **Two persistent buffers** - Always allocated, swap roles as needed
+2. **On-demand allocation** - Allocate when transition starts, free when done
+3. **Texture caching** - Keep recently-used scene renders cached
+
+Option 1 is simplest for memory-constrained embedded device with known scene count.
+
+### Success Criteria
+
+- [ ] Touch input events received from libinput
+- [ ] Swipe gesture detection works
+- [ ] Scenes render to offscreen framebuffers
+- [ ] Both scenes visible during transition
+- [ ] Smooth 60fps animation during swipe
+- [ ] Momentum-based settling animation
+- [ ] Snap-back on cancelled swipe
+- [ ] Frame callbacks correctly managed (only active scene receives them after transition)
+
+### Dependencies
+
+- Stage 13 (EGL Compositor Implementation)
+- Stage 15 (Scene Management)
+
+### Status: Not Started
 
 ---
 
