@@ -28,6 +28,7 @@ bmc-shared-utils.workspace = true
 bmc-support.workspace = true
 bmc-upgrade.workspace = true
 bmc-widget.workspace = true
+bmc-widget-protocol.workspace = true
 chrono = { workspace = true }
 chrono-tz.workspace = true
 futures.workspace = true
