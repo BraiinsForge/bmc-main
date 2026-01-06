@@ -231,6 +231,7 @@ All commit messages follow strict formatting guidelines:
 - **Must** start subject after topic with uppercase letter
 - **Must** write all sentences in the imperative (similar to subject)
 - **Must** start each sentence in the body with a lowercase letter
+- **Never** add "Generated with Claude Code" or "Co-Authored-By: Claude" to commit messages
 - Use "-" for each line in the body (no leading space at the beginning)
 - Add ticket reference at the end as an alternative approach, but do not mix styles - be consistent
 - For multiple topics, chain them: `topic1: topic2: topic3: Subject description`
