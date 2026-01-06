@@ -23,8 +23,11 @@ bmc-shared-ii-net-drv.workspace = true
 bmc-shared-time.workspace = true
 bmc-support.workspace = true
 bmc-upgrade.workspace = true
+bmc-widget-protocol.workspace = true
+calloop.workspace = true
 clap.workspace = true
 drm.workspace = true
+drm-fourcc.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 evdev.workspace = true
@@ -45,6 +48,7 @@ serde.workspace = true
 serde_json.workspace = true
 slint = { workspace = true, features = ["renderer-software"] }
 smart-leds-trait.workspace = true
+smithay.workspace = true
 spidev.workspace = true
 sysfs_gpio = { workspace = true, features = ["async-tokio"] }
 thiserror.workspace = true
