@@ -782,6 +782,7 @@ dependencies = [
  "bmc-support",
  "bmc-upgrade",
  "bmc-widget",
+ "bmc-widget-protocol",
  "chrono",
  "chrono-tz",
  "futures",
@@ -1221,6 +1222,10 @@ dependencies = [
 name = "bmc-widget-protocol"
 version = "0.1.0"
 dependencies = [
+ "bmc-shared-time",
+ "bmc-shared-utils",
+ "serde",
+ "serde_json",
  "wayland-backend",
  "wayland-client 0.31.10",
  "wayland-protocols 0.32.8",
