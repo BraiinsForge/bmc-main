@@ -5,11 +5,11 @@
 //! The compositor runs in a separate thread (using calloop) while the main application runs
 //! on tokio. Communication happens via channels.
 
-use bmc_ipc::{ActionPayload, SettingUpdate};
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-/// Unique identifier for a widget instance.
+pub use bmc_widget_protocol::{ActionPayload, SettingUpdate};
+
 pub type InstanceId = String;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
