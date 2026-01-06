@@ -1198,6 +1198,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-widget-egl-demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "drm-fourcc",
+ "gbm 0.17.0",
+ "glow",
+ "smithay",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-backend",
+ "wayland-client 0.31.10",
+ "wayland-protocols 0.32.8",
+]
+
+[[package]]
+name = "bmc-widget-femtovg-demo"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "slint",
+ "slint-build",
+ "tracing",
+]
+
+[[package]]
 name = "bmc-widget-flip-clock"
 version = "0.1.0"
 dependencies = [
@@ -1788,6 +1814,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-text"
+version = "20.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9d2790b5c08465d49f8dc05c8bcae9fea467855947db39b0f8145c091aaced5"
+dependencies = [
+ "core-foundation 0.9.4",
+ "core-graphics 0.23.2",
+ "foreign-types",
+ "libc",
+]
+
+[[package]]
 name = "core_maths"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2222,6 +2260,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dwrote"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfe1f192fcce01590bd8d839aca53ce0d11d803bf291b2a6c4ad925a8f0024be"
+dependencies = [
+ "lazy_static",
+ "libc",
+ "serde",
+ "serde_derive",
+ "winapi 0.3.9",
+ "wio",
+]
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2446,6 +2498,29 @@ checksum = "e182f7dbc2ef73d9ef67351c5fbbea084729c48362d3ce9dd44c28e32e277fe5"
 dependencies = [
  "libc",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "femtovg"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9bec3fb78abd18f7bbbde01f22f467c47c5a9c043e791802f82da0cf16066d1"
+dependencies = [
+ "bitflags 2.9.0",
+ "bytemuck",
+ "fnv",
+ "glow",
+ "image",
+ "imgref",
+ "log",
+ "lru",
+ "rgb",
+ "rustybuzz",
+ "slotmap",
+ "unicode-bidi",
+ "unicode-segmentation",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -3407,6 +3482,7 @@ dependencies = [
  "glutin",
  "i-slint-common",
  "i-slint-core",
+ "i-slint-renderer-femtovg",
  "i-slint-renderer-skia",
  "input",
  "memmap2",
@@ -3460,6 +3536,7 @@ dependencies = [
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
+ "i-slint-renderer-femtovg",
  "i-slint-renderer-skia",
  "imgref",
  "lyon_path",
@@ -3580,6 +3657,36 @@ dependencies = [
  "quote",
  "serde_json",
  "syn 2.0.100",
+]
+
+[[package]]
+name = "i-slint-renderer-femtovg"
+version = "1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c0ee48371f5bb172515d1f14a0d94cb111abff257993732d2cf5631b7f4fdd9"
+dependencies = [
+ "cfg-if",
+ "const-field-offset",
+ "core-foundation 0.9.4",
+ "core-text",
+ "derive_more",
+ "dwrote",
+ "femtovg",
+ "glow",
+ "i-slint-common",
+ "i-slint-core",
+ "i-slint-core-macros",
+ "imgref",
+ "lyon_path",
+ "pin-weak",
+ "rgb",
+ "scoped-tls-hkt",
+ "ttf-parser 0.25.1",
+ "unicode-script",
+ "unicode-segmentation",
+ "wasm-bindgen",
+ "web-sys",
+ "winapi 0.3.9",
 ]
 
 [[package]]
@@ -4351,6 +4458,12 @@ checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
 ]
+
+[[package]]
+name = "lru"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 
 [[package]]
 name = "lyon"
@@ -6838,6 +6951,7 @@ dependencies = [
  "i-slint-backend-selector",
  "i-slint-core",
  "i-slint-core-macros",
+ "i-slint-renderer-femtovg",
  "log",
  "num-traits",
  "once_cell",
@@ -9272,6 +9386,15 @@ checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "wio"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d129932f4644ac2396cb456385cbf9e63b5b30c6e8dc4820bdca4eb082037a5"
+dependencies = [
+ "winapi 0.3.9",
 ]
 
 [[package]]
