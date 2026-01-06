@@ -6,6 +6,10 @@ authors = ["Braiins Systems s.r.o."]
 description = "Wayland protocol extension for Deck widget communication"
 
 [dependencies]
+bmc-shared-time.workspace = true
+bmc-shared-utils.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 wayland-backend.workspace = true
 wayland-client.workspace = true
 wayland-protocols.workspace = true
