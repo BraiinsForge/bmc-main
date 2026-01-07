@@ -2,12 +2,11 @@
 
 //! Compositor state management combining Smithay handlers with deck_widget_v1 protocol.
 
-use std::collections::HashMap;
-
 use super::protocol::{
     DeckWidgetHandler, DeckWidgetProtocolState, WidgetManagerUserData, WidgetSurfaceUserData,
 };
-use bmc::compositor::{InstanceId, Position, SceneLayout, Size};
+use super::widget_tracker::WidgetTracker;
+use bmc::compositor::InstanceId;
 use bmc_widget_protocol::server::{
     deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_surface_v1::DeckWidgetSurfaceV1,
 };
@@ -39,29 +38,12 @@ use smithay::{
     },
 };
 
-/// Registration data for a widget pending connection.
-#[derive(Debug, Clone)]
-pub struct WidgetRegistration {
-    pub instance_id: InstanceId,
-    pub position: Position,
-    pub size: Size,
-}
-
-/// Tracks a connected widget surface.
-#[derive(Debug)]
-pub struct ConnectedWidget {
-    pub instance_id: InstanceId,
-    pub position: Position,
-    pub size: Size,
-    pub surface: WlSurface,
-}
-
 pub struct CompositorState {
-    pub display_handle: DisplayHandle,
+    _display_handle: DisplayHandle,
     pub compositor_state: SmithayCompositorState,
     pub shm_state: ShmState,
     pub dmabuf_state: DmabufState,
-    pub dmabuf_global: DmabufGlobal,
+    _dmabuf_global: DmabufGlobal,
     pub xdg_shell_state: XdgShellState,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
@@ -69,22 +51,11 @@ pub struct CompositorState {
     pub width: u32,
     pub height: u32,
     pub surfaces: Vec<WlSurface>,
-    pub current_buffer: Option<WlBuffer>,
+    pub widget_buffers: Vec<(WlBuffer, InstanceId)>,
     pub pending_frame_callbacks: Vec<WlCallback>,
 
-    /// Widgets registered by coordinator, waiting for client connection.
-    /// Key is instance_id for deck_widget clients.
-    pub pending_widgets: HashMap<InstanceId, WidgetRegistration>,
-
-    /// PID to instance_id mapping for xdg_toplevel clients.
-    /// When a third-party client connects, we look up its PID here.
-    pub pid_to_instance: HashMap<u32, InstanceId>,
-
-    /// Connected widgets with their surfaces (both deck_widget and xdg_toplevel).
-    pub connected_widgets: HashMap<InstanceId, ConnectedWidget>,
-
-    /// Current active scene layout determining which widgets are visible and where.
-    pub active_scene: SceneLayout,
+    /// Widget registration and connection tracking.
+    pub widgets: WidgetTracker,
 }
 
 impl CompositorState {
@@ -118,11 +89,11 @@ impl CompositorState {
         super::protocol::create_global::<Self>(&display_handle);
 
         Self {
-            display_handle,
+            _display_handle: display_handle,
             compositor_state,
             shm_state,
             dmabuf_state,
-            dmabuf_global,
+            _dmabuf_global: dmabuf_global,
             xdg_shell_state,
             seat_state,
             data_device_state,
@@ -130,12 +101,9 @@ impl CompositorState {
             width,
             height,
             surfaces: Vec::new(),
-            current_buffer: None,
+            widget_buffers: Vec::new(),
             pending_frame_callbacks: Vec::new(),
-            pending_widgets: HashMap::new(),
-            pid_to_instance: HashMap::new(),
-            connected_widgets: HashMap::new(),
-            active_scene: SceneLayout::default(),
+            widgets: WidgetTracker::new(),
         }
     }
 
@@ -143,86 +111,6 @@ impl CompositorState {
         for callback in self.pending_frame_callbacks.drain(..) {
             callback.done(time);
         }
-    }
-
-    /// Register a widget before its process connects.
-    /// For deck_widget clients, pid is None (they identify via protocol).
-    /// For xdg_toplevel clients, pid is required for matching.
-    pub fn register_widget(
-        &mut self,
-        instance_id: InstanceId,
-        position: Position,
-        size: Size,
-        pid: Option<u32>,
-    ) {
-        let registration = WidgetRegistration {
-            instance_id: instance_id.clone(),
-            position,
-            size,
-        };
-
-        self.pending_widgets.insert(instance_id.clone(), registration);
-
-        if let Some(pid) = pid {
-            self.pid_to_instance.insert(pid, instance_id);
-        }
-    }
-
-    /// Unregister a widget when its process stops.
-    pub fn unregister_widget(&mut self, instance_id: &InstanceId) {
-        self.pending_widgets.remove(instance_id);
-        self.connected_widgets.remove(instance_id);
-
-        // Remove from PID mapping if present
-        self.pid_to_instance.retain(|_, id| id != instance_id);
-    }
-
-    /// Look up instance_id by PID (for xdg_toplevel clients).
-    #[must_use]
-    pub fn instance_id_for_pid(&self, pid: u32) -> Option<&InstanceId> {
-        self.pid_to_instance.get(&pid)
-    }
-
-    /// Get registration data for a pending widget.
-    #[must_use]
-    pub fn get_pending_widget(&self, instance_id: &InstanceId) -> Option<&WidgetRegistration> {
-        self.pending_widgets.get(instance_id)
-    }
-
-    /// Move widget from pending to connected state.
-    pub fn connect_widget(&mut self, instance_id: &InstanceId, surface: WlSurface) -> bool {
-        if let Some(registration) = self.pending_widgets.remove(instance_id) {
-            self.connected_widgets.insert(
-                instance_id.clone(),
-                ConnectedWidget {
-                    instance_id: registration.instance_id,
-                    position: registration.position,
-                    size: registration.size,
-                    surface,
-                },
-            );
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Check if a widget is visible in the current scene.
-    #[must_use]
-    pub fn is_widget_visible(&self, instance_id: &InstanceId) -> bool {
-        self.active_scene
-            .widgets
-            .iter()
-            .any(|w| &w.instance_id == instance_id && w.visible)
-    }
-
-    /// Get visible widgets for rendering.
-    #[must_use]
-    pub fn visible_widgets(&self) -> Vec<&ConnectedWidget> {
-        self.connected_widgets
-            .values()
-            .filter(|w| self.is_widget_visible(&w.instance_id))
-            .collect()
     }
 }
 
@@ -250,6 +138,8 @@ impl CompositorHandler for CompositorState {
             self.surfaces.push(surface.clone());
         }
 
+        let instance_id = self.deck_widget_state.instance_id_for_surface(surface).cloned();
+
         with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             let attributes = guard.current();
@@ -257,12 +147,19 @@ impl CompositorHandler for CompositorState {
             if let Some(assignment) = &attributes.buffer {
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
-                        tracing::debug!("New buffer attached to surface");
-                        self.current_buffer = Some(buffer.clone());
+                        if let Some(ref id) = instance_id {
+                            self.widget_buffers.retain(|(_, existing_id)| existing_id != id);
+                            self.widget_buffers.push((buffer.clone(), id.clone()));
+                            tracing::debug!("Buffer attached for widget {}", id);
+                        } else {
+                            tracing::debug!("Buffer attached to unknown surface");
+                        }
                     }
                     BufferAssignment::Removed => {
-                        tracing::debug!("Buffer removed from surface");
-                        self.current_buffer = None;
+                        if let Some(ref id) = instance_id {
+                            self.widget_buffers.retain(|(_, existing_id)| existing_id != id);
+                            tracing::debug!("Buffer removed for widget {}", id);
+                        }
                     }
                 }
             }

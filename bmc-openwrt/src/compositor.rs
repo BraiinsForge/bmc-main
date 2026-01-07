@@ -5,8 +5,10 @@
 mod commands;
 mod egl_compositor;
 mod protocol;
-mod render_egl;
+mod render;
+mod scene_renderer;
 mod state;
+mod widget_tracker;
 
 pub use commands::{CompositorCommand, CompositorResponse};
 pub use egl_compositor::EglCompositor;
