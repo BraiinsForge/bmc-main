@@ -886,12 +886,12 @@ Implementations should use `std::thread::spawn` or `tokio::task::spawn_blocking`
 
 ### Success Criteria
 
-- [ ] `Compositor` trait defined with async methods
-- [ ] Supporting types defined (minimal set)
-- [ ] Trait is `Send + Sync` for thread-safe access
-- [ ] Error types defined
+- [x] `Compositor` trait defined with async methods
+- [x] Supporting types defined (minimal set)
+- [x] Trait is `Send + Sync` for thread-safe access
+- [x] Error types defined
 
-### Status: Not Started
+### Status: Complete
 
 ---
 
@@ -1113,9 +1113,9 @@ Note: Initial configuration (size, params, settings) is passed via environment v
 ```
 
 #### Success Criteria
-- [ ] XML validates with `wayland-scanner --strict`
-- [ ] All messages documented
-- [ ] Enums cover all needed values
+- [x] XML validates with `wayland-scanner --strict`
+- [x] All messages documented
+- [x] Enums cover all needed values
 
 ---
 
@@ -1154,10 +1154,10 @@ The `lib.rs` exposes two modules:
 Both modules use `wayland_scanner::generate_client_code!` and `wayland_scanner::generate_server_code!` macros.
 
 #### Success Criteria
-- [ ] Crate compiles
-- [ ] Client bindings generated
-- [ ] Server bindings generated
-- [ ] Types are re-exported cleanly
+- [x] Crate compiles
+- [x] Client bindings generated
+- [x] Server bindings generated
+- [x] Types are re-exported cleanly
 
 ---
 
@@ -1193,6 +1193,8 @@ The compositor needs to track:
 - [ ] Instance ID matching works
 - [ ] Actions forwarded to channel
 - [ ] Settings broadcast works
+
+#### Status: Not Started
 
 ---
 
@@ -1232,6 +1234,8 @@ Widgets handle events (`setting`, `shutdown`) via standard Wayland event dispatc
 
 **Note on Slint widgets**: Slint manages its own Wayland connection internally and doesn't expose it. Slint widgets will need to create a separate Wayland connection to bind to `deck_widget_manager_v1` and handle our protocol events (`setting`, `shutdown`). This means running two event loops or integrating the protocol connection into Slint's event loop via a timer or file descriptor watch.
 
+#### Status: Not Started
+
 #### Success Criteria
 - [ ] Environment variable helpers work (size, params, settings)
 - [ ] Widget can bind to `deck_widget_manager_v1`
@@ -1269,6 +1273,8 @@ Migrate the digital-clock widget to use environment variables and Wayland protoc
 3. Verify widget connects to compositor and calls `set_ready()`
 4. Change timezone, verify setting event received and UI updates
 5. Verify shutdown works
+
+#### Status: Not Started
 
 #### Success Criteria
 - [ ] digital-clock reads config from environment variables
