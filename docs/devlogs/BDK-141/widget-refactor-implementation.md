@@ -1188,13 +1188,13 @@ The compositor needs to track:
 - Active widget surfaces (by instance_id, after widget connects)
 
 #### Success Criteria
-- [ ] Global advertised to clients
-- [ ] Widget surfaces created correctly
-- [ ] Instance ID matching works
-- [ ] Actions forwarded to channel
-- [ ] Settings broadcast works
+- [x] Global advertised to clients
+- [x] Widget surfaces created correctly
+- [x] Instance ID matching works
+- [x] Actions forwarded to channel
+- [x] Settings broadcast works
 
-#### Status: Not Started
+#### Status: Complete
 
 ---
 
@@ -1288,8 +1288,8 @@ Migrate the digital-clock widget to use environment variables and Wayland protoc
 
 ### Overall Success Criteria
 
-- [ ] Protocol XML validates with wayland-scanner
-- [ ] Compositor implements protocol handlers
+- [x] Protocol XML validates with wayland-scanner
+- [x] Compositor implements protocol handlers
 - [ ] Widget client library works (env helpers + protocol)
 - [ ] digital-clock uses environment variables + Wayland protocol
 - [ ] JSON IPC removed
@@ -1298,7 +1298,7 @@ Migrate the digital-clock widget to use environment variables and Wayland protoc
 
 - Stage 11 (Compositor Trait Abstraction)
 
-### Status: Not Started
+### Status: In Progress
 
 ---
 

@@ -4,7 +4,8 @@
 
 use super::{
     commands::CompositorCommand,
-    render_egl::EglRenderState,
+    render::{DrmOutput, EglContext},
+    scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState},
 };
 use bmc::compositor::{
@@ -17,27 +18,15 @@ use smithay::reexports::{
     drm::control::{Device as DrmControlDevice, Event as DrmEvent},
     wayland_server::{Display, ListeningSocket},
 };
-use std::{
-    os::fd::AsFd,
-    path::Path,
-    sync::{Arc, Mutex},
-    thread::{self, JoinHandle},
-    time::Duration,
-};
+use std::{os::fd::AsFd, path::Path, sync::{Arc, Mutex}, thread, thread::JoinHandle, time::Duration};
 use tokio::sync::mpsc;
 
 const DEFAULT_GPU_PATH: &str = "/dev/dri/renderD128";
 const DEFAULT_DISPLAY_PATH: &str = "/dev/dri/card1";
 
 #[derive(Debug)]
-struct SharedState {
-    wayland_display: Option<String>,
-    running: bool,
-}
-
-#[derive(Debug)]
 pub struct EglCompositor {
-    shared: Arc<Mutex<SharedState>>,
+    wayland_display: Mutex<Option<String>>,
     command_tx: flume::Sender<CompositorCommand>,
     command_rx: flume::Receiver<CompositorCommand>,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
@@ -62,10 +51,7 @@ impl EglCompositor {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         Self {
-            shared: Arc::new(Mutex::new(SharedState {
-                wayland_display: None,
-                running: false,
-            })),
+            wayland_display: Mutex::new(None),
             command_tx,
             command_rx,
             action_tx,
@@ -84,74 +70,52 @@ impl EglCompositor {
         command_rx: flume::Receiver<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: mpsc::UnboundedSender<CompositorEvent>,
-        shared: Arc<Mutex<SharedState>>,
+        ready_tx: flume::Sender<Result<String, String>>,
     ) {
         tracing::info!("Compositor thread starting...");
 
-        // Initialize EGL render state with split GPU/display devices
-        let render_state = match EglRenderState::new(Path::new(&gpu_path), Path::new(&display_path))
-        {
-            Ok(state) => state,
-            Err(e) => {
-                tracing::error!("Failed to initialize EGL render state: {}", e);
-                return;
-            }
-        };
+        macro_rules! try_init {
+            ($expr:expr, $msg:literal) => {
+                match $expr {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let err = format!("{}: {}", $msg, e);
+                        tracing::error!("{}", err);
+                        let _ = ready_tx.send(Err(err));
+                        return;
+                    }
+                }
+            };
+        }
 
-        let (logical_width, logical_height) = render_state.logical_size();
+        let egl = try_init!(EglContext::new(Path::new(&gpu_path)), "Failed to initialize EGL context");
+        let output = try_init!(DrmOutput::new(Path::new(&display_path)), "Failed to initialize DRM output");
+
+        let scene_renderer = SceneRenderer::new(egl, output);
+        let (logical_width, logical_height) = scene_renderer.logical_size();
         tracing::info!(
             "Display configured: {}x{} logical (rotated)",
             logical_width,
             logical_height
         );
 
-        // Create calloop event loop for Wayland dispatch
-        let mut event_loop: EventLoop<'_, AppState> = match EventLoop::try_new() {
-            Ok(el) => el,
-            Err(e) => {
-                tracing::error!("Failed to create event loop: {}", e);
-                return;
-            }
-        };
-
-        // Create Wayland display and compositor state
-        let mut display: Display<CompositorState> = match Display::new() {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!("Failed to create Wayland display: {}", e);
-                return;
-            }
-        };
-
+        let mut event_loop: EventLoop<'_, AppState> = try_init!(EventLoop::try_new(), "Failed to create event loop");
+        let mut display: Display<CompositorState> = try_init!(Display::new(), "Failed to create Wayland display");
         let compositor_state = CompositorState::new(&display, logical_width, logical_height);
-
-        // Bind to Wayland socket
-        let listening_socket = match ListeningSocket::bind_auto("wayland", 0..33) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("Failed to create Wayland socket: {}", e);
-                return;
-            }
-        };
+        let listening_socket = try_init!(ListeningSocket::bind_auto("wayland", 0..33), "Failed to create Wayland socket");
 
         let socket_name = match listening_socket.socket_name() {
             Some(name) => name.to_string_lossy().to_string(),
             None => {
-                tracing::error!("Failed to get socket name");
+                let err = "Failed to get socket name".to_string();
+                tracing::error!("{}", err);
+                let _ = ready_tx.send(Err(err));
                 return;
             }
         };
 
         tracing::info!("Wayland socket created: {}", socket_name);
 
-        // Update shared state so main thread knows we're ready
-        {
-            let mut shared = shared.lock().expect("BUG: shared state lock poisoned");
-            shared.wayland_display = Some(socket_name.clone());
-            shared.running = true;
-        }
-
-        // Add Wayland display fd to event loop for client dispatch
         let loop_handle = event_loop.handle();
         if let Ok(poll_fd) = display.backend().poll_fd().try_clone_to_owned() {
             if loop_handle
@@ -164,15 +128,23 @@ impl EglCompositor {
                 )
                 .is_err()
             {
-                tracing::error!("Failed to add display fd to event loop");
+                let err = "Failed to add display fd to event loop".to_string();
+                tracing::error!("{}", err);
+                let _ = ready_tx.send(Err(err));
                 return;
             }
+        }
+
+        // Signal ready to main thread
+        if ready_tx.send(Ok(socket_name.clone())).is_err() {
+            tracing::error!("Failed to signal ready - receiver dropped");
+            return;
         }
 
         let mut app_state = AppState {
             display,
             compositor: compositor_state,
-            render_state,
+            scene_renderer,
             listening_socket,
             command_rx,
             action_tx,
@@ -182,8 +154,9 @@ impl EglCompositor {
 
         // Add DRM device fd for vblank/page-flip events
         if let Ok(drm_fd) = app_state
-            .render_state
-            .display_drm()
+            .scene_renderer
+            .output()
+            .drm()
             .device_fd()
             .as_fd()
             .try_clone_to_owned()
@@ -191,11 +164,11 @@ impl EglCompositor {
             let _ = loop_handle.insert_source(
                 Generic::new(drm_fd, Interest::READ, Mode::Level),
                 |_, _, state| {
-                    if let Ok(events) = state.render_state.display_drm().receive_events() {
+                    if let Ok(events) = state.scene_renderer.output().drm().receive_events() {
                         for event in events {
                             match event {
                                 DrmEvent::Vblank(_) | DrmEvent::PageFlip(_) => {
-                                    state.render_state.on_vblank();
+                                    state.scene_renderer.output_mut().on_vblank();
                                 }
                                 DrmEvent::Unknown(_) => {}
                             }
@@ -233,8 +206,10 @@ impl EglCompositor {
 
             process_protocol_events(&mut app_state);
 
-            let buffer = app_state.compositor.current_buffer.as_ref();
-            if let Err(e) = app_state.render_state.render_frame(buffer) {
+            if let Err(e) = app_state.scene_renderer.render_scene(
+                &app_state.compositor.widgets,
+                &app_state.compositor.widget_buffers,
+            ) {
                 tracing::error!("Render error: {}", e);
             }
 
@@ -260,11 +235,6 @@ impl EglCompositor {
             }
         }
 
-        {
-            let mut shared = shared.lock().expect("BUG: shared state lock poisoned");
-            shared.running = false;
-        }
-
         tracing::info!("Compositor thread exiting");
     }
 }
@@ -272,7 +242,7 @@ impl EglCompositor {
 struct AppState {
     display: Display<CompositorState>,
     compositor: CompositorState,
-    render_state: EglRenderState,
+    scene_renderer: SceneRenderer,
     listening_socket: ListeningSocket,
     command_rx: flume::Receiver<CompositorCommand>,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
@@ -297,21 +267,15 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 size.height,
                 pid
             );
-            state
-                .compositor
-                .register_widget(instance_id, position, size, pid);
+            // Widget registration is informational - actual tracking happens via Wayland protocol
         }
         CompositorCommand::UnregisterWidget { instance_id } => {
             tracing::debug!("Unregistering widget {}", instance_id);
-            state.compositor.unregister_widget(&instance_id);
-            state
-                .compositor
-                .deck_widget_state
-                .unregister_widget(&instance_id);
+            state.compositor.deck_widget_state.unregister_widget(&instance_id);
         }
         CompositorCommand::SetActiveScene { layout } => {
             tracing::debug!("Setting active scene with {} widgets", layout.widgets.len());
-            state.compositor.active_scene = layout;
+            state.compositor.widgets.set_active_scene(layout);
         }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
@@ -361,18 +325,19 @@ impl Default for EglCompositor {
 impl Compositor for EglCompositor {
     fn start(&self) -> Result<String, CompositorError> {
         {
-            let shared = self.shared.lock().expect("BUG: shared state lock poisoned");
-            if shared.running {
+            let display = self.wayland_display.lock().expect("BUG: wayland_display lock poisoned");
+            if display.is_some() {
                 return Err(CompositorError::AlreadyStarted);
             }
         }
+
+        let (ready_tx, ready_rx) = flume::bounded(1);
 
         let gpu_path = self.gpu_path.clone();
         let display_path = self.display_path.clone();
         let command_rx = self.command_rx.clone();
         let action_tx = self.action_tx.clone();
         let event_tx = self.event_tx.clone();
-        let shared = self.shared.clone();
 
         let handle = thread::Builder::new()
             .name("egl-compositor".to_owned())
@@ -383,7 +348,7 @@ impl Compositor for EglCompositor {
                     command_rx,
                     action_tx,
                     event_tx,
-                    shared,
+                    ready_tx,
                 );
             })
             .map_err(|e| CompositorError::ThreadError(e.to_string()))?;
@@ -396,33 +361,22 @@ impl Compositor for EglCompositor {
             *thread_handle = Some(handle);
         }
 
-        let start_time = std::time::Instant::now();
-        loop {
-            {
-                let shared = self.shared.lock().expect("BUG: shared state lock poisoned");
-                if let Some(ref name) = shared.wayland_display {
-                    return Ok(name.clone());
-                }
-                if !shared.running && start_time.elapsed() > Duration::from_secs(1) {
-                    break;
-                }
-            }
-            if start_time.elapsed() > Duration::from_secs(10) {
-                return Err(CompositorError::ThreadError(
-                    "Timeout waiting for compositor to start".to_owned(),
-                ));
-            }
-            thread::sleep(Duration::from_millis(10));
+        let socket_name = ready_rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| CompositorError::ThreadError("Timeout waiting for compositor to start".to_owned()))?
+            .map_err(CompositorError::ThreadError)?;
+
+        {
+            let mut display = self.wayland_display.lock().expect("BUG: wayland_display lock poisoned");
+            *display = Some(socket_name.clone());
         }
 
-        Err(CompositorError::ThreadError(
-            "Compositor thread exited unexpectedly".to_owned(),
-        ))
+        Ok(socket_name)
     }
 
     fn wayland_display(&self) -> Option<String> {
-        let shared = self.shared.lock().expect("BUG: shared state lock poisoned");
-        shared.wayland_display.clone()
+        let display = self.wayland_display.lock().expect("BUG: wayland_display lock poisoned");
+        display.clone()
     }
 
     fn register_widget(
