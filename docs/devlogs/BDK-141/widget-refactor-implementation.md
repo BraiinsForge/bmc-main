@@ -1203,11 +1203,12 @@ The compositor needs to track:
 #### Goal
 Update `bmc-widget` crate to provide a Wayland-based client API.
 
-#### Files to Modify
-- `bmc-widget/Cargo.toml` - Add `bmc-widget-protocol` dependency
-- `bmc-widget/src/lib.rs` - Export new client module
-- `bmc-widget/src/wayland_client.rs` (new) - Wayland client implementation
+#### Files Modified
+- `bmc-widget/Cargo.toml` - Added `bmc-widget-protocol` dependency
+- `bmc-widget/src/lib.rs` - Export new modules
+- `bmc-widget/src/wayland.rs` (new) - Wayland protocol client (`WidgetProtocolClient`)
 - `bmc-widget/src/env.rs` (new) - Environment variable helpers
+- `bmc-widget/src/client.rs` - Added `connect_to_path()` method
 
 #### New API
 
@@ -1234,15 +1235,15 @@ Widgets handle events (`setting`, `shutdown`) via standard Wayland event dispatc
 
 **Note on Slint widgets**: Slint manages its own Wayland connection internally and doesn't expose it. Slint widgets will need to create a separate Wayland connection to bind to `deck_widget_manager_v1` and handle our protocol events (`setting`, `shutdown`). This means running two event loops or integrating the protocol connection into Slint's event loop via a timer or file descriptor watch.
 
-#### Status: Not Started
+#### Status: Complete
 
 #### Success Criteria
-- [ ] Environment variable helpers work (size, params, settings)
-- [ ] Widget can bind to `deck_widget_manager_v1`
-- [ ] Widget surface created with instance_id
-- [ ] Actions can be requested
-- [ ] Setting events received
-- [ ] Shutdown event handled
+- [x] Environment variable helpers work (size, params, settings)
+- [x] Widget can bind to `deck_widget_manager_v1`
+- [x] Widget surface created with instance_id
+- [x] Actions can be requested
+- [x] Setting events received
+- [x] Shutdown event handled
 
 ---
 

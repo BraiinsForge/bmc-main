@@ -1165,6 +1165,7 @@ name = "bmc-widget"
 version = "0.1.0"
 dependencies = [
  "bmc-ipc",
+ "bmc-widget-protocol",
  "futures",
  "semver",
  "serde",
