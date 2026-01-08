@@ -1252,35 +1252,34 @@ Widgets handle events (`setting`, `shutdown`) via standard Wayland event dispatc
 #### Goal
 Migrate the digital-clock widget to use environment variables and Wayland protocol.
 
-#### Files to Modify
-- `widgets/digital-clock/Cargo.toml` - Update dependencies
-- `widgets/digital-clock/src/main.rs` - Use new client API
+#### Files Modified
+- `widgets/digital-clock/Cargo.toml` - Removed `bmc-ipc`, `tokio`, `serde_json`; added `bmc-widget-protocol`, `thiserror`
+- `widgets/digital-clock/src/main.rs` - Changed from async to sync, uses `ipc::read_config()` and `ipc::setup_wayland_events()`
+- `widgets/digital-clock/src/ipc.rs` - Rewritten to use env vars and Wayland protocol instead of JSON IPC
+- `bmc-widget/src/wayland.rs` - Added `poll_events()` method for non-blocking event polling
 
-#### Migration Steps
+#### Implementation
 
-1. Remove `BMC_IPC_SOCKET` environment variable usage and JSON IPC client
-2. Read size, params, and initial settings from environment variables
-3. Initialize Slint UI at correct size with initial settings
-4. Create separate Wayland connection for BMC protocol
-5. Bind to `deck_widget_manager_v1`, call `get_widget_surface(surface, instance_id)`
-6. Commit first buffer (compositor detects widget is ready)
-7. Handle `setting` events for runtime timezone/localization/night_mode changes
-8. Handle `shutdown` event for graceful termination
+1. **Environment variables**: Widget reads initial config via `bmc_widget::env::read_*()` functions
+2. **Wayland protocol**: Widget creates separate Wayland connection for `deck_widget_v1` protocol
+3. **Event polling**: Slint timer polls the protocol connection every 50ms using `poll_events()`
+4. **Settings**: `WidgetEventHandler` trait handles timezone/localization/night_mode updates
+5. **Shutdown**: Handler calls `slint::quit_event_loop()` on shutdown event
 
 #### Testing
 
 1. Spawn digital-clock with correct environment variables
 2. Verify widget reads size from environment and renders correctly
-3. Verify widget connects to compositor and calls `set_ready()`
+3. Verify widget connects to compositor and calls `get_widget_surface()`
 4. Change timezone, verify setting event received and UI updates
 5. Verify shutdown works
 
-#### Status: Not Started
+#### Status: In Progress
 
 #### Success Criteria
-- [ ] digital-clock reads config from environment variables
-- [ ] digital-clock uses Wayland protocol for runtime events
-- [ ] No JSON IPC socket used
+- [x] digital-clock reads config from environment variables
+- [x] digital-clock uses Wayland protocol for runtime events
+- [x] No JSON IPC socket used
 - [ ] All settings updates work
 - [ ] Graceful shutdown works
 - [ ] Widget renders correctly at all sizes
@@ -1291,9 +1290,9 @@ Migrate the digital-clock widget to use environment variables and Wayland protoc
 
 - [x] Protocol XML validates with wayland-scanner
 - [x] Compositor implements protocol handlers
-- [ ] Widget client library works (env helpers + protocol)
-- [ ] digital-clock uses environment variables + Wayland protocol
-- [ ] JSON IPC removed
+- [x] Widget client library works (env helpers + protocol)
+- [ ] digital-clock uses environment variables + Wayland protocol (tested on device)
+- [x] JSON IPC removed from digital-clock
 
 ### Dependencies
 

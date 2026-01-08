@@ -10,14 +10,13 @@ struct Args {
     standalone: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
 
     if args.standalone {
         run_standalone()?;
     } else {
-        run_with_ipc().await?;
+        run_with_wayland()?;
     }
 
     Ok(())
@@ -29,16 +28,17 @@ fn run_standalone() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
-async fn run_with_ipc() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (client, config) = ipc::connect().await?;
+fn run_with_wayland() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let (instance_id, config) = ipc::read_config()?;
     let widget = DigitalClockWidget::new(config)?;
 
-    tokio::spawn(ipc::run(
-        client,
+    // Timer must be kept alive for the duration of the widget
+    let (_wayland_timer, _shutdown_flag) = ipc::setup_wayland_events(
+        &instance_id,
         widget.date_format(),
         widget.timezone(),
         widget.is_24_format(),
-    ));
+    )?;
 
     widget.run()?;
     Ok(())

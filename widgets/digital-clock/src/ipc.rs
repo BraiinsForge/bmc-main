@@ -2,27 +2,41 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
-use bmc_ipc::SettingUpdate;
 use bmc_shared_time::time::TimeSystem;
-use bmc_widget::{WidgetClient, connect_widget, run_message_loop};
+use bmc_widget::wayland::{WidgetEventHandler, WidgetProtocolClient};
+use bmc_widget::{EnvError, env};
+use bmc_widget_protocol::SettingUpdate;
+use slint::Timer;
 
 use crate::{Config, Params, WidgetSize};
 
-impl From<bmc_ipc::SizeType> for WidgetSize {
-    fn from(size: bmc_ipc::SizeType) -> Self {
+#[derive(Debug, thiserror::Error)]
+pub enum IpcError {
+    #[error("environment variable error: {0}")]
+    Env(#[from] EnvError),
+
+    #[error("wayland error: {0}")]
+    Wayland(#[from] bmc_widget::WaylandError),
+}
+
+impl From<bmc_widget_protocol::SizeType> for WidgetSize {
+    fn from(size: bmc_widget_protocol::SizeType) -> Self {
         match size {
-            bmc_ipc::SizeType::Small => Self::Small,
-            bmc_ipc::SizeType::Medium => Self::Medium,
-            bmc_ipc::SizeType::Large => Self::Large,
-            bmc_ipc::SizeType::Full => Self::Full,
+            bmc_widget_protocol::SizeType::Small => Self::Small,
+            bmc_widget_protocol::SizeType::Medium => Self::Medium,
+            bmc_widget_protocol::SizeType::Large => Self::Large,
+            bmc_widget_protocol::SizeType::Full => Self::Full,
         }
     }
 }
 
-/// Connects to IPC and builds the widget configuration.
-pub async fn connect() -> Result<(WidgetClient, Config), Box<dyn std::error::Error + Send + Sync>> {
-    let (mut client, size, params, settings) = connect_widget::<Params>().await?;
+pub fn read_config() -> Result<(String, Config), IpcError> {
+    let instance_id = env::read_instance_id()?;
+    let size = env::read_size()?;
+    let params: Params = env::read_params()?;
+    let settings = env::read_settings()?;
 
     let mut config = Config {
         width: size.width,
@@ -46,44 +60,71 @@ pub async fn connect() -> Result<(WidgetClient, Config), Box<dyn std::error::Err
         config.date_format = loc.date_format;
     }
 
-    client.send_ready().await?;
-
-    Ok((client, config))
+    Ok((instance_id, config))
 }
 
-/// Runs the IPC message loop with the widget's state.
-pub async fn run(
-    client: WidgetClient,
+struct EventHandler {
     date_format: Arc<AtomicU8>,
     timezone: Arc<RwLock<String>>,
     is_24_format: Arc<AtomicBool>,
-) {
-    run_message_loop(
-        client,
-        move |update| {
-            handle_settings_update(update, &date_format, &timezone, &is_24_format);
-        },
-        || {
-            slint::quit_event_loop().ok();
-        },
-    )
-    .await;
+    shutdown_requested: Arc<AtomicBool>,
 }
 
-fn handle_settings_update(
-    update: SettingUpdate,
-    date_format: &Arc<AtomicU8>,
-    timezone: &Arc<RwLock<String>>,
-    is_24_format: &Arc<AtomicBool>,
-) {
-    match update {
-        SettingUpdate::Timezone(tz_str) => {
-            *timezone.write().expect("BUG: timezone lock poisoned") = tz_str;
-        }
-        SettingUpdate::NightMode(_) => {}
-        SettingUpdate::Localization(ref loc) => {
-            is_24_format.store(loc.time_format == TimeSystem::Hour24, Ordering::Relaxed);
-            date_format.store(loc.date_format as u8, Ordering::Relaxed);
+impl WidgetEventHandler for EventHandler {
+    fn on_setting(&mut self, update: SettingUpdate) {
+        match update {
+            SettingUpdate::Timezone(tz_str) => {
+                *self.timezone.write().expect("BUG: timezone lock poisoned") = tz_str;
+            }
+            SettingUpdate::NightMode(_) => {
+                // Clock widget doesn't use night mode
+            }
+            SettingUpdate::Localization(ref loc) => {
+                self.is_24_format
+                    .store(loc.time_format == TimeSystem::Hour24, Ordering::Relaxed);
+                self.date_format
+                    .store(loc.date_format as u8, Ordering::Relaxed);
+            }
         }
     }
+
+    fn on_shutdown(&mut self) {
+        self.shutdown_requested.store(true, Ordering::Relaxed);
+        slint::quit_event_loop().ok();
+    }
+}
+
+/// Sets up a separate Wayland connection for `deck_widget_v1` protocol events.
+/// Returns a timer that polls the connection - must be kept alive while widget runs.
+pub fn setup_wayland_events(
+    instance_id: &str,
+    date_format: Arc<AtomicU8>,
+    timezone: Arc<RwLock<String>>,
+    is_24_format: Arc<AtomicBool>,
+) -> Result<(Timer, Arc<AtomicBool>), IpcError> {
+    let mut protocol_client = WidgetProtocolClient::connect()?;
+    protocol_client.create_widget_surface(instance_id);
+    protocol_client.flush()?;
+
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+
+    let mut handler = EventHandler {
+        date_format,
+        timezone,
+        is_24_format,
+        shutdown_requested: Arc::clone(&shutdown_requested),
+    };
+
+    let timer = Timer::default();
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(50),
+        move || {
+            if protocol_client.poll_events().is_ok() {
+                protocol_client.process_events(&mut handler);
+            }
+        },
+    );
+
+    Ok((timer, shutdown_requested))
 }
