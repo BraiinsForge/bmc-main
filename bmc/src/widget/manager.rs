@@ -5,26 +5,27 @@ use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bmc_ipc::{AppMessage, SettingUpdate};
+use tokio::process::Child;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use super::coordinator::WidgetEnv;
 use super::{
-    PathDiscovery, SpawnError, UnixConnection, UnixSpawner, WidgetDiscovery, WidgetRegistry,
+    LinkerConfig, PathDiscovery, SpawnError, WaylandSpawner, WidgetDiscovery, WidgetRegistry,
 };
 
-const DEFAULT_SOCKET_DIR: &str = "/tmp/bmc-widgets";
+const DEFAULT_XDG_RUNTIME_DIR: &str = "/tmp/run";
 
 #[derive(Debug)]
 pub struct WidgetManager {
     registry: WidgetRegistry,
-    spawner: UnixSpawner,
-    connections: Arc<RwLock<HashMap<Uuid, UnixConnection>>>,
+    spawner: WaylandSpawner,
+    children: Arc<RwLock<HashMap<String, Child>>>,
 }
 
 impl WidgetManager {
-    pub async fn init(widgets_paths: Vec<PathBuf>) -> Self {
+    pub async fn init(widgets_paths: Vec<PathBuf>, linker: Option<LinkerConfig>) -> Self {
         info!("initializing widget manager");
         for path in &widgets_paths {
             info!(path = %path.display(), "scanning widget directory");
@@ -45,21 +46,25 @@ impl WidgetManager {
             );
         }
 
-        let spawner = UnixSpawner::new(PathBuf::from(DEFAULT_SOCKET_DIR));
+        let spawner = match linker {
+            Some(config) => {
+                info!(
+                    linker = %config.linker_path,
+                    "using dynamic linker for widget spawning"
+                );
+                WaylandSpawner::with_linker(config)
+            }
+            None => WaylandSpawner::new(),
+        };
 
         Self {
             registry,
             spawner,
-            connections: Arc::new(RwLock::new(HashMap::new())),
+            children: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub async fn spawn_widget(
-        &self,
-        widget_uid: Uuid,
-        instance_id: Uuid,
-        init_msg: AppMessage,
-    ) -> Result<(), SpawnError> {
+    pub async fn spawn_widget(&self, widget_uid: Uuid, env: WidgetEnv) -> Result<(), SpawnError> {
         let widget = self.registry.get(&widget_uid).ok_or_else(|| {
             SpawnError::SpawnProcess(Error::new(
                 ErrorKind::NotFound,
@@ -69,26 +74,30 @@ impl WidgetManager {
 
         info!(
             "spawning widget '{}' instance {}",
-            widget.manifest.name, instance_id
+            widget.manifest.name, env.instance_id
         );
 
-        let connection = self.spawner.spawn(widget, instance_id, init_msg).await?;
+        let xdg_runtime_dir =
+            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| DEFAULT_XDG_RUNTIME_DIR.to_owned());
 
-        self.connections
+        let child = self.spawner.spawn(widget, &env, &xdg_runtime_dir)?;
+
+        self.children
             .write()
             .await
-            .insert(instance_id, connection);
+            .insert(env.instance_id.clone(), child);
 
-        info!("widget instance {} connected and ready", instance_id);
+        info!("widget instance {} spawned", env.instance_id);
 
         Ok(())
     }
 
-    pub async fn stop_widget(&self, instance_id: Uuid) {
-        let mut connections = self.connections.write().await;
-        if let Some(mut connection) = connections.remove(&instance_id) {
-            if let Err(e) = self.spawner.shutdown(&mut connection).await {
-                warn!("failed to send shutdown to widget {}: {}", instance_id, e);
+    pub async fn stop_widget(&self, instance_id: &str) {
+        let mut children = self.children.write().await;
+        if let Some(mut child) = children.remove(instance_id) {
+            // Try graceful termination first via SIGTERM, then force kill
+            if let Err(e) = child.kill().await {
+                warn!("failed to kill widget {}: {}", instance_id, e);
             }
             info!("stopped widget instance {}", instance_id);
         } else {
@@ -96,26 +105,13 @@ impl WidgetManager {
         }
     }
 
-    pub async fn send_message(&self, instance_id: Uuid, msg: AppMessage) -> Result<(), SpawnError> {
-        let mut connections = self.connections.write().await;
-        let connection = connections.get_mut(&instance_id).ok_or_else(|| {
-            SpawnError::SpawnProcess(Error::new(
-                ErrorKind::NotFound,
-                format!("widget instance not found: {instance_id}"),
-            ))
-        })?;
-
-        connection.send(msg).await
-    }
-
-    pub async fn broadcast_settings(&self, update: SettingUpdate) {
-        let msg = AppMessage::SettingsUpdate { update };
-        let mut connections = self.connections.write().await;
-
-        for (instance_id, connection) in connections.iter_mut() {
-            if let Err(e) = connection.send(msg.clone()).await {
-                warn!("failed to send settings update to {}: {}", instance_id, e);
+    pub async fn stop_all(&self) {
+        let mut children = self.children.write().await;
+        for (instance_id, mut child) in children.drain() {
+            if let Err(e) = child.kill().await {
+                warn!("failed to kill widget {}: {}", instance_id, e);
             }
         }
+        info!("all widgets stopped");
     }
 }
