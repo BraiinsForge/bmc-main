@@ -10,17 +10,16 @@ slint-embed-files = []
 standalone = ["slint/backend-winit", "slint/renderer-winit-software"]
 
 [dependencies]
-bmc-ipc.workspace = true
 bmc-shared-slint.workspace = true
 bmc-shared-time.workspace = true
 bmc-widget.workspace = true
+bmc-widget-protocol.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 slint.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+thiserror.workspace = true
 tracing.workspace = true
 
 [build-dependencies]

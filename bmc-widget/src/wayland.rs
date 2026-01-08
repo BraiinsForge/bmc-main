@@ -12,6 +12,7 @@
 //! BMC-specific protocol alongside Slint's rendering.
 
 use bmc_widget_protocol::{
+    ActionPayload, SettingUpdate,
     client::{
         deck_widget_manager_v1::DeckWidgetManagerV1,
         deck_widget_surface_v1::{ActionType, DeckWidgetSurfaceV1},
@@ -21,7 +22,6 @@ use bmc_widget_protocol::{
         globals::{GlobalListContents, registry_queue_init},
         protocol::{wl_compositor::WlCompositor, wl_registry::WlRegistry, wl_surface::WlSurface},
     },
-    ActionPayload, SettingUpdate,
 };
 use std::os::fd::AsFd;
 
@@ -68,7 +68,8 @@ pub struct WidgetProtocolClient {
 
 impl std::fmt::Debug for WidgetProtocolClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WidgetProtocolClient").finish_non_exhaustive()
+        f.debug_struct("WidgetProtocolClient")
+            .finish_non_exhaustive()
     }
 }
 
@@ -128,6 +129,30 @@ impl WidgetProtocolClient {
     pub fn dispatch_pending(&mut self) -> Result<(), WaylandError> {
         self.event_queue.dispatch_pending(&mut self.state)?;
         Ok(())
+    }
+
+    /// Read events from the socket and dispatch them (non-blocking).
+    ///
+    /// This combines prepare_read + read_events + dispatch_pending for use in a polling loop.
+    /// Returns Ok(true) if events were dispatched, Ok(false) if nothing was read.
+    pub fn poll_events(&mut self) -> Result<bool, WaylandError> {
+        // Try to prepare a read guard
+        if let Some(guard) = self.event_queue.prepare_read() {
+            // Try to read events (non-blocking via WouldBlock handling)
+            match guard.read() {
+                Ok(_) => {}
+                Err(bmc_widget_protocol::wayland_client::backend::WaylandError::Io(e))
+                    if e.kind() == std::io::ErrorKind::WouldBlock =>
+                {
+                    return Ok(false);
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        // Dispatch any pending events
+        self.event_queue.dispatch_pending(&mut self.state)?;
+        Ok(true)
     }
 
     /// Flush outgoing requests to the compositor.
@@ -193,11 +218,7 @@ impl WidgetProtocolClient {
             .compositor
             .as_ref()
             .expect("BUG: compositor not bound");
-        let manager = self
-            .state
-            .manager
-            .as_ref()
-            .expect("BUG: manager not bound");
+        let manager = self.state.manager.as_ref().expect("BUG: manager not bound");
         let qh = self.event_queue.handle();
 
         // Create a wl_surface on this connection (not used for rendering)
