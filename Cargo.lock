@@ -1183,18 +1183,17 @@ name = "bmc-widget-digital-clock"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bmc-ipc",
  "bmc-shared-slint",
  "bmc-shared-time",
  "bmc-widget",
+ "bmc-widget-protocol",
  "chrono",
  "chrono-tz",
  "clap",
  "serde",
- "serde_json",
  "slint",
  "slint-build",
- "tokio",
+ "thiserror 2.0.12",
  "tracing",
 ]
 
