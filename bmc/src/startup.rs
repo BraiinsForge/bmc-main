@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicBool;
 use crate::alarm::{AlarmBus, AlarmController};
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
+use crate::compositor::Compositor;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
@@ -60,7 +61,6 @@ where
     T: BmcManager,
     V: FirmwareIndex,
 {
-    #[expect(clippy::too_many_lines)]
     pub async fn init<U: DisplayBacklightDriver>(
         config: Configuration,
         manager: Arc<T>,
@@ -69,6 +69,7 @@ where
         led_driver: LedDriver,
         firmware_resolver: FirmwareResolver<V>,
         buttons: Arc<Box<dyn Buttons + Send + Sync>>,
+        compositor: Arc<dyn Compositor>,
     ) -> Result<Self> {
         let listener = TcpListener::bind(config.address).await?;
 
@@ -186,8 +187,9 @@ where
 
         let button_manager = ButtonManager::new(buttons, manager.clone());
 
-        let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
-        let widget_coordinator = Coordinator::new(widget_manager);
+        let widget_manager =
+            WidgetManager::init(config.widgets_paths.clone(), config.widget_linker.clone()).await;
+        let widget_coordinator = Coordinator::new(widget_manager, compositor);
 
         let timezone = manager.timezone();
         {
@@ -279,6 +281,7 @@ pub struct Configuration {
     pub sounds_dir: PathBuf,
     pub crontab_path: Option<PathBuf>,
     pub widgets_paths: Vec<PathBuf>,
+    pub widget_linker: Option<crate::widget::LinkerConfig>,
 }
 
 impl Configuration {
@@ -306,6 +309,7 @@ impl Default for Configuration {
             sounds_dir: PathBuf::from(Self::SOUNDS_DIR),
             crontab_path: Some(Self::CRONTAB_PATH.into()),
             widgets_paths: vec![],
+            widget_linker: None,
         }
     }
 }

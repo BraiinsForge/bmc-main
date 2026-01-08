@@ -7,6 +7,7 @@ use bmc_widget_protocol::server::{
     deck_widget_manager_v1::{self, DeckWidgetManagerV1},
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
+use bmc_widget_protocol::wayland_server::Resource;
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
 };
@@ -54,37 +55,48 @@ where
 {
     fn request(
         state: &mut D,
-        _client: &Client,
+        client: &Client,
         _resource: &DeckWidgetManagerV1,
         request: deck_widget_manager_v1::Request,
         _data: &WidgetManagerUserData,
-        _dhandle: &DisplayHandle,
+        dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
-        match request {
-            deck_widget_manager_v1::Request::Destroy => {}
-            deck_widget_manager_v1::Request::GetWidgetSurface {
-                id,
-                surface,
+        if let deck_widget_manager_v1::Request::GetWidgetSurface {
+            id,
+            surface,
+            instance_id,
+        } = request
+        {
+            // Get client PID for matching render surfaces from Slint connection
+            #[expect(clippy::cast_sign_loss, reason = "PID is always positive")]
+            let pid = client
+                .get_credentials(dhandle)
+                .ok()
+                .map(|creds| creds.pid as u32);
+
+            tracing::info!(
+                "GetWidgetSurface: instance={} surface={:?} pid={:?}",
                 instance_id,
-            } => {
-                let protocol_state = state.deck_widget_state();
-                protocol_state.register_widget(instance_id.clone(), Some(surface));
+                surface.id(),
+                pid
+            );
 
-                let widget_surface = data_init.init(
-                    id,
-                    WidgetSurfaceUserData {
-                        instance_id: instance_id.clone(),
-                    },
-                );
+            let protocol_state = state.deck_widget_state();
+            protocol_state.register_widget(instance_id.clone(), Some(surface.clone()), pid);
 
-                if let Some(widget_data) = protocol_state.get_widget_mut(&instance_id) {
-                    widget_data.protocol_surface = Some(widget_surface);
-                }
+            let widget_surface = data_init.init(
+                id,
+                WidgetSurfaceUserData {
+                    instance_id: instance_id.clone(),
+                },
+            );
 
-                tracing::info!("Widget surface created for instance: {}", instance_id);
+            if let Some(widget_data) = protocol_state.get_widget_mut(&instance_id) {
+                widget_data.protocol_surface = Some(widget_surface);
             }
-            _ => {}
+
+            tracing::info!("Widget surface created for instance: {}", instance_id);
         }
     }
 }
@@ -106,9 +118,15 @@ where
             deck_widget_surface_v1::Request::Destroy => {
                 let protocol_state = state.deck_widget_state();
                 protocol_state.unregister_widget(&data.instance_id);
-                tracing::info!("Widget surface destroyed for instance: {}", data.instance_id);
+                tracing::info!(
+                    "Widget surface destroyed for instance: {}",
+                    data.instance_id
+                );
             }
-            deck_widget_surface_v1::Request::RequestAction { action_type, payload } => {
+            deck_widget_surface_v1::Request::RequestAction {
+                action_type,
+                payload,
+            } => {
                 let action_type_u32: u32 = action_type.into();
                 if let Some(action_payload) = action_from_protocol(action_type_u32, &payload) {
                     let protocol_state = state.deck_widget_state();

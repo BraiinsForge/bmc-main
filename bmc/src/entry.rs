@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::backlight::DisplayBacklightDriver;
+use crate::compositor::Compositor;
 use crate::{App, BmcManager, Configuration};
 use anyhow::Result;
 use bmc_led::led_driver::LedDriver;
@@ -15,6 +16,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
     led_driver: LedDriver,
     firmware_resolver: FirmwareResolver<U>,
     buttons: Arc<Box<dyn bmc_button::Buttons + Send + Sync>>,
+    compositor: Arc<dyn Compositor>,
 ) -> Result<()> {
     let manager = Arc::new(manager);
     let session_manager = manager.session_manager();
@@ -27,6 +29,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
         led_driver,
         firmware_resolver,
         buttons,
+        compositor,
     )
     .await?;
     app.run().await

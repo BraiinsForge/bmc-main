@@ -8,8 +8,8 @@ mod manager;
 mod registry;
 mod spawner;
 
-pub use coordinator::Coordinator;
+pub use coordinator::{Coordinator, WidgetEnv};
 pub use discovery::{PathDiscovery, WidgetDiscovery};
 pub use manager::WidgetManager;
 pub use registry::{RegistryError, WidgetInfo, WidgetRegistry};
-pub use spawner::{SpawnError, UnixConnection, UnixSpawner};
+pub use spawner::{LinkerConfig, SpawnError, WaylandSpawner};

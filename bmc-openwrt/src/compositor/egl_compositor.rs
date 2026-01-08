@@ -18,7 +18,14 @@ use smithay::reexports::{
     drm::control::{Device as DrmControlDevice, Event as DrmEvent},
     wayland_server::{Display, ListeningSocket},
 };
-use std::{os::fd::AsFd, path::Path, sync::{Arc, Mutex}, thread, thread::JoinHandle, time::Duration};
+use std::{
+    os::fd::AsFd,
+    path::Path,
+    sync::{Arc, Mutex},
+    thread,
+    thread::JoinHandle,
+    time::Duration,
+};
 use tokio::sync::mpsc;
 
 const DEFAULT_GPU_PATH: &str = "/dev/dri/renderD128";
@@ -64,13 +71,14 @@ impl EglCompositor {
         }
     }
 
+    #[expect(clippy::too_many_lines)]
     fn run_compositor_loop(
-        gpu_path: String,
-        display_path: String,
+        gpu_path: &str,
+        display_path: &str,
         command_rx: flume::Receiver<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: mpsc::UnboundedSender<CompositorEvent>,
-        ready_tx: flume::Sender<Result<String, String>>,
+        ready_tx: &flume::Sender<Result<String, String>>,
     ) {
         tracing::info!("Compositor thread starting...");
 
@@ -88,8 +96,14 @@ impl EglCompositor {
             };
         }
 
-        let egl = try_init!(EglContext::new(Path::new(&gpu_path)), "Failed to initialize EGL context");
-        let output = try_init!(DrmOutput::new(Path::new(&display_path)), "Failed to initialize DRM output");
+        let egl = try_init!(
+            EglContext::new(Path::new(&gpu_path)),
+            "Failed to initialize EGL context"
+        );
+        let output = try_init!(
+            DrmOutput::new(Path::new(&display_path)),
+            "Failed to initialize DRM output"
+        );
 
         let scene_renderer = SceneRenderer::new(egl, output);
         let (logical_width, logical_height) = scene_renderer.logical_size();
@@ -99,20 +113,23 @@ impl EglCompositor {
             logical_height
         );
 
-        let mut event_loop: EventLoop<'_, AppState> = try_init!(EventLoop::try_new(), "Failed to create event loop");
-        let mut display: Display<CompositorState> = try_init!(Display::new(), "Failed to create Wayland display");
+        let mut event_loop: EventLoop<'_, AppState> =
+            try_init!(EventLoop::try_new(), "Failed to create event loop");
+        let mut display: Display<CompositorState> =
+            try_init!(Display::new(), "Failed to create Wayland display");
         let compositor_state = CompositorState::new(&display, logical_width, logical_height);
-        let listening_socket = try_init!(ListeningSocket::bind_auto("wayland", 0..33), "Failed to create Wayland socket");
+        let listening_socket = try_init!(
+            ListeningSocket::bind_auto("wayland", 0..33),
+            "Failed to create Wayland socket"
+        );
 
-        let socket_name = match listening_socket.socket_name() {
-            Some(name) => name.to_string_lossy().to_string(),
-            None => {
-                let err = "Failed to get socket name".to_string();
-                tracing::error!("{}", err);
-                let _ = ready_tx.send(Err(err));
-                return;
-            }
+        let Some(socket_name_os) = listening_socket.socket_name() else {
+            let err = "Failed to get socket name".to_owned();
+            tracing::error!("{}", err);
+            let _ = ready_tx.send(Err(err));
+            return;
         };
+        let socket_name = socket_name_os.to_string_lossy().to_string();
 
         tracing::info!("Wayland socket created: {}", socket_name);
 
@@ -128,7 +145,7 @@ impl EglCompositor {
                 )
                 .is_err()
             {
-                let err = "Failed to add display fd to event loop".to_string();
+                let err = "Failed to add display fd to event loop".to_owned();
                 tracing::error!("{}", err);
                 let _ = ready_tx.send(Err(err));
                 return;
@@ -271,10 +288,24 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         }
         CompositorCommand::UnregisterWidget { instance_id } => {
             tracing::debug!("Unregistering widget {}", instance_id);
-            state.compositor.deck_widget_state.unregister_widget(&instance_id);
+            state
+                .compositor
+                .deck_widget_state
+                .unregister_widget(&instance_id);
         }
         CompositorCommand::SetActiveScene { layout } => {
-            tracing::debug!("Setting active scene with {} widgets", layout.widgets.len());
+            tracing::info!("Setting active scene with {} widgets", layout.widgets.len());
+            for w in &layout.widgets {
+                tracing::info!(
+                    "  Scene widget: {} at ({}, {}) size {}x{} visible={}",
+                    w.instance_id,
+                    w.position.x,
+                    w.position.y,
+                    w.size.width,
+                    w.size.height,
+                    w.visible
+                );
+            }
             state.compositor.widgets.set_active_scene(layout);
         }
         CompositorCommand::BroadcastSetting { setting } => {
@@ -325,7 +356,10 @@ impl Default for EglCompositor {
 impl Compositor for EglCompositor {
     fn start(&self) -> Result<String, CompositorError> {
         {
-            let display = self.wayland_display.lock().expect("BUG: wayland_display lock poisoned");
+            let display = self
+                .wayland_display
+                .lock()
+                .expect("BUG: wayland_display lock poisoned");
             if display.is_some() {
                 return Err(CompositorError::AlreadyStarted);
             }
@@ -343,12 +377,12 @@ impl Compositor for EglCompositor {
             .name("egl-compositor".to_owned())
             .spawn(move || {
                 Self::run_compositor_loop(
-                    gpu_path,
-                    display_path,
+                    &gpu_path,
+                    &display_path,
                     command_rx,
                     action_tx,
                     event_tx,
-                    ready_tx,
+                    &ready_tx,
                 );
             })
             .map_err(|e| CompositorError::ThreadError(e.to_string()))?;
@@ -363,11 +397,16 @@ impl Compositor for EglCompositor {
 
         let socket_name = ready_rx
             .recv_timeout(Duration::from_secs(10))
-            .map_err(|_| CompositorError::ThreadError("Timeout waiting for compositor to start".to_owned()))?
+            .map_err(|_| {
+                CompositorError::ThreadError("Timeout waiting for compositor to start".to_owned())
+            })?
             .map_err(CompositorError::ThreadError)?;
 
         {
-            let mut display = self.wayland_display.lock().expect("BUG: wayland_display lock poisoned");
+            let mut display = self
+                .wayland_display
+                .lock()
+                .expect("BUG: wayland_display lock poisoned");
             *display = Some(socket_name.clone());
         }
 
@@ -375,7 +414,10 @@ impl Compositor for EglCompositor {
     }
 
     fn wayland_display(&self) -> Option<String> {
-        let display = self.wayland_display.lock().expect("BUG: wayland_display lock poisoned");
+        let display = self
+            .wayland_display
+            .lock()
+            .expect("BUG: wayland_display lock poisoned");
         display.clone()
     }
 

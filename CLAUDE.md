@@ -206,6 +206,19 @@ Workspace-level lints are defined in `Cargo.toml`:
 - Uses `rustfmt` for formatting (config in `rustfmt.toml`)
 - Rust toolchain version specified in `rust-toolchain.toml`
 
+**Module System**: This project uses Rust 2018 module style. Instead of `folder/mod.rs`, use a file named after the
+folder at the same level:
+
+```
+src/
+├── compositor.rs      # Module file for compositor/ (NOT compositor/mod.rs)
+├── compositor/
+│   ├── state.rs
+│   ├── render.rs
+│   └── protocol.rs
+└── main.rs
+```
+
 Format code using Nix formatter (formats Rust, Nix, Python, Shell, Protobuf, TOML, YAML):
 
 ```bash

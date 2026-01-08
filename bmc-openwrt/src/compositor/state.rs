@@ -38,8 +38,9 @@ use smithay::{
     },
 };
 
+#[expect(clippy::struct_field_names)]
 pub struct CompositorState {
-    _display_handle: DisplayHandle,
+    display_handle: DisplayHandle,
     pub compositor_state: SmithayCompositorState,
     pub shm_state: ShmState,
     pub dmabuf_state: DmabufState,
@@ -89,7 +90,7 @@ impl CompositorState {
         super::protocol::create_global::<Self>(&display_handle);
 
         Self {
-            _display_handle: display_handle,
+            display_handle,
             compositor_state,
             shm_state,
             dmabuf_state,
@@ -138,7 +139,33 @@ impl CompositorHandler for CompositorState {
             self.surfaces.push(surface.clone());
         }
 
-        let instance_id = self.deck_widget_state.instance_id_for_surface(surface).cloned();
+        // First try to match by surface directly (for protocol surface)
+        let mut instance_id = self
+            .deck_widget_state
+            .instance_id_for_surface(surface)
+            .cloned();
+
+        // If not found, try to match by PID (for Slint render surfaces)
+        if instance_id.is_none() {
+            // Get PID from surface's client
+            if let Some(client) = surface.client() {
+                if let Ok(creds) = client.get_credentials(&self.display_handle) {
+                    #[expect(clippy::cast_sign_loss, reason = "PID is always positive")]
+                    let pid = creds.pid as u32;
+                    instance_id = self
+                        .deck_widget_state
+                        .instance_id_for_surface_by_pid(Some(pid))
+                        .cloned();
+                    if instance_id.is_some() {
+                        tracing::debug!(
+                            "Matched surface {:?} to widget by PID {}",
+                            surface.id(),
+                            pid
+                        );
+                    }
+                }
+            }
+        }
 
         with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
@@ -148,16 +175,22 @@ impl CompositorHandler for CompositorState {
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
                         if let Some(ref id) = instance_id {
-                            self.widget_buffers.retain(|(_, existing_id)| existing_id != id);
+                            self.widget_buffers
+                                .retain(|(_, existing_id)| existing_id != id);
                             self.widget_buffers.push((buffer.clone(), id.clone()));
-                            tracing::debug!("Buffer attached for widget {}", id);
+                            tracing::debug!(
+                                "Buffer attached for widget {} (total buffers: {})",
+                                id,
+                                self.widget_buffers.len()
+                            );
                         } else {
-                            tracing::debug!("Buffer attached to unknown surface");
+                            tracing::debug!("Buffer attached to unknown surface (no instance_id)");
                         }
                     }
                     BufferAssignment::Removed => {
                         if let Some(ref id) = instance_id {
-                            self.widget_buffers.retain(|(_, existing_id)| existing_id != id);
+                            self.widget_buffers
+                                .retain(|(_, existing_id)| existing_id != id);
                             tracing::debug!("Buffer removed for widget {}", id);
                         }
                     }
