@@ -109,6 +109,7 @@ impl From<Config> for Configuration {
             sounds_dir: value.sounds_dir,
             crontab_path: value.crontab_path,
             widgets_paths: vec![value.widgets_path],
+            widget_linker: None,
         }
     }
 }

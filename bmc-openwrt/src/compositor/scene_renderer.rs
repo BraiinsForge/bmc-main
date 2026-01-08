@@ -24,6 +24,14 @@ pub struct SceneRenderer {
 impl SceneRenderer {
     pub fn new(egl: EglContext, output: DrmOutput) -> Self {
         let (width, height) = (output.width(), output.height());
+        let (logical_w, logical_h) = output.logical_size();
+        tracing::info!(
+            "SceneRenderer: physical {}x{}, logical {}x{}",
+            width,
+            height,
+            logical_w,
+            logical_h
+        );
         Self {
             egl,
             output,
@@ -43,7 +51,11 @@ impl SceneRenderer {
         self.output.logical_size()
     }
 
-    pub fn render_scene(&mut self, widgets: &WidgetTracker, buffers: &[(WlBuffer, bmc::compositor::InstanceId)]) -> Result<()> {
+    pub fn render_scene(
+        &mut self,
+        widgets: &WidgetTracker,
+        buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
+    ) -> Result<()> {
         if self.output.is_flip_pending() {
             return Ok(());
         }
@@ -59,7 +71,10 @@ impl SceneRenderer {
         let imported: Vec<_> = buffers
             .iter()
             .filter_map(|(client_buffer, instance_id)| {
-                let placement = scene.widgets.iter().find(|w| &w.instance_id == instance_id && w.visible)?;
+                let placement = scene
+                    .widgets
+                    .iter()
+                    .find(|w| &w.instance_id == instance_id && w.visible)?;
 
                 let texture = if let Ok(dmabuf) = get_dmabuf(client_buffer) {
                     renderer.import_dmabuf(dmabuf, None).ok()
@@ -76,7 +91,9 @@ impl SceneRenderer {
             })
             .collect();
 
-        let mut framebuffer = renderer.bind(&mut dmabuf).context("Failed to bind render target")?;
+        let mut framebuffer = renderer
+            .bind(&mut dmabuf)
+            .context("Failed to bind render target")?;
 
         #[expect(clippy::cast_possible_wrap)]
         let output_size = Size::from((self.output.width() as i32, self.output.height() as i32));
@@ -97,25 +114,39 @@ impl SceneRenderer {
             );
 
             #[expect(clippy::cast_possible_wrap)]
-            let dst = Rectangle::from_loc_and_size(
-                (placement.position.y as i32, placement.position.x as i32),
-                (tex_size.h, tex_size.w),
-            );
+            let logical_x = placement.position.x as i32;
+            #[expect(clippy::cast_possible_wrap)]
+            let logical_y = placement.position.y as i32;
 
-            tracing::debug!(
-                "Rendering widget {} at ({}, {}) size {}x{}",
-                placement.instance_id,
-                placement.position.x,
-                placement.position.y,
-                placement.size.width,
-                placement.size.height
-            );
+            // Physical buffer: 480x1280 (WxH) - portrait orientation
+            // Logical space: 1280x480 (WxH) - landscape after rotation
+            // Widget texture is logical (e.g., 638x480)
+            // After Transform::_270, dst size is (tex_h, tex_w)
+            let phys_w = tex_size.h; // 480 (logical height -> physical width)
+            let phys_h = tex_size.w; // 638 (logical width -> physical height)
 
+            // Coordinate mapping for 90° CW rotation (Transform::_270):
+            // - Physical Y=0 corresponds to RIGHT side of landscape display
+            // - Physical Y=max corresponds to LEFT side of landscape display
+            // So we invert: logical_x=0 (left) -> high physical_y, logical_x=max (right) -> low physical_y
+            #[expect(clippy::cast_possible_wrap)]
+            let output_height = self.output.height() as i32;
+            let physical_x = logical_y;
+            let physical_y = output_height - logical_x - phys_h;
+
+            let dst = Rectangle::from_loc_and_size((physical_x, physical_y), (phys_w, phys_h));
+
+            // Use full output as damage region to avoid per-widget scissoring issues
+            #[expect(clippy::cast_possible_wrap)]
+            let full_damage = Rectangle::from_size(Size::from((
+                self.output.width() as i32,
+                self.output.height() as i32,
+            )));
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
                 dst,
-                &[dst],
+                &[full_damage],
                 &[],
                 Transform::_270,
                 1.0,
