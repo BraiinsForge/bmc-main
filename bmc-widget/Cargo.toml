@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 bmc-ipc = { workspace = true }
+bmc-widget-protocol = { workspace = true }
 futures = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
