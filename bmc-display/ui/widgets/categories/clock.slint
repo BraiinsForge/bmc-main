@@ -514,14 +514,27 @@ export component WidgetClockDigital inherits Rectangle {
     if size != WidgetSize.Full: GridLayout {
         padding-top: size == WidgetSize.Large ? 90px : size == WidgetSize.Medium ? 20px : 31px;
         padding-bottom: size == WidgetSize.Large ? 90px : size == WidgetSize.Medium ? 20px : 31px;
+
         Row {
-            Text {
-                visible: config.show-timezone;
-                text: root.datetime.timezone;
-                font-size: size == WidgetSize.Large ? 32px : 24px;
-                font-weight: Theme.font.weight.regular;
-                color: Palette.gray-60;
-                horizontal-alignment: center;
+            HorizontalLayout {
+                alignment: center;
+                spacing: size == WidgetSize.Large ? 16px : 8px;
+
+                Text {
+                    visible: config.show-date;
+                    text: root.datetime.weekday + " " + root.datetime.day;
+                    font-size: size == WidgetSize.Large ? 32px : 24px;
+                    font-weight: Theme.font.weight.regular;
+                    color: Palette.gray-60;
+                }
+
+                Text {
+                    visible: config.show-timezone;
+                    text: root.datetime.timezone;
+                    font-size: size == WidgetSize.Large ? 32px : 24px;
+                    font-weight: Theme.font.weight.regular;
+                    color: Palette.gray-60;
+                }
             }
         }
 
@@ -537,7 +550,7 @@ export component WidgetClockDigital inherits Rectangle {
 
         Row {
             Text {
-                visible: !root.datetime.is_24_format;
+                visible: !root.datetime.is-24-format;
                 text: root.datetime.is_pm ? "PM" : "AM";
                 font-size: size == WidgetSize.Large ? 32px : 24px;
                 font-weight: Theme.font.weight.regular;
