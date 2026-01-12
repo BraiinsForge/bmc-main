@@ -26,6 +26,9 @@ use tokio::task;
 use tracing::{debug, error, info, warn};
 
 const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(300);
+const AUTOUPGRADE_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(30);
+const AUTOUPGRADE_RETRY_MAX_ATTEMPTS: u32 = 5;
+const AUTOUPGRADE_RETRY_DELAY_COEFF: u32 = 2;
 
 pub static CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
@@ -347,12 +350,53 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         tokio::task::spawn(async move {
             loop {
                 notifier.notified().await;
-                let _ = self_clone.autoupgrade_trigger().await;
+                match self_clone.autoupgrade_trigger().await {
+                    Ok(()) => {}
+                    Err(err) if err.is_retriable() => {
+                        warn!(error = %err, "Auto-upgrade failed with retriable error, starting backoff retries");
+                        Self::retry_autoupgrade_with_backoff(&self_clone).await;
+                    }
+                    Err(err) => {
+                        error!(error = %err, "Auto-upgrade failed with non-retriable error");
+                    }
+                }
             }
         });
     }
 
-    async fn autoupgrade_trigger(&self) -> anyhow::Result<()> {
+    async fn retry_autoupgrade_with_backoff(service: &Self) {
+        let mut delay = AUTOUPGRADE_RETRY_INITIAL_DELAY;
+
+        for attempt in 1..=AUTOUPGRADE_RETRY_MAX_ATTEMPTS {
+            info!(
+                attempt,
+                delay_secs = delay.as_secs(),
+                "Scheduling auto-upgrade retry"
+            );
+
+            tokio::time::sleep(delay).await;
+
+            match service.autoupgrade_trigger().await {
+                Ok(()) => {
+                    info!(attempt, "Auto-upgrade retry succeeded");
+                    return;
+                }
+                Err(err) if err.is_retriable() => {
+                    warn!(attempt, error = %err, "Auto-upgrade retry failed, will retry");
+                }
+                Err(err) => {
+                    error!(attempt, error = %err, "Auto-upgrade retry failed with non-retriable error, stopping retries");
+                    return;
+                }
+            }
+
+            delay *= AUTOUPGRADE_RETRY_DELAY_COEFF;
+        }
+
+        warn!("Auto-upgrade retries exhausted, will wait for next scheduled trigger");
+    }
+
+    async fn autoupgrade_trigger(&self) -> Result<(), SystemUpgradeError> {
         debug!("Auto-upgrade triggered");
         if let Some(upgrade) = self.check_for_upgrade().await? {
             info!(hash = %upgrade.latest_release.hash, "Upgrade available");
@@ -360,11 +404,11 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
             if let Some(upgrade_hash) = Self::wait_for_download(download_stream).await {
                 info!(hash = %upgrade_hash, "Firmware download completed");
-                self.verify_and_upgrade(&upgrade.latest_release.hash)
-                    .await
-                    .map_err(|err| anyhow!(err))
+                self.verify_and_upgrade(&upgrade.latest_release.hash).await
             } else {
-                Err(anyhow!("Failed to download firmware"))
+                Err(SystemUpgradeError::FailedToDownload(
+                    "Failed to download firmware".to_owned(),
+                ))
             }
         } else {
             debug!("No upgrade available");
@@ -466,4 +510,16 @@ pub(crate) enum SystemUpgradeError {
     UnableToCheckForUpgrade(#[from] FirmwareDownloadError),
     #[error("Upgrade failed")]
     UpgradeFailed,
+}
+
+impl SystemUpgradeError {
+    fn is_retriable(&self) -> bool {
+        matches!(
+            self,
+            Self::UnableToCheckForUpgrade(
+                FirmwareDownloadError::IndexDownloadFailed
+                    | FirmwareDownloadError::FetchUpgradeDetails
+            )
+        )
+    }
 }
