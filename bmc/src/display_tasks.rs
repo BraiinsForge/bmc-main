@@ -38,6 +38,9 @@ const CHECK_IP_ATTEMPTS: u8 = 10;
 const CHECK_IP_WAIT_DURATION: Duration = Duration::from_secs(2);
 const DEFAULT_ALARM_LABEL: &str = "Alarm";
 const WIFI_RECONFIG_TIMEOUT: Duration = Duration::from_secs(8 * 60); // 8 minutes
+const REBOOT_SLEEP_DURATION: Duration = Duration::from_secs(10);
+const WIFI_INTERFACE_MAX_RETRY: usize = 15;
+const WIFI_INTERFACE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub(crate) struct DisplayTasks<T: BmcManager, U: DisplayBacklightDriver> {
@@ -189,6 +192,21 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         ));
     }
 
+    async fn display_setup_start(display_controller: &DisplayController, manager: Arc<T>) {
+        let result = manager
+            .wait_for_wifi_ssid(WIFI_INTERFACE_MAX_RETRY, WIFI_INTERFACE_RETRY_DELAY)
+            .await;
+        if let Ok(ssid) = result {
+            display_controller.set_wifi_ssid(ssid);
+            display_controller.set_ap_qr_code();
+            display_controller.set_init_screen(Some(InitScreen::SetupStart));
+        } else {
+            display_controller.set_init_screen(Some(InitScreen::SetupGeneralError));
+            tokio::time::sleep(REBOOT_SLEEP_DURATION).await;
+            _ = manager.reboot().await;
+        }
+    }
+
     async fn run_date_time_update(
         display_controller: DisplayController,
         config_handle: Arc<RwLock<ConfigHandle>>,
@@ -315,10 +333,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                     InitSetupState::WifiConnectionFailed => {
                         display_controller.set_init_screen(Some(InitScreen::SetupWifiError));
                         tokio::time::sleep(SCREEN_DURATION).await;
-                        let ssid = manager.wifi_ssid();
-                        display_controller.set_wifi_ssid(ssid);
-                        display_controller.set_ap_qr_code();
-                        display_controller.set_init_screen(Some(InitScreen::SetupStart));
+                        Self::display_setup_start(&display_controller, manager.clone()).await;
                     }
                     InitSetupState::UnexpectedError => {
                         display_controller.set_init_screen(Some(InitScreen::SetupGeneralError));
@@ -355,10 +370,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
 
         match state {
             crate::manager::BmcState::FactoryDefault => {
-                let ssid = manager.wifi_ssid();
-                display_controller.set_wifi_ssid(ssid);
-                display_controller.set_ap_qr_code();
-                display_controller.set_init_screen(Some(InitScreen::SetupStart));
+                Self::display_setup_start(&display_controller, manager.clone()).await;
                 // NOTE: init_screen will be turned off in `run_initial_setup_listener`
 
                 // NOTE: Remove upgrade flag when device hasn't been set up yet
@@ -405,10 +417,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             }
             crate::manager::BmcState::WifiReconfiguration => {
                 // WiFi reconfiguration mode - show setup start screen (AP mode active)
-                let ssid = manager.wifi_ssid();
-                display_controller.set_wifi_ssid(ssid);
-                display_controller.set_ap_qr_code();
-                display_controller.set_init_screen(Some(InitScreen::SetupStart));
+                Self::display_setup_start(&display_controller, manager.clone()).await;
                 // NOTE: init_screen will be turned off in `run_initial_setup_listener`
             }
         }
@@ -708,10 +717,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         match manager.enter_wifi_reconfig().await {
             Ok(()) => {
                 info!("Entered WiFi reconfiguration mode");
-                let ssid = manager.wifi_ssid();
-                display_controller.set_wifi_ssid(ssid);
-                display_controller.set_ap_qr_code();
-                display_controller.set_init_screen(Some(InitScreen::SetupStart));
+                Self::display_setup_start(display_controller, manager.clone()).await;
 
                 // Spawn timeout task - hides init screen but keeps AP alive
                 let manager_clone = manager.clone();

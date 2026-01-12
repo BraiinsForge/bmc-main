@@ -1,10 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use anyhow::anyhow;
 use bmc_platform::{BmcPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
 use bmc_shared_time::time::Timezone;
 use bmc_support::SupportArchiveFormat;
+use std::time::Duration;
 use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr},
@@ -13,6 +15,7 @@ use std::{
 use strum::Display;
 use thiserror::Error;
 use tokio::sync::watch;
+use tracing::info;
 
 #[async_trait::async_trait]
 pub trait BmcManager: Sync + Send + 'static + Debug {
@@ -90,7 +93,28 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     async fn update_device_state(&self) -> anyhow::Result<()>;
 
-    fn wifi_ssid(&self) -> String;
+    async fn wait_for_wifi_ssid(
+        &self,
+        max_retry: usize,
+        retry_delay: Duration,
+    ) -> anyhow::Result<String> {
+        for _ in 1..=max_retry {
+            match self.wifi_ssid().await {
+                Ok(wifi_ssid) => return Ok(wifi_ssid),
+                Err(err) => {
+                    info!(
+                        "Wi-Fi interface not initialized yet: {err}, retrying in {} seconds",
+                        retry_delay.as_secs()
+                    );
+                    tokio::time::sleep(retry_delay).await;
+                }
+            }
+        }
+
+        Err(anyhow!("Timeout waiting for Wi-Fi SSID."))
+    }
+
+    async fn wifi_ssid(&self) -> anyhow::Result<String>;
 
     async fn init_wifi_ap(&self) -> Result<(), Self::Error>;
 

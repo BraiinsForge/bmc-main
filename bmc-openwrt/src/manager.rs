@@ -28,6 +28,7 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::Path,
 };
+use tokio::time::{Duration, error::Elapsed, sleep, timeout};
 use tokio::{fs, process::Command};
 use tracing::{debug, error, info};
 
@@ -58,6 +59,7 @@ impl Manager {
     const UCI_NET_LAN_GATEWAY: &str = "network.wifi_sta.gateway";
     const UCI_NET_LAN_DNS: &str = "network.wifi_sta.dns";
     const WIFI_EVENTS_CAPACITY: usize = 10;
+    const WIFI_INTERFACE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
     #[must_use]
     pub fn new(
@@ -140,7 +142,14 @@ impl Manager {
     }
 
     async fn configure_wifi_ap(&self) -> Result<(), InitialSetupError> {
-        let ssid = self.wifi_ssid();
+        let ssid = self
+            .wait_for_wifi_ssid(Self::WIFI_INTERFACE_TIMEOUT)
+            .await
+            .map_err(|_| {
+                InitialSetupError::UnexpectedFailure(
+                    "Timeout waiting for Wi-Fi interface".to_owned(),
+                )
+            })?;
         info!(ssid = %ssid, "Configuring WiFi AP for initial setup");
         let wifi_manager = self.wifi_manager.as_ref();
 
@@ -234,6 +243,10 @@ impl Manager {
         })?;
 
         Ok(())
+    }
+
+    fn make_wifi_ssid_for_mac(&self, mac_short_id: &str) -> String {
+        format!("{} {mac_short_id}", self.wifi_ap_ssid_base)
     }
 }
 
@@ -672,9 +685,17 @@ impl BmcManager for Manager {
         }
     }
 
-    fn wifi_ssid(&self) -> String {
-        let mac_id = Self::get_mac_short_id(&get_default_net_data(Self::DEFAULT_INTERFACE));
-        format!("{} {mac_id}", self.wifi_ap_ssid_base)
+    async fn wifi_ssid(&self) -> anyhow::Result<String> {
+        let iface = self.wifi_manager.get_wifi_device_name().await?;
+        let iface_data = get_default_net_data(&iface);
+
+        // NOTE: should be impossible, since get_wifi_device_name would return error if interface uninitialized.
+        if iface_data.mac.is_none() {
+            return Err(anyhow!("Wi-Fi interface is not initialized yet."));
+        }
+
+        let mac_id = Self::get_mac_short_id(&get_default_net_data(&iface));
+        Ok(self.make_wifi_ssid_for_mac(&mac_id))
     }
 
     async fn init_wifi_ap(&self) -> Result<(), Self::Error> {

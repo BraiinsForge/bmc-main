@@ -334,8 +334,8 @@ impl bmc::BmcManager for Manager {
         Ok(())
     }
 
-    fn wifi_ssid(&self) -> String {
-        Self::WIFI_SSID.to_owned()
+    async fn wifi_ssid(&self) -> anyhow::Result<String> {
+        Ok(Self::WIFI_SSID.to_owned())
     }
 
     async fn init_wifi_ap(&self) -> Result<(), Self::Error> {
