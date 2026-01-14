@@ -36,6 +36,7 @@ type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProp
 type FormStateBlockchainData = FormPropsToLocalState<Comp.FormWidgetBlockchainDataProps>;
 type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
 type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
+type FormStateHalvingCountdown = FormPropsToLocalState<Comp.FormWidgetHalvingCountdownProps>;
 type FormStateRemoteImage = FormPropsToLocalState<Comp.FormWidgetRemoteImageProps>;
 type FormStateRemoteWidget = FormPropsToLocalState<Comp.FormWidgetRemoteWidgetProps>;
 type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
@@ -59,6 +60,11 @@ type DialogStates = {
     };
     clock: {
         data: FormStateClock;
+        isEdit: boolean;
+        sceneID: string;
+    };
+    halvingCountdown: {
+        data: FormStateHalvingCountdown;
         isEdit: boolean;
         sceneID: string;
     };
@@ -93,6 +99,7 @@ function getInitialDialogStates(): DialogStates {
         blockchainData: getForm(),
         braiinsPool: getForm(),
         clock: getForm(),
+        halvingCountdown: getForm(),
         remoteImage: getForm(),
         remoteWidget: getForm(),
         ticker: getForm(),
@@ -252,7 +259,7 @@ class View extends Component<Props, State> {
     get #txt() {
         const { formatMessage } = this.props.intl;
         return {
-            title: formatMessage({ defaultMessage: 'Widgets' }),
+            title: formatMessage({ defaultMessage: 'Display Widgets' }),
             on: formatMessage({ defaultMessage: 'On' }),
             off: formatMessage({ defaultMessage: 'Off' }),
             cancel: formatMessage({ defaultMessage: 'Cancel' }),
@@ -299,6 +306,11 @@ class View extends Component<Props, State> {
             case 'remoteImage':
                 $openDialogKind = 'remoteImage';
                 $kind = { case: 'remoteImage', value: pb.create(pb.RemoteImageWidgetSchema) };
+                break;
+
+            case 'halvingCountdown':
+                $openDialogKind = 'halvingCountdown';
+                $kind = { case: 'halvingCountdown', value: pb.create(pb.HalvingCountdownWidgetSchema) };
                 break;
 
             case 'remoteWidget':
@@ -402,6 +414,13 @@ class View extends Component<Props, State> {
                     dialogStates.remoteImage.data = {
                         errors: null,
                         values: Comp.unpackRemoteImageWidgetKind(widgetKind, size),
+                    };
+                    break;
+
+                case 'halvingCountdown':
+                    dialogStates.halvingCountdown.data = {
+                        errors: null,
+                        values: Comp.unpackHalvingCountdownWidgetKind(widgetKind, size),
                     };
                     break;
 
@@ -583,6 +602,10 @@ class View extends Component<Props, State> {
                 widgetKind = Comp.createRemoteImageWidgetKind(dialogStates.remoteImage.data.values);
                 break;
 
+            case 'halvingCountdown':
+                widgetKind = Comp.createHalvingCountdownWidgetKind(dialogStates.halvingCountdown.data.values);
+                break;
+
             case 'remoteWidget':
                 widgetKind = Comp.createRemoteWidgetKind(dialogStates.remoteWidget.data.values);
                 break;
@@ -637,7 +660,16 @@ class View extends Component<Props, State> {
             openDialogKind,
             remoteWidgetUrl,
             recentRemoteWidgets,
-            dialogStates: { clock, ticker, blockHeight, blockchainData, braiinsPool, remoteImage, remoteWidget },
+            dialogStates: {
+                clock,
+                ticker,
+                blockHeight,
+                blockchainData,
+                braiinsPool,
+                halvingCountdown,
+                remoteImage,
+                remoteWidget,
+            },
             timezones,
             accounts,
         } = this.state;
@@ -709,6 +741,19 @@ class View extends Component<Props, State> {
                     error={
                         openDialogKind === 'blockchainData'
                             ? pb.renderFieldErrorsAsList(blockchainData.data?.errors?.global)
+                            : null
+                    }
+                    // No size selector for the fullscreen widgets we operate with here
+                    widgetSize={null}
+                />
+
+                <Comp.FormWidgetHalvingCountdown
+                    isOpen={openDialogKind === 'halvingCountdown'}
+                    isEdit={openDialogKind === 'halvingCountdown' && halvingCountdown.isEdit}
+                    onClose={cancel}
+                    error={
+                        openDialogKind === 'halvingCountdown'
+                            ? pb.renderFieldErrorsAsList(halvingCountdown.data?.errors?.global)
                             : null
                     }
                     // No size selector for the fullscreen widgets we operate with here
@@ -1042,6 +1087,25 @@ class View extends Component<Props, State> {
                         this.setState(
                             // Set state
                             { openDialogKind: 'remoteImage', dialogStates: ds },
+                            // ...and open the dialog
+                            () => this.#previewOpen(id),
+                        );
+
+                        break;
+                    }
+
+                    case 'halvingCountdown': {
+                        const ds = getInitialDialogStates();
+                        ds.halvingCountdown.sceneID = id;
+                        ds.halvingCountdown.isEdit = true;
+                        ds.halvingCountdown.data.values = Comp.unpackHalvingCountdownWidgetKind(
+                            widgetKind,
+                            pb.WidgetSize.FULL,
+                        );
+
+                        this.setState(
+                            // Set state
+                            { openDialogKind: 'halvingCountdown', dialogStates: ds },
                             // ...and open the dialog
                             () => this.#previewOpen(id),
                         );

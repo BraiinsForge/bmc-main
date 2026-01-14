@@ -601,6 +601,9 @@ export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.Widget
         case 'remoteWidget':
             return intl.formatMessage({ defaultMessage: 'Remote Widget' });
 
+        case 'halvingCountdown':
+            return intl.formatMessage({ defaultMessage: 'Halving Countdown' });
+
         default:
             assertUnreachable(kind);
     }
@@ -661,6 +664,9 @@ export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
 
         case 'remoteWidget':
             return val.value.description;
+
+        case 'halvingCountdown':
+            return intl.formatMessage({ defaultMessage: 'Countdown to the next Bitcoin halving' });
 
         default:
             assertUnreachable(val, 'fullscreen widget kind');

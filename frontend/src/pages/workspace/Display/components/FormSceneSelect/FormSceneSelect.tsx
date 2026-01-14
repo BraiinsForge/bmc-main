@@ -116,6 +116,15 @@ class View extends Component<Props, State> {
                     description={formatMessage({ defaultMessage: 'Display your own image.' })}
                     onSelection={onSelection}
                 />
+
+                <Cell
+                    kind="halvingCountdown"
+                    icon={<Icons.WidgetHalvingCountdown size={56} />}
+                    description={formatMessage({
+                        defaultMessage: 'Countdown to the next Bitcoin halving event.',
+                    })}
+                    onSelection={onSelection}
+                />
             </section>
         );
     }
@@ -159,7 +168,7 @@ class View extends Component<Props, State> {
                             <TextInput
                                 id={$('remote-widget-url')}
                                 labelText={formatMessage({ defaultMessage: 'Add New Widget with URL' })}
-                                placeholder={formatMessage({ defaultMessage: 'Enter URL here...' })}
+                                placeholder={new URL('...', URLS.external.widgetsDirectory).href}
                                 value={remoteWidgetUrl.value || ''}
                                 onChange={e => remoteWidgetUrl.onChange?.(e.target.value)}
                                 invalid={!!remoteWidgetUrl.error}

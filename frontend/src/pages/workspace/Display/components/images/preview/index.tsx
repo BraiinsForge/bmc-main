@@ -56,6 +56,9 @@ export function ScenePreview(props: ScenePreviewProps) {
         case 'blockchainData':
             return <Icons.WidgetBlockchainData size={40} />;
 
+        case 'halvingCountdown':
+            return <Icons.WidgetHalvingCountdown size={40} />;
+
         // case 'image':
         //     return (
         //         <img

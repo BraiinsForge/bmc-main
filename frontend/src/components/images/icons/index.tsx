@@ -16,3 +16,4 @@ export const WidgetPool = carbonizeSvgIcon(require('./Accounts/braiins-pool.svg'
 export const WidgetRemoteImage = carbonizeSvgIcon(require('./widget-image.svg'), 'WidgetRemoteImage');
 export const WidgetRemoteWidget = carbonizeSvgIcon(require('./widget-image.svg'), 'WidgetRemoteImage');
 export const WidgetTicker = carbonizeSvgIcon(require('./widget-ticker.svg'), 'WidgetTicker');
+export const WidgetHalvingCountdown = carbonizeSvgIcon(require('./bitcoin.svg'), 'WidgetHalvingCountdown');
