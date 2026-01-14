@@ -21,6 +21,12 @@ const FORMAT_24H: &str = "%H:%M";
 const FORMAT_12H: &str = "%I:%M %p";
 
 impl BlockheightData {
+    /// Returns the block height if available
+    #[must_use]
+    pub fn height(&self) -> Option<u32> {
+        self.height
+    }
+
     #[must_use]
     pub fn blockheight_as_shared(self, number_format: NumberFormat) -> slint::SharedString {
         self.height.map_or(NOT_AVAILABLE.into(), |height| {
