@@ -14,6 +14,7 @@ pub mod difficulty_data;
 pub mod display_controller;
 pub mod display_driver;
 pub mod graph_utils;
+pub mod halving_data;
 pub mod hashrate_data;
 mod indexmap_model;
 pub mod metadata;

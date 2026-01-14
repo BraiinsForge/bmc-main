@@ -1039,6 +1039,31 @@ impl DisplayController {
             adapter.set_is_wifi_offline(is_offline);
         });
     }
+
+    #[expect(clippy::too_many_arguments)]
+    pub fn update_halving_countdown(
+        &self,
+        scene_id: SceneId,
+        widget_id: WidgetId,
+        total_seconds: u64,
+        blocks_remaining: u32,
+    ) {
+        self.in_event_loop(move |main_window| {
+            let scenes_ref = main_window.get_scenes();
+            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
+
+            if let Some(scene) = scenes_ref.get(&scene_id) {
+                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
+
+                widgets_ref.modify(&widget_id, |widget| {
+                    widget.halving_countdown.total_seconds =
+                        i32::try_from(total_seconds).unwrap_or(i32::MAX);
+                    widget.halving_countdown.blocks_remaining =
+                        i32::try_from(blocks_remaining).unwrap_or(0);
+                });
+            }
+        });
+    }
 }
 
 #[allow(unused, clippy::allow_attributes)]
