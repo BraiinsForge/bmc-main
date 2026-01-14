@@ -1209,6 +1209,7 @@ async fn parse_widget_kind_with_default_params(
                 None => return (None, field_violations),
             }
         }
+        web::widget_kind::Value::HalvingCountdown(_) => WidgetKind::HalvingCountdown,
     };
 
     (Some(kind), field_violations)
@@ -1265,6 +1266,7 @@ fn parse_widget_kind(
         web::widget_kind::Value::RemoteWidget(remote_widget_proto) => {
             Some(map_proto_to_remote_widget_kind(remote_widget_proto))
         }
+        web::widget_kind::Value::HalvingCountdown(_) => Some(WidgetKind::HalvingCountdown),
     };
 
     (maybe_kind, all_field_violations)
@@ -1510,6 +1512,7 @@ fn map_widget_to_proto(widget: Widget) -> web::Widget {
         WidgetKind::RemoteImage(remote_image) => map_remote_image_to_proto(remote_image),
         WidgetKind::BlockchainData => map_blockchain_data_to_proto(),
         WidgetKind::RemoteWidget(remote_widget) => map_remote_widget_to_proto(remote_widget),
+        WidgetKind::HalvingCountdown => map_halving_countdown_to_proto(),
     };
 
     web::Widget {
@@ -1727,6 +1730,14 @@ fn map_blockchain_data_to_proto() -> web::WidgetKind {
     web::WidgetKind {
         value: Some(web::widget_kind::Value::BlockchainData(
             web::BlockchainDataWidget {},
+        )),
+    }
+}
+
+fn map_halving_countdown_to_proto() -> web::WidgetKind {
+    web::WidgetKind {
+        value: Some(web::widget_kind::Value::HalvingCountdown(
+            web::HalvingCountdownWidget {},
         )),
     }
 }
