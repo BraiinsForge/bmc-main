@@ -135,6 +135,7 @@ message WidgetKind {
     RemoteImageWidget remote_image = 5;
     BlockchainDataWidget blockchain_data = 6;
     RemoteWidget remote_widget = 7;
+    HalvingCountdownWidget halving_countdown = 8;
   }
 }
 
@@ -243,6 +244,9 @@ message RemoteWidgetParamsResponse {
 message RecentRemoteWidgetsResponse {
   repeated RemoteWidget recent_remote_widgets = 1;
 }
+
+// No configuration needed - countdown is based purely on block height
+message HalvingCountdownWidget {}
 
 enum SceneCyclingTransition {
   SCENE_CYCLING_TRANSITION_UNSPECIFIED = 0;
