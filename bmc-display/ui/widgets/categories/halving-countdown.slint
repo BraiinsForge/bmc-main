@@ -3,74 +3,31 @@ import { Theme } from "../../style/theme.slint";
 import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
 
 export struct WidgetHalvingCountdownData {
-    // Raw countdown data - formatting done in UI
+    // Raw countdown data
     total-seconds: int,
     blocks-remaining: int,
+    // Backend-formatted strings for fullscreen
+    predicted-date: string,      // e.g., "Apr. 01 2028"
+    predicted-time: string,      // e.g., "4:34 PM GMT+1"
+    target-block: string,        // e.g., "1,050,000"
 }
 
-export component WidgetHalvingCountdown inherits Rectangle {
-    background: Palette.black;
-
-    in property <WidgetSize> size;
+// ============================================================================
+// FULLSCREEN WIDGET
+// ============================================================================
+component WidgetHalvingCountdownFull inherits Rectangle {
     in property <WidgetHalvingCountdownData> data;
 
-    width: BaseDimensions.widget-width(size);
-    height: BaseDimensions.widget-height(size);
+    background: Palette.black;
 
-    // Time unit constants
+    // Time calculations
     property <int> seconds-per-minute: 60;
     property <int> seconds-per-hour: 3600;
     property <int> seconds-per-day: 86400;
-    property <int> days-per-month: 30;
-    property <int> days-per-year: 365;
-
-    // Calculated time components
     property <int> total-days: data.total-seconds / seconds-per-day;
-    property <int> years: total-days / days-per-year;
-    property <int> remaining-days-after-years: total-days - (years * days-per-year);
-    property <int> months: remaining-days-after-years / days-per-month;
-    property <int> days: remaining-days-after-years - (months * days-per-month);
     property <int> hours: (data.total-seconds - (total-days * seconds-per-day)) / seconds-per-hour;
     property <int> minutes: (data.total-seconds - (total-days * seconds-per-day) - (hours * seconds-per-hour)) / seconds-per-minute;
-    property <int> seconds: data.total-seconds - (total-days * seconds-per-day) - (hours * seconds-per-hour) - (minutes * seconds-per-minute);
-
     property <bool> is-complete: data.total-seconds <= 0;
-
-    pure function title-fontsize(size: WidgetSize) -> length {
-        if (WidgetSize.Small == size) {
-            return 20px;
-        } else if (WidgetSize.Medium == size) {
-            return 24px;
-        } else if (WidgetSize.Large == size) {
-            return 32px;
-        } else {
-            return 40px;
-        }
-    }
-
-    pure function countdown-fontsize(size: WidgetSize) -> length {
-        if (WidgetSize.Small == size) {
-            return 48px;
-        } else if (WidgetSize.Medium == size) {
-            return 64px;
-        } else if (WidgetSize.Large == size) {
-            return 96px;
-        } else {
-            return 140px;
-        }
-    }
-
-    pure function blocks-fontsize(size: WidgetSize) -> length {
-        if (WidgetSize.Small == size) {
-            return 16px;
-        } else if (WidgetSize.Medium == size) {
-            return 18px;
-        } else if (WidgetSize.Large == size) {
-            return 22px;
-        } else {
-            return 28px;
-        }
-    }
 
     // Format number with leading zero
     pure function pad2(n: int) -> string {
@@ -81,58 +38,600 @@ export component WidgetHalvingCountdown inherits Rectangle {
     }
 
     VerticalLayout {
-        padding: (WidgetSize.Full == size) ? 32px : 16px;
-        alignment: center;
-        spacing: (WidgetSize.Full == size) ? 16px : 8px;
+        padding: 16px;
+        spacing: 12px;
 
-        // Title
-        Text {
-            text: "Bitcoin Halving";
-            color: Palette.orange-40;
-            font-size: title-fontsize(size);
-            font-weight: Theme.font.weight.semi-bold;
-            horizontal-alignment: center;
+        // Top tile - Title and countdown
+        Rectangle {
+            vertical-stretch: 1;
+            background: #0F0F0F;
+            border-radius: 8px;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+
+                // Title
+                Text {
+                    text: "Halving Countdown";
+                    color: Palette.gray-60;
+                    font-size: 32px;
+                    font-weight: Theme.font.weight.regular;
+                    horizontal-alignment: center;
+                }
+
+                if is-complete: Text {
+                    text: "Halving Complete!";
+                    color: Palette.green-40;
+                    font-size: 120px;
+                    font-weight: Theme.font.weight.bold;
+                    horizontal-alignment: center;
+                }
+
+                if !is-complete: HorizontalLayout {
+                    alignment: center;
+                    spacing: 24px;
+
+                    // Days column
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+
+                        Text {
+                            text: total-days + "";
+                            color: Palette.violet-50;
+                            font-size: 120px;
+                            font-weight: Theme.font.weight.bold;
+                            font-family: "Braiins Deck Sans";
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Days";
+                            color: Palette.gray-60;
+                            font-size: 28px;
+                            font-weight: Theme.font.weight.regular;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    // Colon separator
+                    Text {
+                        text: ":";
+                        color: Palette.violet-50;
+                        font-size: 120px;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        vertical-alignment: top;
+                    }
+
+                    // Hours column
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+
+                        Text {
+                            text: pad2(hours);
+                            color: Palette.violet-50;
+                            font-size: 120px;
+                            font-weight: Theme.font.weight.bold;
+                            font-family: "Braiins Deck Sans";
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Hours";
+                            color: Palette.gray-60;
+                            font-size: 28px;
+                            font-weight: Theme.font.weight.regular;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    // Colon separator
+                    Text {
+                        text: ":";
+                        color: Palette.violet-50;
+                        font-size: 120px;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        vertical-alignment: top;
+                    }
+
+                    // Minutes column
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+
+                        Text {
+                            text: pad2(minutes);
+                            color: Palette.violet-50;
+                            font-size: 120px;
+                            font-weight: Theme.font.weight.bold;
+                            font-family: "Braiins Deck Sans";
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Min.";
+                            color: Palette.gray-60;
+                            font-size: 28px;
+                            font-weight: Theme.font.weight.regular;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
         }
 
-        if is-complete: Text {
-            text: "Halving Complete!";
-            color: Palette.green-40;
-            font-size: countdown-fontsize(size);
-            font-weight: Theme.font.weight.bold;
-            horizontal-alignment: center;
-        }
+        // Bottom tiles row
+        HorizontalLayout {
+            height: 160px;
+            spacing: 12px;
 
-        if !is-complete: VerticalLayout {
-            alignment: center;
-            spacing: 4px;
+            // Left tile - Predicted Date
+            Rectangle {
+                horizontal-stretch: 1;
+                background: #0F0F0F;
+                border-radius: 8px;
 
-            // Smart formatted countdown
-            // Years/Months scale: "Xy Xm Xd"
-            // Days scale: "Xd Xh Xm"
-            // Hours scale: "Xh Xm Xs"
-            Text {
-                text: years > 0
-                    ? years + "y " + months + "m " + days + "d"
-                    : months > 0
-                        ? months + "m " + days + "d " + pad2(hours) + "h"
-                        : days > 0
-                            ? days + "d " + pad2(hours) + "h " + pad2(minutes) + "m"
-                            : pad2(hours) + "h " + pad2(minutes) + "m " + pad2(seconds) + "s";
-                color: Palette.white;
-                font-size: countdown-fontsize(size);
-                font-weight: Theme.font.weight.bold;
-                font-family: "Braiins Deck Sans";
-                horizontal-alignment: center;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 16px;
+
+                    Text {
+                        text: "Predicted Date";
+                        color: Palette.gray-60;
+                        font-size: 24px;
+                        font-weight: Theme.font.weight.regular;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: data.predicted-date;
+                        color: Palette.white;
+                        font-size: 40px;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: data.predicted-time;
+                        color: Palette.gray-60;
+                        font-size: 24px;
+                        font-weight: Theme.font.weight.regular;
+                        horizontal-alignment: center;
+                    }
+                }
             }
 
-            // Blocks remaining
-            Text {
-                text: data.blocks-remaining + " blocks remaining";
-                color: Palette.gray-60;
-                font-size: blocks-fontsize(size);
-                font-weight: Theme.font.weight.regular;
-                horizontal-alignment: center;
+            // Right tile - Block Remaining
+            Rectangle {
+                horizontal-stretch: 1;
+                background: #0F0F0F;
+                border-radius: 8px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 16px;
+
+                    Text {
+                        text: "Block Remaining";
+                        color: Palette.gray-60;
+                        font-size: 24px;
+                        font-weight: Theme.font.weight.regular;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: data.blocks-remaining + "";
+                        color: Palette.white;
+                        font-size: 40px;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Target #" + data.target-block;
+                        color: Palette.gray-60;
+                        font-size: 24px;
+                        font-weight: Theme.font.weight.regular;
+                        horizontal-alignment: center;
+                    }
+                }
             }
         }
+    }
+}
+
+// ============================================================================
+// LARGE WIDGET
+// ============================================================================
+component WidgetHalvingCountdownLarge inherits Rectangle {
+    in property <WidgetHalvingCountdownData> data;
+
+    background: Palette.black;
+
+    // Time calculations
+    property <int> seconds-per-minute: 60;
+    property <int> seconds-per-hour: 3600;
+    property <int> seconds-per-day: 86400;
+    property <int> total-days: data.total-seconds / seconds-per-day;
+    property <int> hours: (data.total-seconds - (total-days * seconds-per-day)) / seconds-per-hour;
+    property <int> minutes: (data.total-seconds - (total-days * seconds-per-day) - (hours * seconds-per-hour)) / seconds-per-minute;
+    property <bool> is-complete: data.total-seconds <= 0;
+
+    // Format number with leading zero
+    pure function pad2(n: int) -> string {
+        if (n < 10) {
+            return "0" + n;
+        }
+        return n;
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        // Top tile - Title and countdown (55% height)
+        Rectangle {
+            vertical-stretch: 55;
+            background: #0F0F0F;
+            border-radius: 8px;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                // Title
+                Text {
+                    text: "Halving Countdown";
+                    color: Palette.gray-60;
+                    font-size: 28px;
+                    font-weight: Theme.font.weight.semi-bold;
+                    horizontal-alignment: center;
+                }
+
+                if is-complete: Text {
+                    text: "Halving Complete!";
+                    color: Palette.green-40;
+                    font-size: 96px;
+                    font-weight: Theme.font.weight.bold;
+                    horizontal-alignment: center;
+                }
+
+                if !is-complete: HorizontalLayout {
+                    alignment: center;
+                    spacing: 20px;
+
+                    // Days column
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+
+                        Text {
+                            text: total-days + "";
+                            color: Palette.violet-50;
+                            font-size: 96px;
+                            font-weight: Theme.font.weight.bold;
+                            font-family: "Braiins Deck Sans";
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Days";
+                            color: Palette.gray-60;
+                            font-size: 26px;
+                            font-weight: Theme.font.weight.semi-bold;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    // Colon separator
+                    Text {
+                        text: ":";
+                        color: Palette.violet-50;
+                        font-size: 96px;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        vertical-alignment: top;
+                    }
+
+                    // Hours column
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+
+                        Text {
+                            text: pad2(hours);
+                            color: Palette.violet-50;
+                            font-size: 96px;
+                            font-weight: Theme.font.weight.bold;
+                            font-family: "Braiins Deck Sans";
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Hours";
+                            color: Palette.gray-60;
+                            font-size: 26px;
+                            font-weight: Theme.font.weight.semi-bold;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    // Colon separator
+                    Text {
+                        text: ":";
+                        color: Palette.violet-50;
+                        font-size: 96px;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        vertical-alignment: top;
+                    }
+
+                    // Minutes column
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+
+                        Text {
+                            text: pad2(minutes);
+                            color: Palette.violet-50;
+                            font-size: 96px;
+                            font-weight: Theme.font.weight.bold;
+                            font-family: "Braiins Deck Sans";
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Min.";
+                            color: Palette.gray-60;
+                            font-size: 26px;
+                            font-weight: Theme.font.weight.semi-bold;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Bottom tiles row (45% height)
+        HorizontalLayout {
+            vertical-stretch: 45;
+            spacing: 8px;
+
+            // Left tile - Predicted Date
+            Rectangle {
+                horizontal-stretch: 1;
+                background: #0F0F0F;
+                border-radius: 8px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 16px;
+
+                    Text {
+                        text: "Predicted Date";
+                        color: Palette.gray-60;
+                        font-size: 22px;
+                        font-weight: Theme.font.weight.semi-bold;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: data.predicted-date;
+                        color: Palette.white;
+                        font-size: 36px;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: data.predicted-time;
+                        color: Palette.gray-60;
+                        font-size: 22px;
+                        font-weight: Theme.font.weight.semi-bold;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            // Right tile - Block Remaining
+            Rectangle {
+                horizontal-stretch: 1;
+                background: #0F0F0F;
+                border-radius: 8px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 16px;
+
+                    Text {
+                        text: "Block Remaining";
+                        color: Palette.gray-60;
+                        font-size: 22px;
+                        font-weight: Theme.font.weight.semi-bold;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: data.blocks-remaining + "";
+                        color: Palette.white;
+                        font-size: 36px;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Target #" + data.target-block;
+                        color: Palette.gray-60;
+                        font-size: 22px;
+                        font-weight: Theme.font.weight.semi-bold;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// SMALL / MEDIUM WIDGETS
+// ============================================================================
+component WidgetHalvingCountdownCompact inherits Rectangle {
+    in property <WidgetSize> size;
+    in property <WidgetHalvingCountdownData> data;
+
+    background: Palette.black;
+
+    // Time calculations
+    property <int> seconds-per-minute: 60;
+    property <int> seconds-per-hour: 3600;
+    property <int> seconds-per-day: 86400;
+    property <int> total-days: data.total-seconds / seconds-per-day;
+    property <int> hours: (data.total-seconds - (total-days * seconds-per-day)) / seconds-per-hour;
+    property <int> minutes: (data.total-seconds - (total-days * seconds-per-day) - (hours * seconds-per-hour)) / seconds-per-minute;
+    property <bool> is-complete: data.total-seconds <= 0;
+
+    // Format number with leading zero
+    pure function pad2(n: int) -> string {
+        if (n < 10) {
+            return "0" + n;
+        }
+        return n;
+    }
+
+    // Size-dependent values
+    property <length> title-fontsize: (WidgetSize.Small == size) ? 20px : 26px;
+    property <length> countdown-fontsize: (WidgetSize.Small == size) ? 48px : 96px;
+    property <length> label-fontsize: (WidgetSize.Small == size) ? 18px : 24px;
+    property <length> spacing-size: (WidgetSize.Small == size) ? 10px : 20px;
+
+    VerticalLayout {
+        padding: 8px;
+
+        // Single tile with countdown
+        Rectangle {
+            background: #0F0F0F;
+            border-radius: 8px;
+
+            VerticalLayout {
+                padding-top: 12px;
+                padding-bottom: 12px;
+                alignment: space-between;
+
+                // Title at top
+                Text {
+                    text: "Halving Countdown";
+                    color: Palette.gray-60;
+                    font-size: title-fontsize;
+                    font-weight: Theme.font.weight.semi-bold;
+                    horizontal-alignment: center;
+                }
+
+                if is-complete: Text {
+                    text: "Halving Complete!";
+                    color: Palette.green-40;
+                    font-size: countdown-fontsize;
+                    font-weight: Theme.font.weight.bold;
+                    horizontal-alignment: center;
+                }
+
+                // Countdown numbers (centered)
+                if !is-complete: HorizontalLayout {
+                    alignment: center;
+                    spacing: spacing-size;
+
+                    Text {
+                        text: total-days + "";
+                        color: Palette.violet-50;
+                        font-size: countdown-fontsize;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: ":";
+                        color: Palette.violet-50;
+                        font-size: countdown-fontsize;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                    }
+                    Text {
+                        text: pad2(hours);
+                        color: Palette.violet-50;
+                        font-size: countdown-fontsize;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: ":";
+                        color: Palette.violet-50;
+                        font-size: countdown-fontsize;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                    }
+                    Text {
+                        text: pad2(minutes);
+                        color: Palette.violet-50;
+                        font-size: countdown-fontsize;
+                        font-weight: Theme.font.weight.bold;
+                        font-family: "Braiins Deck Sans";
+                        horizontal-alignment: center;
+                    }
+                }
+
+                // Labels at bottom
+                if !is-complete: HorizontalLayout {
+                    alignment: center;
+                    spacing: spacing-size * 3;
+
+                    Text {
+                        text: "Days";
+                        color: Palette.gray-60;
+                        font-size: label-fontsize;
+                        font-weight: Theme.font.weight.semi-bold;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Hours";
+                        color: Palette.gray-60;
+                        font-size: label-fontsize;
+                        font-weight: Theme.font.weight.semi-bold;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Min.";
+                        color: Palette.gray-60;
+                        font-size: label-fontsize;
+                        font-weight: Theme.font.weight.semi-bold;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// MAIN EXPORTED WIDGET
+// ============================================================================
+export component WidgetHalvingCountdown inherits Rectangle {
+    in property <WidgetSize> size;
+    in property <WidgetHalvingCountdownData> data;
+
+    background: Palette.black;
+    width: BaseDimensions.widget-width(size);
+    height: BaseDimensions.widget-height(size);
+
+    if size == WidgetSize.Full: WidgetHalvingCountdownFull {
+        width: 100%;
+        height: 100%;
+        data: data;
+    }
+
+    if size == WidgetSize.Large: WidgetHalvingCountdownLarge {
+        width: 100%;
+        height: 100%;
+        data: data;
+    }
+
+    if size == WidgetSize.Small || size == WidgetSize.Medium: WidgetHalvingCountdownCompact {
+        width: 100%;
+        height: 100%;
+        size: size;
+        data: data;
     }
 }

@@ -1047,6 +1047,9 @@ impl DisplayController {
         widget_id: WidgetId,
         total_seconds: u64,
         blocks_remaining: u32,
+        predicted_date: String,
+        predicted_time: String,
+        target_block: String,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -1060,6 +1063,9 @@ impl DisplayController {
                         i32::try_from(total_seconds).unwrap_or(i32::MAX);
                     widget.halving_countdown.blocks_remaining =
                         i32::try_from(blocks_remaining).unwrap_or(0);
+                    widget.halving_countdown.predicted_date = predicted_date.into();
+                    widget.halving_countdown.predicted_time = predicted_time.into();
+                    widget.halving_countdown.target_block = target_block.into();
                 });
             }
         });

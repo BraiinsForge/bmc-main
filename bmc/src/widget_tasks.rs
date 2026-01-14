@@ -153,6 +153,8 @@ impl WidgetTasks {
             WidgetKind::HalvingCountdown => Some(spawn(
                 halving_countdown::run(
                     self.display_controller.clone(),
+                    self.config_handle.clone(),
+                    self.system_timezone_receiver.clone(),
                     scene_id.clone(),
                     widget.id.clone(),
                 )
