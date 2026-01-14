@@ -1,0 +1,138 @@
+import { Palette } from "../../style/palette.slint";
+import { Theme } from "../../style/theme.slint";
+import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
+
+export struct WidgetHalvingCountdownData {
+    // Raw countdown data - formatting done in UI
+    total-seconds: int,
+    blocks-remaining: int,
+}
+
+export component WidgetHalvingCountdown inherits Rectangle {
+    background: Palette.black;
+
+    in property <WidgetSize> size;
+    in property <WidgetHalvingCountdownData> data;
+
+    width: BaseDimensions.widget-width(size);
+    height: BaseDimensions.widget-height(size);
+
+    // Time unit constants
+    property <int> seconds-per-minute: 60;
+    property <int> seconds-per-hour: 3600;
+    property <int> seconds-per-day: 86400;
+    property <int> days-per-month: 30;
+    property <int> days-per-year: 365;
+
+    // Calculated time components
+    property <int> total-days: data.total-seconds / seconds-per-day;
+    property <int> years: total-days / days-per-year;
+    property <int> remaining-days-after-years: total-days - (years * days-per-year);
+    property <int> months: remaining-days-after-years / days-per-month;
+    property <int> days: remaining-days-after-years - (months * days-per-month);
+    property <int> hours: (data.total-seconds - (total-days * seconds-per-day)) / seconds-per-hour;
+    property <int> minutes: (data.total-seconds - (total-days * seconds-per-day) - (hours * seconds-per-hour)) / seconds-per-minute;
+    property <int> seconds: data.total-seconds - (total-days * seconds-per-day) - (hours * seconds-per-hour) - (minutes * seconds-per-minute);
+
+    property <bool> is-complete: data.total-seconds <= 0;
+
+    pure function title-fontsize(size: WidgetSize) -> length {
+        if (WidgetSize.Small == size) {
+            return 20px;
+        } else if (WidgetSize.Medium == size) {
+            return 24px;
+        } else if (WidgetSize.Large == size) {
+            return 32px;
+        } else {
+            return 40px;
+        }
+    }
+
+    pure function countdown-fontsize(size: WidgetSize) -> length {
+        if (WidgetSize.Small == size) {
+            return 48px;
+        } else if (WidgetSize.Medium == size) {
+            return 64px;
+        } else if (WidgetSize.Large == size) {
+            return 96px;
+        } else {
+            return 140px;
+        }
+    }
+
+    pure function blocks-fontsize(size: WidgetSize) -> length {
+        if (WidgetSize.Small == size) {
+            return 16px;
+        } else if (WidgetSize.Medium == size) {
+            return 18px;
+        } else if (WidgetSize.Large == size) {
+            return 22px;
+        } else {
+            return 28px;
+        }
+    }
+
+    // Format number with leading zero
+    pure function pad2(n: int) -> string {
+        if (n < 10) {
+            return "0" + n;
+        }
+        return n;
+    }
+
+    VerticalLayout {
+        padding: (WidgetSize.Full == size) ? 32px : 16px;
+        alignment: center;
+        spacing: (WidgetSize.Full == size) ? 16px : 8px;
+
+        // Title
+        Text {
+            text: "Bitcoin Halving";
+            color: Palette.orange-40;
+            font-size: title-fontsize(size);
+            font-weight: Theme.font.weight.semi-bold;
+            horizontal-alignment: center;
+        }
+
+        if is-complete: Text {
+            text: "Halving Complete!";
+            color: Palette.green-40;
+            font-size: countdown-fontsize(size);
+            font-weight: Theme.font.weight.bold;
+            horizontal-alignment: center;
+        }
+
+        if !is-complete: VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+
+            // Smart formatted countdown
+            // Years/Months scale: "Xy Xm Xd"
+            // Days scale: "Xd Xh Xm"
+            // Hours scale: "Xh Xm Xs"
+            Text {
+                text: years > 0
+                    ? years + "y " + months + "m " + days + "d"
+                    : months > 0
+                        ? months + "m " + days + "d " + pad2(hours) + "h"
+                        : days > 0
+                            ? days + "d " + pad2(hours) + "h " + pad2(minutes) + "m"
+                            : pad2(hours) + "h " + pad2(minutes) + "m " + pad2(seconds) + "s";
+                color: Palette.white;
+                font-size: countdown-fontsize(size);
+                font-weight: Theme.font.weight.bold;
+                font-family: "Braiins Deck Sans";
+                horizontal-alignment: center;
+            }
+
+            // Blocks remaining
+            Text {
+                text: data.blocks-remaining + " blocks remaining";
+                color: Palette.gray-60;
+                font-size: blocks-fontsize(size);
+                font-weight: Theme.font.weight.regular;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

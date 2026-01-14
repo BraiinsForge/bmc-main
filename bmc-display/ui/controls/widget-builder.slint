@@ -9,6 +9,7 @@ import { WidgetBraiinsPool } from "../widgets/categories/braiins-pool.slint";
 import { WidgetRemoteImage } from "../widgets/categories/remote-image.slint";
 import { WidgetBlockchainData } from "../widgets/categories/blockchain-data.slint";
 import { RemoteWidget } from "../widgets/categories/remote-widget.slint";
+import { WidgetHalvingCountdown } from "../widgets/categories/halving-countdown.slint";
 
 component WidgetContainer inherits Rectangle {
     in property <WidgetSize> size;
@@ -79,6 +80,10 @@ export component WidgetBuilder inherits Rectangle {
             if widget.kind == WidgetKind.RemoteWidget: RemoteWidget {
                 size: widget.size;
                 data: widget.remote-widget;
+            }
+            if widget.kind == WidgetKind.HalvingCountdown: WidgetHalvingCountdown {
+                size: widget.size;
+                data: widget.halving-countdown;
             }
         }
     }
