@@ -3,6 +3,7 @@
 mod blockchain_data;
 mod braiins_pool;
 mod clock;
+mod halving_countdown;
 mod remote_image;
 mod remote_widget;
 mod ticker_btc;
@@ -146,6 +147,14 @@ impl WidgetTasks {
                     self.config_handle.clone(),
                     self.system_timezone_receiver.clone(),
                     remote_widget.widget_url.clone(),
+                )
+                .in_current_span(),
+            )),
+            WidgetKind::HalvingCountdown => Some(spawn(
+                halving_countdown::run(
+                    self.display_controller.clone(),
+                    scene_id.clone(),
+                    widget.id.clone(),
                 )
                 .in_current_span(),
             )),
