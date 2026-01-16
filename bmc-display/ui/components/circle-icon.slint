@@ -2,8 +2,8 @@ import { Palette } from "../style/palette.slint";
 
 export component CircleIcon inherits Rectangle {
     in property <image> icon_source;
-    in property <brush> circle_color: @linear-gradient(176deg, rgba(255, 255, 255, 0.30) 3.1%, rgba(255, 255, 255, 0.18) 98.54%);
-    in property <brush> circle_color_pressed: @linear-gradient(176deg, rgba(255, 255, 255, 0.90) 3.1%, rgba(255, 255, 255, 0.54) 98.54%);
+    in property <brush> circle_color: rgba(255, 255, 255, 0.30);
+    in property <brush> circle_color_pressed: rgba(255, 255, 255, 0.80);
     in property <color> icon_color: Palette.white;
     in property <color> icon_color_pressed: Palette.black;
     in property <bool> disable_pressed_color: false;

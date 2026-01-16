@@ -249,7 +249,7 @@ export component BottomRollette inherits Rectangle {
 
                         CircleIcon {
                             icon_source: Images.nightmode;
-                            circle_color: NightModeAdapter.is-active ? Palette.blue-70 : @linear-gradient(176deg, rgba(255, 255, 255, 0.30) 3.1%, rgba(255, 255, 255, 0.18) 98.54%);
+                            circle_color: NightModeAdapter.is-active ? Palette.blue-70 : rgba(255, 255, 255, 0.30);
                             disable_pressed_color: true;
                             icon_color_pressed: Palette.white;
                             clicked => {
