@@ -28,7 +28,7 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::Path,
 };
-use tokio::time::{Duration, error::Elapsed, sleep, timeout};
+use tokio::time::Duration;
 use tokio::{fs, process::Command};
 use tracing::{debug, error, info};
 
@@ -59,7 +59,8 @@ impl Manager {
     const UCI_NET_LAN_GATEWAY: &str = "network.wifi_sta.gateway";
     const UCI_NET_LAN_DNS: &str = "network.wifi_sta.dns";
     const WIFI_EVENTS_CAPACITY: usize = 10;
-    const WIFI_INTERFACE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+    const WIFI_INTERFACE_MAX_RETRY: usize = 60;
+    const WIFI_INTERFACE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
     #[must_use]
     pub fn new(
@@ -143,13 +144,9 @@ impl Manager {
 
     async fn configure_wifi_ap(&self) -> Result<(), InitialSetupError> {
         let ssid = self
-            .wait_for_wifi_ssid(Self::WIFI_INTERFACE_TIMEOUT)
+            .calculate_wifi_ssid()
             .await
-            .map_err(|_| {
-                InitialSetupError::UnexpectedFailure(
-                    "Timeout waiting for Wi-Fi interface".to_owned(),
-                )
-            })?;
+            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
         info!(ssid = %ssid, "Configuring WiFi AP for initial setup");
         let wifi_manager = self.wifi_manager.as_ref();
 
@@ -247,6 +244,37 @@ impl Manager {
 
     fn make_wifi_ssid_for_mac(&self, mac_short_id: &str) -> String {
         format!("{} {mac_short_id}", self.wifi_ap_ssid_base)
+    }
+
+    async fn calculate_wifi_ssid(&self) -> anyhow::Result<String> {
+        for _ in 1..=Self::WIFI_INTERFACE_MAX_RETRY {
+            match self.try_calculate_wifi_ssid().await {
+                Ok(wifi_ssid) => return Ok(wifi_ssid),
+                Err(err) => {
+                    info!(
+                        "Wi-Fi interface not initialized yet: {err}, retrying in {} seconds",
+                        Self::WIFI_INTERFACE_RETRY_DELAY.as_secs()
+                    );
+                    tokio::time::sleep(Self::WIFI_INTERFACE_RETRY_DELAY).await;
+                }
+            }
+        }
+
+        Err(anyhow!("Timeout waiting for Wi-Fi interface to appear."))
+    }
+
+    async fn try_calculate_wifi_ssid(&self) -> anyhow::Result<String> {
+        let iface = self.wifi_manager.get_wifi_device_name().await?;
+        let iface_data = get_default_net_data(&iface);
+
+        // NOTE: should be impossible, since get_wifi_device_name
+        // would return an error if interface is uninitialized.
+        if iface_data.mac.is_none() {
+            return Err(anyhow!("Wi-Fi interface is not initialized yet."));
+        }
+
+        let mac_id = Self::get_mac_short_id(&get_default_net_data(&iface));
+        Ok(self.make_wifi_ssid_for_mac(&mac_id))
     }
 }
 
@@ -686,16 +714,10 @@ impl BmcManager for Manager {
     }
 
     async fn wifi_ssid(&self) -> anyhow::Result<String> {
-        let iface = self.wifi_manager.get_wifi_device_name().await?;
-        let iface_data = get_default_net_data(&iface);
-
-        // NOTE: should be impossible, since get_wifi_device_name would return error if interface uninitialized.
-        if iface_data.mac.is_none() {
-            return Err(anyhow!("Wi-Fi interface is not initialized yet."));
-        }
-
-        let mac_id = Self::get_mac_short_id(&get_default_net_data(&iface));
-        Ok(self.make_wifi_ssid_for_mac(&mac_id))
+        self.wifi_manager
+            .get_ap_ssid()
+            .await
+            .ok_or(anyhow!("Wi-Fi interface not in AP mode."))
     }
 
     async fn init_wifi_ap(&self) -> Result<(), Self::Error> {

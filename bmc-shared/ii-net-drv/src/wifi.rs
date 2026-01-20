@@ -124,6 +124,17 @@ impl OpenwrtWifiManager {
         })
     }
 
+    pub async fn get_ap_ssid(&self) -> Option<String> {
+        let uci = UciHelper::new(&self.wlan_dev_syspath);
+        let config = uci.wifi_iface_find_enabled().await?;
+
+        if config.mode == WifiMode::Ap {
+            Some(config.ssid)
+        } else {
+            None
+        }
+    }
+
     async fn get_wifi_filtered_scan_list(device: &str) -> Result<Vec<WifiScanItem>> {
         Ok(WifiScanner::wifi_scan(device)
             .await?
