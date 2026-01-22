@@ -9,11 +9,6 @@
       "repo": "ssh://git@gitlab.ii.zone/bos/bos-main.git",
       "commit": "f58300e1f9bf89e507ad59ce08f42690ad9a61ef",
       "upstream_path": "open/utils-rs/ii-net"
-    },
-    "bmc-shared/ii-net-drv": {
-      "repo": "ssh://git@gitlab.ii.zone/bos/bos-main.git",
-      "commit": "f58300e1f9bf89e507ad59ce08f42690ad9a61ef",
-      "upstream_path": "open/utils-rs/ii-net-drv"
     }
   }
 }
