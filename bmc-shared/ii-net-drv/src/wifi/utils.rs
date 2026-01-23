@@ -34,10 +34,12 @@ pub struct WifiUtils;
 impl WifiUtils {
     pub async fn get_device_by_syspath(syspath: &str) -> Result<String> {
         tokio::fs::read_dir(Path::new(syspath).join("net"))
-            .await?
+            .await
+            .map_err(|e| anyhow!("Could not access `net` under {syspath}: {e}"))?
             .next_entry()
-            .await?
-            .ok_or(anyhow!("No wifi device in specified syspath: {}", syspath))?
+            .await
+            .map_err(|e| anyhow!("Could not access entries under {syspath}/net: {e}"))?
+            .ok_or(anyhow!("No wifi device in specified syspath: {syspath}"))?
             .file_name()
             .into_string()
             .map_err(|e| Error::msg(format!("{e:?}")))
