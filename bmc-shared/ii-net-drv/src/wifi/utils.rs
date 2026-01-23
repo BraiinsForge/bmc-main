@@ -20,7 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Error, Result, anyhow};
 use bstr::ByteSlice;
@@ -41,6 +41,17 @@ impl WifiUtils {
             .file_name()
             .into_string()
             .map_err(|e| Error::msg(format!("{e:?}")))
+    }
+
+    pub async fn get_phy_path_by_syspath(syspath: &str) -> Result<PathBuf> {
+        Ok(tokio::fs::read_dir(Path::new(syspath).join("ieee80211"))
+           .await
+           .map_err(|e| anyhow!("Could not access `ieee80211` under {syspath}: {e}"))?
+           .next_entry()
+           .await
+           .map_err(|e| anyhow!("Could not access entries under {syspath}/ieee80211: {e}"))?
+           .ok_or(anyhow!("No phy device in specified syspath: {syspath}"))?
+           .path())
     }
 }
 

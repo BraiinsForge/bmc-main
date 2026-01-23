@@ -123,16 +123,8 @@ impl Manager {
         NetworkInterface::get_by_name(name).and_then(|network| network.ipv4_address())
     }
 
-    fn get_mac_short_id(eth_data: &IfaceData) -> String {
-        let mac = eth_data
-            .mac
-            .clone()
-            .unwrap_or_else(|| {
-                error!("Failed to obtain MAC address, using default");
-                MacAddr::default()
-            })
-            .to_string()
-            .replace(MacAddr::DELIMITER, "");
+    fn get_mac_short_id(mac: &str) -> String {
+        let mac = mac.replace(MacAddr::DELIMITER, "");
         let mac = mac.as_bytes();
 
         mac.len()
@@ -252,7 +244,7 @@ impl Manager {
                 Ok(wifi_ssid) => return Ok(wifi_ssid),
                 Err(err) => {
                     info!(
-                        "Wi-Fi interface not initialized yet: {err}, retrying in {} seconds",
+                        "Wi-Fi phy not initialized yet: {err}, retrying in {} seconds",
                         Self::WIFI_INTERFACE_RETRY_DELAY.as_secs()
                     );
                     tokio::time::sleep(Self::WIFI_INTERFACE_RETRY_DELAY).await;
@@ -264,16 +256,9 @@ impl Manager {
     }
 
     async fn try_calculate_wifi_ssid(&self) -> anyhow::Result<String> {
-        let iface = self.wifi_manager.get_wifi_device_name().await?;
-        let iface_data = get_default_net_data(&iface);
+        let mac = self.wifi_manager.get_phy_macaddress().await?;
 
-        // NOTE: should be impossible, since get_wifi_device_name
-        // would return an error if interface is uninitialized.
-        if iface_data.mac.is_none() {
-            return Err(anyhow!("Wi-Fi interface is not initialized yet."));
-        }
-
-        let mac_id = Self::get_mac_short_id(&get_default_net_data(&iface));
+        let mac_id = Self::get_mac_short_id(&mac);
         Ok(self.make_wifi_ssid_for_mac(&mac_id))
     }
 }

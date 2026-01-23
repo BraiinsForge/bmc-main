@@ -135,6 +135,17 @@ impl OpenwrtWifiManager {
         }
     }
 
+    pub async fn get_phy_macaddress(&self) -> anyhow::Result<String> {
+        let phy = WifiUtils::get_phy_path_by_syspath(&self.wlan_dev_syspath).await?;
+        let mac = tokio::fs::read_to_string(phy.join("macaddress"))
+            .await
+            .map_err(|e| anyhow!("Could not obtain phy's macaddress at {}/macaddress: {e}", phy.display()))?
+            .trim()
+            .to_owned();
+
+        Ok(mac)
+    }
+
     async fn get_wifi_filtered_scan_list(device: &str) -> Result<Vec<WifiScanItem>> {
         Ok(WifiScanner::wifi_scan(device)
             .await?
