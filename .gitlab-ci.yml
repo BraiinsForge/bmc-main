@@ -10,12 +10,12 @@ stages:
 ######## Essentials Stage ########
 ##################################
 variables:
-  CI_TOOLS_REV: 6071d67e0c5ec498fc88017d36a54bb1b837ad83 # This is not accessible inside "include"
+  CI_TOOLS_REV: c75e453c0e3fd5fe167a9437b86e48b54c2aa81c # This is not accessible inside "include"
   WORKSPACE_LINTS_IGNORE_PATHS: "./bmc-shared/ii-net ./bmc-shared/ii-net-drv ./bmc-shared/ii-dns"
 
 include:
   - project: "nix/ci-tools"
-    ref: 6071d67e0c5ec498fc88017d36a54bb1b837ad83
+    ref: c75e453c0e3fd5fe167a9437b86e48b54c2aa81c
     file:
       - ".essentials.yml"
       - ".dependencies.yml"
