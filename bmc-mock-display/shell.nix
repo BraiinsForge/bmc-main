@@ -1,54 +1,66 @@
-{ pkgs ? import <nixpkgs> { } }:
+{ pkgs ? import <nixpkgs> {
+    config.allowUnfree = true;
+  }
+}:
 
 pkgs.mkShell {
-  buildInputs = with pkgs; [
+  nativeBuildInputs = with pkgs; [
     # Rust dependencies
     rustc
     cargo
     rustfmt
     clippy
+    protobuf
 
-    # X11 dependencies for Winit
-    xorg.libX11
-    xorg.libXcursor
-    xorg.libXrandr
-    xorg.libXi
-    xorg.libXinerama
-    xorg.libXext
-    xorg.libXft
-    xorg.libXrender
-    xorg.libxcb
+    # Rust dependency resolution
+    pkg-config
 
-    # Wayland dependencies
-    wayland
-    wayland-protocols
-    libxkbcommon
-
-    # Additional graphics libraries
-    libGL
-    vulkan-loader
-
-    # EGL libraries (needed for graphics rendering)
-    libGL.dev
+    # gRPC dep
+    protobuf
   ];
 
-  # Set environment variables if needed
-  shellHook = ''
-    export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [
-      pkgs.xorg.libX11
-      pkgs.xorg.libXcursor
-      pkgs.xorg.libXrandr
-      pkgs.xorg.libXi
-      pkgs.xorg.libXinerama
-      pkgs.libxkbcommon
-      pkgs.libGL
-      pkgs.wayland
-      pkgs.mesa
-      pkgs.vulkan-loader
-    ]}:$LD_LIBRARY_PATH
+  buildInputs = with pkgs; [
+    fontconfig
+    freetype
+  ];
 
-    # Set Wayland/X11 backend preference (optional)
-    # export WINIT_UNIX_BACKEND=wayland
-    # export WINIT_UNIX_BACKEND=x11
-  '';
+  # Set Wayland/X11 backend preference (optional)
+  # export WINIT_UNIX_BACKEND=wayland
+  # export WINIT_UNIX_BACKEND=x11
+
+  env = {
+    # WINIT_UNIX_BACKEND = "wayland";
+    # WINIT_UNIX_BACKEND = "x11";
+    FONTCONFIG_FILE = pkgs.makeFontsConf {
+      fontDirectories = [ pkgs.corefonts pkgs.font-awesome_6 ];
+    };
+
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS =
+      let
+        rpathLibs = with pkgs; lib.makeLibraryPath [
+          # X11 dependencies for Winit
+          xorg.libX11
+          xorg.libXcursor
+          xorg.libXrandr
+          xorg.libXi
+          xorg.libXinerama
+          xorg.libXext
+          xorg.libXft
+          xorg.libXrender
+          xorg.libxcb
+
+          # Wayland dependencies
+          wayland
+          libxkbcommon
+
+          fontconfig
+
+          # Additional graphics libraries
+          libGL
+          vulkan-loader
+          libGL.dev
+        ];
+      in
+      "-C link-args=-Wl,-rpath,${rpathLibs}";
+  };
 }
