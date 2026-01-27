@@ -75,6 +75,14 @@
         };
 
         devShells = workspace.devShells // {
+          frontend = pkgs.mkShell {
+            packages = [ pkgs.yarn pkgs.nodejs ];
+            shellHook = ''
+              export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [
+                pkgs.libgcc
+              ]}:$LD_LIBRARY_PATH
+            '';
+          };
           default = pkgs.mkShell { packages = [ pkgs.ii.rustToolchain ]; };
         };
       });
