@@ -7,9 +7,10 @@ use crate::system_manager::SystemManager;
 
 use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_grpc::web::{
-    self, GeneralSettingsDataResponse, LedSettingsResponse, ListSoundsResponse, PlaySoundRequest,
-    SetDateFormatRequest, SetFirstDayOfWeekRequest, SetNumberFormatRequest,
-    SetTemperatureUnitRequest, SetTimeFormatRequest, SetUnitSystemRequest, SoundInfo, SoundVolume,
+    self, BootSoundSettingsResponse, GeneralSettingsDataResponse, LedSettingsResponse,
+    ListSoundsResponse, PlaySoundRequest, SetDateFormatRequest, SetFirstDayOfWeekRequest,
+    SetNumberFormatRequest, SetTemperatureUnitRequest, SetTimeFormatRequest, SetUnitSystemRequest,
+    SoundInfo, SoundVolume,
 };
 use bmc_grpc::web::{
     BrightnessInfo, DisplaySettingsResponse, SoundVolumeSettingsResponse, TimeInterval,
@@ -476,9 +477,14 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         &self,
         _request: Request<()>,
     ) -> Result<Response<LedSettingsResponse>, Status> {
-        let led_enabled = self.config_handle.read().await.led_enabled();
+        let config = self.config_handle.read().await;
+        let led_enabled = config.led_enabled();
+        let led_enabled_nightmode = config.night_mode().led_enabled;
 
-        Ok(Response::new(LedSettingsResponse { led_enabled }))
+        Ok(Response::new(LedSettingsResponse {
+            led_enabled,
+            led_enabled_nightmode,
+        }))
     }
 
     async fn set_led_enabled(&self, request: Request<bool>) -> Result<Response<()>, Status> {
@@ -504,6 +510,56 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         config.save().await.map_err(|e| {
             error!("Failed to save led enabled, error {e}");
             Status::internal("Failed to save led_enabled")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn set_led_enabled_nightmode(
+        &self,
+        request: Request<bool>,
+    ) -> Result<Response<()>, Status> {
+        let mut config = self.config_handle.write().await;
+        let enabled = request.into_inner();
+
+        if config.night_mode().led_enabled == enabled {
+            return Ok(tonic::Response::new(()));
+        }
+
+        config.set_night_mode_led_enabled(enabled);
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save led_enabled_nightmode, error {e}");
+            Status::internal("Failed to save led_enabled_nightmode")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
+    async fn get_boot_sound_settings(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<BootSoundSettingsResponse>, Status> {
+        let boot_sound_enabled = self.config_handle.read().await.boot_sound_enabled();
+
+        Ok(Response::new(BootSoundSettingsResponse {
+            boot_sound_enabled,
+        }))
+    }
+
+    async fn set_boot_sound_enabled(&self, request: Request<bool>) -> Result<Response<()>, Status> {
+        let mut config = self.config_handle.write().await;
+        let enabled = request.into_inner();
+
+        if config.boot_sound_enabled() == enabled {
+            return Ok(tonic::Response::new(()));
+        }
+
+        config.set_boot_sound_enabled(enabled);
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save boot_sound_enabled, error {e}");
+            Status::internal("Failed to save boot_sound_enabled")
         })?;
 
         Ok(tonic::Response::new(()))

@@ -82,6 +82,11 @@ message SetUnitSystemRequest {
 
 message LedSettingsResponse {
   bool led_enabled = 1;
+  bool led_enabled_nightmode = 2;
+}
+
+message BootSoundSettingsResponse {
+  bool boot_sound_enabled = 1;
 }
 
 service ConfigurationService {
@@ -106,4 +111,7 @@ service ConfigurationService {
   rpc SetUnitSystem(SetUnitSystemRequest) returns (google.protobuf.Empty);
   rpc GetLedSettings(google.protobuf.Empty) returns (LedSettingsResponse);
   rpc SetLedEnabled(google.protobuf.BoolValue) returns (google.protobuf.Empty);
+  rpc SetLedEnabledNightmode(google.protobuf.BoolValue) returns (google.protobuf.Empty);
+  rpc GetBootSoundSettings(google.protobuf.Empty) returns (BootSoundSettingsResponse);
+  rpc SetBootSoundEnabled(google.protobuf.BoolValue) returns (google.protobuf.Empty);
 }

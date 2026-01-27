@@ -59,8 +59,10 @@ class View extends Component<Props> {
             // Fields
             soundVolume,
             soundVolumeNight,
+            bootSoundEnabled,
             // alarmAndNotifyVolume,
             ledNotifyEnabled,
+            ledNotifyEnabledNight,
         } = this.props;
 
         return (
@@ -133,6 +135,28 @@ class View extends Component<Props> {
                     </Field> */}
                 </FieldSet>
 
+                <FieldSet title={intl.formatMessage({ defaultMessage: 'Boot Sound' })}>
+                    <Field
+                        title={intl.formatMessage({ defaultMessage: 'Enable Boot Sound' })}
+                        description={intl.formatMessage({
+                            defaultMessage:
+                                'Enable sound during splash screen animation played at every startup of the Deck',
+                        })}
+                        disabled={bootSoundEnabled.disabled}
+                    >
+                        <CarbonFormField error={bootSoundEnabled.error}>
+                            <Toggle
+                                id={$('sound', 'boot', 'enabled')}
+                                size="md"
+                                aria-invalid={!!bootSoundEnabled.error}
+                                toggled={!!bootSoundEnabled.value}
+                                onToggle={bootSoundEnabled.onChange}
+                                disabled={bootSoundEnabled.disabled}
+                            />
+                        </CarbonFormField>
+                    </Field>
+                </FieldSet>
+
                 <FieldSet title={intl.formatMessage({ defaultMessage: 'LED Notification Lights' })}>
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Enable LED Notifications' })}
@@ -149,6 +173,25 @@ class View extends Component<Props> {
                                 toggled={!!ledNotifyEnabled.value}
                                 onToggle={ledNotifyEnabled.onChange}
                                 disabled={ledNotifyEnabled.disabled}
+                            />
+                        </CarbonFormField>
+                    </Field>
+
+                    <Field
+                        title={intl.formatMessage({ defaultMessage: 'Enable LED Notifications in Night Mode' })}
+                        description={intl.formatMessage({
+                            defaultMessage: 'Use LED lights for notifications and alerts during Night Mode',
+                        })}
+                        disabled={ledNotifyEnabled.disabled}
+                    >
+                        <CarbonFormField error={ledNotifyEnabledNight.error}>
+                            <Toggle
+                                id={$('led', 'notify-night', 'enabled')}
+                                size="md"
+                                aria-invalid={!!ledNotifyEnabledNight.error}
+                                toggled={!!ledNotifyEnabledNight.value}
+                                onToggle={ledNotifyEnabledNight.onChange}
+                                disabled={ledNotifyEnabledNight.disabled}
                             />
                         </CarbonFormField>
                     </Field>

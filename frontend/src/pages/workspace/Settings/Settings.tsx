@@ -108,7 +108,9 @@ interface State {
         // Sound & Light
         volume: FieldState<pb.SoundVolume>;
         volumeNightmode: FieldState<pb.SoundVolume>;
+        enableBootSound: FieldState<boolean>;
         enableLedNotifications: FieldState<boolean>;
+        enableLedNotificationsNightmode: FieldState<boolean>;
 
         // Display
         displayBrightness: FieldState<pb.BrightnessInfo>;
@@ -149,7 +151,9 @@ const getInitialState = (): State => ({
         // Sound & Light
         volume: getFieldStateDefault(),
         volumeNightmode: getFieldStateDefault(),
+        enableBootSound: getFieldStateDefault(),
         enableLedNotifications: getFieldStateDefault(),
+        enableLedNotificationsNightmode: getFieldStateDefault(),
 
         // Display
         displayBrightness: getFieldStateDefault(),
@@ -886,9 +890,10 @@ class View extends Component<Props, State> {
 
         try {
             const { signal } = this.soundLightFetcDataAbort.replace();
-            const [soundAndLight, ledSettings] = await Promise.all([
+            const [soundAndLight, ledSettings, bootSoundSettings] = await Promise.all([
                 pb.rpc.config.getSoundVolumeSettings({}, { signal }),
                 pb.rpc.config.getLedSettings({}, { signal }),
+                pb.rpc.config.getBootSoundSettings({}, { signal }),
             ]);
             this.setState(s => ({
                 values: {
@@ -896,6 +901,8 @@ class View extends Component<Props, State> {
                     volume: getFieldStateDefault(soundAndLight.volume),
                     volumeNightmode: getFieldStateDefault(soundAndLight.volumeNightmode),
                     enableLedNotifications: getFieldStateDefault(ledSettings.ledEnabled),
+                    enableLedNotificationsNightmode: getFieldStateDefault(ledSettings.ledEnabledNightmode),
+                    enableBootSound: getFieldStateDefault(bootSoundSettings.bootSoundEnabled),
                 },
             }));
         } catch ($) {
@@ -945,16 +952,40 @@ class View extends Component<Props, State> {
             // Submit
             await pb.rpc.config.setSoundVolumeNightmode({ value: value.value });
 
-            toast.success(formatMessage({ defaultMessage: 'Night mode sound volume saved' }));
+            toast.success(formatMessage({ defaultMessage: 'Sound volume in night mode saved' }));
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to save the night mode sound volume!' });
+            msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume in night mode!' });
             toast.error(msg);
         } finally {
             await this.#soundLightFetch();
             this.#setField('volumeNightmode', s => getFieldStateDefault(s.value));
         }
     }, 200);
+    #soundLightSetBootSound = async (value: boolean): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('enableBootSound', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            await pb.rpc.config.setBootSoundEnabled({ value });
+
+            toast.success(
+                value
+                    ? formatMessage({ defaultMessage: 'Boot sound enabled' })
+                    : formatMessage({ defaultMessage: 'Boot sound disabled' }),
+            );
+        } catch ($) {
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to save boot sound setting!' });
+            toast.error(msg);
+        } finally {
+            await this.#soundLightFetch();
+            this.#setField('enableBootSound', s => getFieldStateDefault(s.value));
+        }
+    };
     #soundLightSetLedNotify = async (value: boolean): Promise<void> => {
         const { formatMessage } = this.props.intl;
 
@@ -972,22 +1003,52 @@ class View extends Component<Props, State> {
             );
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
+            msg ||= formatMessage({ defaultMessage: 'Failed to save LED notifications setting!' });
             toast.error(msg);
         } finally {
             this.#soundLightFetch();
             this.#setField('enableLedNotifications', s => getFieldStateDefault(s.value));
         }
     };
+    #soundLightSetLedNotifyNight = async (value: boolean): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('enableLedNotificationsNightmode', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            await pb.rpc.config.setLedEnabledNightmode({ value });
+
+            toast.success(
+                value
+                    ? formatMessage({ defaultMessage: 'LED notifications in night mode enabled' })
+                    : formatMessage({ defaultMessage: 'LED notifications in night mode disabled' }),
+            );
+        } catch ($) {
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to save LED notifications night mode setting!' });
+            toast.error(msg);
+        } finally {
+            this.#soundLightFetch();
+            this.#setField('enableLedNotificationsNightmode', s => getFieldStateDefault(s.value));
+        }
+    };
     #soundLightRender = (): ReactNode => {
         const { volume, volumeNightmode, enableLedNotifications } = this.state.values;
+        const { enableLedNotificationsNightmode, enableBootSound } = this.state.values;
 
         return (
             <SectionSoundAndLight
                 soundVolume={this.#getFieldStruct<pb.SoundVolume>(volume, this.#soundLightSetVolume)}
                 soundVolumeNight={this.#getFieldStruct<pb.SoundVolume>(volumeNightmode, this.#soundLightSetVolumeNight)}
                 // alarmAndNotifyVolume={{ value: 65, onChange: noop }}
+                bootSoundEnabled={this.#getFieldStruct<boolean>(enableBootSound, this.#soundLightSetBootSound)}
                 ledNotifyEnabled={this.#getFieldStruct<boolean>(enableLedNotifications, this.#soundLightSetLedNotify)}
+                ledNotifyEnabledNight={this.#getFieldStruct<boolean>(
+                    enableLedNotificationsNightmode,
+                    this.#soundLightSetLedNotifyNight,
+                )}
             />
         );
     };

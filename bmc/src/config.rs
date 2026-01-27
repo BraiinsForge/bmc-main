@@ -74,6 +74,8 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     led_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    boot_sound_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     autoupgrade: Option<AutoUpgradeConfig>,
     #[serde(
         default,
@@ -140,6 +142,14 @@ impl Config {
 
     pub fn set_led_enabled(&mut self, led_enabled: bool) {
         self.led_enabled = Some(led_enabled);
+    }
+
+    pub fn boot_sound_enabled(&self) -> bool {
+        self.boot_sound_enabled.unwrap_or(true)
+    }
+
+    pub fn set_boot_sound_enabled(&mut self, enabled: bool) {
+        self.boot_sound_enabled = Some(enabled);
     }
 
     pub fn autoupgrade(&self) -> AutoUpgradeConfig {
@@ -306,6 +316,7 @@ impl Default for Config {
             sound_volume_pct: None,
             alarms: None,
             led_enabled: None,
+            boot_sound_enabled: None,
             autoupgrade: None,
             accounts: indexmap! {},
         }
@@ -437,6 +448,10 @@ impl ConfigHandle {
         self.night_mode.get_or_insert_default().sound_volume_pct = Some(sound_volume_pct);
     }
 
+    pub fn set_night_mode_led_enabled(&mut self, led_enabled: bool) {
+        self.night_mode.get_or_insert_default().led_enabled = Some(led_enabled);
+    }
+
     pub fn set_sound_volume(&mut self, sound_volume_pct: u8) {
         self.sound_volume_pct = Some(sound_volume_pct);
     }
@@ -512,6 +527,8 @@ struct NightModeConfigData {
     brightness_pct: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sound_volume_pct: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    led_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -521,6 +538,7 @@ pub struct NightModeConfig {
     pub to: NaiveTime,
     pub brightness_pct: u8,
     pub sound_volume_pct: u8,
+    pub led_enabled: bool,
 }
 
 impl NightModeConfig {
@@ -561,6 +579,7 @@ impl NightModeConfigData {
             to: self.to,
             brightness_pct: self.brightness_pct.unwrap_or(default_brightness),
             sound_volume_pct: self.sound_volume_pct.unwrap_or(default_sound_volume),
+            led_enabled: self.led_enabled.unwrap_or(true),
         }
     }
 }
@@ -573,6 +592,7 @@ impl Default for NightModeConfigData {
             to: NightModeConfigData::default_to(),
             brightness_pct: None,
             sound_volume_pct: None,
+            led_enabled: None,
         }
     }
 }
