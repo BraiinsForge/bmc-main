@@ -1,7 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::config::{ConfigHandle, TemperatureUnit, UnitSystem};
-use crate::led::LedState;
 use crate::sound::Sounds;
 use crate::system_manager::SystemManager;
 
@@ -21,7 +20,7 @@ use bmc_shared_utils::number_format::NumberFormat;
 use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
@@ -44,7 +43,6 @@ pub(crate) struct ConfigurationService<T: DisplayBacklightDriver> {
     system_manager: SystemManager<T>,
     sound_controller: SoundController,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    led_state_sender: watch::Sender<LedState>,
 }
 
 impl<T: DisplayBacklightDriver> ConfigurationService<T> {
@@ -52,13 +50,11 @@ impl<T: DisplayBacklightDriver> ConfigurationService<T> {
         system_manager: SystemManager<T>,
         sound_controller: SoundController,
         config_handle: Arc<RwLock<ConfigHandle>>,
-        led_state_sender: watch::Sender<LedState>,
     ) -> Self {
         Self {
             system_manager,
             sound_controller,
             config_handle,
-            led_state_sender,
         }
     }
 }
@@ -477,40 +473,24 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         &self,
         _request: Request<()>,
     ) -> Result<Response<LedSettingsResponse>, Status> {
-        let config = self.config_handle.read().await;
-        let led_enabled = config.led_enabled();
-        let led_enabled_nightmode = config.night_mode().led_enabled;
+        let led_settings = self.system_manager.led_settings().await;
 
         Ok(Response::new(LedSettingsResponse {
-            led_enabled,
-            led_enabled_nightmode,
+            led_enabled: led_settings.led_enabled,
+            led_enabled_nightmode: led_settings.led_enabled_night_mode,
         }))
     }
 
     async fn set_led_enabled(&self, request: Request<bool>) -> Result<Response<()>, Status> {
-        let mut config = self.config_handle.write().await;
-
         let led_enabled = request.into_inner();
 
-        if config.led_enabled() == led_enabled {
-            return Ok(tonic::Response::new(()));
-        }
-
-        config.set_led_enabled(led_enabled);
-
-        self.led_state_sender
-            .send(LedState::from(led_enabled))
+        self.system_manager
+            .set_led_enabled(led_enabled)
+            .await
             .map_err(|e| {
-                config.set_led_enabled(!led_enabled);
-
-                error!("Failed to send led state event, error {e}");
+                error!("Failed to set led_enabled, error {e}");
                 Status::internal("Failed to save led_enabled")
             })?;
-
-        config.save().await.map_err(|e| {
-            error!("Failed to save led enabled, error {e}");
-            Status::internal("Failed to save led_enabled")
-        })?;
 
         Ok(tonic::Response::new(()))
     }
@@ -519,19 +499,15 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         &self,
         request: Request<bool>,
     ) -> Result<Response<()>, Status> {
-        let mut config = self.config_handle.write().await;
         let enabled = request.into_inner();
 
-        if config.night_mode().led_enabled == enabled {
-            return Ok(tonic::Response::new(()));
-        }
-
-        config.set_night_mode_led_enabled(enabled);
-
-        config.save().await.map_err(|e| {
-            error!("Failed to save led_enabled_nightmode, error {e}");
-            Status::internal("Failed to save led_enabled_nightmode")
-        })?;
+        self.system_manager
+            .set_led_enabled_night_mode(enabled)
+            .await
+            .map_err(|e| {
+                error!("Failed to set led_enabled_nightmode, error {e}");
+                Status::internal("Failed to save led_enabled_nightmode")
+            })?;
 
         Ok(tonic::Response::new(()))
     }

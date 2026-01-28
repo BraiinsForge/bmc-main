@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::{
     backlight::DisplayBacklightController,
     config::{ConfigHandle, NightModeConfig},
+    led::LedState,
     night_mode::NightModeController,
     sound::SoundController,
 };
@@ -29,6 +30,12 @@ pub(crate) struct SoundSettings {
     pub(crate) volume_night_mode: u8,
 }
 
+#[derive(Debug)]
+pub(crate) struct LedSettings {
+    pub(crate) led_enabled: bool,
+    pub(crate) led_enabled_night_mode: bool,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SystemManager<T: DisplayBacklightDriver> {
     night_mode_controller: NightModeController,
@@ -36,6 +43,8 @@ pub(crate) struct SystemManager<T: DisplayBacklightDriver> {
     brightness_modified: Arc<Notify>,
     sound_controller: SoundController,
     sound_volume_modified: Arc<Notify>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
+    led_state_modified: Arc<Notify>,
 }
 
 impl<T: DisplayBacklightDriver> SystemManager<T> {
@@ -46,12 +55,13 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         scheduler: JobScheduler,
         display_controller: DisplayController,
         sound_controller: SoundController,
+        led_state_sender: watch::Sender<LedState>,
     ) -> Self {
         let backlight_controller =
             DisplayBacklightController::new(config_handle.clone(), backlight_driver);
 
         let night_mode_controller =
-            NightModeController::init(config_handle, scheduler, timezone_receiver).await;
+            NightModeController::init(config_handle.clone(), scheduler, timezone_receiver).await;
 
         let brightness_modified = Arc::new(Notify::new());
 
@@ -76,12 +86,23 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             display_controller.clone(),
         ));
 
+        let led_state_modified = Arc::new(Notify::new());
+
+        tokio::spawn(Self::set_current_led_state(
+            config_handle.clone(),
+            night_mode_controller.clone(),
+            led_state_sender.clone(),
+            led_state_modified.clone(),
+        ));
+
         Self {
             night_mode_controller,
             backlight_controller,
             brightness_modified,
             sound_controller,
             sound_volume_modified,
+            config_handle,
+            led_state_modified,
         }
     }
 
@@ -166,6 +187,44 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                     }
                 },
                 () = sound_volume_modified.notified() => {},
+            }
+        }
+    }
+
+    async fn set_current_led_state(
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        night_mode_controller: NightModeController,
+        led_state_sender: watch::Sender<LedState>,
+        led_state_modified: Arc<Notify>,
+    ) {
+        let mut night_mode_receiver = night_mode_controller.subscribe();
+        loop {
+            let night_mode_is_active = *night_mode_receiver.borrow_and_update();
+
+            let led_enabled = if night_mode_is_active {
+                night_mode_controller.config().await.led_enabled
+            } else {
+                config_handle.read().await.led_enabled()
+            };
+
+            if let Err(err) = led_state_sender.send(LedState::from(led_enabled)) {
+                warn!(
+                    error = %err,
+                    led_enabled = led_enabled,
+                    night_mode_active = night_mode_is_active,
+                    "Failed to send LED state"
+                );
+            }
+
+            tokio::select! {
+                biased;
+                result = night_mode_receiver.changed() => {
+                    if let Err(err) = result {
+                        info!(error = %err, "Night mode receiver closed, stopping LED state update loop");
+                        break;
+                    }
+                },
+                () = led_state_modified.notified() => {},
             }
         }
     }
@@ -264,6 +323,34 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
     pub(crate) async fn set_sound_volume_night_mode(&self, value: u8) -> anyhow::Result<()> {
         self.night_mode_controller.set_sound_volume(value).await?;
         self.sound_volume_modified.notify_waiters();
+
+        Ok(())
+    }
+
+    pub(crate) async fn led_settings(&self) -> LedSettings {
+        let led_enabled = self.config_handle.read().await.led_enabled();
+        let led_enabled_night_mode = self.night_mode_controller.config().await.led_enabled;
+
+        LedSettings {
+            led_enabled,
+            led_enabled_night_mode,
+        }
+    }
+
+    pub(crate) async fn set_led_enabled(&self, enabled: bool) -> anyhow::Result<()> {
+        {
+            let mut config_handle = self.config_handle.write().await;
+            config_handle.set_led_enabled(enabled);
+            config_handle.save().await?;
+        }
+        self.led_state_modified.notify_waiters();
+
+        Ok(())
+    }
+
+    pub(crate) async fn set_led_enabled_night_mode(&self, enabled: bool) -> anyhow::Result<()> {
+        self.night_mode_controller.set_led_enabled(enabled).await?;
+        self.led_state_modified.notify_waiters();
 
         Ok(())
     }

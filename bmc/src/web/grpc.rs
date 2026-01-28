@@ -3,7 +3,7 @@
 use crate::BmcManager;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
-use crate::led::{LedController, LedState};
+use crate::led::LedController;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::web::SessionManager;
@@ -16,7 +16,7 @@ use bmc_upgrade::firmware::FirmwareIndex;
 use std::fmt::Display;
 use std::sync::Arc;
 use strum::EnumMessage;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::RwLock;
 use tonic::service::Routes;
 use tonic::{Status, body::Body, codegen::http::Request};
 use tonic_middleware::InterceptorFor;
@@ -81,7 +81,6 @@ pub(crate) struct GrpcWeb<
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
     alarm_controller: AlarmController,
-    led_state_sender: watch::Sender<LedState>,
     led_controller: LedController<T>,
 }
 
@@ -100,7 +99,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
         alarm_controller: AlarmController,
-        led_state_sender: watch::Sender<LedState>,
         led_controller: LedController<T>,
     ) -> Self {
         Self {
@@ -114,7 +112,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             system_manager,
             sound_controller,
             alarm_controller,
-            led_state_sender,
             led_controller,
         }
     }
@@ -166,7 +163,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                     self.system_manager,
                     self.sound_controller,
                     self.config_handle.clone(),
-                    self.led_state_sender,
                 ),
             );
 

@@ -11,7 +11,7 @@ use crate::button_manager::ButtonManager;
 use crate::config::ConfigHandle;
 use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
-use crate::led::{LedController, LedState};
+use crate::led::LedController;
 use crate::manager::BmcManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
@@ -50,7 +50,6 @@ where
     sound_controller: SoundController,
     alarm_controller: AlarmController,
     button_manager: ButtonManager<T>,
-    led_state_sender: watch::Sender<LedState>,
     led_controller: LedController<T>,
 }
 
@@ -148,6 +147,15 @@ where
         )
         .await;
 
+        let (_, last_price_change_24h_receiver) = watch::channel(0.0);
+        let (mut led_controller, led_state_sender) = LedController::new(
+            &state_service,
+            manager.clone(),
+            last_price_change_24h_receiver,
+            led_enabled,
+            alarm_bus.clone(),
+        );
+
         let system_manager = SystemManager::init(
             config_handle.clone(),
             manager.watch_timezone_updates(),
@@ -155,6 +163,7 @@ where
             scheduler,
             display_controller.clone(),
             sound_controller.clone(),
+            led_state_sender.clone(),
         )
         .await;
 
@@ -167,15 +176,6 @@ where
             config_handle.clone(),
             alarm_bus.clone(),
             system_manager.clone(),
-        );
-
-        let (_, last_price_change_24h_receiver) = watch::channel(0.0);
-        let (mut led_controller, led_state_sender) = LedController::new(
-            &state_service,
-            manager.clone(),
-            last_price_change_24h_receiver,
-            led_enabled,
-            alarm_bus,
         );
 
         led_controller.init(led_driver.command_sender.clone());
@@ -198,7 +198,6 @@ where
             sound_controller,
             alarm_controller,
             button_manager,
-            led_state_sender,
             led_controller,
         })
     }
@@ -223,7 +222,6 @@ where
             self.system_manager,
             self.sound_controller,
             self.alarm_controller,
-            self.led_state_sender,
             self.led_controller,
         )
         .run(self.listener)

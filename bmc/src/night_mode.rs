@@ -198,6 +198,16 @@ impl NightModeController {
         Ok(())
     }
 
+    pub(crate) async fn set_led_enabled(&self, enabled: bool) -> anyhow::Result<()> {
+        let mut config_handle = self.config_handle.write().await;
+        config_handle.set_night_mode_led_enabled(enabled);
+        config_handle.save().await?;
+
+        info!(led_enabled = enabled, "Night mode LED enabled updated");
+
+        Ok(())
+    }
+
     pub(crate) async fn toggle(&self) -> anyhow::Result<()> {
         let config = self.config().await;
         let is_currently_active = self.calculate_is_active().await;
