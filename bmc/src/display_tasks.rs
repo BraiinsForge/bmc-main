@@ -21,6 +21,7 @@ use reqwest::Client;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::select;
 use tokio::sync::{RwLock, broadcast, watch};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -101,7 +102,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             system_upgrade_receiver,
         ));
 
-        tokio::spawn(Self::run_timezone_listener(timezone_receiver));
+        tokio::spawn(Self::run_timezone_listener(timezone_receiver.clone()));
 
         tokio::spawn(Self::run_wifi_offline_check(
             display_controller.clone(),
@@ -116,7 +117,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         tokio::spawn(Self::run_blockheight_update(
             display_controller.clone(),
             config_handle.clone(),
-            manager.clone(),
+            timezone_receiver,
         ));
 
         tokio::spawn(Self::run_difficulty_stats_update(
@@ -499,59 +500,65 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
     async fn run_blockheight_update(
         display_controller: DisplayController,
         config_handle: Arc<RwLock<ConfigHandle>>,
-        manager: Arc<T>,
+        mut timezone_receiver: watch::Receiver<Timezone>,
     ) {
-        let mut interval = interval(Duration::from_secs(60));
+        let mut interval = interval(DATA_REFRESH_PERIOD);
+
+        let mut localization_change_listener =
+            config_handle.read().await.subscribe_localization_change();
+
+        let localization = config_handle.read().await.localization_config();
+        let mut is_24_format = localization.time_system.is_24();
+        let mut date_format = localization.date_format;
+        let mut number_format = localization.number_format;
+        let mut timezone = timezone_receiver.borrow_and_update().clone();
+
+        let client = Client::new();
+        let mut blockheight_data = BlockheightData::default();
 
         loop {
-            interval.tick().await;
-
-            debug!("Fetching block height data");
-            let client = Client::new();
-            let blockheight_data = match client
-                .get(blockheight_data::BLOCK_HEIGHT_API_URL)
-                .query(&[
-                    (blockheight_data::BLOCK_HEIGHT_LIMIT_API_PARAM, "1"),
-                    (CURRENCY_API_PARAM, "usd"),
-                ])
-                .timeout(API_TIMEOUT)
-                .send()
-                .await
-            {
-                Ok(response) => response
-                    .json::<Vec<BlockheightData>>()
-                    .await
-                    .inspect_err(
-                        |err| error!(error = %err, "Failed to parse block height JSON response"),
-                    )
-                    .unwrap_or_default()
-                    .first()
-                    .cloned()
-                    .unwrap_or_default(),
-                Err(err) => {
-                    warn!(error = %err, "Failed to fetch block height data from API");
-                    BlockheightData::default()
+            select! {
+                _ = interval.tick() => {
+                    debug!("Fetching Blockheight data");
+                    blockheight_data = match client
+                        .get(blockheight_data::BLOCK_HEIGHT_API_URL)
+                        .query(&[
+                            (blockheight_data::BLOCK_HEIGHT_LIMIT_API_PARAM, "1"),
+                            (CURRENCY_API_PARAM, "usd"),
+                        ])
+                        .timeout(API_TIMEOUT)
+                        .send()
+                        .await
+                    {
+                        Ok(response) => response
+                            .json::<Vec<BlockheightData>>()
+                            .await
+                            .inspect_err(
+                                |err| error!(error = %err, "Failed to parse block height JSON response"),
+                            )
+                            .unwrap_or_default()
+                            .first()
+                            .cloned()
+                            .unwrap_or_default(),
+                        Err(err) => {
+                            warn!(error = %err, "Failed to fetch block height data from API");
+                            BlockheightData::default()
+                        }
+                    };
                 }
-            };
-
-            let timezone = manager.timezone();
-
-            let is_24_format = config_handle
-                .read()
-                .await
-                .localization_config()
-                .time_system
-                .is_24();
-            let date_format = config_handle.read().await.localization_config().date_format;
-            let number_format = config_handle
-                .read()
-                .await
-                .localization_config()
-                .number_format;
+                Ok(localization) = localization_change_listener.recv() => {
+                    number_format = localization.number_format;
+                    date_format = localization.date_format;
+                    is_24_format = localization.time_system.is_24();
+                }
+                _ = timezone_receiver.changed() => {
+                    timezone = timezone_receiver.borrow_and_update().clone();
+                }
+            }
 
             display_controller.update_blockheight_data(
-                blockheight_data,
-                timezone,
+                blockheight_data.clone(),
+                timezone.clone(),
                 is_24_format,
                 date_format,
                 number_format,
