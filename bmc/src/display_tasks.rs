@@ -26,6 +26,7 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 const SCREEN_DURATION: Duration = Duration::from_secs(5);
+const DATA_REFRESH_PERIOD: Duration = Duration::from_secs(60);
 
 const PRICE_API_URL: &str = "https://public-api.braiins.com/v1/price-stats";
 const CURRENCY_API_PARAM: &str = "currency";
@@ -600,42 +601,52 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         display_controller: DisplayController,
         config_handle: Arc<RwLock<ConfigHandle>>,
     ) {
-        let mut interval = interval(Duration::from_secs(60));
+        let mut interval = interval(DATA_REFRESH_PERIOD);
+
+        let mut localization_change_listener =
+            config_handle.read().await.subscribe_localization_change();
+
+        let mut number_format = config_handle
+            .read()
+            .await
+            .localization_config()
+            .number_format;
+
         let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
             error!("HTTP Client init failed");
             return;
         };
+        let mut hashrate_data = HashrateData::default();
 
         loop {
-            interval.tick().await;
-
-            debug!("Fetching hashrate data");
-            let hashrate_data = match client
-                .get(HASHRATE_STATS_URL)
-                .query(&[(CURRENCY_API_PARAM, "usd")])
-                .send()
-                .await
-            {
-                Ok(response) => response
-                    .json::<HashrateData>()
-                    .await
-                    .inspect_err(
-                        |err| error!(error = %err, "Failed to parse hashrate JSON response"),
-                    )
-                    .unwrap_or_default(),
-                Err(err) => {
-                    warn!(error = %err, "Failed to fetch hashrate data from API");
-                    HashrateData::default()
+            select! {
+                _ = interval.tick() => {
+                    debug!("Fetching hashrate data");
+                    hashrate_data = match client
+                        .get(HASHRATE_STATS_URL)
+                        .query(&[(CURRENCY_API_PARAM, "usd")])
+                        .send()
+                        .await
+                    {
+                        Ok(response) => response
+                            .json::<HashrateData>()
+                            .await
+                            .inspect_err(
+                                |err| error!(error = %err, "Failed to parse hashrate JSON response"),
+                            )
+                            .unwrap_or_default(),
+                        Err(err) => {
+                            warn!(error = %err, "Failed to fetch hashrate data from API");
+                            HashrateData::default()
+                        }
+                    };
                 }
-            };
+                Ok(localization) = localization_change_listener.recv() => {
+                    number_format = localization.number_format;
+                }
+            }
 
-            let number_format = config_handle
-                .read()
-                .await
-                .localization_config()
-                .number_format;
-
-            display_controller.update_hashrate_data(hashrate_data, number_format);
+            display_controller.update_hashrate_data(hashrate_data.clone(), number_format);
         }
     }
 
