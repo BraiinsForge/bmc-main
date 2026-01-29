@@ -14,6 +14,7 @@ use bmc_display::display_controller::DisplayController;
 use reqwest::Client;
 use std::sync::Arc;
 use tap::TapFallible;
+use tokio::select;
 use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, instrument, warn};
@@ -44,57 +45,71 @@ pub async fn run(
     };
 
     let mut interval = interval(DATA_REFRESH_PERIOD);
+    let mut localization_change_listener =
+        config_handle.read().await.subscribe_localization_change();
+
+    let mut number_format = config_handle
+        .read()
+        .await
+        .localization_config()
+        .number_format;
+
+    let mut btc_history_data = BtcHistoryData::default();
+    let mut blockheight_history = Vec::default();
+    let mut diff_and_hashrate_day = DiffHashrateData::default();
+    let mut diff_and_hashrate_year = DiffHashrateData::default();
 
     loop {
-        interval.tick().await;
+        select! {
+            _ = interval.tick() => {
+                if download_btc_history {
+                    debug!("Fetching Bitcoin history data");
+                    btc_history_data = download_btc_history_data(&client).await;
+                }
+                if download_blocks_history {
+                    debug!("Fetching block height history data");
+                    blockheight_history = download_blockheight_history(&client).await;
+                }
+                if download_diff_and_hashrate_history {
+                    debug!("Fetching difficulty and hashrate history data");
+                    diff_and_hashrate_day =
+                        download_diff_and_hashrate_data(&client, TickerTimeFrame::Day1).await;
+
+                    diff_and_hashrate_year =
+                        download_diff_and_hashrate_data(&client, TickerTimeFrame::Year1).await;
+                }
+            }
+            Ok(localization) = localization_change_listener.recv() => {
+                number_format = localization.number_format;
+            }
+        }
 
         if download_btc_history {
-            debug!("Fetching Bitcoin history data");
-            let btc_history_data = download_btc_history_data(&client).await;
-
             display_controller.update_blockchain_btc_graph(
                 scene_id.clone(),
                 widget_id.clone(),
-                btc_history_data,
+                btc_history_data.clone(),
             );
         }
-
+        if download_blocks_history {
+            display_controller.update_blocks_last_24h(
+                scene_id.clone(),
+                widget_id.clone(),
+                blockheight_history.clone(),
+            );
+        }
         if download_diff_and_hashrate_history {
-            debug!("Fetching difficulty and hashrate history data");
-            let diff_and_hashrate_day =
-                download_diff_and_hashrate_data(&client, TickerTimeFrame::Day1).await;
-
-            let diff_and_hashrate_year =
-                download_diff_and_hashrate_data(&client, TickerTimeFrame::Year1).await;
-
-            let number_format = config_handle
-                .read()
-                .await
-                .localization_config()
-                .number_format;
-
             display_controller.update_hashrate_info(
                 scene_id.clone(),
                 widget_id.clone(),
-                diff_and_hashrate_day,
+                diff_and_hashrate_day.clone(),
                 number_format,
             );
 
             display_controller.update_difficulty_graph(
                 scene_id.clone(),
                 widget_id.clone(),
-                diff_and_hashrate_year,
-            );
-        }
-
-        if download_blocks_history {
-            debug!("Fetching block height history data");
-            let blockheight_history = download_blockheight_history(&client).await;
-
-            display_controller.update_blocks_last_24h(
-                scene_id.clone(),
-                widget_id.clone(),
-                blockheight_history,
+                diff_and_hashrate_year.clone(),
             );
         }
     }
