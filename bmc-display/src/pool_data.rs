@@ -28,7 +28,7 @@ pub const CURSOR: &str = "page_cursor";
 const FORMAT_24H: &str = "%H:%M";
 const FORMAT_12H: &str = "%I:%M %p";
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct CurrentUserHashrate {
     hashrate_th_per_sec: f32,
 }
@@ -60,7 +60,7 @@ struct HashrateSlot {
     hashrate_th_per_sec: f64,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 struct PaginationMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     has_next: Option<bool>,
@@ -68,7 +68,7 @@ struct PaginationMetadata {
     next_cursor: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct UserHashrateHistory {
     #[serde(skip_serializing_if = "Option::is_none")]
     from_timestamp: Option<DateTime<Utc>>,
@@ -235,7 +235,7 @@ struct WorkerSlot {
     active_workers: u32,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct UserWorkerHistory {
     #[serde(skip_serializing_if = "Option::is_none")]
     from_timestamp: Option<DateTime<Utc>>,
@@ -358,7 +358,7 @@ impl UserWorkerHistory {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct CurrentUserWorkerStats {
     active_workers: u32,
     low_workers: u32,
@@ -380,13 +380,13 @@ impl CurrentUserWorkerStats {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 struct FinancialAccount {
     #[serde(skip_serializing_if = "Option::is_none")]
     next_payout_at_estimate: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct UserFinancials {
     financial_accounts: Vec<FinancialAccount>,
 }
@@ -428,7 +428,7 @@ impl UserFinancials {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct LatestUserRewards {
     todays_reward_estimate_btc: f32,
     todays_reward_estimate_usd: f32,
@@ -477,7 +477,7 @@ struct Payout {
     status: PayoutStatus,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct RecentUserPayouts {
     #[serde(skip_serializing_if = "Option::is_none")]
     from_timestamp: Option<DateTime<Utc>>,

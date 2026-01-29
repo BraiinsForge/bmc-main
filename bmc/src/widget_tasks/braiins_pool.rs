@@ -15,6 +15,7 @@ use bmc_shared_time::time::Timezone;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use std::sync::Arc;
+use tokio::select;
 use tokio::sync::{RwLock, watch};
 use tokio::time::interval;
 use tracing::{debug, error, info, instrument, warn};
@@ -94,9 +95,25 @@ pub async fn run(
 
     let mut interval = interval(DATA_REFRESH_PERIOD);
 
-    loop {
-        interval.tick().await;
+    let mut localization_change_listener =
+        config_handle.read().await.subscribe_localization_change();
 
+    let localization = config_handle.read().await.localization_config();
+    let mut number_format = localization.number_format;
+    let mut date_format = localization.date_format;
+    let mut is_24_format = localization.time_system.is_24();
+    let mut system_timezone = system_timezone_receiver.borrow_and_update().clone();
+
+    let mut current_hashrate = CurrentUserHashrate::default();
+    let mut latest_rewards = LatestUserRewards::default();
+    let mut hashrate_history = UserHashrateHistory::default();
+    let mut workers_stats = CurrentUserWorkerStats::default();
+    let mut worker_history = UserWorkerHistory::default();
+    let mut user_financials = UserFinancials::default();
+    let mut recent_payouts_stats = RecentUserPayouts::default();
+    let mut recent_payouts = RecentUserPayouts::default();
+
+    loop {
         let (api_key, account_name) =
             if let Some(account) = config_handle.read().await.accounts.get(&account_id) {
                 let auth = match &account.authentication {
@@ -108,138 +125,152 @@ pub async fn run(
                 return;
             };
 
-        let number_format = config_handle
-            .read()
-            .await
-            .localization_config()
-            .number_format;
-
         display_controller.update_account_name(scene_id.clone(), widget_id.clone(), account_name);
 
-        debug!("Fetching user current hashrate data");
-        let current_hashrate = download_current_hashrate_data(&client, &api_key).await;
+        select! {
+            _ = interval.tick() => {
+                debug!("Fetching user current hashrate data");
+                current_hashrate = download_current_hashrate_data(&client, &api_key).await;
+
+                if download_rewards {
+                    debug!("Fetching user latest rewards data");
+                    latest_rewards = download_latest_rewards_data(&client, &api_key).await;
+                }
+
+                if download_hashrate_history {
+                    debug!("Fetching user hashrate history data");
+                    let to_timestamp = Utc::now();
+                    let from_timestamp = to_timestamp
+                        .checked_sub_signed(chart_frame.clone().into())
+                        // We don't expect this operation will fail
+                        .unwrap_or_default();
+
+                    hashrate_history = download_paginated_hashrate_history_data(
+                        &client,
+                        &api_key,
+                        from_timestamp,
+                        to_timestamp,
+                    )
+                    .await;
+                }
+
+                if download_workers_stats {
+                    debug!("Fetching current workers data");
+                    workers_stats = download_worker_stats_data(&client, &api_key).await;
+                }
+
+                if download_workers_history {
+                    debug!("Fetching user worker history data");
+                    let to_timestamp = Utc::now();
+                    let from_timestamp = to_timestamp
+                        .checked_sub_signed(chart_frame.clone().into())
+                        // We don't expect this operation will fail
+                        .unwrap_or_default();
+
+                    worker_history = download_paginated_worker_history_data(
+                        &client,
+                        &api_key,
+                        from_timestamp,
+                        to_timestamp,
+                    )
+                    .await;
+                }
+
+                if download_payout_stats {
+                    debug!("Fetching user financials data");
+                    user_financials = download_user_financials_data(&client, &api_key).await;
+                    debug!("Fetching user recent payouts data");
+                    recent_payouts_stats = download_recent_payouts_data(&client, &api_key).await;
+                }
+
+                if download_recent_payouts {
+                    debug!("Fetching user recent payouts data");
+                    let to_timestamp = Utc::now();
+                    let from_timestamp = to_timestamp
+                        .checked_sub_signed(chart_frame.clone().into())
+                        // We don't expect this operation will fail
+                        .unwrap_or_default();
+
+                    recent_payouts = download_paginated_recent_payouts_data(
+                        &client,
+                        &api_key,
+                        from_timestamp,
+                        to_timestamp,
+                    )
+                    .await;
+                }
+            }
+            Ok(localization) = localization_change_listener.recv() => {
+                number_format = localization.number_format;
+                date_format = localization.date_format;
+                is_24_format = localization.time_system.is_24();
+            }
+            _ = system_timezone_receiver.changed() => {
+                system_timezone = system_timezone_receiver.borrow_and_update().clone();
+            }
+        }
+
         display_controller.update_current_user_hashrate(
             scene_id.clone(),
             widget_id.clone(),
-            current_hashrate,
+            current_hashrate.clone(),
             number_format,
         );
 
         if download_rewards {
-            debug!("Fetching user latest rewards data");
-            let latest_rewards = download_latest_rewards_data(&client, &api_key).await;
             display_controller.update_rewards_latest(
                 scene_id.clone(),
                 widget_id.clone(),
-                latest_rewards,
+                latest_rewards.clone(),
                 number_format,
             );
         }
 
         if download_hashrate_history {
-            debug!("Fetching user hashrate history data");
-            let to_timestamp = Utc::now();
-            let from_timestamp = to_timestamp
-                .checked_sub_signed(chart_frame.clone().into())
-                // We don't expect this operation will fail
-                .unwrap_or_default();
-
-            let hashrate_history = download_paginated_hashrate_history_data(
-                &client,
-                &api_key,
-                from_timestamp,
-                to_timestamp,
-            )
-            .await;
-
-            let system_timezone = system_timezone_receiver.borrow_and_update().clone();
-            let is_24_format = config_handle
-                .read()
-                .await
-                .localization_config()
-                .time_system
-                .is_24();
-            let date_format = config_handle.read().await.localization_config().date_format;
             display_controller.update_hashrate_history(
                 scene_id.clone(),
                 widget_id.clone(),
-                system_timezone,
+                system_timezone.clone(),
                 is_24_format,
                 date_format,
-                hashrate_history,
+                hashrate_history.clone(),
                 number_format,
             );
         }
 
         if download_workers_stats {
-            debug!("Fetching current workers data");
-            let workers_stats = download_worker_stats_data(&client, &api_key).await;
             display_controller.update_current_workers(
                 scene_id.clone(),
                 widget_id.clone(),
-                workers_stats,
+                workers_stats.clone(),
                 number_format,
             );
         }
 
         if download_workers_history {
-            debug!("Fetching user worker history data");
-            let to_timestamp = Utc::now();
-            let from_timestamp = to_timestamp
-                .checked_sub_signed(chart_frame.clone().into())
-                // We don't expect this operation will fail
-                .unwrap_or_default();
-
-            let worker_history = download_paginated_worker_history_data(
-                &client,
-                &api_key,
-                from_timestamp,
-                to_timestamp,
-            )
-            .await;
-
             display_controller.update_worker_history(
                 scene_id.clone(),
                 widget_id.clone(),
-                worker_history,
+                worker_history.clone(),
                 number_format,
             );
         }
 
         if download_payout_stats {
-            debug!("Fetching user financials data");
-            let user_financials = download_user_financials_data(&client, &api_key).await;
-            debug!("Fetching user recent payouts data");
-            let recent_payouts = download_recent_payouts_data(&client, &api_key).await;
             display_controller.update_payout_stats(
                 scene_id.clone(),
                 widget_id.clone(),
-                user_financials,
-                recent_payouts,
+                user_financials.clone(),
+                recent_payouts_stats.clone(),
                 number_format,
             );
         }
 
         if download_recent_payouts {
-            debug!("Fetching user recent payouts data");
-            let to_timestamp = Utc::now();
-            let from_timestamp = to_timestamp
-                .checked_sub_signed(chart_frame.clone().into())
-                // We don't expect this operation will fail
-                .unwrap_or_default();
-
-            let recent_payouts = download_paginated_recent_payouts_data(
-                &client,
-                &api_key,
-                from_timestamp,
-                to_timestamp,
-            )
-            .await;
-
             display_controller.update_recent_payouts(
                 scene_id.clone(),
                 widget_id.clone(),
-                recent_payouts,
+                recent_payouts.clone(),
             );
         }
     }
