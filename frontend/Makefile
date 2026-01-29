@@ -108,7 +108,3 @@ nix-update-hash:
 ifneq ($(shell uname -s),Darwin)
 	./bin/nix-update-hash.ts --darwin
 endif
-
-#
-# Image Minification
-#

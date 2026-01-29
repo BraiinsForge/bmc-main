@@ -250,6 +250,10 @@ $ctrl-height: to-rem(40px);
         color: $text-secondary;
     }
 
+    input {
+        padding-inline-end: to-rem(80px) !important;
+    }
+
     &.disabled {
         opacity: 0.5;
         cursor: not-allowed;

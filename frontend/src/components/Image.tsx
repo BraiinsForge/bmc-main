@@ -21,6 +21,7 @@ export function Image(props: ImageProps) {
     const [{ effectiveSource, hasFailed }, setState] = useState<State>({ effectiveSource: src, hasFailed: false });
 
     const handleFail = useCallback(() => setState({ effectiveSource: fallback, hasFailed: true }), [fallback]);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: Couldn't find a better way around the "rest" prop
     const renderImage: RenderImage = useCallback(
         (ref, extraProps) => {
             return (
@@ -34,7 +35,6 @@ export function Image(props: ImageProps) {
                 />
             );
         },
-        // biome-ignore lint/correctness/useExhaustiveDependencies: Couldn't find a better way around the "rest" prop
         [effectiveSource, rest, alt, hasFailed, handleFail],
     );
 

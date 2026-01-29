@@ -239,6 +239,6 @@ export function AlarmForm(props: AlarmFormProps) {
 }
 
 function soundOptionElement(item: null | pb.SoundInfo) {
-    if (!item) return null;
+    if (!item) return <></>;
     return <SoundOption sound={item} />;
 }

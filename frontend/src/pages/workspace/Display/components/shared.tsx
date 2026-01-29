@@ -150,7 +150,7 @@ export interface BoundDropdownProps<T> extends iField<T> {
 
     items: T[];
     itemToString(item: null | T): string;
-    itemToElement?(item: T): ReactNode;
+    itemToElement?(item: T): NonNullable<ReactNode>;
 }
 export function BoundDropdown<T>(props: BoundDropdownProps<T>) {
     const {
