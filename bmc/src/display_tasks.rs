@@ -563,37 +563,47 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         display_controller: DisplayController,
         config_handle: Arc<RwLock<ConfigHandle>>,
     ) {
-        let mut interval = interval(Duration::from_secs(60));
+        let mut interval = interval(DATA_REFRESH_PERIOD);
+
+        let mut localization_change_listener =
+            config_handle.read().await.subscribe_localization_change();
+
+        let mut number_format = config_handle
+            .read()
+            .await
+            .localization_config()
+            .number_format;
+
         let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
             error!("HTTP Client init failed");
             return;
         };
+        let mut difficulty_data = DifficultyData::default();
 
         loop {
-            interval.tick().await;
-
-            debug!("Fetching difficulty data");
-            let difficulty_data = match client.get(DIFFICULTY_STATS_URL).send().await {
-                Ok(response) => response
-                    .json::<DifficultyData>()
-                    .await
-                    .inspect_err(
-                        |err| error!(error = %err, "Failed to parse difficulty JSON response"),
-                    )
-                    .unwrap_or_default(),
-                Err(err) => {
-                    warn!(error = %err, "Failed to fetch difficulty data from API");
-                    DifficultyData::default()
+            select! {
+                _ = interval.tick() => {
+                    debug!("Fetching difficulty data");
+                    difficulty_data = match client.get(DIFFICULTY_STATS_URL).send().await {
+                        Ok(response) => response
+                            .json::<DifficultyData>()
+                            .await
+                            .inspect_err(
+                                |err| error!(error = %err, "Failed to parse difficulty JSON response"),
+                            )
+                            .unwrap_or_default(),
+                        Err(err) => {
+                            warn!(error = %err, "Failed to fetch difficulty data from API");
+                            DifficultyData::default()
+                        }
+                    };
                 }
-            };
+                Ok(localization) = localization_change_listener.recv() => {
+                    number_format = localization.number_format;
+                }
+            }
 
-            let number_format = config_handle
-                .read()
-                .await
-                .localization_config()
-                .number_format;
-
-            display_controller.update_difficulty_data(difficulty_data, number_format);
+            display_controller.update_difficulty_data(difficulty_data.clone(), number_format);
         }
     }
 
