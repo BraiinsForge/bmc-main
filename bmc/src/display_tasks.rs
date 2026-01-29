@@ -467,32 +467,43 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         display_controller: DisplayController,
         config_handle: Arc<RwLock<ConfigHandle>>,
     ) {
-        let mut interval = interval(Duration::from_secs(60));
+        let mut interval = interval(DATA_REFRESH_PERIOD);
+
+        let mut localization_change_listener =
+            config_handle.read().await.subscribe_localization_change();
+
+        let mut number_format = config_handle
+            .read()
+            .await
+            .localization_config()
+            .number_format;
+
+        let client = Client::new();
+        let mut btc_price_data = BitcoinData::default();
 
         loop {
-            interval.tick().await;
-
-            debug!("Fetching Bitcoin price data");
-            let client = Client::new();
-            let btc_price_data = match client.get(PRICE_API_URL).timeout(API_TIMEOUT).send().await {
-                Ok(response) => response
-                    .json::<BitcoinData>()
-                    .await
-                    .inspect_err(
-                        |err| error!(error = %err, "Failed to parse Bitcoin price JSON response"),
-                    )
-                    .unwrap_or_default(),
-                Err(err) => {
-                    warn!(error = %err, "Failed to fetch Bitcoin price data from API");
-                    BitcoinData::default()
+            select! {
+                _ = interval.tick() => {
+                    debug!("Fetching Bitcoin price data");
+                    btc_price_data = match client.get(PRICE_API_URL).timeout(API_TIMEOUT).send().await {
+                        Ok(response) => response
+                            .json::<BitcoinData>()
+                            .await
+                            .inspect_err(
+                                |err| error!(error = %err, "Failed to parse Bitcoin price JSON response"),
+                            )
+                            .unwrap_or_default(),
+                        Err(err) => {
+                            warn!(error = %err, "Failed to fetch Bitcoin price data from API");
+                            BitcoinData::default()
+                        }
+                    };
                 }
-            };
+                Ok(localization) = localization_change_listener.recv() => {
+                    number_format = localization.number_format;
+                }
+            }
 
-            let number_format = config_handle
-                .read()
-                .await
-                .localization_config()
-                .number_format;
             display_controller.update_btc_price(btc_price_data, number_format);
         }
     }
