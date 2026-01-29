@@ -327,6 +327,8 @@ pub struct LocalizationConfig {
 pub struct ConfigHandle {
     path: PathBuf,
     config: Config,
+    config_notify: ConfigNotify,
+    localization_dirty: bool,
     default_brightness_pct: u8,
     default_night_mode_brightness_pct: u8,
     default_sound_volume_pct: u8,
@@ -359,6 +361,8 @@ impl ConfigHandle {
         Self {
             path,
             config,
+            config_notify: ConfigNotify::new(),
+            localization_dirty: false,
             default_brightness_pct,
             default_night_mode_brightness_pct,
             default_sound_volume_pct,
@@ -366,8 +370,35 @@ impl ConfigHandle {
         }
     }
 
+    pub fn subscribe_localization_change(&self) -> broadcast::Receiver<LocalizationConfig> {
+        self.config_notify.subscribe_localization_change()
+    }
+
     pub async fn save(&mut self) -> Result<()> {
-        self.config.save(&self.path).await
+        self.config.save(&self.path).await?;
+
+        if self.localization_dirty {
+            self.config_notify
+                .localization_changed(self.localization_config());
+            self.localization_dirty = false;
+        }
+
+        Ok(())
+    }
+
+    pub fn set_time_system(&mut self, time_system: TimeSystem) {
+        self.config.set_time_system(time_system);
+        self.localization_dirty = true;
+    }
+
+    pub fn set_number_format(&mut self, number_format: NumberFormat) {
+        self.config.set_number_format(number_format);
+        self.localization_dirty = true;
+    }
+
+    pub fn set_date_format(&mut self, date_format: DateFormat) {
+        self.config.set_date_format(date_format);
+        self.localization_dirty = true;
     }
 
     pub fn set_brightness(&mut self, brightness_pct: u8) {
