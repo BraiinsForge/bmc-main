@@ -20,7 +20,34 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use tokio::sync::broadcast;
 use tracing::warn;
+
+const CHANNEL_CAPACITY: usize = 8;
+
+#[derive(Clone, Debug)]
+struct ConfigNotify {
+    localization: broadcast::Sender<LocalizationConfig>,
+}
+
+impl ConfigNotify {
+    fn new() -> Self {
+        let (tx_localization, _rx) = broadcast::channel(CHANNEL_CAPACITY);
+        Self {
+            localization: tx_localization,
+        }
+    }
+
+    fn subscribe_localization_change(&self) -> broadcast::Receiver<LocalizationConfig> {
+        self.localization.subscribe()
+    }
+
+    fn localization_changed(&self, config: LocalizationConfig) {
+        if let Err(err) = self.localization.send(config) {
+            warn!(error = %err, "Failed to send localization changed notification");
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
