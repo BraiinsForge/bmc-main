@@ -138,22 +138,24 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let display_controller = self.display_controller.clone();
             let widget_tasks = self.widget_tasks.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
-
                 let new_scene = Scene::fullscreen(widget_kind);
                 let new_scene_id = new_scene.id.clone();
 
-                let replaced_scene = temp_config
-                    .scenes
-                    .insert(new_scene_id.clone(), new_scene.clone());
-                debug_assert!(replaced_scene.is_none());
+                {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
+                    let replaced_scene = temp_config
+                        .scenes
+                        .insert(new_scene_id.clone(), new_scene.clone());
+                    debug_assert!(replaced_scene.is_none());
+
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
+                    }
+                    *config = temp_config;
                 }
-                *config = temp_config;
 
                 if new_scene.enabled {
                     widget_tasks
@@ -179,22 +181,24 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let display_controller = self.display_controller.clone();
             let widget_tasks = self.widget_tasks.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
-
                 let new_scene = Scene::combined();
                 let new_scene_id = new_scene.id.clone();
 
-                let replaced_scene = temp_config
-                    .scenes
-                    .insert(new_scene_id.clone(), new_scene.clone());
-                debug_assert!(replaced_scene.is_none());
+                {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
+                    let replaced_scene = temp_config
+                        .scenes
+                        .insert(new_scene_id.clone(), new_scene.clone());
+                    debug_assert!(replaced_scene.is_none());
+
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
+                    }
+                    *config = temp_config;
                 }
-                *config = temp_config;
 
                 if new_scene.enabled {
                     widget_tasks
@@ -246,26 +250,30 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let display_controller = self.display_controller.clone();
             let widget_tasks = self.widget_tasks.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
+                let previously_enabled = {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                let scene = temp_config
-                    .scenes
-                    .get_mut(&id)
-                    .ok_or_else(|| Status::not_found("Scene not found"))?;
+                    let scene = temp_config
+                        .scenes
+                        .get_mut(&id)
+                        .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                let previously_enabled = scene.enabled;
+                    let previously_enabled = scene.enabled;
 
-                scene.enabled = enabled;
-                scene.cycle_duration = cycle_duration;
+                    scene.enabled = enabled;
+                    scene.cycle_duration = cycle_duration;
 
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
+                    }
+                    *config = temp_config;
+                    previously_enabled
+                };
 
                 if enabled != previously_enabled {
+                    let config = config_handle.read().await;
                     let scene = &config.scenes[&id];
 
                     if previously_enabled {
@@ -321,26 +329,29 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let display_controller = self.display_controller.clone();
             let preview_scene_id = self.preview_scene_id.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
+                let (from_index, to_index) = {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                let from_index = temp_config
-                    .scenes
-                    .get_index_of(&id)
-                    .ok_or_else(|| Status::not_found("Scene not found"))?;
+                    let from_index = temp_config
+                        .scenes
+                        .get_index_of(&id)
+                        .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                let to_index = to_index.min(temp_config.scenes.len() - 1);
+                    let to_index = to_index.min(temp_config.scenes.len() - 1);
 
-                if from_index == to_index {
-                    return Ok(Response::new(()));
-                }
-                temp_config.scenes.move_index(from_index, to_index);
+                    if from_index == to_index {
+                        return Ok(Response::new(()));
+                    }
+                    temp_config.scenes.move_index(from_index, to_index);
 
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
+                    }
+                    *config = temp_config;
+                    (from_index, to_index)
+                };
 
                 display_controller.move_scene(from_index, to_index);
 
@@ -381,30 +392,35 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let widget_tasks = self.widget_tasks.clone();
             let preview_scene_id = self.preview_scene_id.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
+                let (cloned_scene, cloned_scene_index) = {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                let (scene_index, _id, scene) = temp_config
-                    .scenes
-                    .get_full(&id)
-                    .ok_or_else(|| Status::not_found("Scene not found"))?;
+                    let (scene_index, _id, scene) = temp_config
+                        .scenes
+                        .get_full(&id)
+                        .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                let cloned_scene = scene.clone_with_new_id();
+                    let cloned_scene = scene.clone_with_new_id();
+                    let cloned_scene_id = cloned_scene.id.clone();
+                    let cloned_scene_index = scene_index + 1;
+
+                    let replaced_scene = temp_config.scenes.shift_insert(
+                        cloned_scene_index,
+                        cloned_scene_id,
+                        cloned_scene.clone(),
+                    );
+                    debug_assert!(replaced_scene.is_none());
+
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
+                    }
+                    *config = temp_config;
+                    (cloned_scene, cloned_scene_index)
+                };
+
                 let cloned_scene_id = cloned_scene.id.clone();
-                let cloned_scene_index = scene_index + 1;
-
-                let replaced_scene = temp_config.scenes.shift_insert(
-                    cloned_scene_index,
-                    cloned_scene_id.clone(),
-                    cloned_scene.clone(),
-                );
-                debug_assert!(replaced_scene.is_none());
-
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
 
                 if cloned_scene.enabled {
                     widget_tasks
@@ -464,19 +480,22 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let widget_tasks = self.widget_tasks.clone();
             let preview_scene_id = self.preview_scene_id.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
+                let scene = {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                let scene = temp_config
-                    .scenes
-                    .shift_remove(&id)
-                    .ok_or_else(|| Status::not_found("Scene not found"))?;
+                    let scene = temp_config
+                        .scenes
+                        .shift_remove(&id)
+                        .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
+                    }
+                    *config = temp_config;
+                    scene
+                };
 
                 if scene.enabled {
                     widget_tasks.abort_all(&scene.id).await;
@@ -640,41 +659,45 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let widget_tasks = self.widget_tasks.clone();
             let preview_scene_id = self.preview_scene_id.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
+                let (new_widget, scene_enabled) = {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                let scene = temp_config
-                    .scenes
-                    .get_mut(&scene_id)
-                    .ok_or_else(|| Status::not_found("Scene not found"))?;
+                    let scene = temp_config
+                        .scenes
+                        .get_mut(&scene_id)
+                        .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                let new_widget =
-                    scene
-                        .add_widget(position, size, kind)
-                        .map_err(|err| match err {
-                            AddWidgetError::CannotAddWidgetToFullscreenScene
-                            | AddWidgetError::CannotAddFullscreenWidgetToCombinedScene
-                            | AddWidgetError::InvalidWidgetPlacement(_) => {
-                                Status::failed_precondition(err.to_string())
-                            }
-                        })?;
+                    let new_widget =
+                        scene
+                            .add_widget(position, size, kind)
+                            .map_err(|err| match err {
+                                AddWidgetError::CannotAddWidgetToFullscreenScene
+                                | AddWidgetError::CannotAddFullscreenWidgetToCombinedScene
+                                | AddWidgetError::InvalidWidgetPlacement(_) => {
+                                    Status::failed_precondition(err.to_string())
+                                }
+                            })?;
+
+                    let scene_enabled = scene.enabled;
+
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
+                    }
+                    *config = temp_config;
+                    (new_widget, scene_enabled)
+                };
 
                 let new_widget_id = new_widget.id.clone();
 
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
-
-                let scene = &config.scenes[&scene_id];
                 let is_preview_scene = preview_scene_id
                     .lock()
                     .await
                     .as_ref()
                     .is_some_and(|preview_scene_id| *preview_scene_id == scene_id);
 
-                if scene.enabled || is_preview_scene {
+                if scene_enabled || is_preview_scene {
                     widget_tasks.spawn(&scene_id, &new_widget).await;
                 }
 
@@ -732,41 +755,45 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let widget_tasks = self.widget_tasks.clone();
             let preview_scene_id = self.preview_scene_id.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
+                let (updated_widget, scene_enabled) = {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                let scene = temp_config
-                    .scenes
-                    .get_mut(&scene_id)
-                    .ok_or_else(|| Status::not_found("Scene not found"))?;
+                    let scene = temp_config
+                        .scenes
+                        .get_mut(&scene_id)
+                        .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                let updated_widget = scene
-                    .update_widget(&widget_id, position, size, kind)
-                    .map_err(|err| match err {
-                        UpdateWidgetError::NotFound => Status::not_found(err.to_string()),
-                        UpdateWidgetError::CannotUpdateWidgetPositionInFullscreenScene
-                        | UpdateWidgetError::CannotUpdateWidgetSizeInFullscreenScene
-                        | UpdateWidgetError::CannotUpdateWidgetSizeToFullInCombinedScene
-                        | UpdateWidgetError::CannotSwitchWidgetKind
-                        | UpdateWidgetError::InvalidWidgetPlacement(_) => {
-                            Status::failed_precondition(err.to_string())
-                        }
-                    })?;
+                    let updated_widget = scene
+                        .update_widget(&widget_id, position, size, kind)
+                        .map_err(|err| match err {
+                            UpdateWidgetError::NotFound => Status::not_found(err.to_string()),
+                            UpdateWidgetError::CannotUpdateWidgetPositionInFullscreenScene
+                            | UpdateWidgetError::CannotUpdateWidgetSizeInFullscreenScene
+                            | UpdateWidgetError::CannotUpdateWidgetSizeToFullInCombinedScene
+                            | UpdateWidgetError::CannotSwitchWidgetKind
+                            | UpdateWidgetError::InvalidWidgetPlacement(_) => {
+                                Status::failed_precondition(err.to_string())
+                            }
+                        })?;
 
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
+                    let scene_enabled = scene.enabled;
 
-                let scene = &config.scenes[&scene_id];
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
+                    }
+                    *config = temp_config;
+                    (updated_widget, scene_enabled)
+                };
+
                 let is_preview_scene = preview_scene_id
                     .lock()
                     .await
                     .as_ref()
                     .is_some_and(|preview_scene_id| *preview_scene_id == scene_id);
 
-                if scene.enabled || is_preview_scene {
+                if scene_enabled || is_preview_scene {
                     widget_tasks.abort(&scene_id, &updated_widget.id).await;
 
                     widget_tasks.spawn(&scene_id, &updated_widget).await;
@@ -813,28 +840,31 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let display_controller = self.display_controller.clone();
             let widget_tasks = self.widget_tasks.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
+                let scene_enabled = {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                let scene = temp_config
-                    .scenes
-                    .get_mut(&scene_id)
-                    .ok_or_else(|| Status::not_found("Scene not found"))?;
+                    let scene = temp_config
+                        .scenes
+                        .get_mut(&scene_id)
+                        .ok_or_else(|| Status::not_found("Scene not found"))?;
 
-                let scene_enabled = scene.enabled;
+                    let scene_enabled = scene.enabled;
 
-                scene.remove_widget(&widget_id).map_err(|err| match err {
-                    RemoveWidgetError::NotFound => Status::not_found(err.to_string()),
-                    RemoveWidgetError::CannotRemoveWidgetFromFullscreenScene => {
-                        Status::failed_precondition(err.to_string())
+                    scene.remove_widget(&widget_id).map_err(|err| match err {
+                        RemoveWidgetError::NotFound => Status::not_found(err.to_string()),
+                        RemoveWidgetError::CannotRemoveWidgetFromFullscreenScene => {
+                            Status::failed_precondition(err.to_string())
+                        }
+                    })?;
+
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
                     }
-                })?;
-
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
+                    *config = temp_config;
+                    scene_enabled
+                };
 
                 if scene_enabled {
                     widget_tasks.abort(&scene_id, &widget_id).await;
@@ -976,19 +1006,22 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
             let config_handle = self.config_handle.clone();
             let display_controller = self.display_controller.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
+                let (previously_enabled, enabled) = {
+                    let mut config = config_handle.write().await;
+                    let mut temp_config = config.clone();
 
-                let previously_enabled = temp_config.scene_cycling().automatic_cycling_enabled;
-                let enabled = scene_cycling.automatic_cycling_enabled;
+                    let previously_enabled = temp_config.scene_cycling().automatic_cycling_enabled;
+                    let enabled = scene_cycling.automatic_cycling_enabled;
 
-                temp_config.set_scene_cycling(scene_cycling.clone());
+                    temp_config.set_scene_cycling(scene_cycling.clone());
 
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
+                    if let Err(err) = temp_config.save().await {
+                        error!("Cannot save config: {}", err);
+                        return Err(Status::internal("Failed to save configuration"));
+                    }
+                    *config = temp_config;
+                    (previously_enabled, enabled)
+                };
 
                 display_controller.set_scene_cycling(scene_cycling);
 
