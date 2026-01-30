@@ -36,8 +36,65 @@
           ];
         };
 
-        workspace = import ./workspace.nix { inherit self pkgs; };
+        # Shared deps used by both workspace.nix (for package builds) and devShells.
+        # Single source of truth to keep build derivations and dev environments in sync.
+        commonDeps = {
+          # Rust build-time deps (protoc for protobufs, diffutils for cargo)
+          buildDeps = with pkgs; [ protobuf diffutils ];
+
+          # Env vars needed by Slint for font rendering
+          env = {
+            FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.corefonts ]; };
+          };
+
+          # Runtime libs for GUI/display development (Slint, winit backends)
+          guiDeps = with pkgs; [
+            fontconfig # runtime dlopen for font enumeration
+            xorg.libX11
+            xorg.libXcursor
+            xorg.libXrandr
+            xorg.libXi
+            xorg.libXinerama
+            xorg.libXext
+            xorg.libXft
+            xorg.libXrender
+            xorg.libxcb
+            wayland
+            wayland-protocols
+            libxkbcommon
+            libGL
+            vulkan-loader
+            mesa
+          ];
+
+          # Node.js tooling for frontend builds
+          frontendDeps = with pkgs; [ nodejs yarn ];
+
+          # Glibc libs for FHS compat - node_modules binaries (biome, sass-embedded)
+          # expect standard /lib64/ld-linux-x86-64.so.2 interpreter
+          fhsLibs = with pkgs; [ stdenv.cc.cc.lib glibc ];
+        };
+
+        workspace = import ./workspace.nix { inherit self pkgs commonDeps; };
         frontend = import ./frontend { inherit self pkgs; };
+
+        # Full dev shell with Rust + frontend + GUI deps.
+        # Uses buildFHSEnv to provide /lib64/ld-linux-x86-64.so.2 for node_modules binaries.
+        fullDevShell = (pkgs.buildFHSEnv {
+          name = "bmc-full-env";
+          targetPkgs = pkgs: with pkgs; [
+            ii.rustToolchain
+          ]
+          ++ commonDeps.buildDeps
+          ++ commonDeps.frontendDeps
+          ++ commonDeps.fhsLibs
+          ++ commonDeps.guiDeps;
+
+          runScript = "bash";
+          profile = ''
+            export FONTCONFIG_FILE=${commonDeps.env.FONTCONFIG_FILE}
+          '';
+        }).env;
       in
       {
         formatter = nixlib.braiinsfmt.${localSystem} {
@@ -74,7 +131,12 @@
           '';
         };
 
-        devShells = workspace.devShells // {
+        # default: full local dev (Rust + frontend + GUI)
+        # armv7-*: ARM cross-compile shells from workspace.nix
+        devShells = {
+          inherit (workspace.devShells) armv7-release armv7-debug;
+          default = fullDevShell;
+
           frontend = pkgs.mkShell {
             packages = [ pkgs.yarn pkgs.nodejs ];
             shellHook = ''
@@ -83,7 +145,6 @@
               ]}:$LD_LIBRARY_PATH
             '';
           };
-          default = pkgs.mkShell { packages = [ pkgs.ii.rustToolchain ]; };
         };
       });
 }

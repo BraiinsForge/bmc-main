@@ -1,4 +1,6 @@
-{ self, pkgs }:
+# Workspace config for Rust builds. Receives commonDeps from flake.nix
+# to share dependency definitions with devShells.
+{ self, pkgs, commonDeps }:
 let lib = pkgs.lib; in
 let
   crates = with pkgs.ii.rust; {
@@ -14,20 +16,14 @@ let
 
   workspace = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
-    # packages that can be executed during compilation
-    nativeDeps = pkgs: with pkgs; [
-      protobuf
-      diffutils
-    ];
+    # packages that can be executed during compilation (from commonDeps)
+    nativeDeps = _pkgs: commonDeps.buildDeps;
     # packages that will be cross-compiled for target arch
-    targetDeps = build_pkgs: with build_pkgs; [
+    targetDeps = _build_pkgs: [
       # openssl.dev
     ];
-    env = {
-      FONTCONFIG_FILE = pkgs.makeFontsConf {
-        fontDirectories = [ pkgs.corefonts ];
-      };
-    };
+    # environment variables (from commonDeps)
+    env = commonDeps.env;
   };
 
   build-profiles = with workspace; {

@@ -1,0 +1,13 @@
+{
+  "name": "BMC Development",
+  "image": "mcr.microsoft.com/devcontainers/base:alpine",
+  "privileged": true,
+  "features": {
+    "ghcr.io/devcontainers/features/nix:1": {
+      "flakes": true,
+      "extraNixConfig": "experimental-features = nix-command flakes"
+    }
+  },
+  "postCreateCommand": "nix develop --command bash -c 'cd frontend && yarn install'",
+  "postStartCommand": "nix develop"
+}

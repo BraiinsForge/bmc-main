@@ -1,5 +1,28 @@
 Braiins clock
 
+## Development Environment
+
+Enter the dev shell for local development (Rust, frontend, GUI):
+
+```shell
+nix develop
+```
+
+This provides:
+
+- Rust toolchain (from rust-toolchain.toml)
+- Protobuf compiler
+- Node.js + Yarn for frontend
+- GUI libraries for Slint/display development (X11, Wayland, OpenGL)
+- FHS-compatible environment for node_modules binaries
+
+For ARM cross-compilation:
+
+```shell
+nix develop .#armv7-release  # release builds
+nix develop .#armv7-debug    # debug builds
+```
+
 ## Build frontend
 
 ```
