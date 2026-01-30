@@ -1111,6 +1111,7 @@ fn to_datetime(
     let second = i32::try_from(datetime.second()).unwrap_or_default();
     let day = i32::try_from(datetime.day()).unwrap_or_default();
     let month = i32::try_from(datetime.month()).unwrap_or_default();
+    let month_name = slint::format!("{}", datetime.format("%b"));
     let year = datetime.year();
     let weekday = slint::format!("{}", datetime.weekday());
     let time_sec_24 = slint::format!("{hour24:02}:{minute:02}:{second:02}");
@@ -1128,6 +1129,7 @@ fn to_datetime(
         second,
         day,
         month,
+        month_name,
         year,
         weekday,
         time_sec_24,

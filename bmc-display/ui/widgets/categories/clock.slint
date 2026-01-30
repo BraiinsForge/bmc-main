@@ -253,7 +253,7 @@ export component WidgetClockAnalogRect inherits Rectangle {
 
         date := Text {
             visible: size == WidgetSize.Full && config.show-date;
-            text: root.datetime.weekday + " " + root.datetime.day;
+            text: root.datetime.weekday + " " + root.datetime.day + " " + root.datetime.month-name;
             font-size: 40px;
             font-weight: Theme.font.weight.regular;
             color: Palette.gray-40;
@@ -403,7 +403,6 @@ component WidgetClockDigitalTemplate inherits Rectangle {
     in property <length> ampm-font-size;
     in property <length> top-padding;
     in property <length> bottom-padding;
-    in property <length> header-spacing;
     in property <bool> show-year;
     in property <bool> show-alarm;
 
@@ -414,26 +413,26 @@ component WidgetClockDigitalTemplate inherits Rectangle {
         ? (config.show-seconds ? datetime.time-sec-24 : datetime.time-24)
         : (config.show-seconds ? datetime.time-sec-12 : datetime.time-12);
 
+    property <string> date-text: show-year
+        ? (datetime.weekday + " " + datetime.day + " " + datetime.month-name + ", " + datetime.year)
+        : (datetime.weekday + " " + datetime.day + " " + datetime.month-name);
+
+    property <string> header-text:
+        (config.show-date && config.show-timezone)
+            ? (date-text + "    " + datetime.timezone)
+            : config.show-date
+                ? date-text
+                : datetime.timezone;
+
     VerticalLayout {
         padding-top: top-padding;
 
         HorizontalLayout {
             alignment: center;
-            spacing: header-spacing;
 
             Text {
-                visible: config.show-date;
-                text: show-year
-                    ? (datetime.weekday + " " + datetime.day + ", " + datetime.year)
-                    : (datetime.weekday + " " + datetime.day);
-                font-size: header-font-size;
-                font-weight: Theme.font.weight.regular;
-                color: Palette.gray-60;
-            }
-
-            Text {
-                visible: config.show-timezone;
-                text: datetime.timezone;
+                visible: config.show-date || config.show-timezone;
+                text: header-text;
                 font-size: header-font-size;
                 font-weight: Theme.font.weight.regular;
                 color: Palette.gray-60;
@@ -509,7 +508,6 @@ component WidgetClockDigitalFull inherits Rectangle {
         ampm-font-size: 48px;
         top-padding: 50px;
         bottom-padding: 20px;
-        header-spacing: 50px;
         show-year: true;
         show-alarm: true;
     }
@@ -530,7 +528,6 @@ component WidgetClockDigitalLarge inherits Rectangle {
         ampm-font-size: 32px;
         top-padding: 40px;
         bottom-padding: 40px;
-        header-spacing: 16px;
         show-year: false;
         show-alarm: false;
     }
@@ -551,7 +548,6 @@ component WidgetClockDigitalMedium inherits Rectangle {
         ampm-font-size: 24px;
         top-padding: 15px;
         bottom-padding: 15px;
-        header-spacing: 8px;
         show-year: false;
         show-alarm: false;
     }
@@ -572,7 +568,6 @@ component WidgetClockDigitalSmall inherits Rectangle {
         ampm-font-size: 20px;
         top-padding: 20px;
         bottom-padding: 20px;
-        header-spacing: 8px;
         show-year: false;
         show-alarm: false;
     }
