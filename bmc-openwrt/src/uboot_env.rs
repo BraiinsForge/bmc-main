@@ -148,10 +148,15 @@ impl UbootEnvManager {
             ),
             (
                 vars::LED_NIGHT,
-                config.led_night.map(|v| if v { "1" } else { "0" }.to_owned()),
+                config
+                    .led_night
+                    .map(|v| if v { "1" } else { "0" }.to_owned()),
             ),
             (vars::SCREEN_DAY, Some(config.screen_day.to_string())),
-            (vars::SCREEN_NIGHT, config.screen_night.map(|v| v.to_string())),
+            (
+                vars::SCREEN_NIGHT,
+                config.screen_night.map(|v| v.to_string()),
+            ),
         ]
     }
 }

@@ -28,13 +28,22 @@ const CHANNEL_CAPACITY: usize = 8;
 #[derive(Clone, Debug)]
 struct ConfigNotify {
     localization: broadcast::Sender<LocalizationConfig>,
+    night_mode_schedule: broadcast::Sender<()>,
+    led_settings: broadcast::Sender<()>,
+    brightness_settings: broadcast::Sender<()>,
 }
 
 impl ConfigNotify {
     fn new() -> Self {
         let (tx_localization, _rx) = broadcast::channel(CHANNEL_CAPACITY);
+        let (tx_night_mode_schedule, _rx) = broadcast::channel(CHANNEL_CAPACITY);
+        let (tx_led_settings, _rx) = broadcast::channel(CHANNEL_CAPACITY);
+        let (tx_brightness_settings, _rx) = broadcast::channel(CHANNEL_CAPACITY);
         Self {
             localization: tx_localization,
+            night_mode_schedule: tx_night_mode_schedule,
+            led_settings: tx_led_settings,
+            brightness_settings: tx_brightness_settings,
         }
     }
 
@@ -46,6 +55,30 @@ impl ConfigNotify {
         if let Err(err) = self.localization.send(config) {
             warn!(error = %err, "Failed to send localization changed notification");
         }
+    }
+
+    fn subscribe_night_mode_schedule_change(&self) -> broadcast::Receiver<()> {
+        self.night_mode_schedule.subscribe()
+    }
+
+    fn night_mode_schedule_changed(&self) {
+        let _ = self.night_mode_schedule.send(());
+    }
+
+    fn subscribe_led_settings_change(&self) -> broadcast::Receiver<()> {
+        self.led_settings.subscribe()
+    }
+
+    fn led_settings_changed(&self) {
+        let _ = self.led_settings.send(());
+    }
+
+    fn subscribe_brightness_settings_change(&self) -> broadcast::Receiver<()> {
+        self.brightness_settings.subscribe()
+    }
+
+    fn brightness_settings_changed(&self) {
+        let _ = self.brightness_settings.send(());
     }
 }
 
@@ -335,11 +368,15 @@ pub struct LocalizationConfig {
 }
 
 #[derive(Clone, Debug)]
+#[expect(clippy::struct_excessive_bools)]
 pub struct ConfigHandle {
     path: PathBuf,
     config: Config,
     config_notify: ConfigNotify,
     localization_dirty: bool,
+    night_mode_schedule_dirty: bool,
+    led_settings_dirty: bool,
+    brightness_settings_dirty: bool,
     default_brightness_pct: u8,
     default_night_mode_brightness_pct: u8,
     default_sound_volume_pct: u8,
@@ -374,6 +411,9 @@ impl ConfigHandle {
             config,
             config_notify: ConfigNotify::new(),
             localization_dirty: false,
+            night_mode_schedule_dirty: false,
+            led_settings_dirty: false,
+            brightness_settings_dirty: false,
             default_brightness_pct,
             default_night_mode_brightness_pct,
             default_sound_volume_pct,
@@ -385,6 +425,18 @@ impl ConfigHandle {
         self.config_notify.subscribe_localization_change()
     }
 
+    pub fn subscribe_night_mode_schedule_change(&self) -> broadcast::Receiver<()> {
+        self.config_notify.subscribe_night_mode_schedule_change()
+    }
+
+    pub fn subscribe_led_settings_change(&self) -> broadcast::Receiver<()> {
+        self.config_notify.subscribe_led_settings_change()
+    }
+
+    pub fn subscribe_brightness_settings_change(&self) -> broadcast::Receiver<()> {
+        self.config_notify.subscribe_brightness_settings_change()
+    }
+
     pub async fn save(&mut self) -> Result<()> {
         self.config.save(&self.path).await?;
 
@@ -392,6 +444,19 @@ impl ConfigHandle {
             self.config_notify
                 .localization_changed(self.localization_config());
             self.localization_dirty = false;
+        }
+
+        if self.night_mode_schedule_dirty {
+            self.config_notify.night_mode_schedule_changed();
+            self.night_mode_schedule_dirty = false;
+        }
+        if self.led_settings_dirty {
+            self.config_notify.led_settings_changed();
+            self.led_settings_dirty = false;
+        }
+        if self.brightness_settings_dirty {
+            self.config_notify.brightness_settings_changed();
+            self.brightness_settings_dirty = false;
         }
 
         Ok(())
@@ -414,6 +479,7 @@ impl ConfigHandle {
 
     pub fn set_brightness(&mut self, brightness_pct: u8) {
         self.brightness_pct = Some(brightness_pct);
+        self.brightness_settings_dirty = true;
     }
 
     pub fn brightness_pct(&self) -> u8 {
@@ -432,16 +498,19 @@ impl ConfigHandle {
 
     pub fn set_night_mode_enabled(&mut self, enabled: bool) {
         self.night_mode.get_or_insert_default().enabled = enabled;
+        self.night_mode_schedule_dirty = true;
     }
 
     pub fn set_night_mode_brightness(&mut self, brightness_pct: u8) {
         self.night_mode.get_or_insert_default().brightness_pct = Some(brightness_pct);
+        self.brightness_settings_dirty = true;
     }
 
     pub fn set_night_mode_interval(&mut self, from: NaiveTime, to: NaiveTime) {
         let night_mode = self.night_mode.get_or_insert_default();
         night_mode.from = from;
         night_mode.to = to;
+        self.night_mode_schedule_dirty = true;
     }
 
     pub fn set_night_mode_sound_volume(&mut self, sound_volume_pct: u8) {
@@ -450,6 +519,12 @@ impl ConfigHandle {
 
     pub fn set_night_mode_led_enabled(&mut self, led_enabled: bool) {
         self.night_mode.get_or_insert_default().led_enabled = Some(led_enabled);
+        self.led_settings_dirty = true;
+    }
+
+    pub fn set_led_enabled(&mut self, led_enabled: bool) {
+        self.config.set_led_enabled(led_enabled);
+        self.led_settings_dirty = true;
     }
 
     pub fn set_sound_volume(&mut self, sound_volume_pct: u8) {
