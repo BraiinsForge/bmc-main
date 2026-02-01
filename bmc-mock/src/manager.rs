@@ -2,6 +2,7 @@
 
 use crate::{MockSessionManager, mockfs::MockFs};
 use anyhow::anyhow;
+use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
     BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, WifiData, WifiEvent,
     WifiNetworkConfig,
@@ -421,5 +422,10 @@ impl bmc::BmcManager for Manager {
         zip.write_all(Self::DUMMY_SUPPORT_FILE_CONTENT.as_bytes())?;
         zip.finish()?;
         Ok(buf.to_vec())
+    }
+
+    async fn sync_boot_environment(&self, config: &BootloaderConfig) -> Result<(), Self::Error> {
+        info!(?config, "Bootloader config sync (no-op in mock)");
+        Ok(())
     }
 }

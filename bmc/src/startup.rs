@@ -164,6 +164,7 @@ where
             display_controller.clone(),
             sound_controller.clone(),
             led_state_sender.clone(),
+            manager.clone(),
         )
         .await;
 

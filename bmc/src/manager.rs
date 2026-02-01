@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::bootloader_config::BootloaderConfig;
 use anyhow::anyhow;
 use bmc_platform::{BmcPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
@@ -133,6 +134,12 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     async fn handle_graceful_shutdown(&self);
 
     async fn support_archive(&self, format: SupportArchiveFormat) -> Result<Vec<u8>, Self::Error>;
+
+    /// Sync bootloader configuration to persistent storage (e.g., U-Boot environment).
+    ///
+    /// Platform-specific implementations (e.g., OpenWrt) write to U-Boot env,
+    /// while other platforms (e.g., mock) may implement this as a no-op.
+    async fn sync_boot_environment(&self, config: &BootloaderConfig) -> Result<(), Self::Error>;
 }
 
 #[derive(Clone, Debug)]

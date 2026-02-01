@@ -1,11 +1,14 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::{
     backlight::DisplayBacklightController,
+    bootloader_config::BootloaderConfig,
     config::{ConfigHandle, NightModeConfig},
     led::LedState,
+    manager::BmcManager,
     night_mode::NightModeController,
     sound::SoundController,
 };
@@ -13,7 +16,7 @@ use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_scheduler::JobScheduler;
 use bmc_shared_time::time::Timezone;
-use chrono::NaiveTime;
+use chrono::{NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
 use tokio::sync::{Mutex, Notify, RwLock, watch};
 use tracing::{info, warn};
 
@@ -36,6 +39,9 @@ pub(crate) struct LedSettings {
     pub(crate) led_enabled_night_mode: bool,
 }
 
+const BOOTLOADER_SYNC_INTERVAL: Duration = Duration::from_secs(60 * 60); // 1 hour
+const BOOTLOADER_SYNC_DEBOUNCE: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Debug)]
 pub(crate) struct SystemManager<T: DisplayBacklightDriver> {
     night_mode_controller: NightModeController,
@@ -48,7 +54,7 @@ pub(crate) struct SystemManager<T: DisplayBacklightDriver> {
 }
 
 impl<T: DisplayBacklightDriver> SystemManager<T> {
-    pub(crate) async fn init(
+    pub(crate) async fn init<M: BmcManager>(
         config_handle: Arc<RwLock<ConfigHandle>>,
         timezone_receiver: watch::Receiver<Timezone>,
         backlight_driver: Arc<Mutex<T>>,
@@ -56,12 +62,14 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         display_controller: DisplayController,
         sound_controller: SoundController,
         led_state_sender: watch::Sender<LedState>,
+        manager: Arc<M>,
     ) -> Self {
         let backlight_controller =
-            DisplayBacklightController::new(config_handle.clone(), backlight_driver);
+            DisplayBacklightController::new(config_handle.clone(), backlight_driver.clone());
 
         let night_mode_controller =
-            NightModeController::init(config_handle.clone(), scheduler, timezone_receiver).await;
+            NightModeController::init(config_handle.clone(), scheduler, timezone_receiver.clone())
+                .await;
 
         let brightness_modified = Arc::new(Notify::new());
 
@@ -93,6 +101,13 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             night_mode_controller.clone(),
             led_state_sender.clone(),
             led_state_modified.clone(),
+        ));
+
+        tokio::spawn(Self::sync_bootloader_config_task(
+            config_handle.clone(),
+            timezone_receiver.clone(),
+            backlight_driver,
+            manager,
         ));
 
         Self {
@@ -353,5 +368,151 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         self.led_state_modified.notify_waiters();
 
         Ok(())
+    }
+
+    /// Convert local NaiveTime to UTC minutes since midnight.
+    ///
+    /// Uses today's date to determine the correct UTC offset (accounting for DST).
+    fn local_time_to_utc_minutes(local_time: NaiveTime, timezone: &Timezone) -> u16 {
+        // Use today's date to create a proper DateTime with timezone info
+        let today = Utc::now().date_naive();
+
+        // Create a local datetime and convert to UTC
+        let local_datetime = NaiveDate::and_time(&today, local_time);
+        let utc_datetime = timezone
+            .chrono()
+            .from_local_datetime(&local_datetime)
+            .single()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|| {
+                // Handle ambiguous/invalid times (DST transitions)
+                timezone
+                    .chrono()
+                    .from_local_datetime(&local_datetime)
+                    .earliest()
+                    .or_else(|| {
+                        timezone
+                            .chrono()
+                            .from_local_datetime(&local_datetime)
+                            .latest()
+                    })
+                    .unwrap_or_else(|| {
+                        // Final fallback: interpret naive time as UTC, then convert to timezone
+                        Utc.from_utc_datetime(&local_datetime)
+                            .with_timezone(timezone.chrono())
+                    })
+                    .with_timezone(&Utc)
+            });
+
+        let utc_time = utc_datetime.time();
+        let hours = utc_time.hour() as u16;
+        let minutes = utc_time.minute() as u16;
+
+        hours * 60 + minutes
+    }
+
+    /// Calculate BootloaderConfig from current config and timezone.
+    async fn calculate_bootloader_config(
+        config_handle: &RwLock<ConfigHandle>,
+        timezone: &Timezone,
+        backlight_driver: &Mutex<T>,
+    ) -> BootloaderConfig {
+        let config = config_handle.read().await;
+        let night_mode = config.night_mode();
+        let brightness_pct = config.brightness_pct();
+        let led_enabled = config.led_enabled();
+        drop(config);
+
+        let driver = backlight_driver.lock().await;
+        let screen_day = driver.pct_to_brightness(brightness_pct);
+        drop(driver);
+
+        let (night_from_utc_minutes, night_to_utc_minutes, led_night, screen_night) =
+            if night_mode.enabled {
+                let driver = backlight_driver.lock().await;
+                let screen_night = driver.pct_to_brightness(night_mode.brightness_pct);
+                drop(driver);
+
+                (
+                    Some(Self::local_time_to_utc_minutes(night_mode.from, timezone)),
+                    Some(Self::local_time_to_utc_minutes(night_mode.to, timezone)),
+                    Some(night_mode.led_enabled),
+                    Some(screen_night),
+                )
+            } else {
+                (None, None, None, None)
+            };
+
+        BootloaderConfig {
+            night_from_utc_minutes,
+            night_to_utc_minutes,
+            led_day: led_enabled,
+            led_night,
+            screen_day,
+            screen_night,
+        }
+    }
+
+    /// Background task that periodically syncs bootloader configuration.
+    async fn sync_bootloader_config_task<M: BmcManager>(
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        timezone_receiver: watch::Receiver<Timezone>,
+        backlight_driver: Arc<Mutex<T>>,
+        manager: Arc<M>,
+    ) {
+        let mut interval = tokio::time::interval(BOOTLOADER_SYNC_INTERVAL);
+        let mut timezone_receiver = timezone_receiver.clone();
+
+        // Subscribe to config change notifications
+        let mut night_mode_schedule_rx = config_handle
+            .read()
+            .await
+            .subscribe_night_mode_schedule_change();
+        let mut led_settings_rx = config_handle.read().await.subscribe_led_settings_change();
+        let mut brightness_settings_rx = config_handle
+            .read()
+            .await
+            .subscribe_brightness_settings_change();
+
+        let debounce = tokio::time::sleep(BOOTLOADER_SYNC_DEBOUNCE);
+        tokio::pin!(debounce);
+        let mut pending_sync = false;
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    pending_sync = true;
+                    debounce.as_mut().reset(tokio::time::Instant::now());
+                },
+                Ok(()) = timezone_receiver.changed() => {
+                    pending_sync = true;
+                    debounce.as_mut().reset(tokio::time::Instant::now() + BOOTLOADER_SYNC_DEBOUNCE);
+                },
+                Ok(()) = night_mode_schedule_rx.recv() => {
+                    pending_sync = true;
+                    debounce.as_mut().reset(tokio::time::Instant::now() + BOOTLOADER_SYNC_DEBOUNCE);
+                },
+                Ok(()) = led_settings_rx.recv() => {
+                    pending_sync = true;
+                    debounce.as_mut().reset(tokio::time::Instant::now() + BOOTLOADER_SYNC_DEBOUNCE);
+                },
+                Ok(()) = brightness_settings_rx.recv() => {
+                    pending_sync = true;
+                    debounce.as_mut().reset(tokio::time::Instant::now() + BOOTLOADER_SYNC_DEBOUNCE);
+                },
+                () = &mut debounce, if pending_sync => {
+                    pending_sync = false;
+
+                    let timezone = timezone_receiver.borrow().clone();
+                    let bootloader_config =
+                        Self::calculate_bootloader_config(&config_handle, &timezone, &backlight_driver)
+                            .await;
+
+                    if let Err(err) = manager.sync_boot_environment(&bootloader_config).await {
+                        warn!(error = %err, "Failed to sync bootloader configuration");
+                    }
+                },
+            }
+        }
     }
 }

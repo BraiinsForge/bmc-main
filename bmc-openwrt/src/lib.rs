@@ -11,6 +11,7 @@ mod pwd;
 pub mod session;
 mod signal;
 mod sys;
+pub mod uboot_env;
 mod unix;
 
 const ROOT_USERNAME: &str = "root";

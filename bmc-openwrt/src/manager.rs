@@ -2,12 +2,14 @@
 
 use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
 use crate::session::OpenwrtSessionManager;
+use crate::uboot_env::UbootEnvManager;
 use crate::unix::system_reboot;
 use crate::unix::{
     call_command, call_command_stdin, call_command_to_string, get_hostname, get_ip_address,
 };
 use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
+use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
     BmcState, IfaceData, InitialSetupError, WifiData, WifiEvent, WifiNetworkConfig,
 };
@@ -40,6 +42,7 @@ pub struct Manager {
     wifi_manager: Arc<OpenwrtWifiManager>,
     wifi_ap_ssid_base: String,
     wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
+    uboot_env_manager: UbootEnvManager,
 }
 
 impl Manager {
@@ -87,6 +90,7 @@ impl Manager {
             wifi_manager,
             wifi_ap_ssid_base,
             wifi_event_sender,
+            uboot_env_manager: UbootEnvManager::new(),
         }
     }
 
@@ -774,6 +778,13 @@ impl BmcManager for Manager {
     async fn support_archive(&self, format: SupportArchiveFormat) -> Result<Vec<u8>, Error> {
         unix::get_support_archive(format).await.map_err(Into::into)
     }
+
+    async fn sync_boot_environment(&self, config: &BootloaderConfig) -> Result<(), Self::Error> {
+        self.uboot_env_manager
+            .sync(config)
+            .await
+            .map_err(|e| Error::UbootEnv(e.to_string()))
+    }
 }
 
 async fn uci_get_opt(opt: &str) -> Option<String> {
@@ -815,4 +826,6 @@ pub enum Error {
     InitialSetupWifiAp(String),
     #[error("Wrong password or other error: {0}")]
     WifiError(String),
+    #[error("U-Boot environment error: {0}")]
+    UbootEnv(String),
 }

@@ -2,6 +2,7 @@
 
 mod alarm;
 mod backlight;
+pub mod bootloader_config;
 mod button_manager;
 mod config;
 mod countdown_types;
