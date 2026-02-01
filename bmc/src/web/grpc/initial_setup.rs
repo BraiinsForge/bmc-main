@@ -6,13 +6,13 @@ use crate::web::grpc::network::{scan_wifi_response, try_into_wifi_network_config
 use crate::web::grpc::shared::try_from_number_format;
 use crate::{
     BmcManager,
-    config::TemperatureUnit as ConfigTemperatureUnit,
+    config::{TemperatureUnit as ConfigTemperatureUnit, UnitSystem as ConfigUnitSystem},
     initial_setup::{DeviceSetupConfig, InitialSetup},
     manager::BmcState,
 };
 use bmc_grpc::web::{
     DateFormat, NumberFormat, ScanWifiResponse, SetWifiRequest, SettingsDataResponse,
-    SettingsRequest, TemperatureUnit, TimeFormat,
+    SettingsRequest, TemperatureUnit, TimeFormat, UnitSystem,
     initial_setup_service_server::InitialSetupService as GrpcInitialSetupService,
 };
 use bmc_shared_time::time::{TimeSystem, Timezone};
@@ -114,6 +114,7 @@ where
             date_format: DateFormat::DdMmYyyyDot.into(),
             number_format: NumberFormat::SpaceGroupCommaDecimal.into(),
             temperature_unit: TemperatureUnit::Celsius.into(),
+            unit_system: UnitSystem::Metric.into(),
         }))
     }
 
@@ -170,6 +171,9 @@ impl TryFrom<SettingsRequest> for DeviceSetupConfig {
         let temperature_unit = try_from_temperature_unit(value.temperature_unit())
             .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
 
+        let unit_system = try_from_unit_system(value.unit_system())
+            .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
+
         let err = Status::with_error_details(
             Code::InvalidArgument,
             GrpcError::BadRequest.to_string(),
@@ -180,7 +184,8 @@ impl TryFrom<SettingsRequest> for DeviceSetupConfig {
         let time_system = time_system.map_err(|_| err.clone())?;
         let date_format = date_format.map_err(|_| err.clone())?;
         let number_format = number_format.map_err(|_| err.clone())?;
-        let temperature_unit = temperature_unit.map_err(|_| err)?;
+        let temperature_unit = temperature_unit.map_err(|_| err.clone())?;
+        let unit_system = unit_system.map_err(|_| err)?;
 
         Ok(DeviceSetupConfig {
             timezone,
@@ -190,6 +195,7 @@ impl TryFrom<SettingsRequest> for DeviceSetupConfig {
             date_format,
             data_collection: value.data_collection,
             temperature_unit,
+            unit_system,
         })
     }
 }
@@ -236,5 +242,16 @@ fn try_from_temperature_unit(
         )),
         TemperatureUnit::Celsius => Ok(ConfigTemperatureUnit::Celsius),
         TemperatureUnit::Fahrenheit => Ok(ConfigTemperatureUnit::Fahrenheit),
+    }
+}
+
+fn try_from_unit_system(value: UnitSystem) -> Result<ConfigUnitSystem, FieldViolation> {
+    match value {
+        UnitSystem::Unspecified => Err(FieldViolation::new(
+            "unit_system",
+            "unit_system cannot be unspecified",
+        )),
+        UnitSystem::Metric => Ok(ConfigUnitSystem::Metric),
+        UnitSystem::Imperial => Ok(ConfigUnitSystem::Imperial),
     }
 }

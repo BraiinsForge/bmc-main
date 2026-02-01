@@ -391,6 +391,27 @@ export function temperatureUnitToString(intl: IntlShape, x?: null | pb.Temperatu
     }
 }
 
+export const unitSystemOptions: Array<Exclude<pb.UnitSystem, 0>> = [pb.UnitSystem.METRIC, pb.UnitSystem.IMPERIAL];
+export function unitSystemToString(intl: IntlShape, x?: Maybe<pb.UnitSystem>): null;
+export function unitSystemToString(intl: IntlShape, x: Exclude<pb.UnitSystem, 0>): string;
+export function unitSystemToString(intl: IntlShape, x?: null | pb.UnitSystem) {
+    switch (x) {
+        case null:
+        case undefined:
+        case pb.UnitSystem.UNSPECIFIED:
+            return null;
+
+        case pb.UnitSystem.METRIC:
+            return intl.formatMessage({ defaultMessage: 'Metric (km, kg)' });
+
+        case pb.UnitSystem.IMPERIAL:
+            return intl.formatMessage({ defaultMessage: 'Imperial (mi, lb)' });
+
+        default:
+            assertUnreachable(x, 'unit system');
+    }
+}
+
 export const numberFormatOptions: Array<Exclude<pb.NumberFormat, 0>> = [
     pb.NumberFormat.SPACE_GROUP_COMMA_DECIMAL,
     pb.NumberFormat.COMMA_GROUP_DOT_DECIMAL,

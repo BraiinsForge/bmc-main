@@ -8,7 +8,7 @@ import type { EmptySchema } from '@bufbuild/protobuf/wkt';
 import { file_google_protobuf_empty, file_google_protobuf_wrappers } from '@bufbuild/protobuf/wkt';
 import type { ScanWifiResponseSchema, SetWifiRequestSchema } from './network_pb';
 import { file_web_network } from './network_pb';
-import type { DateFormat, NumberFormat, TemperatureUnit, TimeFormat, Timezone } from './shared_pb';
+import type { DateFormat, NumberFormat, TemperatureUnit, TimeFormat, Timezone, UnitSystem } from './shared_pb';
 import { file_web_shared } from './shared_pb';
 import type { Message } from '@bufbuild/protobuf';
 
@@ -18,7 +18,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_initial_setup: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chd3ZWIvaW5pdGlhbF9zZXR1cC5wcm90bxIPYnJhaWlucy5ibWMud2ViIrkCCg9TZXR0aW5nc1JlcXVlc3QSMAoLdGltZV9mb3JtYXQYASABKA4yGy5icmFpaW5zLmJtYy53ZWIuVGltZUZvcm1hdBITCgt0aW1lem9uZV9pZBgCIAEoCRIwCgtkYXRlX2Zvcm1hdBgDIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5EYXRlRm9ybWF0EjQKDW51bWJlcl9mb3JtYXQYBCABKA4yHS5icmFpaW5zLmJtYy53ZWIuTnVtYmVyRm9ybWF0EhUKCHBhc3N3b3JkGAUgASgJSACIAQESFwoPZGF0YV9jb2xsZWN0aW9uGAYgASgIEjoKEHRlbXBlcmF0dXJlX3VuaXQYByABKA4yIC5icmFpaW5zLmJtYy53ZWIuVGVtcGVyYXR1cmVVbml0QgsKCV9wYXNzd29yZCLkAgoUU2V0dGluZ3NEYXRhUmVzcG9uc2USMAoLdGltZV9mb3JtYXQYASABKA4yGy5icmFpaW5zLmJtYy53ZWIuVGltZUZvcm1hdBIsCgl0aW1lem9uZXMYAiADKAsyGS5icmFpaW5zLmJtYy53ZWIuVGltZXpvbmUSEwoLdGltZXpvbmVfaWQYAyABKAkSMAoLZGF0ZV9mb3JtYXQYBCABKA4yGy5icmFpaW5zLmJtYy53ZWIuRGF0ZUZvcm1hdBI0Cg1udW1iZXJfZm9ybWF0GAUgASgOMh0uYnJhaWlucy5ibWMud2ViLk51bWJlckZvcm1hdBIzCg9kYXRhX2NvbGxlY3Rpb24YBiABKAsyGi5nb29nbGUucHJvdG9idWYuQm9vbFZhbHVlEjoKEHRlbXBlcmF0dXJlX3VuaXQYByABKA4yIC5icmFpaW5zLmJtYy53ZWIuVGVtcGVyYXR1cmVVbml0MrsCChNJbml0aWFsU2V0dXBTZXJ2aWNlEkIKB1NldFdpZmkSHy5icmFpaW5zLmJtYy53ZWIuU2V0V2lmaVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSRQoIU2NhbldpZmkSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaIS5icmFpaW5zLmJtYy53ZWIuU2NhbldpZmlSZXNwb25zZRJQCg9HZXRTZXR0aW5nc0RhdGESFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJS5icmFpaW5zLmJtYy53ZWIuU2V0dGluZ3NEYXRhUmVzcG9uc2USRwoLU2V0dXBEZXZpY2USIC5icmFpaW5zLmJtYy53ZWIuU2V0dGluZ3NSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5YgZwcm90bzM',
+        'Chd3ZWIvaW5pdGlhbF9zZXR1cC5wcm90bxIPYnJhaWlucy5ibWMud2ViIusCCg9TZXR0aW5nc1JlcXVlc3QSMAoLdGltZV9mb3JtYXQYASABKA4yGy5icmFpaW5zLmJtYy53ZWIuVGltZUZvcm1hdBITCgt0aW1lem9uZV9pZBgCIAEoCRIwCgtkYXRlX2Zvcm1hdBgDIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5EYXRlRm9ybWF0EjQKDW51bWJlcl9mb3JtYXQYBCABKA4yHS5icmFpaW5zLmJtYy53ZWIuTnVtYmVyRm9ybWF0EhUKCHBhc3N3b3JkGAUgASgJSACIAQESFwoPZGF0YV9jb2xsZWN0aW9uGAYgASgIEjoKEHRlbXBlcmF0dXJlX3VuaXQYByABKA4yIC5icmFpaW5zLmJtYy53ZWIuVGVtcGVyYXR1cmVVbml0EjAKC3VuaXRfc3lzdGVtGAggASgOMhsuYnJhaWlucy5ibWMud2ViLlVuaXRTeXN0ZW1CCwoJX3Bhc3N3b3JkIpYDChRTZXR0aW5nc0RhdGFSZXNwb25zZRIwCgt0aW1lX2Zvcm1hdBgBIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5UaW1lRm9ybWF0EiwKCXRpbWV6b25lcxgCIAMoCzIZLmJyYWlpbnMuYm1jLndlYi5UaW1lem9uZRITCgt0aW1lem9uZV9pZBgDIAEoCRIwCgtkYXRlX2Zvcm1hdBgEIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5EYXRlRm9ybWF0EjQKDW51bWJlcl9mb3JtYXQYBSABKA4yHS5icmFpaW5zLmJtYy53ZWIuTnVtYmVyRm9ybWF0EjMKD2RhdGFfY29sbGVjdGlvbhgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5Cb29sVmFsdWUSOgoQdGVtcGVyYXR1cmVfdW5pdBgHIAEoDjIgLmJyYWlpbnMuYm1jLndlYi5UZW1wZXJhdHVyZVVuaXQSMAoLdW5pdF9zeXN0ZW0YCCABKA4yGy5icmFpaW5zLmJtYy53ZWIuVW5pdFN5c3RlbTK7AgoTSW5pdGlhbFNldHVwU2VydmljZRJCCgdTZXRXaWZpEh8uYnJhaWlucy5ibWMud2ViLlNldFdpZmlSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkUKCFNjYW5XaWZpEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiEuYnJhaWlucy5ibWMud2ViLlNjYW5XaWZpUmVzcG9uc2USUAoPR2V0U2V0dGluZ3NEYXRhEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiUuYnJhaWlucy5ibWMud2ViLlNldHRpbmdzRGF0YVJlc3BvbnNlEkcKC1NldHVwRGV2aWNlEiAuYnJhaWlucy5ibWMud2ViLlNldHRpbmdzUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eWIGcHJvdG8z',
         [file_google_protobuf_empty, file_google_protobuf_wrappers, file_web_network, file_web_shared],
     );
 
@@ -60,6 +60,11 @@ export type SettingsRequest = Message<'braiins.bmc.web.SettingsRequest'> & {
      * @generated from field: braiins.bmc.web.TemperatureUnit temperature_unit = 7;
      */
     temperatureUnit: TemperatureUnit;
+
+    /**
+     * @generated from field: braiins.bmc.web.UnitSystem unit_system = 8;
+     */
+    unitSystem: UnitSystem;
 };
 
 /**
@@ -106,6 +111,11 @@ export type SettingsDataResponse = Message<'braiins.bmc.web.SettingsDataResponse
      * @generated from field: braiins.bmc.web.TemperatureUnit temperature_unit = 7;
      */
     temperatureUnit: TemperatureUnit;
+
+    /**
+     * @generated from field: braiins.bmc.web.UnitSystem unit_system = 8;
+     */
+    unitSystem: UnitSystem;
 };
 
 /**

@@ -53,6 +53,7 @@ message GeneralSettingsDataResponse {
   google.protobuf.BoolValue show_seconds_status_bar = 5;
   braiins.bmc.web.Weekday first_day_of_week = 6;
   braiins.bmc.web.TemperatureUnit temperature_unit = 7;
+  braiins.bmc.web.UnitSystem unit_system = 8;
 }
 
 message SetTimeFormatRequest {
@@ -73,6 +74,10 @@ message SetTemperatureUnitRequest {
 
 message SetFirstDayOfWeekRequest {
   braiins.bmc.web.Weekday first_day_of_week = 1;
+}
+
+message SetUnitSystemRequest {
+  braiins.bmc.web.UnitSystem unit_system = 1;
 }
 
 message LedSettingsResponse {
@@ -98,6 +103,7 @@ service ConfigurationService {
   rpc ShowSecondsInStatusBar(google.protobuf.BoolValue) returns (google.protobuf.Empty);
   rpc SetFirstDayOfWeek(SetFirstDayOfWeekRequest) returns (google.protobuf.Empty);
   rpc SetTemperatureUnit(SetTemperatureUnitRequest) returns (google.protobuf.Empty);
+  rpc SetUnitSystem(SetUnitSystemRequest) returns (google.protobuf.Empty);
   rpc GetLedSettings(google.protobuf.Empty) returns (LedSettingsResponse);
   rpc SetLedEnabled(google.protobuf.BoolValue) returns (google.protobuf.Empty);
 }

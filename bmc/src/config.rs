@@ -97,6 +97,10 @@ impl Config {
         self.localization.get_or_insert_default().temperature_unit = temperature_unit;
     }
 
+    pub fn set_unit_system(&mut self, unit_system: UnitSystem) {
+        self.localization.get_or_insert_default().unit_system = unit_system;
+    }
+
     pub fn show_seconds_in_status_bar(&mut self, show: bool) {
         self.localization
             .get_or_insert_default()
@@ -289,6 +293,7 @@ pub struct LocalizationConfig {
     pub first_day_of_week: WeekDay,
     pub show_seconds_in_status_bar: bool,
     pub temperature_unit: TemperatureUnit,
+    pub unit_system: UnitSystem,
 }
 
 #[derive(Clone, Debug)]
@@ -519,4 +524,11 @@ pub enum TemperatureUnit {
     #[default]
     Celsius,
     Fahrenheit,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum UnitSystem {
+    #[default]
+    Metric,
+    Imperial,
 }

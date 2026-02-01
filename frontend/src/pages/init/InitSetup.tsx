@@ -73,6 +73,7 @@ class View extends Component<Props, State> {
                 dateFormat: v.dateFormat || undefined,
                 numberFormat: v.numberFormat || undefined,
                 temperatureUnits: v.temperatureUnit || undefined,
+                unitSystem: v.unitSystem || undefined,
                 // dataCollection: v.dataCollection,
             };
         } catch ($) {
@@ -125,6 +126,7 @@ class View extends Component<Props, State> {
             numberFormat,
             timeFormat,
             temperatureUnits,
+            unitSystem,
         } = this.state.data.values;
         const {
             intl: { formatMessage },
@@ -156,6 +158,7 @@ class View extends Component<Props, State> {
                     timezoneId: timezone?.id,
                     timeFormat,
                     temperatureUnit: temperatureUnits,
+                    unitSystem,
                 }),
                 { signal },
             );
@@ -170,6 +173,7 @@ class View extends Component<Props, State> {
                 'numberFormat',
                 'timeFormat',
                 'temperatureUnits',
+                'unitSystem',
                 // 'dataCollection',
             ]);
             this.setState(s => ({ data: { ...s.data, errors } }));
@@ -221,6 +225,12 @@ class View extends Component<Props, State> {
                             value: values.temperatureUnits || null,
                             error: this.#getFieldError('temperatureUnits'),
                             onChange: this.#handleChange('temperatureUnits'),
+                        }}
+                        unitSystem={{
+                            disabled,
+                            value: values.unitSystem || null,
+                            error: this.#getFieldError('unitSystem'),
+                            onChange: this.#handleChange('unitSystem'),
                         }}
                         // Password
                         password1={{

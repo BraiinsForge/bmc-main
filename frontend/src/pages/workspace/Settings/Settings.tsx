@@ -102,6 +102,7 @@ interface State {
         // showSecondsStatusBar: LeafState<boolean>;
         firstDayOfWeek: FieldState<pb.Weekday>;
         temperatureUnit: FieldState<pb.TemperatureUnit>;
+        unitSystem: FieldState<pb.UnitSystem>;
         timezone: FieldState<pb.Timezone>;
 
         // Sound & Light
@@ -142,6 +143,7 @@ const getInitialState = (): State => ({
         // showSecondsStatusBar: getEmptyLeafState(),
         firstDayOfWeek: getFieldStateDefault(),
         temperatureUnit: getFieldStateDefault(),
+        unitSystem: getFieldStateDefault(),
         timezone: getFieldStateDefault(),
 
         // Sound & Light
@@ -296,6 +298,7 @@ class View extends Component<Props, State> {
                     showSecondsStatusBar: getFieldStateDefault(d.showSecondsStatusBar),
                     firstDayOfWeek: getFieldStateDefault(d.firstDayOfWeek),
                     temperatureUnit: getFieldStateDefault(d.temperatureUnit),
+                    unitSystem: getFieldStateDefault(d.unitSystem),
                 },
             }));
         } catch ($) {
@@ -498,6 +501,31 @@ class View extends Component<Props, State> {
         }
     };
 
+    private generalSetUnitSystemAbort = pb.abort.get();
+    #generalSetUnitSystem = async (value: pb.UnitSystem): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('unitSystem', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            const { signal } = this.generalSetUnitSystemAbort.replace();
+            await pb.rpc.config.setUnitSystem({ unitSystem: value }, { signal });
+
+            toast.success(formatMessage({ defaultMessage: 'Unit system changed' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= formatMessage({ defaultMessage: 'Failed to save unit system' });
+            toast.error(message, { id: 'general-set-unit-system' });
+        } finally {
+            await this.#generalFetch();
+            this.#setField('unitSystem', s => getFieldStateDefault(s.value));
+        }
+    };
+
     private generalSetNumberFormatAbort = pb.abort.get();
     #generalSetNumberFormat = async (value: pb.NumberFormat): Promise<void> => {
         const { formatMessage } = this.props.intl;
@@ -593,6 +621,7 @@ class View extends Component<Props, State> {
                 numberFormat,
                 firstDayOfWeek,
                 temperatureUnit,
+                unitSystem,
                 // showSecondsStatusBar,
                 timezone,
                 // dataCollection,
@@ -609,6 +638,7 @@ class View extends Component<Props, State> {
                 dateFormat={this.#getFieldStruct(dateFormat, this.#generalSetDateFormat)}
                 firstWeekDay={this.#getFieldStruct(firstDayOfWeek, this.#generalSetFirsWeekDay)}
                 temperatureUnits={this.#getFieldStruct(temperatureUnit, this.#generalSetTemperatureUnits)}
+                unitSystem={this.#getFieldStruct(unitSystem, this.#generalSetUnitSystem)}
                 numberFormat={this.#getFieldStruct(numberFormat, this.#generalSetNumberFormat)}
                 // System actions
                 onFactoryReset={this.#generalFactoryReset}

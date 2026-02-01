@@ -347,12 +347,13 @@
     "date_format": "DdMmYyyyDot",
     "first_day_of_week": "Monday",
     "show_seconds_in_status_bar": false,
-    "temperature_unit": "Celsius"
+    "temperature_unit": "Celsius",
+    "unit_system": "Metric"
   },
   "data_collection": false,
   "autoupgrade": {
     "enabled": true,
-    "cron": "8 20 18 * * 7"
+    "cron": "14 55 20 * * 7"
   },
   "accounts": []
 }

@@ -28,6 +28,7 @@ type TimeFormat = Exclude<pb.TimeFormat, 0>;
 type DateFormat = Exclude<pb.DateFormat, 0>;
 type NumberFormat = Exclude<pb.NumberFormat, 0>;
 type TemperatureUnit = Exclude<pb.TemperatureUnit, 0>;
+type UnitSystem = Exclude<pb.UnitSystem, 0>;
 
 export interface SetupProps {
     timeFormat: iField<TimeFormat>;
@@ -35,6 +36,7 @@ export interface SetupProps {
     dateFormat: iField<DateFormat>;
     numberFormat: iField<NumberFormat>;
     temperatureUnits: iField<TemperatureUnit>;
+    unitSystem: iField<UnitSystem>;
 
     password1: iField<string>;
     password2: iField<string>;
@@ -84,6 +86,11 @@ class View extends Component<Props> {
         }),
     );
 
+    #unitSystemOptions = pb.unitSystemOptions.map<ButtonSwitchItem<UnitSystem>>(key => ({
+        id: key,
+        text: pb.unitSystemToString(this.props.intl, key) ?? 'N/A',
+    }));
+
     #catchEscapeKey = (e: KeyboardEvent<HTMLFormElement>): void => {
         if (e.target instanceof HTMLInputElement && e.key === Key.Escape) {
             blockEvent(e);
@@ -102,6 +109,7 @@ class View extends Component<Props> {
             dateFormat,
             numberFormat,
             temperatureUnits,
+            unitSystem,
 
             password1,
             password2,
@@ -245,6 +253,23 @@ class View extends Component<Props> {
                                 onChange={temperatureUnits.onChange}
                                 invalid={!!temperatureUnits.error}
                                 invalidText={temperatureUnits.error}
+                            />
+                        </Field>
+
+                        <Field
+                            variant="light"
+                            title={formatMessage({ defaultMessage: 'Unit System' })}
+                            disabled={unitSystem.disabled}
+                        >
+                            <ButtonSwitch<UnitSystem>
+                                id={$('unit-system')}
+                                size="md"
+                                selectedOption={unitSystem.value}
+                                options={this.#unitSystemOptions}
+                                disabled={unitSystem.disabled}
+                                onChange={unitSystem.onChange}
+                                invalid={!!unitSystem.error}
+                                invalidText={unitSystem.error}
                             />
                         </Field>
                     </FieldSet>

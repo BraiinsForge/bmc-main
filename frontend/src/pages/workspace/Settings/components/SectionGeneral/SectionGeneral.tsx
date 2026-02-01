@@ -35,6 +35,7 @@ export interface SectionGeneralProps {
 
     // Regional settings
     temperatureUnits: iField<pb.TemperatureUnit>;
+    unitSystem: iField<pb.UnitSystem>;
     numberFormat: iField<pb.NumberFormat>;
 
     // System actions
@@ -75,6 +76,11 @@ class View extends Component<Props> {
             icon: Icon,
         }),
     );
+
+    #unitSystemOptions = pb.unitSystemOptions.map<ButtonSwitchItem<pb.UnitSystem>>(key => ({
+        id: key,
+        text: pb.unitSystemToString(this.props.intl, key) ?? 'N/A',
+    }));
 
     #weekDayChange: DropdownProps<pb.Weekday>['onChange'] = x => {
         const { onChange } = this.props.firstWeekDay;
@@ -134,6 +140,7 @@ class View extends Component<Props> {
             firstWeekDay,
 
             temperatureUnits,
+            unitSystem,
             numberFormat,
             // usageData,
 
@@ -269,6 +276,23 @@ class View extends Component<Props> {
                             onChange={temperatureUnits.onChange}
                             invalid={!!temperatureUnits.error}
                             invalidText={temperatureUnits.error}
+                        />
+                    </Field>
+
+                    <Field
+                        variant="dark"
+                        title={formatMessage({ defaultMessage: 'Unit System' })}
+                        disabled={unitSystem.disabled}
+                    >
+                        <ButtonSwitch<pb.UnitSystem>
+                            id={$('unit-system')}
+                            size="md"
+                            selectedOption={unitSystem.value}
+                            options={this.#unitSystemOptions}
+                            disabled={unitSystem.disabled}
+                            onChange={unitSystem.onChange}
+                            invalid={!!unitSystem.error}
+                            invalidText={unitSystem.error}
                         />
                     </Field>
 

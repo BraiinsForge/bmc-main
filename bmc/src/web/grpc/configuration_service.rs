@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::config::{ConfigHandle, TemperatureUnit};
+use crate::config::{ConfigHandle, TemperatureUnit, UnitSystem};
 use crate::led::LedState;
 use crate::sound::Sounds;
 use crate::system_manager::SystemManager;
@@ -9,7 +9,7 @@ use bmc_display::display_driver::DisplayBacklightDriver;
 use bmc_grpc::web::{
     self, GeneralSettingsDataResponse, LedSettingsResponse, ListSoundsResponse, PlaySoundRequest,
     SetDateFormatRequest, SetFirstDayOfWeekRequest, SetNumberFormatRequest,
-    SetTemperatureUnitRequest, SetTimeFormatRequest, SoundInfo, SoundVolume,
+    SetTemperatureUnitRequest, SetTimeFormatRequest, SetUnitSystemRequest, SoundInfo, SoundVolume,
 };
 use bmc_grpc::web::{
     BrightnessInfo, DisplaySettingsResponse, SoundVolumeSettingsResponse, TimeInterval,
@@ -282,6 +282,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             number_format: map_number_format_to_proto(localization.number_format).into(),
             first_day_of_week: map_weekday_to_proto(localization.first_day_of_week).into(),
             temperature_unit: map_temperature_unit_to_proto(&localization.temperature_unit).into(),
+            unit_system: map_unit_system_to_proto(&localization.unit_system).into(),
             show_seconds_status_bar: Some(localization.show_seconds_in_status_bar),
         }))
     }
@@ -429,6 +430,33 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         Ok(tonic::Response::new(()))
     }
 
+    async fn set_unit_system(
+        &self,
+        request: Request<SetUnitSystemRequest>,
+    ) -> Result<Response<()>, Status> {
+        let unit_system = map_unit_system_from_proto(request.into_inner().unit_system())
+            .ok_or_else(|| {
+                Status::with_error_details(
+                    tonic::Code::InvalidArgument,
+                    GrpcError::BadRequest.to_string(),
+                    ErrorDetails::with_bad_request_violation(
+                        "unit_system",
+                        "value cannot be unspecified",
+                    ),
+                )
+            })?;
+
+        let mut config = self.config_handle.write().await;
+        config.set_unit_system(unit_system);
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save unit_system, error {e}");
+            Status::internal("Failed to save unit_system")
+        })?;
+
+        Ok(tonic::Response::new(()))
+    }
+
     async fn show_seconds_in_status_bar(
         &self,
         request: Request<bool>,
@@ -550,5 +578,20 @@ fn map_temperature_unit_from_proto(value: web::TemperatureUnit) -> Option<Temper
         web::TemperatureUnit::Unspecified => None,
         web::TemperatureUnit::Celsius => Some(TemperatureUnit::Celsius),
         web::TemperatureUnit::Fahrenheit => Some(TemperatureUnit::Fahrenheit),
+    }
+}
+
+fn map_unit_system_to_proto(value: &UnitSystem) -> web::UnitSystem {
+    match value {
+        UnitSystem::Metric => web::UnitSystem::Metric,
+        UnitSystem::Imperial => web::UnitSystem::Imperial,
+    }
+}
+
+fn map_unit_system_from_proto(value: web::UnitSystem) -> Option<UnitSystem> {
+    match value {
+        web::UnitSystem::Unspecified => None,
+        web::UnitSystem::Metric => Some(UnitSystem::Metric),
+        web::UnitSystem::Imperial => Some(UnitSystem::Imperial),
     }
 }

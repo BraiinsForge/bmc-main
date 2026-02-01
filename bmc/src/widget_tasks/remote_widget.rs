@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::config::{ConfigHandle, TemperatureUnit};
+use crate::config::{ConfigHandle, TemperatureUnit, UnitSystem};
 use anyhow::{Context, Result, bail};
 use backon::{BackoffBuilder, ExponentialBuilder};
 use bmc_display::data::{SceneId, WidgetId, WidgetSize};
@@ -132,7 +132,8 @@ pub async fn run(
             "numberFormat": format_number_format(localization.number_format),
             "dateFormat": format_date_format(localization.date_format),
             "timeFormat": format_time_format(localization.time_system),
-            "temperatureUnit": format_temperature_unit(&localization.temperature_unit)
+            "temperatureUnit": format_temperature_unit(&localization.temperature_unit),
+            "unitSystem": format_unit_system(&localization.unit_system)
         });
 
         // Merge user params on top (user params take precedence)
@@ -331,5 +332,12 @@ fn format_temperature_unit(value: &TemperatureUnit) -> &'static str {
     match value {
         TemperatureUnit::Celsius => "TEMPERATURE_UNIT_CELSIUS",
         TemperatureUnit::Fahrenheit => "TEMPERATURE_UNIT_FAHRENHEIT",
+    }
+}
+
+fn format_unit_system(value: &UnitSystem) -> &'static str {
+    match value {
+        UnitSystem::Metric => "UNIT_SYSTEM_METRIC",
+        UnitSystem::Imperial => "UNIT_SYSTEM_IMPERIAL",
     }
 }

@@ -32,6 +32,7 @@ export default {
         dateFormat: getField('dateFormat', pb.DateFormat.D_M_YYYY_SLASH),
         numberFormat: getField('numberFormat', pb.NumberFormat.COMMA_GROUP_DOT_DECIMAL),
         temperatureUnits: getField('temperatureUnits', pb.TemperatureUnit.CELSIUS),
+        unitSystem: getField('unitSystem', pb.UnitSystem.METRIC),
 
         password1: getField('password1', ''),
         password2: getField('password2', ''),
