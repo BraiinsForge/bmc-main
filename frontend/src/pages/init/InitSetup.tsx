@@ -72,6 +72,7 @@ class View extends Component<Props, State> {
                 timeFormat: v.timeFormat || undefined,
                 dateFormat: v.dateFormat || undefined,
                 numberFormat: v.numberFormat || undefined,
+                temperatureUnits: v.temperatureUnit || undefined,
                 // dataCollection: v.dataCollection,
             };
         } catch ($) {
@@ -123,6 +124,7 @@ class View extends Component<Props, State> {
             dateFormat,
             numberFormat,
             timeFormat,
+            temperatureUnits,
         } = this.state.data.values;
         const {
             intl: { formatMessage },
@@ -153,6 +155,7 @@ class View extends Component<Props, State> {
                     password: password1,
                     timezoneId: timezone?.id,
                     timeFormat,
+                    temperatureUnit: temperatureUnits,
                 }),
                 { signal },
             );
@@ -165,8 +168,9 @@ class View extends Component<Props, State> {
                 'timezone',
                 'dateFormat',
                 'numberFormat',
-                'dataCollection',
                 'timeFormat',
+                'temperatureUnits',
+                // 'dataCollection',
             ]);
             this.setState(s => ({ data: { ...s.data, errors } }));
         }
@@ -211,6 +215,12 @@ class View extends Component<Props, State> {
                             value: values.numberFormat || null,
                             error: this.#getFieldError('numberFormat'),
                             onChange: this.#handleChange('numberFormat'),
+                        }}
+                        temperatureUnits={{
+                            disabled,
+                            value: values.temperatureUnits || null,
+                            error: this.#getFieldError('temperatureUnits'),
+                            onChange: this.#handleChange('temperatureUnits'),
                         }}
                         // Password
                         password1={{

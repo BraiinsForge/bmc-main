@@ -8,7 +8,7 @@ import { Form, getID, type iField } from '@/lib/form';
 
 // Components
 import { Layout } from '../Layout';
-import { ButtonSwitch, FieldSet, Field, LogoHeader, Tooltip, Button } from '@/components';
+import { ButtonSwitch, type ButtonSwitchItem, FieldSet, Field, LogoHeader, Tooltip, Button } from '@/components';
 import {
     ComboBox,
     type ComboBoxProps,
@@ -27,12 +27,14 @@ import css from './Setup.scss';
 type TimeFormat = Exclude<pb.TimeFormat, 0>;
 type DateFormat = Exclude<pb.DateFormat, 0>;
 type NumberFormat = Exclude<pb.NumberFormat, 0>;
+type TemperatureUnit = Exclude<pb.TemperatureUnit, 0>;
 
 export interface SetupProps {
     timeFormat: iField<TimeFormat>;
     timezone: iField<pb.Timezone> & { items: ReadonlyArray<pb.Timezone> };
     dateFormat: iField<DateFormat>;
     numberFormat: iField<NumberFormat>;
+    temperatureUnits: iField<TemperatureUnit>;
 
     password1: iField<string>;
     password2: iField<string>;
@@ -74,6 +76,14 @@ class View extends Component<Props> {
         if (x.selectedItem) onChange?.(x.selectedItem);
     };
 
+    #temperatureOptions = Array.from(pb.temperatureUnitOptions.entries()).map<ButtonSwitchItem<TemperatureUnit>>(
+        ([key, Icon]) => ({
+            id: key,
+            text: pb.temperatureUnitToString(this.props.intl, key) ?? 'N/A',
+            icon: Icon,
+        }),
+    );
+
     #catchEscapeKey = (e: KeyboardEvent<HTMLFormElement>): void => {
         if (e.target instanceof HTMLInputElement && e.key === Key.Escape) {
             blockEvent(e);
@@ -91,6 +101,7 @@ class View extends Component<Props> {
             timezone,
             dateFormat,
             numberFormat,
+            temperatureUnits,
 
             password1,
             password2,
@@ -219,6 +230,23 @@ class View extends Component<Props> {
                                 invalidText={numberFormat.error}
                             />
                         </Field>
+
+                        <Field
+                            variant="light"
+                            title={formatMessage({ defaultMessage: 'Temperature' })}
+                            disabled={temperatureUnits.disabled}
+                        >
+                            <ButtonSwitch<TemperatureUnit>
+                                id={$('temperature')}
+                                size="md"
+                                selectedOption={temperatureUnits.value}
+                                options={this.#temperatureOptions}
+                                disabled={temperatureUnits.disabled}
+                                onChange={temperatureUnits.onChange}
+                                invalid={!!temperatureUnits.error}
+                                invalidText={temperatureUnits.error}
+                            />
+                        </Field>
                     </FieldSet>
 
                     <FieldSet
@@ -250,6 +278,7 @@ class View extends Component<Props> {
                                 id={$('password-1')}
                                 hideLabel
                                 labelText={null}
+                                tooltipPosition="left"
                                 value={password1.value ?? ''}
                                 onChange={e => password1.onChange?.(e.target.value)}
                                 disabled={password1.disabled}
@@ -268,6 +297,7 @@ class View extends Component<Props> {
                                 id={$('password-2')}
                                 hideLabel
                                 labelText={null}
+                                tooltipPosition="left"
                                 value={password2.value ?? ''}
                                 onChange={e => password2.onChange?.(e.target.value)}
                                 disabled={password2.disabled}

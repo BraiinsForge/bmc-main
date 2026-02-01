@@ -473,30 +473,30 @@ class View extends Component<Props, State> {
         }
     };
 
-    // private generalSetTemperatureUnitsAbort = pb.abort.get();
-    // #generalSetTemperatureUnits = async (value: pb.TemperatureUnit): Promise<void> => {
-    //     const { formatMessage } = this.props.intl;
-    //
-    //     try {
-    //         // Optimistic update & saving flag
-    //         this.#setField('temperatureUnit', s => ({ ...s, value, isSaving: true }));
-    //
-    //         // Submit
-    //         const { signal } = this.generalSetTemperatureUnitsAbort.replace();
-    //         await pb.rpc.config.setTemperatureUnit({ temperatureUnit: value }, { signal });
-    //
-    //         toast.success(formatMessage({ defaultMessage: 'Temperature units changed' }));
-    //     } catch ($) {
-    //         if (pb.abort.is($)) return;
-    //
-    //         let message = pb.collectAllErrorsAsFormattedList($);
-    //         message ||= formatMessage({ defaultMessage: 'Failed to save TemperatureUnits' });
-    //         toast.error(message, 'general-set-temperature-units');
-    //     } finally {
-    //         await this.#generalFetch();
-    //         this.#setField('temperatureUnit', s => getFieldStateDefault(s.value));
-    //     }
-    // };
+    private generalSetTemperatureUnitsAbort = pb.abort.get();
+    #generalSetTemperatureUnits = async (value: pb.TemperatureUnit): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            // Optimistic update & saving flag
+            this.#setField('temperatureUnit', s => ({ ...s, value, isSaving: true }));
+
+            // Submit
+            const { signal } = this.generalSetTemperatureUnitsAbort.replace();
+            await pb.rpc.config.setTemperatureUnit({ temperatureUnit: value }, { signal });
+
+            toast.success(formatMessage({ defaultMessage: 'Temperature units changed' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= formatMessage({ defaultMessage: 'Failed to save TemperatureUnits' });
+            toast.error(message, { id: 'general-set-temperature-units' });
+        } finally {
+            await this.#generalFetch();
+            this.#setField('temperatureUnit', s => getFieldStateDefault(s.value));
+        }
+    };
 
     private generalSetNumberFormatAbort = pb.abort.get();
     #generalSetNumberFormat = async (value: pb.NumberFormat): Promise<void> => {
@@ -592,7 +592,7 @@ class View extends Component<Props, State> {
                 dateFormat,
                 numberFormat,
                 firstDayOfWeek,
-                // temperatureUnit,
+                temperatureUnit,
                 // showSecondsStatusBar,
                 timezone,
                 // dataCollection,
@@ -608,7 +608,7 @@ class View extends Component<Props, State> {
                 timezone={this.#getFieldStruct(timezone, this.#generalSetTimezone, { items: data.timezones })}
                 dateFormat={this.#getFieldStruct(dateFormat, this.#generalSetDateFormat)}
                 firstWeekDay={this.#getFieldStruct(firstDayOfWeek, this.#generalSetFirsWeekDay)}
-                // temperatureUnits={this.#getFieldStruct(temperatureUnit, this.#generalSetTemperatureUnits)}
+                temperatureUnits={this.#getFieldStruct(temperatureUnit, this.#generalSetTemperatureUnits)}
                 numberFormat={this.#getFieldStruct(numberFormat, this.#generalSetNumberFormat)}
                 // System actions
                 onFactoryReset={this.#generalFactoryReset}

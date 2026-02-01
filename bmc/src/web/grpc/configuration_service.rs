@@ -404,20 +404,22 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         &self,
         request: Request<SetTemperatureUnitRequest>,
     ) -> Result<Response<()>, Status> {
-        let weekday = map_temperature_unit_from_proto(request.into_inner().temperature_unit())
-            .ok_or_else(|| {
-                Status::with_error_details(
-                    tonic::Code::InvalidArgument,
-                    GrpcError::BadRequest.to_string(),
-                    ErrorDetails::with_bad_request_violation(
-                        "temperature_unit",
-                        "value cannot be unspecified",
-                    ),
-                )
-            })?;
+        let temperature_unit = map_temperature_unit_from_proto(
+            request.into_inner().temperature_unit(),
+        )
+        .ok_or_else(|| {
+            Status::with_error_details(
+                tonic::Code::InvalidArgument,
+                GrpcError::BadRequest.to_string(),
+                ErrorDetails::with_bad_request_violation(
+                    "temperature_unit",
+                    "value cannot be unspecified",
+                ),
+            )
+        })?;
 
         let mut config = self.config_handle.write().await;
-        config.set_temperature_unit(weekday);
+        config.set_temperature_unit(temperature_unit);
 
         config.save().await.map_err(|e| {
             error!("Failed to save temperature_unit, error {e}");

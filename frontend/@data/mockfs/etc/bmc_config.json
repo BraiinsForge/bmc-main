@@ -341,5 +341,18 @@
       ]
     }
   ],
+  "localization": {
+    "time_system": "Hour24",
+    "number_format": "SpaceGroupCommaDecimal",
+    "date_format": "DdMmYyyyDot",
+    "first_day_of_week": "Monday",
+    "show_seconds_in_status_bar": false,
+    "temperature_unit": "Celsius"
+  },
+  "data_collection": false,
+  "autoupgrade": {
+    "enabled": true,
+    "cron": "8 20 18 * * 7"
+  },
   "accounts": []
 }

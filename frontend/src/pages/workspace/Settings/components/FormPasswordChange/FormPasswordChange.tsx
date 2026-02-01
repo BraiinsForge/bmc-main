@@ -74,6 +74,7 @@ function Field(props: FieldProps) {
             id={$(name)}
             autoComplete={autoComplete}
             labelText={label}
+            tooltipPosition="left"
             value={field.value ?? ''}
             invalid={!!field.error}
             invalidText={field.error}

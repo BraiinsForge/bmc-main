@@ -27,7 +27,7 @@ export default {
         },
         dateFormat: getArg('dateFormat', pb.DateFormat.DD_MM_YYYY_DASH),
         firstWeekDay: getArg('dateFormat', pb.Weekday.THURSDAY),
-        // temperatureUnits: getArg('dateFormat', pb.TemperatureUnit.CELSIUS),
+        temperatureUnits: getArg('temperatureUnits', pb.TemperatureUnit.CELSIUS),
         numberFormat: getArg('dateFormat', pb.NumberFormat.SPACE_GROUP_DOT_DECIMAL),
 
         onFactoryReset: action('onFactoryReset'),

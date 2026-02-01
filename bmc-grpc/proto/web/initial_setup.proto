@@ -14,6 +14,7 @@ message SettingsRequest {
   braiins.bmc.web.NumberFormat number_format = 4;
   optional string password = 5;
   bool data_collection = 6;
+  braiins.bmc.web.TemperatureUnit temperature_unit = 7;
 }
 
 message SettingsDataResponse {
@@ -23,6 +24,7 @@ message SettingsDataResponse {
   braiins.bmc.web.DateFormat date_format = 4;
   braiins.bmc.web.NumberFormat number_format = 5;
   google.protobuf.BoolValue data_collection = 6;
+  braiins.bmc.web.TemperatureUnit temperature_unit = 7;
 }
 
 service InitialSetupService {

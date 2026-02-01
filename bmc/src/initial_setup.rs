@@ -3,7 +3,7 @@
 use crate::system_upgrade::SystemUpgradeService;
 use crate::{
     BmcManager,
-    config::ConfigHandle,
+    config::{ConfigHandle, TemperatureUnit},
     manager::{InitialSetupError, WifiNetworkConfig},
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
@@ -233,11 +233,13 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         let number_format = config.number_format;
         let time_system = config.time_system;
         let data_collection = config.data_collection;
+        let temperature_unit = config.temperature_unit;
 
         config_guard.set_date_format(date_format);
         config_guard.set_number_format(number_format);
         config_guard.set_time_system(time_system);
         config_guard.set_data_collection(data_collection);
+        config_guard.set_temperature_unit(temperature_unit.clone());
         config_guard.set_autoupgrade(autoupgrade_config.clone());
         config_guard
             .save()
@@ -249,6 +251,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             number_format = ?number_format,
             time_system = ?time_system,
             data_collection = data_collection,
+            temperature_unit = ?temperature_unit,
             "Device configuration saved"
         );
 
@@ -311,4 +314,5 @@ pub(crate) struct DeviceSetupConfig {
     pub(crate) date_format: DateFormat,
     pub(crate) number_format: NumberFormat,
     pub(crate) data_collection: bool,
+    pub(crate) temperature_unit: TemperatureUnit,
 }

@@ -9,10 +9,10 @@ import AppContext, { type AppContextType } from '@/context';
 import {
     Field,
     FieldSet,
-    // CarbonFormField,
     Button,
     ButtonSwitch,
-    // type ButtonSwitchItem,
+    type ButtonSwitchItem,
+    // CarbonFormField
 } from '@/components';
 import {
     // Toggle,
@@ -34,7 +34,7 @@ export interface SectionGeneralProps {
     firstWeekDay: iField<pb.Weekday>;
 
     // Regional settings
-    // temperatureUnits: iField<pb.TemperatureUnit>;
+    temperatureUnits: iField<pb.TemperatureUnit>;
     numberFormat: iField<pb.NumberFormat>;
 
     // System actions
@@ -68,13 +68,13 @@ class View extends Component<Props> {
         return pb.numberFormatToString(x) ?? 'N/A';
     };
 
-    // #temperatureOptions = Array.from(pb.temperatureUnitOptions.entries()).map<ButtonSwitchItem<pb.TemperatureUnit>>(
-    //     ([key, Icon]) => ({
-    //         id: key,
-    //         text: pb.temperatureUnitToString(this.props.intl, key) ?? 'N/A',
-    //         icon: Icon,
-    //     }),
-    // );
+    #temperatureOptions = Array.from(pb.temperatureUnitOptions.entries()).map<ButtonSwitchItem<pb.TemperatureUnit>>(
+        ([key, Icon]) => ({
+            id: key,
+            text: pb.temperatureUnitToString(this.props.intl, key) ?? 'N/A',
+            icon: Icon,
+        }),
+    );
 
     #weekDayChange: DropdownProps<pb.Weekday>['onChange'] = x => {
         const { onChange } = this.props.firstWeekDay;
@@ -133,7 +133,7 @@ class View extends Component<Props> {
             dateFormat,
             firstWeekDay,
 
-            // temperatureUnits,
+            temperatureUnits,
             numberFormat,
             // usageData,
 
@@ -255,7 +255,6 @@ class View extends Component<Props> {
                 </FieldSet>
 
                 <FieldSet title={formatMessage({ defaultMessage: 'Regional Settings' })}>
-                    {/*
                     <Field
                         variant="dark"
                         title={formatMessage({ defaultMessage: 'Temperature' })}
@@ -272,7 +271,6 @@ class View extends Component<Props> {
                             invalidText={temperatureUnits.error}
                         />
                     </Field>
-                    */}
 
                     <Field
                         variant="dark"
