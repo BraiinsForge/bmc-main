@@ -38,6 +38,8 @@
 #define LED_COUNT 10
 #define DOUBLE_TAP_MS 300
 
+#define LED_BRIGHTNESS 200 // Static brightness, the LED changes color on brightness changes
+
 // Global state
 static pid_t g_ffmpeg_pid = -1;
 static atomic_bool g_stop_requested = false;
@@ -91,6 +93,11 @@ static int led_init(led_ctx_t *ctx)
     return 0;
 }
 
+static float get_brightness_factor()
+{
+    return ((float)atomic_load(&g_brightness_factor_pct)) / 100.0;
+}
+
 static void led_destroy(led_ctx_t *ctx)
 {
     if (ctx->frame) free(ctx->frame);
@@ -103,16 +110,17 @@ static void led_flush(led_ctx_t *ctx)
         write(ctx->spi_fd, ctx->frame, ctx->frame_len);
 }
 
-static void led_set_all(led_ctx_t *ctx, uint8_t brightness, rgb_t c)
+static void led_set_all(led_ctx_t *ctx, float brightness_factor, rgb_t c)
 {
     uint8_t *px = ctx->frame + 4;
-    uint8_t b5 = brightness >> 3;  // 0-255 -> 0-31
+    uint8_t b5 = LED_BRIGHTNESS >> 3;  // 0-255 -> 0-31
+
     if (b5 > 31) b5 = 31;
     for (int i = 0; i < ctx->nled; i++, px += 4) {
         px[0] = 0xE0 | b5;
-        px[1] = c.b;
-        px[2] = c.g;
-        px[3] = c.r;
+        px[1] = c.b * brightness_factor;
+        px[2] = c.g * brightness_factor;
+        px[3] = c.r * brightness_factor;
     }
 }
 
@@ -127,10 +135,10 @@ static void led_off(led_ctx_t *ctx)
 }
 
 // Knight rider effect
-static void led_knight_rider(led_ctx_t *ctx, float phase, uint8_t brightness)
+static void led_knight_rider(led_ctx_t *ctx, float phase, float brightness_factor)
 {
     uint8_t *px = ctx->frame + 4;
-    uint8_t b5 = brightness >> 3;
+    uint8_t b5 = LED_BRIGHTNESS >> 3;
     if (b5 > 31) b5 = 31;
 
     float travel = (float)(ctx->nled - 1);
@@ -140,7 +148,7 @@ static void led_knight_rider(led_ctx_t *ctx, float phase, uint8_t brightness)
 
     for (int i = 0; i < ctx->nled; i++, px += 4) {
         int dist = abs(i - (int)head);
-        float factor = (dist <= 1) ? 1.0f : (dist <= 3) ? 0.3f : 0.05f;
+        float factor = ((dist <= 1) ? 1.0f : (dist <= 3) ? 0.3f : 0.05f) * brightness_factor;
 
         px[0] = 0xE0 | b5;
         px[1] = (uint8_t)(LED_COLOR.b * factor);
@@ -172,13 +180,15 @@ static void *led_thread(void *arg)
                         (now.tv_nsec - start.tv_nsec) / 1e9;
         float phase = fmodf(elapsed / 2.0f, 1.0f);  // 2 second cycle
 
+        float brightness_factor = get_brightness_factor();
+
         if (atomic_load(&g_paused)) {
             // Breathing effect when paused
             float breath = 0.5f + 0.5f * sinf(phase * 2.0f * M_PI);
-            led_set_all(&ctx, (uint8_t)(breath * 128), LED_COLOR);
+            led_set_all(&ctx, 0.5f * breath * brightness_factor, LED_COLOR);
         } else {
             // Knight rider when playing
-            led_knight_rider(&ctx, phase, 200);
+            led_knight_rider(&ctx, phase, brightness_factor);
         }
 
         led_flush(&ctx);
@@ -383,7 +393,7 @@ static void sighandler(int sig)
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <video.mp4> [alsa_device] [volume]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <video.mp4> [alsa_device] [volume] [brightness]\n", argv[0]);
         fprintf(stderr, "Embedded ffmpeg: %zu bytes\n", ffmpeg_bin_len);
         fprintf(stderr, "Controls: tap=pause, double-tap=skip\n");
         return 1;
@@ -399,6 +409,13 @@ int main(int argc, char *argv[])
     if (volume_pct > 100) volume_pct = 100;
     char volume_filter[32];
     snprintf(volume_filter, sizeof(volume_filter), "volume=%.2f", volume_pct / 100.0);
+
+    // Parse brightness factor
+    int brightness_pct = (argc > 4) ? atoi(argv[4]) : 100;
+    if (brightness_pct < 0) brightness_pct = 0;
+    if (brightness_pct > 100) brightness_pct = 100;
+
+    atomic_store(&g_brightness_factor_pct, brightness_pct);
 
     if (access(video, R_OK) != 0) {
         fprintf(stderr, "Error: cannot read %s\n", video);
