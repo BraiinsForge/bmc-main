@@ -25,6 +25,7 @@ export struct WidgetCountdownData {
 export component WidgetCountdown inherits Rectangle {
     in property <WidgetSize> size;
     in property <WidgetCountdownData> data;
+    callback dismissed();
 
     background: data.config.background-color;
 
@@ -111,15 +112,19 @@ export component WidgetCountdown inherits Rectangle {
         }
 
         // Main countdown display
-        if data.is-completed: VerticalLayout {
-            alignment: center;
-            Text {
-                text: "COMPLETED!";
-                color: Palette.orange-40;
-                font-size: number-fontsize(size) * 0.6;
-                font-weight: Theme.font.weight.bold;
-                font-family: "Braiins Deck Sans";
-                horizontal-alignment: center;
+        if data.is-completed: TouchArea {
+            clicked => { root.dismissed(); }
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "COMPLETED!";
+                    color: Palette.orange-40;
+                    font-size: number-fontsize(size) * 0.6;
+                    font-weight: Theme.font.weight.bold;
+                    font-family: "Braiins Deck Sans";
+                    horizontal-alignment: center;
+                }
             }
         }
 

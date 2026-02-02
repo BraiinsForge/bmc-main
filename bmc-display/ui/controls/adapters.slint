@@ -100,3 +100,7 @@ export global WifiReconfigAdapter {
     callback trigger_reconfig;          // WiFi failed screen - guards against spam
     callback trigger_reconfig_restart;  // Bottom rollette - allows clean restart
 }
+
+export global CountdownAdapter {
+    callback dismiss_countdown(/* scene_id */ string, /* widget_id */ string);
+}

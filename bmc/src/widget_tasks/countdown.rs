@@ -18,6 +18,9 @@ const COMPLETION_EFFECT_DURATION: Duration = Duration::from_secs(30);
 /// LED breathing period
 const BREATHE_PERIOD: Duration = Duration::from_millis(4000);
 
+/// Delay before automatically dismissing a completed countdown scene
+const AUTO_DISMISS_DELAY: Duration = Duration::from_secs(5 * 60);
+
 #[expect(clippy::too_many_arguments)]
 #[instrument(name = "countdown", skip_all, fields(%scene_id, %widget_id))]
 pub async fn run(
@@ -117,6 +120,16 @@ pub async fn run(
                     debug!(sound = %sound_settings.sound, "Sound triggered");
                 }
             }
+
+            // Auto-dismiss the scene after a delay
+            let dc = display_controller.clone();
+            let sid = scene_id.clone();
+            let wid = widget_id.clone();
+            tokio::spawn(async move {
+                sleep(AUTO_DISMISS_DELAY).await;
+                info!("Auto-dismissing completed countdown scene");
+                dc.auto_dismiss_countdown(sid, wid);
+            });
 
             return;
         }

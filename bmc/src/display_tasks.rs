@@ -187,6 +187,12 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             system_manager.clone(),
         ));
 
+        // NOTE: Dismiss completed countdown scenes via tap
+        tokio::spawn(Self::run_countdown_dismiss_listener(
+            display_controller.clone(),
+            config_handle.clone(),
+        ));
+
         // NOTE: Watch night mode state changes and update UI
         tokio::spawn(Self::run_night_mode_state_watcher(
             display_controller.clone(),
@@ -897,6 +903,48 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             if let Err(e) = result {
                 error!("Failed to set sound volume: {:?}", e);
             }
+        }
+    }
+
+    async fn run_countdown_dismiss_listener(
+        display_controller: DisplayController,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+    ) {
+        let mut receiver = display_controller.on_countdown_dismiss_events();
+        while let Some(event) = receiver.next().await {
+            info!(
+                "Countdown dismissed: scene={}, widget={}",
+                event.scene_id, event.widget_id
+            );
+
+            let scene_id: bmc_display::data::SceneId = match event.scene_id.parse() {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            let cycle_duration = {
+                let mut config = config_handle.write().await;
+                let mut temp = config.clone();
+                let Some(scene) = temp.scenes.get_mut(&scene_id) else {
+                    continue;
+                };
+                if !scene.enabled {
+                    continue;
+                }
+
+                scene.enabled = false;
+                let cycle_duration = scene.cycle_duration;
+
+                if let Err(err) = temp.save().await {
+                    error!("Failed to save config after countdown dismiss: {err}");
+                    continue;
+                }
+                *config = temp;
+                cycle_duration
+            };
+
+            display_controller.update_scene(scene_id, false, cycle_duration);
+            display_controller.reset_cycler();
         }
     }
 

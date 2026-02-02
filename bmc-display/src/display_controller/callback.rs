@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::data::WidgetSize;
+use crate::data::{SceneId, WidgetId, WidgetSize};
 use crate::display_controller::DisplayController;
 use crate::generated;
 use crate::generated::{AlarmAdapter, BaseDimensions, BrightnessAdapter, SoundAdapter};
@@ -25,6 +25,12 @@ pub enum BrightnessEvent {
 pub enum SoundEvent {
     Increase,
     Decrease,
+}
+
+#[derive(Debug)]
+pub struct CountdownDismissEvent {
+    pub scene_id: String,
+    pub widget_id: String,
 }
 
 // When consumer creates two streams using two e.g. `on_alarm_events()` calls, then first stream will be closed,
@@ -162,6 +168,34 @@ impl DisplayController {
             });
         });
         UnboundedReceiverStream::new(rx)
+    }
+
+    #[must_use]
+    pub fn on_countdown_dismiss_events(&self) -> UnboundedReceiverStream<CountdownDismissEvent> {
+        let (tx, rx) = unbounded_channel();
+
+        self.in_event_loop(move |main_window| {
+            let adapter = main_window.global::<generated::CountdownAdapter<'_>>();
+            adapter.on_dismiss_countdown(move |scene_id, widget_id| {
+                debug!("Countdown dismiss: scene={scene_id}, widget={widget_id}");
+                _ = tx.send(CountdownDismissEvent {
+                    scene_id: scene_id.to_string(),
+                    widget_id: widget_id.to_string(),
+                });
+            });
+        });
+        UnboundedReceiverStream::new(rx)
+    }
+
+    /// Programmatically invoke the dismiss callback (used for auto-dismiss after timeout).
+    pub fn auto_dismiss_countdown(&self, scene_id: SceneId, widget_id: WidgetId) {
+        self.in_event_loop(move |main_window| {
+            let adapter = main_window.global::<generated::CountdownAdapter<'_>>();
+            adapter.invoke_dismiss_countdown(
+                scene_id.to_string().into(),
+                widget_id.to_string().into(),
+            );
+        });
     }
 
     #[must_use]
