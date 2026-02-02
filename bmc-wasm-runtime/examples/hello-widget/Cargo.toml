@@ -1,0 +1,17 @@
+[package]
+name = "hello-widget"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../sdk" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+# Keep this crate out of the main workspace
+[workspace]

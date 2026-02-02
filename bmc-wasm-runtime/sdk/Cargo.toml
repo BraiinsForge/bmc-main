@@ -1,0 +1,13 @@
+[package]
+name = "bmc-wasm-sdk"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+taffy = "0.9"
+
+# Keep this crate out of the main workspace
+[workspace]

@@ -1,6 +1,12 @@
-.claude
+# Build artifacts
 target/
 result**
+
+# Development
+.claude
 .idea
+
+# OS artifacts
+*.log
 **/*#
 .DS_Store

@@ -1,0 +1,106 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+
+//! Interaction state for immediate-mode UI.
+
+use std::collections::{HashMap, VecDeque};
+
+use super::types::{Rect, TouchEvent};
+
+/// Manages interaction state for immediate-mode UI pattern.
+#[derive(Debug)]
+pub struct InteractionState {
+    /// Hit regions registered this frame (cleared each frame).
+    hit_regions: HashMap<String, Rect>,
+
+    /// Pending touch events.
+    event_queue: VecDeque<TouchEvent>,
+
+    /// Element where touch started (for click detection).
+    touch_down_key: Option<String>,
+
+    /// Pending click to be consumed by matching button().
+    pending_click: Option<String>,
+}
+
+impl InteractionState {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            hit_regions: HashMap::new(),
+            event_queue: VecDeque::new(),
+            touch_down_key: None,
+            pending_click: None,
+        }
+    }
+
+    /// Clear hit regions for new frame.
+    pub fn begin_frame(&mut self) {
+        // Process pending events BEFORE clearing hit regions
+        // (events need to hit-test against previous frame's regions)
+        while let Some(event) = self.event_queue.pop_front() {
+            match event {
+                TouchEvent::Down { x, y } => {
+                    self.touch_down_key = self.hit_test(x, y);
+                }
+                TouchEvent::Up { x, y } => {
+                    if let Some(down_key) = &self.touch_down_key
+                        && self.hit_test(x, y).as_ref() == Some(down_key)
+                    {
+                        // Touch up on same element = click
+                        self.pending_click = Some(down_key.clone());
+                    }
+
+                    self.touch_down_key = None;
+                }
+                TouchEvent::Move { .. } => {
+                    // Could track for drag, but out of scope for MVP
+                }
+            }
+        }
+
+        // Now clear hit regions for this frame
+        self.hit_regions.clear();
+    }
+
+    /// Push a touch event to be processed.
+    pub fn push_event(&mut self, event: TouchEvent) {
+        self.event_queue.push_back(event);
+    }
+
+    /// Register a hit region and check if it was clicked.
+    /// Returns true if this element was clicked (consumes the click).
+    pub fn button(&mut self, key: &str, bounds: Rect) -> bool {
+        // Register hit region for future hit testing
+        self.hit_regions.insert(key.to_owned(), bounds);
+
+        // Check and consume pending click
+        if self.pending_click.as_deref() == Some(key) {
+            self.pending_click = None;
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if a button is currently pressed (touch down on it).
+    #[must_use]
+    pub fn is_pressed(&self, key: &str) -> bool {
+        self.touch_down_key.as_deref() == Some(key)
+    }
+
+    /// Hit test against registered regions.
+    fn hit_test(&self, x: i32, y: i32) -> Option<String> {
+        for (key, rect) in &self.hit_regions {
+            if rect.contains(x, y) {
+                return Some(key.clone());
+            }
+        }
+        None
+    }
+}
+
+impl Default for InteractionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}

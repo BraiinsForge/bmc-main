@@ -1,0 +1,34 @@
+[package]
+name = "bmc-wasm-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+
+# WASM runtime
+wasmi.workspace = true
+
+# Rendering
+cosmic-text.workspace = true
+tiny-skia.workspace = true
+
+# Layout
+taffy.workspace = true
+
+# Testbed
+minifb = { workspace = true, optional = true }
+notify = { workspace = true, optional = true }
+
+[features]
+default = []
+testbed = ["minifb", "notify"]
+
+[[bin]]
+name = "testbed"
+path = "src/bin/testbed.rs"
+required-features = ["testbed"]
+
+[lints]
+workspace = true
