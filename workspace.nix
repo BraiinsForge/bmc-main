@@ -78,9 +78,13 @@ let
     inherit (build-profiles.fast) build clippy test nextest;
   };
 
+  armv7lPkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
+  bmc-video-play-armv7 = armv7lPkgs.callPackage ./bmc-video/package.nix { };
+
 in
 {
   packages = packages // specialPackages // {
+    inherit bmc-video-play-armv7;
     bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
   };
   devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) build-profiles;
