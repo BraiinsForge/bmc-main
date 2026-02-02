@@ -391,7 +391,14 @@ int main(int argc, char *argv[])
 
     const char *video = argv[1];
     const char *alsa = (argc > 2) ? argv[2] : "default";
-    const char *alsa_out = (strcmp(alsa, "default") == 0) ? "hw:0,0" : alsa;
+    const char *alsa_out = (strcmp(alsa, "default") == 0) ? "plughw:0,0" : alsa;
+
+    // Parse volume (0-100, default 30)
+    int volume_pct = (argc > 3) ? atoi(argv[3]) : 30;
+    if (volume_pct < 0) volume_pct = 0;
+    if (volume_pct > 100) volume_pct = 100;
+    char volume_filter[32];
+    snprintf(volume_filter, sizeof(volume_filter), "volume=%.2f", volume_pct / 100.0);
 
     if (access(video, R_OK) != 0) {
         fprintf(stderr, "Error: cannot read %s\n", video);
@@ -420,6 +427,8 @@ int main(int argc, char *argv[])
               "-i", video,
               "-pix_fmt", "rgb565",
               "-f", "fbdev", FB_DEV,
+              "-ac", "2",
+              "-af", volume_filter,
               "-f", "alsa", alsa_out,
               NULL);
         _exit(127);
