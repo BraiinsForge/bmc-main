@@ -37,6 +37,8 @@
 #define LED_SPI_DEV "/dev/spidev0.0"
 #define LED_COUNT 10
 #define DOUBLE_TAP_MS 300
+#define KNIGHT_RIDER_PERIOD 1.0f // seconds
+#define PAUSE_PERIOD 2.0f // seconds
 
 #define LED_BRIGHTNESS 200 // Static brightness, the LED changes color on brightness changes
 
@@ -172,21 +174,25 @@ static void *led_thread(void *arg)
     struct timespec start;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
+    float period = KNIGHT_RIDER_PERIOD;
+
     while (!atomic_load(&g_led_stop)) {
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
 
         double elapsed = (now.tv_sec - start.tv_sec) +
                         (now.tv_nsec - start.tv_nsec) / 1e9;
-        float phase = fmodf(elapsed / 2.0f, 1.0f);  // 2 second cycle
+        float phase = fmodf(elapsed / period, 1.0f);
 
         float brightness_factor = get_brightness_factor();
 
         if (atomic_load(&g_paused)) {
+            period = PAUSE_PERIOD;
             // Breathing effect when paused
             float breath = 0.5f + 0.5f * sinf(phase * 2.0f * M_PI);
             led_set_all(&ctx, 0.5f * breath * brightness_factor, LED_COLOR);
         } else {
+            period = KNIGHT_RIDER_PERIOD;
             // Knight rider when playing
             led_knight_rider(&ctx, phase, brightness_factor);
         }
