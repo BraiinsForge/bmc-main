@@ -23,6 +23,15 @@ import css from '../shared.scss';
 
 const $ = getID('countdown-form').get;
 
+function rgbToHex(r: number, g: number, b: number): string {
+    return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+    const n = parseInt(hex.slice(1), 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
 export interface FormWidgetCountdownProps {
     isOpen: boolean;
     isEdit: boolean;
@@ -155,14 +164,34 @@ class View extends Component<Props> {
                     invalidText={targetTime.errorText}
                 />
 
-                <TextInput
-                    id={$('background-color')}
-                    labelText={formatMessage({ defaultMessage: 'Background Color (optional)' })}
-                    placeholder={formatMessage({ defaultMessage: '#000000 or black' })}
-                    value={backgroundColor.value}
-                    onChange={e => backgroundColor.onChange(e.target.value)}
-                    helperText={formatMessage({ defaultMessage: 'Hex color (#RGB, #RRGGBB) or color name' })}
-                />
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
+                    <div style={{ flex: 1 }}>
+                        <TextInput
+                            id={$('background-color')}
+                            labelText={formatMessage({ defaultMessage: 'Background Color (optional)' })}
+                            placeholder={formatMessage({ defaultMessage: '#000000 or black' })}
+                            value={backgroundColor.value}
+                            onChange={e => backgroundColor.onChange(e.target.value)}
+                            helperText={formatMessage({ defaultMessage: 'Hex color (#RGB, #RRGGBB) or color name' })}
+                        />
+                    </div>
+                    <input
+                        type="color"
+                        id={$('background-color-picker')}
+                        value={backgroundColor.value || '#000000'}
+                        onChange={e => backgroundColor.onChange?.(e.target.value)}
+                        aria-label={formatMessage({ defaultMessage: 'Pick background color' })}
+                        style={{
+                            width: '40px',
+                            height: '40px',
+                            padding: '2px',
+                            border: '1px solid #8d8d8d',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            marginBottom: '20px',
+                        }}
+                    />
+                </div>
 
                 <BoundRadioGroup
                     {...fontStyle}
@@ -192,30 +221,28 @@ class View extends Component<Props> {
                             labelText={formatMessage({ defaultMessage: 'LED Effect' })}
                             items={this.#ledEffectOptions}
                         />
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                            <NumberInput
-                                id={$('led-r')}
-                                label={formatMessage({ defaultMessage: 'Red' })}
-                                min={0}
-                                max={255}
-                                value={ledColorR.value}
-                                onChange={(_, { value }) => ledColorR.onChange(Number(value))}
-                            />
-                            <NumberInput
-                                id={$('led-g')}
-                                label={formatMessage({ defaultMessage: 'Green' })}
-                                min={0}
-                                max={255}
-                                value={ledColorG.value}
-                                onChange={(_, { value }) => ledColorG.onChange(Number(value))}
-                            />
-                            <NumberInput
-                                id={$('led-b')}
-                                label={formatMessage({ defaultMessage: 'Blue' })}
-                                min={0}
-                                max={255}
-                                value={ledColorB.value}
-                                onChange={(_, { value }) => ledColorB.onChange(Number(value))}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <label className="cds--label" htmlFor={$('led-color')} style={{ margin: 0 }}>
+                                {formatMessage({ defaultMessage: 'LED Color' })}
+                            </label>
+                            <input
+                                type="color"
+                                id={$('led-color')}
+                                value={rgbToHex(ledColorR.value ?? 0, ledColorG.value ?? 0, ledColorB.value ?? 0)}
+                                onChange={e => {
+                                    const { r, g, b } = hexToRgb(e.target.value);
+                                    ledColorR.onChange?.(r);
+                                    ledColorG.onChange?.(g);
+                                    ledColorB.onChange?.(b);
+                                }}
+                                style={{
+                                    width: '32px',
+                                    height: '32px',
+                                    padding: '2px',
+                                    border: '1px solid #8d8d8d',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                }}
                             />
                         </div>
                     </>
