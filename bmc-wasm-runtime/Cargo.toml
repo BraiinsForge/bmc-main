@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+bmc-wasm-protocol = { path = "protocol" }
 tracing.workspace = true
 
 # WASM runtime

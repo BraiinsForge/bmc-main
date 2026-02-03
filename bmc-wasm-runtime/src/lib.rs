@@ -7,8 +7,13 @@
 //!
 //! See `docs/plan.md` for the full design document.
 
-pub mod colors;
 mod drawing;
+
+// Re-export colors and color macro from protocol crate
+pub mod colors {
+    pub use bmc_wasm_protocol::colors::*;
+}
+pub use bmc_wasm_protocol::color;
 mod host_api;
 mod runtime;
 pub mod tree;

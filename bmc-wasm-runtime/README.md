@@ -1,132 +1,149 @@
 # WASM Widget Runtime
 
-WebAssembly runtime for remote widget overlays on Braiins Deck.
+WebAssembly runtime for Braiins Deck remote widget overlays. Widgets are compiled to WASM and rendered with host-side
+flex layout (Taffy) and text shaping (cosmic-text).
 
 ## Architecture
 
-### Target Hardware
-
-- STM32MP157C (Cortex-A7 dual-core @ 650MHz)
-- 256MB DDR3 RAM
-- 1280×480 touchscreen display
-
-### Host-Side (Rust)
-
-- **wasmi** - Pure Rust WASM interpreter with fuel metering
-- **tiny-skia** - 2D software rendering
-- **cosmic-text** - Text shaping/layout with i18n support
-
-### WASM-Side
-
-- Raw FFI layer (`host_*` functions)
-- Ergonomic Rust SDK (`bmc-wasm-sdk`)
-
-## Widget API
-
-### Exports (widget implements)
-
-```rust
-fn init(width: u32, height: u32);  // called once on load
-fn render(delta_ms: u32);          // called each frame
+```
+┌─────────────────┐     ┌─────────────────┐
+│   WASM Widget   │     │      Host       │
+│  (bmc-wasm-sdk) │────▶│ (bmc-wasm-runtime)
+│                 │     │                 │
+│  - UI tree      │     │  - Deserialize  │
+│  - Animations   │     │  - Taffy layout │
+│  - State        │     │  - Render       │
+└─────────────────┘     └─────────────────┘
 ```
 
-### Host Functions (widget calls)
+Widgets build a declarative UI tree that gets serialized and sent to the host for layout and rendering. This keeps WASM
+binaries small (~15KB) by offloading text shaping and layout to native code.
 
-```rust
-// Tree-based UI (preferred)
-fn host_submit_tree(ptr: u32, len: u32, width: u32, height: u32);
-fn host_get_click(index: u32) -> i32;
+## SDK API
 
-// Direct drawing (for advanced use)
-fn host_fill_rect(x: i32, y: i32, w: u32, h: u32, color: u32);
-fn host_draw_text(text_ptr: u32, text_len: u32, x: i32, y: i32, size: u32, color: u32);
-
-// Frame control
-fn host_request_frame();              // request next frame ASAP
-fn host_request_frame_after(ms: u32); // request frame after delay
-```
-
-## Immediate-Mode UI
-
-Inspired by Dear ImGui. Buttons return `true` on the frame they're clicked:
-
-```rust
-if button("save-btn", x, y, w, h) {
-    // clicked this frame
-}
-```
-
-The host tracks hit regions, touch state, and click detection.
-
-## Frame Control
-
-Widgets control their own frame rate:
-
-- `request_frame()` - continuous animation
-- `request_frame_after(ms)` - periodic updates
-- No call = paused until touch event
-
-Host auto-clears overlay before `render()` and auto-commits after.
-
-## SDK Usage
+### Layout Primitives
 
 ```rust
 use bmc_wasm_sdk::*;
 
-#[no_mangle]
-pub extern "C" fn render(_delta_ms: u32) {
-    let result = render_ui(WIDTH, HEIGHT, col(props!(), [
-        text("Hello from WASM!", 24, props!()),
-        row(props!(gap: 16.0), [
+render_ui(width, height,
+    col(props!(padding: 24.0, gap: 16.0), [
+        row(props!(gap: 12.0), [
             button(ButtonStyle::Primary, "Click me"),
-            button(ButtonStyle::Secondary, "Or me"),
+            button(ButtonStyle::Secondary, "Cancel"),
         ]),
-        canvas(props!(width: 100.0, height: 100.0), [
-            centered(rect(0.0, 0.0, 20.0, 20.0, RED_50)),
-            orbit(30.0, rotation, rect(0.0, 0.0, 8.0, 8.0, VIOLET_50)),
-        ]),
-    ]));
+        spacer(1.0),
+    ])
+);
+```
 
-    // Handle button clicks
-    if result.clicks[0] { /* first button clicked */ }
-    if result.clicks[1] { /* second button clicked */ }
+- `col(props, children)` - Vertical flex container
+- `row(props, children)` - Horizontal flex container
+- `center(props, children)` - Centered container
+- `spacer(flex)` - Flexible spacer
+- `button(style, label)` - Interactive button
+- `canvas(props, draws)` - Custom drawing area
 
-    request_frame();
+### Text
+
+```rust
+// Simple text
+text("Hello world", style!(size: 24, color: GRAY_10))
+
+// Rich paragraph with styled spans
+paragraph(style!(size: 14, line_height: 1.4), [
+    span("Click ", ()),
+    span("Save", style!(weight: 700)),
+    span(" to ", ()),
+    span("confirm", style!(color: GREEN_50)),
+    span(".", ()),
+])
+```
+
+Text wraps automatically to container width. Use `max_width` in style to set an explicit maximum.
+
+### Style Macros
+
+```rust
+// Layout props for containers
+props!(padding: 16.0, gap: 8.0, background: GRAY_90)
+
+// Text + layout props combined
+style!(size: 20, weight: 700, color: VIOLET_50, padding: 8.0)
+```
+
+**Text style fields:** `size`, `weight`, `italic`, `underline`, `strikethrough`, `line_height`, `align`, `max_width`
+
+**Layout fields:** `padding`, `margin`, `gap`, `flex`, `width`, `height`, `background`
+
+**Shared:** `color` (applies to both text and layout)
+
+### Canvas Drawing
+
+```rust
+canvas(props!(width: 100.0, height: 100.0), [
+    rect(10.0, 10.0, 20.0, 20.0, RED_50),
+    centered(rect(0.0, 0.0, 32.0, 32.0, VIOLET_50)),
+    orbit(40.0, angle, rect(0.0, 0.0, 8.0, 8.0, GREEN_50)),
+    rotated(rotation, rect(0.0, 0.0, 16.0, 16.0, GRAY_10)),
+])
+```
+
+### Animations
+
+```rust
+animated!(FADE: f32);
+animated!(ROTATION: f32);
+
+fn init() {
+    FADE::start(0.0, 1.0, 500, easing::ease_out_cubic);
+    ROTATION::start(0.0, PI * 2.0, 2000, easing::linear);
+}
+
+fn render(delta_ms: u32) {
+    FADE::tick(delta_ms);
+    ROTATION::tick(delta_ms);
+
+    let opacity = FADE::get();
+    let angle = ROTATION::get();
+
+    if ROTATION::is_finished() {
+        ROTATION::reset(); // Loop
+    }
 }
 ```
 
-### Tree Nodes
+### Colors
 
-- `col(props, children)` - vertical layout
-- `row(props, children)` - horizontal layout
-- `center(props, children)` - centered container
-- `text(content, size, props)` - text label
-- `button(style, label)` - clickable button
-- `spacer(flex)` - flexible space
-- `canvas(props, draws)` - custom drawing area
+Brand colors from the design system:
 
-### Canvas Draw Commands
+```rust
+GRAY_10..GRAY_100    // Light to dark grays
+VIOLET_10..VIOLET_100 // Brand purple
+GREEN_10..GREEN_100   // Success
+RED_10..RED_100       // Error/danger
+ORANGE_10..ORANGE_100 // Warning
+TRANSPARENT
 
-- `rect(x, y, w, h, color)` - rectangle at local position
-- `centered(draw)` - center any draw command in canvas
-- `orbit(radius, angle, draw)` - position around canvas center
-- `rotated(angle, draw)` - rotate around draw's center
-
-Wrappers compose: `rotated(angle, centered(rect(...)))`
-
-## Development Testbed
-
-```bash
-cargo run --bin testbed -- path/to/widget.wasm
+// With alpha
+color!(GRAY_80, alpha: 0.5)
 ```
 
-Features:
+## Development
 
-- Hot reload on file change
-- Mouse → touch translation
-- FPS counter
+```bash
+# Run testbed with hot reload
+make dev
 
-## Resource Limits
+# Build and run release
+make run
 
-- Fuel per frame: 10,000,000 instructions
-- Overlay size: matches display (1280×480)
+# Check WASM binary size
+make size
+```
+
+## Crate Structure
+
+- `bmc-wasm-runtime` - Host runtime (layout, rendering)
+- `bmc-wasm-sdk` - Widget SDK (compiled to WASM)
+- `bmc-wasm-protocol` - Shared types and constants

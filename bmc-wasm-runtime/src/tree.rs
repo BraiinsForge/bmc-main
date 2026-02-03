@@ -10,49 +10,36 @@
 )]
 
 use anyhow::{Result, bail};
+use bmc_wasm_protocol::{
+    DRAW_CENTERED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, NODE_BUTTON, NODE_CANVAS, NODE_CENTER,
+    NODE_COLUMN, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+};
 
-/// Node type tags (must match SDK)
-pub const NODE_COLUMN: u8 = 0;
-pub const NODE_ROW: u8 = 1;
-pub const NODE_CENTER: u8 = 2;
-pub const NODE_TEXT: u8 = 3;
-pub const NODE_BUTTON: u8 = 4;
-pub const NODE_SPACER: u8 = 5;
-pub const NODE_CANVAS: u8 = 6;
+// Re-export for other modules
+pub use bmc_wasm_protocol::{PropsData, TextAlign, TextStyle};
 
-// Draw command tags (must match SDK)
-pub const DRAW_RECT: u8 = 16;
-pub const DRAW_CENTERED: u8 = 17;
-pub const DRAW_ORBIT: u8 = 18;
-pub const DRAW_ROTATED: u8 = 19;
-
-/// Fixed-size props (32 bytes, must match SDK)
-#[derive(Clone, Copy, Default, Debug)]
-pub struct PropsData {
-    pub padding: f32,
-    pub margin: f32,
-    pub gap: f32,
-    pub background: u32,
-    pub width: f32,
-    pub height: f32,
-    pub flex: f32,
-    pub color: u32,
+/// A text span with style overrides
+#[derive(Clone, Debug)]
+pub struct SpanData {
+    pub text: String,
+    pub weight: Option<u16>,
+    pub color: Option<u32>,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
 }
 
-impl PropsData {
-    pub const SIZE: usize = 32;
-
+impl SpanData {
+    /// Resolve this span's effective style given a base style
     #[must_use]
-    pub fn from_bytes(data: &[u8]) -> Self {
-        Self {
-            padding: f32::from_le_bytes([data[0], data[1], data[2], data[3]]),
-            margin: f32::from_le_bytes([data[4], data[5], data[6], data[7]]),
-            gap: f32::from_le_bytes([data[8], data[9], data[10], data[11]]),
-            background: u32::from_le_bytes([data[12], data[13], data[14], data[15]]),
-            width: f32::from_le_bytes([data[16], data[17], data[18], data[19]]),
-            height: f32::from_le_bytes([data[20], data[21], data[22], data[23]]),
-            flex: f32::from_le_bytes([data[24], data[25], data[26], data[27]]),
-            color: u32::from_le_bytes([data[28], data[29], data[30], data[31]]),
+    pub fn resolve_style(&self, base: &TextStyle) -> TextStyle {
+        TextStyle {
+            weight: self.weight.unwrap_or(base.weight),
+            color: self.color.unwrap_or(base.color),
+            italic: self.italic || base.italic,
+            underline: self.underline || base.underline,
+            strikethrough: self.strikethrough || base.strikethrough,
+            ..*base
         }
     }
 }
@@ -87,10 +74,10 @@ pub enum TreeNode {
     Column(PropsData, Vec<TreeNode>),
     Row(PropsData, Vec<TreeNode>),
     Center(PropsData, Vec<TreeNode>),
-    Text {
-        content: String,
-        size: u32,
-        color: u32,
+    Paragraph {
+        props: PropsData,
+        base_style: TextStyle,
+        spans: Vec<SpanData>,
     },
     Button {
         label: String,
@@ -172,6 +159,50 @@ impl<'a> TreeReader<'a> {
         Ok(s)
     }
 
+    fn read_text_style(&mut self) -> Result<TextStyle> {
+        if self.pos + TextStyle::SIZE > self.data.len() {
+            bail!("unexpected end of tree data reading text style");
+        }
+        let style = TextStyle::from_bytes(&self.data[self.pos..self.pos + TextStyle::SIZE]);
+        self.pos += TextStyle::SIZE;
+        Ok(style)
+    }
+
+    fn read_span(&mut self) -> Result<SpanData> {
+        let flags = self.read_u16()?;
+        let extra_flags = self.read_u8()?;
+        let len = self.read_u16()?;
+        let text = self.read_string(len)?;
+
+        let has_weight = (flags >> 12) & 1 != 0;
+        let has_color = (flags >> 13) & 1 != 0;
+
+        let weight = if has_weight {
+            Some(flags & 0xFFF)
+        } else {
+            None
+        };
+
+        let color = if has_color {
+            Some(self.read_u32()?)
+        } else {
+            None
+        };
+
+        let italic = (flags >> 14) & 1 != 0;
+        let underline = (flags >> 15) & 1 != 0;
+        let strikethrough = extra_flags & 1 != 0;
+
+        Ok(SpanData {
+            text,
+            weight,
+            color,
+            italic,
+            underline,
+            strikethrough,
+        })
+    }
+
     fn read_node(&mut self) -> Result<TreeNode> {
         let node_type = self.read_u8()?;
 
@@ -190,15 +221,18 @@ impl<'a> TreeReader<'a> {
                     _ => unreachable!(),
                 })
             }
-            NODE_TEXT => {
-                let size = self.read_u32()?;
-                let color = self.read_u32()?;
-                let len = self.read_u16()?;
-                let content = self.read_string(len)?;
-                Ok(TreeNode::Text {
-                    content,
-                    size,
-                    color,
+            NODE_PARAGRAPH => {
+                let props = self.read_props()?;
+                let base_style = self.read_text_style()?;
+                let span_count = self.read_u16()?;
+                let mut spans = Vec::with_capacity(span_count as usize);
+                for _ in 0..span_count {
+                    spans.push(self.read_span()?);
+                }
+                Ok(TreeNode::Paragraph {
+                    props,
+                    base_style,
+                    spans,
                 })
             }
             NODE_BUTTON => {
@@ -285,10 +319,9 @@ use cosmic_text::{FontSystem, SwashCache};
 use taffy::prelude::*;
 use tiny_skia::Pixmap;
 
-use crate::colors::GRAY_10;
 use crate::components::{ButtonStyle, draw_button};
 use crate::drawing::shapes::{fill_rect, fill_rotated_rect};
-use crate::drawing::text::draw_text;
+use crate::drawing::text::{measure_paragraph, render_paragraph};
 use crate::interaction::InteractionState;
 
 /// Result from processing a tree
@@ -298,11 +331,18 @@ pub struct TreeResult {
     pub clicks: Vec<bool>,
 }
 
+/// Paragraph data for measurement and rendering
+#[derive(Clone, Debug)]
+struct ParagraphData {
+    base_style: TextStyle,
+    spans: Vec<SpanData>,
+}
+
 /// Node data attached to taffy nodes
 #[derive(Clone, Default)]
 struct NodeContext {
     background: u32,
-    text: Option<(String, u32, u32)>,  // content, size, color
+    paragraph: Option<ParagraphData>,
     button: Option<(u32, String, u8)>, // id, label, style
     draws: Vec<DrawCommand>,           // canvas draw commands
 }
@@ -335,8 +375,51 @@ pub fn process_tree(
         taffy.set_style(root_id, new_style)?;
     }
 
-    // Compute layout
-    taffy.compute_layout(root_id, Size::MAX_CONTENT)?;
+    // Compute layout with measure function for paragraphs
+    taffy.compute_layout_with_measure(
+        root_id,
+        Size::MAX_CONTENT,
+        |known_dimensions, available_space, _node_id, node_context, _style| {
+            // If dimensions are already known, use them
+            if let (Some(w), Some(h)) = (known_dimensions.width, known_dimensions.height) {
+                return Size {
+                    width: w,
+                    height: h,
+                };
+            }
+
+            // Measure paragraphs based on available width
+            if let Some(ctx) = node_context {
+                if let Some(ref para) = ctx.paragraph {
+                    let available_width = match available_space.width {
+                        AvailableSpace::Definite(w) => Some(w),
+                        AvailableSpace::MinContent => Some(0.0),
+                        AvailableSpace::MaxContent => None,
+                    };
+
+                    // Use explicit max_width if set, otherwise use available width
+                    let max_width = if para.base_style.max_width > 0 {
+                        Some(
+                            (para.base_style.max_width as f32)
+                                .min(available_width.unwrap_or(f32::MAX)),
+                        )
+                    } else {
+                        available_width
+                    };
+
+                    let (w, h) =
+                        measure_paragraph(font_system, &para.base_style, &para.spans, max_width);
+                    return Size {
+                        width: w,
+                        height: h,
+                    };
+                }
+            }
+
+            // Default for non-paragraph nodes without explicit size
+            Size::ZERO
+        },
+    )?;
 
     // Render
     render_taffy_node(
@@ -417,25 +500,29 @@ fn build_taffy_node(
             Ok(id)
         }
 
-        TreeNode::Text {
-            content,
-            size,
-            color,
+        TreeNode::Paragraph {
+            props,
+            base_style,
+            spans,
         } => {
-            let approx_width = content.len() as f32 * (*size as f32 * 0.6);
-            let approx_height = *size as f32 * 1.2;
+            // Don't pre-measure - use Taffy's measure callback with available width
             let style = Style {
-                size: Size {
-                    width: length(approx_width),
-                    height: length(approx_height),
-                },
+                padding: padding_uniform(props.padding),
+                margin: margin_uniform(props.margin),
+                flex_grow: props.flex,
+                // Let measure function determine size based on available width
                 ..Default::default()
             };
+
             let id = taffy.new_leaf(style)?;
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
-                    text: Some((content.clone(), *size, *color)),
+                    background: props.background,
+                    paragraph: Some(ParagraphData {
+                        base_style: *base_style,
+                        spans: spans.clone(),
+                    }),
                     ..Default::default()
                 }),
             )?;
@@ -524,9 +611,17 @@ fn render_taffy_node(
             fill_rect(pixmap, x, y, w, h, ctx.background);
         }
 
-        if let Some((ref content, size, color)) = ctx.text {
-            let color = if color == 0 { GRAY_10 } else { color };
-            draw_text(pixmap, font_system, swash_cache, content, x, y, size, color);
+        if let Some(ref para) = ctx.paragraph {
+            render_paragraph(
+                pixmap,
+                font_system,
+                swash_cache,
+                &para.base_style,
+                &para.spans,
+                x,
+                y,
+                w,
+            );
         }
 
         if let Some((btn_id, ref label, style)) = ctx.button {

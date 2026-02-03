@@ -34,11 +34,11 @@ mod transform;
 mod tween;
 
 pub use animated::AnimatedInner;
-pub use transform::{deg_to_rad, rad_to_deg, Transform};
+pub use transform::{Transform, deg_to_rad, rad_to_deg};
 pub use tween::{DynTween, Tween};
 
 // Re-export keyframe primitives
-pub use keyframe::{ease, CanTween, EasingFunction};
+pub use keyframe::{CanTween, EasingFunction, ease};
 
 /// Predefined easing functions.
 ///
@@ -58,24 +58,56 @@ pub use keyframe::{ease, CanTween, EasingFunction};
 /// - `ease_in_quad`, `ease_out_quad`, `ease_in_out_quad` - quadratic
 /// - `ease_in_cubic`, `ease_out_cubic`, `ease_in_out_cubic` - cubic
 pub mod easing {
-    pub use keyframe::functions::*;
     use keyframe::EasingFunction;
+    pub use keyframe::functions::*;
 
     // Function pointer versions for DynTween
-    pub fn linear(t: f64) -> f64 { Linear.y(t) }
-    pub fn ease_in(t: f64) -> f64 { EaseIn.y(t) }
-    pub fn ease_out(t: f64) -> f64 { EaseOut.y(t) }
-    pub fn ease_in_out(t: f64) -> f64 { EaseInOut.y(t) }
-    pub fn ease_in_quad(t: f64) -> f64 { EaseInQuad.y(t) }
-    pub fn ease_out_quad(t: f64) -> f64 { EaseOutQuad.y(t) }
-    pub fn ease_in_out_quad(t: f64) -> f64 { EaseInOutQuad.y(t) }
-    pub fn ease_in_cubic(t: f64) -> f64 { EaseInCubic.y(t) }
-    pub fn ease_out_cubic(t: f64) -> f64 { EaseOutCubic.y(t) }
-    pub fn ease_in_out_cubic(t: f64) -> f64 { EaseInOutCubic.y(t) }
-    pub fn ease_in_quart(t: f64) -> f64 { EaseInQuart.y(t) }
-    pub fn ease_out_quart(t: f64) -> f64 { EaseOutQuart.y(t) }
-    pub fn ease_in_out_quart(t: f64) -> f64 { EaseInOutQuart.y(t) }
-    pub fn ease_in_quint(t: f64) -> f64 { EaseInQuint.y(t) }
-    pub fn ease_out_quint(t: f64) -> f64 { EaseOutQuint.y(t) }
-    pub fn ease_in_out_quint(t: f64) -> f64 { EaseInOutQuint.y(t) }
+    pub fn linear(t: f64) -> f64 {
+        Linear.y(t)
+    }
+    pub fn ease_in(t: f64) -> f64 {
+        EaseIn.y(t)
+    }
+    pub fn ease_out(t: f64) -> f64 {
+        EaseOut.y(t)
+    }
+    pub fn ease_in_out(t: f64) -> f64 {
+        EaseInOut.y(t)
+    }
+    pub fn ease_in_quad(t: f64) -> f64 {
+        EaseInQuad.y(t)
+    }
+    pub fn ease_out_quad(t: f64) -> f64 {
+        EaseOutQuad.y(t)
+    }
+    pub fn ease_in_out_quad(t: f64) -> f64 {
+        EaseInOutQuad.y(t)
+    }
+    pub fn ease_in_cubic(t: f64) -> f64 {
+        EaseInCubic.y(t)
+    }
+    pub fn ease_out_cubic(t: f64) -> f64 {
+        EaseOutCubic.y(t)
+    }
+    pub fn ease_in_out_cubic(t: f64) -> f64 {
+        EaseInOutCubic.y(t)
+    }
+    pub fn ease_in_quart(t: f64) -> f64 {
+        EaseInQuart.y(t)
+    }
+    pub fn ease_out_quart(t: f64) -> f64 {
+        EaseOutQuart.y(t)
+    }
+    pub fn ease_in_out_quart(t: f64) -> f64 {
+        EaseInOutQuart.y(t)
+    }
+    pub fn ease_in_quint(t: f64) -> f64 {
+        EaseInQuint.y(t)
+    }
+    pub fn ease_out_quint(t: f64) -> f64 {
+        EaseOutQuint.y(t)
+    }
+    pub fn ease_in_out_quint(t: f64) -> f64 {
+        EaseInOutQuint.y(t)
+    }
 }

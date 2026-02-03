@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-//! Braiins color palette
+//! Color constants for the design system.
 
 // Gray scale
 pub const GRAY_10: u32 = 0xF4F4_F4FF;
@@ -68,5 +68,7 @@ pub const TRANSPARENT: u32 = 0x0000_0000;
 /// Color utility macro: `color!(GRAY_80, alpha: 0.5)`
 #[macro_export]
 macro_rules! color {
-    ($base:expr, alpha: $a:expr) => {{ ($base & 0xFFFF_FF00) | (($a * 255.0) as u32 & 0xFF) }};
+    ($base:expr, alpha: $a:expr) => {
+        ($base & 0xFFFF_FF00) | (($a * 255.0) as u32 & 0xFF)
+    };
 }

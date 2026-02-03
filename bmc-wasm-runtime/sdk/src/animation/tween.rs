@@ -2,7 +2,7 @@
 
 //! Tween state management for animations.
 
-use keyframe::{functions::Linear, CanTween, EasingFunction};
+use keyframe::{CanTween, EasingFunction, functions::Linear};
 
 /// A stateful animation that interpolates from one value to another over time.
 ///

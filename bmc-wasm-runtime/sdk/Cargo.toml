@@ -7,8 +7,19 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
-keyframe = { version = "1.1", default-features = false }
-libm = "0.2"
+bmc-wasm-protocol = { path = "../protocol" }
+keyframe.workspace = true
+libm.workspace = true
+
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
 
 # Keep this crate out of the main workspace
 [workspace]

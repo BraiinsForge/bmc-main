@@ -15,7 +15,7 @@ clean:
 dev:
 	@cargo build --features testbed --bin testbed
 	@cd $(EXAMPLE_DIR) && cargo build --target $(WASM_TARGET)
-	mprocs \
+	RUST_LOG=bmc_wasm_runtime=debug mprocs \
 		--names "validate,watch,testbed" \
 		"make validate" \
 		"cd $(EXAMPLE_DIR) && cargo watch -x 'build --target $(WASM_TARGET)'" \
