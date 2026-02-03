@@ -3,6 +3,14 @@
 { self, pkgs, commonDeps }:
 let lib = pkgs.lib; in
 let
+  # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
+  # The man output fails to build for ARMv7 glibc targets
+  fixedArmv7Pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.extend (final: prev: {
+    linux-pam = prev.linux-pam.overrideAttrs (old: {
+      outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
+    });
+  });
+
   crates = with pkgs.ii.rust; {
     bmc-mock = defineCrate {
       path = "./bmc-mock";
@@ -117,14 +125,14 @@ let
       minimal_deps = true;
       rustProfile = "release";
       rustCrossTarget = "armv7-unknown-linux-gnueabihf";
-      build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform;
+      build_pkgs = fixedArmv7Pkgs;
     };
     armv7-glibc-debug = workspace.mkBuildProfile {
       suffix = "armv7";
       minimal_deps = false;
       rustProfile = "dev";
       rustCrossTarget = "armv7-unknown-linux-gnueabihf";
-      build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform;
+      build_pkgs = fixedArmv7Pkgs;
     };
   };
 
