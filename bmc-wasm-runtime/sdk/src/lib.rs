@@ -2,25 +2,28 @@
 
 //! WASM Widget SDK for Braiins Deck.
 //!
-//! Provides host bindings, layout, and UI primitives for building widgets.
+//! Provides host bindings and UI primitives for building widgets.
+//! Layout is computed on the host side for minimal WASM binary size.
 
 pub mod animation;
 mod colors;
 pub mod host;
-pub mod ui;
+pub mod tree;
 
 pub use colors::*;
 pub use host::{ButtonStyle, draw_text, fill_rect, request_frame, request_frame_after};
-pub use ui::*;
+pub use tree::{
+    Draw, Node, PropsData, TreeRenderResult,
+    col, row, center, text, button, spacer, canvas, render_ui,
+    rect, centered, orbit, rotated,
+    begin_tree, finish_tree, with_buffer,
+};
 
-/// Shorthand for Props: `props!()` or `props!(gap: 16.0, background: 0xFF)`
+/// Shorthand for PropsData: `props!()` or `props!(gap: 16.0, background: 0xFF)`
 #[macro_export]
 macro_rules! props {
-    () => { $crate::ui::Props::default() };
+    () => { $crate::tree::PropsData::default() };
     ($($field:ident: $value:expr),* $(,)?) => {
-        $crate::ui::Props { $($field: $value),*, ..Default::default() }
+        $crate::tree::PropsData { $($field: $value),*, ..Default::default() }
     };
 }
-
-// Re-export taffy for advanced layout needs
-pub use taffy;

@@ -19,6 +19,7 @@ name = "bmc-wasm-sdk"
 version = "0.1.0"
 dependencies = [
  "keyframe",
+ "libm",
  "taffy",
 ]
 

@@ -29,9 +29,11 @@
 //! }
 //! ```
 
+mod animated;
 mod transform;
 mod tween;
 
+pub use animated::AnimatedInner;
 pub use transform::{deg_to_rad, rad_to_deg, Transform};
 pub use tween::{DynTween, Tween};
 

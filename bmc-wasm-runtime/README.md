@@ -33,14 +33,13 @@ fn render(delta_ms: u32);          // called each frame
 ### Host Functions (widget calls)
 
 ```rust
-// Drawing
-fn host_fill_rect(x: i32, y: i32, w: u32, h: u32, color: u32);
-fn host_draw_rounded_rect(x: i32, y: i32, w: u32, h: u32, radius: u32, color: u32);
-fn host_draw_text(text_ptr: u32, text_len: u32, x: i32, y: i32, size: u32, color: u32);
+// Tree-based UI (preferred)
+fn host_submit_tree(ptr: u32, len: u32, width: u32, height: u32);
+fn host_get_click(index: u32) -> i32;
 
-// Interaction
-fn host_button(key_ptr: u32, key_len: u32, label_ptr: u32, label_len: u32,
-               x: i32, y: i32, w: u32, h: u32, style: u32) -> i32;
+// Direct drawing (for advanced use)
+fn host_fill_rect(x: i32, y: i32, w: u32, h: u32, color: u32);
+fn host_draw_text(text_ptr: u32, text_len: u32, x: i32, y: i32, size: u32, color: u32);
 
 // Frame control
 fn host_request_frame();              // request next frame ASAP
@@ -76,16 +75,44 @@ use bmc_wasm_sdk::*;
 
 #[no_mangle]
 pub extern "C" fn render(_delta_ms: u32) {
-    ui::render(WIDTH, HEIGHT, col(props!(), [
+    let result = render_ui(WIDTH, HEIGHT, col(props!(), [
         text("Hello from WASM!", 24, props!()),
         row(props!(gap: 16.0), [
             button(ButtonStyle::Primary, "Click me"),
             button(ButtonStyle::Secondary, "Or me"),
         ]),
+        canvas(props!(width: 100.0, height: 100.0), [
+            centered(rect(0.0, 0.0, 20.0, 20.0, RED_50)),
+            orbit(30.0, rotation, rect(0.0, 0.0, 8.0, 8.0, VIOLET_50)),
+        ]),
     ]));
+
+    // Handle button clicks
+    if result.clicks[0] { /* first button clicked */ }
+    if result.clicks[1] { /* second button clicked */ }
+
     request_frame();
 }
 ```
+
+### Tree Nodes
+
+- `col(props, children)` - vertical layout
+- `row(props, children)` - horizontal layout
+- `center(props, children)` - centered container
+- `text(content, size, props)` - text label
+- `button(style, label)` - clickable button
+- `spacer(flex)` - flexible space
+- `canvas(props, draws)` - custom drawing area
+
+### Canvas Draw Commands
+
+- `rect(x, y, w, h, color)` - rectangle at local position
+- `centered(draw)` - center any draw command in canvas
+- `orbit(radius, angle, draw)` - position around canvas center
+- `rotated(angle, draw)` - rotate around draw's center
+
+Wrappers compose: `rotated(angle, centered(rect(...)))`
 
 ## Development Testbed
 

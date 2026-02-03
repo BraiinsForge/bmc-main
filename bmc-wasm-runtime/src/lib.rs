@@ -11,6 +11,7 @@ pub mod colors;
 mod drawing;
 mod host_api;
 mod runtime;
+pub mod tree;
 
 pub mod components;
 pub mod interaction;

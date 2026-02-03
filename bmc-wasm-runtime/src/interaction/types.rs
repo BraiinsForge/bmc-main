@@ -11,7 +11,7 @@ pub enum TouchEvent {
 }
 
 /// Rectangle for hit testing.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,

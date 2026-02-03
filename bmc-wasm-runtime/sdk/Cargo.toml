@@ -9,7 +9,6 @@ crate-type = ["rlib"]
 [dependencies]
 keyframe = { version = "1.1", default-features = false }
 libm = "0.2"
-taffy = "0.9"
 
 # Keep this crate out of the main workspace
 [workspace]

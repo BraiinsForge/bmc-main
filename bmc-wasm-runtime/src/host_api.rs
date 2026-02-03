@@ -36,6 +36,9 @@ pub struct HostState {
 
     /// Whether to request server refresh
     pub refresh_requested: bool,
+
+    /// Button clicks from last tree render (for new tree API)
+    pub tree_clicks: Vec<bool>,
 }
 
 impl HostState {
@@ -57,6 +60,7 @@ impl HostState {
             frame_requested: false,
             frame_delay_ms: None,
             refresh_requested: false,
+            tree_clicks: Vec::new(),
         })
     }
 

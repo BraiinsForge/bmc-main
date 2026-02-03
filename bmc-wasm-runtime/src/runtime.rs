@@ -2,7 +2,7 @@
 
 //! WASM runtime wrapper using wasmi.
 
-#![expect(clippy::too_many_lines)]
+#![expect(clippy::too_many_lines, clippy::cast_possible_truncation)]
 
 use anyhow::Result;
 use wasmi::{Caller, Extern, Linker};
@@ -11,6 +11,7 @@ use crate::components::{ButtonStyle, draw_button};
 use crate::drawing::shapes::{draw_rounded_rect, fill_rect};
 use crate::drawing::text::draw_text;
 use crate::host_api::HostState;
+use crate::tree;
 
 /// WebAssembly widget runtime.
 ///
@@ -213,11 +214,75 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // New tree-based API
+        linker.func_wrap(
+            "env",
+            "host_submit_tree",
+            |mut caller: Caller<'_, HostState>, ptr: u32, len: u32, width: u32, height: u32| {
+                let tree_data = {
+                    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                    if let Some(memory) = memory {
+                        let data = memory.data(&caller);
+                        let start = ptr as usize;
+                        let end = start + len as usize;
+                        if end <= data.len() {
+                            Some(data[start..end].to_vec())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(data) = tree_data {
+                    let state = caller.data_mut();
+                    match tree::process_tree(
+                        &data,
+                        width,
+                        height,
+                        &mut state.pixmap,
+                        &mut state.font_system,
+                        &mut state.swash_cache,
+                        &mut state.interaction,
+                    ) {
+                        Ok(result) => {
+                            state.tree_clicks = result.clicks;
+                        }
+                        Err(e) => {
+                            tracing::error!("tree processing failed: {e}");
+                        }
+                    }
+                }
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_get_button_count",
+            |caller: Caller<'_, HostState>| -> u32 { caller.data().tree_clicks.len() as u32 },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_get_click",
+            |caller: Caller<'_, HostState>, index: u32| -> i32 {
+                caller
+                    .data()
+                    .tree_clicks
+                    .get(index as usize)
+                    .map_or(0, |&c| i32::from(c))
+            },
+        )?;
+
         Ok(())
     }
 
     /// Render a frame. Host auto-clears before and auto-commits after.
     pub fn render(&mut self, delta_ms: u32) -> Result<()> {
+        // Process touch events and clear hit regions for new frame
+        self.store.data_mut().interaction.begin_frame();
+
         // Clear overlay
         self.store.data_mut().clear_overlay();
 

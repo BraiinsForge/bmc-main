@@ -30,6 +30,11 @@ unsafe extern "C" {
         h: u32,
         style: u32,
     ) -> i32;
+
+    // New tree-based API
+    fn host_submit_tree(ptr: *const u8, len: u32, width: u32, height: u32);
+    fn host_get_button_count() -> u32;
+    fn host_get_click(index: u32) -> i32;
 }
 
 /// Fill a rectangle with a solid color.
@@ -76,4 +81,23 @@ pub fn button(
             style as u32,
         ) != 0
     }
+}
+
+// ============================================================================
+// New tree-based API
+// ============================================================================
+
+/// Submit a serialized tree for host-side layout and rendering.
+pub fn submit_tree(data: &[u8], width: u32, height: u32) {
+    unsafe { host_submit_tree(data.as_ptr(), data.len() as u32, width, height) }
+}
+
+/// Get number of buttons in the last submitted tree.
+pub fn get_button_count() -> u32 {
+    unsafe { host_get_button_count() }
+}
+
+/// Check if button at index was clicked.
+pub fn get_click(index: u32) -> bool {
+    unsafe { host_get_click(index) != 0 }
 }

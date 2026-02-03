@@ -6,11 +6,12 @@
 #![expect(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::integer_division
 )]
 
 use cosmic_text::{FontSystem, SwashCache};
-use taffy::prelude::*;
 use tiny_skia::Pixmap;
 
 use crate::color;
@@ -130,45 +131,12 @@ pub fn draw_button(
         fill_rect(pixmap, x, y, w, h, bg_color);
     }
 
-    // Use taffy to center the label
+    // Center the label with simple arithmetic
     let text_w = measure_text(font_system, label, BUTTON_FONT_SIZE);
     let text_h = (BUTTON_FONT_SIZE as f32 * 1.2) as u32; // line height
 
-    let mut tree: TaffyTree<()> = TaffyTree::new();
-
-    let text_node = tree
-        .new_leaf(Style {
-            size: Size {
-                width: length(text_w as f32),
-                height: length(text_h as f32),
-            },
-            ..Default::default()
-        })
-        .unwrap();
-
-    let container = tree
-        .new_with_children(
-            Style {
-                size: Size {
-                    width: length(w as f32),
-                    height: length(h as f32),
-                },
-                justify_content: Some(JustifyContent::Center),
-                align_items: Some(AlignItems::Center),
-                ..Default::default()
-            },
-            &[text_node],
-        )
-        .unwrap();
-
-    tree.compute_layout(container, Size::MAX_CONTENT).unwrap();
-
-    let text_layout = tree.layout(text_node).unwrap();
-
-    #[expect(clippy::cast_possible_truncation)]
-    let text_x = x + text_layout.location.x as i32;
-    #[expect(clippy::cast_possible_truncation)]
-    let text_y = y + text_layout.location.y as i32;
+    let text_x = x + (w as i32 - text_w as i32) / 2;
+    let text_y = y + (h as i32 - text_h as i32) / 2;
 
     let fg_color = if style.is_outline() && is_pressed {
         BTN_TERTIARY_FG_ACTIVE
