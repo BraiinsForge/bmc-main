@@ -4,6 +4,7 @@
 //!
 //! Provides host bindings, layout, and UI primitives for building widgets.
 
+pub mod animation;
 mod colors;
 pub mod host;
 pub mod ui;

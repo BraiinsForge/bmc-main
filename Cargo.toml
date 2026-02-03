@@ -36,6 +36,11 @@ strip = true
 inherits = "release"
 lto = true
 
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+
 # special profile used in CI, optimized for fast compilation and efficient caching
 [profile.fast]
 inherits = "dev"

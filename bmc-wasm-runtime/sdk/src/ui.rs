@@ -9,13 +9,15 @@ use std::string::String;
 use std::vec::Vec;
 use taffy::prelude::*;
 
-// Frame-local button counter for auto-generated IDs
+// Frame-local counters for auto-generated IDs
 thread_local! {
     static BUTTON_ID: Cell<u32> = const { Cell::new(0) };
+    static CANVAS_ID: Cell<u32> = const { Cell::new(0) };
 }
 
 fn begin_frame() {
     BUTTON_ID.with(|id| id.set(0));
+    CANVAS_ID.with(|id| id.set(0));
 }
 
 fn next_button_id() -> u32 {
@@ -24,6 +26,32 @@ fn next_button_id() -> u32 {
         id.set(current + 1);
         current
     })
+}
+
+fn next_canvas_id() -> u32 {
+    CANVAS_ID.with(|id| {
+        let current = id.get();
+        id.set(current + 1);
+        current
+    })
+}
+
+/// A rectangle returned from layout for custom drawing.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Result from ui::render containing interaction state and layout info.
+#[derive(Clone, Debug, Default)]
+pub struct RenderResult {
+    /// Click state for each button (in order of appearance).
+    pub clicks: Vec<bool>,
+    /// Computed rectangles for each canvas (in order of appearance).
+    pub canvases: Vec<Rect>,
 }
 
 /// Style properties for layout nodes.
@@ -63,6 +91,8 @@ pub enum Node {
     Text(String, u32, u32),
     Button(String, ButtonStyle),
     Spacer(f32),
+    /// A layout box that returns its computed position for custom drawing.
+    Canvas(Props),
 }
 
 /// Column layout (vertical stack).
@@ -103,14 +133,21 @@ pub fn spacer(flex: f32) -> Node {
     Node::Spacer(flex)
 }
 
-/// Render the UI tree to screen.
-pub fn render(width: u32, height: u32, root: Node) -> Vec<bool> {
+/// A box for custom drawing. Participates in layout, returns its computed bounds.
+/// Use `props!(width: 100.0, height: 50.0)` to set size.
+/// Optional `background` will be drawn automatically.
+pub fn canvas(props: Props) -> Node {
+    Node::Canvas(props)
+}
+
+/// Render the UI tree to screen. Returns button clicks and canvas positions.
+pub fn render(width: u32, height: u32, root: Node) -> RenderResult {
     begin_frame();
 
     let mut tree: TaffyTree<NodeData> = TaffyTree::new();
-    let mut button_clicks = Vec::new();
+    let mut result = RenderResult::default();
 
-    let root_id = build_node(&mut tree, &root, &mut button_clicks);
+    let root_id = build_node(&mut tree, &root, &mut result);
 
     if let Ok(style) = tree.style(root_id) {
         let mut new_style = style.clone();
@@ -122,9 +159,9 @@ pub fn render(width: u32, height: u32, root: Node) -> Vec<bool> {
     }
 
     tree.compute_layout(root_id, Size::MAX_CONTENT).unwrap();
-    draw_node(&tree, root_id, 0, 0, &mut button_clicks);
+    draw_node(&tree, root_id, 0, 0, &mut result);
 
-    button_clicks
+    result
 }
 
 #[derive(Clone, Default)]
@@ -132,18 +169,19 @@ struct NodeData {
     background: u32, // 0 = no background
     text: Option<(String, u32, u32)>,
     button: Option<(u32, String, ButtonStyle)>,
+    canvas_id: Option<u32>,
 }
 
 fn build_node(
     tree: &mut TaffyTree<NodeData>,
     node: &Node,
-    clicks: &mut Vec<bool>,
+    result: &mut RenderResult,
 ) -> taffy::NodeId {
     match node {
         Node::Column(props, children) => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_node(tree, c, clicks))
+                .map(|c| build_node(tree, c, result))
                 .collect();
             let style = Style {
                 flex_direction: FlexDirection::Column,
@@ -173,7 +211,7 @@ fn build_node(
         Node::Row(props, children) => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_node(tree, c, clicks))
+                .map(|c| build_node(tree, c, result))
                 .collect();
             let style = Style {
                 flex_direction: FlexDirection::Row,
@@ -203,7 +241,7 @@ fn build_node(
         Node::Center(props, children) => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_node(tree, c, clicks))
+                .map(|c| build_node(tree, c, result))
                 .collect();
             let style = Style {
                 flex_direction: FlexDirection::Column,
@@ -255,7 +293,7 @@ fn build_node(
         }
         Node::Button(label, style_variant) => {
             let btn_id = next_button_id();
-            clicks.push(false);
+            result.clicks.push(false);
 
             let width = (label.len() as f32 * 10.0).max(120.0) + 32.0;
             let height = 48.0;
@@ -278,6 +316,29 @@ fn build_node(
             .unwrap();
             id
         }
+        Node::Canvas(props) => {
+            let canvas_id = next_canvas_id();
+            result.canvases.push(Rect::default()); // Will be filled in during draw
+
+            let style = Style {
+                size: size_from_props(props),
+                flex_grow: props.flex,
+                padding: padding_uniform(props.padding),
+                margin: margin_uniform(props.margin),
+                ..Default::default()
+            };
+            let id = tree.new_leaf(style).unwrap();
+            tree.set_node_context(
+                id,
+                Some(NodeData {
+                    background: props.background,
+                    canvas_id: Some(canvas_id),
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+            id
+        }
         Node::Spacer(flex) => {
             let style = Style {
                 flex_grow: *flex,
@@ -293,7 +354,7 @@ fn draw_node(
     node_id: taffy::NodeId,
     parent_x: i32,
     parent_y: i32,
-    clicks: &mut Vec<bool>,
+    result: &mut RenderResult,
 ) {
     let layout = tree.layout(node_id).unwrap();
     let x = parent_x + layout.location.x as i32;
@@ -312,14 +373,19 @@ fn draw_node(
             let mut key_buf = [0u8; 16];
             let key = format_btn_key(btn_id, &mut key_buf);
             let clicked = host::button(key, label.as_bytes(), x, y, w, h, style);
-            if (btn_id as usize) < clicks.len() {
-                clicks[btn_id as usize] = clicked;
+            if (btn_id as usize) < result.clicks.len() {
+                result.clicks[btn_id as usize] = clicked;
+            }
+        }
+        if let Some(canvas_id) = data.canvas_id {
+            if (canvas_id as usize) < result.canvases.len() {
+                result.canvases[canvas_id as usize] = Rect { x, y, width: w, height: h };
             }
         }
     }
 
     for child_id in tree.children(node_id).unwrap() {
-        draw_node(tree, child_id, x, y, clicks);
+        draw_node(tree, child_id, x, y, result);
     }
 }
 

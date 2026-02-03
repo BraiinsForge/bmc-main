@@ -30,3 +30,11 @@ run:
 validate:
 	@cargo fmt
 	@cargo clippy --all-targets --all-features -- -D warnings
+
+# Profiling with samply (install: cargo install samply)
+# Requires: echo '-1' | sudo tee /proc/sys/kernel/perf_event_paranoid
+.PHONY: profile
+profile:
+	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
+	cargo build --profile profiling --features testbed --bin testbed
+	$(HOME)/.cargo/bin/samply record ../target/profiling/testbed $(subst /debug/,/release/,$(WASM_FILE))
