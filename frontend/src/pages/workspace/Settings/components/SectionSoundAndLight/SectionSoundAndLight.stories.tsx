@@ -25,8 +25,10 @@ export default {
             'nightBrightness',
             pb.create(pb.SoundVolumeSchema, { value: 33, min: 0, max: 100, step: 4 }),
         ),
+        bootSoundEnabled: getArg('bootSoundEnabled', true),
         // alarmAndNotifyVolume: getArg('nightEnabled', 44),
         ledNotifyEnabled: getArg('nightNotify', true),
+        ledNotifyEnabledNight: getArg('ledNotifyEnabledNight', true),
     } satisfies SectionSoundAndLightProps,
 } satisfies Meta<SectionSoundAndLightProps>;
 

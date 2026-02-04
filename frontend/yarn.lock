@@ -191,10 +191,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@babel/runtime@npm:^7.12.5, @babel/runtime@npm:^7.18.3, @babel/runtime@npm:^7.24.5, @babel/runtime@npm:^7.27.3, @babel/runtime@npm:^7.28.4":
-  version: 7.28.4
-  resolution: "@babel/runtime@npm:7.28.4"
-  checksum: 10c0/792ce7af9750fb9b93879cc9d1db175701c4689da890e6ced242ea0207c9da411ccf16dc04e689cc01158b28d7898c40d75598f4559109f761c12ce01e959bf7
+"@babel/runtime@npm:^7.12.5, @babel/runtime@npm:^7.18.3, @babel/runtime@npm:^7.24.5, @babel/runtime@npm:^7.27.3, @babel/runtime@npm:^7.28.6":
+  version: 7.28.6
+  resolution: "@babel/runtime@npm:7.28.6"
+  checksum: 10c0/358cf2429992ac1c466df1a21c1601d595c46930a13c1d4662fde908d44ee78ec3c183aaff513ecb01ef8c55c3624afe0309eeeb34715672dbfadb7feedb2c0d
   languageName: node
   linkType: hard
 
@@ -234,18 +234,18 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@biomejs/biome@npm:2.3.13":
-  version: 2.3.13
-  resolution: "@biomejs/biome@npm:2.3.13"
+"@biomejs/biome@npm:2.3.14":
+  version: 2.3.14
+  resolution: "@biomejs/biome@npm:2.3.14"
   dependencies:
-    "@biomejs/cli-darwin-arm64": "npm:2.3.13"
-    "@biomejs/cli-darwin-x64": "npm:2.3.13"
-    "@biomejs/cli-linux-arm64": "npm:2.3.13"
-    "@biomejs/cli-linux-arm64-musl": "npm:2.3.13"
-    "@biomejs/cli-linux-x64": "npm:2.3.13"
-    "@biomejs/cli-linux-x64-musl": "npm:2.3.13"
-    "@biomejs/cli-win32-arm64": "npm:2.3.13"
-    "@biomejs/cli-win32-x64": "npm:2.3.13"
+    "@biomejs/cli-darwin-arm64": "npm:2.3.14"
+    "@biomejs/cli-darwin-x64": "npm:2.3.14"
+    "@biomejs/cli-linux-arm64": "npm:2.3.14"
+    "@biomejs/cli-linux-arm64-musl": "npm:2.3.14"
+    "@biomejs/cli-linux-x64": "npm:2.3.14"
+    "@biomejs/cli-linux-x64-musl": "npm:2.3.14"
+    "@biomejs/cli-win32-arm64": "npm:2.3.14"
+    "@biomejs/cli-win32-x64": "npm:2.3.14"
   dependenciesMeta:
     "@biomejs/cli-darwin-arm64":
       optional: true
@@ -265,126 +265,126 @@ __metadata:
       optional: true
   bin:
     biome: bin/biome
-  checksum: 10c0/920c44c755ab8efa2114b441baf74b8f5fae8e6ad98a301ce02228f546d20ef6ab7c33b990b0a4acd1ffc8f5985ae839cf1fec59a6f169732a0f86c14308728b
+  checksum: 10c0/7dc4c0354c59046a24cc23e69465e0d7def81ba85e2039268b828461c5f0978693c68d917e08c554474392314a9b7039fed50487e8fc4b96d039f2f63b1b829a
   languageName: node
   linkType: hard
 
-"@biomejs/cli-darwin-arm64@npm:2.3.13":
-  version: 2.3.13
-  resolution: "@biomejs/cli-darwin-arm64@npm:2.3.13"
+"@biomejs/cli-darwin-arm64@npm:2.3.14":
+  version: 2.3.14
+  resolution: "@biomejs/cli-darwin-arm64@npm:2.3.14"
   conditions: os=darwin & cpu=arm64
   languageName: node
   linkType: hard
 
-"@biomejs/cli-darwin-x64@npm:2.3.13":
-  version: 2.3.13
-  resolution: "@biomejs/cli-darwin-x64@npm:2.3.13"
+"@biomejs/cli-darwin-x64@npm:2.3.14":
+  version: 2.3.14
+  resolution: "@biomejs/cli-darwin-x64@npm:2.3.14"
   conditions: os=darwin & cpu=x64
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-arm64-musl@npm:2.3.13":
-  version: 2.3.13
-  resolution: "@biomejs/cli-linux-arm64-musl@npm:2.3.13"
+"@biomejs/cli-linux-arm64-musl@npm:2.3.14":
+  version: 2.3.14
+  resolution: "@biomejs/cli-linux-arm64-musl@npm:2.3.14"
   conditions: os=linux & cpu=arm64 & libc=musl
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-arm64@npm:2.3.13":
-  version: 2.3.13
-  resolution: "@biomejs/cli-linux-arm64@npm:2.3.13"
+"@biomejs/cli-linux-arm64@npm:2.3.14":
+  version: 2.3.14
+  resolution: "@biomejs/cli-linux-arm64@npm:2.3.14"
   conditions: os=linux & cpu=arm64 & libc=glibc
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-x64-musl@npm:2.3.13":
-  version: 2.3.13
-  resolution: "@biomejs/cli-linux-x64-musl@npm:2.3.13"
+"@biomejs/cli-linux-x64-musl@npm:2.3.14":
+  version: 2.3.14
+  resolution: "@biomejs/cli-linux-x64-musl@npm:2.3.14"
   conditions: os=linux & cpu=x64 & libc=musl
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-x64@npm:2.3.13":
-  version: 2.3.13
-  resolution: "@biomejs/cli-linux-x64@npm:2.3.13"
+"@biomejs/cli-linux-x64@npm:2.3.14":
+  version: 2.3.14
+  resolution: "@biomejs/cli-linux-x64@npm:2.3.14"
   conditions: os=linux & cpu=x64 & libc=glibc
   languageName: node
   linkType: hard
 
-"@biomejs/cli-win32-arm64@npm:2.3.13":
-  version: 2.3.13
-  resolution: "@biomejs/cli-win32-arm64@npm:2.3.13"
+"@biomejs/cli-win32-arm64@npm:2.3.14":
+  version: 2.3.14
+  resolution: "@biomejs/cli-win32-arm64@npm:2.3.14"
   conditions: os=win32 & cpu=arm64
   languageName: node
   linkType: hard
 
-"@biomejs/cli-win32-x64@npm:2.3.13":
-  version: 2.3.13
-  resolution: "@biomejs/cli-win32-x64@npm:2.3.13"
+"@biomejs/cli-win32-x64@npm:2.3.14":
+  version: 2.3.14
+  resolution: "@biomejs/cli-win32-x64@npm:2.3.14"
   conditions: os=win32 & cpu=x64
   languageName: node
   linkType: hard
 
-"@bufbuild/buf-darwin-arm64@npm:1.64.0":
-  version: 1.64.0
-  resolution: "@bufbuild/buf-darwin-arm64@npm:1.64.0"
+"@bufbuild/buf-darwin-arm64@npm:1.65.0":
+  version: 1.65.0
+  resolution: "@bufbuild/buf-darwin-arm64@npm:1.65.0"
   conditions: os=darwin & cpu=arm64
   languageName: node
   linkType: hard
 
-"@bufbuild/buf-darwin-x64@npm:1.64.0":
-  version: 1.64.0
-  resolution: "@bufbuild/buf-darwin-x64@npm:1.64.0"
+"@bufbuild/buf-darwin-x64@npm:1.65.0":
+  version: 1.65.0
+  resolution: "@bufbuild/buf-darwin-x64@npm:1.65.0"
   conditions: os=darwin & cpu=x64
   languageName: node
   linkType: hard
 
-"@bufbuild/buf-linux-aarch64@npm:1.64.0":
-  version: 1.64.0
-  resolution: "@bufbuild/buf-linux-aarch64@npm:1.64.0"
+"@bufbuild/buf-linux-aarch64@npm:1.65.0":
+  version: 1.65.0
+  resolution: "@bufbuild/buf-linux-aarch64@npm:1.65.0"
   conditions: os=linux & cpu=arm64
   languageName: node
   linkType: hard
 
-"@bufbuild/buf-linux-armv7@npm:1.64.0":
-  version: 1.64.0
-  resolution: "@bufbuild/buf-linux-armv7@npm:1.64.0"
+"@bufbuild/buf-linux-armv7@npm:1.65.0":
+  version: 1.65.0
+  resolution: "@bufbuild/buf-linux-armv7@npm:1.65.0"
   conditions: os=linux & cpu=arm
   languageName: node
   linkType: hard
 
-"@bufbuild/buf-linux-x64@npm:1.64.0":
-  version: 1.64.0
-  resolution: "@bufbuild/buf-linux-x64@npm:1.64.0"
+"@bufbuild/buf-linux-x64@npm:1.65.0":
+  version: 1.65.0
+  resolution: "@bufbuild/buf-linux-x64@npm:1.65.0"
   conditions: os=linux & cpu=x64
   languageName: node
   linkType: hard
 
-"@bufbuild/buf-win32-arm64@npm:1.64.0":
-  version: 1.64.0
-  resolution: "@bufbuild/buf-win32-arm64@npm:1.64.0"
+"@bufbuild/buf-win32-arm64@npm:1.65.0":
+  version: 1.65.0
+  resolution: "@bufbuild/buf-win32-arm64@npm:1.65.0"
   conditions: os=win32 & cpu=arm64
   languageName: node
   linkType: hard
 
-"@bufbuild/buf-win32-x64@npm:1.64.0":
-  version: 1.64.0
-  resolution: "@bufbuild/buf-win32-x64@npm:1.64.0"
+"@bufbuild/buf-win32-x64@npm:1.65.0":
+  version: 1.65.0
+  resolution: "@bufbuild/buf-win32-x64@npm:1.65.0"
   conditions: os=win32 & cpu=x64
   languageName: node
   linkType: hard
 
-"@bufbuild/buf@npm:1.64.0":
-  version: 1.64.0
-  resolution: "@bufbuild/buf@npm:1.64.0"
+"@bufbuild/buf@npm:1.65.0":
+  version: 1.65.0
+  resolution: "@bufbuild/buf@npm:1.65.0"
   dependencies:
-    "@bufbuild/buf-darwin-arm64": "npm:1.64.0"
-    "@bufbuild/buf-darwin-x64": "npm:1.64.0"
-    "@bufbuild/buf-linux-aarch64": "npm:1.64.0"
-    "@bufbuild/buf-linux-armv7": "npm:1.64.0"
-    "@bufbuild/buf-linux-x64": "npm:1.64.0"
-    "@bufbuild/buf-win32-arm64": "npm:1.64.0"
-    "@bufbuild/buf-win32-x64": "npm:1.64.0"
+    "@bufbuild/buf-darwin-arm64": "npm:1.65.0"
+    "@bufbuild/buf-darwin-x64": "npm:1.65.0"
+    "@bufbuild/buf-linux-aarch64": "npm:1.65.0"
+    "@bufbuild/buf-linux-armv7": "npm:1.65.0"
+    "@bufbuild/buf-linux-x64": "npm:1.65.0"
+    "@bufbuild/buf-win32-arm64": "npm:1.65.0"
+    "@bufbuild/buf-win32-x64": "npm:1.65.0"
   dependenciesMeta:
     "@bufbuild/buf-darwin-arm64":
       optional: true
@@ -404,7 +404,7 @@ __metadata:
     buf: bin/buf
     protoc-gen-buf-breaking: bin/protoc-gen-buf-breaking
     protoc-gen-buf-lint: bin/protoc-gen-buf-lint
-  checksum: 10c0/5fc83b951c06a0a3de6ab660d93149c5336bc4473c9f0e1d93068e698226e08797b0b572647ef55081bffbbce0b80de63500746d1b6d1b56112fbc48f2340513
+  checksum: 10c0/aabd930c6b9deda345210046ed8eac6adc76e19f503da1cde506e25f0d021e2dc09a49b1112a3334eb7eb3afa32517828965458cc43f431dbbc6799a81fca418
   languageName: node
   linkType: hard
 
@@ -814,14 +814,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@dr.pogodin/react-helmet@npm:3.0.5":
-  version: 3.0.5
-  resolution: "@dr.pogodin/react-helmet@npm:3.0.5"
+"@dr.pogodin/react-helmet@npm:3.0.6":
+  version: 3.0.6
+  resolution: "@dr.pogodin/react-helmet@npm:3.0.6"
   dependencies:
-    "@babel/runtime": "npm:^7.28.4"
+    "@babel/runtime": "npm:^7.28.6"
   peerDependencies:
     react: 19
-  checksum: 10c0/dac0390a70f95de13bd2734790d46e1a62df4845882be817c95e488f20717ba62467bb0d43b77713798ba4b037aad1a2077092b0061ecf6b06e815de1cfdec05
+  checksum: 10c0/6f836065a9f42869b9c98c2a30790561dc0b5c40438d67da146f5ad021df4f37d1c3df73f56c9b48c741af772d97d5530b35399980e1db243d777fe389f52c41
   languageName: node
   linkType: hard
 
@@ -1245,9 +1245,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@formatjs/cli@npm:6.12.1":
-  version: 6.12.1
-  resolution: "@formatjs/cli@npm:6.12.1"
+"@formatjs/cli@npm:6.12.2":
+  version: 6.12.2
+  resolution: "@formatjs/cli@npm:6.12.2"
   peerDependencies:
     "@glimmer/syntax": ^0.84.3 || ^0.95.0
     "@vue/compiler-core": 3.5.27
@@ -1270,7 +1270,7 @@ __metadata:
       optional: true
   bin:
     formatjs: bin/formatjs
-  checksum: 10c0/84ccdbdcb58dae5ba2c2edb828705aa070a8e410570e219893f3a6d61e50906512c53f51a5debd82db8917d9adabdfd62de9b8114c47290bfdc1f992db128241
+  checksum: 10c0/d22123027a7137ea0c3075e188f20c56201084f0dc93fd0a8a6c0c456ee0fb7ab3e8b053546d3493d83d2680a9a3e528b5a8fce0a66addce4af323d3c3d0ca07
   languageName: node
   linkType: hard
 
@@ -2624,33 +2624,33 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@storybook/react-dom-shim@npm:10.2.3":
-  version: 10.2.3
-  resolution: "@storybook/react-dom-shim@npm:10.2.3"
+"@storybook/react-dom-shim@npm:10.2.5":
+  version: 10.2.5
+  resolution: "@storybook/react-dom-shim@npm:10.2.5"
   peerDependencies:
     react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
     react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-    storybook: ^10.2.3
-  checksum: 10c0/3d6130616b53c68e07f7b2cc82e298a36826f9b8254860a202b17607e126dabcef189506e1f3fdcdf3003cb34dc2933fb7ec6a527defacc3fb9053c1cff81a0d
+    storybook: ^10.2.5
+  checksum: 10c0/2d74f7d29c31d4fa8b5d9cbf35142959542f5b150f44f66699adbc67fcffe114656e8c75494f406b44b6530714175ee550e62e7af779edefc6c4f2180c38f6c6
   languageName: node
   linkType: hard
 
-"@storybook/react@npm:10.2.3, @storybook/react@npm:^10.1.11":
-  version: 10.2.3
-  resolution: "@storybook/react@npm:10.2.3"
+"@storybook/react@npm:10.2.5, @storybook/react@npm:^10.1.11":
+  version: 10.2.5
+  resolution: "@storybook/react@npm:10.2.5"
   dependencies:
     "@storybook/global": "npm:^5.0.0"
-    "@storybook/react-dom-shim": "npm:10.2.3"
+    "@storybook/react-dom-shim": "npm:10.2.5"
     react-docgen: "npm:^8.0.2"
   peerDependencies:
     react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
     react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-    storybook: ^10.2.3
+    storybook: ^10.2.5
     typescript: ">= 4.9.x"
   peerDependenciesMeta:
     typescript:
       optional: true
-  checksum: 10c0/649afeb7dd415ce3ebe19838c061cc90d3f4edef15333bb60b03a5223a56eb3d3dd8cd08ebf4c3cbd6fe5078cae94cc980e7e09d23fbb2e79ca44874154e5505
+  checksum: 10c0/40ad46b2a5e6b7316598dbc77f68d6b2c66ba0282bf1383b78822b2458d02b9e65a3a7864c606d4fffd47559151ae0d4f38509c1ac3148d8d26a6e35f371cc2f
   languageName: node
   linkType: hard
 
@@ -3059,12 +3059,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:24.10.9":
-  version: 24.10.9
-  resolution: "@types/node@npm:24.10.9"
+"@types/node@npm:24.10.10":
+  version: 24.10.10
+  resolution: "@types/node@npm:24.10.10"
   dependencies:
     undici-types: "npm:~7.16.0"
-  checksum: 10c0/e9e436fcd2136bddb1bbe3271a89f4653910bcf6ee8047c4117f544c7905a106c039e2720ee48f28505ef2560e22fb9ead719f28bf5e075fdde0c1120e38e3b2
+  checksum: 10c0/ae6871069373cf9ea2f9f9c6d42af6d0a66a213f8688c1b4ced6466cbcdd0f926e4603480a454b1df330feb1243d2ac50749895eddf5667e25e6873d3f8b9488
   languageName: node
   linkType: hard
 
@@ -3110,12 +3110,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/react@npm:*, @types/react@npm:19.2.10":
-  version: 19.2.10
-  resolution: "@types/react@npm:19.2.10"
+"@types/react@npm:*, @types/react@npm:19.2.11":
+  version: 19.2.11
+  resolution: "@types/react@npm:19.2.11"
   dependencies:
     csstype: "npm:^3.2.2"
-  checksum: 10c0/17b96203a79ad3fa3cee8f1f1f324b93f005bc125755e29ac149402807275feaf3f00a4e65b8405f633923ac993da5737fd9800d27ee49911f3ed51dc27478f9
+  checksum: 10c0/a02aa87853fa6ef82353dd58803f18744e367e05760845be9a35f9771031fb81077ef05fb5ef3e9d7bbd91d3f8394b47106a18a833ddfed81e6fbf0be55a3544
   languageName: node
   linkType: hard
 
@@ -3417,8 +3417,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "bmc-frontend@workspace:."
   dependencies:
-    "@biomejs/biome": "npm:2.3.13"
-    "@bufbuild/buf": "npm:1.64.0"
+    "@biomejs/biome": "npm:2.3.14"
+    "@bufbuild/buf": "npm:1.65.0"
     "@bufbuild/protobuf": "npm:2.11.0"
     "@bufbuild/protoc-gen-es": "npm:2.11.0"
     "@carbon/icons-react": "npm:11.74.0"
@@ -3429,10 +3429,10 @@ __metadata:
     "@dnd-kit/modifiers": "npm:9.0.0"
     "@dnd-kit/sortable": "npm:10.0.0"
     "@dnd-kit/utilities": "npm:3.2.2"
-    "@dr.pogodin/react-helmet": "npm:3.0.5"
+    "@dr.pogodin/react-helmet": "npm:3.0.6"
     "@emotion/react": "npm:11.14.0"
     "@emotion/styled": "npm:11.14.1"
-    "@formatjs/cli": "npm:6.12.1"
+    "@formatjs/cli": "npm:6.12.2"
     "@formatjs/intl-locale": "npm:5.2.1"
     "@formatjs/intl-pluralrules": "npm:6.2.2"
     "@formatjs/intl-relativetimeformat": "npm:12.2.2"
@@ -3442,7 +3442,7 @@ __metadata:
     "@rsbuild/plugin-svgr": "npm:1.3.0"
     "@rsbuild/plugin-typed-css-modules": "npm:1.2.1"
     "@rstest/core": "npm:0.8.1"
-    "@storybook/react": "npm:10.2.3"
+    "@storybook/react": "npm:10.2.5"
     "@swc/plugin-emotion": "npm:12.0.0"
     "@swc/plugin-formatjs": "npm:7.0.0"
     "@testing-library/dom": "npm:10.4.1"
@@ -3453,9 +3453,9 @@ __metadata:
     "@types/js-cookie": "npm:3.0.6"
     "@types/knuth-shuffle": "npm:1.0.2"
     "@types/markdown-it": "npm:14.1.2"
-    "@types/node": "npm:24.10.9"
+    "@types/node": "npm:24.10.10"
     "@types/prismjs": "npm:1.26.5"
-    "@types/react": "npm:19.2.10"
+    "@types/react": "npm:19.2.11"
     "@types/react-dom": "npm:19.2.3"
     "@types/react-is": "npm:19.2.0"
     "@types/react-refresh": "npm:0.14.7"
@@ -3489,7 +3489,7 @@ __metadata:
     prismjs: "npm:1.30.0"
     react: "npm:19.2.4"
     react-dom: "npm:19.2.4"
-    react-intl: "npm:8.1.2"
+    react-intl: "npm:8.1.3"
     react-is: "npm:19.2.4"
     react-popper-tooltip: "npm:4.4.2"
     react-refresh: "npm:0.18.0"
@@ -3498,9 +3498,9 @@ __metadata:
     sass-embedded: "npm:1.97.3"
     sass-loader: "npm:16.0.6"
     sonner: "npm:2.0.7"
-    storybook: "npm:10.2.3"
+    storybook: "npm:10.2.5"
     storybook-react-rsbuild: "npm:3.2.2"
-    stylelint: "npm:17.1.0"
+    stylelint: "npm:17.1.1"
     stylelint-config-standard: "npm:40.0.0"
     stylelint-config-standard-scss: "npm:17.0.0"
     svgo: "npm:4.0.0"
@@ -6716,9 +6716,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-intl@npm:8.1.2":
-  version: 8.1.2
-  resolution: "react-intl@npm:8.1.2"
+"react-intl@npm:8.1.3":
+  version: 8.1.3
+  resolution: "react-intl@npm:8.1.3"
   dependencies:
     "@formatjs/ecma402-abstract": "npm:3.1.1"
     "@formatjs/icu-messageformat-parser": "npm:3.5.1"
@@ -6728,13 +6728,13 @@ __metadata:
     intl-messageformat: "npm:11.1.2"
     tslib: "npm:^2.8.1"
   peerDependencies:
-    "@types/react": ^19.2.8
-    react: 16 || 17 || 18 || 19
+    "@types/react": 19
+    react: 19
     typescript: ^5.6.0
   peerDependenciesMeta:
     typescript:
       optional: true
-  checksum: 10c0/48c129523405e0a77fe9c3f2d321797b505af39ebc227e9fc64449bfefbbd187bfbb2d724124dc0778c8a2006fe8a99027a1ba9b1efc8b47d8b4c4d4015bcf32
+  checksum: 10c0/e17a7a99f5559ee12d87aa4777f00051145f73b1417c7a9107e46d4b60c83043a7c104a2411afbc89a59a31c947cd3f7a9bae44b988782b4a35b6d4fde94fa4c
   languageName: node
   linkType: hard
 
@@ -7569,9 +7569,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"storybook@npm:10.2.3":
-  version: 10.2.3
-  resolution: "storybook@npm:10.2.3"
+"storybook@npm:10.2.5":
+  version: 10.2.5
+  resolution: "storybook@npm:10.2.5"
   dependencies:
     "@storybook/global": "npm:^5.0.0"
     "@storybook/icons": "npm:^2.0.1"
@@ -7592,7 +7592,7 @@ __metadata:
       optional: true
   bin:
     storybook: ./dist/bin/dispatcher.js
-  checksum: 10c0/21d54f09bb92afd6dfe5e037d68cbd9559feacd275ac2b0eed0e6abac98779901b8613e4eca0ae9e3fd6411b07c44625a4981f0cd5e80cb79aa73f2f449586a8
+  checksum: 10c0/49d91060789b00cb4658e9b4d1de64e5ddd901d64e17013ce4b46f2f19ce2c8fa80ef7a57f45cb763e63b83e5ed1dbaa7e5690f2e1815a4a166d8c18b7b79fa2
   languageName: node
   linkType: hard
 
@@ -7740,9 +7740,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"stylelint@npm:17.1.0":
-  version: 17.1.0
-  resolution: "stylelint@npm:17.1.0"
+"stylelint@npm:17.1.1":
+  version: 17.1.1
+  resolution: "stylelint@npm:17.1.1"
   dependencies:
     "@csstools/css-parser-algorithms": "npm:^4.0.0"
     "@csstools/css-syntax-patches-for-csstree": "npm:^1.0.25"
@@ -7784,7 +7784,7 @@ __metadata:
     write-file-atomic: "npm:^7.0.0"
   bin:
     stylelint: bin/stylelint.mjs
-  checksum: 10c0/c7f468122d1ccdebba6012963faa27320dcd48a9eeac389afed94a4adb4c9fce1d447eee996194523cb23ca81ff3fcc2a54ae94bcd3486dec205ede097917e25
+  checksum: 10c0/641d02449cfd8c3abd356cb38a9c7499a934015d7905fb78ef5af454f742527fb30c14e4084bebfb0b03ec0107659cc59020b0aebace2342604dade6b9a0a510
   languageName: node
   linkType: hard
 

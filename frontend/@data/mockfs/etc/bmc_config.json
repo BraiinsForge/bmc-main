@@ -385,6 +385,7 @@
     "unit_system": "Metric"
   },
   "data_collection": false,
+  "boot_sound_enabled": true,
   "autoupgrade": {
     "enabled": true,
     "cron": "14 55 20 * * 7"

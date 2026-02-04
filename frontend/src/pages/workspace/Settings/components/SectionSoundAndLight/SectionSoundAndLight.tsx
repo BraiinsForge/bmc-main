@@ -17,8 +17,12 @@ import css from './SectionSoundAndLight.scss';
 export interface SectionSoundAndLightProps {
     soundVolume: iField<pb.SoundVolume>;
     soundVolumeNight: iField<pb.SoundVolume>;
+    bootSoundEnabled: iField<boolean>;
+
     // alarmAndNotifyVolume: iField<Integer<0, 100>>;
+
     ledNotifyEnabled: iField<boolean>;
+    ledNotifyEnabledNight: iField<boolean>;
 }
 interface Props extends SectionSoundAndLightProps {
     intl: IntlShape;
@@ -140,7 +144,7 @@ class View extends Component<Props> {
                         title={intl.formatMessage({ defaultMessage: 'Enable Boot Sound' })}
                         description={intl.formatMessage({
                             defaultMessage:
-                                'Enable sound during splash screen animation played at every startup of the Deck',
+                                'Enable sound during splash screen animation played at every startup of the Deck.',
                         })}
                         disabled={bootSoundEnabled.disabled}
                     >
@@ -161,7 +165,7 @@ class View extends Component<Props> {
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Enable LED Notifications' })}
                         description={intl.formatMessage({
-                            defaultMessage: 'Use LED lights for notifications and alerts',
+                            defaultMessage: 'Use LED lights for notifications and alerts.',
                         })}
                         disabled={ledNotifyEnabled.disabled}
                     >
@@ -180,7 +184,7 @@ class View extends Component<Props> {
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Enable LED Notifications in Night Mode' })}
                         description={intl.formatMessage({
-                            defaultMessage: 'Use LED lights for notifications and alerts during Night Mode',
+                            defaultMessage: 'Use LED lights for notifications and alerts during Night Mode.',
                         })}
                         disabled={ledNotifyEnabled.disabled}
                     >

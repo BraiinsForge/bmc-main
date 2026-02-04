@@ -76,6 +76,7 @@ $left-size-min: to-rem(280px);
     font-size: to-rem(14px);
     font-weight: 400;
     line-height: 1.28;
+    text-wrap: balance;
 
     &:empty {
         display: none;
