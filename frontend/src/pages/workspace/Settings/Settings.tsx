@@ -62,11 +62,18 @@ const FIELD_STATE_DEFAULT: Readonly<FieldState<any>> = Object.freeze({
     isSaving: false,
     isLoading: false,
 });
-function getFieldStateDefault<T>(value?: Maybe<T>, state?: 'loading' | 'saving'): FieldState<T> {
-    const res: FieldState<T> = { ...FIELD_STATE_DEFAULT };
-    res.value = value ?? null;
+function getFieldStateDefault<T>(init?: {
+    value?: Maybe<T>;
+    errors?: Maybe<string[]>;
+    state?: 'loading' | 'saving';
+}): FieldState<T> {
+    const res: FieldState<T> = {
+        ...FIELD_STATE_DEFAULT,
+        value: init?.value ?? FIELD_STATE_DEFAULT.value,
+        errors: init?.errors ?? FIELD_STATE_DEFAULT.errors,
+    };
 
-    switch (state) {
+    switch (init?.state) {
         case 'saving':
             res.isSaving = true;
             break;
@@ -236,7 +243,13 @@ class View extends Component<Props, State> {
             ]);
             this.setState(s => ({
                 data: { ...s.data, timezones, metadata },
-                values: { ...s.values, timezone: getFieldStateDefault(timezone) },
+                values: {
+                    ...s.values,
+                    timezone: getFieldStateDefault({
+                        value: timezone,
+                        errors: s.values.timezone.errors,
+                    }),
+                },
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -295,14 +308,38 @@ class View extends Component<Props, State> {
             this.setState(s => ({
                 values: {
                     ...s.values,
-                    timeFormat: getFieldStateDefault(d.timeFormat),
-                    dateFormat: getFieldStateDefault(d.dateFormat),
-                    numberFormat: getFieldStateDefault(d.numberFormat),
-                    dataCollection: getFieldStateDefault(d.dataCollection),
-                    showSecondsStatusBar: getFieldStateDefault(d.showSecondsStatusBar),
-                    firstDayOfWeek: getFieldStateDefault(d.firstDayOfWeek),
-                    temperatureUnit: getFieldStateDefault(d.temperatureUnit),
-                    unitSystem: getFieldStateDefault(d.unitSystem),
+                    timeFormat: getFieldStateDefault({
+                        value: d.timeFormat,
+                        errors: s.values.timeFormat.errors,
+                    }),
+                    dateFormat: getFieldStateDefault({
+                        value: d.dateFormat,
+                        errors: s.values.dateFormat.errors,
+                    }),
+                    numberFormat: getFieldStateDefault({
+                        value: d.numberFormat,
+                        errors: s.values.numberFormat.errors,
+                    }),
+                    dataCollection: getFieldStateDefault({
+                        value: d.dataCollection,
+                        errors: s.values.dataCollection.errors,
+                    }),
+                    // showSecondsStatusBar: getFieldStateDefault({
+                    //     value: d.showSecondsStatusBar,
+                    //     errors: s.values.showSecondsStatusBar.errors,
+                    // }),
+                    firstDayOfWeek: getFieldStateDefault({
+                        value: d.firstDayOfWeek,
+                        errors: s.values.firstDayOfWeek.errors,
+                    }),
+                    temperatureUnit: getFieldStateDefault({
+                        value: d.temperatureUnit,
+                        errors: s.values.temperatureUnit.errors,
+                    }),
+                    unitSystem: getFieldStateDefault({
+                        value: d.unitSystem,
+                        errors: s.values.unitSystem.errors,
+                    }),
                 },
             }));
         } catch ($) {
@@ -363,7 +400,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            await this.#setField('timezone', s => ({ ...s, value, isSaving: true }));
+            await this.#setField('timezone', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             const { signal } = this.generalSetTimezoneAbort.replace();
             await pb.rpc.sys.setTimezone({ id: value.id }, { signal });
@@ -376,7 +413,7 @@ class View extends Component<Props, State> {
             this.#setFieldAttr('timezone', 'errors', errors);
         } finally {
             await this.#fetchSystemInfo();
-            this.#setField('timezone', s => getFieldStateDefault(s.value));
+            this.#setField('timezone', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
 
@@ -386,7 +423,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('timeFormat', s => ({ ...s, value, isSaving: true }));
+            this.#setField('timeFormat', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             const { signal } = this.generalSetTimeFormatAbort.replace();
@@ -401,7 +438,7 @@ class View extends Component<Props, State> {
             this.#setFieldAttr('timeFormat', 'errors', [error]);
         } finally {
             await this.#generalFetch();
-            this.#setField('timeFormat', s => getFieldStateDefault(s.value));
+            this.#setField('timeFormat', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
 
@@ -436,7 +473,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('dateFormat', s => ({ ...s, value, isSaving: true }));
+            this.#setField('dateFormat', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             const { signal } = this.generalSetDateFormatAbort.replace();
@@ -451,7 +488,7 @@ class View extends Component<Props, State> {
             toast.error(message);
         } finally {
             await this.#generalFetch();
-            this.#setField('dateFormat', s => getFieldStateDefault(s.value));
+            this.#setField('dateFormat', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
 
@@ -461,7 +498,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('firstDayOfWeek', s => ({ ...s, value, isSaving: true }));
+            this.#setField('firstDayOfWeek', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             const { signal } = this.generalSetFirsWeekDayAbort.replace();
@@ -476,7 +513,7 @@ class View extends Component<Props, State> {
             toast.error(message);
         } finally {
             await this.#generalFetch();
-            this.#setField('firstDayOfWeek', s => getFieldStateDefault(s.value));
+            this.#setField('firstDayOfWeek', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
 
@@ -486,7 +523,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('temperatureUnit', s => ({ ...s, value, isSaving: true }));
+            this.#setField('temperatureUnit', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             const { signal } = this.generalSetTemperatureUnitsAbort.replace();
@@ -501,7 +538,7 @@ class View extends Component<Props, State> {
             toast.error(message, { id: 'general-set-temperature-units' });
         } finally {
             await this.#generalFetch();
-            this.#setField('temperatureUnit', s => getFieldStateDefault(s.value));
+            this.#setField('temperatureUnit', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
 
@@ -511,7 +548,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('unitSystem', s => ({ ...s, value, isSaving: true }));
+            this.#setField('unitSystem', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             const { signal } = this.generalSetUnitSystemAbort.replace();
@@ -526,7 +563,7 @@ class View extends Component<Props, State> {
             toast.error(message, { id: 'general-set-unit-system' });
         } finally {
             await this.#generalFetch();
-            this.#setField('unitSystem', s => getFieldStateDefault(s.value));
+            this.#setField('unitSystem', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
 
@@ -536,7 +573,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('numberFormat', s => ({ ...s, value, isSaving: true }));
+            this.#setField('numberFormat', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             const { signal } = this.generalSetNumberFormatAbort.replace();
@@ -551,7 +588,7 @@ class View extends Component<Props, State> {
             toast.error(message);
         } finally {
             await this.#generalFetch();
-            this.#setField('numberFormat', s => getFieldStateDefault(s.value));
+            this.#setField('numberFormat', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
 
@@ -561,7 +598,7 @@ class View extends Component<Props, State> {
     //
     //     try {
     //         // Optimistic update & saving flag
-    //         this.#setField('dataCollection', s => ({ ...s, value, isSaving: true }));
+    //         this.#setField('dataCollection', s => ({ ...s, value, isSaving: true, errors: [] }));
     //
     //         // Submit
     //         const { signal } = this.generalSetDataCollectionAbort.replace();
@@ -673,10 +710,22 @@ class View extends Component<Props, State> {
                 } satisfies State['data'],
                 values: {
                     ...s.values,
-                    displayBrightness: getFieldStateDefault(d.brightness),
-                    displayNightmodeEnabled: getFieldStateDefault(d.nightmodeEnabled),
-                    displayNightmodeBrightness: getFieldStateDefault(d.brightnessNightmode),
-                    displayNightmodeInterval: getFieldStateDefault(d.nightmodeInterval),
+                    displayBrightness: getFieldStateDefault({
+                        value: d.brightness,
+                        errors: s.values.displayBrightness.errors,
+                    }),
+                    displayNightmodeEnabled: getFieldStateDefault({
+                        value: d.nightmodeEnabled,
+                        errors: s.values.displayNightmodeEnabled.errors,
+                    }),
+                    displayNightmodeBrightness: getFieldStateDefault({
+                        value: d.brightnessNightmode,
+                        errors: s.values.displayNightmodeBrightness.errors,
+                    }),
+                    displayNightmodeInterval: getFieldStateDefault({
+                        value: d.nightmodeInterval,
+                        errors: s.values.displayNightmodeInterval.errors,
+                    }),
                 } satisfies State['values'],
             }));
         } catch ($) {
@@ -695,7 +744,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('displayBrightness', s => ({ ...s, value, isSaving: true }));
+            this.#setField('displayBrightness', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             const { signal } = this.displaySetBrightnessAbort.replace();
@@ -708,10 +757,10 @@ class View extends Component<Props, State> {
             const errors = pb.collectAllErrors($) ?? [
                 formatMessage({ defaultMessage: 'Failed to save the brightness!' }),
             ];
-            this.#setField('displayBrightness', s => ({ ...getFieldStateDefault(s.value), errors }));
+            this.#setField('displayBrightness', s => getFieldStateDefault({ value: s.value, errors }));
         } finally {
             await this.#displayFetch();
-            this.#setField('displayBrightness', s => getFieldStateDefault(s.value));
+            this.#setField('displayBrightness', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     }, 600);
 
@@ -730,7 +779,12 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            await this.#setField('displayNightmodeEnabled', s => ({ ...s, value: newEnabled, isSaving: true }));
+            await this.#setField('displayNightmodeEnabled', s => ({
+                ...s,
+                value: newEnabled,
+                isSaving: true,
+                errors: [],
+            }));
 
             // Persist changes
             const { signal } = this.displaySetNightmodeEnabledAbort.replace();
@@ -760,7 +814,7 @@ class View extends Component<Props, State> {
             this.#setFieldAttr('displayNightmodeEnabled', 'errors', errors);
         } finally {
             await this.#displayFetch();
-            this.#setField('displayNightmodeEnabled', s => getFieldStateDefault(s.value));
+            this.#setField('displayNightmodeEnabled', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
 
@@ -775,7 +829,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            await this.#setField('displayNightmodeBrightness', s => ({ ...s, value, isSaving: true }));
+            await this.#setField('displayNightmodeBrightness', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Persist changes
             const { signal } = this.displaySetNightmodeBrightnessAbort.replace();
@@ -791,7 +845,9 @@ class View extends Component<Props, State> {
             this.#setFieldAttr('displayNightmodeBrightness', 'errors', errors);
         } finally {
             await this.#displayFetch();
-            this.#setField('displayNightmodeBrightness', s => getFieldStateDefault(s.value));
+            this.#setField('displayNightmodeBrightness', s =>
+                getFieldStateDefault({ value: s.value, errors: s.errors }),
+            );
         }
     }, 600);
 
@@ -818,7 +874,8 @@ class View extends Component<Props, State> {
             return this.#setFieldAttr('displayNightmodeInterval', 'errors', validationErrors);
 
         try {
-            await this.#setFieldAttr('displayNightmodeInterval', 'isSaving', true);
+            // Optimistic update & saving flag
+            await this.#setField('displayNightmodeInterval', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Persist changes
             const { signal } = this.displaySetNightmodeIntervalAbort.replace();
@@ -834,7 +891,7 @@ class View extends Component<Props, State> {
             this.#setFieldAttr('displayNightmodeInterval', 'errors', errors);
         } finally {
             await this.#displayFetch();
-            this.#setField('displayNightmodeInterval', s => getFieldStateDefault(s.value));
+            this.#setField('displayNightmodeInterval', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     }, 800);
 
@@ -898,11 +955,23 @@ class View extends Component<Props, State> {
             this.setState(s => ({
                 values: {
                     ...s.values,
-                    volume: getFieldStateDefault(soundAndLight.volume),
-                    volumeNightmode: getFieldStateDefault(soundAndLight.volumeNightmode),
-                    enableLedNotifications: getFieldStateDefault(ledSettings.ledEnabled),
-                    enableLedNotificationsNightmode: getFieldStateDefault(ledSettings.ledEnabledNightmode),
-                    enableBootSound: getFieldStateDefault(bootSoundSettings.bootSoundEnabled),
+                    volume: getFieldStateDefault({ value: soundAndLight.volume, errors: s.values.volume.errors }),
+                    volumeNightmode: getFieldStateDefault({
+                        value: soundAndLight.volumeNightmode,
+                        errors: s.values.volumeNightmode.errors,
+                    }),
+                    enableLedNotifications: getFieldStateDefault({
+                        value: ledSettings.ledEnabled,
+                        errors: s.values.enableLedNotifications.errors,
+                    }),
+                    enableLedNotificationsNightmode: getFieldStateDefault({
+                        value: ledSettings.ledEnabledNightmode,
+                        errors: s.values.enableLedNotificationsNightmode.errors,
+                    }),
+                    enableBootSound: getFieldStateDefault({
+                        value: bootSoundSettings.bootSoundEnabled,
+                        errors: s.values.enableBootSound.errors,
+                    }),
                 },
             }));
         } catch ($) {
@@ -923,7 +992,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('volume', s => ({ ...s, value, isSaving: true }));
+            this.#setField('volume', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             await pb.rpc.config.setSoundVolume({ value: value.value });
@@ -935,7 +1004,7 @@ class View extends Component<Props, State> {
             toast.error(msg);
         } finally {
             await this.#soundLightFetch();
-            this.#setField('volume', s => getFieldStateDefault(s.value));
+            this.#setField('volume', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     }, 200);
     #soundLightSetVolumeNight = debounce(async (value: pb.SoundVolume): Promise<void> => {
@@ -947,7 +1016,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('volumeNightmode', s => ({ ...s, value, isSaving: true }));
+            this.#setField('volumeNightmode', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             await pb.rpc.config.setSoundVolumeNightmode({ value: value.value });
@@ -959,7 +1028,7 @@ class View extends Component<Props, State> {
             toast.error(msg);
         } finally {
             await this.#soundLightFetch();
-            this.#setField('volumeNightmode', s => getFieldStateDefault(s.value));
+            this.#setField('volumeNightmode', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     }, 200);
     #soundLightSetBootSound = async (value: boolean): Promise<void> => {
@@ -967,7 +1036,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('enableBootSound', s => ({ ...s, value, isSaving: true }));
+            this.#setField('enableBootSound', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             await pb.rpc.config.setBootSoundEnabled({ value });
@@ -983,7 +1052,7 @@ class View extends Component<Props, State> {
             toast.error(msg);
         } finally {
             await this.#soundLightFetch();
-            this.#setField('enableBootSound', s => getFieldStateDefault(s.value));
+            this.#setField('enableBootSound', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
     #soundLightSetLedNotify = async (value: boolean): Promise<void> => {
@@ -991,7 +1060,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('enableLedNotifications', s => ({ ...s, value, isSaving: true }));
+            this.#setField('enableLedNotifications', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             await pb.rpc.config.setLedEnabled({ value });
@@ -1007,7 +1076,7 @@ class View extends Component<Props, State> {
             toast.error(msg);
         } finally {
             this.#soundLightFetch();
-            this.#setField('enableLedNotifications', s => getFieldStateDefault(s.value));
+            this.#setField('enableLedNotifications', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
     #soundLightSetLedNotifyNight = async (value: boolean): Promise<void> => {
@@ -1015,7 +1084,7 @@ class View extends Component<Props, State> {
 
         try {
             // Optimistic update & saving flag
-            this.#setField('enableLedNotificationsNightmode', s => ({ ...s, value, isSaving: true }));
+            this.#setField('enableLedNotificationsNightmode', s => ({ ...s, value, isSaving: true, errors: [] }));
 
             // Submit
             await pb.rpc.config.setLedEnabledNightmode({ value });
@@ -1031,7 +1100,9 @@ class View extends Component<Props, State> {
             toast.error(msg);
         } finally {
             this.#soundLightFetch();
-            this.#setField('enableLedNotificationsNightmode', s => getFieldStateDefault(s.value));
+            this.#setField('enableLedNotificationsNightmode', s =>
+                getFieldStateDefault({ value: s.value, errors: s.errors }),
+            );
         }
     };
     #soundLightRender = (): ReactNode => {
