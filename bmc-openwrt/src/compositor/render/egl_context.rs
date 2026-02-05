@@ -57,7 +57,7 @@ impl EglContext {
 
     pub fn finish_rendering(&mut self) -> Result<()> {
         unsafe {
-            self.renderer.with_context(|gl| gl.Finish())?;
+            self.renderer.with_context(|gl| gl.Flush())?;
         }
         Ok(())
     }

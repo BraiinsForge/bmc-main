@@ -60,6 +60,9 @@ pub struct CompositorState {
 
     /// Buffer IDs that have been destroyed and need texture cache invalidation.
     pub invalidated_buffers: Vec<ObjectId>,
+
+    /// Set when widget content or scene layout changes and a new frame must be rendered.
+    pub needs_redraw: bool,
 }
 
 impl CompositorState {
@@ -109,6 +112,7 @@ impl CompositorState {
             pending_frame_callbacks: Vec::new(),
             widgets: WidgetTracker::new(),
             invalidated_buffers: Vec::new(),
+            needs_redraw: true,
         }
     }
 
@@ -178,6 +182,7 @@ impl CompositorHandler for CompositorState {
             if let Some(assignment) = &attributes.buffer {
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
+                        self.needs_redraw = true;
                         if let Some(ref id) = instance_id {
                             self.widget_buffers
                                 .retain(|(_, existing_id)| existing_id != id);
@@ -199,6 +204,13 @@ impl CompositorHandler for CompositorState {
                         }
                     }
                 }
+            }
+
+            // Any commit with frame callbacks indicates the client rendered
+            // and expects display feedback — trigger a redraw. This covers
+            // Slint widgets that render to the same buffer without re-attaching.
+            if !attributes.frame_callbacks.is_empty() {
+                self.needs_redraw = true;
             }
 
             self.pending_frame_callbacks

@@ -96,9 +96,9 @@ impl SceneRenderer {
         &mut self,
         widgets: &WidgetTracker,
         buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if self.output.is_flip_pending() {
-            return Ok(());
+            return Ok(false);
         }
 
         let buffer = self.buffers.back_buffer(&self.output)?;
@@ -240,6 +240,6 @@ impl SceneRenderer {
             ii_stopwatch::stopwatch_reset!(self.flip_w);
         }
 
-        Ok(())
+        Ok(true)
     }
 }

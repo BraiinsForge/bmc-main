@@ -238,35 +238,55 @@ impl EglCompositor {
 
             process_protocol_events(&mut app_state);
 
-            // Invalidate texture cache for destroyed buffers
+            // Invalidate texture cache for destroyed buffers — do this
+            // unconditionally so GPU resources are freed promptly even
+            // when the compositor is idle.
             if !app_state.compositor.invalidated_buffers.is_empty() {
                 let invalidated: Vec<_> =
                     app_state.compositor.invalidated_buffers.drain(..).collect();
                 app_state.scene_renderer.invalidate_textures(&invalidated);
             }
 
-            ii_stopwatch::stopwatch_start!(render_w);
-            if let Err(e) = app_state.scene_renderer.render_scene(
-                &app_state.compositor.widgets,
-                &app_state.compositor.widget_buffers,
-            ) {
-                tracing::error!("Render error: {}", e);
-            }
-            ii_stopwatch::stopwatch_stop!(render_w);
+            // Determine if a new frame is needed
+            let needs_render = app_state.compositor.needs_redraw;
 
-            ii_stopwatch::stopwatch_start!(callbacks_w);
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "wrapping is acceptable for frame time"
-            )]
-            let time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u32)
-                .unwrap_or(0);
-            app_state.compositor.send_frame_callbacks(time);
+            if needs_render {
+                ii_stopwatch::stopwatch_start!(render_w);
+                let rendered = app_state
+                    .scene_renderer
+                    .render_scene(
+                        &app_state.compositor.widgets,
+                        &app_state.compositor.widget_buffers,
+                    )
+                    .unwrap_or_else(|e| {
+                        tracing::error!("Render error: {}", e);
+                        false
+                    });
+                ii_stopwatch::stopwatch_stop!(render_w);
+
+                // Only clear needs_redraw and send frame callbacks when
+                // a frame was actually produced. If render was skipped
+                // (flip pending), keep needs_redraw set for the next
+                // iteration, and withhold callbacks to pace widget
+                // rendering at the actual display rate.
+                if rendered {
+                    app_state.compositor.needs_redraw = false;
+
+                    ii_stopwatch::stopwatch_start!(callbacks_w);
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        reason = "wrapping is acceptable for frame time"
+                    )]
+                    let time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u32)
+                        .unwrap_or(0);
+                    app_state.compositor.send_frame_callbacks(time);
+                    ii_stopwatch::stopwatch_stop!(callbacks_w);
+                }
+            }
 
             let _ = app_state.display.flush_clients();
-            ii_stopwatch::stopwatch_stop!(callbacks_w);
 
             // 16ms dispatch timeout for ~60fps
             ii_stopwatch::stopwatch_start!(dispatch_w);
@@ -352,6 +372,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 );
             }
             state.compositor.widgets.set_active_scene(layout);
+            state.compositor.needs_redraw = true;
         }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
