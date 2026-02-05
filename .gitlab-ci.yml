@@ -28,6 +28,22 @@ verify-shared-crates:
   script:
     - nix-shell -p jq getopt --run "./scripts/verify_crates.sh --summary"
 
+###################################
+######## Frontend Checks ##########
+###################################
+
+frontend-lint:
+  extends: .nix
+  stage: check
+  script:
+    - nix build .#checks.x86_64-linux.lint
+
+frontend-test:
+  extends: .nix
+  stage: check
+  script:
+    - nix build .#checks.x86_64-linux.test
+
 ############################
 ######## Apps Stage ########
 ############################
