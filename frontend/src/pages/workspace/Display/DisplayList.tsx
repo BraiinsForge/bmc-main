@@ -700,6 +700,7 @@ class View extends Component<Props, State> {
             },
             timezones,
             accounts,
+            sounds,
         } = this.state;
         const cancel = this.#openDialogCancel;
 
@@ -862,7 +863,7 @@ class View extends Component<Props, State> {
                     soundEnabled={this.#getFormFieldStruct('countdown', 'soundEnabled')}
                     soundId={this.#getFormFieldStruct('countdown', 'soundId')}
                     soundVolume={this.#getFormFieldStruct('countdown', 'soundVolume')}
-                    soundOptions={this.state.sounds}
+                    soundOptions={sounds}
                 />
             </Fragment>
         );

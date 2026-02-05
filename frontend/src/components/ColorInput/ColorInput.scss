@@ -5,14 +5,29 @@
     flex-direction: column;
 }
 
+$size: to-rem(40px);
+
 .input {
-    width: 40px;
-    height: 40px;
-    padding: 2px;
-    border: 1px solid $border-strong;
-    border-radius: 4px;
+    width: $size;
+    height: $size;
+
+    padding: 0;
+    border: none;
+    border-bottom: 1px solid $border-strong;
+
     cursor: pointer;
     background: transparent;
+
+    // Remove browser's internal padding around the color swatch
+    &::-webkit-color-swatch-wrapper {
+        padding: 0;
+    }
+    &::-webkit-color-swatch {
+        border: none;
+    }
+    &::-moz-color-swatch {
+        border: none;
+    }
 
     &:disabled {
         cursor: not-allowed;
