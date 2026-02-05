@@ -24,11 +24,11 @@ import css from '../shared.scss';
 const $ = getID('countdown-form').get;
 
 function rgbToHex(r: number, g: number, b: number): string {
-    return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+    return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
-    const n = parseInt(hex.slice(1), 16);
+    const n = Number.parseInt(hex.slice(1), 16);
     return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
 
@@ -138,30 +138,30 @@ class View extends Component<Props> {
                     id={$('label')}
                     labelText={formatMessage({ defaultMessage: 'Label' })}
                     placeholder={formatMessage({ defaultMessage: 'My Countdown' })}
-                    value={label.value}
-                    onChange={e => label.onChange(e.target.value)}
-                    invalid={!!label.errorText}
-                    invalidText={label.errorText}
+                    value={label.value ?? ''}
+                    onChange={e => label.onChange?.(e.target.value)}
+                    invalid={!!label.error}
+                    invalidText={label.error}
                 />
 
                 <TextInput
                     id={$('target-date')}
                     type="date"
                     labelText={formatMessage({ defaultMessage: 'Target Date' })}
-                    value={targetDate.value}
-                    onChange={e => targetDate.onChange(e.target.value)}
-                    invalid={!!targetDate.errorText}
-                    invalidText={targetDate.errorText}
+                    value={targetDate.value ?? ''}
+                    onChange={e => targetDate.onChange?.(e.target.value)}
+                    invalid={!!targetDate.error}
+                    invalidText={targetDate.error}
                 />
 
                 <TextInput
                     id={$('target-time')}
                     type="time"
                     labelText={formatMessage({ defaultMessage: 'Target Time' })}
-                    value={targetTime.value}
-                    onChange={e => targetTime.onChange(e.target.value)}
-                    invalid={!!targetTime.errorText}
-                    invalidText={targetTime.errorText}
+                    value={targetTime.value ?? ''}
+                    onChange={e => targetTime.onChange?.(e.target.value)}
+                    invalid={!!targetTime.error}
+                    invalidText={targetTime.error}
                 />
 
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
@@ -170,8 +170,8 @@ class View extends Component<Props> {
                             id={$('background-color')}
                             labelText={formatMessage({ defaultMessage: 'Background Color (optional)' })}
                             placeholder={formatMessage({ defaultMessage: '#000000 or black' })}
-                            value={backgroundColor.value}
-                            onChange={e => backgroundColor.onChange(e.target.value)}
+                            value={backgroundColor.value ?? ''}
+                            onChange={e => backgroundColor.onChange?.(e.target.value)}
                             helperText={formatMessage({ defaultMessage: 'Hex color (#RGB, #RRGGBB) or color name' })}
                         />
                     </div>
@@ -264,8 +264,8 @@ class View extends Component<Props> {
                             label={formatMessage({ defaultMessage: 'Volume (%)' })}
                             min={0}
                             max={100}
-                            value={soundVolume.value}
-                            onChange={(_, { value }) => soundVolume.onChange(Number(value))}
+                            value={soundVolume.value ?? ''}
+                            onChange={(_, { value }) => soundVolume.onChange?.(Number(value))}
                         />
                     </>
                 )}
@@ -323,8 +323,8 @@ export function FormWidgetCountdown(props: FormWidgetCountdownProps) {
 /**
  * Convert date and time strings to Unix timestamp (seconds)
  */
-function dateTimeToTimestamp(date: string, time: string): bigint {
-    if (!date) return BigInt(Math.floor(Date.now() / 1000) + 3600); // Default: 1 hour from now
+function dateTimeToTimestamp(date: Maybe<string>, time: Maybe<string>): bigint {
+    if (!date || !time) return BigInt(Math.floor(Date.now() / 1_000) + 3_600); // Default: 1 hour from now
 
     const d = parse(`${date} ${time || '00:00'}`, 'yyyy-MM-dd HH:mm', new Date());
     return BigInt(Math.floor(d.getTime() / 1000));
@@ -361,7 +361,6 @@ export function createCountdownWidgetKind(data: FormPropsToValuesRec<FormWidgetC
         led || sound ? pb.create(pb.CountdownCompletionActionSchema, { led, sound }) : undefined;
 
     const seconds = dateTimeToTimestamp(data.targetDate, data.targetTime);
-
     return pb.create(pb.WidgetKindSchema, {
         value: {
             case: 'countdown',

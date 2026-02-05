@@ -339,6 +339,26 @@
           }
         }
       ]
+    },
+    {
+      "id": "7cd94f04-462b-43d9-b89b-fe445ab05164",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "84d20662-7f97-4dbc-aa25-7db1e368c394",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "countdown",
+          "params": {
+            "label": "Countdown",
+            "target_timestamp": 1770283440,
+            "background_color": "#000000",
+            "numbers_font_style": "bold"
+          }
+        }
+      ]
     }
   ],
   "localization": {
