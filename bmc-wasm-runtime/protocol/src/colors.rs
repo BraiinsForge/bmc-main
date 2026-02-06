@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Color constants for the design system.
 

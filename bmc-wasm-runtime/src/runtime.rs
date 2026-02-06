@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! WASM runtime wrapper using wasmi.
 
@@ -133,7 +133,9 @@ impl WasmWidgetRuntime {
             "env",
             "host_request_frame",
             |mut caller: Caller<'_, HostState>| {
-                caller.data_mut().frame_requested = true;
+                let state = caller.data_mut();
+                state.frame_requested = true;
+                state.animation_only_frame = false;
             },
         )?;
 
@@ -144,6 +146,7 @@ impl WasmWidgetRuntime {
                 let state = caller.data_mut();
                 state.frame_requested = true;
                 state.frame_delay_ms = Some(delay_ms);
+                state.animation_only_frame = false;
             },
         )?;
 
@@ -240,6 +243,8 @@ impl WasmWidgetRuntime {
                 if let Some(data) = tree_data {
                     let state = caller.data_mut();
                     let delta_ms = state.delta_ms;
+                    let frame_counter = state.frame_counter;
+                    state.frame_counter += 1;
                     match tree::process_tree(
                         &data,
                         width,
@@ -250,10 +255,20 @@ impl WasmWidgetRuntime {
                         &mut state.text_cache,
                         &mut state.interaction,
                         &mut state.modal_states,
+                        &mut state.animation_states,
+                        &mut state.transition_states,
+                        frame_counter,
                         delta_ms,
                     ) {
-                        Ok(result) => {
+                        Ok((result, has_active)) => {
+                            let had_clicks = result.clicks.iter().any(|&c| c);
                             state.tree_clicks = result.clicks;
+                            if has_active {
+                                state.frame_requested = true;
+                                // Only skip WASM next frame if no clicks need processing
+                                state.animation_only_frame = !had_clicks;
+                            }
+                            state.cached_tree_data = Some((data, width, height));
                         }
                         Err(e) => {
                             tracing::error!("tree processing failed: {e}");
@@ -285,21 +300,57 @@ impl WasmWidgetRuntime {
     }
 
     /// Render a frame. Host auto-clears before and auto-commits after.
+    ///
+    /// On animation-only frames (no pending input, host auto-requested),
+    /// skips WASM execution and re-renders from cached tree data.
     pub fn render(&mut self, delta_ms: u32) -> Result<()> {
-        // Process touch events and clear hit regions for new frame
-        self.store.data_mut().interaction.begin_frame();
+        let state = self.store.data_mut();
 
-        // Clear overlay
-        self.store.data_mut().clear_overlay();
+        // Decide frame type BEFORE begin_frame consumes events
+        let animation_only = state.animation_only_frame
+            && !state.interaction.has_pending_events()
+            && state.cached_tree_data.is_some();
 
-        // Store delta_ms for animations (used by host_submit_tree)
-        self.store.data_mut().delta_ms = delta_ms;
+        state.interaction.begin_frame();
+        state.clear_overlay();
+        state.delta_ms = delta_ms;
 
-        // Reset fuel budget
-        self.store.set_fuel(Self::FUEL_PER_FRAME)?;
-
-        // Call WASM render
-        self.render_func.call(&mut self.store, delta_ms)?;
+        if animation_only {
+            // Animation-only frame: skip WASM, re-render from cached tree
+            let (data, width, height) = state.cached_tree_data.clone().unwrap();
+            let frame_counter = state.frame_counter;
+            state.frame_counter += 1;
+            match tree::process_tree(
+                &data,
+                width,
+                height,
+                &mut state.pixmap,
+                &mut state.font_system,
+                &mut state.swash_cache,
+                &mut state.text_cache,
+                &mut state.interaction,
+                &mut state.modal_states,
+                &mut state.animation_states,
+                &mut state.transition_states,
+                frame_counter,
+                delta_ms,
+            ) {
+                Ok((result, has_active)) => {
+                    state.tree_clicks = result.clicks;
+                    if has_active {
+                        state.frame_requested = true;
+                        state.animation_only_frame = true;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("cached tree render failed: {e}");
+                }
+            }
+        } else {
+            // Full frame: run WASM
+            self.store.set_fuel(Self::FUEL_PER_FRAME)?;
+            self.render_func.call(&mut self.store, delta_ms)?;
+        }
 
         Ok(())
     }
@@ -331,5 +382,37 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn instance(&self) -> &wasmi::Instance {
         &self.instance
+    }
+
+    /// Draw text into a pixmap using the runtime's font system and cache.
+    #[cfg(feature = "testbed")]
+    pub fn draw_text(
+        &mut self,
+        pixmap: &mut tiny_skia::Pixmap,
+        text: &str,
+        x: i32,
+        y: i32,
+        size: u32,
+        color: u32,
+    ) {
+        let state = self.store.data_mut();
+        crate::drawing::text::draw_text(
+            pixmap,
+            &mut state.font_system,
+            &mut state.swash_cache,
+            &mut state.text_cache,
+            text,
+            x,
+            y,
+            size,
+            color,
+        );
+    }
+
+    /// Measure text width using the runtime's font system.
+    #[cfg(feature = "testbed")]
+    pub fn measure_text(&mut self, text: &str, size: u32) -> u32 {
+        let state = self.store.data_mut();
+        crate::drawing::text::measure_text(&mut state.font_system, text, size)
     }
 }

@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Node type and draw command constants for tree serialization.
 
@@ -17,3 +17,4 @@ pub const DRAW_RECT: u8 = 16;
 pub const DRAW_CENTERED: u8 = 17;
 pub const DRAW_ORBIT: u8 = 18;
 pub const DRAW_ROTATED: u8 = 19;
+pub const DRAW_MODIFIED: u8 = 20;

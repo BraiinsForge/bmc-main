@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Binary tree serialization for host-side layout.
 //!
@@ -13,14 +13,34 @@ use std::string::String;
 use std::vec::Vec;
 
 use bmc_wasm_protocol::{
-    DRAW_CENTERED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, GRAY_10, NODE_BUTTON, NODE_CANVAS,
-    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_MODIFIED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED,
+    Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
+    NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for macro paths
 pub use bmc_wasm_protocol::{PropsData, TextStyle};
 
 use crate::host::ButtonStyle;
+
+/// Definition of a single animation (serialized to host).
+#[derive(Clone, Debug)]
+pub struct AnimationDef {
+    pub property: AnimProperty,
+    pub from: f32,
+    pub to: f32,
+    pub duration_ms: u32,
+    pub delay_ms: u16,
+    pub easing: Easing,
+    pub loop_mode: LoopMode,
+}
+
+/// Definition of a transition (serialized to host).
+#[derive(Clone, Debug)]
+pub struct TransitionDef {
+    pub duration_ms: u32,
+    pub easing: Easing,
+}
 
 /// A text span with optional style overrides
 #[derive(Clone, Debug)]
@@ -302,6 +322,137 @@ pub enum Draw {
     },
     /// Rotate any draw command around its center
     Rotated { angle: f32, inner: Box<Draw> },
+    /// Draw with host-computed animations and/or transitions
+    Modified {
+        animations: Vec<AnimationDef>,
+        transition: Option<TransitionDef>,
+        color_space: ColorSpace,
+        inner: Box<Draw>,
+    },
+}
+
+impl Draw {
+    /// Add a repeating animation to this draw command.
+    #[must_use]
+    pub fn animate(
+        self,
+        property: AnimProperty,
+        from: f32,
+        to: f32,
+        duration_ms: u32,
+        easing: Easing,
+        loop_mode: LoopMode,
+    ) -> Self {
+        self.animate_delayed(property, from, to, duration_ms, 0, easing, loop_mode)
+    }
+
+    /// Add a repeating animation with a start delay.
+    #[must_use]
+    pub fn animate_delayed(
+        self,
+        property: AnimProperty,
+        from: f32,
+        to: f32,
+        duration_ms: u32,
+        delay_ms: u16,
+        easing: Easing,
+        loop_mode: LoopMode,
+    ) -> Self {
+        let def = AnimationDef {
+            property,
+            from,
+            to,
+            duration_ms,
+            delay_ms,
+            easing,
+            loop_mode,
+        };
+        match self {
+            Draw::Modified {
+                mut animations,
+                transition,
+                color_space,
+                inner,
+            } => {
+                animations.push(def);
+                Draw::Modified {
+                    animations,
+                    transition,
+                    color_space,
+                    inner,
+                }
+            }
+            other => Draw::Modified {
+                animations: vec![def],
+                transition: None,
+                color_space: ColorSpace::default(),
+                inner: Box::new(other),
+            },
+        }
+    }
+
+    /// Animate between two colors.
+    #[must_use]
+    pub fn animate_color(
+        self,
+        from_color: u32,
+        to_color: u32,
+        duration_ms: u32,
+        easing: Easing,
+        loop_mode: LoopMode,
+    ) -> Self {
+        self.animate(
+            AnimProperty::Color,
+            f32::from_bits(from_color),
+            f32::from_bits(to_color),
+            duration_ms,
+            easing,
+            loop_mode,
+        )
+    }
+
+    /// Add a transition — host smoothly interpolates when static values change.
+    #[must_use]
+    pub fn transition(self, duration_ms: u32, easing: Easing) -> Self {
+        self.transition_with_color_space(duration_ms, easing, ColorSpace::default())
+    }
+
+    /// Add a transition with explicit color interpolation space.
+    #[must_use]
+    pub fn transition_with_color_space(
+        self,
+        duration_ms: u32,
+        easing: Easing,
+        color_space: ColorSpace,
+    ) -> Self {
+        let transition = Some(TransitionDef {
+            duration_ms,
+            easing,
+        });
+        match self {
+            Draw::Modified {
+                animations,
+                transition: _,
+                color_space: cs,
+                inner,
+            } => Draw::Modified {
+                animations,
+                transition,
+                color_space: if color_space != ColorSpace::default() {
+                    color_space
+                } else {
+                    cs
+                },
+                inner,
+            },
+            other => Draw::Modified {
+                animations: Vec::new(),
+                transition,
+                color_space,
+                inner: Box::new(other),
+            },
+        }
+    }
 }
 
 /// A UI node in the tree (for building before serialization)
@@ -602,6 +753,43 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
         Draw::Rotated { angle, inner } => {
             buf.write_u8(DRAW_ROTATED);
             buf.write_f32(*angle);
+            serialize_draw(buf, inner);
+        }
+        Draw::Modified {
+            animations,
+            transition,
+            color_space,
+            inner,
+        } => {
+            buf.write_u8(DRAW_MODIFIED);
+            let mut flags: u8 = 0;
+            if !animations.is_empty() {
+                flags |= 0x01;
+            }
+            if transition.is_some() {
+                flags |= 0x02;
+            }
+            flags |= (*color_space as u8) << 2;
+            buf.write_u8(flags);
+
+            if !animations.is_empty() {
+                buf.write_u8(animations.len() as u8);
+                for anim in animations {
+                    buf.write_u8(anim.property as u8);
+                    buf.write_f32(anim.from);
+                    buf.write_f32(anim.to);
+                    buf.write_u32(anim.duration_ms);
+                    buf.write_u16(anim.delay_ms);
+                    buf.write_u8(anim.easing as u8);
+                    buf.write_u8(anim.loop_mode as u8);
+                }
+            }
+
+            if let Some(t) = transition {
+                buf.write_u32(t.duration_ms);
+                buf.write_u8(t.easing as u8);
+            }
+
             serialize_draw(buf, inner);
         }
     }

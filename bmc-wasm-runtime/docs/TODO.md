@@ -2,7 +2,8 @@
 
 ## Performance
 
-- Declarative host-side animations to replace keyframe dependency (see [design doc](declarative-animations.md))
+- Node-level animations/transitions (apply to layout nodes, not just draw commands)
+- Explicit `phase_offset` for time-synced staggered animations
 - GPU rendering with shaders (wgpu?) to replace tiny-skia software rasterizer
 
 ## API Enhancements
@@ -17,6 +18,6 @@
 - Binary format compatibility check at widget load time
 - Mismatch warning when recompile is needed
 
-## QA
+## Build Guardrails
 
-- [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) for dependency auditing
+- [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) to ban heavy crates (serde, regex, etc.) from widget builds — needs adding to nix flake first

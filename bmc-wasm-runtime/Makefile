@@ -28,6 +28,7 @@ run:
 
 .PHONY: validate
 validate:
+	@nix fmt
 	@cargo fmt
 	@cargo clippy --all-targets --all-features -- -D warnings
 
@@ -58,3 +59,16 @@ size:
 	@echo ""
 	@echo "Sections:"
 	@wasm-objdump -h $(WASM_OPT) 2>/dev/null || true
+
+# Maximum allowed optimized WASM size in bytes (40KB)
+WASM_SIZE_LIMIT := 40960
+
+.PHONY: size-check
+size-check: size
+	@SIZE=$$(wc -c < $(WASM_OPT)); \
+	if [ "$$SIZE" -gt $(WASM_SIZE_LIMIT) ]; then \
+		echo "FAIL: optimized WASM is $$SIZE bytes (limit: $(WASM_SIZE_LIMIT))"; \
+		exit 1; \
+	else \
+		echo "OK: optimized WASM is $$SIZE bytes (limit: $(WASM_SIZE_LIMIT))"; \
+	fi

@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Interaction state for immediate-mode UI.
 
@@ -88,6 +88,12 @@ impl InteractionState {
     /// Push a touch event to be processed.
     pub fn push_event(&mut self, event: TouchEvent) {
         self.event_queue.push_back(event);
+    }
+
+    /// Check if there are pending touch events to process.
+    #[must_use]
+    pub fn has_pending_events(&self) -> bool {
+        !self.event_queue.is_empty()
     }
 
     /// Register a hit region and check if it was clicked.

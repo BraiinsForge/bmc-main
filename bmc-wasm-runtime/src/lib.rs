@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! WebAssembly runtime for remote widget overlays.
 //!
@@ -7,6 +7,7 @@
 //!
 //! See `docs/plan.md` for the full design document.
 
+mod animation;
 mod drawing;
 
 // Re-export colors and color macro from protocol crate

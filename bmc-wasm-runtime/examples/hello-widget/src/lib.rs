@@ -1,86 +1,52 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! SDK component showcase - buttons, colors, animations, rich text.
 
-use bmc_wasm_sdk::animation::{DynTween, easing};
 use bmc_wasm_sdk::*;
 use std::cell::{Cell, RefCell};
-use std::f32::consts::PI;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
+
+use AnimProperty::*;
+use Easing::*;
+use LoopMode::*;
 
 thread_local! {
     static WIDTH: Cell<u32> = const { Cell::new(1_280) };
     static HEIGHT: Cell<u32> = const { Cell::new(480) };
     static COUNTS: RefCell<[u32; 4]> = const { RefCell::new([0; 4]) };
-    static PULSE_DIR: Cell<bool> = const { Cell::new(true) };
     static MODAL_OPEN: Cell<bool> = const { Cell::new(false) };
-    /// Track modal state changes for animation timing
-    static MODAL_PREV: Cell<bool> = const { Cell::new(false) };
-    /// Frames since modal state changed (for animation duration)
-    static MODAL_ANIM_FRAMES: Cell<u32> = const { Cell::new(0) };
+    // Manual fade: elapsed_ms, total 600ms, ease_out_cubic
+    static FADE_ELAPSED: Cell<u32> = const { Cell::new(0) };
 }
-
-animated!(FADE: f32);
-animated!(ROTATION: f32);
-animated!(PULSE: f32);
 
 // Background color (burgundy/magenta)
 const BG_COLOR: u32 = 0x66_23_47_FF;
+const FADE_DURATION: u32 = 600;
+
+fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init(width: u32, height: u32) {
     WIDTH.set(width);
     HEIGHT.set(height);
-
-    FADE::start(0.0, 1.0, 600, easing::ease_out_cubic);
-    ROTATION::start(0.0, PI * 2.0, 4_000, easing::linear);
-    PULSE::start(0.5, 1.0, 1_000, easing::ease_in_out);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
     let w = WIDTH.get();
     let h = HEIGHT.get();
-    let modal_open = MODAL_OPEN.get();
 
-    // Tick fade animation (always, for initial load)
-    FADE::tick(delta_ms);
-
-    // Only tick background animations when modal is closed
-    if !modal_open {
-        ROTATION::tick(delta_ms);
-        PULSE::tick(delta_ms);
-
-        // Loop rotation
-        if ROTATION::is_finished() {
-            ROTATION::reset();
-        }
-
-        // Ping-pong pulse
-        if PULSE::is_finished() {
-            let growing = PULSE_DIR.get();
-            PULSE_DIR.set(!growing);
-            PULSE::with(|p| {
-                p.set_tween(if growing {
-                    DynTween::new(1.0, 0.5, 1_000, easing::ease_in_out)
-                } else {
-                    DynTween::new(0.5, 1.0, 1_000, easing::ease_in_out)
-                });
-            });
-        }
-    }
-
-    let fade = FADE::get();
-    let rotation = ROTATION::get();
-    let pulse = PULSE::get();
+    // Manual fade interpolation (no crate needed)
+    let elapsed = FADE_ELAPSED.get().saturating_add(delta_ms);
+    FADE_ELAPSED.set(elapsed);
+    let fade = ease_out_cubic((elapsed as f32 / FADE_DURATION as f32).min(1.0));
 
     let counts = COUNTS.with(|c| *c.borrow());
     let header_color = color!(GRAY_10, alpha: fade);
-    let pulse_size = 32.0 * pulse;
     let clock_hour_mark_width = 8.0;
     let clock_hour_mark_height = 1.5;
-
-    let _wf = w as f32;
-    let _hf = h as f32;
 
     let result = render_ui(
         w,
@@ -100,13 +66,10 @@ pub extern "C" fn render(delta_ms: u32) {
                                 row(
                                     props!(gap: 12.0),
                                     [
-                                        button(
-                                            ButtonStyle::Primary,
-                                            format!("Primary {}", counts[0]),
-                                        ),
+                                        button(ButtonStyle::Primary, fmt!("Primary {}", counts[0])),
                                         button(
                                             ButtonStyle::Secondary,
-                                            format!("Secondary {}", counts[1]),
+                                            fmt!("Secondary {}", counts[1]),
                                         ),
                                     ],
                                 ),
@@ -115,19 +78,16 @@ pub extern "C" fn render(delta_ms: u32) {
                                     [
                                         button(
                                             ButtonStyle::Tertiary,
-                                            format!("Tertiary {}", counts[2]),
+                                            fmt!("Tertiary {}", counts[2]),
                                         ),
-                                        button(
-                                            ButtonStyle::Danger,
-                                            format!("Danger {}", counts[3]),
-                                        ),
+                                        button(ButtonStyle::Danger, fmt!("Danger {}", counts[3])),
                                     ],
                                 ),
                                 spacer(1.0),
                                 button(ButtonStyle::Primary, "Open Modal"),
                             ],
                         ),
-                        // Middle column: Animations
+                        // Middle column: Animations (declarative)
                         col(
                             props!(gap: 12.0, flex: 1.0),
                             [
@@ -135,9 +95,10 @@ pub extern "C" fn render(delta_ms: u32) {
                                 text("Pulse + Spin", style!(size: 14, color: GRAY_40)),
                                 canvas(
                                     props!(width: 64.0, height: 64.0),
-                                    [rotated(
-                                        rotation,
-                                        centered(rect(0.0, 0.0, pulse_size, pulse_size, VIOLET_50)),
+                                    [centered(
+                                        rect(0.0, 0.0, 32.0, 32.0, VIOLET_50)
+                                            .animate(Rotate, 0.0, TAU, 4_000, Linear, Forever)
+                                            .animate(Scale, 0.5, 1.0, 1_000, EaseInOut, PingPong),
                                     )],
                                 ),
                                 text("Clock", style!(size: 14, color: GRAY_40)),
@@ -188,11 +149,16 @@ pub extern "C" fn render(delta_ms: u32) {
                                                 GRAY_50,
                                             ),
                                         ),
-                                        orbit(
-                                            18.0,
-                                            rotation - PI / 2.0,
-                                            rect(0.0, 0.0, 4.0, 4.0, VIOLET_40),
-                                        ),
+                                        // Orbiting clock hand (declarative)
+                                        orbit(18.0, 0.0, rect(0.0, 0.0, 4.0, 4.0, VIOLET_40))
+                                            .animate(
+                                                OrbitAngle,
+                                                -FRAC_PI_2,
+                                                3.0 * FRAC_PI_2,
+                                                4_000,
+                                                Linear,
+                                                Forever,
+                                            ),
                                         centered(rect(0.0, 0.0, 6.0, 6.0, GRAY_10)),
                                     ],
                                 ),
@@ -357,39 +323,16 @@ pub extern "C" fn render(delta_ms: u32) {
                         counts[i] = counts[i].saturating_add(1);
                     });
                 }
-                4 => {
-                    // Open modal
-                    MODAL_OPEN.set(true);
-                }
-                5 => {
-                    // Close modal
-                    MODAL_OPEN.set(false);
-                }
+                4 => MODAL_OPEN.set(true),
+                5 => MODAL_OPEN.set(false),
                 _ => {}
             }
         }
     }
 
-    // Re-read modal state after processing clicks
-    let modal_open = MODAL_OPEN.get();
-
-    // Track modal state changes for animation
-    let modal_prev = MODAL_PREV.get();
-    if modal_open != modal_prev {
-        MODAL_PREV.set(modal_open);
-        MODAL_ANIM_FRAMES.set(0);
-    }
-    let modal_anim_frames = MODAL_ANIM_FRAMES.get();
-    MODAL_ANIM_FRAMES.set(modal_anim_frames.saturating_add(1));
-
-    // Request next frame only when needed:
-    // - Initial fade animation running
-    // - Modal closed (background animations running)
-    // - Modal animating (first ~20 frames after state change, ~300ms at 60fps)
-    let fade_running = !FADE::is_finished();
-    let modal_animating = modal_anim_frames < 20;
-
-    if fade_running || !modal_open || modal_animating {
+    // Only need to request frame for manual fade — host auto-requests for
+    // declarative animations and modal open/close.
+    if elapsed < FADE_DURATION {
         request_frame();
     }
 }

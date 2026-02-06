@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Host state and function bindings for WASM.
 
@@ -7,6 +7,39 @@ use std::collections::HashMap;
 
 use crate::drawing::text::ShapedTextCache;
 use crate::interaction::InteractionState;
+
+/// State for a single running animation instance.
+#[derive(Debug, Clone)]
+pub struct AnimationState {
+    pub elapsed_ms: u32,
+    /// Current direction for PingPong (true = forward).
+    pub forward: bool,
+    /// Frame counter when last seen (for GC).
+    pub last_seen_frame: u64,
+}
+
+/// Captured static values of a draw command for transition interpolation.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PrevDrawValues {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub color: u32,
+    pub angle: f32,
+    pub radius: f32,
+}
+
+/// State for a single transition instance.
+#[derive(Debug, Clone)]
+pub struct TransitionState {
+    /// Values we are interpolating from.
+    pub from: PrevDrawValues,
+    /// Previous target values (to detect changes).
+    pub target: PrevDrawValues,
+    pub elapsed_ms: u32,
+    pub last_seen_frame: u64,
+}
 
 /// State for a modal dialog (animation, scroll)
 #[derive(Debug, Default)]
@@ -70,6 +103,21 @@ pub struct HostState {
 
     /// Cache for shaped text buffers
     pub text_cache: ShapedTextCache,
+
+    /// Running animation states, keyed by content hash.
+    pub animation_states: HashMap<u64, AnimationState>,
+
+    /// Running transition states, keyed by (canvas_index, draw_index).
+    pub transition_states: HashMap<(u16, u16), TransitionState>,
+
+    /// Monotonic frame counter for GC.
+    pub frame_counter: u64,
+
+    /// Cached tree data for animation-only frames (bytes, width, height).
+    pub cached_tree_data: Option<(Vec<u8>, u32, u32)>,
+
+    /// Whether the next frame only needs animation updates (no WASM execution).
+    pub animation_only_frame: bool,
 }
 
 impl HostState {
@@ -95,6 +143,11 @@ impl HostState {
             modal_states: HashMap::new(),
             delta_ms: 0,
             text_cache: ShapedTextCache::new(256), // Cache up to 256 shaped text entries
+            animation_states: HashMap::new(),
+            transition_states: HashMap::new(),
+            frame_counter: 0,
+            cached_tree_data: None,
+            animation_only_frame: false,
         })
     }
 

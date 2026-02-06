@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Widget development testbed with hot-reloading.
 
@@ -195,14 +195,13 @@ fn main() -> Result<()> {
         WindowOptions::default(),
     )
     .context("Failed to create window")?;
-    window.set_target_fps(60);
-
     let mut last_frame = Instant::now();
     let mut frame_buffer: Vec<u32> = vec![0; (width * height) as usize];
     let mut background: Vec<u32> = vec![0; (width * height) as usize];
     let mut needs_render = true;
     let mut input = InputState::new(width);
     let mut fps = FpsTracker::new();
+    let mut stats = StatsOverlay::new();
 
     // Pre-render background once
     draw_background(&mut background, width, height);
@@ -239,7 +238,8 @@ fn main() -> Result<()> {
         };
 
         fps.tick(render_ms, rendered);
-        draw_frame_chart(&mut frame_buffer, width, &fps);
+        stats.update(fps.avg_render_ms(), fps.display_render, &mut runtime);
+        draw_frame_chart(&mut frame_buffer, width, &fps, &stats);
 
         window
             .update_with_buffer(&frame_buffer, width as usize, height as usize)
@@ -393,8 +393,84 @@ fn composite_overlay(buffer: &mut [u32], overlay: &tiny_skia::Pixmap, width: u32
     }
 }
 
-/// Draw frame time chart with avg ms overlay.
-fn draw_frame_chart(buffer: &mut [u32], width: u32, fps: &FpsTracker) {
+/// Cached stats text rendered with real fonts.
+struct StatsOverlay {
+    pixmap: tiny_skia::Pixmap,
+    last_avg_ms: u32,
+    last_render_fps: u32,
+}
+
+impl StatsOverlay {
+    const VALUE_SIZE: u32 = 16;
+    const UNIT_SIZE: u32 = 11;
+    const WIDTH: u32 = 90;
+    const HEIGHT: u32 = 38;
+
+    fn new() -> Self {
+        Self {
+            pixmap: tiny_skia::Pixmap::new(Self::WIDTH, Self::HEIGHT).unwrap(),
+            last_avg_ms: u32::MAX,
+            last_render_fps: u32::MAX,
+        }
+    }
+
+    /// Re-render the stats text if values changed. Returns true if updated.
+    fn update(&mut self, avg_ms: u32, render_fps: u32, runtime: &mut WasmWidgetRuntime) -> bool {
+        if avg_ms == self.last_avg_ms && render_fps == self.last_render_fps {
+            return false;
+        }
+        self.last_avg_ms = avg_ms;
+        self.last_render_fps = render_fps;
+
+        self.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+        // Line 1: avg frame time — value + "ms" unit
+        let ms_color = if avg_ms > 16 {
+            0xFF_FF_60_60
+        } else {
+            0xFF_CC_CC_CC
+        };
+        let ms_text = format!("{avg_ms}");
+        let ms_w = runtime.measure_text(&ms_text, Self::VALUE_SIZE);
+        runtime.draw_text(&mut self.pixmap, &ms_text, 0, 0, Self::VALUE_SIZE, ms_color);
+        runtime.draw_text(
+            &mut self.pixmap,
+            "ms",
+            ms_w as i32 + 1,
+            (Self::VALUE_SIZE - Self::UNIT_SIZE) as i32,
+            Self::UNIT_SIZE,
+            0xFF_80_80_80,
+        );
+
+        // Line 2: render FPS — value + "fps" unit
+        let y2 = Self::VALUE_SIZE as i32 + 2;
+        if render_fps > 0 {
+            let fps_text = format!("{render_fps}");
+            let fps_w = runtime.measure_text(&fps_text, Self::VALUE_SIZE);
+            runtime.draw_text(
+                &mut self.pixmap,
+                &fps_text,
+                0,
+                y2,
+                Self::VALUE_SIZE,
+                0xFF_AA_AA_AA,
+            );
+            runtime.draw_text(
+                &mut self.pixmap,
+                "fps",
+                fps_w as i32 + 1,
+                y2 + (Self::VALUE_SIZE - Self::UNIT_SIZE) as i32,
+                Self::UNIT_SIZE,
+                0xFF_80_80_80,
+            );
+        }
+
+        true
+    }
+}
+
+/// Draw frame time chart and blit stats overlay.
+fn draw_frame_chart(buffer: &mut [u32], width: u32, fps: &FpsTracker, stats: &StatsOverlay) {
     const CHART_HEIGHT: u32 = 40;
     const BAR_WIDTH: u32 = 1;
     let chart_width = fps.history.len() as u32 * BAR_WIDTH;
@@ -439,55 +515,37 @@ fn draw_frame_chart(buffer: &mut [u32], width: u32, fps: &FpsTracker) {
         }
     }
 
-    // Draw avg render ms on top of chart
-    let avg_ms = fps.avg_render_ms();
-    if avg_ms > 0 {
-        draw_number(buffer, width, start_x + 4, start_y + 2, avg_ms, avg_ms > 16);
-    }
-}
-
-/// Draw a number using 3x5 bitmap font scaled 3x. Red if `warning` is true.
-fn draw_number(buffer: &mut [u32], width: u32, x: u32, y: u32, value: u32, warning: bool) {
-    const DIGITS: [u16; 10] = [
-        0b111_101_101_101_111, // 0
-        0b010_110_010_010_111, // 1
-        0b111_001_111_100_111, // 2
-        0b111_001_111_001_111, // 3
-        0b101_101_111_001_001, // 4
-        0b111_100_111_001_111, // 5
-        0b111_100_111_101_111, // 6
-        0b111_001_001_001_001, // 7
-        0b111_101_111_101_111, // 8
-        0b111_101_111_001_111, // 9
-    ];
-
-    const SCALE: u32 = 3;
-    let text = format!("{value}");
-    let color = if warning {
-        0xFF_FF_60_60
-    } else {
-        0xFF_AA_AA_AA
-    };
-
-    for (i, ch) in text.chars().enumerate() {
-        let bits = DIGITS.get(ch as usize - '0' as usize).copied().unwrap_or(0);
-        let ox = x + i as u32 * (3 * SCALE + SCALE);
-
-        for row in 0..5_u32 {
-            for col in 0..3_u32 {
-                let bit_idx = (4 - row) * 3 + (2 - col);
-                if (bits >> bit_idx) & 1 == 1 {
-                    for sy in 0..SCALE {
-                        for sx in 0..SCALE {
-                            let px = ox + col * SCALE + sx;
-                            let py = y + row * SCALE + sy;
-                            let idx = (py * width + px) as usize;
-                            if idx < buffer.len() {
-                                buffer[idx] = color;
-                            }
-                        }
-                    }
-                }
+    // Blit stats text overlay (RGBA premultiplied → ARGB)
+    let stats_data = stats.pixmap.data();
+    let ox = start_x + 4;
+    let oy = start_y + 2;
+    for sy in 0..stats.pixmap.height() {
+        for sx in 0..stats.pixmap.width() {
+            let src_idx = ((sy * stats.pixmap.width() + sx) * 4) as usize;
+            let sa = stats_data[src_idx + 3];
+            if sa == 0 {
+                continue;
+            }
+            let dx = ox + sx;
+            let dy = oy + sy;
+            let dst_idx = (dy * width + dx) as usize;
+            if dst_idx >= buffer.len() {
+                continue;
+            }
+            let sr = stats_data[src_idx];
+            let sg = stats_data[src_idx + 1];
+            let sb = stats_data[src_idx + 2];
+            if sa == 255 {
+                buffer[dst_idx] =
+                    0xFF_00_00_00 | ((sr as u32) << 16) | ((sg as u32) << 8) | sb as u32;
+            } else {
+                let dst = buffer[dst_idx];
+                let inv = 255 - sa as u16;
+                let out_r = sr.saturating_add((((dst >> 16) & 0xFF) as u16 * inv / 255) as u8);
+                let out_g = sg.saturating_add((((dst >> 8) & 0xFF) as u16 * inv / 255) as u8);
+                let out_b = sb.saturating_add(((dst & 0xFF) as u16 * inv / 255) as u8);
+                buffer[dst_idx] =
+                    0xFF_00_00_00 | ((out_r as u32) << 16) | ((out_g as u32) << 8) | out_b as u32;
             }
         }
     }

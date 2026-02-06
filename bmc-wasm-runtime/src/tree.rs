@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Tree deserialization and layout computation.
 
@@ -11,9 +11,9 @@
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::{
-    DRAW_CENTERED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, GRAY_10, GRAY_50, GRAY_70, GRAY_90,
-    GRAY_100, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH,
-    NODE_ROW, NODE_SPACER,
+    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_MODIFIED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED,
+    Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90, GRAY_100, LoopMode, NODE_BUTTON, NODE_CANVAS,
+    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for other modules
@@ -45,6 +45,25 @@ impl SpanData {
     }
 }
 
+/// Host-side animation definition (deserialized from wire format).
+#[derive(Debug, Clone)]
+pub struct HostAnimationDef {
+    pub property: AnimProperty,
+    pub from: f32,
+    pub to: f32,
+    pub duration_ms: u32,
+    pub delay_ms: u16,
+    pub easing: Easing,
+    pub loop_mode: LoopMode,
+}
+
+/// Host-side transition definition.
+#[derive(Debug, Clone)]
+pub struct HostTransitionDef {
+    pub duration_ms: u32,
+    pub easing: Easing,
+}
+
 /// Draw command for canvas (local coordinates)
 #[derive(Debug, Clone)]
 pub enum DrawCommand {
@@ -65,6 +84,12 @@ pub enum DrawCommand {
     },
     Rotated {
         angle: f32,
+        inner: Box<DrawCommand>,
+    },
+    Modified {
+        animations: Vec<HostAnimationDef>,
+        transition: Option<HostTransitionDef>,
+        color_space: ColorSpace,
         inner: Box<DrawCommand>,
     },
 }
@@ -327,6 +352,62 @@ impl<'a> TreeReader<'a> {
                     inner: Box::new(inner),
                 })
             }
+            DRAW_MODIFIED => {
+                let flags = self.read_u8()?;
+                let has_animations = flags & 0x01 != 0;
+                let has_transition = flags & 0x02 != 0;
+                let color_space =
+                    ColorSpace::from_u8((flags >> 2) & 0x03).unwrap_or(ColorSpace::Oklab);
+
+                let animations = if has_animations {
+                    let count = self.read_u8()? as usize;
+                    let mut anims = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let property = AnimProperty::from_u8(self.read_u8()?)
+                            .ok_or_else(|| anyhow::anyhow!("invalid AnimProperty"))?;
+                        let from = self.read_f32()?;
+                        let to = self.read_f32()?;
+                        let duration_ms = self.read_u32()?;
+                        let delay_ms = self.read_u16()?;
+                        let easing = Easing::from_u8(self.read_u8()?)
+                            .ok_or_else(|| anyhow::anyhow!("invalid Easing"))?;
+                        let loop_mode = LoopMode::from_u8(self.read_u8()?)
+                            .ok_or_else(|| anyhow::anyhow!("invalid LoopMode"))?;
+                        anims.push(HostAnimationDef {
+                            property,
+                            from,
+                            to,
+                            duration_ms,
+                            delay_ms,
+                            easing,
+                            loop_mode,
+                        });
+                    }
+                    anims
+                } else {
+                    Vec::new()
+                };
+
+                let transition = if has_transition {
+                    let duration_ms = self.read_u32()?;
+                    let easing = Easing::from_u8(self.read_u8()?)
+                        .ok_or_else(|| anyhow::anyhow!("invalid Easing for transition"))?;
+                    Some(HostTransitionDef {
+                        duration_ms,
+                        easing,
+                    })
+                } else {
+                    None
+                };
+
+                let inner = self.read_draw()?;
+                Ok(DrawCommand::Modified {
+                    animations,
+                    transition,
+                    color_space,
+                    inner: Box::new(inner),
+                })
+            }
             _ => bail!("unknown draw command: {}", draw_type),
         }
     }
@@ -355,13 +436,27 @@ use cosmic_text::{FontSystem, SwashCache};
 use taffy::prelude::*;
 use tiny_skia::Pixmap;
 
+use crate::animation::{apply_easing, compute_animation_value, interpolate_color, multiply_alpha};
 use crate::components::{ButtonStyle, draw_button};
 use crate::drawing::shapes::{fill_rect, fill_rotated_rect};
 use crate::drawing::text::{
     ShapedTextCache, measure_paragraph, render_paragraph, render_paragraph_clipped,
 };
-use crate::host_api::ModalState;
+use crate::host_api::{AnimationState, ModalState, PrevDrawValues, TransitionState};
 use crate::interaction::InteractionState;
+
+/// Mutable animation context threaded through the render pipeline.
+struct AnimationContext<'a> {
+    animation_states: &'a mut HashMap<u64, AnimationState>,
+    transition_states: &'a mut HashMap<(u16, u16), TransitionState>,
+    delta_ms: u32,
+    frame_counter: u64,
+    draw_counter: u32,
+    canvas_index: u16,
+    draw_in_canvas: u16,
+    /// Set to true when any animation or transition is in progress.
+    has_active: bool,
+}
 
 /// Result from processing a tree
 #[derive(Debug, Default)]
@@ -399,8 +494,14 @@ struct ModalInfo {
     button_index_start: u32,
 }
 
-/// Process a tree: deserialize, layout, render
-#[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
+/// Process a tree: deserialize, layout, render.
+///
+/// Returns `(result, has_active_animations)` — caller should request next frame when active.
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::implicit_hasher
+)]
 pub fn process_tree(
     data: &[u8],
     width: u32,
@@ -411,8 +512,13 @@ pub fn process_tree(
     text_cache: &mut ShapedTextCache,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<u16, ModalState>,
+    animation_states: &mut HashMap<u64, AnimationState>,
+    transition_states: &mut HashMap<(u16, u16), TransitionState>,
+    frame_counter: u64,
     delta_ms: u32,
-) -> Result<TreeResult> {
+) -> Result<(TreeResult, bool)> {
+    text_cache.begin_frame(frame_counter);
+
     let tree_node = deserialize_tree(data)?;
     let mut result = TreeResult::default();
     let mut button_id: u32 = 0;
@@ -470,8 +576,13 @@ pub fn process_tree(
                         available_width
                     };
 
-                    let (w, h) =
-                        measure_paragraph(font_system, &para.base_style, &para.spans, max_width);
+                    let (w, h) = measure_paragraph(
+                        font_system,
+                        text_cache,
+                        &para.base_style,
+                        &para.spans,
+                        max_width,
+                    );
                     return Size {
                         width: w,
                         height: h,
@@ -483,6 +594,17 @@ pub fn process_tree(
             Size::ZERO
         },
     )?;
+
+    let mut anim_ctx = AnimationContext {
+        animation_states,
+        transition_states,
+        delta_ms,
+        frame_counter,
+        draw_counter: 0,
+        canvas_index: 0,
+        draw_in_canvas: 0,
+        has_active: false,
+    };
 
     // Render main tree
     render_taffy_node(
@@ -496,6 +618,7 @@ pub fn process_tree(
         text_cache,
         interaction,
         &mut result,
+        &mut anim_ctx,
     );
 
     // Render modal overlays
@@ -515,7 +638,20 @@ pub fn process_tree(
         );
     }
 
-    Ok(result)
+    // GC: remove animation/transition states not seen this frame
+    anim_ctx
+        .animation_states
+        .retain(|_, s| s.last_seen_frame >= frame_counter);
+    anim_ctx
+        .transition_states
+        .retain(|_, s| s.last_seen_frame >= frame_counter);
+
+    // Check modal animations too
+    let modal_animating = modal_states
+        .values()
+        .any(|s| s.animation_progress > 0.0 && s.animation_progress < 1.0);
+
+    Ok((result, anim_ctx.has_active || modal_animating))
 }
 
 #[expect(clippy::too_many_lines)]
@@ -727,6 +863,7 @@ fn render_taffy_node(
     text_cache: &mut ShapedTextCache,
     interaction: &mut InteractionState,
     result: &mut TreeResult,
+    anim_ctx: &mut AnimationContext<'_>,
 ) {
     let layout = taffy.layout(node_id).unwrap();
     let x = parent_x + layout.location.x as i32;
@@ -744,6 +881,7 @@ fn render_taffy_node(
                 pixmap,
                 font_system,
                 swash_cache,
+                text_cache,
                 &para.base_style,
                 &para.spans,
                 x,
@@ -775,8 +913,13 @@ fn render_taffy_node(
         }
 
         // Render canvas draw commands with local coordinates
-        for draw in &ctx.draws {
-            render_draw_command(pixmap, draw, x, y, w, h);
+        if !ctx.draws.is_empty() {
+            anim_ctx.draw_in_canvas = 0;
+            for draw in &ctx.draws {
+                render_draw_command(pixmap, draw, x, y, w, h, anim_ctx);
+                anim_ctx.draw_in_canvas += 1;
+            }
+            anim_ctx.canvas_index += 1;
         }
     }
 
@@ -792,6 +935,7 @@ fn render_taffy_node(
             text_cache,
             interaction,
             result,
+            anim_ctx,
         );
     }
 }
@@ -804,23 +948,26 @@ fn render_draw_command(
     cy: i32,
     cw: u32,
     ch: u32,
+    anim_ctx: &mut AnimationContext<'_>,
 ) {
-    render_draw_inner(pixmap, draw, cx, cy, cw, ch, 0.0, 0.0, 0.0);
+    render_draw_inner(
+        pixmap, draw, cx, cy, cw, ch, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, None, anim_ctx,
+    );
 }
 
 /// Get the bounds (width, height) of a draw command
 fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
     match draw {
         DrawCommand::Rect { w, h, .. } => (*w, *h),
-        DrawCommand::Centered { inner } | DrawCommand::Rotated { inner, .. } => {
-            get_draw_bounds(inner)
-        }
-        DrawCommand::Orbit { inner, .. } => get_draw_bounds(inner),
+        DrawCommand::Centered { inner }
+        | DrawCommand::Rotated { inner, .. }
+        | DrawCommand::Modified { inner, .. }
+        | DrawCommand::Orbit { inner, .. } => get_draw_bounds(inner),
     }
 }
 
-/// Render a draw command with accumulated transforms
-#[expect(clippy::too_many_arguments)]
+/// Render a draw command with accumulated transforms and animation modifiers.
+#[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_draw_inner(
     pixmap: &mut Pixmap,
     draw: &DrawCommand,
@@ -831,19 +978,33 @@ fn render_draw_inner(
     offset_x: f32,
     offset_y: f32,
     rotation: f32,
+    scale: f32,
+    alpha: f32,
+    orbit_angle_offset: f32,
+    color_override: Option<u32>,
+    anim_ctx: &mut AnimationContext<'_>,
 ) {
     match draw {
         DrawCommand::Rect { x, y, w, h, color } => {
-            let rx = cx + (*x + offset_x) as i32;
-            let ry = cy + (*y + offset_y) as i32;
-            if rotation == 0.0 {
-                fill_rect(pixmap, rx, ry, *w as u32, *h as u32, *color);
+            let ew = *w * scale;
+            let eh = *h * scale;
+            // Center-anchored scaling: offset by half the size difference
+            let sx = *x + offset_x + (*w - ew) / 2.0;
+            let sy = *y + offset_y + (*h - eh) / 2.0;
+            let rx = cx + sx as i32;
+            let ry = cy + sy as i32;
+            let final_color = if alpha < 1.0 {
+                multiply_alpha(color_override.unwrap_or(*color), alpha)
             } else {
-                fill_rotated_rect(pixmap, rx, ry, *w as u32, *h as u32, rotation, *color);
+                color_override.unwrap_or(*color)
+            };
+            if rotation == 0.0 {
+                fill_rect(pixmap, rx, ry, ew as u32, eh as u32, final_color);
+            } else {
+                fill_rotated_rect(pixmap, rx, ry, ew as u32, eh as u32, rotation, final_color);
             }
         }
         DrawCommand::Centered { inner } => {
-            // Center the inner command in canvas
             let (iw, ih) = get_draw_bounds(inner);
             let new_offset_x = (cw as f32 - iw) / 2.0;
             let new_offset_y = (ch as f32 - ih) / 2.0;
@@ -857,6 +1018,11 @@ fn render_draw_inner(
                 new_offset_x,
                 new_offset_y,
                 rotation,
+                scale,
+                alpha,
+                orbit_angle_offset,
+                color_override,
+                anim_ctx,
             );
         }
         DrawCommand::Orbit {
@@ -864,12 +1030,12 @@ fn render_draw_inner(
             angle,
             inner,
         } => {
-            // Position at orbit around canvas center
+            let effective_angle = *angle + orbit_angle_offset;
             let center_offset_x = cw as f32 / 2.0;
             let center_offset_y = ch as f32 / 2.0;
             let (iw, ih) = get_draw_bounds(inner);
-            let new_offset_x = center_offset_x + radius * angle.cos() - iw / 2.0;
-            let new_offset_y = center_offset_y + radius * angle.sin() - ih / 2.0;
+            let new_offset_x = center_offset_x + radius * effective_angle.cos() - iw / 2.0;
+            let new_offset_y = center_offset_y + radius * effective_angle.sin() - ih / 2.0;
             render_draw_inner(
                 pixmap,
                 inner,
@@ -880,10 +1046,14 @@ fn render_draw_inner(
                 new_offset_x,
                 new_offset_y,
                 rotation,
+                scale,
+                alpha,
+                0.0, // orbit_angle_offset consumed
+                color_override,
+                anim_ctx,
             );
         }
         DrawCommand::Rotated { angle, inner } => {
-            // Accumulate rotation
             render_draw_inner(
                 pixmap,
                 inner,
@@ -894,8 +1064,214 @@ fn render_draw_inner(
                 offset_x,
                 offset_y,
                 rotation + angle,
+                scale,
+                alpha,
+                orbit_angle_offset,
+                color_override,
+                anim_ctx,
             );
         }
+        DrawCommand::Modified {
+            animations,
+            transition,
+            color_space,
+            inner,
+        } => {
+            let mut acc_rotation = rotation;
+            let mut acc_scale = scale;
+            let mut acc_alpha = alpha;
+            let mut acc_offset_x = offset_x;
+            let mut acc_offset_y = offset_y;
+            let mut acc_orbit_angle = orbit_angle_offset;
+            let mut acc_color: Option<u32> = color_override;
+
+            // Process animations
+            for anim_def in animations {
+                let key = animation_key(anim_def, anim_ctx.draw_counter);
+                let state =
+                    anim_ctx
+                        .animation_states
+                        .entry(key)
+                        .or_insert_with(|| AnimationState {
+                            elapsed_ms: 0,
+                            forward: true,
+                            last_seen_frame: anim_ctx.frame_counter,
+                        });
+                state.last_seen_frame = anim_ctx.frame_counter;
+
+                let (value, active) = compute_animation_value(anim_def, state, anim_ctx.delta_ms);
+                if active {
+                    anim_ctx.has_active = true;
+                }
+
+                match anim_def.property {
+                    AnimProperty::Rotate => acc_rotation += value,
+                    AnimProperty::Scale => acc_scale *= value,
+                    AnimProperty::Alpha => acc_alpha *= value,
+                    AnimProperty::TranslateX => acc_offset_x += value,
+                    AnimProperty::TranslateY => acc_offset_y += value,
+                    AnimProperty::OrbitAngle => acc_orbit_angle += value,
+                    AnimProperty::Color => {
+                        let from_color = f32::to_bits(anim_def.from);
+                        let to_color = f32::to_bits(anim_def.to);
+                        // value is the raw lerped f32, recompute t for color
+                        let range = anim_def.to - anim_def.from;
+                        let t = if range.abs() > f32::EPSILON {
+                            (value - anim_def.from) / range
+                        } else {
+                            0.0
+                        };
+                        acc_color = Some(interpolate_color(from_color, to_color, t, *color_space));
+                    }
+                }
+            }
+
+            // Process transition
+            if let Some(trans_def) = transition {
+                let current_values = extract_draw_values(inner);
+                let key = (anim_ctx.canvas_index, anim_ctx.draw_in_canvas);
+                let state = anim_ctx.transition_states.entry(key).or_insert_with(|| {
+                    TransitionState {
+                        from: current_values,
+                        target: current_values,
+                        elapsed_ms: trans_def.duration_ms, // start finished
+                        last_seen_frame: anim_ctx.frame_counter,
+                    }
+                });
+                state.last_seen_frame = anim_ctx.frame_counter;
+
+                // Detect target change
+                if state.target != current_values {
+                    // D3-style: interpolate from current interpolated position
+                    let t = if trans_def.duration_ms > 0 {
+                        (state.elapsed_ms as f32 / trans_def.duration_ms as f32).min(1.0)
+                    } else {
+                        1.0
+                    };
+                    let eased_t = apply_easing(trans_def.easing, t);
+                    state.from =
+                        interpolate_draw_values(&state.from, &state.target, eased_t, *color_space);
+                    state.target = current_values;
+                    state.elapsed_ms = 0;
+                }
+
+                state.elapsed_ms = state.elapsed_ms.saturating_add(anim_ctx.delta_ms);
+
+                if state.elapsed_ms < trans_def.duration_ms {
+                    anim_ctx.has_active = true;
+                    let t = state.elapsed_ms as f32 / trans_def.duration_ms as f32;
+                    let eased_t = apply_easing(trans_def.easing, t);
+                    let interp =
+                        interpolate_draw_values(&state.from, &state.target, eased_t, *color_space);
+                    // Apply interpolated overrides to accumulated state
+                    acc_offset_x += interp.x - current_values.x;
+                    acc_offset_y += interp.y - current_values.y;
+                    acc_scale *= if current_values.w > 0.0 {
+                        interp.w / current_values.w
+                    } else {
+                        1.0
+                    };
+                    acc_orbit_angle += interp.angle - current_values.angle;
+                    if interp.color != current_values.color {
+                        acc_color = Some(interp.color);
+                    }
+                }
+            }
+
+            anim_ctx.draw_counter += 1;
+
+            render_draw_inner(
+                pixmap,
+                inner,
+                cx,
+                cy,
+                cw,
+                ch,
+                acc_offset_x,
+                acc_offset_y,
+                acc_rotation,
+                acc_scale,
+                acc_alpha,
+                acc_orbit_angle,
+                acc_color,
+                anim_ctx,
+            );
+        }
+    }
+}
+
+/// Compute a content-based hash key for an animation definition + draw counter salt.
+fn animation_key(def: &HostAnimationDef, draw_counter: u32) -> u64 {
+    // Simple FNV-like hash of the animation definition bytes
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    h ^= def.property as u64;
+    h = h.wrapping_mul(0x0100_0000_01b3);
+    h ^= def.from.to_bits() as u64;
+    h = h.wrapping_mul(0x0100_0000_01b3);
+    h ^= def.to.to_bits() as u64;
+    h = h.wrapping_mul(0x0100_0000_01b3);
+    h ^= def.duration_ms as u64;
+    h = h.wrapping_mul(0x0100_0000_01b3);
+    h ^= def.delay_ms as u64;
+    h = h.wrapping_mul(0x0100_0000_01b3);
+    h ^= def.easing as u64;
+    h = h.wrapping_mul(0x0100_0000_01b3);
+    h ^= def.loop_mode as u64;
+    h = h.wrapping_mul(0x0100_0000_01b3);
+    h ^ draw_counter as u64
+}
+
+/// Extract the static values from a draw command's innermost content for transition tracking.
+fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
+    match draw {
+        DrawCommand::Rect { x, y, w, h, color } => PrevDrawValues {
+            x: *x,
+            y: *y,
+            w: *w,
+            h: *h,
+            color: *color,
+            ..Default::default()
+        },
+        DrawCommand::Orbit {
+            radius,
+            angle,
+            inner,
+        } => {
+            let mut vals = extract_draw_values(inner);
+            vals.angle = *angle;
+            vals.radius = *radius;
+            vals
+        }
+        DrawCommand::Rotated { angle, inner } => {
+            let mut vals = extract_draw_values(inner);
+            vals.angle = *angle;
+            vals
+        }
+        DrawCommand::Centered { inner } | DrawCommand::Modified { inner, .. } => {
+            extract_draw_values(inner)
+        }
+    }
+}
+
+/// Linearly interpolate between two sets of draw values.
+fn interpolate_draw_values(
+    a: &PrevDrawValues,
+    b: &PrevDrawValues,
+    t: f32,
+    color_space: ColorSpace,
+) -> PrevDrawValues {
+    PrevDrawValues {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        w: a.w + (b.w - a.w) * t,
+        h: a.h + (b.h - a.h) * t,
+        color: if a.color == b.color {
+            a.color
+        } else {
+            interpolate_color(a.color, b.color, t, color_space)
+        },
+        angle: a.angle + (b.angle - a.angle) * t,
+        radius: a.radius + (b.radius - a.radius) * t,
     }
 }
 
@@ -1053,6 +1429,7 @@ fn render_modal(
         pixmap,
         font_system,
         swash_cache,
+        text_cache,
         &title_style,
         &title_spans,
         modal_x + 16,
@@ -1266,8 +1643,14 @@ fn render_modal_body_node(
         TreeNode::Paragraph {
             base_style, spans, ..
         } => {
-            // Measure first to get actual height
-            let (_, h) = measure_paragraph(font_system, base_style, spans, Some(width as f32));
+            // Measure first to get actual height (cached)
+            let (_, h) = measure_paragraph(
+                font_system,
+                text_cache,
+                base_style,
+                spans,
+                Some(width as f32),
+            );
             let h_i32 = h as i32;
 
             // Only render if at least partially visible
@@ -1276,6 +1659,7 @@ fn render_modal_body_node(
                     pixmap,
                     font_system,
                     swash_cache,
+                    text_cache,
                     base_style,
                     spans,
                     x,

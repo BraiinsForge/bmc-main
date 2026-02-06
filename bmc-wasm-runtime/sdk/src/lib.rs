@@ -1,21 +1,21 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! WASM Widget SDK for Braiins Deck.
 //!
 //! Provides host bindings and UI primitives for building widgets.
 //! Layout is computed on the host side for minimal WASM binary size.
 
-pub mod animation;
 pub mod host;
 pub mod tree;
 
 pub use bmc_wasm_protocol::*;
 pub use host::{ButtonStyle, draw_text, fill_rect, request_frame, request_frame_after};
 pub use tree::{
-    Draw, ModalProps, Node, PropsData, Span, StyleResult, TextStyle, TreeRenderResult, begin_tree,
-    button, canvas, center, centered, col, finish_tree, modal, modal_styled, orbit, paragraph,
-    rect, render_ui, rotated, row, spacer, span, text, with_buffer,
+    AnimationDef, Draw, ModalProps, Node, PropsData, Span, StyleResult, TextStyle, TransitionDef,
+    TreeRenderResult, begin_tree, button, canvas, center, centered, col, finish_tree, modal,
+    modal_styled, orbit, paragraph, rect, render_ui, rotated, row, spacer, span, text, with_buffer,
 };
+pub use ufmt;
 
 /// Shorthand for PropsData: `props!()` or `props!(gap: 16.0, background: 0xFF)`
 #[macro_export]
@@ -24,6 +24,17 @@ macro_rules! props {
     ($($field:ident: $value:expr),* $(,)?) => {
         $crate::tree::PropsData { $($field: $value),*, ..Default::default() }
     };
+}
+
+/// Lightweight string interpolation without pulling in `core::fmt`.
+/// Drop-in replacement for `format!()` in widget code.
+#[macro_export]
+macro_rules! fmt {
+    ($($arg:tt)*) => {{
+        let mut s = String::new();
+        _ = $crate::ufmt::uwrite!(s, $($arg)*);
+        s
+    }};
 }
 
 /// Unified style macro for text styling and layout.

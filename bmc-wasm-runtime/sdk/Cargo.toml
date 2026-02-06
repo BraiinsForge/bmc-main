@@ -8,8 +8,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 bmc-wasm-protocol = { path = "../protocol" }
-keyframe.workspace = true
-libm.workspace = true
+ufmt = { version = "0.2", features = ["std"] }
 
 [lints.rust]
 unused_must_use = "deny"
@@ -25,5 +24,3 @@ module_name_repetitions = "allow"
 [workspace]
 
 [workspace.dependencies]
-keyframe = "1.1"
-libm = "0.2"

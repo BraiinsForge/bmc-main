@@ -11,13 +11,14 @@ flex layout (Taffy) and text shaping (cosmic-text).
 │  (bmc-wasm-sdk) │────▶│ (bmc-wasm-runtime)
 │                 │     │                 │
 │  - UI tree      │     │  - Deserialize  │
-│  - Animations   │     │  - Taffy layout │
+│  - Anim decl    │     │  - Taffy layout │
 │  - State        │     │  - Render       │
 └─────────────────┘     └─────────────────┘
 ```
 
-Widgets build a declarative UI tree that gets serialized and sent to the host for layout and rendering. This keeps WASM
-binaries small (~15KB) by offloading text shaping and layout to native code.
+Widgets build a declarative UI tree that gets serialized and sent to the host for layout and rendering. Animations and
+transitions are declared in the tree and computed host-side, keeping WASM binaries small by offloading text shaping,
+layout, and animation math to native code.
 
 ## SDK API
 
@@ -63,7 +64,7 @@ paragraph(style!(size: 14, line_height: 1.4), [
 
 Text wraps automatically to container width. Use `max_width` in style to set an explicit maximum.
 
-### Style Macros
+### Macros
 
 ```rust
 // Layout props for containers
@@ -71,6 +72,9 @@ props!(padding: 16.0, gap: 8.0, background: GRAY_90)
 
 // Text + layout props combined
 style!(size: 20, weight: 700, color: VIOLET_50, padding: 8.0)
+
+// Lightweight format!() replacement (~5KB smaller WASM binary)
+fmt!("Count: {}", value)
 ```
 
 **Text style fields:** `size`, `weight`, `italic`, `underline`, `strikethrough`, `line_height`, `align`, `max_width`
@@ -115,27 +119,46 @@ Use `modal_styled` with `ModalProps` for custom padding or backdrop alpha.
 
 ### Animations
 
+Animations are declared on draw commands and computed host-side. No animation crate needed in WASM.
+
+#### `.animate()` — Repeating host-driven effects
+
 ```rust
-animated!(FADE: f32);
-animated!(ROTATION: f32);
+use AnimProperty::*;
+use Easing::*;
+use LoopMode::*;
 
-fn init() {
-    FADE::start(0.0, 1.0, 500, easing::ease_out_cubic);
-    ROTATION::start(0.0, PI * 2.0, 2000, easing::linear);
-}
+// Spin forever + pulse scale
+rect(0.0, 0.0, 32.0, 32.0, VIOLET_50)
+    .animate(Rotate, 0.0, TAU, 4_000, Linear, Forever)
+    .animate(Scale, 0.5, 1.0, 1_000, EaseInOut, PingPong)
 
-fn render(delta_ms: u32) {
-    FADE::tick(delta_ms);
-    ROTATION::tick(delta_ms);
+// Orbiting element
+orbit(18.0, 0.0, rect(0.0, 0.0, 4.0, 4.0, VIOLET_40))
+    .animate(OrbitAngle, -FRAC_PI_2, 3.0 * FRAC_PI_2, 4_000, Linear, Forever)
 
-    let opacity = FADE::get();
-    let angle = ROTATION::get();
-
-    if ROTATION::is_finished() {
-        ROTATION::reset(); // Loop
-    }
-}
+// Color animation
+rect(0.0, 0.0, 32.0, 32.0, RED_50)
+    .animate_color(RED_50, VIOLET_50, 2_000, EaseInOut, PingPong)
 ```
+
+Properties: `Rotate`, `Scale`, `Alpha`, `TranslateX`, `TranslateY`, `OrbitAngle`, `Color`
+
+#### `.transition()` — Smooth state-driven interpolation
+
+Like CSS `transition`. WASM sets target values each render; host smoothly interpolates when values change.
+
+```rust
+// Smooth color change when state changes
+rect(0.0, 0.0, 32.0, 32.0, current_color)
+    .transition(300, EaseOutCubic)
+
+// Custom color space for transitions
+rect(0.0, 0.0, 32.0, 32.0, current_color)
+    .transition_with_color_space(300, EaseOutCubic, Oklch)
+```
+
+Host auto-requests frames when any animation or transition is active — no manual `request_frame()` needed.
 
 ### Colors
 
