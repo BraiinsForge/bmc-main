@@ -13,9 +13,9 @@ use std::string::String;
 use std::vec::Vec;
 
 use bmc_wasm_protocol::{
-    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_MODIFIED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED,
-    Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
-    NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_CIRCLE, DRAW_MODIFIED, DRAW_ORBIT, DRAW_RECT,
+    DRAW_ROTATED, Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN,
+    NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for macro paths
@@ -310,6 +310,13 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
+        color: u32,
+    },
+    /// Filled circle at absolute local position (cx, cy = center)
+    Circle {
+        cx: f32,
+        cy: f32,
+        r: f32,
         color: u32,
     },
     /// Center any draw command in canvas
@@ -641,6 +648,11 @@ pub fn rect(x: f32, y: f32, w: f32, h: f32, color: u32) -> Draw {
     Draw::Rect { x, y, w, h, color }
 }
 
+/// Filled circle at local position within canvas
+pub fn circle(cx: f32, cy: f32, r: f32, color: u32) -> Draw {
+    Draw::Circle { cx, cy, r, color }
+}
+
 /// Center any draw command in canvas
 pub fn centered(inner: Draw) -> Draw {
     Draw::Centered {
@@ -735,6 +747,13 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
     match draw {
         Draw::Rect { x, y, w, h, color } => {
             buf.write_draw_rect(*x, *y, *w, *h, *color);
+        }
+        Draw::Circle { cx, cy, r, color } => {
+            buf.write_u8(DRAW_CIRCLE);
+            buf.write_f32(*cx);
+            buf.write_f32(*cy);
+            buf.write_f32(*r);
+            buf.write_u32(*color);
         }
         Draw::Centered { inner } => {
             buf.write_u8(DRAW_CENTERED);

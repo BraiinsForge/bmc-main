@@ -27,38 +27,6 @@ pub fn fill_rect(pixmap: &mut Pixmap, x: i32, y: i32, w: u32, h: u32, color: u32
     }
 }
 
-/// Fill a rectangle rotated around its center.
-pub fn fill_rotated_rect(
-    pixmap: &mut Pixmap,
-    x: i32,
-    y: i32,
-    w: u32,
-    h: u32,
-    angle: f32,
-    color: u32,
-) {
-    let mut paint = Paint::default();
-    paint.set_color(color_from_u32(color));
-    paint.anti_alias = true;
-
-    let x = x as f32;
-    let y = y as f32;
-    let w = w as f32;
-    let h = h as f32;
-
-    // Center of the rectangle
-    let cx = x + w / 2.0;
-    let cy = y + h / 2.0;
-
-    // Create rotation transform around center
-    let transform = Transform::from_rotate_at(angle.to_degrees(), cx, cy);
-
-    let rect = tiny_skia::Rect::from_xywh(x, y, w, h);
-    if let Some(rect) = rect {
-        pixmap.fill_rect(rect, &paint, transform, None);
-    }
-}
-
 /// Draw a rounded rectangle.
 pub fn draw_rounded_rect(
     pixmap: &mut Pixmap,

@@ -2,19 +2,24 @@
 
 //! Node type and draw command constants for tree serialization.
 
-// Node types
-pub const NODE_COLUMN: u8 = 0;
-pub const NODE_ROW: u8 = 1;
-pub const NODE_CENTER: u8 = 2;
-pub const NODE_PARAGRAPH: u8 = 3;
-pub const NODE_BUTTON: u8 = 4;
-pub const NODE_SPACER: u8 = 5;
-pub const NODE_CANVAS: u8 = 6;
-pub const NODE_MODAL: u8 = 7;
+// Node types (0x00–0x3F)
+pub const NODE_COLUMN: u8 = 0x00;
+pub const NODE_ROW: u8 = 0x01;
+pub const NODE_CENTER: u8 = 0x02;
+pub const NODE_PARAGRAPH: u8 = 0x03;
+pub const NODE_BUTTON: u8 = 0x04;
+pub const NODE_SPACER: u8 = 0x05;
+pub const NODE_CANVAS: u8 = 0x06;
+pub const NODE_MODAL: u8 = 0x07;
 
-// Draw commands
-pub const DRAW_RECT: u8 = 16;
-pub const DRAW_CENTERED: u8 = 17;
-pub const DRAW_ORBIT: u8 = 18;
-pub const DRAW_ROTATED: u8 = 19;
-pub const DRAW_MODIFIED: u8 = 20;
+// Draw commands — shapes (0x40–0x5F)
+pub const DRAW_RECT: u8 = 0x40;
+pub const DRAW_CIRCLE: u8 = 0x41;
+
+// Draw commands — transforms (0x60–0x7F)
+pub const DRAW_CENTERED: u8 = 0x60;
+pub const DRAW_ORBIT: u8 = 0x61;
+pub const DRAW_ROTATED: u8 = 0x62;
+
+// Draw commands — modifiers (0x80–0x9F)
+pub const DRAW_MODIFIED: u8 = 0x80;

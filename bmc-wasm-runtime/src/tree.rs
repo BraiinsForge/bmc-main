@@ -11,9 +11,9 @@
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::{
-    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_MODIFIED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED,
-    Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90, GRAY_100, LoopMode, NODE_BUTTON, NODE_CANVAS,
-    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_CIRCLE, DRAW_MODIFIED, DRAW_ORBIT, DRAW_RECT,
+    DRAW_ROTATED, Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90, GRAY_100, LoopMode, NODE_BUTTON,
+    NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for other modules
@@ -81,6 +81,12 @@ pub enum DrawCommand {
         radius: f32,
         angle: f32,
         inner: Box<DrawCommand>,
+    },
+    Circle {
+        cx: f32,
+        cy: f32,
+        r: f32,
+        color: u32,
     },
     Rotated {
         angle: f32,
@@ -328,6 +334,13 @@ impl<'a> TreeReader<'a> {
                 let color = self.read_u32()?;
                 Ok(DrawCommand::Rect { x, y, w, h, color })
             }
+            DRAW_CIRCLE => {
+                let cx = self.read_f32()?;
+                let cy = self.read_f32()?;
+                let r = self.read_f32()?;
+                let color = self.read_u32()?;
+                Ok(DrawCommand::Circle { cx, cy, r, color })
+            }
             DRAW_CENTERED => {
                 let inner = self.read_draw()?;
                 Ok(DrawCommand::Centered {
@@ -438,7 +451,7 @@ use tiny_skia::Pixmap;
 
 use crate::animation::{apply_easing, compute_animation_value, interpolate_color, multiply_alpha};
 use crate::components::{ButtonStyle, draw_button};
-use crate::drawing::shapes::{fill_rect, fill_rotated_rect};
+use crate::drawing::shapes::{draw_circle, fill_rect};
 use crate::drawing::text::{
     ShapedTextCache, measure_paragraph, render_paragraph, render_paragraph_clipped,
 };
@@ -959,6 +972,7 @@ fn render_draw_command(
 fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
     match draw {
         DrawCommand::Rect { w, h, .. } => (*w, *h),
+        DrawCommand::Circle { r, .. } => (*r * 2.0, *r * 2.0),
         DrawCommand::Centered { inner }
         | DrawCommand::Rotated { inner, .. }
         | DrawCommand::Modified { inner, .. }
@@ -991,18 +1005,65 @@ fn render_draw_inner(
             // Center-anchored scaling: offset by half the size difference
             let sx = *x + offset_x + (*w - ew) / 2.0;
             let sy = *y + offset_y + (*h - eh) / 2.0;
-            let rx = cx + sx as i32;
-            let ry = cy + sy as i32;
+            let rx = cx as f32 + sx;
+            let ry = cy as f32 + sy;
             let final_color = if alpha < 1.0 {
                 multiply_alpha(color_override.unwrap_or(*color), alpha)
             } else {
                 color_override.unwrap_or(*color)
             };
             if rotation == 0.0 {
-                fill_rect(pixmap, rx, ry, ew as u32, eh as u32, final_color);
+                fill_rect(
+                    pixmap,
+                    rx as i32,
+                    ry as i32,
+                    ew as u32,
+                    eh as u32,
+                    final_color,
+                );
             } else {
-                fill_rotated_rect(pixmap, rx, ry, ew as u32, eh as u32, rotation, final_color);
+                // Rotate around canvas center (like CSS transform-origin: center)
+                let pivot_x = cx as f32 + cw as f32 / 2.0;
+                let pivot_y = cy as f32 + ch as f32 / 2.0;
+                let transform =
+                    tiny_skia::Transform::from_rotate_at(rotation.to_degrees(), pivot_x, pivot_y);
+                let mut paint = tiny_skia::Paint::default();
+                let c = final_color;
+                let color = tiny_skia::Color::from_rgba(
+                    ((c >> 24) & 0xFF) as f32 / 255.0,
+                    ((c >> 16) & 0xFF) as f32 / 255.0,
+                    ((c >> 8) & 0xFF) as f32 / 255.0,
+                    (c & 0xFF) as f32 / 255.0,
+                )
+                .unwrap_or(tiny_skia::Color::TRANSPARENT);
+                paint.set_color(color);
+                paint.anti_alias = true;
+                if let Some(rect) = tiny_skia::Rect::from_xywh(rx, ry, ew, eh) {
+                    pixmap.fill_rect(rect, &paint, transform, None);
+                }
             }
+        }
+        DrawCommand::Circle {
+            cx: circle_cx,
+            cy: circle_cy,
+            r,
+            color,
+        } => {
+            let er = *r * scale;
+            let scx = *circle_cx + offset_x;
+            let scy = *circle_cy + offset_y;
+            let final_color = if alpha < 1.0 {
+                multiply_alpha(color_override.unwrap_or(*color), alpha)
+            } else {
+                color_override.unwrap_or(*color)
+            };
+            draw_circle(
+                pixmap,
+                cx + scx as i32,
+                cy + scy as i32,
+                er as u32,
+                final_color,
+            );
         }
         DrawCommand::Centered { inner } => {
             let (iw, ih) = get_draw_bounds(inner);
@@ -1172,6 +1233,7 @@ fn render_draw_inner(
                         1.0
                     };
                     acc_orbit_angle += interp.angle - current_values.angle;
+                    acc_rotation += interp.rotation - current_values.rotation;
                     if interp.color != current_values.color {
                         acc_color = Some(interp.color);
                     }
@@ -1232,6 +1294,15 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             color: *color,
             ..Default::default()
         },
+        DrawCommand::Circle {
+            cx, cy, r, color, ..
+        } => PrevDrawValues {
+            x: *cx,
+            y: *cy,
+            w: *r,
+            color: *color,
+            ..Default::default()
+        },
         DrawCommand::Orbit {
             radius,
             angle,
@@ -1244,13 +1315,25 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
         }
         DrawCommand::Rotated { angle, inner } => {
             let mut vals = extract_draw_values(inner);
-            vals.angle = *angle;
+            vals.rotation = *angle;
             vals
         }
         DrawCommand::Centered { inner } | DrawCommand::Modified { inner, .. } => {
             extract_draw_values(inner)
         }
     }
+}
+
+/// Shortest-path delta for angle interpolation (wraps around TAU).
+fn shortest_angle_delta(from: f32, to: f32) -> f32 {
+    let mut d = to - from;
+    if d > std::f32::consts::PI {
+        d -= std::f32::consts::TAU;
+    }
+    if d < -std::f32::consts::PI {
+        d += std::f32::consts::TAU;
+    }
+    d
 }
 
 /// Linearly interpolate between two sets of draw values.
@@ -1270,8 +1353,9 @@ fn interpolate_draw_values(
         } else {
             interpolate_color(a.color, b.color, t, color_space)
         },
-        angle: a.angle + (b.angle - a.angle) * t,
+        angle: a.angle + shortest_angle_delta(a.angle, b.angle) * t,
         radius: a.radius + (b.radius - a.radius) * t,
+        rotation: a.rotation + shortest_angle_delta(a.rotation, b.rotation) * t,
     }
 }
 

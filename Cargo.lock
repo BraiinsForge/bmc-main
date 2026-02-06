@@ -1164,6 +1164,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-wasm-protocol",
+ "chrono",
  "cosmic-text",
  "minifb",
  "notify",

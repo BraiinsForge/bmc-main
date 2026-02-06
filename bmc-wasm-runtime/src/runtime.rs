@@ -5,6 +5,7 @@
 #![expect(clippy::too_many_lines, clippy::cast_possible_truncation)]
 
 use anyhow::Result;
+use chrono::{Datelike, Local, Timelike};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::components::{ButtonStyle, draw_button};
@@ -293,6 +294,36 @@ impl WasmWidgetRuntime {
                     .tree_clicks
                     .get(index as usize)
                     .map_or(0, |&c| i32::from(c))
+            },
+        )?;
+
+        // System time — writes 20-byte struct to WASM memory at out_ptr
+        linker.func_wrap(
+            "env",
+            "host_get_system_time",
+            |mut caller: Caller<'_, HostState>, out_ptr: u32| {
+                let now = Local::now();
+                let mut buf = [0_u8; 20];
+                buf[0..8].copy_from_slice(&now.timestamp().to_le_bytes());
+                buf[8..12].copy_from_slice(&now.offset().local_minus_utc().to_le_bytes());
+                #[expect(clippy::cast_sign_loss)]
+                let year = now.year() as u16;
+                buf[12..14].copy_from_slice(&year.to_le_bytes());
+                buf[14] = now.month() as u8;
+                buf[15] = now.day() as u8;
+                buf[16] = now.hour() as u8;
+                buf[17] = now.minute() as u8;
+                buf[18] = now.second() as u8;
+                buf[19] = now.weekday().num_days_from_monday() as u8;
+
+                let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                if let Some(memory) = memory {
+                    let data = memory.data_mut(&mut caller);
+                    let start = out_ptr as usize;
+                    if start + 20 <= data.len() {
+                        data[start..start + 20].copy_from_slice(&buf);
+                    }
+                }
             },
         )?;
 

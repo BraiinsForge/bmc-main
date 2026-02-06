@@ -26,8 +26,11 @@ pub struct PrevDrawValues {
     pub w: f32,
     pub h: f32,
     pub color: u32,
+    /// Orbit angle (for `Orbit` draw commands).
     pub angle: f32,
     pub radius: f32,
+    /// Rotation angle (for `Rotated` draw commands).
+    pub rotation: f32,
 }
 
 /// State for a single transition instance.
