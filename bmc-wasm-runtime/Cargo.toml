@@ -36,5 +36,8 @@ name = "testbed"
 path = "src/bin/testbed.rs"
 required-features = ["testbed"]
 
+[build-dependencies]
+bmc-icon-compiler = { path = "icon-compiler" }
+
 [lints]
 workspace = true

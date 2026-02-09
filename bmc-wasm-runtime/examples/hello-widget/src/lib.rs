@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! SDK component showcase - buttons, colors, animations, rich text.
+//! SDK component showcase - buttons, colors, animations, rich text, icons.
 
 use bmc_wasm_sdk::*;
 use std::cell::{Cell, RefCell};
@@ -9,6 +9,12 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use AnimProperty::*;
 use Easing::*;
 use LoopMode::*;
+
+const STAR: Icon = include_icon!("assets/star.svg");
+const SETTINGS: Icon = include_icon!("assets/settings.svg");
+const CHECKMARK: Icon = include_icon!("assets/checkmark.svg");
+const WARNING: Icon = include_icon!("assets/warning.svg");
+const SEARCH: Icon = include_icon!("assets/search.svg");
 
 thread_local! {
     static WIDTH: Cell<u32> = const { Cell::new(1_280) };
@@ -31,25 +37,61 @@ pub extern "C" fn init(width: u32, height: u32) {
 
 fn buttons_section(counts: [u32; 4]) -> Node {
     col(
-        props!(gap: 16.0, flex: 1.0),
+        props!(gap: 8.0, flex: 1.0),
         [
             text("Buttons", style!(size: 20, color: GRAY_10)),
             row(
-                props!(gap: 12.0),
+                props!(gap: 8.0),
                 [
-                    button(ButtonStyle::Primary, fmt!("Primary {}", counts[0])),
-                    button(ButtonStyle::Secondary, fmt!("Secondary {}", counts[1])),
+                    button(ButtonStyle::Primary, None, fmt!("Primary {}", counts[0])),
+                    button(
+                        ButtonStyle::Secondary,
+                        None,
+                        fmt!("Secondary {}", counts[1]),
+                    ),
                 ],
             ),
             row(
-                props!(gap: 12.0),
+                props!(gap: 8.0),
                 [
-                    button(ButtonStyle::Tertiary, fmt!("Tertiary {}", counts[2])),
-                    button(ButtonStyle::Danger, fmt!("Danger {}", counts[3])),
+                    button(ButtonStyle::Tertiary, None, fmt!("Tertiary {}", counts[2])),
+                    button(ButtonStyle::Danger, None, fmt!("Danger {}", counts[3])),
                 ],
             ),
             spacer(1.0),
-            button(ButtonStyle::Primary, "Open Modal"),
+            button(ButtonStyle::Primary, None, "Open Modal"),
+        ],
+    )
+}
+
+fn icon_buttons_section() -> Node {
+    col(
+        props!(gap: 8.0),
+        [
+            text("Icon Buttons", style!(size: 16, color: GRAY_10)),
+            row(
+                props!(gap: 8.0),
+                [
+                    button(
+                        ButtonStyle::Primary,
+                        tree::ensure_registered(&SETTINGS),
+                        "Settings",
+                    ),
+                    button(
+                        ButtonStyle::Secondary,
+                        tree::ensure_registered(&CHECKMARK),
+                        "Apply",
+                    ),
+                ],
+            ),
+            row(
+                props!(gap: 8.0),
+                [
+                    button(ButtonStyle::Secondary, tree::ensure_registered(&SEARCH), ""),
+                    button(ButtonStyle::Danger, tree::ensure_registered(&WARNING), ""),
+                    button(ButtonStyle::Primary, ICON_CLOSE, ""),
+                ],
+            ),
         ],
     )
 }
@@ -95,8 +137,7 @@ fn clock_canvas(hour_angle: f32, minute_angle: f32, second_angle: f32) -> Node {
         draws.push(orbit(54.0, angle, rect(0.0, 0.0, 3.0, 3.0, GRAY_50)));
     }
 
-    // Hands: rotated() now pivots around canvas center.
-    // Position with bottom-center at canvas center, extending upward.
+    // Hands: rotated() pivots around canvas center
     // Hour hand
     draws.push(
         rotated(hour_angle, rect(C - 3.0, C - 32.0, 6.0, 36.0, GRAY_10)).transition(500, EaseOut),
@@ -113,6 +154,42 @@ fn clock_canvas(hour_angle: f32, minute_angle: f32, second_angle: f32) -> Node {
     draws.push(centered(rect(0.0, 0.0, 8.0, 8.0, GRAY_10)));
 
     canvas(props!(width: S, height: S), draws)
+}
+
+fn icons_section() -> Node {
+    col(
+        props!(gap: 12.0, flex: 1.0),
+        [
+            text("Icons", style!(size: 20, color: GRAY_10)),
+            text("Custom (include_icon!)", style!(size: 12, color: GRAY_50)),
+            canvas(
+                props!(width: 180.0, height: 40.0),
+                [
+                    icon(0.0, 4.0, 32.0, 32.0, &STAR, VIOLET_50),
+                    icon(40.0, 4.0, 32.0, 32.0, &SETTINGS, GREEN_50),
+                    icon(80.0, 4.0, 32.0, 32.0, &CHECKMARK, RED_50),
+                    icon(120.0, 4.0, 32.0, 32.0, &WARNING, ORANGE_50),
+                ],
+            ),
+            text("Built-in (icon_builtin)", style!(size: 12, color: GRAY_50)),
+            canvas(
+                props!(width: 100.0, height: 40.0),
+                [
+                    icon_builtin(0.0, 4.0, 32.0, 32.0, ICON_CLOSE, GRAY_10),
+                    icon_builtin(40.0, 4.0, 32.0, 32.0, ICON_CLOSE, RED_50),
+                ],
+            ),
+            text("Animated", style!(size: 12, color: GRAY_50)),
+            canvas(
+                props!(width: 64.0, height: 64.0),
+                [centered(
+                    icon(0.0, 0.0, 32.0, 32.0, &STAR, ORANGE_50)
+                        .animate(Rotate, 0.0, TAU, 3_000, Linear, Forever)
+                        .animate(Scale, 0.6, 1.0, 1_500, EaseInOut, PingPong),
+                )],
+            ),
+        ],
+    )
 }
 
 fn colors_section() -> Node {
@@ -147,7 +224,7 @@ fn colors_section() -> Node {
 
 fn rich_text_section() -> Node {
     col(
-        props!(gap: 12.0, background: color!(GRAY_90, alpha: 0.9), padding: 16.0),
+        props!(flex: 1.0, gap: 8.0, background: color!(GRAY_90, alpha: 0.9), padding: 12.0),
         [
             text("Rich Text", style!(size: 20, color: GRAY_10)),
             row(
@@ -222,6 +299,10 @@ fn about_modal() -> Node {
                 style!(size: 14),
             ),
             text(
+                "\u{2022} Icon buttons (icon-only, icon+text, built-in)",
+                style!(size: 14),
+            ),
+            text(
                 "\u{2022} Animations (rotation, pulse, fade)",
                 style!(size: 14),
             ),
@@ -282,24 +363,31 @@ pub extern "C" fn render(_delta_ms: u32) {
         w,
         h,
         col(
-            props!(background: BG_COLOR, padding: 24.0, gap: 24.0),
+            props!(background: BG_COLOR, padding: 16.0, gap: 16.0),
             [
                 row(
-                    props!(gap: 32.0),
+                    props!(gap: 24.0),
                     [
                         buttons_section(counts),
                         animations_section(&time),
+                        icons_section(),
                         colors_section(),
                     ],
                 ),
-                rich_text_section(),
+                row(
+                    props!(gap: 24.0),
+                    [icon_buttons_section(), rich_text_section()],
+                ),
                 about_modal(),
             ],
         ),
     );
 
     // Handle button clicks
-    // Buttons 0-3: counter buttons, 4: open modal, 5: modal close
+    // 0-3: counter buttons, 4: Open Modal
+    // 5-6: icon+text buttons (Settings, Apply)
+    // 7-9: icon-only buttons (Search, Warning, Close)
+    // 10: modal close (auto-added by host)
     for (i, &clicked) in result.clicks.iter().enumerate() {
         if clicked {
             match i {
@@ -310,7 +398,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                     });
                 }
                 4 => MODAL_OPEN.set(true),
-                5 => MODAL_OPEN.set(false),
+                10 => MODAL_OPEN.set(false),
                 _ => {}
             }
         }

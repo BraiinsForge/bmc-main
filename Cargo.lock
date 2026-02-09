@@ -889,6 +889,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-icon-compiler"
+version = "0.1.0"
+dependencies = [
+ "usvg",
+]
+
+[[package]]
 name = "bmc-ipc"
 version = "0.1.0"
 dependencies = [
@@ -1163,6 +1170,7 @@ name = "bmc-wasm-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-icon-compiler",
  "bmc-wasm-protocol",
  "chrono",
  "cosmic-text",

@@ -4,7 +4,6 @@
 
 - Node-level animations/transitions (apply to layout nodes, not just draw commands)
 - Explicit `phase_offset` for time-synced staggered animations
-- SVG icon rendering (usvg + FemtoVG path primitives)
 
 ## API Enhancements
 

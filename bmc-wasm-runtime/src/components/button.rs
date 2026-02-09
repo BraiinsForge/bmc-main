@@ -73,7 +73,17 @@ impl ButtonStyle {
 /// Button font size
 const BUTTON_FONT_SIZE: f32 = 16.0;
 
-/// Draw a button with label and check if it was clicked.
+/// Icon size within buttons
+const BUTTON_ICON_SIZE: f32 = 16.0;
+
+/// Gap between icon and text
+const ICON_TEXT_GAP: f32 = 8.0;
+
+/// Draw a button with optional icon and label, and check if it was clicked.
+///
+/// - `icon_id == 0`: text-only button
+/// - `icon_id != 0, label empty`: icon-only button (icon centered)
+/// - `icon_id != 0, label present`: icon + text button
 ///
 /// Returns `true` the frame the button was clicked (immediate-mode pattern).
 #[expect(clippy::too_many_arguments)]
@@ -87,6 +97,7 @@ pub fn draw_button(
     w: f32,
     h: f32,
     style: ButtonStyle,
+    icon_id: u16,
 ) -> bool {
     let bounds = Rect::new(x as i32, y as i32, w as u32, h as u32);
     let is_pressed = interaction.is_pressed(key);
@@ -109,20 +120,55 @@ pub fn draw_button(
         renderer.fill_rect(x, y, w, h, bg_color);
     }
 
-    // Center the label with simple arithmetic
-    let text_w = renderer.measure_text(label, BUTTON_FONT_SIZE);
-    let text_h = BUTTON_FONT_SIZE * 1.2;
-
-    let text_x = x + (w - text_w) / 2.0;
-    let text_y = y + (h - text_h) / 2.0;
-
     let fg_color = if style.is_outline() && is_pressed {
         BTN_TERTIARY_FG_ACTIVE
     } else {
         BTN_FG
     };
 
-    renderer.draw_text(label, text_x, text_y, BUTTON_FONT_SIZE, fg_color);
+    let has_icon = icon_id != 0;
+    let has_label = !label.is_empty();
+
+    if has_icon && has_label {
+        // Icon + text: [icon 16x16] [8px gap] [text], centered together
+        let text_w = renderer.measure_text(label, BUTTON_FONT_SIZE);
+        let content_w = BUTTON_ICON_SIZE + ICON_TEXT_GAP + text_w;
+        let content_x = x + (w - content_w) / 2.0;
+
+        let icon_y = y + (h - BUTTON_ICON_SIZE) / 2.0;
+        renderer.draw_icon(
+            content_x,
+            icon_y,
+            BUTTON_ICON_SIZE,
+            BUTTON_ICON_SIZE,
+            fg_color,
+            icon_id,
+        );
+
+        let text_h = BUTTON_FONT_SIZE * 1.2;
+        let text_x = content_x + BUTTON_ICON_SIZE + ICON_TEXT_GAP;
+        let text_y = y + (h - text_h) / 2.0;
+        renderer.draw_text(label, text_x, text_y, BUTTON_FONT_SIZE, fg_color);
+    } else if has_icon {
+        // Icon-only: centered in button
+        let icon_x = x + (w - BUTTON_ICON_SIZE) / 2.0;
+        let icon_y = y + (h - BUTTON_ICON_SIZE) / 2.0;
+        renderer.draw_icon(
+            icon_x,
+            icon_y,
+            BUTTON_ICON_SIZE,
+            BUTTON_ICON_SIZE,
+            fg_color,
+            icon_id,
+        );
+    } else {
+        // Text-only: centered
+        let text_w = renderer.measure_text(label, BUTTON_FONT_SIZE);
+        let text_h = BUTTON_FONT_SIZE * 1.2;
+        let text_x = x + (w - text_w) / 2.0;
+        let text_y = y + (h - text_h) / 2.0;
+        renderer.draw_text(label, text_x, text_y, BUTTON_FONT_SIZE, fg_color);
+    }
 
     // Register hit region and check for click
     interaction.button(key, bounds)

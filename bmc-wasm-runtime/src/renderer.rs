@@ -71,6 +71,14 @@ pub trait Renderer {
         clip_bottom: f32,
     );
 
+    // -- Icons --
+
+    /// Register icon data (compact binary from proc macro), returns opaque ID.
+    fn register_icon(&mut self, data: &[u8]) -> u16;
+
+    /// Draw a registered icon at the given position and size.
+    fn draw_icon(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32, icon_id: u16);
+
     // -- Frame lifecycle --
 
     fn begin_frame(&mut self, width: u32, height: u32);

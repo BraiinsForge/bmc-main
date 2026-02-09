@@ -35,14 +35,13 @@ validate:
 # Profiling with samply (install: cargo install samply)
 .PHONY: profile
 profile:
-	@samply --version >/dev/null 2>&1 || (echo "Error: samply not found. Install with: cargo install samply" && exit 1)
+	@command -v samply >/dev/null 2>&1 || { echo "Error: samply not found. Install with: cargo install samply"; exit 1; }
 	@PARANOID=$$(cat /proc/sys/kernel/perf_event_paranoid); \
-	test "$$PARANOID" -eq -1 || (echo "Error: /proc/sys/kernel/perf_event_paranoid=$$PARANOID (expected -1). Run: echo '-1' | sudo tee /proc/sys/kernel/perf_event_paranoid" && exit 1); \
-	echo "perf_event_paranoid is set to -1"
+	test "$$PARANOID" -eq -1 || { echo "Error: /proc/sys/kernel/perf_event_paranoid=$$PARANOID (expected -1). Run: echo '-1' | sudo tee /proc/sys/kernel/perf_event_paranoid"; exit 1; }
 
 	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
 	cargo build --profile profiling --features testbed --bin testbed
-	$(HOME)/.cargo/bin/samply record ../target/profiling/testbed $(subst /debug/,/release/,$(WASM_FILE))
+	samply record ../target/profiling/testbed $(subst /debug/,/release/,$(WASM_FILE))
 
 # Measure WASM binary size (install: brew install binaryen)
 WASM_RELEASE := $(EXAMPLE_DIR)/target/$(WASM_TARGET)/release/$(subst -,_,$(EXAMPLE)).wasm

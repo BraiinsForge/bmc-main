@@ -1,0 +1,47 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Icon binary format constants shared between the proc macro and host runtime.
+//!
+//! Binary format (emitted by `include_icon!`, parsed by host `IconRegistry`):
+//!
+//! ```text
+//! [viewbox_w: f32][viewbox_h: f32][path_count: u16]
+//!   for each path:
+//!     [flags: u8]              // bit 0: has_fill, bit 1: has_stroke
+//!     [fill_color: u32]        // RGBA, present if has_fill
+//!     [stroke_color: u32]      // RGBA, present if has_stroke
+//!     [stroke_width: f32]      // present if has_stroke
+//!     [op_count: u16]
+//!       for each op: [type: u8][data...]
+//! ```
+
+/// Path operation: move to (x, y) — 2×f32
+pub const ICON_OP_MOVE_TO: u8 = 0x00;
+
+/// Path operation: line to (x, y) — 2×f32
+pub const ICON_OP_LINE_TO: u8 = 0x01;
+
+/// Path operation: quadratic bezier (cx, cy, x, y) — 4×f32
+pub const ICON_OP_QUAD_TO: u8 = 0x02;
+
+/// Path operation: cubic bezier (cx1, cy1, cx2, cy2, x, y) — 6×f32
+pub const ICON_OP_CUBIC_TO: u8 = 0x03;
+
+/// Path operation: close path — no data
+pub const ICON_OP_CLOSE: u8 = 0x04;
+
+/// Flag bit: path has a fill color
+pub const ICON_FLAG_HAS_FILL: u8 = 0x01;
+
+/// Flag bit: path has a stroke
+pub const ICON_FLAG_HAS_STROKE: u8 = 0x02;
+
+// ── Built-in icon IDs ───────────────────────────────────────────────
+// Reserved range 0xFF00..=0xFFFF for host-bundled icons.
+// User-registered icons use IDs 1.. (no collision).
+
+/// Base ID for built-in icons.
+pub const ICON_BUILTIN_BASE: u16 = 0xFF00;
+
+/// Close (X) icon — used by modal close button.
+pub const ICON_CLOSE: u16 = 0xFF01;

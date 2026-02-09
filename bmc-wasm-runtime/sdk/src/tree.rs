@@ -12,16 +12,50 @@
 use std::string::String;
 use std::vec::Vec;
 
+use std::cell::RefCell;
+
 use bmc_wasm_protocol::{
-    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_CIRCLE, DRAW_MODIFIED, DRAW_ORBIT, DRAW_RECT,
-    DRAW_ROTATED, Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN,
-    NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED, DRAW_ORBIT,
+    DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER,
+    NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for macro paths
 pub use bmc_wasm_protocol::{PropsData, TextStyle};
 
 use crate::host::ButtonStyle;
+
+/// Compiled icon data (output of `include_icon!` proc macro).
+///
+/// The `data` field contains the compact binary representation of SVG paths
+/// produced at compile time. On first use, this data is sent to the host via
+/// `host_register_icon()` which returns an opaque ID used for rendering.
+pub struct Icon {
+    pub data: &'static [u8],
+}
+
+// Icon registration — lazy, once per icon per runtime lifetime.
+thread_local! {
+    static ICON_IDS: RefCell<Vec<(usize, u16)>> = RefCell::new(Vec::new());
+}
+
+/// Register an icon with the host (if not already registered) and return its ID.
+///
+/// Useful when you need a raw icon ID for `button_with_icon` or `icon_button`.
+pub fn ensure_registered(icon: &Icon) -> u16 {
+    ICON_IDS.with(|ids| {
+        let mut ids = ids.borrow_mut();
+        let key = icon.data.as_ptr() as usize;
+        for &(k, id) in ids.iter() {
+            if k == key {
+                return id;
+            }
+        }
+        let id = crate::host::register_icon(icon.data);
+        ids.push((key, id));
+        id
+    })
+}
 
 /// Definition of a single animation (serialized to host).
 #[derive(Clone, Debug)]
@@ -210,9 +244,10 @@ impl TreeBuffer {
     }
 
     /// Write a button node
-    pub fn write_button(&mut self, label: &str, style: ButtonStyle) {
+    pub fn write_button(&mut self, label: &str, style: ButtonStyle, icon_id: u16) {
         self.write_u8(NODE_BUTTON);
         self.write_u8(style as u8);
+        self.write_u16(icon_id);
         let bytes = label.as_bytes();
         self.write_u16(bytes.len() as u16);
         self.write_bytes(bytes);
@@ -329,6 +364,15 @@ pub enum Draw {
     },
     /// Rotate any draw command around its center
     Rotated { angle: f32, inner: Box<Draw> },
+    /// Icon at absolute local position
+    Icon {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: u32,
+        icon_id: u16,
+    },
     /// Draw with host-computed animations and/or transitions
     Modified {
         animations: Vec<AnimationDef>,
@@ -475,6 +519,7 @@ pub enum Node {
     Button {
         label: String,
         style: ButtonStyle,
+        icon_id: u16,
     },
     Spacer {
         flex: f32,
@@ -547,11 +592,18 @@ pub fn paragraph(style: StyleResult, spans: impl IntoIterator<Item = Span>) -> N
     }
 }
 
-/// Button node
-pub fn button(style: ButtonStyle, label: impl Into<String>) -> Node {
+/// Button node with optional icon.
+///
+/// ```ignore
+/// button(ButtonStyle::Primary, None, "Click me")          // text only
+/// button(ButtonStyle::Primary, gear_id, "Settings")       // icon + text
+/// button(ButtonStyle::Primary, close_id, "")              // icon only
+/// ```
+pub fn button(style: ButtonStyle, icon: impl Into<Option<u16>>, label: impl Into<String>) -> Node {
     Node::Button {
         label: label.into(),
         style,
+        icon_id: icon.into().unwrap_or(0),
     }
 }
 
@@ -677,6 +729,39 @@ pub fn rotated(angle: f32, inner: Draw) -> Draw {
     }
 }
 
+/// Icon at local position within canvas.
+///
+/// On first call for a given icon, registers its compiled data with the host.
+/// Subsequent calls reuse the cached host ID — zero per-frame overhead.
+///
+/// Use `TRANSPARENT` (0) as color to render with original SVG colors,
+/// or pass a color to tint the entire icon.
+pub fn icon(x: f32, y: f32, w: f32, h: f32, icon_data: &Icon, color: u32) -> Draw {
+    let icon_id = ensure_registered(icon_data);
+    Draw::Icon {
+        x,
+        y,
+        w,
+        h,
+        color,
+        icon_id,
+    }
+}
+
+/// Draw a built-in icon in canvas (no registration needed).
+///
+/// Use `ICON_CLOSE` or other `ICON_*` constants from the protocol crate.
+pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: u16, color: u32) -> Draw {
+    Draw::Icon {
+        x,
+        y,
+        w,
+        h,
+        color,
+        icon_id,
+    }
+}
+
 /// Serialize a node tree to the buffer
 fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
     match node {
@@ -705,8 +790,12 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
         } => {
             buf.write_paragraph(props, base_style, spans);
         }
-        Node::Button { label, style } => {
-            buf.write_button(label, *style);
+        Node::Button {
+            label,
+            style,
+            icon_id,
+        } => {
+            buf.write_button(label, *style, *icon_id);
         }
         Node::Spacer { flex } => {
             buf.write_spacer(*flex);
@@ -754,6 +843,22 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*cy);
             buf.write_f32(*r);
             buf.write_u32(*color);
+        }
+        Draw::Icon {
+            x,
+            y,
+            w,
+            h,
+            color,
+            icon_id,
+        } => {
+            buf.write_u8(DRAW_ICON);
+            buf.write_f32(*x);
+            buf.write_f32(*y);
+            buf.write_f32(*w);
+            buf.write_f32(*h);
+            buf.write_u32(*color);
+            buf.write_u16(*icon_id);
         }
         Draw::Centered { inner } => {
             buf.write_u8(DRAW_CENTERED);

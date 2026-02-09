@@ -229,10 +229,41 @@ impl WasmWidgetRuntime {
                         w as f32,
                         h as f32,
                         ButtonStyle::from(style),
+                        0,
                     );
                     return i32::from(clicked);
                 }
                 0
+            },
+        )?;
+
+        // Icon registration
+        linker.func_wrap(
+            "env",
+            "host_register_icon",
+            |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
+                let icon_data = {
+                    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                    if let Some(memory) = memory {
+                        let data = memory.data(&caller);
+                        let start = data_ptr as usize;
+                        let end = start + data_len as usize;
+                        if end <= data.len() {
+                            Some(data[start..end].to_vec())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(data) = icon_data {
+                    let state = caller.data_mut();
+                    u32::from(state.renderer.register_icon(&data))
+                } else {
+                    0
+                }
             },
         )?;
 

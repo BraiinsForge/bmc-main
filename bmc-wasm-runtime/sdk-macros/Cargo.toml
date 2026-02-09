@@ -1,15 +1,16 @@
 [package]
-name = "bmc-wasm-sdk"
+name = "bmc-wasm-sdk-macros"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-crate-type = ["rlib"]
+proc-macro = true
 
 [dependencies]
-bmc-wasm-protocol = { path = "../protocol" }
-bmc-wasm-sdk-macros = { path = "../sdk-macros" }
-ufmt = { version = "0.2", features = ["std"] }
+bmc-icon-compiler = { path = "../icon-compiler" }
+proc-macro2 = "1"
+quote = "1"
+syn = "2"
 
 [lints.rust]
 unused_must_use = "deny"
@@ -23,5 +24,3 @@ module_name_repetitions = "allow"
 
 # Keep this crate out of the main workspace
 [workspace]
-
-[workspace.dependencies]

@@ -37,6 +37,9 @@ unsafe extern "C" {
     fn host_submit_tree(ptr: *const u8, len: u32, width: u32, height: u32);
     fn host_get_button_count() -> u32;
     fn host_get_click(index: u32) -> i32;
+
+    // Icon registration
+    fn host_register_icon(data_ptr: *const u8, data_len: u32) -> u32;
 }
 
 /// Fill a rectangle with a solid color.
@@ -158,4 +161,10 @@ pub fn get_button_count() -> u32 {
 /// Check if button at index was clicked.
 pub fn get_click(index: u32) -> bool {
     unsafe { host_get_click(index) != 0 }
+}
+
+/// Register icon data with the host, returns an opaque icon ID.
+#[expect(clippy::cast_possible_truncation)]
+pub fn register_icon(data: &[u8]) -> u16 {
+    unsafe { host_register_icon(data.as_ptr(), data.len() as u32) as u16 }
 }

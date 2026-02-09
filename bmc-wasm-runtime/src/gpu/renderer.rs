@@ -14,6 +14,7 @@ use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, Color, FontId, Paint, Path};
 
+use super::icons::IconRegistry;
 use super::text::{ParagraphLayoutCache, to_femtovg_color};
 use crate::renderer::Renderer;
 use crate::tree::{SpanData, TextStyle};
@@ -34,6 +35,7 @@ pub struct FemtoVgRenderer {
     font_bold: FontId,
     font_system: cosmic_text::FontSystem,
     paragraph_cache: ParagraphLayoutCache,
+    icon_registry: IconRegistry,
     width: f32,
     height: f32,
     frame_counter: u64,
@@ -78,12 +80,16 @@ impl FemtoVgRenderer {
         db.load_font_data(FONT_BOLD.to_vec());
         let font_system = cosmic_text::FontSystem::new_with_locale_and_db("en-US".into(), db);
 
+        let mut icon_registry = IconRegistry::new();
+        icon_registry.register_builtins();
+
         Ok(Self {
             canvas,
             font_regular,
             font_bold,
             font_system,
             paragraph_cache: ParagraphLayoutCache::new(),
+            icon_registry,
             width: width as f32,
             height: height as f32,
             frame_counter: 0,
@@ -228,6 +234,18 @@ impl Renderer for FemtoVgRenderer {
         self.push_scissor(x, clip_top, max_width, clip_bottom - clip_top);
         self.draw_paragraph(style, spans, x, y, max_width);
         self.pop_scissor();
+    }
+
+    // -- Icons --
+
+    fn register_icon(&mut self, data: &[u8]) -> u16 {
+        self.icon_registry.register(data)
+    }
+
+    fn draw_icon(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32, icon_id: u16) {
+        if let Some(icon) = self.icon_registry.get(icon_id) {
+            super::icons::draw_icon(&mut self.canvas, icon, x, y, w, h, color);
+        }
     }
 
     // -- Frame lifecycle --

@@ -23,7 +23,7 @@ and rendering. Animations and transitions are declared in the tree and computed 
 keeping WASM binaries small by offloading text shaping, layout, and animation math to
 native code.
 
-See [docs/GPU_RENDERING.md](docs/GPU_RENDERING.md) for rendering architecture details.
+See [GPU Rendering](docs/devlog/hosted-wasm/GPU_RENDERING.md) and [SVG Icons](docs/devlog/hosted-wasm/SVG_ICONS.md) for architecture details.
 
 ## SDK API
 

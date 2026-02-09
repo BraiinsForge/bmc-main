@@ -11,9 +11,10 @@
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::{
-    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_CIRCLE, DRAW_MODIFIED, DRAW_ORBIT, DRAW_RECT,
-    DRAW_ROTATED, Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90, GRAY_100, LoopMode, NODE_BUTTON,
-    NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED, DRAW_ORBIT,
+    DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90, GRAY_100, ICON_CLOSE,
+    LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH,
+    NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for other modules
@@ -88,6 +89,14 @@ pub enum DrawCommand {
         r: f32,
         color: u32,
     },
+    Icon {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: u32,
+        icon_id: u16,
+    },
     Rotated {
         angle: f32,
         inner: Box<DrawCommand>,
@@ -114,6 +123,7 @@ pub enum TreeNode {
     Button {
         label: String,
         style: u8,
+        icon_id: u16,
     },
     Spacer {
         flex: f32,
@@ -279,9 +289,14 @@ impl<'a> TreeReader<'a> {
             }
             NODE_BUTTON => {
                 let style = self.read_u8()?;
+                let icon_id = self.read_u16()?;
                 let len = self.read_u16()?;
                 let label = self.read_string(len)?;
-                Ok(TreeNode::Button { label, style })
+                Ok(TreeNode::Button {
+                    label,
+                    style,
+                    icon_id,
+                })
             }
             NODE_SPACER => {
                 let flex = self.read_f32()?;
@@ -323,6 +338,7 @@ impl<'a> TreeReader<'a> {
         }
     }
 
+    #[expect(clippy::too_many_lines)]
     fn read_draw(&mut self) -> Result<DrawCommand> {
         let draw_type = self.read_u8()?;
         match draw_type {
@@ -340,6 +356,22 @@ impl<'a> TreeReader<'a> {
                 let r = self.read_f32()?;
                 let color = self.read_u32()?;
                 Ok(DrawCommand::Circle { cx, cy, r, color })
+            }
+            DRAW_ICON => {
+                let x = self.read_f32()?;
+                let y = self.read_f32()?;
+                let w = self.read_f32()?;
+                let h = self.read_f32()?;
+                let color = self.read_u32()?;
+                let icon_id = self.read_u16()?;
+                Ok(DrawCommand::Icon {
+                    x,
+                    y,
+                    w,
+                    h,
+                    color,
+                    icon_id,
+                })
             }
             DRAW_CENTERED => {
                 let inner = self.read_draw()?;
@@ -485,8 +517,8 @@ struct ParagraphData {
 struct NodeContext {
     background: u32,
     paragraph: Option<ParagraphData>,
-    button: Option<(u32, String, u8)>, // id, label, style
-    draws: Vec<DrawCommand>,           // canvas draw commands
+    button: Option<(u32, String, u8, u16)>, // id, label, style, icon_id
+    draws: Vec<DrawCommand>,                // canvas draw commands
 }
 
 /// Collected modal info for overlay rendering
@@ -557,31 +589,29 @@ pub fn process_tree(
             }
 
             // Measure paragraphs based on available width
-            if let Some(ctx) = node_context {
-                if let Some(ref para) = ctx.paragraph {
-                    let available_width = match available_space.width {
-                        AvailableSpace::Definite(w) => Some(w),
-                        AvailableSpace::MinContent => Some(0.0),
-                        AvailableSpace::MaxContent => None,
-                    };
+            if let Some(ctx) = node_context
+                && let Some(ref para) = ctx.paragraph
+            {
+                let available_width = match available_space.width {
+                    AvailableSpace::Definite(w) => Some(w),
+                    AvailableSpace::MinContent => Some(0.0),
+                    AvailableSpace::MaxContent => None,
+                };
 
-                    // Use explicit max_width if set, otherwise use available width
-                    let max_width = if para.base_style.max_width > 0 {
-                        Some(
-                            (para.base_style.max_width as f32)
-                                .min(available_width.unwrap_or(f32::MAX)),
-                        )
-                    } else {
-                        available_width
-                    };
+                // Use explicit max_width if set, otherwise use available width
+                let max_width = if para.base_style.max_width > 0 {
+                    Some(
+                        (para.base_style.max_width as f32).min(available_width.unwrap_or(f32::MAX)),
+                    )
+                } else {
+                    available_width
+                };
 
-                    let (w, h) =
-                        renderer.measure_paragraph(&para.base_style, &para.spans, max_width);
-                    return Size {
-                        width: w,
-                        height: h,
-                    };
-                }
+                let (w, h) = renderer.measure_paragraph(&para.base_style, &para.spans, max_width);
+                return Size {
+                    width: w,
+                    height: h,
+                };
             }
 
             // Default for non-paragraph nodes without explicit size
@@ -738,13 +768,26 @@ fn build_taffy_node(
         TreeNode::Button {
             label,
             style: btn_style,
+            icon_id,
         } => {
             let id_num = *button_id;
             *button_id += 1;
             result.clicks.push(false);
 
-            let width = (label.len() as f32 * 10.0).max(120.0) + 32.0;
-            let height = 48.0;
+            let has_icon = *icon_id != 0;
+            let has_label = !label.is_empty();
+
+            let (width, height) = if has_icon && !has_label {
+                // Icon-only: square button
+                (48.0, 48.0)
+            } else if has_icon && has_label {
+                // Icon + text: icon 16px + 8px gap + text width + padding
+                let text_w = (label.len() as f32 * 10.0).max(40.0);
+                (16.0 + 8.0 + text_w + 32.0, 48.0)
+            } else {
+                // Text-only: unchanged
+                ((label.len() as f32 * 10.0).max(120.0) + 32.0, 48.0)
+            };
 
             let style = Style {
                 size: Size {
@@ -757,7 +800,7 @@ fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
-                    button: Some((id_num, label.clone(), *btn_style)),
+                    button: Some((id_num, label.clone(), *btn_style, *icon_id)),
                     ..Default::default()
                 }),
             )?;
@@ -865,7 +908,7 @@ fn render_taffy_node(
             renderer.draw_paragraph(&para.base_style, &para.spans, x, y, w);
         }
 
-        if let Some((btn_id, ref label, style)) = ctx.button {
+        if let Some((btn_id, ref label, style, icon_id)) = ctx.button {
             let mut key_buf = [0_u8; 16];
             let key = format_btn_key(btn_id, &mut key_buf);
             let clicked = draw_button(
@@ -878,6 +921,7 @@ fn render_taffy_node(
                 w,
                 h,
                 ButtonStyle::from(style as u32),
+                icon_id,
             );
             if (btn_id as usize) < result.clicks.len() {
                 result.clicks[btn_id as usize] = clicked;
@@ -927,7 +971,7 @@ fn render_draw_command(
 /// Get the bounds (width, height) of a draw command
 fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
     match draw {
-        DrawCommand::Rect { w, h, .. } => (*w, *h),
+        DrawCommand::Rect { w, h, .. } | DrawCommand::Icon { w, h, .. } => (*w, *h),
         DrawCommand::Circle { r, .. } => (*r * 2.0, *r * 2.0),
         DrawCommand::Centered { inner }
         | DrawCommand::Rotated { inner, .. }
@@ -978,6 +1022,37 @@ fn render_draw_inner(
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
                 renderer.fill_rect(rx - pivot_x, ry - pivot_y, ew, eh, final_color);
+                renderer.restore();
+            }
+        }
+        DrawCommand::Icon {
+            x,
+            y,
+            w,
+            h,
+            color,
+            icon_id,
+        } => {
+            let ew = *w * scale;
+            let eh = *h * scale;
+            let sx = *x + offset_x + (*w - ew) / 2.0;
+            let sy = *y + offset_y + (*h - eh) / 2.0;
+            let rx = cx + sx;
+            let ry = cy + sy;
+            let final_color = if alpha < 1.0 {
+                multiply_alpha(color_override.unwrap_or(*color), alpha)
+            } else {
+                color_override.unwrap_or(*color)
+            };
+            if rotation == 0.0 {
+                renderer.draw_icon(rx, ry, ew, eh, final_color, *icon_id);
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.draw_icon(rx - pivot_x, ry - pivot_y, ew, eh, final_color, *icon_id);
                 renderer.restore();
             }
         }
@@ -1218,7 +1293,10 @@ fn animation_key(def: &HostAnimationDef, draw_counter: u32) -> u64 {
 /// Extract the static values from a draw command's innermost content for transition tracking.
 fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
     match draw {
-        DrawCommand::Rect { x, y, w, h, color } => PrevDrawValues {
+        DrawCommand::Rect { x, y, w, h, color }
+        | DrawCommand::Icon {
+            x, y, w, h, color, ..
+        } => PrevDrawValues {
             x: *x,
             y: *y,
             w: *w,
@@ -1448,12 +1526,13 @@ fn render_modal(
         renderer,
         interaction,
         close_key,
-        "X",
+        "",
         close_btn_x,
         close_btn_y,
         close_btn_size,
         close_btn_size,
         ButtonStyle::Secondary,
+        ICON_CLOSE,
     );
 
     if close_clicked && (close_btn_id as usize) < result.clicks.len() {
@@ -1602,7 +1681,7 @@ fn render_modal_body(
 }
 
 /// Render a single modal body node, returning its height
-#[expect(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_modal_body_node(
     node: &TreeNode,
     x: f32,
@@ -1636,11 +1715,24 @@ fn render_modal_body_node(
             }
             h
         }
-        TreeNode::Button { label, style } => {
+        TreeNode::Button {
+            label,
+            style,
+            icon_id,
+        } => {
             let btn_id = *button_idx;
             *button_idx += 1;
 
-            let btn_width = (label.len() as f32 * 10.0).max(120.0) + 32.0;
+            let has_icon = *icon_id != 0;
+            let has_label = !label.is_empty();
+            let btn_width = if has_icon && !has_label {
+                48.0
+            } else if has_icon && has_label {
+                let text_w = (label.len() as f32 * 10.0).max(40.0);
+                16.0 + 8.0 + text_w + 32.0
+            } else {
+                (label.len() as f32 * 10.0).max(120.0) + 32.0
+            };
             let btn_height = 48.0;
 
             if y < clip_bottom && y + btn_height > clip_top {
@@ -1656,6 +1748,7 @@ fn render_modal_body_node(
                     btn_width,
                     btn_height,
                     ButtonStyle::from(*style as u32),
+                    *icon_id,
                 );
                 if clicked && (btn_id as usize) < result.clicks.len() {
                     result.clicks[btn_id as usize] = true;

@@ -9,12 +9,13 @@ pub mod host;
 pub mod tree;
 
 pub use bmc_wasm_protocol::*;
+pub use bmc_wasm_sdk_macros::include_icon;
 pub use host::{ButtonStyle, SystemTime, draw_text, fill_rect, request_frame, request_frame_after};
 pub use tree::{
-    AnimationDef, Draw, ModalProps, Node, PropsData, Span, StyleResult, TextStyle, TransitionDef,
-    TreeRenderResult, begin_tree, button, canvas, center, centered, circle, col, finish_tree,
-    modal, modal_styled, orbit, paragraph, rect, render_ui, rotated, row, spacer, span, text,
-    with_buffer,
+    AnimationDef, Draw, Icon, ModalProps, Node, PropsData, Span, StyleResult, TextStyle,
+    TransitionDef, TreeRenderResult, begin_tree, button, canvas, center, centered, circle, col,
+    finish_tree, icon, icon_builtin, modal, modal_styled, orbit, paragraph, rect, render_ui,
+    rotated, row, spacer, span, text, with_buffer,
 };
 pub use ufmt;
 

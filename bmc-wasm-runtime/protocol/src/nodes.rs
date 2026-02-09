@@ -15,6 +15,7 @@ pub const NODE_MODAL: u8 = 0x07;
 // Draw commands — shapes (0x40–0x5F)
 pub const DRAW_RECT: u8 = 0x40;
 pub const DRAW_CIRCLE: u8 = 0x41;
+pub const DRAW_ICON: u8 = 0x42;
 
 // Draw commands — transforms (0x60–0x7F)
 pub const DRAW_CENTERED: u8 = 0x60;
