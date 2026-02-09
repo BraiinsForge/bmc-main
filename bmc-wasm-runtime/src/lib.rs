@@ -8,7 +8,8 @@
 //! See `docs/plan.md` for the full design document.
 
 mod animation;
-mod drawing;
+pub mod gpu;
+pub mod renderer;
 
 // Re-export colors and color macro from protocol crate
 pub mod colors {

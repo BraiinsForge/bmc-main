@@ -4,11 +4,11 @@
 
 - Node-level animations/transitions (apply to layout nodes, not just draw commands)
 - Explicit `phase_offset` for time-synced staggered animations
-- GPU rendering with shaders (wgpu?) to replace tiny-skia software rasterizer
+- SVG icon rendering (usvg + FemtoVG path primitives)
 
 ## API Enhancements
 
-- More draw primitives (circles, lines, arcs)
+- More draw primitives (arcs, bezier curves)
 - Scroll momentum / inertial scrolling for modals
 - Theming support
 

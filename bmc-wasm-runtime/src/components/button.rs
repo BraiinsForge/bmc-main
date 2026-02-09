@@ -3,21 +3,11 @@
 //! Button component with immediate-mode API.
 
 #![allow(clippy::wildcard_imports)]
-#![expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::integer_division
-)]
-
-use cosmic_text::{FontSystem, SwashCache};
-use tiny_skia::Pixmap;
+#![expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 use crate::colors::*;
-use crate::drawing::shapes::{fill_rect, stroke_rect};
-use crate::drawing::text::{ShapedTextCache, draw_text, measure_text};
 use crate::interaction::{InteractionState, Rect};
+use crate::renderer::Renderer;
 
 // Button semantic colors (normal, active/pressed)
 const BTN_PRIMARY_BG: u32 = VIOLET_60;
@@ -81,27 +71,24 @@ impl ButtonStyle {
 }
 
 /// Button font size
-const BUTTON_FONT_SIZE: u32 = 16;
+const BUTTON_FONT_SIZE: f32 = 16.0;
 
 /// Draw a button with label and check if it was clicked.
 ///
 /// Returns `true` the frame the button was clicked (immediate-mode pattern).
 #[expect(clippy::too_many_arguments)]
 pub fn draw_button(
-    pixmap: &mut Pixmap,
-    font_system: &mut FontSystem,
-    swash_cache: &mut SwashCache,
-    text_cache: &mut ShapedTextCache,
+    renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     key: &str,
     label: &str,
-    x: i32,
-    y: i32,
-    w: u32,
-    h: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
     style: ButtonStyle,
 ) -> bool {
-    let bounds = Rect::new(x, y, w, h);
+    let bounds = Rect::new(x as i32, y as i32, w as u32, h as u32);
     let is_pressed = interaction.is_pressed(key);
 
     let (normal_color, active_color) = style.colors();
@@ -114,20 +101,20 @@ pub fn draw_button(
     // Draw button background or border
     if style.is_outline() {
         if is_pressed {
-            fill_rect(pixmap, x, y, w, h, bg_color);
+            renderer.fill_rect(x, y, w, h, bg_color);
         } else {
-            stroke_rect(pixmap, x, y, w, h, 1, style.border_color());
+            renderer.stroke_rect(x, y, w, h, 1.0, style.border_color());
         }
     } else {
-        fill_rect(pixmap, x, y, w, h, bg_color);
+        renderer.fill_rect(x, y, w, h, bg_color);
     }
 
     // Center the label with simple arithmetic
-    let text_w = measure_text(font_system, label, BUTTON_FONT_SIZE);
-    let text_h = (BUTTON_FONT_SIZE as f32 * 1.2) as u32; // line height
+    let text_w = renderer.measure_text(label, BUTTON_FONT_SIZE);
+    let text_h = BUTTON_FONT_SIZE * 1.2;
 
-    let text_x = x + (w as i32 - text_w as i32) / 2;
-    let text_y = y + (h as i32 - text_h as i32) / 2;
+    let text_x = x + (w - text_w) / 2.0;
+    let text_y = y + (h - text_h) / 2.0;
 
     let fg_color = if style.is_outline() && is_pressed {
         BTN_TERTIARY_FG_ACTIVE
@@ -135,17 +122,7 @@ pub fn draw_button(
         BTN_FG
     };
 
-    draw_text(
-        pixmap,
-        font_system,
-        swash_cache,
-        text_cache,
-        label,
-        text_x,
-        text_y,
-        BUTTON_FONT_SIZE,
-        fg_color,
-    );
+    renderer.draw_text(label, text_x, text_y, BUTTON_FONT_SIZE, fg_color);
 
     // Register hit region and check for click
     interaction.button(key, bounds)

@@ -1,24 +1,29 @@
 # WASM Widget Runtime
 
-WebAssembly runtime for Braiins Deck remote widget overlays. Widgets are compiled to WASM and rendered with host-side
-flex layout (Taffy) and text shaping (cosmic-text).
+WebAssembly runtime for Braiins Deck remote widget overlays. Widgets are compiled to WASM
+and rendered with GPU-accelerated host-side flex layout (Taffy), text shaping (cosmic-text),
+and rendering (FemtoVG / OpenGL).
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐
-│   WASM Widget   │     │      Host       │
-│  (bmc-wasm-sdk) │────▶│ (bmc-wasm-runtime)
-│                 │     │                 │
-│  - UI tree      │     │  - Deserialize  │
-│  - Anim decl    │     │  - Taffy layout │
-│  - State        │     │  - Render       │
-└─────────────────┘     └─────────────────┘
+┌─────────────────┐     ┌──────────────────────┐
+│   WASM Widget   │     │        Host           │
+│  (bmc-wasm-sdk) │────▶│  (bmc-wasm-runtime)   │
+│                 │     │                      │
+│  - UI tree      │     │  - Deserialize tree  │
+│  - Anim decl    │     │  - Taffy flex layout │
+│  - State        │     │  - FemtoVG rendering │
+│                 │     │  - cosmic-text text  │
+└─────────────────┘     └──────────────────────┘
 ```
 
-Widgets build a declarative UI tree that gets serialized and sent to the host for layout and rendering. Animations and
-transitions are declared in the tree and computed host-side, keeping WASM binaries small by offloading text shaping,
-layout, and animation math to native code.
+Widgets build a declarative UI tree that gets serialized and sent to the host for layout
+and rendering. Animations and transitions are declared in the tree and computed host-side,
+keeping WASM binaries small by offloading text shaping, layout, and animation math to
+native code.
+
+See [docs/GPU_RENDERING.md](docs/GPU_RENDERING.md) for rendering architecture details.
 
 ## SDK API
 
@@ -185,12 +190,19 @@ make dev
 # Build and run release
 make run
 
+# Lint + format
+make validate
+
+# CPU profile with samply + memory stats
+make profile
+
 # Check WASM binary size
 make size
 ```
 
 ## Crate Structure
 
-- `bmc-wasm-runtime` - Host runtime (layout, rendering)
-- `bmc-wasm-sdk` - Widget SDK (compiled to WASM)
-- `bmc-wasm-protocol` - Shared types and constants
+- `bmc-wasm-runtime` — Host runtime: WASM execution (wasmi), flex layout (taffy),
+  GPU rendering (FemtoVG), text shaping (cosmic-text)
+- `bmc-wasm-sdk` — Widget SDK (compiled to WASM)
+- `bmc-wasm-protocol` — Shared types and constants

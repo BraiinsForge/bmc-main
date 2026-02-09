@@ -445,18 +445,13 @@ pub fn deserialize_tree(data: &[u8]) -> Result<TreeNode> {
 
 use std::collections::HashMap;
 
-use cosmic_text::{FontSystem, SwashCache};
 use taffy::prelude::*;
-use tiny_skia::Pixmap;
 
 use crate::animation::{apply_easing, compute_animation_value, interpolate_color, multiply_alpha};
 use crate::components::{ButtonStyle, draw_button};
-use crate::drawing::shapes::{draw_circle, fill_rect};
-use crate::drawing::text::{
-    ShapedTextCache, measure_paragraph, render_paragraph, render_paragraph_clipped,
-};
 use crate::host_api::{AnimationState, ModalState, PrevDrawValues, TransitionState};
 use crate::interaction::InteractionState;
+use crate::renderer::Renderer;
 
 /// Mutable animation context threaded through the render pipeline.
 struct AnimationContext<'a> {
@@ -510,19 +505,12 @@ struct ModalInfo {
 /// Process a tree: deserialize, layout, render.
 ///
 /// Returns `(result, has_active_animations)` — caller should request next frame when active.
-#[expect(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::implicit_hasher
-)]
+#[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
 pub fn process_tree(
     data: &[u8],
-    width: u32,
-    height: u32,
-    pixmap: &mut Pixmap,
-    font_system: &mut FontSystem,
-    swash_cache: &mut SwashCache,
-    text_cache: &mut ShapedTextCache,
+    width: f32,
+    height: f32,
+    renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<u16, ModalState>,
     animation_states: &mut HashMap<u64, AnimationState>,
@@ -530,8 +518,6 @@ pub fn process_tree(
     frame_counter: u64,
     delta_ms: u32,
 ) -> Result<(TreeResult, bool)> {
-    text_cache.begin_frame(frame_counter);
-
     let tree_node = deserialize_tree(data)?;
     let mut result = TreeResult::default();
     let mut button_id: u32 = 0;
@@ -551,8 +537,8 @@ pub fn process_tree(
     if let Ok(style) = taffy.style(root_id) {
         let mut new_style = style.clone();
         new_style.size = Size {
-            width: length(width as f32),
-            height: length(height as f32),
+            width: length(width),
+            height: length(height),
         };
         taffy.set_style(root_id, new_style)?;
     }
@@ -589,13 +575,8 @@ pub fn process_tree(
                         available_width
                     };
 
-                    let (w, h) = measure_paragraph(
-                        font_system,
-                        text_cache,
-                        &para.base_style,
-                        &para.spans,
-                        max_width,
-                    );
+                    let (w, h) =
+                        renderer.measure_paragraph(&para.base_style, &para.spans, max_width);
                     return Size {
                         width: w,
                         height: h,
@@ -623,12 +604,9 @@ pub fn process_tree(
     render_taffy_node(
         &taffy,
         root_id,
-        0,
-        0,
-        pixmap,
-        font_system,
-        swash_cache,
-        text_cache,
+        0.0,
+        0.0,
+        renderer,
         interaction,
         &mut result,
         &mut anim_ctx,
@@ -640,10 +618,7 @@ pub fn process_tree(
             modal,
             width,
             height,
-            pixmap,
-            font_system,
-            swash_cache,
-            text_cache,
+            renderer,
             interaction,
             modal_states,
             delta_ms,
@@ -868,49 +843,33 @@ fn build_taffy_node(
 fn render_taffy_node(
     taffy: &TaffyTree<NodeContext>,
     node_id: taffy::NodeId,
-    parent_x: i32,
-    parent_y: i32,
-    pixmap: &mut Pixmap,
-    font_system: &mut FontSystem,
-    swash_cache: &mut SwashCache,
-    text_cache: &mut ShapedTextCache,
+    parent_x: f32,
+    parent_y: f32,
+    renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     result: &mut TreeResult,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
     let layout = taffy.layout(node_id).unwrap();
-    let x = parent_x + layout.location.x as i32;
-    let y = parent_y + layout.location.y as i32;
-    let w = layout.size.width as u32;
-    let h = layout.size.height as u32;
+    let x = parent_x + layout.location.x;
+    let y = parent_y + layout.location.y;
+    let w = layout.size.width;
+    let h = layout.size.height;
 
     if let Some(ctx) = taffy.get_node_context(node_id) {
         if ctx.background != 0 {
-            fill_rect(pixmap, x, y, w, h, ctx.background);
+            renderer.fill_rect(x, y, w, h, ctx.background);
         }
 
         if let Some(ref para) = ctx.paragraph {
-            render_paragraph(
-                pixmap,
-                font_system,
-                swash_cache,
-                text_cache,
-                &para.base_style,
-                &para.spans,
-                x,
-                y,
-                w,
-            );
+            renderer.draw_paragraph(&para.base_style, &para.spans, x, y, w);
         }
 
         if let Some((btn_id, ref label, style)) = ctx.button {
             let mut key_buf = [0_u8; 16];
             let key = format_btn_key(btn_id, &mut key_buf);
             let clicked = draw_button(
-                pixmap,
-                font_system,
-                swash_cache,
-                text_cache,
+                renderer,
                 interaction,
                 key,
                 label,
@@ -929,7 +888,7 @@ fn render_taffy_node(
         if !ctx.draws.is_empty() {
             anim_ctx.draw_in_canvas = 0;
             for draw in &ctx.draws {
-                render_draw_command(pixmap, draw, x, y, w, h, anim_ctx);
+                render_draw_command(renderer, draw, x, y, w, h, anim_ctx);
                 anim_ctx.draw_in_canvas += 1;
             }
             anim_ctx.canvas_index += 1;
@@ -942,10 +901,7 @@ fn render_taffy_node(
             child_id,
             x,
             y,
-            pixmap,
-            font_system,
-            swash_cache,
-            text_cache,
+            renderer,
             interaction,
             result,
             anim_ctx,
@@ -955,16 +911,16 @@ fn render_taffy_node(
 
 /// Render a draw command with canvas-local coordinates
 fn render_draw_command(
-    pixmap: &mut Pixmap,
+    renderer: &mut dyn Renderer,
     draw: &DrawCommand,
-    cx: i32,
-    cy: i32,
-    cw: u32,
-    ch: u32,
+    cx: f32,
+    cy: f32,
+    cw: f32,
+    ch: f32,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
     render_draw_inner(
-        pixmap, draw, cx, cy, cw, ch, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, None, anim_ctx,
+        renderer, draw, cx, cy, cw, ch, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, None, anim_ctx,
     );
 }
 
@@ -983,12 +939,12 @@ fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
 /// Render a draw command with accumulated transforms and animation modifiers.
 #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_draw_inner(
-    pixmap: &mut Pixmap,
+    renderer: &mut dyn Renderer,
     draw: &DrawCommand,
-    cx: i32,
-    cy: i32,
-    cw: u32,
-    ch: u32,
+    cx: f32,
+    cy: f32,
+    cw: f32,
+    ch: f32,
     offset_x: f32,
     offset_y: f32,
     rotation: f32,
@@ -1005,42 +961,24 @@ fn render_draw_inner(
             // Center-anchored scaling: offset by half the size difference
             let sx = *x + offset_x + (*w - ew) / 2.0;
             let sy = *y + offset_y + (*h - eh) / 2.0;
-            let rx = cx as f32 + sx;
-            let ry = cy as f32 + sy;
+            let rx = cx + sx;
+            let ry = cy + sy;
             let final_color = if alpha < 1.0 {
                 multiply_alpha(color_override.unwrap_or(*color), alpha)
             } else {
                 color_override.unwrap_or(*color)
             };
             if rotation == 0.0 {
-                fill_rect(
-                    pixmap,
-                    rx as i32,
-                    ry as i32,
-                    ew as u32,
-                    eh as u32,
-                    final_color,
-                );
+                renderer.fill_rect(rx, ry, ew, eh, final_color);
             } else {
                 // Rotate around canvas center (like CSS transform-origin: center)
-                let pivot_x = cx as f32 + cw as f32 / 2.0;
-                let pivot_y = cy as f32 + ch as f32 / 2.0;
-                let transform =
-                    tiny_skia::Transform::from_rotate_at(rotation.to_degrees(), pivot_x, pivot_y);
-                let mut paint = tiny_skia::Paint::default();
-                let c = final_color;
-                let color = tiny_skia::Color::from_rgba(
-                    ((c >> 24) & 0xFF) as f32 / 255.0,
-                    ((c >> 16) & 0xFF) as f32 / 255.0,
-                    ((c >> 8) & 0xFF) as f32 / 255.0,
-                    (c & 0xFF) as f32 / 255.0,
-                )
-                .unwrap_or(tiny_skia::Color::TRANSPARENT);
-                paint.set_color(color);
-                paint.anti_alias = true;
-                if let Some(rect) = tiny_skia::Rect::from_xywh(rx, ry, ew, eh) {
-                    pixmap.fill_rect(rect, &paint, transform, None);
-                }
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.fill_rect(rx - pivot_x, ry - pivot_y, ew, eh, final_color);
+                renderer.restore();
             }
         }
         DrawCommand::Circle {
@@ -1057,20 +995,14 @@ fn render_draw_inner(
             } else {
                 color_override.unwrap_or(*color)
             };
-            draw_circle(
-                pixmap,
-                cx + scx as i32,
-                cy + scy as i32,
-                er as u32,
-                final_color,
-            );
+            renderer.fill_circle(cx + scx, cy + scy, er, final_color);
         }
         DrawCommand::Centered { inner } => {
             let (iw, ih) = get_draw_bounds(inner);
-            let new_offset_x = (cw as f32 - iw) / 2.0;
-            let new_offset_y = (ch as f32 - ih) / 2.0;
+            let new_offset_x = (cw - iw) / 2.0;
+            let new_offset_y = (ch - ih) / 2.0;
             render_draw_inner(
-                pixmap,
+                renderer,
                 inner,
                 cx,
                 cy,
@@ -1092,13 +1024,13 @@ fn render_draw_inner(
             inner,
         } => {
             let effective_angle = *angle + orbit_angle_offset;
-            let center_offset_x = cw as f32 / 2.0;
-            let center_offset_y = ch as f32 / 2.0;
+            let center_offset_x = cw / 2.0;
+            let center_offset_y = ch / 2.0;
             let (iw, ih) = get_draw_bounds(inner);
             let new_offset_x = center_offset_x + radius * effective_angle.cos() - iw / 2.0;
             let new_offset_y = center_offset_y + radius * effective_angle.sin() - ih / 2.0;
             render_draw_inner(
-                pixmap,
+                renderer,
                 inner,
                 cx,
                 cy,
@@ -1116,7 +1048,7 @@ fn render_draw_inner(
         }
         DrawCommand::Rotated { angle, inner } => {
             render_draw_inner(
-                pixmap,
+                renderer,
                 inner,
                 cx,
                 cy,
@@ -1243,7 +1175,7 @@ fn render_draw_inner(
             anim_ctx.draw_counter += 1;
 
             render_draw_inner(
-                pixmap,
+                renderer,
                 inner,
                 cx,
                 cy,
@@ -1388,24 +1320,17 @@ fn count_tree_buttons(node: &TreeNode, button_id: &mut u32, result: &mut TreeRes
 }
 
 // Modal rendering constants
-const MODAL_HEADER_HEIGHT: u32 = 48;
+const MODAL_HEADER_HEIGHT: f32 = 48.0;
 const MODAL_ANIMATION_OPEN_MS: f32 = 250.0;
 const MODAL_ANIMATION_CLOSE_MS: f32 = 180.0;
 
 /// Render a modal overlay
-#[expect(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::cast_possible_wrap
-)]
+#[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_modal(
     modal: &ModalInfo,
-    width: u32,
-    height: u32,
-    pixmap: &mut Pixmap,
-    font_system: &mut FontSystem,
-    swash_cache: &mut SwashCache,
-    text_cache: &mut ShapedTextCache,
+    width: f32,
+    height: f32,
+    renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<u16, ModalState>,
     delta_ms: u32,
@@ -1451,42 +1376,34 @@ fn render_modal(
     };
 
     // Draw backdrop (alpha from modal props, scaled by animation progress)
-    let padding = u32::from(modal.padding);
+    let padding = f32::from(modal.padding);
     let backdrop_alpha = ((f32::from(modal.backdrop_alpha) / 255.0) * progress * 255.0) as u8;
     let backdrop_color = u32::from_be_bytes([0, 0, 0, backdrop_alpha]);
-    fill_rect(pixmap, 0, 0, width, height, backdrop_color);
+    renderer.fill_rect(0.0, 0.0, width, height, backdrop_color);
 
     // Modal content dimensions
-    let modal_width = width.saturating_sub(padding * 2);
-    let modal_height = height.saturating_sub(padding * 2);
+    let modal_width = (width - padding * 2.0).max(0.0);
+    let modal_height = (height - padding * 2.0).max(0.0);
     // Body height = modal height - header - internal padding (16px top + 16px bottom)
-    let body_padding = 16_u32;
-    let body_height = modal_height.saturating_sub(MODAL_HEADER_HEIGHT + body_padding * 2);
-    state.viewport_height = body_height as f32;
+    let body_padding = 16.0;
+    let body_height = (modal_height - MODAL_HEADER_HEIGHT - body_padding * 2.0).max(0.0);
+    state.viewport_height = body_height;
 
     // Animate content position (slide down from -100px)
-    let slide_offset = ((1.0 - progress) * -100.0) as i32;
-    let modal_x = padding as i32;
-    let modal_y = padding as i32 + slide_offset;
+    let slide_offset = (1.0 - progress) * -100.0;
+    let modal_x = padding;
+    let modal_y = padding + slide_offset;
 
     // Content is always fully opaque - only backdrop animates opacity
     // This prevents ugly alpha blending of text over background content
 
     // Draw modal background
     let modal_bg = GRAY_90;
-    fill_rect(
-        pixmap,
-        modal_x,
-        modal_y,
-        modal_width,
-        modal_height,
-        modal_bg,
-    );
+    renderer.fill_rect(modal_x, modal_y, modal_width, modal_height, modal_bg);
 
     // Draw header background
     let header_bg = GRAY_100;
-    fill_rect(
-        pixmap,
+    renderer.fill_rect(
         modal_x,
         modal_y,
         modal_width,
@@ -1509,20 +1426,16 @@ fn render_modal(
         underline: false,
         strikethrough: false,
     }];
-    render_paragraph(
-        pixmap,
-        font_system,
-        swash_cache,
-        text_cache,
+    renderer.draw_paragraph(
         &title_style,
         &title_spans,
-        modal_x + 16,
-        modal_y + 12,
-        modal_width - 64, // Leave space for close button
+        modal_x + 16.0,
+        modal_y + 12.0,
+        modal_width - 64.0, // Leave space for close button
     );
 
     // Draw close button (X icon in top-right)
-    let close_btn_x = modal_x + modal_width as i32 - 48;
+    let close_btn_x = modal_x + modal_width - 48.0;
     let close_btn_y = modal_y;
     let close_btn_size = MODAL_HEADER_HEIGHT;
 
@@ -1532,13 +1445,10 @@ fn render_modal(
     let close_key = format_btn_key(close_btn_id, &mut key_buf);
 
     let close_clicked = draw_button(
-        pixmap,
-        font_system,
-        swash_cache,
-        text_cache,
+        renderer,
         interaction,
         close_key,
-        "✕",
+        "X",
         close_btn_x,
         close_btn_y,
         close_btn_size,
@@ -1552,11 +1462,16 @@ fn render_modal(
 
     // Body area with scrolling
     let body_x = modal_x;
-    let body_y = modal_y + MODAL_HEADER_HEIGHT as i32;
+    let body_y = modal_y + MODAL_HEADER_HEIGHT;
 
     // Register scroll region for touch handling
     let body_key = format!("modal_{}_body", modal.modal_id);
-    let scroll_region = crate::interaction::Rect::new(body_x, body_y, modal_width, body_height);
+    let scroll_region = crate::interaction::Rect::new(
+        body_x as i32,
+        body_y as i32,
+        modal_width as u32,
+        body_height as u32,
+    );
     interaction.button(&body_key, scroll_region);
 
     // Apply scroll delta from touch drag or mouse wheel
@@ -1570,24 +1485,21 @@ fn render_modal(
     state.scroll_offset += scroll_delta as f32;
 
     // Clamp scroll offset
-    let max_scroll = (modal.content_height - body_height as f32).max(0.0);
+    let max_scroll = (modal.content_height - body_height).max(0.0);
     state.scroll_offset = state.scroll_offset.clamp(0.0, max_scroll);
 
     // Render body content with scroll offset
     // For now, render body children in a column layout within the body area
-    let content_y = body_y + body_padding as i32 - state.scroll_offset as i32;
-    let clip_top = body_y + body_padding as i32;
-    let clip_bottom = body_y + body_padding as i32 + body_height as i32;
+    let content_y = body_y + body_padding - state.scroll_offset;
+    let clip_top = body_y + body_padding;
+    let clip_bottom = body_y + body_padding + body_height;
     render_modal_body(
         &modal.body,
-        body_x + body_padding as i32,
+        body_x + body_padding,
         content_y,
-        modal_width - body_padding * 2,
+        modal_width - body_padding * 2.0,
         body_height,
-        pixmap,
-        font_system,
-        swash_cache,
-        text_cache,
+        renderer,
         interaction,
         result,
         modal.button_index_start,
@@ -1596,16 +1508,15 @@ fn render_modal(
     );
 
     // Draw scrollbar if content exceeds viewport
-    if modal.content_height > body_height as f32 {
-        let scrollbar_width = 4_u32;
-        let scrollbar_x = modal_x + modal_width as i32 - scrollbar_width as i32 - 4;
-        let scrollbar_track_y = body_y + 4;
-        let scrollbar_track_height = body_height - 8;
+    if modal.content_height > body_height {
+        let scrollbar_width = 4.0;
+        let scrollbar_x = modal_x + modal_width - scrollbar_width - 4.0;
+        let scrollbar_track_y = body_y + 4.0;
+        let scrollbar_track_height = body_height - 8.0;
 
         // Track
         let track_color = GRAY_70;
-        fill_rect(
-            pixmap,
+        renderer.fill_rect(
             scrollbar_x,
             scrollbar_track_y,
             scrollbar_width,
@@ -1614,15 +1525,13 @@ fn render_modal(
         );
 
         // Thumb
-        let thumb_ratio = body_height as f32 / modal.content_height;
-        let thumb_height = (scrollbar_track_height as f32 * thumb_ratio).max(20.0) as u32;
+        let thumb_ratio = body_height / modal.content_height;
+        let thumb_height = (scrollbar_track_height * thumb_ratio).max(20.0);
         let scroll_ratio = state.scroll_offset / max_scroll.max(1.0);
-        let thumb_y = scrollbar_track_y
-            + (scroll_ratio * (scrollbar_track_height - thumb_height) as f32) as i32;
+        let thumb_y = scrollbar_track_y + scroll_ratio * (scrollbar_track_height - thumb_height);
 
         let thumb_color = GRAY_50;
-        fill_rect(
-            pixmap,
+        renderer.fill_rect(
             scrollbar_x,
             thumb_y,
             scrollbar_width,
@@ -1659,22 +1568,19 @@ fn count_node_buttons(node: &TreeNode) -> u32 {
 }
 
 /// Render modal body children with clipping
-#[expect(clippy::too_many_arguments, clippy::cast_possible_wrap)]
+#[expect(clippy::too_many_arguments)]
 fn render_modal_body(
     body: &[TreeNode],
-    x: i32,
-    mut y: i32,
-    width: u32,
-    _available_height: u32,
-    pixmap: &mut Pixmap,
-    font_system: &mut FontSystem,
-    swash_cache: &mut SwashCache,
-    text_cache: &mut ShapedTextCache,
+    x: f32,
+    mut y: f32,
+    width: f32,
+    _available_height: f32,
+    renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     result: &mut TreeResult,
     button_index_start: u32,
-    clip_top: i32,
-    clip_bottom: i32,
+    clip_top: f32,
+    clip_bottom: f32,
 ) {
     let mut button_idx = button_index_start;
 
@@ -1684,66 +1590,41 @@ fn render_modal_body(
             x,
             y,
             width,
-            pixmap,
-            font_system,
-            swash_cache,
-            text_cache,
+            renderer,
             interaction,
             result,
             &mut button_idx,
             clip_top,
             clip_bottom,
         );
-        y += node_height as i32 + 8; // 8px gap between items
+        y += node_height + 8.0; // 8px gap between items
     }
 }
 
 /// Render a single modal body node, returning its height
-#[expect(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::cast_possible_wrap,
-    clippy::integer_division
-)]
+#[expect(clippy::too_many_arguments)]
 fn render_modal_body_node(
     node: &TreeNode,
-    x: i32,
-    y: i32,
-    width: u32,
-    pixmap: &mut Pixmap,
-    font_system: &mut FontSystem,
-    swash_cache: &mut SwashCache,
-    text_cache: &mut ShapedTextCache,
+    x: f32,
+    y: f32,
+    width: f32,
+    renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     result: &mut TreeResult,
     button_idx: &mut u32,
-    clip_top: i32,
-    clip_bottom: i32,
-) -> u32 {
-    // Skip if completely outside clip region
-    // (would need height first, but we'll render and let pixel-level clipping handle it)
-
+    clip_top: f32,
+    clip_bottom: f32,
+) -> f32 {
     match node {
         TreeNode::Paragraph {
             base_style, spans, ..
         } => {
             // Measure first to get actual height (cached)
-            let (_, h) = measure_paragraph(
-                font_system,
-                text_cache,
-                base_style,
-                spans,
-                Some(width as f32),
-            );
-            let h_i32 = h as i32;
+            let (_, h) = renderer.measure_paragraph(base_style, spans, Some(width));
 
             // Only render if at least partially visible
-            if y < clip_bottom && y + h_i32 > clip_top {
-                render_paragraph_clipped(
-                    pixmap,
-                    font_system,
-                    swash_cache,
-                    text_cache,
+            if y < clip_bottom && y + h > clip_top {
+                renderer.draw_paragraph_clipped(
                     base_style,
                     spans,
                     x,
@@ -1753,23 +1634,20 @@ fn render_modal_body_node(
                     clip_bottom,
                 );
             }
-            h as u32
+            h
         }
         TreeNode::Button { label, style } => {
             let btn_id = *button_idx;
             *button_idx += 1;
 
-            let btn_width = (label.len() as u32 * 10).max(120) + 32;
-            let btn_height = 48_u32;
+            let btn_width = (label.len() as f32 * 10.0).max(120.0) + 32.0;
+            let btn_height = 48.0;
 
-            if y < clip_bottom && y + btn_height as i32 > clip_top {
+            if y < clip_bottom && y + btn_height > clip_top {
                 let mut key_buf = [0_u8; 16];
                 let key = format_btn_key(btn_id, &mut key_buf);
                 let clicked = draw_button(
-                    pixmap,
-                    font_system,
-                    swash_cache,
-                    text_cache,
+                    renderer,
                     interaction,
                     key,
                     label,
@@ -1787,7 +1665,7 @@ fn render_modal_body_node(
             btn_height
         }
         TreeNode::Column(_, children) => {
-            let mut total_height = 0_u32;
+            let mut total_height = 0.0_f32;
             let mut child_y = y;
             for child in children {
                 let h = render_modal_body_node(
@@ -1795,43 +1673,37 @@ fn render_modal_body_node(
                     x,
                     child_y,
                     width,
-                    pixmap,
-                    font_system,
-                    swash_cache,
-                    text_cache,
+                    renderer,
                     interaction,
                     result,
                     button_idx,
                     clip_top,
                     clip_bottom,
                 );
-                child_y += h as i32 + 8;
-                total_height += h + 8;
+                child_y += h + 8.0;
+                total_height += h + 8.0;
             }
-            total_height.saturating_sub(8) // Remove last gap
+            (total_height - 8.0).max(0.0) // Remove last gap
         }
         TreeNode::Row(_, children) => {
-            let child_count = children.len().max(1);
-            let child_width = width / child_count as u32;
-            let mut max_height = 0_u32;
+            let child_count = children.len().max(1) as f32;
+            let child_width = width / child_count;
+            let mut max_height = 0.0_f32;
             let mut child_x = x;
             for child in children {
                 let h = render_modal_body_node(
                     child,
                     child_x,
                     y,
-                    child_width.saturating_sub(8),
-                    pixmap,
-                    font_system,
-                    swash_cache,
-                    text_cache,
+                    (child_width - 8.0).max(0.0),
+                    renderer,
                     interaction,
                     result,
                     button_idx,
                     clip_top,
                     clip_bottom,
                 );
-                child_x += child_width as i32;
+                child_x += child_width;
                 max_height = max_height.max(h);
             }
             max_height
@@ -1839,7 +1711,7 @@ fn render_modal_body_node(
         TreeNode::Center(..)
         | TreeNode::Spacer { .. }
         | TreeNode::Canvas(..)
-        | TreeNode::Modal { .. } => 0,
+        | TreeNode::Modal { .. } => 0.0,
     }
 }
 

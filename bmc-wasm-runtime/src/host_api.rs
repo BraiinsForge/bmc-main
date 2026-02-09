@@ -2,10 +2,9 @@
 
 //! Host state and function bindings for WASM.
 
-use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::drawing::text::ShapedTextCache;
+use crate::gpu::FemtoVgRenderer;
 use crate::interaction::InteractionState;
 
 /// State for a single running animation instance.
@@ -68,23 +67,14 @@ pub struct ModalState {
 /// Host-side state accessible to WASM via host functions.
 #[expect(dead_code)]
 pub struct HostState {
-    /// RGBA8 overlay buffer
-    pub pixmap: tiny_skia::Pixmap,
-
-    /// Font system for text rendering
-    pub font_system: cosmic_text::FontSystem,
-
-    /// Swash cache for glyph rasterization
-    pub swash_cache: cosmic_text::SwashCache,
+    /// GPU renderer (FemtoVG + cosmic-text)
+    pub renderer: FemtoVgRenderer,
 
     /// Interaction state (hit testing, pending clicks)
     pub interaction: InteractionState,
 
     /// Server-provided state blob
     pub state_blob: Option<Vec<u8>>,
-
-    /// Registered images from state blob
-    pub images: HashMap<u32, tiny_skia::Pixmap>,
 
     /// Whether `request_frame()` was called this frame
     pub frame_requested: bool,
@@ -104,9 +94,6 @@ pub struct HostState {
     /// Delta time since last frame (for animations)
     pub delta_ms: u32,
 
-    /// Cache for shaped text buffers
-    pub text_cache: ShapedTextCache,
-
     /// Running animation states, keyed by content hash.
     pub animation_states: HashMap<u64, AnimationState>,
 
@@ -117,47 +104,35 @@ pub struct HostState {
     pub frame_counter: u64,
 
     /// Cached tree data for animation-only frames (bytes, width, height).
-    pub cached_tree_data: Option<(Vec<u8>, u32, u32)>,
+    pub cached_tree_data: Option<(Vec<u8>, f32, f32)>,
 
     /// Whether the next frame only needs animation updates (no WASM execution).
     pub animation_only_frame: bool,
 }
 
 impl HostState {
-    /// Create new host state with given dimensions.
-    pub fn new(width: u32, height: u32) -> Result<Self> {
-        let pixmap = tiny_skia::Pixmap::new(width, height)
-            .ok_or_else(|| anyhow::anyhow!("Failed to create pixmap"))?;
-
-        let font_system = cosmic_text::FontSystem::new();
-        let swash_cache = cosmic_text::SwashCache::new();
-
-        Ok(Self {
-            pixmap,
-            font_system,
-            swash_cache,
+    /// Create new host state with the given renderer.
+    pub fn new(renderer: FemtoVgRenderer) -> Self {
+        Self {
+            renderer,
             interaction: InteractionState::new(),
             state_blob: None,
-            images: HashMap::new(),
             frame_requested: false,
             frame_delay_ms: None,
             refresh_requested: false,
             tree_clicks: Vec::new(),
             modal_states: HashMap::new(),
             delta_ms: 0,
-            text_cache: ShapedTextCache::new(256), // Cache up to 256 shaped text entries
             animation_states: HashMap::new(),
             transition_states: HashMap::new(),
             frame_counter: 0,
             cached_tree_data: None,
             animation_only_frame: false,
-        })
+        }
     }
 
-    /// Clear the overlay to transparent.
-    pub fn clear_overlay(&mut self) {
-        self.pixmap.fill(tiny_skia::Color::TRANSPARENT);
-        // Note: begin_frame() is called separately in runtime.rs before this
+    /// Reset per-frame flags.
+    pub fn begin_render_frame(&mut self) {
         self.frame_requested = false;
         self.frame_delay_ms = None;
     }

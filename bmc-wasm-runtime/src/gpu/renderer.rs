@@ -1,0 +1,256 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! FemtoVG-based GPU renderer implementing the [`Renderer`] trait.
+//!
+//! Wraps a `femtovg::Canvas<OpenGl>` for shape/text drawing and a
+//! `cosmic_text::FontSystem` + [`ParagraphLayoutCache`] for rich-text paragraph layout.
+
+#![expect(clippy::cast_precision_loss)]
+
+use std::ffi::c_void;
+
+use anyhow::Result;
+use cosmic_text::fontdb;
+use femtovg::renderer::OpenGl;
+use femtovg::{Canvas, Color, FontId, Paint, Path};
+
+use super::text::{ParagraphLayoutCache, to_femtovg_color};
+use crate::renderer::Renderer;
+use crate::tree::{SpanData, TextStyle};
+
+// Embed BraiinsSans fonts at compile time.
+const FONT_REGULAR: &[u8] =
+    include_bytes!("../../../bmc-display/ui/assets/fonts/BraiinsSans-Regular.otf");
+const FONT_BOLD: &[u8] =
+    include_bytes!("../../../bmc-display/ui/assets/fonts/BraiinsSans-Bold.otf");
+
+/// GPU-accelerated renderer backed by FemtoVG (OpenGL ES 2.0+).
+///
+/// Owns the FemtoVG canvas, font IDs, cosmic-text `FontSystem`, and a
+/// paragraph layout cache. Created once per runtime lifetime.
+pub struct FemtoVgRenderer {
+    canvas: Canvas<OpenGl>,
+    font_regular: FontId,
+    font_bold: FontId,
+    font_system: cosmic_text::FontSystem,
+    paragraph_cache: ParagraphLayoutCache,
+    width: f32,
+    height: f32,
+    frame_counter: u64,
+}
+
+impl std::fmt::Debug for FemtoVgRenderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FemtoVgRenderer")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("frame_counter", &self.frame_counter)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FemtoVgRenderer {
+    /// Create a new GPU renderer.
+    ///
+    /// Loads BraiinsSans fonts into both FemtoVG (for GPU glyph rendering) and
+    /// cosmic-text (for paragraph shaping/layout). The cosmic-text `FontSystem`
+    /// uses an empty DB with only the embedded fonts — no system font discovery.
+    ///
+    /// # Safety
+    /// `load_fn` must return valid OpenGL function pointers for the current GL context.
+    pub unsafe fn new<F>(load_fn: F, width: u32, height: u32) -> Result<Self>
+    where
+        F: FnMut(&str) -> *const c_void,
+    {
+        // Create FemtoVG OpenGL renderer + canvas
+        let gl_renderer = unsafe { OpenGl::new_from_function(load_fn) }?;
+        let mut canvas = Canvas::new(gl_renderer)?;
+        canvas.set_size(width, height, 1.0);
+
+        // Load fonts into FemtoVG for GPU rendering
+        let font_regular = canvas.add_font_mem(FONT_REGULAR)?;
+        let font_bold = canvas.add_font_mem(FONT_BOLD)?;
+
+        // Build cosmic-text FontSystem with only our embedded fonts.
+        // Loading the same two files keeps glyph advances in sync with FemtoVG.
+        let mut db = fontdb::Database::new();
+        db.load_font_data(FONT_REGULAR.to_vec());
+        db.load_font_data(FONT_BOLD.to_vec());
+        let font_system = cosmic_text::FontSystem::new_with_locale_and_db("en-US".into(), db);
+
+        Ok(Self {
+            canvas,
+            font_regular,
+            font_bold,
+            font_system,
+            paragraph_cache: ParagraphLayoutCache::new(),
+            width: width as f32,
+            height: height as f32,
+            frame_counter: 0,
+        })
+    }
+}
+
+// ── Renderer trait implementation ───────────────────────────────────
+
+impl Renderer for FemtoVgRenderer {
+    // -- Shapes --
+
+    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32) {
+        let mut path = Path::new();
+        path.rect(x, y, w, h);
+        self.canvas
+            .fill_path(&path, &Paint::color(to_femtovg_color(color)));
+    }
+
+    fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: u32) {
+        let mut path = Path::new();
+        path.rounded_rect(x, y, w, h, radius);
+        self.canvas
+            .fill_path(&path, &Paint::color(to_femtovg_color(color)));
+    }
+
+    fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: u32) {
+        let mut path = Path::new();
+        path.circle(cx, cy, r);
+        self.canvas
+            .fill_path(&path, &Paint::color(to_femtovg_color(color)));
+    }
+
+    fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: u32) {
+        let mut path = Path::new();
+        path.rect(x, y, w, h);
+        let mut paint = Paint::color(to_femtovg_color(color));
+        paint.set_line_width(border_width);
+        self.canvas.stroke_path(&path, &paint);
+    }
+
+    fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: u32) {
+        let mut path = Path::new();
+        path.move_to(x1, y1);
+        path.line_to(x2, y2);
+        let mut paint = Paint::color(to_femtovg_color(color));
+        paint.set_line_width(width);
+        self.canvas.stroke_path(&path, &paint);
+    }
+
+    // -- Transform stack --
+
+    fn save(&mut self) {
+        self.canvas.save();
+    }
+
+    fn restore(&mut self) {
+        self.canvas.restore();
+    }
+
+    fn translate(&mut self, x: f32, y: f32) {
+        self.canvas.translate(x, y);
+    }
+
+    fn rotate(&mut self, angle_radians: f32) {
+        self.canvas.rotate(angle_radians);
+    }
+
+    // -- Scissor clipping --
+
+    fn push_scissor(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.canvas.save();
+        self.canvas.scissor(x, y, w, h);
+    }
+
+    fn pop_scissor(&mut self) {
+        self.canvas.restore();
+    }
+
+    // -- Simple text --
+
+    fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: u32) {
+        let mut paint = Paint::color(to_femtovg_color(color));
+        paint.set_font(&[self.font_regular]);
+        paint.set_font_size(size);
+        paint.set_text_baseline(femtovg::Baseline::Top);
+        let _ = self.canvas.fill_text(x, y, text, &paint);
+    }
+
+    fn measure_text(&mut self, text: &str, size: f32) -> f32 {
+        let mut paint = Paint::color(Color::white());
+        paint.set_font(&[self.font_regular]);
+        paint.set_font_size(size);
+        self.canvas
+            .measure_text(0.0, 0.0, text, &paint)
+            .map_or(0.0, |m| m.width())
+    }
+
+    // -- Rich text paragraphs --
+
+    fn measure_paragraph(
+        &mut self,
+        style: &TextStyle,
+        spans: &[SpanData],
+        max_width: Option<f32>,
+    ) -> (f32, f32) {
+        self.paragraph_cache
+            .measure(&mut self.font_system, style, spans, max_width)
+    }
+
+    fn draw_paragraph(
+        &mut self,
+        style: &TextStyle,
+        spans: &[SpanData],
+        x: f32,
+        y: f32,
+        max_width: f32,
+    ) {
+        self.paragraph_cache.draw(
+            &mut self.font_system,
+            &mut self.canvas,
+            self.font_regular,
+            self.font_bold,
+            style,
+            spans,
+            x,
+            y,
+            max_width,
+        );
+    }
+
+    fn draw_paragraph_clipped(
+        &mut self,
+        style: &TextStyle,
+        spans: &[SpanData],
+        x: f32,
+        y: f32,
+        max_width: f32,
+        clip_top: f32,
+        clip_bottom: f32,
+    ) {
+        self.push_scissor(x, clip_top, max_width, clip_bottom - clip_top);
+        self.draw_paragraph(style, spans, x, y, max_width);
+        self.pop_scissor();
+    }
+
+    // -- Frame lifecycle --
+
+    fn begin_frame(&mut self, width: u32, height: u32) {
+        self.width = width as f32;
+        self.height = height as f32;
+        self.frame_counter += 1;
+        self.canvas.set_size(width, height, 1.0);
+        self.canvas
+            .clear_rect(0, 0, width, height, Color::rgbf(0.0, 0.0, 0.0));
+        self.paragraph_cache.begin_frame(self.frame_counter);
+    }
+
+    fn flush(&mut self) {
+        self.canvas.flush();
+    }
+
+    fn width(&self) -> f32 {
+        self.width
+    }
+
+    fn height(&self) -> f32 {
+        self.height
+    }
+}

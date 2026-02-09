@@ -2,21 +2,28 @@
 
 //! WASM runtime wrapper using wasmi.
 
-#![expect(clippy::too_many_lines, clippy::cast_possible_truncation)]
+#![expect(
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss
+)]
+
+use std::ffi::c_void;
 
 use anyhow::Result;
 use chrono::{Datelike, Local, Timelike};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::components::{ButtonStyle, draw_button};
-use crate::drawing::shapes::{draw_rounded_rect, fill_rect};
-use crate::drawing::text::draw_text;
+use crate::gpu::FemtoVgRenderer;
 use crate::host_api::HostState;
+use crate::renderer::Renderer;
 use crate::tree;
 
 /// WebAssembly widget runtime.
 ///
 /// Executes WASM modules in a sandboxed environment with fuel metering.
+/// Owns the GPU renderer inside `HostState`.
 #[expect(missing_debug_implementations)]
 pub struct WasmWidgetRuntime {
     store: wasmi::Store<HostState>,
@@ -28,14 +35,25 @@ impl WasmWidgetRuntime {
     /// Maximum fuel (instructions) per frame.
     pub const FUEL_PER_FRAME: u64 = 10_000_000;
 
-    /// Create a new runtime from WASM bytes.
-    pub fn new(wasm_bytes: &[u8], width: u32, height: u32) -> Result<Self> {
+    /// Create a new runtime from WASM bytes and a GL function loader.
+    ///
+    /// The runtime creates and owns the GPU renderer. The host (testbed / BMC)
+    /// only provides the GL context and event loop.
+    ///
+    /// # Safety
+    /// `load_fn` must return valid OpenGL function pointers for the current GL context.
+    pub unsafe fn new<F>(wasm_bytes: &[u8], load_fn: F, width: u32, height: u32) -> Result<Self>
+    where
+        F: FnMut(&str) -> *const c_void,
+    {
+        let renderer = unsafe { FemtoVgRenderer::new(load_fn, width, height) }?;
+        let host_state = HostState::new(renderer);
+
         let mut config = wasmi::Config::default();
         config.consume_fuel(true);
         let engine = wasmi::Engine::new(&config);
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
-        let host_state = HostState::new(width, height)?;
         let mut store = wasmi::Store::new(&engine, host_state);
         store.set_fuel(Self::FUEL_PER_FRAME)?;
 
@@ -60,13 +78,15 @@ impl WasmWidgetRuntime {
     }
 
     fn register_host_functions(linker: &mut Linker<HostState>) -> Result<()> {
-        // Drawing functions
+        // Drawing functions — renderer accessed via state.renderer
         linker.func_wrap(
             "env",
             "host_fill_rect",
             |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: u32, h: u32, color: u32| {
                 let state = caller.data_mut();
-                fill_rect(&mut state.pixmap, x, y, w, h, color);
+                state
+                    .renderer
+                    .fill_rect(x as f32, y as f32, w as f32, h as f32, color);
             },
         )?;
 
@@ -81,7 +101,14 @@ impl WasmWidgetRuntime {
              radius: u32,
              color: u32| {
                 let state = caller.data_mut();
-                draw_rounded_rect(&mut state.pixmap, x, y, w, h, radius, color);
+                state.renderer.fill_rounded_rect(
+                    x as f32,
+                    y as f32,
+                    w as f32,
+                    h as f32,
+                    radius as f32,
+                    color,
+                );
             },
         )?;
 
@@ -114,17 +141,9 @@ impl WasmWidgetRuntime {
 
                 if let Some(text) = text_owned {
                     let state = caller.data_mut();
-                    draw_text(
-                        &mut state.pixmap,
-                        &mut state.font_system,
-                        &mut state.swash_cache,
-                        &mut state.text_cache,
-                        &text,
-                        x,
-                        y,
-                        size,
-                        color,
-                    );
+                    state
+                        .renderer
+                        .draw_text(&text, x as f32, y as f32, size as f32, color);
                 }
             },
         )?;
@@ -201,17 +220,14 @@ impl WasmWidgetRuntime {
                 if let (Some(key), Some(label)) = (key_owned, label_owned) {
                     let state = caller.data_mut();
                     let clicked = draw_button(
-                        &mut state.pixmap,
-                        &mut state.font_system,
-                        &mut state.swash_cache,
-                        &mut state.text_cache,
+                        &mut state.renderer,
                         &mut state.interaction,
                         &key,
                         &label,
-                        x,
-                        y,
-                        w,
-                        h,
+                        x as f32,
+                        y as f32,
+                        w as f32,
+                        h as f32,
                         ButtonStyle::from(style),
                     );
                     return i32::from(clicked);
@@ -246,14 +262,13 @@ impl WasmWidgetRuntime {
                     let delta_ms = state.delta_ms;
                     let frame_counter = state.frame_counter;
                     state.frame_counter += 1;
+                    let w = width as f32;
+                    let h = height as f32;
                     match tree::process_tree(
                         &data,
-                        width,
-                        height,
-                        &mut state.pixmap,
-                        &mut state.font_system,
-                        &mut state.swash_cache,
-                        &mut state.text_cache,
+                        w,
+                        h,
+                        &mut state.renderer,
                         &mut state.interaction,
                         &mut state.modal_states,
                         &mut state.animation_states,
@@ -269,7 +284,7 @@ impl WasmWidgetRuntime {
                                 // Only skip WASM next frame if no clicks need processing
                                 state.animation_only_frame = !had_clicks;
                             }
-                            state.cached_tree_data = Some((data, width, height));
+                            state.cached_tree_data = Some((data, w, h));
                         }
                         Err(e) => {
                             tracing::error!("tree processing failed: {e}");
@@ -330,7 +345,7 @@ impl WasmWidgetRuntime {
         Ok(())
     }
 
-    /// Render a frame. Host auto-clears before and auto-commits after.
+    /// Render a frame. Call `renderer().begin_frame()` before and `renderer().flush()` after.
     ///
     /// On animation-only frames (no pending input, host auto-requested),
     /// skips WASM execution and re-renders from cached tree data.
@@ -343,7 +358,7 @@ impl WasmWidgetRuntime {
             && state.cached_tree_data.is_some();
 
         state.interaction.begin_frame();
-        state.clear_overlay();
+        state.begin_render_frame();
         state.delta_ms = delta_ms;
 
         if animation_only {
@@ -355,10 +370,7 @@ impl WasmWidgetRuntime {
                 &data,
                 width,
                 height,
-                &mut state.pixmap,
-                &mut state.font_system,
-                &mut state.swash_cache,
-                &mut state.text_cache,
+                &mut state.renderer,
                 &mut state.interaction,
                 &mut state.modal_states,
                 &mut state.animation_states,
@@ -386,6 +398,11 @@ impl WasmWidgetRuntime {
         Ok(())
     }
 
+    /// Access the GPU renderer (for begin_frame, flush, and testbed drawing).
+    pub fn renderer(&mut self) -> &mut FemtoVgRenderer {
+        &mut self.store.data_mut().renderer
+    }
+
     /// Check if WASM requested another frame via `request_frame()`.
     #[must_use]
     pub fn wants_next_frame(&self) -> bool {
@@ -403,47 +420,9 @@ impl WasmWidgetRuntime {
         self.store.data_mut().interaction.push_event(event);
     }
 
-    /// Get the rendered overlay pixmap.
-    #[must_use]
-    pub fn get_overlay(&self) -> &tiny_skia::Pixmap {
-        &self.store.data().pixmap
-    }
-
     /// Get the instance for additional exports.
     #[must_use]
     pub fn instance(&self) -> &wasmi::Instance {
         &self.instance
-    }
-
-    /// Draw text into a pixmap using the runtime's font system and cache.
-    #[cfg(feature = "testbed")]
-    pub fn draw_text(
-        &mut self,
-        pixmap: &mut tiny_skia::Pixmap,
-        text: &str,
-        x: i32,
-        y: i32,
-        size: u32,
-        color: u32,
-    ) {
-        let state = self.store.data_mut();
-        crate::drawing::text::draw_text(
-            pixmap,
-            &mut state.font_system,
-            &mut state.swash_cache,
-            &mut state.text_cache,
-            text,
-            x,
-            y,
-            size,
-            color,
-        );
-    }
-
-    /// Measure text width using the runtime's font system.
-    #[cfg(feature = "testbed")]
-    pub fn measure_text(&mut self, text: &str, size: u32) -> u32 {
-        let state = self.store.data_mut();
-        crate::drawing::text::measure_text(&mut state.font_system, text, size)
     }
 }

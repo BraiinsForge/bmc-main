@@ -1,169 +1,44 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Widget development testbed with hot-reloading.
+//!
+//! Uses winit for windowing, glutin for OpenGL context, and FemtoVG for GPU rendering.
 
 #![expect(
     clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_lossless,
     clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    clippy::integer_division
+    clippy::integer_division,
+    clippy::wildcard_enum_match_arm
 )]
 
+use std::ffi::CString;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
-use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
+use anyhow::{Context as _, Result};
+use glutin::config::ConfigTemplateBuilder;
+use glutin::context::ContextAttributesBuilder;
+use glutin::display::GetGlDisplay;
+use glutin::prelude::*;
+use glutin::surface::{SurfaceAttributesBuilder, SwapInterval, WindowSurface};
+use glutin_winit::DisplayBuilder;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use raw_window_handle::HasWindowHandle;
+use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::Window;
 
 use bmc_wasm_runtime::WasmWidgetRuntime;
 use bmc_wasm_runtime::interaction::TouchEvent;
+use bmc_wasm_runtime::renderer::Renderer;
 
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 480;
-
-/// Tracks mouse state and converts to touch events.
-struct InputState {
-    mouse_down: bool,
-    width: u32,
-}
-
-impl InputState {
-    fn new(width: u32) -> Self {
-        Self {
-            mouse_down: false,
-            width,
-        }
-    }
-
-    /// Check if position is in the stats/chart overlay area (top-right).
-    fn in_stats_area(&self, x: i32, y: i32) -> bool {
-        x >= (self.width as i32 - 130) && y < 50
-    }
-
-    /// Process window input, push touch events to runtime. Returns true if there was input.
-    fn handle(&mut self, window: &Window, runtime: &mut WasmWidgetRuntime) -> bool {
-        let mut has_input = false;
-
-        if let Some((mx, my)) = window.get_mouse_pos(MouseMode::Clamp) {
-            let x = mx as i32;
-            let y = my as i32;
-
-            // Ignore interactions in stats overlay area
-            if self.in_stats_area(x, y) {
-                // Still track mouse state to avoid stuck states
-                self.mouse_down = window.get_mouse_down(MouseButton::Left);
-                return false;
-            }
-
-            let is_down = window.get_mouse_down(MouseButton::Left);
-            if is_down && !self.mouse_down {
-                runtime.push_touch_event(TouchEvent::Down { x, y });
-                self.mouse_down = true;
-                has_input = true;
-            } else if !is_down && self.mouse_down {
-                runtime.push_touch_event(TouchEvent::Up { x, y });
-                self.mouse_down = false;
-                has_input = true;
-            } else if is_down {
-                runtime.push_touch_event(TouchEvent::Move { x, y });
-                has_input = true;
-            }
-
-            if let Some((_, scroll_y)) = window.get_scroll_wheel() {
-                let delta_y = (scroll_y * 3.0) as i32;
-                if delta_y != 0 {
-                    runtime.push_touch_event(TouchEvent::Scroll { x, y, delta_y });
-                    has_input = true;
-                }
-            }
-        }
-
-        has_input
-    }
-}
-
-/// Frame timing sample for visualization.
-#[derive(Clone, Copy)]
-struct FrameSample {
-    ms: u32,
-    rendered: bool,
-}
-
-impl Default for FrameSample {
-    fn default() -> Self {
-        Self {
-            ms: 16,
-            rendered: false,
-        }
-    }
-}
-
-/// Tracks render/loop FPS and frame history for display.
-struct FpsTracker {
-    last_update: Instant,
-    loop_count: u32,
-    render_count: u32,
-    pub display_loop: u32,
-    pub display_render: u32,
-    /// Rolling buffer of frame samples for chart
-    pub history: [FrameSample; 120],
-    history_idx: usize,
-}
-
-impl FpsTracker {
-    fn new() -> Self {
-        Self {
-            last_update: Instant::now(),
-            loop_count: 0,
-            render_count: 0,
-            display_loop: 0,
-            display_render: 0,
-            history: [FrameSample::default(); 120],
-            history_idx: 0,
-        }
-    }
-
-    fn tick(&mut self, delta_ms: u32, rendered: bool) {
-        self.loop_count += 1;
-        if rendered {
-            self.render_count += 1;
-        }
-        if self.last_update.elapsed().as_secs() >= 1 {
-            self.display_loop = self.loop_count;
-            self.display_render = self.render_count;
-            self.loop_count = 0;
-            self.render_count = 0;
-            self.last_update = Instant::now();
-        }
-
-        // Record frame sample
-        self.history[self.history_idx] = FrameSample {
-            ms: delta_ms,
-            rendered,
-        };
-        self.history_idx = (self.history_idx + 1) % self.history.len();
-    }
-
-    /// Iterate samples from oldest to newest.
-    fn samples(&self) -> impl Iterator<Item = &FrameSample> {
-        let (a, b) = self.history.split_at(self.history_idx);
-        b.iter().chain(a.iter())
-    }
-
-    /// Average frame time of rendered frames (in ms). Returns 0 if no renders.
-    fn avg_render_ms(&self) -> u32 {
-        let (sum, count) = self
-            .history
-            .iter()
-            .filter(|s| s.rendered)
-            .fold((0_u32, 0_u32), |(sum, count), s| (sum + s.ms, count + 1));
-        if count > 0 { sum / count } else { 0 }
-    }
-}
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -182,74 +57,336 @@ fn main() -> Result<()> {
     println!("Loading widget from: {}", wasm_path.display());
     println!("Display size: {width}x{height}");
 
-    let wasm_bytes = std::fs::read(&wasm_path).context("Failed to read WASM file")?;
-    let mut runtime =
-        WasmWidgetRuntime::new(&wasm_bytes, width, height).context("Failed to create runtime")?;
+    let event_loop = EventLoop::new()?;
+    let mut app = App {
+        wasm_path,
+        width,
+        height,
+        state: None,
+        rss_after_gl_kb: None,
+        rss_after_runtime_kb: None,
+    };
+    event_loop.run_app(&mut app)?;
+    print_memory_stats(app.rss_after_gl_kb, app.rss_after_runtime_kb);
+    Ok(())
+}
 
-    let (_watcher, watcher_rx) = setup_watcher(&wasm_path)?;
+/// Read current RSS from `/proc/self/status` in kB (Linux only).
+fn current_rss_kb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            return rest.trim().strip_suffix("kB")?.trim().parse().ok();
+        }
+    }
+    None
+}
 
-    let mut window = Window::new(
-        "WASM Widget Testbed",
-        width as usize,
-        height as usize,
-        WindowOptions::default(),
-    )
-    .context("Failed to create window")?;
-    let mut last_frame = Instant::now();
-    let mut frame_buffer: Vec<u32> = vec![0; (width * height) as usize];
-    let mut background: Vec<u32> = vec![0; (width * height) as usize];
-    let mut needs_render = true;
-    let mut input = InputState::new(width);
-    let mut fps = FpsTracker::new();
-    let mut stats = StatsOverlay::new();
+/// Print peak memory usage from `/proc/self/status` (Linux only, zero overhead).
+fn print_memory_stats(rss_after_gl_kb: Option<u64>, rss_after_runtime_kb: Option<u64>) {
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return;
+    };
+    eprintln!("\n=== Memory ===");
+    if let (Some(gl), Some(rt)) = (rss_after_gl_kb, rss_after_runtime_kb) {
+        let rt_delta = rt.saturating_sub(gl);
+        eprintln!("GL + windowing:    {gl:>6} kB");
+        eprintln!("WASM runtime:      {rt_delta:>6} kB  (delta)");
+    }
+    for line in status.lines() {
+        if line.starts_with("VmPeak:") || line.starts_with("VmRSS:") || line.starts_with("VmHWM:") {
+            eprintln!("{}", line.trim());
+        }
+    }
+}
 
-    // Pre-render background once
-    draw_background(&mut background, width, height);
-    frame_buffer.copy_from_slice(&background);
+// ── App ────────────────────────────────────────────────────────────
 
-    while window.is_open() && !window.is_key_down(Key::Escape) {
-        // Hot-reload check
-        if watcher_rx.try_recv().is_ok() {
-            while watcher_rx.try_recv().is_ok() {} // drain
-            if let Some(new_runtime) = try_reload(&wasm_path, width, height) {
-                runtime = new_runtime;
-                input = InputState::new(width);
-                needs_render = true;
-            }
+struct App {
+    wasm_path: PathBuf,
+    width: u32,
+    height: u32,
+    state: Option<AppState>,
+    rss_after_gl_kb: Option<u64>,
+    rss_after_runtime_kb: Option<u64>,
+}
+
+struct AppState {
+    window: Window,
+    gl_surface: glutin::surface::Surface<WindowSurface>,
+    gl_context: glutin::context::PossiblyCurrentContext,
+    gl_config: glutin::config::Config,
+    runtime: WasmWidgetRuntime,
+    _watcher: RecommendedWatcher,
+    watcher_rx: Receiver<()>,
+    last_frame: Instant,
+    needs_render: bool,
+    pending_reload: bool,
+    mouse_pos: (i32, i32),
+    mouse_down: bool,
+    fps: FpsTracker,
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.state.is_some() {
+            return;
         }
 
-        let now = Instant::now();
-        let delta_ms = now.duration_since(last_frame).as_millis() as u32;
-        last_frame = now;
+        let window_attrs = Window::default_attributes()
+            .with_title("WASM Widget Testbed")
+            .with_inner_size(PhysicalSize::new(self.width, self.height));
 
-        let has_input = input.handle(&window, &mut runtime);
-        let rendered = needs_render || has_input;
+        let template = ConfigTemplateBuilder::new().with_alpha_size(8);
+        let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attrs));
 
-        let render_ms = if rendered {
-            let t0 = Instant::now();
-            if let Err(e) = runtime.render(delta_ms) {
-                eprintln!("Render error: {e}");
-            }
-            frame_buffer.copy_from_slice(&background);
-            composite_overlay(&mut frame_buffer, runtime.get_overlay(), width, height);
-            t0.elapsed().as_millis() as u32
-        } else {
-            0
+        let (window, gl_config) = display_builder
+            .build(event_loop, template, |configs| {
+                configs
+                    .reduce(|a, c| {
+                        if c.num_samples() > a.num_samples() {
+                            c
+                        } else {
+                            a
+                        }
+                    })
+                    .unwrap()
+            })
+            .expect("Failed to build display");
+
+        let window = window.expect("Failed to create window");
+        let gl_display = gl_config.display();
+        let raw_handle = window.window_handle().unwrap().as_raw();
+
+        let context_attrs = ContextAttributesBuilder::new().build(Some(raw_handle));
+        let gl_context = unsafe {
+            gl_display
+                .create_context(&gl_config, &context_attrs)
+                .expect("Failed to create GL context")
         };
 
-        fps.tick(render_ms, rendered);
-        stats.update(fps.avg_render_ms(), fps.display_render, &mut runtime);
-        draw_frame_chart(&mut frame_buffer, width, &fps, &stats);
+        let size = window.inner_size();
+        let surface_attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
+            raw_handle,
+            NonZeroU32::new(size.width.max(1)).unwrap(),
+            NonZeroU32::new(size.height.max(1)).unwrap(),
+        );
+        let gl_surface = unsafe {
+            gl_display
+                .create_window_surface(&gl_config, &surface_attrs)
+                .expect("Failed to create GL surface")
+        };
 
-        window
-            .update_with_buffer(&frame_buffer, width as usize, height as usize)
-            .context("Failed to update window")?;
+        let gl_context = gl_context
+            .make_current(&gl_surface)
+            .expect("Failed to make GL context current");
 
-        needs_render = runtime.wants_next_frame();
+        // No vsync — testbed measures uncapped GPU throughput.
+        // Event-driven loop sleeps when idle, so no wasted CPU.
+        let _ = gl_surface.set_swap_interval(&gl_context, SwapInterval::DontWait);
+
+        self.rss_after_gl_kb = current_rss_kb();
+
+        let runtime = create_runtime(&self.wasm_path, &gl_config, self.width, self.height)
+            .expect("Failed to create runtime");
+
+        self.rss_after_runtime_kb = current_rss_kb();
+
+        let (watcher, watcher_rx) =
+            setup_watcher(&self.wasm_path).expect("Failed to set up file watcher");
+
+        self.state = Some(AppState {
+            window,
+            gl_surface,
+            gl_context,
+            gl_config,
+            runtime,
+            _watcher: watcher,
+            watcher_rx,
+            last_frame: Instant::now(),
+            needs_render: true,
+            pending_reload: false,
+            mouse_pos: (0, 0),
+            mouse_down: false,
+            fps: FpsTracker::new(),
+        });
     }
 
-    drop(window);
-    Ok(())
+    #[expect(clippy::too_many_lines)]
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        let Some(state) = &mut self.state else { return };
+
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed
+                    && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
+                {
+                    event_loop.exit();
+                }
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                state.mouse_pos = (position.x as i32, position.y as i32);
+                if state.mouse_down {
+                    let (x, y) = state.mouse_pos;
+                    state.runtime.push_touch_event(TouchEvent::Move { x, y });
+                    state.needs_render = true;
+                }
+            }
+
+            WindowEvent::MouseInput {
+                state: btn_state,
+                button: MouseButton::Left,
+                ..
+            } => {
+                let (x, y) = state.mouse_pos;
+                match btn_state {
+                    ElementState::Pressed => {
+                        state.mouse_down = true;
+                        state.runtime.push_touch_event(TouchEvent::Down { x, y });
+                        state.needs_render = true;
+                    }
+                    ElementState::Released => {
+                        state.mouse_down = false;
+                        state.runtime.push_touch_event(TouchEvent::Up { x, y });
+                        state.needs_render = true;
+                    }
+                }
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                let delta_y = match delta {
+                    // winit: positive y = content should move down = scroll up
+                    // interaction: positive delta = scroll down
+                    // Negate to match, and scale up for usable speed
+                    MouseScrollDelta::LineDelta(_, y) => (-y * 30.0) as i32,
+                    MouseScrollDelta::PixelDelta(pos) => -pos.y as i32,
+                };
+                if delta_y != 0 {
+                    let (x, y) = state.mouse_pos;
+                    state
+                        .runtime
+                        .push_touch_event(TouchEvent::Scroll { x, y, delta_y });
+                    state.needs_render = true;
+                }
+            }
+
+            WindowEvent::Resized(size) => {
+                if size.width > 0 && size.height > 0 {
+                    state.gl_surface.resize(
+                        &state.gl_context,
+                        NonZeroU32::new(size.width).unwrap(),
+                        NonZeroU32::new(size.height).unwrap(),
+                    );
+                    state.needs_render = true;
+                }
+            }
+
+            WindowEvent::RedrawRequested => {
+                // Hot-reload
+                if state.pending_reload {
+                    state.pending_reload = false;
+                    match create_runtime(&self.wasm_path, &state.gl_config, self.width, self.height)
+                    {
+                        Ok(new_runtime) => {
+                            println!("Reloaded: {}", self.wasm_path.display());
+                            state.runtime = new_runtime;
+                        }
+                        Err(e) => eprintln!("Reload failed: {e}"),
+                    }
+                }
+
+                let now = Instant::now();
+                let delta_ms = now.duration_since(state.last_frame).as_millis() as u32;
+                state.last_frame = now;
+
+                let size = state.window.inner_size();
+                let (w, h) = (size.width, size.height);
+                if w == 0 || h == 0 {
+                    return;
+                }
+
+                // Render
+                let t0 = Instant::now();
+
+                state.runtime.renderer().begin_frame(w, h);
+                // Dark wine background
+                state
+                    .runtime
+                    .renderer()
+                    .fill_rect(0.0, 0.0, w as f32, h as f32, 0x50_18_38_FF);
+
+                if let Err(e) = state.runtime.render(delta_ms) {
+                    eprintln!("Render error: {e}");
+                }
+
+                let render_us = t0.elapsed().as_micros() as u32;
+                state.fps.tick(render_us, state.needs_render);
+                draw_stats(state.runtime.renderer(), w as f32, &state.fps);
+
+                state.runtime.renderer().flush();
+                state
+                    .gl_surface
+                    .swap_buffers(&state.gl_context)
+                    .expect("Failed to swap buffers");
+
+                state.needs_render = state.runtime.wants_next_frame();
+            }
+
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(state) = &mut self.state else { return };
+
+        // Check for hot-reload
+        if state.watcher_rx.try_recv().is_ok() {
+            while state.watcher_rx.try_recv().is_ok() {} // drain
+            state.pending_reload = true;
+        }
+
+        if state.needs_render || state.pending_reload {
+            event_loop.set_control_flow(ControlFlow::Poll);
+            state.window.request_redraw();
+        } else {
+            // Poll periodically for hot-reload events
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(100),
+            ));
+        }
+    }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────
+
+fn create_runtime(
+    wasm_path: &Path,
+    gl_config: &glutin::config::Config,
+    width: u32,
+    height: u32,
+) -> Result<WasmWidgetRuntime> {
+    let wasm_bytes = std::fs::read(wasm_path).context("Failed to read WASM file")?;
+    let gl_display = gl_config.display();
+    unsafe {
+        WasmWidgetRuntime::new(
+            &wasm_bytes,
+            |s| {
+                let c = CString::new(s).unwrap();
+                gl_display.get_proc_address(&c)
+            },
+            width,
+            height,
+        )
+    }
+    .context("Failed to create runtime")
 }
 
 fn parse_size(args: &[String]) -> Option<(u32, u32)> {
@@ -268,31 +405,6 @@ fn parse_size(args: &[String]) -> Option<(u32, u32)> {
     None
 }
 
-/// Draw a smooth diagonal gradient background in wine colors.
-fn draw_background(buffer: &mut [u32], width: u32, height: u32) {
-    // Wine color base: #662347 (R=0x66, G=0x23, B=0x47)
-    // Gradient from darker to base wine
-    const R_START: f32 = 0x50 as f32;
-    const G_START: f32 = 0x18 as f32;
-    const B_START: f32 = 0x38 as f32;
-    const R_END: f32 = 0x70 as f32;
-    const G_END: f32 = 0x28 as f32;
-    const B_END: f32 = 0x50 as f32;
-
-    for y in 0..height {
-        for x in 0..width {
-            let t = (x + y) as f32 / (width + height) as f32;
-            let r = (R_START + t * (R_END - R_START)) as u8;
-            let g = (G_START + t * (G_END - G_START)) as u8;
-            let b = (B_START + t * (B_END - B_START)) as u8;
-            buffer[(y * width + x) as usize] =
-                0xFF_00_00_00 | (r as u32) << 16 | (g as u32) << 8 | b as u32;
-        }
-    }
-}
-
-/// Set up file watcher for hot-reload.
-/// Watches parent directory to handle file replacement (cargo deletes + renames).
 fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
     let (tx, rx) = channel();
     let target = path.canonicalize()?;
@@ -302,11 +414,11 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
     let mut watcher = RecommendedWatcher::new(
         move |res: Result<notify::Event, _>| {
             if let Ok(event) = res {
-                let is_relevant_kind = matches!(
+                let is_relevant = matches!(
                     event.kind,
                     EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
                 );
-                if !is_relevant_kind {
+                if !is_relevant {
                     return;
                 }
                 let targets_match = event.paths.iter().any(|p| {
@@ -331,222 +443,121 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
     Ok((watcher, rx))
 }
 
-/// Try to reload WASM module, returning new runtime on success.
-fn try_reload(path: &Path, width: u32, height: u32) -> Option<WasmWidgetRuntime> {
-    match std::fs::read(path) {
-        Ok(bytes) => match WasmWidgetRuntime::new(&bytes, width, height) {
-            Ok(rt) => {
-                println!("Reloaded: {}", path.display());
-                Some(rt)
-            }
-            Err(e) => {
-                eprintln!("Reload failed: {e}");
-                None
-            }
-        },
-        Err(e) => {
-            eprintln!("Read failed: {e}");
-            None
+// ── Stats overlay ──────────────────────────────────────────────────
+
+fn draw_stats(renderer: &mut impl Renderer, w: f32, fps: &FpsTracker) {
+    const CHART_H: f32 = 40.0;
+    const BAR_W: f32 = 1.0;
+    // Chart scale: 50ms full height (in microseconds)
+    const SCALE_US: f32 = 50_000.0;
+    let chart_w = fps.history.len() as f32 * BAR_W;
+    let x0 = w - chart_w - 4.0;
+    let y0 = 4.0_f32;
+
+    // Background
+    renderer.fill_rect(x0 - 2.0, y0, chart_w + 6.0, CHART_H + 4.0, 0x30_10_20_C0);
+
+    // 16ms reference line (60fps target)
+    let ref_y = y0 + CHART_H - (16_000.0 * CHART_H / SCALE_US);
+    renderer.fill_rect(x0, ref_y, chart_w, 1.0, 0x50_30_40_FF);
+
+    // Bars
+    for (i, sample) in fps.samples().enumerate() {
+        let bx = x0 + i as f32 * BAR_W;
+        let bh = (sample.us as f32 * CHART_H / SCALE_US).min(CHART_H);
+        let color = if sample.rendered {
+            0x50_AA_50_FF
+        } else {
+            0x60_60_60_FF
+        };
+        renderer.fill_rect(bx, y0 + CHART_H - bh, BAR_W, bh, color);
+    }
+
+    // Text labels
+    let avg_us = fps.avg_render_us();
+    let avg_ms = avg_us as f32 / 1_000.0;
+    let color = if avg_us > 16_000 {
+        0xFF_60_60_FF
+    } else {
+        0xCC_CC_CC_FF
+    };
+    renderer.draw_text(&format!("{avg_ms:.1}ms"), x0 + 4.0, y0 + 2.0, 16.0, color);
+    if fps.display_render > 0 {
+        renderer.draw_text(
+            &format!("{}fps", fps.display_render),
+            x0 + 4.0,
+            y0 + 20.0,
+            16.0,
+            0xAA_AA_AA_FF,
+        );
+    }
+}
+
+// ── FPS tracking ───────────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+struct FrameSample {
+    us: u32,
+    rendered: bool,
+}
+
+impl Default for FrameSample {
+    fn default() -> Self {
+        Self {
+            us: 16_000,
+            rendered: false,
         }
     }
 }
 
-/// Composite RGBA overlay onto ARGB buffer.
-fn composite_overlay(buffer: &mut [u32], overlay: &tiny_skia::Pixmap, width: u32, height: u32) {
-    let overlay_data = overlay.data();
-
-    for y in 0..height.min(overlay.height()) {
-        for x in 0..width.min(overlay.width()) {
-            let src_idx = ((y * overlay.width() + x) * 4) as usize;
-            let dst_idx = (y * width + x) as usize;
-
-            // tiny-skia uses premultiplied RGBA
-            let src_r = overlay_data[src_idx];
-            let src_g = overlay_data[src_idx + 1];
-            let src_b = overlay_data[src_idx + 2];
-            let src_a = overlay_data[src_idx + 3];
-
-            if src_a == 0 {
-                continue;
-            }
-
-            if src_a == 255 {
-                // Fully opaque - just copy
-                buffer[dst_idx] =
-                    0xFF_00_00_00 | ((src_r as u32) << 16) | ((src_g as u32) << 8) | (src_b as u32);
-            } else {
-                // Alpha blend (source is premultiplied)
-                let dst = buffer[dst_idx];
-                let dst_r = ((dst >> 16) & 0xFF) as u8;
-                let dst_g = ((dst >> 8) & 0xFF) as u8;
-                let dst_b = (dst & 0xFF) as u8;
-
-                let inv_alpha = 255 - src_a;
-                let out_r = src_r.saturating_add(((dst_r as u16 * inv_alpha as u16) / 255) as u8);
-                let out_g = src_g.saturating_add(((dst_g as u16 * inv_alpha as u16) / 255) as u8);
-                let out_b = src_b.saturating_add(((dst_b as u16 * inv_alpha as u16) / 255) as u8);
-
-                buffer[dst_idx] =
-                    0xFF_00_00_00 | ((out_r as u32) << 16) | ((out_g as u32) << 8) | (out_b as u32);
-            }
-        }
-    }
+struct FpsTracker {
+    last_update: Instant,
+    loop_count: u32,
+    render_count: u32,
+    display_render: u32,
+    history: [FrameSample; 120],
+    history_idx: usize,
 }
 
-/// Cached stats text rendered with real fonts.
-struct StatsOverlay {
-    pixmap: tiny_skia::Pixmap,
-    last_avg_ms: u32,
-    last_render_fps: u32,
-}
-
-impl StatsOverlay {
-    const VALUE_SIZE: u32 = 16;
-    const UNIT_SIZE: u32 = 11;
-    const WIDTH: u32 = 90;
-    const HEIGHT: u32 = 38;
-
+impl FpsTracker {
     fn new() -> Self {
         Self {
-            pixmap: tiny_skia::Pixmap::new(Self::WIDTH, Self::HEIGHT).unwrap(),
-            last_avg_ms: u32::MAX,
-            last_render_fps: u32::MAX,
+            last_update: Instant::now(),
+            loop_count: 0,
+            render_count: 0,
+            display_render: 0,
+            history: [FrameSample::default(); 120],
+            history_idx: 0,
         }
     }
 
-    /// Re-render the stats text if values changed. Returns true if updated.
-    fn update(&mut self, avg_ms: u32, render_fps: u32, runtime: &mut WasmWidgetRuntime) -> bool {
-        if avg_ms == self.last_avg_ms && render_fps == self.last_render_fps {
-            return false;
+    fn tick(&mut self, us: u32, rendered: bool) {
+        self.loop_count += 1;
+        if rendered {
+            self.render_count += 1;
         }
-        self.last_avg_ms = avg_ms;
-        self.last_render_fps = render_fps;
-
-        self.pixmap.fill(tiny_skia::Color::TRANSPARENT);
-
-        // Line 1: avg frame time — value + "ms" unit
-        let ms_color = if avg_ms > 16 {
-            0xFF_FF_60_60
-        } else {
-            0xFF_CC_CC_CC
-        };
-        let ms_text = format!("{avg_ms}");
-        let ms_w = runtime.measure_text(&ms_text, Self::VALUE_SIZE);
-        runtime.draw_text(&mut self.pixmap, &ms_text, 0, 0, Self::VALUE_SIZE, ms_color);
-        runtime.draw_text(
-            &mut self.pixmap,
-            "ms",
-            ms_w as i32 + 1,
-            (Self::VALUE_SIZE - Self::UNIT_SIZE) as i32,
-            Self::UNIT_SIZE,
-            0xFF_80_80_80,
-        );
-
-        // Line 2: render FPS — value + "fps" unit
-        let y2 = Self::VALUE_SIZE as i32 + 2;
-        if render_fps > 0 {
-            let fps_text = format!("{render_fps}");
-            let fps_w = runtime.measure_text(&fps_text, Self::VALUE_SIZE);
-            runtime.draw_text(
-                &mut self.pixmap,
-                &fps_text,
-                0,
-                y2,
-                Self::VALUE_SIZE,
-                0xFF_AA_AA_AA,
-            );
-            runtime.draw_text(
-                &mut self.pixmap,
-                "fps",
-                fps_w as i32 + 1,
-                y2 + (Self::VALUE_SIZE - Self::UNIT_SIZE) as i32,
-                Self::UNIT_SIZE,
-                0xFF_80_80_80,
-            );
+        if self.last_update.elapsed().as_secs() >= 1 {
+            self.display_render = self.render_count;
+            self.loop_count = 0;
+            self.render_count = 0;
+            self.last_update = Instant::now();
         }
-
-        true
-    }
-}
-
-/// Draw frame time chart and blit stats overlay.
-fn draw_frame_chart(buffer: &mut [u32], width: u32, fps: &FpsTracker, stats: &StatsOverlay) {
-    const CHART_HEIGHT: u32 = 40;
-    const BAR_WIDTH: u32 = 1;
-    let chart_width = fps.history.len() as u32 * BAR_WIDTH;
-    let start_x = width.saturating_sub(chart_width + 4);
-    let start_y = 4_u32;
-
-    // Clear chart area
-    for y in 0..CHART_HEIGHT + 4 {
-        for x in start_x.saturating_sub(2)..width {
-            let idx = ((start_y + y) * width + x) as usize;
-            if idx < buffer.len() {
-                buffer[idx] = 0xFF_30_10_20; // darker wine
-            }
-        }
+        self.history[self.history_idx] = FrameSample { us, rendered };
+        self.history_idx = (self.history_idx + 1) % self.history.len();
     }
 
-    // Draw 16ms reference line (60fps target)
-    let ref_y = start_y + CHART_HEIGHT - (16 * CHART_HEIGHT / 50).min(CHART_HEIGHT);
-    for x in start_x..width.saturating_sub(4) {
-        let idx = (ref_y * width + x) as usize;
-        if idx < buffer.len() {
-            buffer[idx] = 0xFF_50_30_40; // dim line
-        }
+    fn samples(&self) -> impl Iterator<Item = &FrameSample> {
+        let (a, b) = self.history.split_at(self.history_idx);
+        b.iter().chain(a.iter())
     }
 
-    // Draw bars
-    for (i, sample) in fps.samples().enumerate() {
-        let x = start_x + i as u32 * BAR_WIDTH;
-        let bar_h = (sample.ms * CHART_HEIGHT / 50).min(CHART_HEIGHT);
-        let color = if sample.rendered {
-            0xFF_50_AA_50 // green for rendered
-        } else {
-            0xFF_60_60_60 // gray for idle
-        };
-
-        for dy in 0..bar_h {
-            let y = start_y + CHART_HEIGHT - 1 - dy;
-            let idx = (y * width + x) as usize;
-            if idx < buffer.len() {
-                buffer[idx] = color;
-            }
-        }
-    }
-
-    // Blit stats text overlay (RGBA premultiplied → ARGB)
-    let stats_data = stats.pixmap.data();
-    let ox = start_x + 4;
-    let oy = start_y + 2;
-    for sy in 0..stats.pixmap.height() {
-        for sx in 0..stats.pixmap.width() {
-            let src_idx = ((sy * stats.pixmap.width() + sx) * 4) as usize;
-            let sa = stats_data[src_idx + 3];
-            if sa == 0 {
-                continue;
-            }
-            let dx = ox + sx;
-            let dy = oy + sy;
-            let dst_idx = (dy * width + dx) as usize;
-            if dst_idx >= buffer.len() {
-                continue;
-            }
-            let sr = stats_data[src_idx];
-            let sg = stats_data[src_idx + 1];
-            let sb = stats_data[src_idx + 2];
-            if sa == 255 {
-                buffer[dst_idx] =
-                    0xFF_00_00_00 | ((sr as u32) << 16) | ((sg as u32) << 8) | sb as u32;
-            } else {
-                let dst = buffer[dst_idx];
-                let inv = 255 - sa as u16;
-                let out_r = sr.saturating_add((((dst >> 16) & 0xFF) as u16 * inv / 255) as u8);
-                let out_g = sg.saturating_add((((dst >> 8) & 0xFF) as u16 * inv / 255) as u8);
-                let out_b = sb.saturating_add(((dst & 0xFF) as u16 * inv / 255) as u8);
-                buffer[dst_idx] =
-                    0xFF_00_00_00 | ((out_r as u32) << 16) | ((out_g as u32) << 8) | out_b as u32;
-            }
-        }
+    /// Average render time in microseconds.
+    fn avg_render_us(&self) -> u32 {
+        let (sum, count) = self
+            .history
+            .iter()
+            .filter(|s| s.rendered)
+            .fold((0_u32, 0_u32), |(sum, count), s| (sum + s.us, count + 1));
+        if count > 0 { sum / count } else { 0 }
     }
 }

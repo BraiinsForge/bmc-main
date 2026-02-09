@@ -14,18 +14,22 @@ wasmi.workspace = true
 
 # Rendering
 cosmic-text.workspace = true
-tiny-skia.workspace = true
+femtovg.workspace = true
+glow.workspace = true
 
 # Layout
 taffy.workspace = true
 
 # Testbed
-minifb = { workspace = true, optional = true }
+glutin = { workspace = true, optional = true }
+glutin-winit = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
+raw-window-handle = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
 
 [features]
 default = []
-testbed = ["minifb", "notify"]
+testbed = ["glutin", "glutin-winit", "notify", "raw-window-handle", "winit"]
 
 [[bin]]
 name = "testbed"
