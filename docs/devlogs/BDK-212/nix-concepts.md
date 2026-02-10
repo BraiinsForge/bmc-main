@@ -66,10 +66,11 @@ Binary caches use the standard Nix format with NAR archives and narinfo metadata
 
 ```
 https://cache.braiins.com/
-├── nix-cache-info                    # Cache metadata
+├── nix-cache-info                   # Cache metadata
 ├── v1/
 │   └── miniminer-index.json         # Root index (package list)
-├── <hash>.narinfo                    # Package metadata files
+│   └── miniminer-factory.json       # Tarballs for initialization
+├── <hash>.narinfo                   # Package metadata files
 └── nar/
     ├── <hash>.nar.xz                # Compressed NAR archives
     └── <hash>.nar.zst
@@ -115,21 +116,32 @@ packages.
     "commit": "a1b2c3d4e5f6789..."
   },
   "indexes": [
-    "https://other-server.example.com/miniminer-index.json",
-    "https://community-cache.example.com/miniminer-index.json"
+    "https://other-server.example.com/v1/miniminer-index.json",
+    "https://community-cache.example.com/v1/miniminer-index.json"
+  ],
+  "caches": [
+    {
+      "name": "default",
+      "cache_url": "https://cache.braiins.com",
+      "cache_key": "..."
+    }
   ],
   "packages": {
     "miniminer-display": {
-      "latest": "2.1.0",
+      "version": "2.1.0",
+      "cache": "default",
       "store_path": "/nix/store/abc123def456-bmc-2.1.0",
       "min_bos_version": "26.01",
+      "min_bmc_version": "26.01",
       "category": "core",
       "description": "Main display application for the Deck"
     },
     "hashrate-widget": {
-      "latest": "1.2.0",
+      "version": "1.2.0",
+      "cache": "default",
       "store_path": "/nix/store/xyz789ghi012-hashrate-widget-1.2.0",
       "min_bos_version": "25.10",
+      "min_bmc_version": "26.01",
       "category": "widget",
       "description": "Widget showing current hashrate statistics"
     }
@@ -140,20 +152,56 @@ packages.
 It is expected that the server will ensure that the indexes do not
 conflict between each other. Such as, there shouldn't be a package
 with the same version listed twice. A package could be listed twice
-with differing versions. The device should then choose latest.
+with differing versions. The device should then choose latest by
+default in user's UI. Specific version might be used by other software.
 
 **Key fields:**
 
 * `version` - Version of the index itself
 * `provenance` - Build provenance information:
   * `commit` - Git commit hash from which the index was built
+* `caches` - List of binary caches:
+  * `name` - Cache identifier referenced by packages
+  * `cache_url` - URL of the binary cache
+  * `cache_key` - Public key for signature verification
 * `indexes` - List of URLs pointing to other index pages (for federated package discovery)
 * `packages` - Available packages with their metadata:
   * `version` - Latest available version
+  * `cache` - The cache that hosts this package. Default cache from the index used if not present.
   * `store_path` - Nix store path for direct `nix copy` from binary cache
   * `min_bos_version` - Minimum BOS version required (YY.MM format, e.g., "26.01")
+  * `min_bmc_version` - Minimum BMC core version required (YY.MM format, e.g., "26.01")
   * `category` - Package category (display, widget, etc.)
   * `description` - Human-readable package description
+
+### Factory index structure
+
+This is used for initialization of Nix on a given device. Braiins
+should ensure there is always a tarball for the latest firmware to
+prevent users not getting Nix initialized.
+
+**Location:** `<https://<server>>/v1/miniminer-factory.json`
+
+```json
+{
+  "version": 1,
+  "tarballs": [
+    {
+      "bos_version": "26.01",
+      "download_url": "https://cache.braiins.com/v1/miniminer-nix-26.01.tar.xz",
+      "profile_path": "/nix/var/nix/gcroots/bmc"
+    }
+  ]
+}
+```
+
+**Key fields:**
+
+* `version` - Version of the factory index itself
+* `tarballs` - List of initial Nix store tarballs per BOS version:
+  * `bos_version` - BOS version this tarball is for (YY.MM format, e.g., "26.01")
+  * `download_url` - URL of the `.tar.xz` archive containing the initial Nix store and profile
+  * `profile_path` - Path of the initial profile inside the tarball
 
 ---
 
@@ -176,28 +224,49 @@ Additional metadata about servers (priority, enabled state).
 
 ```json
 {
+  "factory": {
+      "id": "braiins_server",
+      "index_url": "https://cache.braiins.com/v1/miniminer-factory.json",
+      "known_public_key": "cache.braiins.com:AAAAB3NzaC1...",
+      "priority": 1,
+      "enabled": true
+  },
   "servers": [
     {
-      "id": "bos_server",
-      "type": "bos",
-      "cache_url": "https://cache.braiins.com",
-      "index_url": "https://cache.braiins.com/miniminer-index.json",
-      "public_key": "cache.braiins.com:AAAAB3NzaC1...",
+      "id": "braiins_server",
+      "type": "system",
+      "index_url": "https://cache.braiins.com/v1/miniminer-index.json",
+      "known_public_key": "cache.braiins.com:AAAAB3NzaC1...",
       "priority": 1,
       "enabled": true
     },
     {
       "id": "app_a_server",
       "type": "application",
-      "cache_url": "https://apps-cache.braiins.com",
-      "index_url": "https://apps-cache.braiins.com/miniminer-index.json",
-      "public_key": "apps-cache.braiins.com:BBBBB4NzaC2...",
+      "index_url": "https://apps-cache.braiins.com/v1/miniminer-index.json",
+      "known_public_key": "apps-cache.braiins.com:BBBBB4NzaC2...",
       "priority": 2,
       "enabled": true
     }
   ]
 }
 ```
+
+**Key fields:**
+
+* `factory` - Server entry for the factory index (used for initialization/reset):
+  * `id` - Unique server identifier
+  * `index_url` - URL of the factory index (`miniminer-factory.json`)
+  * `public_key` - Public key for signature verification
+  * `priority` - Resolution priority (lower = higher priority)
+  * `enabled` - Whether this server is active
+* `servers` - List of server entries for package indexes:
+  * `id` - Unique server identifier
+  * `type` - Server type (user facing type, ie. system or application)
+  * `index_url` - URL of the package index (`miniminer-index.json`)
+  * `known_public_key` - Already known public key for signature verification. The server can also offer new keys with new cache servers. The keys here are already trusted.
+  * `priority` - Conflict resolution priority (lower = higher priority)
+  * `enabled` - Whether this server is being actively used for fetching packages
 
 The packages will be resolved by order of the priority to prevent
 shadowing of the official packages.
@@ -258,7 +327,7 @@ existing ones, as long as the current BOS satisfies the package's
                                 │
                                 ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│ 4. BOS Upgrade (if min_bos_version not satisfied)                │
+│ 4. BOS Upgrade                                                   │
 │    - BOS upgrade happens BEFORE the profile switch               │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │
@@ -293,23 +362,98 @@ From all the collected packages, a profile is built. This means that
 all the files from the packages are taken and symlinked together to a
 single folder.
 
-Apart from that, a manifest of the profile is computed to know the
-packages that went inside of the profile.
+Afterwards a manifest of the profile is computed to know the packages
+that went inside of the profile for upgrades. This manifest is saved
+inside of the profile itself.
 
-And lastly, a final activation script is computed for the profile,
+A final activation script is always computed for the profile,
 executing all the individual activation scripts in computed order.
 See Phase 5 for detailed description of the activation itself.
+
+#### Hooks
+
+During the build of the profile it's possible we will need to build
+specialized scripts or unify a couple of files into one. For example
+it could be feasible to combine all individual widget json files into
+a bigger json file with all the widgets listed in one place.
+
+The activation script creation could also be just another hook
+that will sort the activation scripts topologically and build
+a singular script that calls the individual activation scripts.
+
+The hooks can be added by any package, inside of `hooks/`
+subdirectory. These hooks are executed in order based on the
+lexicographical order of the filenames. Similarly to the activation
+scripts, they will get paths of the old profile and new profile as an
+environment variable.
 
 #### Manifest
 
 The manifest kept inside of the profile should be similarly structured
 as the indexes the packages are downloaded from. Each package has its
-name, store_path, version and description specified.
+name, store_path, cache, version, description, where it came from
+and who/what has installed it specified.
+
+However, there needs to be also additional information stating what
+has actually installed this package. This can then be used as part of
+deciding when a package might be removed - what/who installed it can
+also decide on when to remove it, so we might need to ask the given
+system if to keep the package on upgrades or if to upgrade it.
+
+The usual value of "installed_by" is going to be "user", where the
+user is the one who has installed it and only the user can remove it,
+ie. the user has installed a widget. We keep that widget as long as it
+exists or the user has removed it.
+
+Each package can also be pinned, either by "major", "minor", "patch", false,
+saying how it should be treated on upgrade.
 
 This could allow for partial upgrades if we wanted to support those,
 since all information necessary to build a new profile is kept. Also
 the upgrades will be performed thanks to them, looking at the packages
 based on the names.
+
+```
+{
+  "packages": {
+    "miniminer-display": {
+      "version": "2.1.0",
+      "cache": "default",
+      "store_path": "/nix/store/abc123def456-bmc-2.1.0",
+      "min_bos_version": "26.01",
+      "min_bmc_version": "26.01",
+      "category": "core",
+      "description": "Main display application for the Deck",
+      "installed_by": "system",
+      "pinned": false
+    },
+    "hashrate-widget": {
+      "version": "1.2.0",
+      "cache": "default",
+      "store_path": "/nix/store/xyz789ghi012-hashrate-widget-1.2.0",
+      "min_bos_version": "25.10",
+      "min_bmc_version": "26.01",
+      "category": "widget",
+      "description": "Widget showing current hashrate statistics",
+      "installed_by": "user",
+      "pinned": false
+    }
+  }
+}
+```
+
+**Key fields:**
+
+* `packages` - Installed packages with their metadata:
+  * `version` - Installed version
+  * `cache` - Cache identifier the package was fetched from
+  * `store_path` - Nix store path of the installed package
+  * `min_bos_version` - Minimum BOS version required (YY.MM format, e.g., "26.01")
+  * `min_bmc_version` - Minimum BMC core version required (YY.MM format, e.g., "26.01")
+  * `category` - Package category (core, widget, etc.)
+  * `description` - Human-readable package description
+  * `installed_by` - What initiated the installation (e.g., "system", "user")
+  * `pinned` - Version pinning strategy ("major", "minor", "patch", or false)
 
 ### Phase 4: BOS Upgrade
 
@@ -326,8 +470,8 @@ During the upgrade, both BOS and the application parts managed through Nix are u
 ### Phase 5: Activation, atomic profile switch
 
 Each package can ship with multiple activation scripts. The activation scripts should:
-1. Get the system to the state where the package can be ran
-2. Actually run what's necessary automatically
+1. Get the system to the state where the package can be used
+2. Run the newly made services
 
 For example, when upgrading the main BMC compositor, first, the bmc service is put to place in /etc/init.d.
 Then the BMC is (re)started.
@@ -338,8 +482,8 @@ Then the BMC is (re)started.
 core/
   activation/
     bmc-service.json
-    bmc-service.sh
-    bmc-start.sh
+    bmc-service
+    bmc-start
     bmc-start.json
 ```
 
@@ -357,6 +501,9 @@ BMC_OLD_GENERATION=/path/to/old/generation
 BMC_NEW_GENERATION=/path/to/new/generation
 ```
 These allow for example to restart services.
+
+The activation scripts aren't specified further, they can be shell scripts,
+they can be binaries...
 
 ### Final Activation
 
@@ -377,9 +524,43 @@ packages.
 
 User configurations survive upgrades through:
 
-**Profile Generations** - Previous generations preserved on disk for rollback
+**Profile Generations** - Previous generations preserved on disk for
+rollback.
 
-TODO OpenWrt configuration
+**Conffiles** - OpenWrt normally removes non-marked files on
+the disk. To mitigate that there will be a service with activation
+script that marks such files as config files that should be backed up
+before sysupgrade.
+
+---
+
+## Service configuration in activation scripts
+
+Since home-manager / NixOS have modules that extend each other, it's
+possible to for example say that a module wants a configuration file
+to be put to a given place, such as:
+```
+xdg.configFile."fish/config.fish".text = "my contents";
+```
+
+Saying to create a file ~/.config/fish/config.fish with given content.
+Then the module that's responsible for `xdg.configFile` can pick this
+up and create all the files that were specified.
+
+In our system, this is not possible, though. We do not have the module
+system to extend options like this.
+
+There will be two ways of solving this, first off, a simpler way,
+the activation services can expand environment variables. And then
+the 'consumers' will use these environment variables.
+
+Secondly, it is possible to solve this from within files that the packages
+can put inside of the profile with needed configuration. These could be for
+example json files with necessary configuration.
+
+In practice, both approaches can be combined, the first one for
+simpler services, such as specifying where config files reside that
+shouldn't be removed. The second for more complex ones.
 
 ---
 
@@ -423,10 +604,10 @@ When installing or updating packages:
 1. **Collect store paths** - Gather all store paths for packages to be included in the profile
 2. **Build unified symlink tree** - Walk each store path and merge all files/directories under standard paths (bin, lib, share, etc.), creating symlinks pointing to the actual files in the Nix store
 3. **Handle conflicts** - If two packages provide the same file, apply conflict resolution (priority-based or error)
-4. **Resolve activation scripts** - Based on dependency rules between activation scripts, determine the correct order and content of activation scripts, and add them to the profile
+4. **Run hooks** - Special scripts that operate on the profile, producing new files
+    a) **Resolve activation scripts** - Based on dependency rules between activation scripts, determine the correct order and content of activation scripts, and add them to the profile
 5. **Create manifest** - Generate a `manifest` file in the profile that captures all package versions installed, including their store paths
-6. **Atomic switch** - Replace the `current` symlink to point to the new generation directory
-7. **Activation** - Run activation scripts
+6. **Activation** - Run activation scripts and as part of that, switch the currently active profile generation for new one
 
 ### Atomic Symlink Replacement
 
@@ -461,9 +642,89 @@ activation of the older generation is ran.
 
 ---
 
+## Initialization
+
+The devices now in production do not contain Nix yet. Apart from that
+the way we initialize the Nix store is also important for factory
+resets - we need to guarantee that even if the device gets bricked,
+the factory reset actually resets the /nix/store and all the state.
+
+Because of this, an initializer binary will be maintained for already
+existing devices. For new devices, the initial /nix/store version will
+be flashed in the factory.
+
+### Factory initialization
+
+In the factory, we will flash the partitions with the desired
+/nix/store, /nix/var/nix and so on. The profile itself can also be
+activated already on the flashed partitions, or it could be activated
+on boot.
+
+The scripts for the factory will have to be adapted and new images
+made.
+
+### Upgrade process (No Nix -> Nix) and fallback
+
+This section is for either upgrading an already existing Deck, or for
+any other cases when the Deck is in a state that the Nix stack is not
+initialized properly. This can happen when the Deck is in factory
+reset, or if important files get corrupted.
+
+There will be a fallback service that checks for initialization and in
+case of issues, it will reinitialize the /nix/store. We do not have
+source of /nix/store on the device, so it needs to be downloaded.
+
+Since the device might not be connected to the WiFi, a small static
+compiled program will have to be maintained forever. This program will
+allow for basic WiFi configuration and download of the initial /nix/store
+tarball.
+
+Among other things, the initial tarball should also contain the initial profile.
+This way we can just call the activation script from it, not relying on the scripts
+or programs already available on the system to be able to build and activate
+the profile.
+
+The `factory` field in `/etc/nix-upgrade/servers.json` is the url used for fetching
+the available tarballs.
+
+The initial tarball is selected based on the bos version saved in
+`/etc/bos-version`. In case there is no tarball for a given version, the
+service will upgrade BOS itself. The latest version always has to have
+a tarball, otherwise this would break.
+
+The service needs to communicate to the user what's happening through
+multiple states and progress bars so that the user knows it's not stuck.
+
 ## Factory Reset
 
-TODO
+During a factory reset, a file is created to completely remove the
+/nix/store and all its state on next boot. This is then respected by
+the initializer that will remove the /nix/store prior anything starts
+from it.
+
+This path is taken, because it might be impossible to remove the
+/nix/store during operation, due to files being used by currently
+running processes.
+
+(As an improvement we could remove all generations except the first
+one, but this might be cumbersome and won't work in case the first
+generation has been corrupted or removed, so this might be done only
+as a future addition, first focusing on the option of removing the
+full store)
+
+## Handling store corruptions
+
+As a future addition, we should also try to detect corruptions inside
+of the store. Corruptions are easily detectable as all the store paths
+have the content hash calculated and saved. When the hash does not match
+anymore, there is a file corruption.
+
+Then, the paths commonly might be redownloadable from the available caches,
+to fix this corruption.
+
+This could run as a background task on each boot, as the most common
+source of corruptions are power outages. But it could also run
+periodically during operation.
 
 ---
 
@@ -493,8 +754,10 @@ Possible options
 }
 ```
 
+**Key fields:**
+
 * `keep_generations` - Minimum number of generations to keep
-* `keep_days` - Remove generations older than this (days)
+* `keep_days` - Keep all generations newer than this (days)
 * `min_free_space` - Try to guarantee this much free space
 * `protected_generations` - Generations that are never removed (e.g., factory)
 
@@ -537,6 +800,11 @@ trusted-public-keys = cache.braiins.com:AAAAB3NzaC1... apps-cache.braiins.com:BB
 ```
 
 Nix refuses packages with invalid/missing signatures. Multiple signatures supported for multi-party trust.
+
+The user should be the one to authorize the new cache servers. The
+indexes offer new cache servers. The main one from Braiins will be
+authorized automatically, but when user adds more indexes, they should
+be asked to verify that they want to authorize the server.
 
 ---
 
