@@ -5,6 +5,13 @@
 //! Provides host bindings and UI primitives for building widgets.
 //! Layout is computed on the host side for minimal WASM binary size.
 
+// Embed protocol version as a WASM export.
+// The host calls this after instantiation to verify compatibility.
+#[unsafe(no_mangle)]
+pub extern "C" fn __bmc_sdk_version() -> u64 {
+    bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+}
+
 pub mod host;
 pub mod tree;
 

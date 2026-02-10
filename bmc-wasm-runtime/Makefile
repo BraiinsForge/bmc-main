@@ -17,7 +17,7 @@ dev:
 	@cd $(EXAMPLE_DIR) && cargo build --target $(WASM_TARGET)
 	RUST_LOG=bmc_wasm_runtime=debug mprocs \
 		--names "validate,watch,testbed" \
-		"make validate" \
+		"$(MAKE) -C .. validate" \
 		"cd $(EXAMPLE_DIR) && cargo watch -x 'build --target $(WASM_TARGET)'" \
 		"cargo run --features testbed --bin testbed -- $(WASM_FILE)"
 
@@ -25,12 +25,6 @@ dev:
 run:
 	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
 	cargo run --features testbed --bin testbed -- $(subst /debug/,/release/,$(WASM_FILE))
-
-.PHONY: validate
-validate:
-	@nix fmt
-	@cargo fmt
-	@cargo clippy --all-targets --all-features -- -D warnings
 
 # Profiling with samply (install: cargo install samply)
 .PHONY: profile

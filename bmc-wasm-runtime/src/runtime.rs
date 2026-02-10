@@ -10,7 +10,8 @@
 
 use std::ffi::c_void;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
+use bmc_wasm_protocol::{SDK_VERSION, SDK_VERSION_EXPORT, version_unpack};
 use chrono::{Datelike, Local, Timelike};
 use wasmi::{Caller, Extern, Linker};
 
@@ -19,6 +20,45 @@ use crate::gpu::FemtoVgRenderer;
 use crate::host_api::HostState;
 use crate::renderer::Renderer;
 use crate::tree;
+
+/// Call the widget's `__bmc_sdk_version` export and validate against the host.
+///
+/// Returns the widget's `(major, minor, patch)` version on success.
+/// Rejects on missing export or major version mismatch.
+fn check_sdk_version(
+    instance: wasmi::Instance,
+    store: &mut wasmi::Store<HostState>,
+) -> Result<(u16, u16, u16)> {
+    let (major, minor, patch) = SDK_VERSION;
+
+    let version_func = instance
+        .get_typed_func::<(), u64>(&*store, SDK_VERSION_EXPORT)
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "widget missing '{SDK_VERSION_EXPORT}' export — \
+             if using Rust SDK, update bmc-wasm-sdk; \
+             otherwise export a `{SDK_VERSION_EXPORT}() -> u64` function \
+             (packed major|minor<<16|patch<<32, host expects {major}.{minor}.{patch})"
+            )
+        })?;
+
+    let packed = version_func.call(store, ())?;
+    let widget_version = version_unpack(packed);
+    let (w_major, w_minor, w_patch) = widget_version;
+
+    if w_major != major {
+        bail!(
+            "SDK major version mismatch: widget is {w_major}.{w_minor}.{w_patch}, \
+             host expects {major}.{minor}.{patch}"
+        );
+    }
+
+    tracing::info!(
+        "widget SDK version {w_major}.{w_minor}.{w_patch} \
+         (host {major}.{minor}.{patch})"
+    );
+    Ok(widget_version)
+}
 
 /// WebAssembly widget runtime.
 ///
@@ -29,6 +69,7 @@ pub struct WasmWidgetRuntime {
     store: wasmi::Store<HostState>,
     instance: wasmi::Instance,
     render_func: wasmi::TypedFunc<u32, ()>,
+    sdk_version: (u16, u16, u16),
 }
 
 impl WasmWidgetRuntime {
@@ -46,13 +87,13 @@ impl WasmWidgetRuntime {
     where
         F: FnMut(&str) -> *const c_void,
     {
-        let renderer = unsafe { FemtoVgRenderer::new(load_fn, width, height) }?;
-        let host_state = HostState::new(renderer);
-
         let mut config = wasmi::Config::default();
         config.consume_fuel(true);
         let engine = wasmi::Engine::new(&config);
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
+
+        let renderer = unsafe { FemtoVgRenderer::new(load_fn, width, height) }?;
+        let host_state = HostState::new(renderer);
 
         let mut store = wasmi::Store::new(&engine, host_state);
         store.set_fuel(Self::FUEL_PER_FRAME)?;
@@ -61,6 +102,9 @@ impl WasmWidgetRuntime {
         Self::register_host_functions(&mut linker)?;
 
         let instance = linker.instantiate(&mut store, &module)?.start(&mut store)?;
+
+        // Check SDK version before running any widget code
+        let sdk_version = check_sdk_version(instance, &mut store)?;
 
         // Get render function
         let render_func = instance.get_typed_func::<u32, ()>(&store, "render")?;
@@ -74,6 +118,7 @@ impl WasmWidgetRuntime {
             store,
             instance,
             render_func,
+            sdk_version,
         })
     }
 
@@ -449,6 +494,18 @@ impl WasmWidgetRuntime {
     /// Push a touch event to be processed next frame.
     pub fn push_touch_event(&mut self, event: crate::interaction::TouchEvent) {
         self.store.data_mut().interaction.push_event(event);
+    }
+
+    /// The SDK version the widget was compiled with (major, minor, patch).
+    #[must_use]
+    pub fn sdk_version(&self) -> (u16, u16, u16) {
+        self.sdk_version
+    }
+
+    /// The SDK version the host expects (major, minor, patch).
+    #[must_use]
+    pub fn host_sdk_version() -> (u16, u16, u16) {
+        SDK_VERSION
     }
 
     /// Get the instance for additional exports.

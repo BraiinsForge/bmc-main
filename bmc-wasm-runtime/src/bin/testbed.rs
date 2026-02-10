@@ -112,11 +112,12 @@ struct App {
 }
 
 struct AppState {
+    // runtime must drop before GL context (FemtoVG Canvas calls GL on drop)
+    runtime: WasmWidgetRuntime,
     window: Window,
     gl_surface: glutin::surface::Surface<WindowSurface>,
     gl_context: glutin::context::PossiblyCurrentContext,
     gl_config: glutin::config::Config,
-    runtime: WasmWidgetRuntime,
     _watcher: RecommendedWatcher,
     watcher_rx: Receiver<()>,
     last_frame: Instant,
@@ -191,6 +192,14 @@ impl ApplicationHandler for App {
             .expect("Failed to create runtime");
 
         self.rss_after_runtime_kb = current_rss_kb();
+
+        let (major, minor, patch) = runtime.sdk_version();
+        println!("Widget SDK version: {major}.{minor}.{patch}");
+        let widget_name = self
+            .wasm_path
+            .file_stem()
+            .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
+        window.set_title(&format!("{widget_name} — SDK {major}.{minor}.{patch}"));
 
         let (watcher, watcher_rx) =
             setup_watcher(&self.wasm_path).expect("Failed to set up file watcher");
@@ -296,7 +305,18 @@ impl ApplicationHandler for App {
                     match create_runtime(&self.wasm_path, &state.gl_config, self.width, self.height)
                     {
                         Ok(new_runtime) => {
-                            println!("Reloaded: {}", self.wasm_path.display());
+                            let (major, minor, patch) = new_runtime.sdk_version();
+                            println!(
+                                "Reloaded: {} (SDK {major}.{minor}.{patch})",
+                                self.wasm_path.display()
+                            );
+                            let widget_name = self
+                                .wasm_path
+                                .file_stem()
+                                .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
+                            state
+                                .window
+                                .set_title(&format!("{widget_name} — SDK {major}.{minor}.{patch}"));
                             state.runtime = new_runtime;
                         }
                         Err(e) => eprintln!("Reload failed: {e}"),
