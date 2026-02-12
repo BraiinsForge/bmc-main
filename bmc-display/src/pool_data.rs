@@ -384,6 +384,8 @@ impl CurrentUserWorkerStats {
 struct FinancialAccount {
     #[serde(skip_serializing_if = "Option::is_none")]
     next_payout_at_estimate: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_payout_progress_pct: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -399,19 +401,37 @@ impl UserFinancials {
             .financial_accounts
             .iter()
             .filter_map(|account| account.next_payout_at_estimate)
-            .map(|dt| (now - dt).abs().num_minutes())
+            .map(|dt| (now - dt).abs())
             .min();
 
         next_payout
             .map(|estimate| {
-                if estimate > 60 {
-                    let hours = estimate.div_euclid(60);
-                    format!(" {} {}", hours, if hours == 1 { "Hour" } else { "Hours" })
-                } else {
+                #[expect(clippy::integer_division)]
+                if estimate.num_days() >= 365 {
+                    let years = estimate.num_days() / 365;
+                    format!(" {} {}", years, if years == 1 { "Year" } else { "Years" })
+                } else if estimate.num_days() >= 30 {
+                    let months = estimate.num_days() / 30;
                     format!(
                         " {} {}",
-                        estimate,
-                        if estimate == 1 { "Minute" } else { "Minutes" }
+                        months,
+                        if months == 1 { "Month" } else { "Months" }
+                    )
+                } else if estimate.num_weeks() >= 1 {
+                    let weeks = estimate.num_weeks();
+                    format!(" {} {}", weeks, if weeks == 1 { "Week" } else { "Weeks" })
+                } else if estimate.num_days() >= 1 {
+                    let days = estimate.num_days();
+                    format!(" {} {}", days, if days == 1 { "Day" } else { "Days" })
+                } else if estimate.num_hours() >= 1 {
+                    let hours = estimate.num_hours();
+                    format!(" {} {}", hours, if hours == 1 { "Hour" } else { "Hours" })
+                } else {
+                    let minutes = estimate.num_minutes();
+                    format!(
+                        " {} {}",
+                        minutes,
+                        if minutes == 1 { "Minute" } else { "Minutes" }
                     )
                 }
             })
@@ -419,12 +439,11 @@ impl UserFinancials {
     }
 
     #[must_use]
-    pub fn next_payout_estimate(&self) -> Option<DateTime<Utc>> {
-        let now = Utc::now();
+    pub fn next_payout_progress_pct(&self) -> Option<f32> {
         self.financial_accounts
             .iter()
-            .filter_map(|account| account.next_payout_at_estimate)
-            .min_by_key(|dt| (now - dt).abs().num_milliseconds())
+            .filter_map(|account| account.next_payout_progress_pct)
+            .reduce(f32::max)
     }
 }
 
@@ -501,16 +520,6 @@ impl RecentUserPayouts {
                     number_format.format_number(payout.amount_btc, 6)
                 ))
             })
-    }
-
-    #[must_use]
-    pub fn last_payout_datetime(&self) -> Option<DateTime<Utc>> {
-        let now = Utc::now();
-        self.payouts
-            .iter()
-            .filter(|payout| payout.status == PayoutStatus::Completed)
-            .min_by_key(|payout| (now - payout.occurred_at).abs().num_seconds())
-            .map(|payout| payout.occurred_at)
     }
 
     #[must_use]

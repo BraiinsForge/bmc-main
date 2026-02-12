@@ -739,16 +739,8 @@ impl DisplayController {
                         user_financials.next_payout_estimate_to_shared();
                     widget.braiins_pool.last_payout =
                         recent_payouts.last_payout_to_shared(number_format);
-                    if let (Some(next_payout_estimate), Some(last_payout)) = (
-                        user_financials.next_payout_estimate(),
-                        recent_payouts.last_payout_datetime(),
-                    ) {
-                        let now = Utc::now();
-                        let base = (next_payout_estimate - last_payout).abs().num_seconds();
-                        let until_now = (now - last_payout).abs().num_seconds();
-                        #[expect(clippy::integer_division, clippy::cast_precision_loss)]
-                        let fraction = (100 * until_now / base) as f32;
-                        widget.braiins_pool.progress = fraction;
+                    if let Some(progress_pct) = user_financials.next_payout_progress_pct() {
+                        widget.braiins_pool.progress = progress_pct;
                     }
                 });
             }
