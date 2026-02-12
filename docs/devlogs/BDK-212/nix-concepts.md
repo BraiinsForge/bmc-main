@@ -844,3 +844,46 @@ This Nix-based upgrade system provides:
 6. **Multi-Server Support** - Dependencies resolved across organizations
 7. **Reproducibility** - Flakes ensure consistent builds via lockfiles
 8. **Security** - Built-in signature verification via narinfo
+
+## Examples
+
+Here are some examples on how the hooks can be utilized.
+
+### File merger hook
+
+Sometimes we will need to merge multiple files into a single file,
+for example for OpenWrt's Conffiles. To do that there will be a specialized hook.
+
+The packages will provide a folder `merge-files/path/to/file`. Then, the hook will take
+the files from there and create a new file under the profile: `path/to/file`. Specifically
+the hook should look at the files in a lexicographical order, so then we can prepend priority
+to the files, ie. `00-`, `50-`, `100-`.
+
+### File symlinker hook
+
+We might need to create an activation script that will symlink files
+out of the profile. To do that, there are at least two options. Either
+each package is going to provide an activation script with the
+symlinks, but that might lead to quite a lot of activation scripts
+that need to be executed on each boot, or a hook could be made so that
+we have only one activation script.
+
+With the hook approach, the packages could provide `file-symlinks/` with json file definitions.
+These definitions will tell us what file to take out of the profile and where to put it to.
+There might be multiple conflicting files, so the hook has to decide based on the priority which
+file to choose. Additionally it could also respect the priorities of the configured servers.
+
+```
+{
+   "priority": 10,
+   "from": "my/test",
+   "to": "/etc/test"
+}
+```
+
+The hook will create a single activation script that will symlink all
+of the files. This allows us to keep the possibly harder logic in Rust
+and use activation scripts only for simple
+
+The produced script will reside at `activation/file-symlinks` and
+`activation/file-symlinks.json`, stating when it should run.
