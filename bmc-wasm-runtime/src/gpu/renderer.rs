@@ -8,11 +8,12 @@
 #![expect(clippy::cast_precision_loss)]
 
 use std::ffi::c_void;
+use std::num::NonZeroU32;
 
 use anyhow::Result;
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
-use femtovg::{Canvas, Color, FontId, Paint, Path};
+use femtovg::{Canvas, Color, FontId, Paint, Path, RenderTarget};
 
 use super::bitmap::BitmapRegistry;
 use super::icons::IconRegistry;
@@ -54,7 +55,10 @@ impl std::fmt::Debug for FemtoVgRenderer {
 }
 
 impl FemtoVgRenderer {
-    /// Create a new GPU renderer.
+    /// Create a new GPU renderer targeting a specific FBO.
+    ///
+    /// The `fbo_id` is the OpenGL framebuffer object that FemtoVG should render to.
+    /// This is typically the staging FBO from the EGL two-FBO pipeline.
     ///
     /// Loads BraiinsSans fonts into both FemtoVG (for GPU glyph rendering) and
     /// cosmic-text (for paragraph shaping/layout). The cosmic-text `FontSystem`
@@ -62,12 +66,24 @@ impl FemtoVgRenderer {
     ///
     /// # Safety
     /// `load_fn` must return valid OpenGL function pointers for the current GL context.
-    pub unsafe fn new<F>(load_fn: F, width: u32, height: u32) -> Result<Self>
+    pub unsafe fn new<F>(load_fn: F, width: u32, height: u32, fbo_id: u32) -> Result<Self>
     where
         F: FnMut(&str) -> *const c_void,
     {
-        // Create FemtoVG OpenGL renderer + canvas
-        let gl_renderer = unsafe { OpenGl::new_from_function(load_fn) }?;
+        // Create FemtoVG OpenGL renderer
+        let mut gl_renderer = unsafe { OpenGl::new_from_function(load_fn) }?;
+
+        // Set the FBO as screen target BEFORE creating the Canvas.
+        // This is critical for rendering to DMA-BUF exports.
+        if let Some(fbo_nz) = NonZeroU32::new(fbo_id) {
+            // Safety: NonZeroU32 has the same layout as glow::Framebuffer
+            let fbo = unsafe { std::mem::transmute::<NonZeroU32, _>(fbo_nz) };
+            gl_renderer.set_screen_target(Some(fbo));
+            tracing::info!("FemtoVG screen target set to FBO {}", fbo_id);
+        } else {
+            tracing::warn!("FBO id is 0, using default screen target");
+        }
+
         let mut canvas = Canvas::new(gl_renderer)?;
         canvas.set_size(width, height, 1.0);
 
@@ -269,6 +285,8 @@ impl Renderer for FemtoVgRenderer {
         self.width = width as f32;
         self.height = height as f32;
         self.frame_counter += 1;
+        // Ensure we render to the configured screen target (the staging FBO)
+        self.canvas.set_render_target(RenderTarget::Screen);
         self.canvas.set_size(width, height, 1.0);
         self.canvas
             .clear_rect(0, 0, width, height, Color::rgbf(0.0, 0.0, 0.0));

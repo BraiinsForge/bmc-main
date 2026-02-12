@@ -79,12 +79,21 @@ impl WasmWidgetRuntime {
 
     /// Create a new runtime from WASM bytes and a GL function loader.
     ///
+    /// The `fbo_id` is the OpenGL framebuffer object that FemtoVG should render to.
+    /// This is typically the staging FBO from the EGL two-FBO pipeline.
+    ///
     /// The runtime creates and owns the GPU renderer. The host (testbed / BMC)
     /// only provides the GL context and event loop.
     ///
     /// # Safety
     /// `load_fn` must return valid OpenGL function pointers for the current GL context.
-    pub unsafe fn new<F>(wasm_bytes: &[u8], load_fn: F, width: u32, height: u32) -> Result<Self>
+    pub unsafe fn new<F>(
+        wasm_bytes: &[u8],
+        load_fn: F,
+        width: u32,
+        height: u32,
+        fbo_id: u32,
+    ) -> Result<Self>
     where
         F: FnMut(&str) -> *const c_void,
     {
@@ -93,7 +102,7 @@ impl WasmWidgetRuntime {
         let engine = wasmi::Engine::new(&config);
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
-        let renderer = unsafe { FemtoVgRenderer::new(load_fn, width, height) }?;
+        let renderer = unsafe { FemtoVgRenderer::new(load_fn, width, height, fbo_id) }?;
         let host_state = HostState::new(renderer);
 
         let mut store = wasmi::Store::new(&engine, host_state);
