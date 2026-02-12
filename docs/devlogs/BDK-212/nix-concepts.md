@@ -663,12 +663,23 @@ on boot.
 The scripts for the factory will have to be adapted and new images
 made.
 
-### Upgrade process (No Nix -> Nix) and fallback
+### First OpenWrt firmware with Nix
 
-This section is for either upgrading an already existing Deck, or for
-any other cases when the Deck is in a state that the Nix stack is not
-initialized properly. This can happen when the Deck is in factory
-reset, or if important files get corrupted.
+When we will be making the first firmware with Nix support, we should
+ideally ensure that Nix store is initialized prior to the upgrade.
+
+For that, we will mark the firmware as a major version, so devices
+cannot skip it.
+
+The image's COMMAND will contain the initialization procedure in the
+image check part. It will download the initial nix store and extract
+it to the root partition. It will also contain the initial profile.
+
+Then on the next boot, activation of the profile will be ran. The
+fallback initializer will detect that the store is initialized already
+and be skipped.
+
+### Fallback (factory reset or if something goes wrong)
 
 There will be a fallback service that checks for initialization and in
 case of issues, it will reinitialize the /nix/store. We do not have
