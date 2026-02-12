@@ -127,6 +127,8 @@ bmc-shared-time = { path = "bmc-shared/time" }
 bmc-shared-utils = { path = "bmc-shared/utils" }
 bmc-support = { path = "bmc-support" }
 bmc-upgrade = { path = "bmc-upgrade" }
+bmc-wasm-protocol = { path = "bmc-wasm-runtime/protocol" }
+bmc-wasm-runtime = { path = "bmc-wasm-runtime" }
 bmc-widget = { path = "bmc-widget" }
 bmc-widget-protocol = { path = "bmc-widget-protocol" }
 bstr = "1.11.3"
