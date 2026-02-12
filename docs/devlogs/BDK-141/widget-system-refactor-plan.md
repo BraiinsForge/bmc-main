@@ -325,5 +325,5 @@ Update gRPC API to support standalone widgets.
 ## Related Documents
 
 - [Widget Manifest](widget-manifest.md) - Manifest schema specification
-- [Widget IPC Protocol](widget-ipc-protocol.md) - Legacy IPC protocol (outdated, replaced by Wayland protocol extension)
+
 - [Widget Refactor Implementation](widget-refactor-implementation.md) - Detailed implementation plan

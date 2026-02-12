@@ -152,7 +152,7 @@ Example:
 
 ##### Size Dimensions
 
-The Deck application sends pixel dimensions in the [`init` message](widget-ipc-protocol.md#init) based on the size type. See [SizeInfo Object](widget-ipc-protocol.md#sizeinfo-object) for the message format.
+The Deck application sends pixel dimensions in the `init` message based on the size type.
 
 Dimensions for the Braiins Deck (1280x480 display, 4x2 grid):
 
@@ -238,5 +238,5 @@ When a widget instance is created:
 2. Application creates IPC socket at `/run/bmc/widgets/<instance-id>.sock`
 3. Application spawns the binary with environment variable:
    - `BMC_IPC_SOCKET` - Path to the IPC socket
-4. Widget connects to IPC socket and receives [`init` message](widget-ipc-protocol.md#init) with full configuration
-5. Application sends [`settings_update` messages](widget-ipc-protocol.md#settings_update) when subscribed settings change
+4. Widget connects to IPC socket and receives `init` message with full configuration
+5. Application sends `settings_update` messages when subscribed settings change
