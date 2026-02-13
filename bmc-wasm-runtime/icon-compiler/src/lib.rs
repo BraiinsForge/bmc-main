@@ -45,7 +45,7 @@ pub fn compile_svg(svg: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&size.width().to_le_bytes());
     buf.extend_from_slice(&size.height().to_le_bytes());
-    let path_count = u16::try_from(paths.len()).expect("too many paths in SVG");
+    let path_count = u16::try_from(paths.len()).unwrap_or_else(|_| panic!("too many paths in SVG"));
     buf.extend_from_slice(&path_count.to_le_bytes());
 
     for info in &paths {
@@ -167,7 +167,8 @@ fn write_path(buf: &mut Vec<u8>, info: &PathInfo) {
         buf.extend_from_slice(&info.stroke_width.to_le_bytes());
     }
 
-    let op_count = u16::try_from(info.ops.len()).expect("too many ops in SVG path");
+    let op_count =
+        u16::try_from(info.ops.len()).unwrap_or_else(|_| panic!("too many ops in SVG path"));
     buf.extend_from_slice(&op_count.to_le_bytes());
     for op in &info.ops {
         match op {

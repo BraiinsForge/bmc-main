@@ -964,7 +964,9 @@ fn render_taffy_node(
     result: &mut TreeResult,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
-    let layout = taffy.layout(node_id).unwrap();
+    let Ok(layout) = taffy.layout(node_id) else {
+        return;
+    };
     let x = parent_x + layout.location.x;
     let y = parent_y + layout.location.y;
     let w = layout.size.width;
@@ -1014,7 +1016,10 @@ fn render_taffy_node(
         }
     }
 
-    for child_id in taffy.children(node_id).unwrap() {
+    let Ok(children) = taffy.children(node_id) else {
+        return;
+    };
+    for child_id in children {
         render_taffy_node(
             taffy,
             child_id,
@@ -2104,7 +2109,8 @@ fn format_btn_key(id: u32, buf: &mut [u8; 16]) -> &str {
     buf[0..4].copy_from_slice(b"btn_");
     if id == 0 {
         buf[4] = b'0';
-        return core::str::from_utf8(&buf[0..5]).unwrap();
+        // Safety: buffer contains only ASCII bytes
+        return core::str::from_utf8(&buf[0..5]).unwrap_or("btn_0");
     }
     let mut n = id;
     let mut i = 16;
@@ -2115,7 +2121,8 @@ fn format_btn_key(id: u32, buf: &mut [u8; 16]) -> &str {
     }
     let num_len = 16 - i;
     buf.copy_within(i..16, 4);
-    core::str::from_utf8(&buf[0..4 + num_len]).unwrap()
+    // Safety: buffer contains only ASCII bytes
+    core::str::from_utf8(&buf[0..4 + num_len]).unwrap_or("btn_?")
 }
 
 #[cfg(test)]

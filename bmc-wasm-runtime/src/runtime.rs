@@ -11,7 +11,7 @@
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use bmc_wasm_protocol::{SDK_VERSION, SDK_VERSION_EXPORT, version_unpack};
 use chrono::{DateTime, Datelike, Local, Timelike, Utc};
 use wasmi::{Caller, Extern, Linker};
@@ -694,7 +694,10 @@ impl WasmWidgetRuntime {
 
         if animation_only {
             // Animation-only frame: skip WASM, re-render from cached tree
-            let (data, width, height) = state.cached_tree_data.clone().unwrap();
+            let (data, width, height) = state
+                .cached_tree_data
+                .clone()
+                .context("animation frame without cached tree data")?;
             let frame_counter = state.frame_counter;
             state.frame_counter += 1;
             match tree::process_tree(
@@ -827,7 +830,10 @@ impl WasmWidgetRuntime {
 
             // Allocate WASM memory for the body
             let body_ptr = if body_len > 0 {
-                self.store.set_fuel(Self::FUEL_PER_FRAME).expect("set fuel");
+                if let Err(e) = self.store.set_fuel(Self::FUEL_PER_FRAME) {
+                    tracing::error!("set_fuel failed: {e}");
+                    continue;
+                }
                 match alloc_func.call(&mut self.store, body_len) {
                     Ok(ptr) => {
                         // Write body into WASM memory
@@ -855,7 +861,10 @@ impl WasmWidgetRuntime {
             };
 
             // Call __on_fetch_response(request_id, status, body_ptr, body_len)
-            self.store.set_fuel(Self::FUEL_PER_FRAME).expect("set fuel");
+            if let Err(e) = self.store.set_fuel(Self::FUEL_PER_FRAME) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
             if let Err(e) = on_response.call(
                 &mut self.store,
                 (resp.request_id, resp.status, body_ptr, body_len),

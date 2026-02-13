@@ -162,13 +162,9 @@ const TILE_DEFS: [(u32, u32, u32, u32, &str); 4] = [
     (M + 638 + G, M + 480 + G + 238 + G, 317, 238, "SMALL"),
 ];
 
-impl ApplicationHandler for App {
+impl App {
     #[expect(clippy::too_many_lines)]
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
-            return;
-        }
-
+    fn init(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
         let win_size = PhysicalSize::new(PREVIEW_WIDTH, PREVIEW_HEIGHT);
         let window_attrs = Window::default_attributes()
             .with_title("WASM Widget Testbed")
@@ -191,36 +187,37 @@ impl ApplicationHandler for App {
                             a
                         }
                     })
-                    .unwrap()
+                    .unwrap_or_else(|| unreachable!())
             })
-            .expect("Failed to build display");
+            .context("Failed to build display")?;
 
-        let window = window.expect("Failed to create window");
+        let window = window.context("Failed to create window")?;
         let gl_display = gl_config.display();
-        let raw_handle = window.window_handle().unwrap().as_raw();
+        let raw_handle = window.window_handle()?.as_raw();
 
         let context_attrs = ContextAttributesBuilder::new().build(Some(raw_handle));
         let gl_context = unsafe {
             gl_display
                 .create_context(&gl_config, &context_attrs)
-                .expect("Failed to create GL context")
+                .context("Failed to create GL context")?
         };
 
         let size = window.inner_size();
-        let surface_attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
-            raw_handle,
-            NonZeroU32::new(size.width.max(1)).unwrap(),
-            NonZeroU32::new(size.height.max(1)).unwrap(),
+        let (nz_w, nz_h) = (
+            NonZeroU32::new(size.width.max(1)).unwrap_or(NonZeroU32::MIN),
+            NonZeroU32::new(size.height.max(1)).unwrap_or(NonZeroU32::MIN),
         );
+        let surface_attrs =
+            SurfaceAttributesBuilder::<WindowSurface>::new().build(raw_handle, nz_w, nz_h);
         let gl_surface = unsafe {
             gl_display
                 .create_window_surface(&gl_config, &surface_attrs)
-                .expect("Failed to create GL surface")
+                .context("Failed to create GL surface")?
         };
 
         let gl_context = gl_context
             .make_current(&gl_surface)
-            .expect("Failed to make GL context current");
+            .context("Failed to make GL context current")?;
 
         if let Err(e) = gl_surface.set_swap_interval(&gl_context, SwapInterval::DontWait) {
             eprintln!("Warning: failed to disable vsync: {e}");
@@ -229,20 +226,21 @@ impl ApplicationHandler for App {
         self.rss_after_gl_kb = current_rss_kb();
 
         let (watcher, watcher_rx) =
-            setup_watcher(&self.wasm_path).expect("Failed to set up file watcher");
+            setup_watcher(&self.wasm_path).context("Failed to set up file watcher")?;
 
         let gl = unsafe {
             glow::Context::from_loader_function(|s| {
-                let c = CString::new(s).unwrap();
-                gl_display.get_proc_address(&c).cast()
+                gl_display
+                    .get_proc_address(&CString::new(s).unwrap_or_default())
+                    .cast()
             })
         };
 
         let mut tiles = Vec::with_capacity(4);
         for &(x, y, w, h, label) in &TILE_DEFS {
             let runtime = create_runtime(&self.wasm_path, &gl_config, w, h)
-                .expect("Failed to create runtime");
-            let (fbo, texture) = create_fbo(&gl, w, h);
+                .context("Failed to create runtime")?;
+            let (fbo, texture) = create_fbo(&gl, w, h)?;
             tiles.push(PreviewTile {
                 runtime,
                 x,
@@ -255,9 +253,9 @@ impl ApplicationHandler for App {
             });
         }
 
-        let (checker_fbo, checker_texture) = create_fbo(&gl, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+        let (checker_fbo, checker_texture) = create_fbo(&gl, PREVIEW_WIDTH, PREVIEW_HEIGHT)?;
         render_checkerboard_to_fbo(&gl, checker_fbo, PREVIEW_WIDTH, PREVIEW_HEIGHT);
-        let (stats_fbo, stats_texture) = create_fbo(&gl, STATS_W, STATS_H);
+        let (stats_fbo, stats_texture) = create_fbo(&gl, STATS_W, STATS_H)?;
 
         self.rss_after_runtime_kb = current_rss_kb();
 
@@ -289,6 +287,19 @@ impl ApplicationHandler for App {
             mouse_down: false,
             fps: FpsTracker::new(),
         });
+        Ok(())
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.state.is_some() {
+            return;
+        }
+        if let Err(e) = self.init(event_loop) {
+            eprintln!("Fatal initialization error: {e:#}");
+            event_loop.exit();
+        }
     }
 
     fn window_event(
@@ -559,10 +570,9 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
     // Always mark as rendered — we draw all 4 tiles every frame
     state.fps.tick(render_us, true);
 
-    state
-        .gl_surface
-        .swap_buffers(&state.gl_context)
-        .expect("Failed to swap buffers");
+    if let Err(e) = state.gl_surface.swap_buffers(&state.gl_context) {
+        eprintln!("Failed to swap buffers: {e}");
+    }
 
     state.needs_render = state
         .tiles
@@ -641,9 +651,13 @@ fn hit_test_tile(tiles: &[PreviewTile], pos: (i32, i32)) -> Option<(usize, i32, 
 
 /// Create an FBO with a color texture attachment.
 #[expect(clippy::cast_possible_wrap)]
-fn create_fbo(gl: &glow::Context, width: u32, height: u32) -> (glow::Framebuffer, glow::Texture) {
+fn create_fbo(
+    gl: &glow::Context,
+    width: u32,
+    height: u32,
+) -> Result<(glow::Framebuffer, glow::Texture)> {
     unsafe {
-        let texture = gl.create_texture().unwrap();
+        let texture = gl.create_texture().context("Failed to create texture")?;
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
         gl.tex_image_2d(
             glow::TEXTURE_2D,
@@ -667,7 +681,9 @@ fn create_fbo(gl: &glow::Context, width: u32, height: u32) -> (glow::Framebuffer
             glow::LINEAR as i32,
         );
 
-        let fbo = gl.create_framebuffer().unwrap();
+        let fbo = gl
+            .create_framebuffer()
+            .context("Failed to create framebuffer")?;
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
         gl.framebuffer_texture_2d(
             glow::FRAMEBUFFER,
@@ -687,7 +703,7 @@ fn create_fbo(gl: &glow::Context, width: u32, height: u32) -> (glow::Framebuffer
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         gl.bind_texture(glow::TEXTURE_2D, None);
 
-        (fbo, texture)
+        Ok((fbo, texture))
     }
 }
 
@@ -704,10 +720,7 @@ fn create_runtime(
     unsafe {
         WasmWidgetRuntime::new(
             &wasm_bytes,
-            |s| {
-                let c = CString::new(s).unwrap();
-                gl_display.get_proc_address(&c)
-            },
+            |s| gl_display.get_proc_address(&CString::new(s).unwrap_or_default()),
             width,
             height,
             0,

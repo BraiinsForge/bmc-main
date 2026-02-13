@@ -27,7 +27,8 @@ pub fn include_bitmap(input: TokenStream) -> TokenStream {
     let rel_path = path_lit.value();
 
     // Verify the file exists at compile time for a clear error message
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .unwrap_or_else(|_| panic!("CARGO_MANIFEST_DIR not set"));
     let full_path = std::path::Path::new(&manifest_dir).join(&rel_path);
     if !full_path.exists() {
         panic!("bitmap file not found: {}", full_path.display());
@@ -61,7 +62,8 @@ pub fn include_icon(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
     let rel_path = path_lit.value();
 
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .unwrap_or_else(|_| panic!("CARGO_MANIFEST_DIR not set"));
     let full_path = std::path::Path::new(&manifest_dir).join(&rel_path);
 
     let svg_data = std::fs::read_to_string(&full_path)

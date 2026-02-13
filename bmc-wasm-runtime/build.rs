@@ -19,17 +19,22 @@ const BUILTIN_ICON_MAP: &[(&str, u16)] = &[
 
 fn main() {
     let icons_dir = Path::new("icons");
-    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let out_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| panic!("OUT_DIR not set"));
     let out_path = Path::new(&out_dir);
 
     // Collect (name, id) for each icon
     let mut entries = Vec::new();
 
-    for entry in fs::read_dir(icons_dir).expect("failed to read icons/ directory") {
-        let entry = entry.unwrap();
+    for entry in fs::read_dir(icons_dir).unwrap_or_else(|e| panic!("failed to read icons/: {e}")) {
+        let entry = entry.unwrap_or_else(|e| panic!("failed to iterate icon entries: {e}"));
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "svg") {
-            let stem = path.file_stem().unwrap().to_str().unwrap().to_owned();
+            let stem = path
+                .file_stem()
+                .unwrap_or_else(|| panic!("no file stem for {}", path.display()))
+                .to_str()
+                .unwrap_or_else(|| panic!("non-UTF8 file stem for {}", path.display()))
+                .to_owned();
             let svg = fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
 
@@ -37,7 +42,8 @@ fn main() {
 
             // Write binary blob
             let bin_name = format!("icon_{stem}.bin");
-            fs::write(out_path.join(&bin_name), &compiled).unwrap();
+            fs::write(out_path.join(&bin_name), &compiled)
+                .unwrap_or_else(|e| panic!("failed to write {bin_name}: {e}"));
 
             // Look up ID from the protocol-defined mapping
             let const_id = BUILTIN_ICON_MAP
@@ -65,9 +71,10 @@ fn main() {
             generated,
             "    (0x{id:04X}, include_bytes!(concat!(env!(\"OUT_DIR\"), \"/icon_{stem}.bin\"))),"
         )
-        .unwrap();
+        .unwrap_or_else(|e| panic!("failed to write generated source: {e}"));
     }
     generated.push_str("];\n");
 
-    fs::write(out_path.join("builtin_icons.rs"), generated).unwrap();
+    fs::write(out_path.join("builtin_icons.rs"), generated)
+        .unwrap_or_else(|e| panic!("failed to write builtin_icons.rs: {e}"));
 }
