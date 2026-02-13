@@ -39,6 +39,8 @@ type EglCreateImageKhr = unsafe extern "C" fn(
 
 type GlEglImageTargetTexture2DOes = unsafe extern "C" fn(target: u32, image: *mut c_void);
 
+type EglDestroyImageKhr = unsafe extern "C" fn(dpy: *mut c_void, image: *mut c_void) -> i32;
+
 /// EGL state for OpenGL ES rendering via GBM
 ///
 /// Uses a two-FBO pipeline to work around FemtoVG's Y-flip on FBO targets:
@@ -62,6 +64,8 @@ pub struct EglState {
     gl: glow::Context,
     /// EGL extension: eglCreateImageKHR
     egl_create_image: EglCreateImageKhr,
+    /// EGL extension: eglDestroyImageKHR
+    egl_destroy_image: EglDestroyImageKhr,
     /// GL extension: glEGLImageTargetTexture2DOES
     gl_image_target_texture: GlEglImageTargetTexture2DOes,
     /// Export buffers (EGLImage-backed, for DMA-BUF)
@@ -104,8 +108,7 @@ struct BlitResources {
 struct RenderBuffer {
     /// GBM buffer object
     bo: BufferObject<()>,
-    /// EGLImage handle
-    #[expect(dead_code, reason = "kept alive for texture binding")]
+    /// EGLImage handle (destroyed in `destroy_render_buffer`)
     egl_image: *mut c_void,
     /// OpenGL texture (color attachment, backed by EGLImage)
     texture: glow::Texture,
@@ -167,6 +170,16 @@ impl EglState {
         };
         tracing::debug!("Loaded eglCreateImageKHR");
 
+        // Load EGL extension: eglDestroyImageKHR
+        let egl_destroy_image: EglDestroyImageKhr = unsafe {
+            let proc = smithay::backend::egl::get_proc_address("eglDestroyImageKHR");
+            if proc.is_null() {
+                anyhow::bail!("eglDestroyImageKHR not available");
+            }
+            std::mem::transmute(proc)
+        };
+        tracing::debug!("Loaded eglDestroyImageKHR");
+
         // Load GL extension: glEGLImageTargetTexture2DOES
         let gl_image_target_texture: GlEglImageTargetTexture2DOes = unsafe {
             let proc = smithay::backend::egl::get_proc_address("glEGLImageTargetTexture2DOES");
@@ -196,6 +209,7 @@ impl EglState {
             egl_context,
             gl,
             egl_create_image,
+            egl_destroy_image,
             gl_image_target_texture,
             buffers: [None, None],
             current_buffer: 0,
@@ -687,23 +701,85 @@ void main() {
 
         for buffer in &mut self.buffers {
             if let Some(buf) = buffer.take() {
-                unsafe {
-                    self.gl.delete_framebuffer(buf.fbo);
-                    self.gl.delete_texture(buf.texture);
-                }
+                Self::destroy_render_buffer(
+                    &self.gl,
+                    self.egl_destroy_image,
+                    self.egl_display_raw,
+                    buf,
+                );
             }
         }
 
         if let Some(staging) = self.staging.take() {
-            unsafe {
-                self.gl.delete_framebuffer(staging.fbo);
-                self.gl.delete_renderbuffer(staging.stencil_rbo);
-                self.gl.delete_texture(staging.texture);
-            }
+            Self::destroy_staging_buffer(&self.gl, staging);
         }
 
         self.width = width;
         self.height = height;
+    }
+
+    /// Destroy a render buffer and all its GPU resources
+    fn destroy_render_buffer(
+        gl: &glow::Context,
+        egl_destroy_image: EglDestroyImageKhr,
+        egl_display_raw: *mut c_void,
+        buf: RenderBuffer,
+    ) {
+        unsafe {
+            gl.delete_framebuffer(buf.fbo);
+            gl.delete_texture(buf.texture);
+            // Destroy EGLImage to free GPU VA space
+            egl_destroy_image(egl_display_raw, buf.egl_image);
+        }
+        tracing::debug!("Destroyed render buffer (EGLImage {:?})", buf.egl_image);
+        // GBM BO is dropped here via buf.bo Drop
+    }
+
+    /// Destroy staging buffer and its GPU resources
+    fn destroy_staging_buffer(gl: &glow::Context, staging: StagingBuffer) {
+        unsafe {
+            gl.delete_framebuffer(staging.fbo);
+            gl.delete_renderbuffer(staging.stencil_rbo);
+            gl.delete_texture(staging.texture);
+        }
+        tracing::debug!("Destroyed staging buffer");
+    }
+
+    /// Destroy blit resources
+    fn destroy_blit_resources(gl: &glow::Context, blit: BlitResources) {
+        unsafe {
+            gl.delete_program(blit.program);
+            gl.delete_buffer(blit.vbo);
+        }
+        tracing::debug!("Destroyed blit resources");
+    }
+}
+
+impl Drop for EglState {
+    fn drop(&mut self) {
+        tracing::info!("Dropping EglState, cleaning up GPU resources");
+
+        // Destroy export buffers
+        for buffer in &mut self.buffers {
+            if let Some(buf) = buffer.take() {
+                Self::destroy_render_buffer(
+                    &self.gl,
+                    self.egl_destroy_image,
+                    self.egl_display_raw,
+                    buf,
+                );
+            }
+        }
+
+        // Destroy staging buffer
+        if let Some(staging) = self.staging.take() {
+            Self::destroy_staging_buffer(&self.gl, staging);
+        }
+
+        // Destroy blit resources
+        if let Some(blit) = self.blit_program.take() {
+            Self::destroy_blit_resources(&self.gl, blit);
+        }
     }
 }
 
