@@ -17,15 +17,15 @@ cosmic-text.workspace = true
 femtovg.workspace = true
 glow.workspace = true
 image.workspace = true
-imgref = "1.10"
-rgb = "0.8"
+imgref.workspace = true
+rgb.workspace = true
 
 # Layout
 taffy.workspace = true
 
 # Network + JSON (for host-side fetch and parsing)
 serde_json.workspace = true
-ureq = "3"
+ureq.workspace = true
 
 # Testbed
 glutin = { workspace = true, optional = true }

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-usvg = "0.45"
+usvg.workspace = true
 
 [lints]
 workspace = true

@@ -8,9 +8,9 @@ proc-macro = true
 
 [dependencies]
 bmc-icon-compiler = { path = "../icon-compiler" }
-proc-macro2 = "1"
-quote = "1"
-syn = "2"
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
 
 [lints.rust]
 unused_must_use = "deny"
@@ -24,3 +24,8 @@ module_name_repetitions = "allow"
 
 # Keep this crate out of the main workspace
 [workspace]
+
+[workspace.dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = "2"

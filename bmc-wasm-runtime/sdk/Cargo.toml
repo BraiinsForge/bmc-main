@@ -9,7 +9,7 @@ crate-type = ["rlib"]
 [dependencies]
 bmc-wasm-protocol = { path = "../protocol" }
 bmc-wasm-sdk-macros = { path = "../sdk-macros" }
-ufmt = { version = "0.2", features = ["std"] }
+ufmt = { workspace = true }
 
 [lints.rust]
 unused_must_use = "deny"
@@ -25,3 +25,4 @@ module_name_repetitions = "allow"
 [workspace]
 
 [workspace.dependencies]
+ufmt = { version = "0.2", features = ["std"] }

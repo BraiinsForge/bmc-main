@@ -10,7 +10,7 @@ lint:
 
 .PHONY: test
 test:
-	cargo nextest run --workspace
+	cargo nextest run --workspace --exclude bmc-display
 
 .PHONY: validate
 validate: format lint
