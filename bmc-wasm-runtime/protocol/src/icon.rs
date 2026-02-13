@@ -60,3 +60,6 @@ pub const ICON_SUCCESS: u16 = 0xFF12;
 
 /// Info icon (filled circle with "i") — notification info state.
 pub const ICON_INFO: u16 = 0xFF13;
+
+/// Meter / gauge icon — fuel budget indicator.
+pub const ICON_METER: u16 = 0xFF14;

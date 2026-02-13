@@ -12,6 +12,15 @@ pub enum ButtonStyle {
     Tertiary = 3,
 }
 
+/// Button size variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ButtonSize {
+    Small = 0,
+    Normal = 1,
+    Large = 2,
+}
+
 // Host function imports
 unsafe extern "C" {
     fn host_fill_rect(x: i32, y: i32, w: u32, h: u32, color: u32);

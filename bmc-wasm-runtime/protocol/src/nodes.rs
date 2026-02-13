@@ -13,6 +13,11 @@ pub const NODE_CANVAS: u8 = 0x06;
 pub const NODE_MODAL: u8 = 0x07;
 pub const NODE_NOTIFICATION: u8 = 0x08;
 
+// Button size variants (wire value for NODE_BUTTON)
+pub const BUTTON_SIZE_SMALL: u8 = 0;
+pub const BUTTON_SIZE_NORMAL: u8 = 1;
+pub const BUTTON_SIZE_LARGE: u8 = 2;
+
 // Draw commands — shapes (0x40–0x5F)
 pub const DRAW_RECT: u8 = 0x40;
 pub const DRAW_CIRCLE: u8 = 0x41;

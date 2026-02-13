@@ -35,4 +35,4 @@ pub mod tree;
 pub mod components;
 pub mod interaction;
 
-pub use runtime::WasmWidgetRuntime;
+pub use runtime::{RenderStatus, WasmWidgetRuntime};

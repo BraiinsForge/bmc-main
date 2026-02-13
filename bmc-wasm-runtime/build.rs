@@ -6,7 +6,9 @@ use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
-use bmc_wasm_protocol::{ICON_CLOSE, ICON_ERROR, ICON_INFO, ICON_SUCCESS, ICON_WARNING};
+use bmc_wasm_protocol::{
+    ICON_CLOSE, ICON_ERROR, ICON_INFO, ICON_METER, ICON_SUCCESS, ICON_WARNING,
+};
 
 /// Maps SVG file stem → builtin icon ID from the protocol crate.
 const BUILTIN_ICON_MAP: &[(&str, u16)] = &[
@@ -15,6 +17,7 @@ const BUILTIN_ICON_MAP: &[(&str, u16)] = &[
     ("warning--solid", ICON_WARNING),
     ("checkmark--solid", ICON_SUCCESS),
     ("info--solid", ICON_INFO),
+    ("meter", ICON_METER),
 ];
 
 fn main() {

@@ -5,7 +5,7 @@
 //! Format: Each node is [type:u8][data...]
 //! Container nodes: [type][props:32B][child_count:u16][children...]
 //! Paragraph: [type][props:32B][text_style:16B][span_count:u16][spans...]
-//! Button: [type][style:u8][len:u16][bytes...]
+//! Button: [type][style:u8][size:u8][icon_id:u16][len:u16][bytes...]
 //! Spacer: [type][flex:f32]
 //! Canvas: [type][props:32B]
 
@@ -23,7 +23,7 @@ use bmc_wasm_protocol::{
 // Re-export for macro paths
 pub use bmc_wasm_protocol::{PropsData, TextStyle};
 
-use crate::host::ButtonStyle;
+use crate::host::{ButtonSize, ButtonStyle};
 
 /// Compiled icon data (output of `include_icon!` proc macro).
 ///
@@ -290,9 +290,16 @@ impl TreeBuffer {
     }
 
     /// Write a button node
-    pub fn write_button(&mut self, label: &str, style: ButtonStyle, icon_id: u16) {
+    pub fn write_button(
+        &mut self,
+        label: &str,
+        style: ButtonStyle,
+        size: ButtonSize,
+        icon_id: u16,
+    ) {
         self.write_u8(NODE_BUTTON);
         self.write_u8(style as u8);
+        self.write_u8(size as u8);
         self.write_u16(icon_id);
         let bytes = label.as_bytes();
         self.write_u16(bytes.len() as u16);
@@ -591,6 +598,7 @@ pub enum Node {
     Button {
         label: String,
         style: ButtonStyle,
+        size: ButtonSize,
         icon_id: u16,
     },
     Spacer {
@@ -671,18 +679,13 @@ pub fn paragraph(style: StyleResult, spans: impl IntoIterator<Item = Span>) -> N
     }
 }
 
-/// Button node with optional icon.
-///
-/// ```ignore
-/// button(ButtonStyle::Primary, None, "Click me")          // text only
-/// button(ButtonStyle::Primary, gear_id, "Settings")       // icon + text
-/// button(ButtonStyle::Primary, close_id, "")              // icon only
-/// ```
-pub fn button(style: ButtonStyle, icon: impl Into<Option<u16>>, label: impl Into<String>) -> Node {
+/// Create a button node (used by the `button!` macro).
+pub fn make_button(label: String, style: ButtonStyle, size: ButtonSize, icon_id: u16) -> Node {
     Node::Button {
-        label: label.into(),
+        label,
         style,
-        icon_id: icon.into().unwrap_or(0),
+        size,
+        icon_id,
     }
 }
 
@@ -910,9 +913,10 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
         Node::Button {
             label,
             style,
+            size,
             icon_id,
         } => {
-            buf.write_button(label, *style, *icon_id);
+            buf.write_button(label, *style, *size, *icon_id);
         }
         Node::Spacer { flex } => {
             buf.write_spacer(*flex);

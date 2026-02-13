@@ -3,7 +3,11 @@
 //! Button component with immediate-mode API.
 
 #![allow(clippy::wildcard_imports)]
-#![expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
 
 use crate::colors::*;
 use crate::interaction::{InteractionState, Rect};
@@ -70,14 +74,88 @@ impl ButtonStyle {
     }
 }
 
-/// Button font size
-const BUTTON_FONT_SIZE: f32 = 16.0;
+use bmc_wasm_protocol::{BUTTON_SIZE_LARGE, BUTTON_SIZE_SMALL};
 
-/// Icon size within buttons
-const BUTTON_ICON_SIZE: f32 = 16.0;
+/// Button size variants with layout metrics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonSize {
+    Small,
+    Normal,
+    Large,
+}
 
-/// Gap between icon and text
-const ICON_TEXT_GAP: f32 = 8.0;
+impl From<u8> for ButtonSize {
+    fn from(value: u8) -> Self {
+        match value {
+            BUTTON_SIZE_SMALL => ButtonSize::Small,
+            BUTTON_SIZE_LARGE => ButtonSize::Large,
+            _ => ButtonSize::Normal,
+        }
+    }
+}
+
+impl ButtonSize {
+    #[must_use]
+    pub fn height(self) -> f32 {
+        match self {
+            ButtonSize::Small => 32.0,
+            ButtonSize::Normal => 48.0,
+            ButtonSize::Large => 56.0,
+        }
+    }
+
+    #[must_use]
+    pub fn font_size(self) -> f32 {
+        match self {
+            ButtonSize::Small => 13.0,
+            ButtonSize::Normal => 16.0,
+            ButtonSize::Large => 18.0,
+        }
+    }
+
+    #[must_use]
+    pub fn icon_size(self) -> f32 {
+        match self {
+            ButtonSize::Small => 14.0,
+            ButtonSize::Normal => 16.0,
+            ButtonSize::Large => 20.0,
+        }
+    }
+
+    #[must_use]
+    pub fn h_padding(self) -> f32 {
+        match self {
+            ButtonSize::Small => 12.0,
+            ButtonSize::Normal => 16.0,
+            ButtonSize::Large => 20.0,
+        }
+    }
+
+    #[must_use]
+    pub fn icon_text_gap(self) -> f32 {
+        match self {
+            ButtonSize::Small => 6.0,
+            ButtonSize::Normal => 8.0,
+            ButtonSize::Large => 10.0,
+        }
+    }
+
+    /// Compute button width given label length, icon presence.
+    #[must_use]
+    pub fn width(self, label_len: usize, has_icon: bool) -> f32 {
+        let h = self.height();
+        if has_icon && label_len == 0 {
+            // Icon-only: square
+            h
+        } else if has_icon {
+            let text_w = (label_len as f32 * self.font_size() * 0.6).max(self.font_size() * 2.5);
+            self.h_padding() + self.icon_size() + self.icon_text_gap() + text_w + self.h_padding()
+        } else {
+            let text_w = (label_len as f32 * self.font_size() * 0.6).max(self.font_size() * 7.0);
+            text_w + self.h_padding() * 2.0
+        }
+    }
+}
 
 /// Draw a button with optional icon and label, and check if it was clicked.
 ///
@@ -97,6 +175,7 @@ pub fn draw_button(
     w: f32,
     h: f32,
     style: ButtonStyle,
+    size: ButtonSize,
     icon_id: u16,
 ) -> bool {
     let bounds = Rect::new(x as i32, y as i32, w as u32, h as u32);
@@ -126,50 +205,36 @@ pub fn draw_button(
         BTN_FG
     };
 
+    let font_size = size.font_size();
+    let icon_sz = size.icon_size();
+    let gap = size.icon_text_gap();
+
     let has_icon = icon_id != 0;
     let has_label = !label.is_empty();
 
     if has_icon && has_label {
-        // Icon + text: [icon 16x16] [8px gap] [text], centered together
-        let text_w = renderer.measure_text(label, BUTTON_FONT_SIZE);
-        let content_w = BUTTON_ICON_SIZE + ICON_TEXT_GAP + text_w;
+        let text_w = renderer.measure_text(label, font_size);
+        let content_w = icon_sz + gap + text_w;
         let content_x = x + (w - content_w) / 2.0;
 
-        let icon_y = y + (h - BUTTON_ICON_SIZE) / 2.0;
-        renderer.draw_icon(
-            content_x,
-            icon_y,
-            BUTTON_ICON_SIZE,
-            BUTTON_ICON_SIZE,
-            fg_color,
-            icon_id,
-        );
+        let icon_y = y + (h - icon_sz) / 2.0;
+        renderer.draw_icon(content_x, icon_y, icon_sz, icon_sz, fg_color, icon_id);
 
-        let text_h = BUTTON_FONT_SIZE * 1.2;
-        let text_x = content_x + BUTTON_ICON_SIZE + ICON_TEXT_GAP;
+        let text_h = font_size * 1.3;
+        let text_x = content_x + icon_sz + gap;
         let text_y = y + (h - text_h) / 2.0;
-        renderer.draw_text(label, text_x, text_y, BUTTON_FONT_SIZE, fg_color);
+        renderer.draw_text(label, text_x, text_y, font_size, fg_color);
     } else if has_icon {
-        // Icon-only: centered in button
-        let icon_x = x + (w - BUTTON_ICON_SIZE) / 2.0;
-        let icon_y = y + (h - BUTTON_ICON_SIZE) / 2.0;
-        renderer.draw_icon(
-            icon_x,
-            icon_y,
-            BUTTON_ICON_SIZE,
-            BUTTON_ICON_SIZE,
-            fg_color,
-            icon_id,
-        );
+        let icon_x = x + (w - icon_sz) / 2.0;
+        let icon_y = y + (h - icon_sz) / 2.0;
+        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id);
     } else {
-        // Text-only: centered
-        let text_w = renderer.measure_text(label, BUTTON_FONT_SIZE);
-        let text_h = BUTTON_FONT_SIZE * 1.2;
+        let text_w = renderer.measure_text(label, font_size);
+        let text_h = font_size * 1.3;
         let text_x = x + (w - text_w) / 2.0;
         let text_y = y + (h - text_h) / 2.0;
-        renderer.draw_text(label, text_x, text_y, BUTTON_FONT_SIZE, fg_color);
+        renderer.draw_text(label, text_x, text_y, font_size, fg_color);
     }
 
-    // Register hit region and check for click
     interaction.button(key, bounds)
 }

@@ -4,11 +4,11 @@
 //! SDK component showcase - buttons, colors, animations, rich text, icons.
 
 use bmc_wasm_sdk::{
-    AnimProperty, ButtonStyle, Draw, Easing, GRAY_10, GRAY_30, GRAY_40, GRAY_50, GRAY_70, GRAY_80,
-    GRAY_90, GREEN_50, ICON_CLOSE, Icon, LoopMode, Node, ORANGE_50, RED_50, SystemTime, VIOLET_50,
-    button, canvas, centered, circle, col, color, fmt, icon, icon_builtin, include_icon, modal,
-    orbit, paragraph, props, rect, render_ui, request_frame_after, rotated, row, spacer, span,
-    style, text, tree, ufmt,
+    AnimProperty, Draw, Easing, GRAY_10, GRAY_30, GRAY_40, GRAY_50, GRAY_70, GRAY_80, GRAY_90,
+    GREEN_50, ICON_CLOSE, Icon, LoopMode, Node, ORANGE_50, RED_50, SystemTime, VIOLET_50, button,
+    canvas, centered, circle, col, color, fmt, icon, icon_builtin, include_icon, modal, orbit,
+    paragraph, props, rect, render_ui, request_frame_after, rotated, row, spacer, span, style,
+    text, tree, ufmt,
 };
 use std::cell::{Cell, RefCell};
 use std::f32::consts::{FRAC_PI_2, TAU};
@@ -50,23 +50,19 @@ fn buttons_section(counts: [u32; 4]) -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    button(ButtonStyle::Primary, None, fmt!("Primary {}", counts[0])),
-                    button(
-                        ButtonStyle::Secondary,
-                        None,
-                        fmt!("Secondary {}", counts[1]),
-                    ),
+                    button!(fmt!("Primary {}", counts[0]), style: Primary),
+                    button!(fmt!("Secondary {}", counts[1]), style: Secondary),
                 ],
             ),
             row(
                 props!(gap: 8.0),
                 [
-                    button(ButtonStyle::Tertiary, None, fmt!("Tertiary {}", counts[2])),
-                    button(ButtonStyle::Danger, None, fmt!("Danger {}", counts[3])),
+                    button!(fmt!("Tertiary {}", counts[2]), style: Tertiary),
+                    button!(fmt!("Danger {}", counts[3]), style: Danger),
                 ],
             ),
             spacer(1.0),
-            button(ButtonStyle::Primary, None, "Open Modal"),
+            button!("Open Modal", style: Primary),
         ],
     )
 }
@@ -79,24 +75,16 @@ fn icon_buttons_section() -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    button(
-                        ButtonStyle::Primary,
-                        tree::ensure_registered(&SETTINGS),
-                        "Settings",
-                    ),
-                    button(
-                        ButtonStyle::Secondary,
-                        tree::ensure_registered(&CHECKMARK),
-                        "Apply",
-                    ),
+                    button!("Settings", style: Primary, icon: tree::ensure_registered(&SETTINGS)),
+                    button!("Apply", style: Secondary, icon: tree::ensure_registered(&CHECKMARK)),
                 ],
             ),
             row(
                 props!(gap: 8.0),
                 [
-                    button(ButtonStyle::Secondary, tree::ensure_registered(&SEARCH), ""),
-                    button(ButtonStyle::Danger, tree::ensure_registered(&WARNING), ""),
-                    button(ButtonStyle::Primary, ICON_CLOSE, ""),
+                    button!("", style: Secondary, icon: tree::ensure_registered(&SEARCH)),
+                    button!("", style: Danger, icon: tree::ensure_registered(&WARNING)),
+                    button!("", style: Primary, icon: ICON_CLOSE),
                 ],
             ),
         ],

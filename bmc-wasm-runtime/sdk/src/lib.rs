@@ -30,18 +30,24 @@ pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::{include_bitmap, include_icon};
 pub use format::format_duration;
 pub use host::{
-    ButtonStyle, SizeVariant, SystemTime, WidgetSize, draw_text, fill_rect, parse_date,
+    ButtonSize, ButtonStyle, SizeVariant, SystemTime, WidgetSize, draw_text, fill_rect, parse_date,
     request_frame, request_frame_after,
 };
 pub use json::JsonDoc;
 pub use net::{FetchResponse, fetch, fetch_after};
 pub use tree::{
     AnimationDef, Bitmap, Draw, Icon, ModalProps, Node, NotificationKind, PropsData, Span,
-    StyleResult, TextStyle, TransitionDef, TreeRenderResult, begin_tree, bitmap, button, canvas,
-    center, centered, circle, col, icon, icon_builtin, modal, modal_styled, notification, orbit,
-    paragraph, rect, render_ui, rotated, row, spacer, span, text, with_buffer,
+    StyleResult, TextStyle, TransitionDef, TreeRenderResult, begin_tree, bitmap, canvas, center,
+    centered, circle, col, icon, icon_builtin, make_button, modal, modal_styled, notification,
+    orbit, paragraph, rect, render_ui, rotated, row, spacer, span, text, with_buffer,
 };
 pub use ufmt;
+
+/// Helper for `button!` macro — converts label to String.
+#[doc(hidden)]
+pub fn __macro_string_from(s: impl Into<String>) -> String {
+    s.into()
+}
 
 /// Shorthand for PropsData: `props!()` or `props!(gap: 16.0, background: 0xFF)`
 #[macro_export]
@@ -49,6 +55,73 @@ macro_rules! props {
     () => { $crate::tree::PropsData::default() };
     ($($field:ident: $value:expr),* $(,)?) => {
         $crate::tree::PropsData { $($field: $value),*, ..Default::default() }
+    };
+}
+
+/// Button node with keyword-style options and sensible defaults.
+///
+/// Style and size accept bare variant names resolved through the SDK.
+///
+/// # Examples
+/// ```ignore
+/// button!("OK")                                     // Primary, Normal, no icon
+/// button!("Delete", style: Danger)                  // Danger, Normal
+/// button!("Reset", style: Secondary, size: Small)   // Secondary, Small
+/// button!("", icon: gear_id)                        // icon-only, Primary, Normal
+/// ```
+#[macro_export]
+macro_rules! button {
+    // Accumulator pattern: parse fields one at a time, then emit.
+    // Entry point:
+    ($label:expr $(, $($rest:tt)*)?) => {
+        button!(@acc
+            [$label]
+            [style: $crate::ButtonStyle::Primary]
+            [size: $crate::ButtonSize::Normal]
+            [icon: 0u16]
+            $($($rest)*)?
+        )
+    };
+
+    // Terminal — all fields consumed, build the node.
+    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] $(,)?) => {
+        $crate::make_button($crate::__macro_string_from($label), $s, $sz, $i)
+    };
+
+    // style: Variant
+    (@acc [$label:expr] [style: $_s:expr] [size: $sz:expr] [icon: $i:expr]
+     style: $v:ident $(, $($rest:tt)*)?) => {
+        button!(@acc
+            [$label]
+            [style: $crate::ButtonStyle::$v]
+            [size: $sz]
+            [icon: $i]
+            $($($rest)*)?
+        )
+    };
+
+    // size: Variant
+    (@acc [$label:expr] [style: $s:expr] [size: $_sz:expr] [icon: $i:expr]
+     size: $v:ident $(, $($rest:tt)*)?) => {
+        button!(@acc
+            [$label]
+            [style: $s]
+            [size: $crate::ButtonSize::$v]
+            [icon: $i]
+            $($($rest)*)?
+        )
+    };
+
+    // icon: expr
+    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $_i:expr]
+     icon: $v:expr $(, $($rest:tt)*)?) => {
+        button!(@acc
+            [$label]
+            [style: $s]
+            [size: $sz]
+            [icon: $v]
+            $($($rest)*)?
+        )
     };
 }
 

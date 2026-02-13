@@ -11,12 +11,12 @@
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use bmc_wasm_protocol::{SDK_VERSION, SDK_VERSION_EXPORT, version_unpack};
 use chrono::{DateTime, Datelike, Local, Timelike, Utc};
 use wasmi::{Caller, Extern, Linker};
 
-use crate::components::{ButtonStyle, draw_button};
+use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::gpu::FemtoVgRenderer;
 use crate::host_api::{CompletedFetch, DelayedFetch, HostState};
 use crate::renderer::Renderer;
@@ -61,6 +61,20 @@ fn check_sdk_version(
     Ok(widget_version)
 }
 
+/// Result of a single `render()` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderStatus {
+    /// Frame rendered successfully within fuel budget.
+    Ok,
+    /// Widget exceeded its fuel budget this frame.
+    /// The last good frame is shown with a warning indicator.
+    FuelExhausted,
+    /// Widget exceeded its budget too many times and has been killed.
+    /// An error overlay is shown; WASM will not be called again
+    /// until [`WasmWidgetRuntime::reset_fuel_state`] is called.
+    Dead,
+}
+
 /// WebAssembly widget runtime.
 ///
 /// Executes WASM modules in a sandboxed environment with fuel metering.
@@ -71,6 +85,14 @@ pub struct WasmWidgetRuntime {
     instance: wasmi::Instance,
     render_func: wasmi::TypedFunc<u32, ()>,
     sdk_version: (u16, u16, u16),
+    /// Instruction budget reset before each WASM frame execution.
+    fuel_per_frame: u64,
+    /// Consecutive frames that exceeded the fuel budget.
+    fuel_strikes: u32,
+    /// Widget permanently stopped after exceeding [`Self::max_fuel_strikes`].
+    fuel_dead: bool,
+    /// How many consecutive fuel-outs before the widget is killed.
+    max_fuel_strikes: u32,
 }
 
 impl WasmWidgetRuntime {
@@ -81,6 +103,9 @@ impl WasmWidgetRuntime {
     ///
     /// The `fbo_id` is the OpenGL framebuffer object that FemtoVG should render to.
     /// This is typically the staging FBO from the EGL two-FBO pipeline.
+    ///
+    /// `fuel_per_frame` sets the instruction budget per frame. Use
+    /// [`Self::FUEL_PER_FRAME`] for the default.
     ///
     /// The runtime creates and owns the GPU renderer. The host (testbed / BMC)
     /// only provides the GL context and event loop.
@@ -93,6 +118,7 @@ impl WasmWidgetRuntime {
         width: u32,
         height: u32,
         fbo_id: u32,
+        fuel_per_frame: u64,
     ) -> Result<Self>
     where
         F: FnMut(&str) -> *const c_void,
@@ -106,7 +132,7 @@ impl WasmWidgetRuntime {
         let host_state = HostState::new(renderer);
 
         let mut store = wasmi::Store::new(&engine, host_state);
-        store.set_fuel(Self::FUEL_PER_FRAME)?;
+        store.set_fuel(fuel_per_frame)?;
 
         let mut linker = Linker::new(&engine);
         Self::register_host_functions(&mut linker)?;
@@ -129,6 +155,10 @@ impl WasmWidgetRuntime {
             instance,
             render_func,
             sdk_version,
+            fuel_per_frame,
+            fuel_strikes: 0,
+            fuel_dead: false,
+            max_fuel_strikes: 5,
         })
     }
 
@@ -284,6 +314,7 @@ impl WasmWidgetRuntime {
                         w as f32,
                         h as f32,
                         ButtonStyle::from(style),
+                        ButtonSize::Normal,
                         0,
                     );
                     return i32::from(clicked);
@@ -680,8 +711,23 @@ impl WasmWidgetRuntime {
     ///
     /// On animation-only frames (no pending input, host auto-requested),
     /// skips WASM execution and re-renders from cached tree data.
-    pub fn render(&mut self, delta_ms: u32) -> Result<()> {
+    ///
+    /// Returns [`RenderStatus::FuelExhausted`] if the widget blew its budget
+    /// (last good frame is shown with a warning bar). After
+    /// [`Self::max_fuel_strikes`] consecutive fuel-outs the widget is killed
+    /// and [`RenderStatus::Dead`] is returned on every subsequent call.
+    pub fn render(&mut self, delta_ms: u32) -> Result<RenderStatus> {
         let state = self.store.data_mut();
+
+        // Dead widget — show overlay on every frame.
+        // Use `reset_fuel_state()` to revive (e.g. from a testbed button).
+        if self.fuel_dead {
+            state.interaction.begin_frame();
+            state.begin_render_frame();
+            Self::render_cached_tree(state, delta_ms);
+            Self::draw_dead_overlay(state);
+            return Ok(RenderStatus::Dead);
+        }
 
         // Decide frame type BEFORE begin_frame consumes events
         let animation_only = state.animation_only_frame
@@ -693,43 +739,124 @@ impl WasmWidgetRuntime {
         state.delta_ms = delta_ms;
 
         if animation_only {
-            // Animation-only frame: skip WASM, re-render from cached tree
-            let (data, width, height) = state
-                .cached_tree_data
-                .clone()
-                .context("animation frame without cached tree data")?;
-            let frame_counter = state.frame_counter;
-            state.frame_counter += 1;
-            match tree::process_tree(
-                &data,
-                width,
-                height,
-                &mut state.renderer,
-                &mut state.interaction,
-                &mut state.modal_states,
-                &mut state.animation_states,
-                &mut state.transition_states,
-                frame_counter,
-                delta_ms,
-            ) {
-                Ok((result, has_active)) => {
-                    state.tree_clicks = result.clicks;
-                    if has_active {
-                        state.frame_requested = true;
-                        state.animation_only_frame = true;
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("cached tree render failed: {e}");
-                }
-            }
-        } else {
-            // Full frame: run WASM
-            self.store.set_fuel(Self::FUEL_PER_FRAME)?;
-            self.render_func.call(&mut self.store, delta_ms)?;
+            Self::render_cached_tree(state, delta_ms);
+            return Ok(RenderStatus::Ok);
         }
 
-        Ok(())
+        // Full frame: run WASM with per-frame fuel budget.
+        self.store.set_fuel(self.fuel_per_frame)?;
+        match self.render_func.call(&mut self.store, delta_ms) {
+            Ok(()) => {
+                self.fuel_strikes = 0;
+                Ok(RenderStatus::Ok)
+            }
+            Err(e) if e.as_trap_code() == Some(wasmi::core::TrapCode::OutOfFuel) => {
+                self.fuel_strikes += 1;
+                tracing::warn!(
+                    "widget exceeded fuel budget (strike {}/{})",
+                    self.fuel_strikes,
+                    self.max_fuel_strikes,
+                );
+                if self.fuel_strikes >= self.max_fuel_strikes {
+                    self.fuel_dead = true;
+                    let state = self.store.data_mut();
+                    Self::render_cached_tree(state, delta_ms);
+                    Self::draw_dead_overlay(state);
+                    return Ok(RenderStatus::Dead);
+                }
+                // Show last good frame + warning bar, and request a
+                // retry so the widget can run again with any state
+                // changes that happened before the fuel trap.
+                let state = self.store.data_mut();
+                Self::render_cached_tree(state, delta_ms);
+                Self::draw_fuel_warning(state, self.fuel_strikes, self.max_fuel_strikes);
+                state.frame_requested = true;
+                Ok(RenderStatus::FuelExhausted)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Re-render the last successfully submitted tree (no WASM execution).
+    fn render_cached_tree(state: &mut HostState, delta_ms: u32) {
+        let Some((data, width, height)) = state.cached_tree_data.clone() else {
+            return;
+        };
+        let frame_counter = state.frame_counter;
+        state.frame_counter += 1;
+        match tree::process_tree(
+            &data,
+            width,
+            height,
+            &mut state.renderer,
+            &mut state.interaction,
+            &mut state.modal_states,
+            &mut state.animation_states,
+            &mut state.transition_states,
+            frame_counter,
+            delta_ms,
+        ) {
+            Ok((result, has_active)) => {
+                state.tree_clicks = result.clicks;
+                if has_active {
+                    state.frame_requested = true;
+                    state.animation_only_frame = true;
+                }
+            }
+            Err(e) => {
+                tracing::error!("cached tree render failed: {e}");
+            }
+        }
+    }
+
+    /// Subtle red bar at the top edge indicating fuel exhaustion.
+    fn draw_fuel_warning(state: &mut HostState, strikes: u32, max_strikes: u32) {
+        let w = state.renderer.width();
+        let fraction = strikes as f32 / max_strikes as f32;
+        let bar_w = w * fraction;
+        // Red bar, increasingly opaque as strikes accumulate
+        #[expect(clippy::cast_sign_loss)] // fraction is always 0..=1
+        let alpha = (100.0 + 155.0 * fraction) as u32;
+        let color = 0xFF_00_00_00 | (alpha & 0xFF);
+        state.renderer.fill_rect(0.0, 0.0, bar_w, 3.0, color);
+    }
+
+    /// Full error overlay for a dead widget — CDS notification banner.
+    fn draw_dead_overlay(state: &mut HostState) {
+        let canvas_w = state.renderer.width();
+        let canvas_h = state.renderer.height();
+
+        let title = "This widget has been stopped";
+        let subtitle = "It used too many resources and was suspended.";
+        let banner_w = f32::clamp(canvas_w * 0.6, 250.0, 400.0);
+        let banner_h =
+            tree::measure_notification_banner(title, subtitle, banner_w, &mut state.renderer);
+
+        // Semi-transparent dark scrim
+        state
+            .renderer
+            .fill_rect(0.0, 0.0, canvas_w, canvas_h, 0x00_00_00_B0);
+
+        tree::render_notification_banner(
+            title,
+            subtitle,
+            bmc_wasm_protocol::RED_60,
+            bmc_wasm_protocol::ICON_METER,
+            (canvas_w - banner_w) / 2.0,
+            (canvas_h - banner_h) / 2.0,
+            banner_w,
+            banner_h,
+            &mut state.renderer,
+        );
+    }
+
+    /// Reset the fuel strike counter and dead state.
+    ///
+    /// Call this after hot-reloading a widget or when the host wants to
+    /// give the widget another chance.
+    pub fn reset_fuel_state(&mut self) {
+        self.fuel_strikes = 0;
+        self.fuel_dead = false;
     }
 
     /// Access the GPU renderer (for begin_frame, flush, and testbed drawing).
@@ -830,7 +957,7 @@ impl WasmWidgetRuntime {
 
             // Allocate WASM memory for the body
             let body_ptr = if body_len > 0 {
-                if let Err(e) = self.store.set_fuel(Self::FUEL_PER_FRAME) {
+                if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
                     tracing::error!("set_fuel failed: {e}");
                     continue;
                 }
@@ -861,7 +988,7 @@ impl WasmWidgetRuntime {
             };
 
             // Call __on_fetch_response(request_id, status, body_ptr, body_len)
-            if let Err(e) = self.store.set_fuel(Self::FUEL_PER_FRAME) {
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
                 tracing::error!("set_fuel failed: {e}");
                 continue;
             }

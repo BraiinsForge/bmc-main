@@ -131,6 +131,7 @@ pub enum TreeNode {
     Button {
         label: String,
         style: u8,
+        size: u8,
         icon_id: u16,
     },
     Spacer {
@@ -303,12 +304,14 @@ impl<'a> TreeReader<'a> {
             }
             NODE_BUTTON => {
                 let style = self.read_u8()?;
+                let size = self.read_u8()?;
                 let icon_id = self.read_u16()?;
                 let len = self.read_u16()?;
                 let label = self.read_string(len)?;
                 Ok(TreeNode::Button {
                     label,
                     style,
+                    size,
                     icon_id,
                 })
             }
@@ -520,7 +523,7 @@ use std::collections::HashMap;
 use taffy::prelude::*;
 
 use crate::animation::{apply_easing, compute_animation_value, interpolate_color, multiply_alpha};
-use crate::components::{ButtonStyle, draw_button};
+use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::host_api::{AnimationState, ModalState, PrevDrawValues, TransitionState};
 use crate::interaction::InteractionState;
 use crate::renderer::Renderer;
@@ -565,8 +568,8 @@ struct NotificationData {
 struct NodeContext {
     background: u32,
     paragraph: Option<ParagraphData>,
-    button: Option<(u32, String, u8, u16)>, // id, label, style, icon_id
-    draws: Vec<DrawCommand>,                // canvas draw commands
+    button: Option<(u32, String, u8, u8, u16)>, // id, label, style, size, icon_id
+    draws: Vec<DrawCommand>,                    // canvas draw commands
     notification: Option<NotificationData>,
 }
 
@@ -818,26 +821,17 @@ fn build_taffy_node(
         TreeNode::Button {
             label,
             style: btn_style,
+            size: btn_size,
             icon_id,
         } => {
             let id_num = *button_id;
             *button_id += 1;
             result.clicks.push(false);
 
+            let sz = ButtonSize::from(*btn_size);
             let has_icon = *icon_id != 0;
-            let has_label = !label.is_empty();
-
-            let (width, height) = if has_icon && !has_label {
-                // Icon-only: square button
-                (48.0, 48.0)
-            } else if has_icon && has_label {
-                // Icon + text: icon 16px + 8px gap + text width + padding
-                let text_w = (label.len() as f32 * 10.0).max(40.0);
-                (16.0 + 8.0 + text_w + 32.0, 48.0)
-            } else {
-                // Text-only: unchanged
-                ((label.len() as f32 * 10.0).max(120.0) + 32.0, 48.0)
-            };
+            let width = sz.width(label.len(), has_icon);
+            let height = sz.height();
 
             let style = Style {
                 size: Size {
@@ -850,7 +844,7 @@ fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
-                    button: Some((id_num, label.clone(), *btn_style, *icon_id)),
+                    button: Some((id_num, label.clone(), *btn_style, *btn_size, *icon_id)),
                     ..Default::default()
                 }),
             )?;
@@ -981,7 +975,7 @@ fn render_taffy_node(
             renderer.draw_paragraph(&para.base_style, &para.spans, x, y, w);
         }
 
-        if let Some((btn_id, ref label, style, icon_id)) = ctx.button {
+        if let Some((btn_id, ref label, style, size, icon_id)) = ctx.button {
             let mut key_buf = [0_u8; 16];
             let key = format_btn_key(btn_id, &mut key_buf);
             let clicked = draw_button(
@@ -994,6 +988,7 @@ fn render_taffy_node(
                 w,
                 h,
                 ButtonStyle::from(style as u32),
+                ButtonSize::from(size),
                 icon_id,
             );
             if (btn_id as usize) < result.clicks.len() {
@@ -1649,6 +1644,7 @@ fn render_modal(
         close_btn_size,
         close_btn_size,
         ButtonStyle::Secondary,
+        ButtonSize::Normal,
         ICON_CLOSE,
     );
 
@@ -1838,22 +1834,16 @@ fn render_modal_body_node(
         TreeNode::Button {
             label,
             style,
+            size,
             icon_id,
         } => {
             let btn_id = *button_idx;
             *button_idx += 1;
 
+            let sz = ButtonSize::from(*size);
             let has_icon = *icon_id != 0;
-            let has_label = !label.is_empty();
-            let btn_width = if has_icon && !has_label {
-                48.0
-            } else if has_icon && has_label {
-                let text_w = (label.len() as f32 * 10.0).max(40.0);
-                16.0 + 8.0 + text_w + 32.0
-            } else {
-                (label.len() as f32 * 10.0).max(120.0) + 32.0
-            };
-            let btn_height = 48.0;
+            let btn_width = sz.width(label.len(), has_icon);
+            let btn_height = sz.height();
 
             if y < clip_bottom && y + btn_height > clip_top {
                 let mut key_buf = [0_u8; 16];
@@ -1868,6 +1858,7 @@ fn render_modal_body_node(
                     btn_width,
                     btn_height,
                     ButtonStyle::from(*style as u32),
+                    sz,
                     *icon_id,
                 );
                 if clicked && (btn_id as usize) < result.clicks.len() {
@@ -2034,16 +2025,73 @@ fn render_notification(
     renderer: &mut dyn Renderer,
 ) {
     let (accent, icon_id) = notification_accent(notif.kind);
+    render_notification_banner(
+        &notif.title,
+        &notif.subtitle,
+        accent,
+        icon_id,
+        x,
+        y,
+        w,
+        h,
+        renderer,
+    );
+}
 
+/// Compute the height of a notification banner for a given width.
+pub fn measure_notification_banner(
+    title: &str,
+    subtitle: &str,
+    width: f32,
+    renderer: &mut dyn Renderer,
+) -> f32 {
+    let text_w = (width - NOTIF_TEXT_LEFT - NOTIF_PAD).max(0.0);
+
+    let mut text_h = 0.0;
+    if !title.is_empty() {
+        let spans = plain_spans(title);
+        let (_, h) = renderer.measure_paragraph(&notification_title_style(), &spans, Some(text_w));
+        text_h += h;
+    }
+    if !subtitle.is_empty() {
+        if text_h > 0.0 {
+            text_h += 2.0;
+        }
+        let spans = plain_spans(subtitle);
+        let (_, h) =
+            renderer.measure_paragraph(&notification_subtitle_style(), &spans, Some(text_w));
+        text_h += h;
+    }
+
+    NOTIF_PAD * 2.0 + text_h.max(NOTIF_ICON_SIZE)
+}
+
+/// Render a notification-style banner at a given position.
+///
+/// This is the shared visual used by both the tree notification node and
+/// host-side overlays (e.g. the fuel-limiter dead state).
+#[expect(clippy::too_many_arguments)]
+pub fn render_notification_banner(
+    title: &str,
+    subtitle: &str,
+    accent: u32,
+    icon_id: u16,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    renderer: &mut dyn Renderer,
+) {
     // Background
     renderer.fill_rect(x, y, w, h, GRAY_90);
 
     // Left accent border
     renderer.fill_rect(x, y, NOTIF_BORDER_W, h, accent);
 
-    // Icon (top-aligned with text)
+    // Icon — vertically centered with the title line
+    let title_line_h = notification_title_style().size as f32 * 1.3;
     let icon_x = x + NOTIF_BORDER_W + NOTIF_PAD;
-    let icon_y = y + NOTIF_PAD;
+    let icon_y = y + NOTIF_PAD + (title_line_h - NOTIF_ICON_SIZE) / 2.0;
     renderer.draw_icon(
         icon_x,
         icon_y,
@@ -2058,16 +2106,16 @@ fn render_notification(
     let text_w = (w - NOTIF_TEXT_LEFT - NOTIF_PAD).max(0.0);
     let mut text_y = y + NOTIF_PAD;
 
-    if !notif.title.is_empty() {
+    if !title.is_empty() {
         let style = notification_title_style();
-        let spans = plain_spans(&notif.title);
+        let spans = plain_spans(title);
         let (_, th) = renderer.measure_paragraph(&style, &spans, Some(text_w));
         renderer.draw_paragraph(&style, &spans, text_x, text_y, text_w);
         text_y += th + 2.0;
     }
-    if !notif.subtitle.is_empty() {
+    if !subtitle.is_empty() {
         let style = notification_subtitle_style();
-        let spans = plain_spans(&notif.subtitle);
+        let spans = plain_spans(subtitle);
         renderer.draw_paragraph(&style, &spans, text_x, text_y, text_w);
     }
 }

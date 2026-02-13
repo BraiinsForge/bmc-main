@@ -35,9 +35,10 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowButtons};
 
-use bmc_wasm_runtime::WasmWidgetRuntime;
-use bmc_wasm_runtime::interaction::TouchEvent;
+use bmc_wasm_runtime::components::{ButtonSize, ButtonStyle, draw_button};
+use bmc_wasm_runtime::interaction::{InteractionState, TouchEvent};
 use bmc_wasm_runtime::renderer::Renderer;
+use bmc_wasm_runtime::{RenderStatus, WasmWidgetRuntime};
 
 // Layout constants
 const PREVIEW_GAP: u32 = 8;
@@ -122,6 +123,7 @@ struct PreviewTile {
     label: &'static str,
     fbo: glow::Framebuffer,
     _texture: glow::Texture,
+    logged_dead: bool,
 }
 
 struct PreviewState {
@@ -144,6 +146,7 @@ struct PreviewState {
     mouse_pos: (i32, i32),
     mouse_down: bool,
     fps: FpsTracker,
+    stats_interaction: InteractionState,
 }
 
 // Stats panel position: empty area right of SMALL tile
@@ -189,7 +192,7 @@ impl App {
                     })
                     .unwrap_or_else(|| unreachable!())
             })
-            .context("Failed to build display")?;
+            .map_err(|e| anyhow::anyhow!("Failed to build display: {e}"))?;
 
         let window = window.context("Failed to create window")?;
         let gl_display = gl_config.display();
@@ -250,6 +253,7 @@ impl App {
                 label,
                 fbo,
                 _texture: texture,
+                logged_dead: false,
             });
         }
 
@@ -286,6 +290,7 @@ impl App {
             mouse_pos: (0, 0),
             mouse_down: false,
             fps: FpsTracker::new(),
+            stats_interaction: InteractionState::new(),
         });
         Ok(())
     }
@@ -389,6 +394,23 @@ fn handle_preview_event(
                         state.needs_render = true;
                     }
                 }
+            } else if let Some((lx, ly)) = hit_test_stats(state.mouse_pos) {
+                match btn_state {
+                    ElementState::Pressed => {
+                        state.mouse_down = true;
+                        state
+                            .stats_interaction
+                            .push_event(TouchEvent::Down { x: lx, y: ly });
+                        state.needs_render = true;
+                    }
+                    ElementState::Released => {
+                        state.mouse_down = false;
+                        state
+                            .stats_interaction
+                            .push_event(TouchEvent::Up { x: lx, y: ly });
+                        state.needs_render = true;
+                    }
+                }
             } else if btn_state == ElementState::Released {
                 state.mouse_down = false;
             }
@@ -476,8 +498,22 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         tile.runtime.renderer().begin_frame(tw, th);
 
         tile.runtime.deliver_fetch_responses();
-        if let Err(e) = tile.runtime.render(delta_ms) {
-            eprintln!("Render error ({}): {e}", tile.label);
+        match tile.runtime.render(delta_ms) {
+            Ok(RenderStatus::Ok) => {
+                tile.logged_dead = false;
+            }
+            Ok(RenderStatus::FuelExhausted) => {
+                eprintln!("Fuel exhausted ({})", tile.label);
+            }
+            Ok(RenderStatus::Dead) => {
+                if !tile.logged_dead {
+                    eprintln!("Widget dead ({})", tile.label);
+                    tile.logged_dead = true;
+                }
+            }
+            Err(e) => {
+                eprintln!("Render error ({}): {e}", tile.label);
+            }
         }
 
         tile.runtime.renderer().flush();
@@ -503,6 +539,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
     }
 
     // Render stats panel into its FBO (reuse FULL tile's renderer)
+    let reset_clicked;
     {
         let renderer = state.tiles[0].runtime.renderer();
         let w = STATS_W as f32;
@@ -516,7 +553,8 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         let pad = 12.0;
         renderer.fill_rounded_rect(pad, pad, w - pad * 2.0, h - pad * 2.0, 6.0, 0x1E_1E_1E_FF);
 
-        draw_preview_stats(renderer, w, h, &state.fps);
+        state.stats_interaction.begin_frame();
+        reset_clicked = draw_stats_panel(renderer, &mut state.stats_interaction, w, h, &state.fps);
         renderer.flush();
         unsafe {
             state.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
@@ -561,6 +599,11 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         STATS_W,
         STATS_H,
     );
+
+    // Reset = full WASM reload (same as hot-reload)
+    if reset_clicked {
+        state.pending_reload = true;
+    }
 
     unsafe {
         state.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
@@ -635,6 +678,19 @@ fn render_checkerboard_to_fbo(gl: &glow::Context, fbo: glow::Framebuffer, w: u32
     }
 }
 
+#[expect(clippy::cast_possible_wrap)]
+/// Check if window coordinates are inside the stats panel, return local coords.
+fn hit_test_stats(pos: (i32, i32)) -> Option<(i32, i32)> {
+    let (mx, my) = pos;
+    let sx = STATS_X as i32;
+    let sy = STATS_Y as i32;
+    if mx >= sx && mx < sx + STATS_W as i32 && my >= sy && my < sy + STATS_H as i32 {
+        Some((mx - sx, my - sy))
+    } else {
+        None
+    }
+}
+
 /// Find which tile contains the given window coordinates, returning (index, local_x, local_y).
 #[expect(clippy::cast_possible_wrap)]
 fn hit_test_tile(tiles: &[PreviewTile], pos: (i32, i32)) -> Option<(usize, i32, i32)> {
@@ -657,7 +713,9 @@ fn create_fbo(
     height: u32,
 ) -> Result<(glow::Framebuffer, glow::Texture)> {
     unsafe {
-        let texture = gl.create_texture().context("Failed to create texture")?;
+        let texture = gl
+            .create_texture()
+            .map_err(|e| anyhow::anyhow!("Failed to create texture: {e}"))?;
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
         gl.tex_image_2d(
             glow::TEXTURE_2D,
@@ -683,7 +741,7 @@ fn create_fbo(
 
         let fbo = gl
             .create_framebuffer()
-            .context("Failed to create framebuffer")?;
+            .map_err(|e| anyhow::anyhow!("Failed to create framebuffer: {e}"))?;
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
         gl.framebuffer_texture_2d(
             glow::FRAMEBUFFER,
@@ -724,6 +782,7 @@ fn create_runtime(
             width,
             height,
             0,
+            WasmWidgetRuntime::FUEL_PER_FRAME,
         )
     }
     .context("Failed to create runtime")
@@ -769,10 +828,14 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
 
 // ── Stats overlay ──────────────────────────────────────────────────
 
-/// Draw a stats panel for the empty area right of the SMALL tile.
-/// Content is inset to fit inside the rounded panel (outer=12, inner=8 → 20px from edge).
-fn draw_preview_stats(renderer: &mut impl Renderer, w: f32, h: f32, fps: &FpsTracker) {
-    // Content area inside the inset rounded panel (12px outer + 8px inner padding)
+/// Draw stats panel with reset button. Returns `true` if reset was clicked.
+fn draw_stats_panel(
+    renderer: &mut dyn Renderer,
+    interaction: &mut InteractionState,
+    w: f32,
+    h: f32,
+    fps: &FpsTracker,
+) -> bool {
     let inset = 20.0;
     let cw = w - inset * 2.0;
     let ch = h - inset * 2.0;
@@ -780,11 +843,31 @@ fn draw_preview_stats(renderer: &mut impl Renderer, w: f32, h: f32, fps: &FpsTra
     // Header
     renderer.draw_text("Performance", inset, inset, 14.0, 0x88_88_88_FF);
 
-    // Chart fills available width, leaves room for header and text
+    // Reset button (small, right-aligned with header)
+    let btn_sz = ButtonSize::Small;
+    let btn_w = btn_sz.width(5, false); // "Reset" = 5 chars
+    let btn_h = btn_sz.height();
+    let btn_x = w - inset - btn_w;
+    let btn_y = inset - 4.0;
+    let reset_clicked = draw_button(
+        renderer,
+        interaction,
+        "reset",
+        "Reset",
+        btn_x,
+        btn_y,
+        btn_w,
+        btn_h,
+        ButtonStyle::Tertiary,
+        btn_sz,
+        0,
+    );
+
+    // Chart
     let bar_w = 2.0;
     let chart_w = (fps.history.len() as f32 * bar_w).min(cw);
     let chart_top = inset + 24.0;
-    let chart_h = ch - 24.0 - 36.0; // header + bottom text
+    let chart_h = ch - 24.0 - 36.0;
     let scale_us = 50_000.0_f32;
     let x0 = inset + (cw - chart_w) / 2.0;
 
@@ -793,7 +876,6 @@ fn draw_preview_stats(renderer: &mut impl Renderer, w: f32, h: f32, fps: &FpsTra
     renderer.fill_rect(x0, ref_y, chart_w, 1.0, 0x44_44_44_FF);
     renderer.draw_text("16ms", x0 + chart_w + 4.0, ref_y - 6.0, 10.0, 0x66_66_66_FF);
 
-    // Bars
     for (i, sample) in fps.samples().enumerate() {
         let bx = x0 + i as f32 * bar_w;
         let bh = (sample.us as f32 * chart_h / scale_us).min(chart_h);
@@ -820,6 +902,8 @@ fn draw_preview_stats(renderer: &mut impl Renderer, w: f32, h: f32, fps: &FpsTra
         let fps_w = renderer.measure_text(&fps_text, 18.0);
         renderer.draw_text(&fps_text, w - inset - fps_w, text_y, 18.0, 0xAA_AA_AA_FF);
     }
+
+    reset_clicked
 }
 
 // ── FPS tracking ───────────────────────────────────────────────────
