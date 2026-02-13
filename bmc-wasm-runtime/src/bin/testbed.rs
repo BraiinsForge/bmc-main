@@ -710,6 +710,7 @@ fn create_runtime(
             },
             width,
             height,
+            0,
         )
     }
     .context("Failed to create runtime")

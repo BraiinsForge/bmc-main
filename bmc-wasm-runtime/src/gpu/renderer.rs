@@ -75,13 +75,11 @@ impl FemtoVgRenderer {
 
         // Set the FBO as screen target BEFORE creating the Canvas.
         // This is critical for rendering to DMA-BUF exports.
-        if let Some(fbo_nz) = NonZeroU32::new(fbo_id) {
-            // Safety: NonZeroU32 has the same layout as glow::Framebuffer
-            let fbo = unsafe { std::mem::transmute::<NonZeroU32, _>(fbo_nz) };
-            gl_renderer.set_screen_target(Some(fbo));
-            tracing::info!("FemtoVG screen target set to FBO {}", fbo_id);
+        if let Some(fbo) = NonZeroU32::new(fbo_id) {
+            gl_renderer.set_screen_target(Some(glow::NativeFramebuffer(fbo)));
+            tracing::info!("FemtoVG screen target set to FBO {fbo_id}");
         } else {
-            tracing::warn!("FBO id is 0, using default screen target");
+            tracing::info!("FBO id is 0, using default screen target");
         }
 
         let mut canvas = Canvas::new(gl_renderer)?;
