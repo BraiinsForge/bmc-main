@@ -43,6 +43,14 @@ frontend-test:
   stage: check
   script:
     - nix build .#checks.x86_64-linux.test
+########## Cargo Checks ###########
+###################################
+
+cargo-deny:
+  extends: .nix
+  stage: check
+  script:
+    - nix-shell -p cargo cargo-deny --run "cargo deny check bans sources"
 
 ############################
 ######## Apps Stage ########

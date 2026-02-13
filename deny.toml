@@ -1,0 +1,123 @@
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+targets = []
+all-features = true
+
+# ── Advisories ────────────────────────────────────────────────────────
+[advisories]
+unmaintained = "workspace"
+
+# ── Duplicate crate bans ─────────────────────────────────────────────
+[bans]
+multiple-versions = "deny"
+wildcards = "allow"
+highlight = "all"
+
+# Transitive duplicates we can't resolve (ecosystem version migrations).
+# Revisit periodically — remove entries once the ecosystem catches up.
+skip = [
+    # reqwest 0.11 → hyper 0.14 ecosystem (remove after upgrading to reqwest 0.12+)
+    { crate = "base64@0.21" },
+    { crate = "h2@0.3" },
+    { crate = "http@0.2" },
+    { crate = "http-body@0.4" },
+    { crate = "hyper@0.14" },
+    { crate = "mio@0.8" },
+    { crate = "rustls@0.21" },
+    { crate = "rustls-webpki@0.101" },
+    { crate = "socket2@0.4" },
+    { crate = "socket2@0.5" },
+    { crate = "sync_wrapper@0.1" },
+    { crate = "tower@0.4" },
+    { crate = "wasi@0.11" },
+    { crate = "webpki-roots@0.25" },
+
+    # rand 0.8 → 0.9 migration
+    { crate = "getrandom@0.2" },
+    { crate = "getrandom@0.3" },
+    { crate = "rand@0.8" },
+    { crate = "rand_chacha@0.3" },
+    { crate = "rand_core@0.6" },
+
+    # Font/text ecosystem (cosmic-text, rustybuzz, swash version splits)
+    { crate = "font-types@0.9" },
+    { crate = "read-fonts@0.34" },
+    { crate = "rustybuzz@0.14" },
+    { crate = "skrifa@0.36" },
+    { crate = "ttf-parser@0.21" },
+    { crate = "unicode-bidi-mirroring@0.2" },
+    { crate = "unicode-ccc@0.2" },
+
+    # Slint (i-slint-renderer-skia uses glow 0.16, femtovg uses 0.13)
+    { crate = "glow@0.16" },
+
+    # Wayland/Smithay ecosystem splits
+    { crate = "wayland-client@0.31" },
+    { crate = "wayland-cursor@0.31" },
+    { crate = "wayland-protocols@0.29" },
+    { crate = "wayland-scanner@0.31" },
+    { crate = "wayland-sys@0.31" },
+
+    # Apple/ObjC framework splits (winit vs softbuffer vs slint)
+    { crate = "block2@0.5" },
+    { crate = "core-foundation@0.9" },
+    { crate = "core-graphics@0.23" },
+    { crate = "core-graphics-types@0.1" },
+    { crate = "objc2@0.5" },
+    { crate = "objc2-app-kit@0.2" },
+    { crate = "objc2-foundation@0.2" },
+    { crate = "objc2-quartz-core@0.2" },
+
+    # Widespread ecosystem splits
+    { crate = "bitflags@1" },
+    { crate = "downcast-rs@1" },
+    { crate = "hashbrown@0.14" },
+    { crate = "hashbrown@0.15" },
+    { crate = "itertools@0.12" },
+    { crate = "linux-raw-sys@0.4" },
+    { crate = "linux-raw-sys@0.6" },
+    { crate = "memoffset@0.6" },
+    { crate = "nix@0.23" },
+    { crate = "nix@0.24" },
+    { crate = "nix@0.26" },
+    { crate = "nix@0.29" },
+    { crate = "png@0.17" },
+    { crate = "redox_syscall@0.4" },
+    { crate = "regex-automata@0.1" },
+    { crate = "regex-syntax@0.6" },
+    { crate = "rustc-hash@1" },
+    { crate = "rustix@0.38" },
+    { crate = "smol_str@0.2" },
+    { crate = "thiserror@1" },
+    { crate = "thiserror-impl@1" },
+    { crate = "toml_datetime@0.6" },
+    { crate = "toml_edit@0.22" },
+    { crate = "version-compare@0.1" },
+    { crate = "winapi@0.3" },
+]
+
+# Platform crate trees with massive version fragmentation — skip subtrees.
+skip-tree = [
+    { crate = "windows@0.58" },
+    { crate = "windows@0.61" },
+    { crate = "windows-sys@0.45" },
+    { crate = "windows-sys@0.48" },
+    { crate = "windows-sys@0.52" },
+    { crate = "windows-sys@0.59" },
+    { crate = "windows-sys@0.60" },
+]
+
+# ── Licenses ──────────────────────────────────────────────────────────
+# Not checked in CI — workspace crates are proprietary (license = "").
+# Enable later if third-party license auditing is needed.
+
+# ── Sources ───────────────────────────────────────────────────────────
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = [
+    "https://github.com/rust-lang/crates.io-index",
+    "sparse+http://registry.ii.zone/api/v1/crates/",
+]
+allow-git = []
