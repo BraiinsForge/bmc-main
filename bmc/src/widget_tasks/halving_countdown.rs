@@ -27,11 +27,16 @@ pub async fn run(
     let mut blocks_remaining: u32 = 0;
     let mut target_block: u32 = 0;
 
-    let mut tick_interval = interval(Duration::from_secs(1));
+    let mut localization_change_listener =
+        config_handle.read().await.subscribe_localization_change();
+
+    let mut tick_interval = interval(Duration::from_secs(60));
 
     loop {
         select! {
             _ = tick_interval.tick() => {}
+            Ok(_) = localization_change_listener.recv() => {}
+            Ok(()) = system_timezone_receiver.changed() => {}
             Ok(()) = blockheight_receiver.changed() => {
                 let data = blockheight_receiver.borrow_and_update().clone();
                 let Some(height) = data.height() else {
