@@ -3,6 +3,7 @@ import { Theme } from "../../style/theme.slint";
 import { WidgetSize, BaseDimensions } from "../widget-shared.slint";
 
 export struct WidgetHalvingCountdownData {
+    has-data: bool,
     // Raw countdown data
     total-seconds: int,
     blocks-remaining: int,
@@ -69,7 +70,7 @@ component WidgetHalvingCountdownFull inherits Rectangle {
                         spacing: 4px;
 
                         Text {
-                            text: total-days + "";
+                            text: data.has-data ? total-days + "" : "-";
                             color: Palette.violet-50;
                             font-size: 120px;
                             font-weight: Theme.font.weight.bold;
@@ -101,7 +102,7 @@ component WidgetHalvingCountdownFull inherits Rectangle {
                         spacing: 4px;
 
                         Text {
-                            text: pad2(hours);
+                            text: data.has-data ? pad2(hours) : "-";
                             color: Palette.violet-50;
                             font-size: 120px;
                             font-weight: Theme.font.weight.bold;
@@ -133,7 +134,7 @@ component WidgetHalvingCountdownFull inherits Rectangle {
                         spacing: 4px;
 
                         Text {
-                            text: pad2(minutes);
+                            text: data.has-data ? pad2(minutes) : "-";
                             color: Palette.violet-50;
                             font-size: 120px;
                             font-weight: Theme.font.weight.bold;
@@ -175,7 +176,7 @@ component WidgetHalvingCountdownFull inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Text {
-                        text: data.predicted-date;
+                        text: data.has-data ? data.predicted-date : "-";
                         color: Palette.white;
                         font-size: 40px;
                         font-weight: Theme.font.weight.bold;
@@ -183,7 +184,7 @@ component WidgetHalvingCountdownFull inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Text {
-                        text: data.predicted-time;
+                        text: data.has-data ? data.predicted-time : "";
                         color: Palette.gray-60;
                         font-size: 24px;
                         font-weight: Theme.font.weight.regular;
@@ -210,7 +211,7 @@ component WidgetHalvingCountdownFull inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Text {
-                        text: data.blocks-remaining + "";
+                        text: data.has-data ? data.blocks-remaining + "" : "-";
                         color: Palette.white;
                         font-size: 40px;
                         font-weight: Theme.font.weight.bold;
@@ -218,7 +219,7 @@ component WidgetHalvingCountdownFull inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Text {
-                        text: "Target #" + data.target-block;
+                        text: data.has-data ? "Target #" + data.target-block : "";
                         color: Palette.gray-60;
                         font-size: 24px;
                         font-weight: Theme.font.weight.regular;
@@ -287,7 +288,7 @@ component WidgetHalvingCountdownLarge inherits Rectangle {
                         spacing: 2px;
 
                         Text {
-                            text: total-days + "";
+                            text: data.has-data ? total-days + "" : "-";
                             color: Palette.violet-50;
                             font-size: 96px;
                             font-weight: Theme.font.weight.bold;
@@ -319,7 +320,7 @@ component WidgetHalvingCountdownLarge inherits Rectangle {
                         spacing: 2px;
 
                         Text {
-                            text: pad2(hours);
+                            text: data.has-data ? pad2(hours) : "-";
                             color: Palette.violet-50;
                             font-size: 96px;
                             font-weight: Theme.font.weight.bold;
@@ -351,7 +352,7 @@ component WidgetHalvingCountdownLarge inherits Rectangle {
                         spacing: 2px;
 
                         Text {
-                            text: pad2(minutes);
+                            text: data.has-data ? pad2(minutes) : "-";
                             color: Palette.violet-50;
                             font-size: 96px;
                             font-weight: Theme.font.weight.bold;
@@ -393,7 +394,7 @@ component WidgetHalvingCountdownLarge inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Text {
-                        text: data.predicted-date;
+                        text: data.has-data ? data.predicted-date : "-";
                         color: Palette.white;
                         font-size: 36px;
                         font-weight: Theme.font.weight.bold;
@@ -401,7 +402,7 @@ component WidgetHalvingCountdownLarge inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Text {
-                        text: data.predicted-time;
+                        text: data.has-data ? data.predicted-time : "";
                         color: Palette.gray-60;
                         font-size: 22px;
                         font-weight: Theme.font.weight.semi-bold;
@@ -428,7 +429,7 @@ component WidgetHalvingCountdownLarge inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Text {
-                        text: data.blocks-remaining + "";
+                        text: data.has-data ? data.blocks-remaining + "" : "-";
                         color: Palette.white;
                         font-size: 36px;
                         font-weight: Theme.font.weight.bold;
@@ -436,7 +437,7 @@ component WidgetHalvingCountdownLarge inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Text {
-                        text: "Target #" + data.target-block;
+                        text: data.has-data ? "Target #" + data.target-block : "";
                         color: Palette.gray-60;
                         font-size: 22px;
                         font-weight: Theme.font.weight.semi-bold;
@@ -507,7 +508,7 @@ component WidgetHalvingCountdownCompact inherits Rectangle {
                     spacing: spacing-size;
 
                     Text {
-                        text: total-days + "";
+                        text: data.has-data ? total-days + "" : "-";
                         color: Palette.violet-50;
                         font-size: countdown-fontsize;
                         font-weight: Theme.font.weight.bold;
@@ -522,7 +523,7 @@ component WidgetHalvingCountdownCompact inherits Rectangle {
                         font-family: "Braiins Deck Sans";
                     }
                     Text {
-                        text: pad2(hours);
+                        text: data.has-data ? pad2(hours) : "-";
                         color: Palette.violet-50;
                         font-size: countdown-fontsize;
                         font-weight: Theme.font.weight.bold;
@@ -537,7 +538,7 @@ component WidgetHalvingCountdownCompact inherits Rectangle {
                         font-family: "Braiins Deck Sans";
                     }
                     Text {
-                        text: pad2(minutes);
+                        text: data.has-data ? pad2(minutes) : "-";
                         color: Palette.violet-50;
                         font-size: countdown-fontsize;
                         font-weight: Theme.font.weight.bold;

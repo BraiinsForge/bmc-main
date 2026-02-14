@@ -1095,6 +1095,7 @@ impl DisplayController {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
                 widgets_ref.modify(&widget_id, |widget| {
+                    widget.halving_countdown.has_data = true;
                     widget.halving_countdown.total_seconds =
                         i32::try_from(total_seconds).unwrap_or(i32::MAX);
                     widget.halving_countdown.blocks_remaining =
