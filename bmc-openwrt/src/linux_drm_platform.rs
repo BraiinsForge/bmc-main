@@ -243,10 +243,9 @@ impl Platform for LinuxDrmPlatform {
             property::Value::UnsignedRange(self.height as u64),
         );
 
-        // Set the crtc
-        // On many setups, this requires root access.
-        card.atomic_commit(AtomicCommitFlags::ALLOW_MODESET, atomic_req)
-            .expect("Failed to set mode");
+        // Defer the modeset until the first frame is rendered, so the kernel
+        // splash screen on fb0 stays visible during application init.
+        let mut pending_modeset = Some(atomic_req);
 
         #[expect(clippy::integer_division)]
         let pixel_stride = db.pitch() as usize / BYTES_PER_PIXEL;
@@ -357,6 +356,14 @@ impl Platform for LinuxDrmPlatform {
                 renderer.render(&mut in_memory_buffer, pixel_stride);
                 frame_buffer.copy_from_slice(&in_memory_buffer);
             });
+
+            // Perform the DRM modeset after the first frame has been rendered into the
+            // buffer, so the display transitions directly from the kernel splash to the
+            // Slint UI without a black flash.
+            if let Some(req) = pending_modeset.take() {
+                card.atomic_commit(AtomicCommitFlags::ALLOW_MODESET, req)
+                    .expect("Failed to set mode");
+            }
 
             // Do not sleep when there are active animations (as mentioned in `duration_until_next_timer_update` docs)
             if self.window.has_active_animations() {
