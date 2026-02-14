@@ -642,9 +642,10 @@ void main() {
     pub fn end_frame(&mut self) -> Result<DmaBufInfo> {
         use std::os::fd::AsFd;
 
-        // Ensure rendering is complete
+        // Submit GPU commands without blocking - implicit DMA-BUF fencing ensures
+        // the compositor won't scan out until GPU completes (same as compositor pattern)
         unsafe {
-            self.gl.finish();
+            self.gl.flush();
         }
 
         let idx = self.current_buffer;
