@@ -73,14 +73,14 @@ impl Platform for LinuxDrmPlatform {
             Card::open_global().map_err(|e| slint::PlatformError::OtherError(Box::new(e)))?;
 
         card.set_client_capability(drm::ClientCapability::UniversalPlanes, true)
-            .expect("Unable to request UniversalPlanes capability");
+            .expect("BUG: Unable to request UniversalPlanes capability");
         card.set_client_capability(drm::ClientCapability::Atomic, true)
-            .expect("Unable to request Atomic capability");
+            .expect("BUG: Unable to request Atomic capability");
 
         // Load the information.
         let res = card
             .resource_handles()
-            .expect("Could not load normal resource ids.");
+            .expect("BUG: Could not load normal resource ids.");
         let coninfo: Vec<connector::Info> = res
             .connectors()
             .iter()
@@ -96,13 +96,16 @@ impl Platform for LinuxDrmPlatform {
         let con = coninfo
             .iter()
             .find(|&i| i.state() == connector::State::Connected)
-            .expect("No connected connectors");
+            .expect("BUG: No connected connectors");
 
         // Get the first (usually best) mode
-        let &mode = con.modes().first().expect("No modes found on connector");
+        let &mode = con
+            .modes()
+            .first()
+            .expect("BUG: No modes found on connector");
 
         // Find a crtc and FB
-        let crtc = crtcinfo.first().expect("No crtcs found");
+        let crtc = crtcinfo.first().expect("BUG: No crtcs found");
 
         // Create a DB
         // If buffer resolution is above display resolution, a ENOSPC (not enough GPU memory) error may
@@ -114,12 +117,12 @@ impl Platform for LinuxDrmPlatform {
                 PIXEL_FORMAT,
                 BITS_PER_PIXEL,
             )
-            .expect("Could not create dumb buffer");
+            .expect("BUG: Could not create dumb buffer");
         // Map it and black it out.
         {
             let mut map = card
                 .map_dumb_buffer(&mut db)
-                .expect("Could not map dumbbuffer");
+                .expect("BUG: Could not map dumbbuffer");
             for b in map.as_mut() {
                 *b = 0;
             }
@@ -128,9 +131,9 @@ impl Platform for LinuxDrmPlatform {
         // Create an FB:
         let fb = card
             .add_framebuffer(&db, BITS_PER_PIXEL, BITS_PER_PIXEL)
-            .expect("Could not create FB");
+            .expect("BUG: Could not create FB");
 
-        let planes = card.plane_handles().expect("Could not list planes");
+        let planes = card.plane_handles().expect("BUG: Could not list planes");
         let (better_planes, compatible_planes): (
             Vec<control::plane::Handle>,
             Vec<control::plane::Handle>,
@@ -163,19 +166,19 @@ impl Platform for LinuxDrmPlatform {
 
         let con_props = card
             .get_properties(con.handle())
-            .expect("Could not get props of connector")
+            .expect("BUG: Could not get props of connector")
             .as_hashmap(&card)
-            .expect("Could not get a prop from connector");
+            .expect("BUG: Could not get a prop from connector");
         let crtc_props = card
             .get_properties(crtc.handle())
-            .expect("Could not get props of crtc")
+            .expect("BUG: Could not get props of crtc")
             .as_hashmap(&card)
-            .expect("Could not get a prop from crtc");
+            .expect("BUG: Could not get a prop from crtc");
         let plane_props = card
             .get_properties(plane)
-            .expect("Could not get props of plane")
+            .expect("BUG: Could not get props of plane")
             .as_hashmap(&card)
-            .expect("Could not get a prop from plane");
+            .expect("BUG: Could not get a prop from plane");
 
         let mut atomic_req = atomic::AtomicModeReq::new();
         atomic_req.add_property(
@@ -185,7 +188,7 @@ impl Platform for LinuxDrmPlatform {
         );
         let blob = card
             .create_property_blob(&mode)
-            .expect("Failed to create blob");
+            .expect("BUG: Failed to create blob");
         atomic_req.add_property(crtc.handle(), crtc_props["MODE_ID"].handle(), blob);
         atomic_req.add_property(
             crtc.handle(),
@@ -251,7 +254,7 @@ impl Platform for LinuxDrmPlatform {
         let pixel_stride = db.pitch() as usize / BYTES_PER_PIXEL;
         let mut map = card
             .map_dumb_buffer(&mut db)
-            .expect("Could not map dumbbuffer");
+            .expect("BUG: Could not map dumbbuffer");
         let (_, frame_buffer, _) = unsafe { map.align_to_mut::<Rgb565Pixel>() };
 
         let mut in_memory_buffer = frame_buffer.to_vec();
@@ -362,7 +365,7 @@ impl Platform for LinuxDrmPlatform {
             // Slint UI without a black flash.
             if let Some(req) = pending_modeset.take() {
                 card.atomic_commit(AtomicCommitFlags::ALLOW_MODESET, req)
-                    .expect("Failed to set mode");
+                    .expect("BUG: Failed to set mode");
             }
 
             // Do not sleep when there are active animations (as mentioned in `duration_until_next_timer_update` docs)
