@@ -27,7 +27,6 @@ component WidgetHalvingCountdownFull inherits Rectangle {
     property <int> total-days: data.total-seconds / seconds-per-day;
     property <int> hours: (data.total-seconds - (total-days * seconds-per-day)) / seconds-per-hour;
     property <int> minutes: (data.total-seconds - (total-days * seconds-per-day) - (hours * seconds-per-hour)) / seconds-per-minute;
-    property <bool> is-complete: data.total-seconds <= 0;
 
     // Format number with leading zero
     pure function pad2(n: int) -> string {
@@ -60,15 +59,7 @@ component WidgetHalvingCountdownFull inherits Rectangle {
                     horizontal-alignment: center;
                 }
 
-                if is-complete: Text {
-                    text: "Halving Complete!";
-                    color: Palette.green-40;
-                    font-size: 120px;
-                    font-weight: Theme.font.weight.bold;
-                    horizontal-alignment: center;
-                }
-
-                if !is-complete: HorizontalLayout {
+                HorizontalLayout {
                     alignment: center;
                     spacing: 24px;
 
@@ -254,7 +245,6 @@ component WidgetHalvingCountdownLarge inherits Rectangle {
     property <int> total-days: data.total-seconds / seconds-per-day;
     property <int> hours: (data.total-seconds - (total-days * seconds-per-day)) / seconds-per-hour;
     property <int> minutes: (data.total-seconds - (total-days * seconds-per-day) - (hours * seconds-per-hour)) / seconds-per-minute;
-    property <bool> is-complete: data.total-seconds <= 0;
 
     // Format number with leading zero
     pure function pad2(n: int) -> string {
@@ -287,15 +277,7 @@ component WidgetHalvingCountdownLarge inherits Rectangle {
                     horizontal-alignment: center;
                 }
 
-                if is-complete: Text {
-                    text: "Halving Complete!";
-                    color: Palette.green-40;
-                    font-size: 96px;
-                    font-weight: Theme.font.weight.bold;
-                    horizontal-alignment: center;
-                }
-
-                if !is-complete: HorizontalLayout {
+                HorizontalLayout {
                     alignment: center;
                     spacing: 20px;
 
@@ -482,7 +464,6 @@ component WidgetHalvingCountdownCompact inherits Rectangle {
     property <int> total-days: data.total-seconds / seconds-per-day;
     property <int> hours: (data.total-seconds - (total-days * seconds-per-day)) / seconds-per-hour;
     property <int> minutes: (data.total-seconds - (total-days * seconds-per-day) - (hours * seconds-per-hour)) / seconds-per-minute;
-    property <bool> is-complete: data.total-seconds <= 0;
 
     // Format number with leading zero
     pure function pad2(n: int) -> string {
@@ -520,16 +501,8 @@ component WidgetHalvingCountdownCompact inherits Rectangle {
                     horizontal-alignment: center;
                 }
 
-                if is-complete: Text {
-                    text: "Halving Complete!";
-                    color: Palette.green-40;
-                    font-size: countdown-fontsize;
-                    font-weight: Theme.font.weight.bold;
-                    horizontal-alignment: center;
-                }
-
                 // Countdown numbers (centered)
-                if !is-complete: HorizontalLayout {
+                HorizontalLayout {
                     alignment: center;
                     spacing: spacing-size;
 
@@ -574,7 +547,7 @@ component WidgetHalvingCountdownCompact inherits Rectangle {
                 }
 
                 // Labels at bottom
-                if !is-complete: HorizontalLayout {
+                HorizontalLayout {
                     alignment: center;
                     spacing: spacing-size * 3;
 
