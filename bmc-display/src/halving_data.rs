@@ -4,7 +4,7 @@
 pub const HALVING_INTERVAL: u32 = 210_000;
 
 /// Average block time in seconds (Bitcoin targets ~10 minutes)
-pub const AVG_BLOCK_TIME_SECS: u64 = 600;
+pub const AVG_BLOCK_TIME_SECS: u32 = 600;
 
 /// Calculate the next halving block height from current height
 #[must_use]

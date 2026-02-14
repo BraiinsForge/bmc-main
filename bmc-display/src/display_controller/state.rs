@@ -1081,7 +1081,7 @@ impl DisplayController {
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
-        total_seconds: u64,
+        total_seconds: i64,
         blocks_remaining: u32,
         predicted_date: String,
         predicted_time: String,

@@ -6,15 +6,14 @@ use bmc_display::blockheight_data::{
 };
 use bmc_display::data::{SceneId, WidgetId};
 use bmc_display::display_controller::DisplayController;
-use bmc_display::halving_data::{HalvingCountdown, next_halving_block};
+use bmc_display::halving_data::{AVG_BLOCK_TIME_SECS, next_halving_block};
 use bmc_shared_time::time::{DateFormat, Timezone};
-use chrono::{DateTime, Duration as ChronoDuration, FixedOffset};
+use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Utc};
 use reqwest::Client;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::time::Duration;
-use tokio::sync::{RwLock, watch};
-use tokio::time::interval;
+use tokio::sync::{RwLock, mpsc, watch};
+use tokio::{select, time::interval};
 use tracing::{debug, error, instrument, warn};
 
 use crate::widget_tasks::API_TIMEOUT;
@@ -38,51 +37,60 @@ pub async fn run(
         }
     };
 
-    let shared_height = Arc::new(AtomicU32::new(0));
+    let (tx, mut rx) = mpsc::channel(1);
 
     // Spawn background task that periodically fetches block height
-    {
-        let shared_height = Arc::clone(&shared_height);
-        tokio::spawn(async move {
-            let mut fetch_interval = interval(BLOCK_HEIGHT_REFRESH_INTERVAL);
-            loop {
-                fetch_interval.tick().await;
-                if let Some(height) = fetch_block_height(&client).await {
-                    shared_height.store(height, Relaxed);
-                }
+    tokio::spawn(async move {
+        let mut fetch_interval = interval(BLOCK_HEIGHT_REFRESH_INTERVAL);
+        loop {
+            fetch_interval.tick().await;
+            if let Some(data) = fetch_blockheight_data(&client).await {
+                let _ = tx.send(data).await;
             }
-        });
-    }
+        }
+    });
 
-    let mut current_height: u32 = 0;
-    let mut countdown = HalvingCountdown::default();
+    let mut current_data = BlockheightData::default();
+    let mut predicted_halving: Option<DateTime<Utc>> = None;
+    let mut blocks_remaining: u32 = 0;
     let mut target_block: u32 = 0;
 
     // Create interval for 1-second countdown ticks
     let mut tick_interval = interval(Duration::from_secs(1));
 
     loop {
-        tick_interval.tick().await;
+        select! {
+            _ = tick_interval.tick() => {}
+            Some(data) = rx.recv() => {
+                let Some(height) = data.height() else {
+                    continue;
+                };
+                if current_data.height() == Some(height) {
+                    continue;
+                }
+                debug!(
+                    old_height = current_data.height(),
+                    new_height = height,
+                    "Block height updated"
+                );
 
-        let height = shared_height.load(Relaxed);
+                target_block = next_halving_block(height);
+                blocks_remaining = target_block.saturating_sub(height);
+                current_data = data;
 
-        // No data yet from the background fetcher
-        if height == 0 {
+                // Compute predicted halving datetime from block timestamp
+                predicted_halving = current_data.timestamp_as_datetime().map(|ts| {
+                    let secs = i64::from(blocks_remaining) * i64::from(AVG_BLOCK_TIME_SECS);
+                    ts + ChronoDuration::seconds(secs)
+                });
+            }
+        }
+
+        let Some(halving) = predicted_halving else {
             continue;
-        }
+        };
 
-        if height == current_height {
-            countdown.tick();
-        } else {
-            debug!(
-                old_height = current_height,
-                new_height = height,
-                "Block height updated"
-            );
-            current_height = height;
-            countdown = HalvingCountdown::from_block_height(current_height);
-            target_block = next_halving_block(current_height);
-        }
+        let total_seconds = (halving - Utc::now()).num_seconds().max(0);
 
         update_display(
             &display_controller,
@@ -90,14 +98,16 @@ pub async fn run(
             &mut system_timezone_receiver,
             &scene_id,
             &widget_id,
-            &countdown,
+            total_seconds,
+            blocks_remaining,
             target_block,
+            halving,
         )
         .await;
     }
 }
 
-async fn fetch_block_height(client: &Client) -> Option<u32> {
+async fn fetch_blockheight_data(client: &Client) -> Option<BlockheightData> {
     let request = client
         .get(BLOCK_HEIGHT_API_URL)
         .query(&[(BLOCK_HEIGHT_LIMIT_API_PARAM, "1"), ("currency", "usd")]);
@@ -112,9 +122,7 @@ async fn fetch_block_height(client: &Client) -> Option<u32> {
                 )
                 .ok()?;
 
-            blocks
-                .first()
-                .and_then(bmc_display::blockheight_data::BlockheightData::height)
+            blocks.into_iter().next()
         }
         Err(err) => {
             warn!(error = %err, "Failed to fetch block height from API");
@@ -123,21 +131,17 @@ async fn fetch_block_height(client: &Client) -> Option<u32> {
     }
 }
 
-/// Format the predicted halving date and time
 fn format_predicted_datetime(
-    total_seconds: u64,
+    predicted_halving: DateTime<Utc>,
     timezone: &Timezone,
     is_24_format: bool,
     date_format: DateFormat,
 ) -> (String, String) {
-    let now = chrono::Local::now().with_timezone(timezone.chrono());
-    let secs = i64::try_from(total_seconds).unwrap_or(i64::MAX);
-    let predicted = now + ChronoDuration::seconds(secs);
-    let predicted: DateTime<FixedOffset> = predicted.fixed_offset();
+    let predicted: DateTime<FixedOffset> = predicted_halving
+        .with_timezone(timezone.chrono())
+        .fixed_offset();
 
     let date = predicted.format(date_format.format_string()).to_string();
-
-    // Format time with timezone: "4:34 PM GMT+1" or "16:34 GMT+1"
     let time = if is_24_format {
         format!("{} {}", predicted.format("%H:%M"), timezone)
     } else {
@@ -147,34 +151,32 @@ fn format_predicted_datetime(
     (date, time)
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn update_display(
     display_controller: &DisplayController,
     config_handle: &Arc<RwLock<ConfigHandle>>,
     system_timezone_receiver: &mut watch::Receiver<Timezone>,
     scene_id: &SceneId,
     widget_id: &WidgetId,
-    countdown: &HalvingCountdown,
+    total_seconds: i64,
+    blocks_remaining: u32,
     target_block: u32,
+    predicted_halving: DateTime<Utc>,
 ) {
     let timezone = system_timezone_receiver.borrow_and_update().clone();
     let localization = config_handle.read().await.localization_config();
     let is_24_format = localization.time_system.is_24();
-    let number_format = localization.number_format;
     let date_format = localization.date_format;
+    let target_block_formatted = localization.number_format.format_number(target_block, 0);
 
-    let (predicted_date, predicted_time) = format_predicted_datetime(
-        countdown.total_seconds,
-        &timezone,
-        is_24_format,
-        date_format,
-    );
-    let target_block_formatted = number_format.format_number(target_block, 0);
+    let (predicted_date, predicted_time) =
+        format_predicted_datetime(predicted_halving, &timezone, is_24_format, date_format);
 
     display_controller.update_halving_countdown(
         scene_id.clone(),
         widget_id.clone(),
-        countdown.total_seconds,
-        countdown.blocks_remaining,
+        total_seconds,
+        blocks_remaining,
         predicted_date,
         predicted_time,
         target_block_formatted,
