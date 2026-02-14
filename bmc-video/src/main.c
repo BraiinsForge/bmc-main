@@ -482,7 +482,11 @@ int main(int argc, char *argv[])
     pthread_join(touch_tid, NULL);
     pthread_join(led_tid, NULL);
 
-    clear_framebuffer();
+    // TODO: Fix this in the future. The last frame will be kept for now.
+    // Since we use this only for splash animation with DECK logo at the end,
+    // it's what we want for now. But if we play arbitrary videos, the
+    // screen should be put to a deterministic state afterwards.
+    /* clear_framebuffer(); */
     fprintf(stderr, "Done\n");
     return 0;
 }
