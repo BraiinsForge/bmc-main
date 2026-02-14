@@ -12,6 +12,7 @@ mod ticker_btc;
 use crate::config::ConfigHandle;
 use crate::countdown_types::CountdownCompletionAction;
 use crate::sound::SoundController;
+use bmc_display::blockheight_data::BlockheightData;
 use bmc_display::data::{SceneId, Widget, WidgetId, WidgetKind};
 use bmc_display::display_controller::DisplayController;
 use bmc_led::data::LedCommand;
@@ -45,6 +46,7 @@ pub(crate) struct WidgetTasks {
     system_timezone_receiver: watch::Receiver<Timezone>,
     led_event_tx: Sender<LedCommand>,
     sound_controller: SoundController,
+    blockheight_receiver: watch::Receiver<BlockheightData>,
 }
 
 impl WidgetTasks {
@@ -54,6 +56,7 @@ impl WidgetTasks {
         system_timezone_receiver: watch::Receiver<Timezone>,
         led_event_tx: Sender<LedCommand>,
         sound_controller: SoundController,
+        blockheight_receiver: watch::Receiver<BlockheightData>,
     ) -> Self {
         Self {
             task_handles: Arc::default(),
@@ -62,6 +65,7 @@ impl WidgetTasks {
             system_timezone_receiver,
             led_event_tx,
             sound_controller,
+            blockheight_receiver,
         }
     }
 
@@ -167,6 +171,7 @@ impl WidgetTasks {
                     self.display_controller.clone(),
                     self.config_handle.clone(),
                     self.system_timezone_receiver.clone(),
+                    self.blockheight_receiver.clone(),
                     scene_id.clone(),
                     widget.id.clone(),
                 )
@@ -263,6 +268,7 @@ impl Clone for WidgetTasks {
             system_timezone_receiver: self.system_timezone_receiver.clone(),
             led_event_tx: self.led_event_tx.clone(),
             sound_controller: self.sound_controller.clone(),
+            blockheight_receiver: self.blockheight_receiver.clone(),
         }
     }
 }

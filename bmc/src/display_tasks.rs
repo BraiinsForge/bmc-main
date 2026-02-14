@@ -54,6 +54,7 @@ pub(crate) struct DisplayTasks<T: BmcManager, U: DisplayBacklightDriver> {
     config_handle: Arc<RwLock<ConfigHandle>>,
     alarm_bus: AlarmBus,
     system_manager: SystemManager<U>,
+    blockheight_sender: watch::Sender<BlockheightData>,
 }
 
 impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
@@ -67,6 +68,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         config_handle: Arc<RwLock<ConfigHandle>>,
         alarm_bus: AlarmBus,
         system_manager: SystemManager<U>,
+        blockheight_sender: watch::Sender<BlockheightData>,
     ) -> Self {
         Self {
             display_controller,
@@ -77,6 +79,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             config_handle,
             alarm_bus,
             system_manager,
+            blockheight_sender,
         }
     }
 
@@ -90,6 +93,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             config_handle,
             alarm_bus,
             system_manager,
+            blockheight_sender,
         } = self;
 
         tokio::spawn(Self::run_init_display_screen(
@@ -118,6 +122,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
             display_controller.clone(),
             config_handle.clone(),
             timezone_receiver,
+            blockheight_sender,
         ));
 
         tokio::spawn(Self::run_difficulty_stats_update(
@@ -525,6 +530,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         display_controller: DisplayController,
         config_handle: Arc<RwLock<ConfigHandle>>,
         mut timezone_receiver: watch::Receiver<Timezone>,
+        blockheight_sender: watch::Sender<BlockheightData>,
     ) {
         let mut interval = interval(DATA_REFRESH_PERIOD);
 
@@ -579,6 +585,8 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                     timezone = timezone_receiver.borrow_and_update().clone();
                 }
             }
+
+            blockheight_sender.send_replace(blockheight_data.clone());
 
             display_controller.update_blockheight_data(
                 blockheight_data.clone(),

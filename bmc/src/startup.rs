@@ -20,6 +20,7 @@ use crate::web::{ServerConfig, WebService};
 use crate::widget_tasks::WidgetTasks;
 use anyhow::Result;
 use bmc_button::Buttons;
+use bmc_display::blockheight_data::BlockheightData;
 use bmc_display::display_controller::DisplayController;
 use bmc_display::display_driver::{DisplayBacklightDriver, DisplayDriver};
 use bmc_led::led_driver::LedDriver;
@@ -113,12 +114,15 @@ where
         let sound_controller =
             SoundController::new(config_handle.clone(), config.sounds_dir.clone());
 
+        let (blockheight_sender, blockheight_receiver) = watch::channel(BlockheightData::default());
+
         let widget_tasks = WidgetTasks::new(
             display_controller.clone(),
             config_handle.clone(),
             manager.watch_timezone_updates(),
             led_driver.command_sender.clone(),
             sound_controller.clone(),
+            blockheight_receiver,
         );
 
         for scene in config_handle.read().await.scenes.values() {
@@ -179,6 +183,7 @@ where
             config_handle.clone(),
             alarm_bus.clone(),
             system_manager.clone(),
+            blockheight_sender,
         );
 
         led_controller.init(led_driver.command_sender.clone());

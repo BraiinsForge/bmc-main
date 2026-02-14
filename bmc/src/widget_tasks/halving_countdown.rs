@@ -1,67 +1,39 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use crate::config::ConfigHandle;
-use bmc_display::blockheight_data::{
-    BLOCK_HEIGHT_API_URL, BLOCK_HEIGHT_LIMIT_API_PARAM, BlockheightData,
-};
+use bmc_display::blockheight_data::BlockheightData;
 use bmc_display::data::{SceneId, WidgetId};
 use bmc_display::display_controller::DisplayController;
 use bmc_display::halving_data::{AVG_BLOCK_TIME_SECS, next_halving_block};
 use bmc_shared_time::time::{DateFormat, Timezone};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Utc};
-use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, mpsc, watch};
+use tokio::sync::{RwLock, watch};
 use tokio::{select, time::interval};
-use tracing::{debug, error, instrument, warn};
-
-use crate::widget_tasks::API_TIMEOUT;
-
-/// How often to re-fetch block height from API (5 minutes)
-const BLOCK_HEIGHT_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+use tracing::{debug, instrument};
 
 #[instrument(name = "halving_countdown", skip_all, fields(%scene_id, %widget_id))]
 pub async fn run(
     display_controller: DisplayController,
     config_handle: Arc<RwLock<ConfigHandle>>,
     mut system_timezone_receiver: watch::Receiver<Timezone>,
+    mut blockheight_receiver: watch::Receiver<BlockheightData>,
     scene_id: SceneId,
     widget_id: WidgetId,
 ) {
-    let client = match Client::builder().timeout(API_TIMEOUT).build() {
-        Ok(client) => client,
-        Err(err) => {
-            error!(?err, "Failed to create reqwest client, stopping");
-            return;
-        }
-    };
-
-    let (tx, mut rx) = mpsc::channel(1);
-
-    // Spawn background task that periodically fetches block height
-    tokio::spawn(async move {
-        let mut fetch_interval = interval(BLOCK_HEIGHT_REFRESH_INTERVAL);
-        loop {
-            fetch_interval.tick().await;
-            if let Some(data) = fetch_blockheight_data(&client).await {
-                let _ = tx.send(data).await;
-            }
-        }
-    });
-
     let mut current_data = BlockheightData::default();
     let mut predicted_halving: Option<DateTime<Utc>> = None;
     let mut blocks_remaining: u32 = 0;
     let mut target_block: u32 = 0;
 
-    // Create interval for 1-second countdown ticks
     let mut tick_interval = interval(Duration::from_secs(1));
 
     loop {
         select! {
             _ = tick_interval.tick() => {}
-            Some(data) = rx.recv() => {
+            Ok(()) = blockheight_receiver.changed() => {
+                let data = blockheight_receiver.borrow_and_update().clone();
                 let Some(height) = data.height() else {
                     continue;
                 };
@@ -104,30 +76,6 @@ pub async fn run(
             halving,
         )
         .await;
-    }
-}
-
-async fn fetch_blockheight_data(client: &Client) -> Option<BlockheightData> {
-    let request = client
-        .get(BLOCK_HEIGHT_API_URL)
-        .query(&[(BLOCK_HEIGHT_LIMIT_API_PARAM, "1"), ("currency", "usd")]);
-
-    match request.send().await {
-        Ok(response) => {
-            let blocks: Vec<BlockheightData> = response
-                .json()
-                .await
-                .inspect_err(
-                    |err| error!(error = %err, "Failed to parse block height JSON response"),
-                )
-                .ok()?;
-
-            blocks.into_iter().next()
-        }
-        Err(err) => {
-            warn!(error = %err, "Failed to fetch block height from API");
-            None
-        }
     }
 }
 
