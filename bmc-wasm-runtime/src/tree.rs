@@ -620,8 +620,8 @@ struct ModalInfo {
 
 /// Process a tree: deserialize, layout, render.
 ///
-/// Returns `(result, has_active_animations, timings)` — caller should request next frame when
-/// active.
+/// Returns `(tree_node, result, has_active_animations, timings)` — the caller
+/// can cache `tree_node` for animation-only frames to skip deserialization.
 #[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
 pub fn process_tree(
     data: &[u8],
@@ -634,7 +634,7 @@ pub fn process_tree(
     transition_states: &mut HashMap<(u16, u16), TransitionState>,
     frame_counter: u64,
     delta_ms: u32,
-) -> Result<(TreeResult, bool, FrameTimings)> {
+) -> Result<(TreeNode, TreeResult, bool, FrameTimings)> {
     let mut timings = FrameTimings::default();
 
     // Phase 1: Deserialize
@@ -656,7 +656,7 @@ pub fn process_tree(
         &mut timings,
     )?;
 
-    Ok((result, has_active, timings))
+    Ok((tree_node, result, has_active, timings))
 }
 
 /// Layout and render a previously deserialized tree.

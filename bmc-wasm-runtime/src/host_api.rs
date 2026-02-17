@@ -139,8 +139,8 @@ pub struct HostState {
     /// Monotonic frame counter for GC.
     pub frame_counter: u64,
 
-    /// Cached tree data for animation-only frames (bytes, width, height).
-    pub cached_tree_data: Option<(Vec<u8>, f32, f32)>,
+    /// Cached deserialized tree for animation-only frames (tree, width, height).
+    pub cached_tree: Option<(crate::tree::TreeNode, f32, f32)>,
 
     /// Whether the next frame only needs animation updates (no WASM execution).
     pub animation_only_frame: bool,
@@ -187,7 +187,7 @@ impl HostState {
             animation_states: HashMap::new(),
             transition_states: HashMap::new(),
             frame_counter: 0,
-            cached_tree_data: None,
+            cached_tree: None,
             animation_only_frame: false,
             next_request_id: 1,
             fetch_rx,

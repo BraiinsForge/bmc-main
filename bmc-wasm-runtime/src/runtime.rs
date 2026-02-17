@@ -428,7 +428,7 @@ impl WasmWidgetRuntime {
                         frame_counter,
                         delta_ms,
                     ) {
-                        Ok((result, has_active, timings)) => {
+                        Ok((tree_node, result, has_active, timings)) => {
                             let had_clicks = result.clicks.iter().any(|&c| c);
                             state.tree_clicks = result.clicks;
                             state.last_timings = timings;
@@ -437,7 +437,7 @@ impl WasmWidgetRuntime {
                                 // Only skip WASM next frame if no clicks need processing
                                 state.animation_only_frame = !had_clicks;
                             }
-                            state.cached_tree_data = Some((data, w, h));
+                            state.cached_tree = Some((tree_node, w, h));
                         }
                         Err(e) => {
                             tracing::error!("tree processing failed: {e}");
@@ -812,7 +812,7 @@ impl WasmWidgetRuntime {
         // Decide frame type BEFORE begin_frame consumes events
         let animation_only = state.animation_only_frame
             && !state.interaction.has_pending_events()
-            && state.cached_tree_data.is_some();
+            && state.cached_tree.is_some();
 
         state.interaction.begin_frame();
         state.begin_render_frame();
@@ -860,14 +860,18 @@ impl WasmWidgetRuntime {
     }
 
     /// Re-render the last successfully submitted tree (no WASM execution).
+    ///
+    /// Calls `layout_and_render` directly on the cached `TreeNode`, skipping
+    /// deserialization entirely.
     fn render_cached_tree(state: &mut HostState, delta_ms: u32) {
-        let Some((data, width, height)) = state.cached_tree_data.clone() else {
+        let Some((ref tree_node, width, height)) = state.cached_tree else {
             return;
         };
         let frame_counter = state.frame_counter;
         state.frame_counter += 1;
-        match tree::process_tree(
-            &data,
+        let mut timings = FrameTimings::default();
+        match tree::layout_and_render(
+            tree_node,
             width,
             height,
             &mut state.renderer,
@@ -877,10 +881,11 @@ impl WasmWidgetRuntime {
             &mut state.transition_states,
             frame_counter,
             delta_ms,
+            &mut timings,
         ) {
-            Ok((result, has_active, timings)) => {
+            Ok((result, has_active)) => {
                 state.last_timings = timings;
-                state.last_timings.wasm_us = 0; // no WASM execution on cached frames
+                // No WASM execution, no deserialization on cached frames
                 state.tree_clicks = result.clicks;
                 if has_active {
                     state.frame_requested = true;
