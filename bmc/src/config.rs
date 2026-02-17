@@ -364,6 +364,7 @@ pub struct LocalizationConfig {
     pub first_day_of_week: WeekDay,
     pub show_seconds_in_status_bar: bool,
     pub temperature_unit: TemperatureUnit,
+    #[serde(default)]
     pub unit_system: UnitSystem,
 }
 
