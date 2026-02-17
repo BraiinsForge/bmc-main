@@ -26,6 +26,10 @@ run:
 	cargo run --features testbed --bin testbed -- $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
 
 # Profiling with samply (install: cargo install samply)
+# Usage: make profile                    — record profile
+#        make profile ARGS="--perf-report reports/03-foo/perf.json --perf-frames 600"
+PROFILING_BINARY := ../target/profiling/testbed
+
 .PHONY: profile
 profile:
 	@command -v samply >/dev/null 2>&1 || { echo "Error: samply not found. Install with: cargo install samply"; exit 1; }
@@ -34,7 +38,12 @@ profile:
 
 	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
 	cargo build --profile profiling --features testbed --bin testbed
-	samply record ../target/profiling/testbed $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
+	samply record --save-only -o profile.json.gz \
+		$(PROFILING_BINARY) $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
+	python3 tools/symbolicate_profile.py profile.json.gz $(PROFILING_BINARY)
+	@echo ""
+	@echo "Saved: profile.json.gz + symbols.json"
+	@echo "View:  samply load profile.json.gz"
 
 # Measure WASM binary size (install: brew install binaryen)
 WASM_RELEASE := $(EXAMPLE_DIR)/target/$(WASM_TARGET)/release/$(subst -,_,$(EXAMPLE)).wasm
