@@ -154,14 +154,13 @@ pub extern "C" fn __on_fetch_response(request_id: u32, status: u32, body_ptr: u3
 
     let response = FetchResponse { status, body };
 
-    // Look up and call the registered callback
-    let cb_idx = PENDING.with(|p| p.borrow_mut().remove(&request_id));
-    if let Some(idx) = cb_idx {
-        CALLBACKS.with(|cbs| {
-            let cbs = cbs.borrow();
-            if let Some(cb) = cbs.get(idx) {
-                cb(&response);
-            }
-        });
+    // Look up the registered callback. We must copy the function pointer out
+    // before invoking it, because the callback may call `fetch()` which needs
+    // mutable access to CALLBACKS via `register_callback()`.
+    let cb = PENDING
+        .with(|p| p.borrow_mut().remove(&request_id))
+        .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+    if let Some(cb) = cb {
+        cb(&response);
     }
 }

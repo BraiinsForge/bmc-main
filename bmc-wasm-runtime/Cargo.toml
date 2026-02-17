@@ -7,6 +7,7 @@ edition = "2024"
 anyhow.workspace = true
 bmc-wasm-protocol = { path = "protocol" }
 chrono.workspace = true
+formato.workspace = true
 tracing.workspace = true
 
 # WASM runtime
@@ -32,11 +33,12 @@ glutin = { workspace = true, optional = true }
 glutin-winit = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
 raw-window-handle = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
 
 [features]
 default = []
-testbed = ["glutin", "glutin-winit", "notify", "raw-window-handle", "winit"]
+testbed = ["glutin", "glutin-winit", "notify", "raw-window-handle", "tracing-subscriber", "winit"]
 
 [[bin]]
 name = "testbed"

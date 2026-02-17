@@ -1175,6 +1175,7 @@ dependencies = [
  "chrono",
  "cosmic-text",
  "femtovg",
+ "formato",
  "glow",
  "glutin",
  "glutin-winit",
@@ -1186,6 +1187,7 @@ dependencies = [
  "serde_json",
  "taffy",
  "tracing",
+ "tracing-subscriber",
  "ureq",
  "wasmi",
  "winit",
@@ -2202,12 +2204,6 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
-
-[[package]]
-name = "downcast-rs"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 
 [[package]]
 name = "dpi"
@@ -4827,12 +4823,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multi-stash"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
-
-[[package]]
 name = "multimap"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7179,7 +7169,7 @@ dependencies = [
  "cc",
  "cgmath",
  "cursor-icon",
- "downcast-rs 1.2.1",
+ "downcast-rs",
  "drm 0.14.1",
  "drm-ffi 0.9.0",
  "drm-fourcc",
@@ -8687,13 +8677,10 @@ dependencies = [
 
 [[package]]
 name = "wasmi"
-version = "0.45.0"
+version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877340aa3fc4c9fe5fd73600fc67800de7bf7954e803e4ec60251f61abdd8bd1"
+checksum = "22bf475363d09d960b48275c4ea9403051add498a9d80c64dbc91edabab9d1d0"
 dependencies = [
- "arrayvec",
- "multi-stash",
- "smallvec",
  "spin",
  "wasmi_collections",
  "wasmi_core",
@@ -8704,28 +8691,27 @@ dependencies = [
 
 [[package]]
 name = "wasmi_collections"
-version = "0.45.0"
+version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b2e17c923a55f438581639e76aab583452ac2b0a48462dd328b7ce2ce4242c"
+checksum = "85851acbdffd675a9b699b3590406a1d37fc1e1fd073743c7c9cf47c59caacba"
 dependencies = [
  "string-interner",
 ]
 
 [[package]]
 name = "wasmi_core"
-version = "0.45.0"
+version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0b5b2456f258a01866d46e3e7d2862d80d599c273b5fa859218ca11a6b03636"
+checksum = "ef64cf60195d1f937dbaed592a5afce3e6d86868fb8070c5255bc41539d68f9d"
 dependencies = [
- "downcast-rs 2.0.2",
  "libm",
 ]
 
 [[package]]
 name = "wasmi_ir"
-version = "0.45.0"
+version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "368bd6ff29b5f6e16ff0fc3150c8d1d5ce43b4048c34b3bb2c7108f05fe04eb9"
+checksum = "5dcb572ce4400e06b5475819f3d6b9048513efbca785f0b9ef3a41747f944fd8"
 dependencies = [
  "wasmi_core",
 ]
@@ -8779,7 +8765,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe770181423e5fc79d3e2a7f4410b7799d5aab1de4372853de3c6aa13ca24121"
 dependencies = [
  "cc",
- "downcast-rs 1.2.1",
+ "downcast-rs",
  "rustix 0.38.44",
  "scoped-tls",
  "smallvec",
@@ -8793,7 +8779,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3b068c05a039c9f755f881dc50f01732214f5685e379829759088967c46715"
 dependencies = [
  "bitflags 1.3.2",
- "downcast-rs 1.2.1",
+ "downcast-rs",
  "libc",
  "nix 0.24.3",
  "scoped-tls",
@@ -8953,7 +8939,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "485dfb8ccf0daa0d34625d34e6ac15f99e550a7999b6fd88a0835ccd37655785"
 dependencies = [
  "bitflags 2.11.0",
- "downcast-rs 1.2.1",
+ "downcast-rs",
  "rustix 0.38.44",
  "wayland-backend",
  "wayland-scanner 0.31.6",

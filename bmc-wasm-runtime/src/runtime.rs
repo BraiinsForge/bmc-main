@@ -12,8 +12,12 @@ use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use bmc_wasm_protocol::{SDK_VERSION, SDK_VERSION_EXPORT, version_unpack};
+use bmc_wasm_protocol::{
+    FormatPreferences, NumberFormat, SDK_VERSION, SDK_VERSION_EXPORT, TemperatureUnit, UnitSystem,
+    version_unpack,
+};
 use chrono::{DateTime, Datelike, Local, Timelike, Utc};
+use formato::{FormatOptions, Formato};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
@@ -119,6 +123,7 @@ impl WasmWidgetRuntime {
         height: u32,
         fbo_id: u32,
         fuel_per_frame: u64,
+        prefs: FormatPreferences,
     ) -> Result<Self>
     where
         F: FnMut(&str) -> *const c_void,
@@ -129,7 +134,7 @@ impl WasmWidgetRuntime {
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
         let renderer = unsafe { FemtoVgRenderer::new(load_fn, width, height, fbo_id) }?;
-        let host_state = HostState::new(renderer);
+        let host_state = HostState::new(renderer, prefs);
 
         let mut store = wasmi::Store::new(&engine, host_state);
         store.set_fuel(fuel_per_frame)?;
@@ -137,7 +142,7 @@ impl WasmWidgetRuntime {
         let mut linker = Linker::new(&engine);
         Self::register_host_functions(&mut linker)?;
 
-        let instance = linker.instantiate(&mut store, &module)?.start(&mut store)?;
+        let instance = linker.instantiate_and_start(&mut store, &module)?;
 
         // Check SDK version before running any widget code
         let sdk_version = check_sdk_version(instance, &mut store)?;
@@ -552,6 +557,23 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // ── Logging ────────────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_log",
+            |caller: Caller<'_, HostState>, ptr: u32, len: u32, level: u32| {
+                let msg = read_string(&caller, ptr, len);
+                let Some(msg) = msg else { return };
+                match level {
+                    0 => tracing::debug!("{msg}"),
+                    1 => tracing::info!("{msg}"),
+                    2 => tracing::warn!("{msg}"),
+                    _ => tracing::error!("{msg}"),
+                }
+            },
+        )?;
+
         // ── JSON ───────────────────────────────────────────────────
 
         linker.func_wrap(
@@ -704,6 +726,63 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // ── Formatting ────────────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_format_number",
+            |mut caller: Caller<'_, HostState>,
+             value: f64,
+             decimals: u32,
+             out_ptr: u32,
+             out_len: u32|
+             -> i32 {
+                let formatted =
+                    format_number_with_prefs(caller.data().prefs.number_format, value, decimals);
+                write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_format_speed",
+            |mut caller: Caller<'_, HostState>,
+             value: f64,
+             decimals: u32,
+             out_ptr: u32,
+             out_len: u32|
+             -> i32 {
+                let prefs = caller.data().prefs;
+                let (converted, suffix) = match prefs.unit_system {
+                    UnitSystem::Metric => (value, " km/h"),
+                    UnitSystem::Imperial => (value * 0.621_371_192, " mph"),
+                };
+                let num = format_number_with_prefs(prefs.number_format, converted, decimals);
+                let formatted = format!("{num}{suffix}");
+                write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_format_temperature",
+            |mut caller: Caller<'_, HostState>,
+             value: f64,
+             decimals: u32,
+             out_ptr: u32,
+             out_len: u32|
+             -> i32 {
+                let prefs = caller.data().prefs;
+                let (converted, suffix) = match prefs.temperature_unit {
+                    TemperatureUnit::Celsius => (value, " \u{00b0}C"),
+                    TemperatureUnit::Fahrenheit => (value * 9.0 / 5.0 + 32.0, " \u{00b0}F"),
+                };
+                let num = format_number_with_prefs(prefs.number_format, converted, decimals);
+                let formatted = format!("{num}{suffix}");
+                write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
+            },
+        )?;
+
         Ok(())
     }
 
@@ -750,7 +829,7 @@ impl WasmWidgetRuntime {
                 self.fuel_strikes = 0;
                 Ok(RenderStatus::Ok)
             }
-            Err(e) if e.as_trap_code() == Some(wasmi::core::TrapCode::OutOfFuel) => {
+            Err(e) if e.as_trap_code() == Some(wasmi::TrapCode::OutOfFuel) => {
                 self.fuel_strikes += 1;
                 tracing::warn!(
                     "widget exceeded fuel budget (strike {}/{})",
@@ -939,6 +1018,8 @@ impl WasmWidgetRuntime {
             return;
         }
 
+        tracing::debug!("delivering {} fetch response(s)", responses.len());
+
         // Get the __on_fetch_response and __alloc exports
         let on_response = self
             .instance
@@ -954,6 +1035,12 @@ impl WasmWidgetRuntime {
 
         for resp in responses {
             let body_len = resp.body.len() as u32;
+            tracing::debug!(
+                id = resp.request_id,
+                status = resp.status,
+                body_len,
+                "delivering fetch response"
+            );
 
             // Allocate WASM memory for the body
             let body_ptr = if body_len > 0 {
@@ -1046,6 +1133,50 @@ fn parse_headers(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Vec<(Str
             Some((k.trim().to_owned(), v.trim().to_owned()))
         })
         .collect()
+}
+
+/// Format a number using the given number format preference and `formato` crate.
+fn format_number_with_prefs(nf: NumberFormat, value: f64, decimals: u32) -> String {
+    let (group_sep, decimal_sep) = match nf {
+        NumberFormat::SpaceComma => ("\u{00a0}", ","),
+        NumberFormat::CommaDot => (",", "."),
+        NumberFormat::DotComma => (".", ","),
+        NumberFormat::SpaceDot => ("\u{00a0}", "."),
+    };
+
+    let options = FormatOptions::new()
+        .with_thousands(group_sep)
+        .with_decimal(decimal_sep);
+
+    let pattern = if decimals == 0 {
+        "#,##0".to_owned()
+    } else {
+        format!("#,##0.{}", "0".repeat(decimals as usize))
+    };
+
+    value.formato_ops(&pattern, &options)
+}
+
+/// Write a UTF-8 string into WASM memory at `out_ptr`, returning actual byte length.
+/// Negative return on error (no memory export).
+#[expect(clippy::cast_possible_wrap)]
+fn write_to_wasm(caller: &mut Caller<'_, HostState>, s: &str, out_ptr: u32, out_len: u32) -> i32 {
+    let bytes = s.as_bytes();
+    let actual_len = bytes.len();
+    let copy_len = actual_len.min(out_len as usize);
+
+    if copy_len > 0 {
+        let memory = caller.get_export("memory").and_then(Extern::into_memory);
+        if let Some(memory) = memory {
+            let data = memory.data_mut(caller);
+            let start = out_ptr as usize;
+            if start + copy_len <= data.len() {
+                data[start..start + copy_len].copy_from_slice(&bytes[..copy_len]);
+            }
+        }
+    }
+
+    actual_len as i32
 }
 
 /// Perform an HTTP GET request, returning (status_code, body).

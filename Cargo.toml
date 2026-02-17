@@ -278,7 +278,7 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "server"] }
 wayland-scanner = "0.31"
 wayland-server = "0.31"
-wasmi = "0.45"
+wasmi = "1.0"
 winit = "0.30"
 wl-nl80211 = "0.3.2"
 sysfs_gpio = "0.6.1"

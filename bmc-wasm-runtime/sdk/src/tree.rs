@@ -16,8 +16,9 @@ use std::cell::RefCell;
 
 use bmc_wasm_protocol::{
     AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
-    DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS,
-    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, LoopMode, NODE_BUTTON,
+    NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_ROW,
+    NODE_SPACER,
 };
 
 // Re-export for macro paths
@@ -106,6 +107,17 @@ pub struct AnimationDef {
 pub struct TransitionDef {
     pub duration_ms: u32,
     pub easing: Easing,
+}
+
+/// Path interpolation mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Interpolation {
+    /// Straight line segments between points.
+    #[default]
+    Linear = 0,
+    /// Smooth Catmull-Rom spline through all points (host converts to cubic Bézier).
+    CatmullRom = 1,
 }
 
 /// A text span with optional style overrides
@@ -457,6 +469,16 @@ pub enum Draw {
         transition: Option<TransitionDef>,
         color_space: ColorSpace,
         inner: Box<Draw>,
+    },
+    /// Variable-length path: polyline (stroked) or polygon (filled),
+    /// with optional Catmull-Rom smoothing.
+    Path {
+        points: Vec<(f32, f32)>,
+        color: u32,
+        stroke_width: f32,
+        closed: bool,
+        fill: bool,
+        interpolation: Interpolation,
     },
 }
 
@@ -882,6 +904,72 @@ pub fn bitmap(x: f32, y: f32, w: f32, h: f32, bmp: &Bitmap) -> Draw {
     }
 }
 
+/// Path draw command — polyline or polygon with optional Catmull-Rom smoothing.
+///
+/// Prefer the [`path!`] macro for ergonomic call sites.
+#[must_use]
+pub fn make_path(
+    points: Vec<(f32, f32)>,
+    stroke_width: f32,
+    color: u32,
+    closed: bool,
+    fill: bool,
+    interpolation: Interpolation,
+) -> Draw {
+    Draw::Path {
+        points,
+        color,
+        stroke_width,
+        closed,
+        fill,
+        interpolation,
+    }
+}
+
+/// Ergonomic path construction for canvas draw commands.
+///
+/// # Stroked paths (polylines)
+/// ```ignore
+/// path!(points, stroke: 4.0, color: WHITE)                // open, linear
+/// path!(points, stroke: 4.0, color: BLUE_50, smooth)      // open, Catmull-Rom
+/// path!(points, stroke: 2.0, color: WHITE, closed)        // closed outline, linear
+/// path!(points, stroke: 2.0, color: WHITE, closed, smooth) // closed outline, smooth
+/// ```
+///
+/// # Filled paths (polygons)
+/// ```ignore
+/// path!(points, fill, color: SHADE_BLACK)          // filled polygon, linear
+/// path!(points, fill, color: SHADE_BLACK, smooth)  // filled polygon, smooth
+/// ```
+#[macro_export]
+macro_rules! path {
+    ($pts:expr, stroke: $w:expr, color: $c:expr) => {
+        $crate::make_path($pts, $w, $c, false, false, $crate::Interpolation::Linear)
+    };
+    ($pts:expr, stroke: $w:expr, color: $c:expr, smooth) => {
+        $crate::make_path(
+            $pts,
+            $w,
+            $c,
+            false,
+            false,
+            $crate::Interpolation::CatmullRom,
+        )
+    };
+    ($pts:expr, stroke: $w:expr, color: $c:expr, closed) => {
+        $crate::make_path($pts, $w, $c, true, false, $crate::Interpolation::Linear)
+    };
+    ($pts:expr, stroke: $w:expr, color: $c:expr, closed, smooth) => {
+        $crate::make_path($pts, $w, $c, true, false, $crate::Interpolation::CatmullRom)
+    };
+    ($pts:expr, fill, color: $c:expr) => {
+        $crate::make_path($pts, 0.0, $c, true, true, $crate::Interpolation::Linear)
+    };
+    ($pts:expr, fill, color: $c:expr, smooth) => {
+        $crate::make_path($pts, 0.0, $c, true, true, $crate::Interpolation::CatmullRom)
+    };
+}
+
 /// Serialize a node tree to the buffer
 fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
     match node {
@@ -1057,6 +1145,36 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             }
 
             serialize_draw(buf, inner);
+        }
+        Draw::Path {
+            points,
+            color,
+            stroke_width,
+            closed,
+            fill,
+            interpolation,
+        } => {
+            let mut flags: u8 = 0;
+            if *closed {
+                flags |= 0x01;
+            }
+            if *interpolation == Interpolation::CatmullRom {
+                flags |= 0x02;
+            }
+            if *fill {
+                flags |= 0x04;
+            }
+            buf.write_u8(DRAW_PATH);
+            buf.write_u8(flags);
+            buf.write_u16(points.len() as u16);
+            for &(x, y) in points {
+                buf.write_f32(x);
+                buf.write_f32(y);
+            }
+            buf.write_u32(*color);
+            if !fill {
+                buf.write_f32(*stroke_width);
+            }
         }
     }
 }

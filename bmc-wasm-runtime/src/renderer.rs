@@ -87,6 +87,24 @@ pub trait Renderer {
     /// Draw a registered bitmap at the given position and size.
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16);
 
+    // -- Paths --
+
+    /// Stroke a path through the given points.
+    /// If `smooth` is true, use Catmull-Rom spline interpolation.
+    /// If `closed` is true, join last point to first.
+    fn stroke_path(
+        &mut self,
+        points: &[(f32, f32)],
+        stroke_width: f32,
+        color: u32,
+        closed: bool,
+        smooth: bool,
+    );
+
+    /// Fill a closed path through the given points.
+    /// If `smooth` is true, use Catmull-Rom spline interpolation.
+    fn fill_path_points(&mut self, points: &[(f32, f32)], color: u32, smooth: bool);
+
     // -- Frame lifecycle --
 
     fn begin_frame(&mut self, width: u32, height: u32);

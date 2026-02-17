@@ -89,3 +89,9 @@ Small) simultaneously in a masonry layout with a performance overlay. Pass extra
   (cosmic-text)
 - `bmc-wasm-sdk` — Widget SDK (compiled to WASM)
 - `bmc-wasm-protocol` — Shared types and constants
+
+## Example Widgets
+
+- `examples/hello-widget` — Minimal skeleton (default for `make dev`)
+- `examples/spacex-launch` — SpaceX next launch countdown with network fetching and JSON parsing
+- `examples/iss-position` — ISS tracker with live map tile, SGP4 orbital ground track, and day/night terminator overlay

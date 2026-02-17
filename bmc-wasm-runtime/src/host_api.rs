@@ -8,6 +8,8 @@ use std::time::Instant;
 
 use serde_json::Value;
 
+use bmc_wasm_protocol::FormatPreferences;
+
 use crate::gpu::FemtoVgRenderer;
 use crate::interaction::InteractionState;
 
@@ -145,11 +147,14 @@ pub struct HostState {
 
     /// Next JSON document ID.
     pub next_json_id: u32,
+
+    /// User formatting preferences (number format, unit system, temperature unit).
+    pub prefs: FormatPreferences,
 }
 
 impl HostState {
-    /// Create new host state with the given renderer.
-    pub fn new(renderer: FemtoVgRenderer) -> Self {
+    /// Create new host state with the given renderer and formatting preferences.
+    pub fn new(renderer: FemtoVgRenderer, prefs: FormatPreferences) -> Self {
         let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
             renderer,
@@ -172,6 +177,7 @@ impl HostState {
             delayed_fetches: Vec::new(),
             json_docs: HashMap::new(),
             next_json_id: 1,
+            prefs,
         }
     }
 

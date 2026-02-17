@@ -71,7 +71,7 @@ skip = [
 
     # Widespread ecosystem splits
     { crate = "bitflags@1" },
-    { crate = "downcast-rs@1" },
+
     { crate = "hashbrown@0.14" },
     { crate = "hashbrown@0.15" },
     { crate = "itertools@0.12" },

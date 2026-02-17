@@ -23,6 +23,7 @@ pub mod alloc;
 pub mod format;
 pub mod host;
 pub mod json;
+pub mod log;
 pub mod net;
 pub mod tree;
 
@@ -36,10 +37,10 @@ pub use host::{
 pub use json::JsonDoc;
 pub use net::{FetchResponse, fetch, fetch_after};
 pub use tree::{
-    AnimationDef, Bitmap, Draw, Icon, ModalProps, Node, NotificationKind, PropsData, Span,
-    StyleResult, TextStyle, TransitionDef, TreeRenderResult, begin_tree, bitmap, canvas, center,
-    centered, circle, col, icon, icon_builtin, make_button, modal, modal_styled, notification,
-    orbit, paragraph, rect, render_ui, rotated, row, spacer, span, text, with_buffer,
+    AnimationDef, Bitmap, Draw, Icon, Interpolation, ModalProps, Node, NotificationKind, PropsData,
+    Span, StyleResult, TextStyle, TransitionDef, TreeRenderResult, begin_tree, bitmap, canvas,
+    center, centered, circle, col, icon, icon_builtin, make_button, make_path, modal, modal_styled,
+    notification, orbit, paragraph, rect, render_ui, rotated, row, spacer, span, text, with_buffer,
 };
 pub use ufmt;
 

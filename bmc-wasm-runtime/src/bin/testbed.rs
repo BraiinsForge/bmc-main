@@ -35,6 +35,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowButtons};
 
+use bmc_wasm_protocol::FormatPreferences;
 use bmc_wasm_runtime::components::{ButtonSize, ButtonStyle, draw_button};
 use bmc_wasm_runtime::interaction::{InteractionState, TouchEvent};
 use bmc_wasm_runtime::renderer::Renderer;
@@ -49,6 +50,8 @@ const PREVIEW_WIDTH: u32 = PREVIEW_MARGIN + 1284 + PREVIEW_MARGIN; // 1300
 const PREVIEW_HEIGHT: u32 = PREVIEW_MARGIN + 972 + PREVIEW_MARGIN; // 988
 
 fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
@@ -783,6 +786,7 @@ fn create_runtime(
             height,
             0,
             WasmWidgetRuntime::FUEL_PER_FRAME,
+            FormatPreferences::default(),
         )
     }
     .context("Failed to create runtime")

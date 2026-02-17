@@ -119,6 +119,7 @@ fn on_launch_data(response: &FetchResponse) {
         } else {
             fmt!("API request failed ({})", response.status)
         };
+        log_error!("launch data fetch failed: {}", msg);
         STATE.with(|s| *s.borrow_mut() = WidgetState::Error(msg));
         request_frame();
         fetch_after(RETRY_MS, API_URL, api_auth().as_deref(), on_launch_data);

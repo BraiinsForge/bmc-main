@@ -134,11 +134,11 @@ pub fn draw_icon(
         if let Some(fill_color) = icon_path.fill_color {
             let paint_color = tint.unwrap_or_else(|| to_femtovg_color(fill_color));
             let mut paint = Paint::color(paint_color);
+            // Disable AA fringe — it bleeds into narrow gaps between adjacent
+            // paths, filling them in. FemtoVG's own text renderer does the same.
+            paint.set_anti_alias(false);
             if icon_path.is_evenodd {
                 paint.set_fill_rule(FillRule::EvenOdd);
-                // Disable AA fringe — it bleeds into narrow cutouts,
-                // filling them in. FemtoVG's own text renderer does the same.
-                paint.set_anti_alias(false);
             }
             canvas.fill_path(&icon_path.path, &paint);
         }

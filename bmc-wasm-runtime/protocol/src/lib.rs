@@ -7,6 +7,7 @@
 
 pub mod animation;
 pub mod colors;
+pub mod format;
 pub mod icon;
 pub mod nodes;
 pub mod text;
@@ -14,6 +15,7 @@ pub mod version;
 
 pub use animation::*;
 pub use colors::*;
+pub use format::*;
 pub use icon::*;
 pub use nodes::*;
 pub use text::*;

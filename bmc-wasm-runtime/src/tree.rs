@@ -12,10 +12,10 @@
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::{
     AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
-    DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90, GRAY_100,
-    GREEN_40, ICON_CLOSE, ICON_ERROR, ICON_INFO, ICON_SUCCESS, ICON_WARNING, LoopMode, NODE_BUTTON,
-    NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_ROW,
-    NODE_SPACER, ORANGE_40, RED_60, VIOLET_50,
+    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90,
+    GRAY_100, GREEN_40, ICON_CLOSE, ICON_ERROR, ICON_INFO, ICON_SUCCESS, ICON_WARNING, LoopMode,
+    NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
+    NODE_PARAGRAPH, NODE_ROW, NODE_SPACER, ORANGE_40, RED_60, VIOLET_50,
 };
 
 // Re-export for other modules
@@ -114,6 +114,14 @@ pub enum DrawCommand {
         transition: Option<HostTransitionDef>,
         color_space: ColorSpace,
         inner: Box<DrawCommand>,
+    },
+    Path {
+        points: Vec<(f32, f32)>,
+        color: u32,
+        stroke_width: f32,
+        closed: bool,
+        fill: bool,
+        smooth: bool,
     },
 }
 
@@ -494,6 +502,29 @@ impl<'a> TreeReader<'a> {
                     transition,
                     color_space,
                     inner: Box::new(inner),
+                })
+            }
+            DRAW_PATH => {
+                let flags = self.read_u8()?;
+                let closed = flags & 0x01 != 0;
+                let smooth = flags & 0x02 != 0;
+                let fill = flags & 0x04 != 0;
+                let point_count = self.read_u16()? as usize;
+                let mut points = Vec::with_capacity(point_count);
+                for _ in 0..point_count {
+                    let x = self.read_f32()?;
+                    let y = self.read_f32()?;
+                    points.push((x, y));
+                }
+                let color = self.read_u32()?;
+                let stroke_width = if fill { 0.0 } else { self.read_f32()? };
+                Ok(DrawCommand::Path {
+                    points,
+                    color,
+                    stroke_width,
+                    closed,
+                    fill,
+                    smooth,
                 })
             }
             _ => bail!("unknown draw command: {}", draw_type),
@@ -998,12 +1029,14 @@ fn render_taffy_node(
 
         // Render canvas draw commands with local coordinates
         if !ctx.draws.is_empty() {
+            renderer.push_scissor(x, y, w, h);
             anim_ctx.draw_in_canvas = 0;
             for draw in &ctx.draws {
                 render_draw_command(renderer, draw, x, y, w, h, anim_ctx);
                 anim_ctx.draw_in_canvas += 1;
             }
             anim_ctx.canvas_index += 1;
+            renderer.pop_scissor();
         }
 
         if let Some(ref notif) = ctx.notification {
@@ -1054,6 +1087,21 @@ fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
         | DrawCommand::Rotated { inner, .. }
         | DrawCommand::Modified { inner, .. }
         | DrawCommand::Orbit { inner, .. } => get_draw_bounds(inner),
+        DrawCommand::Path { points, .. } => {
+            if points.is_empty() {
+                (0.0, 0.0)
+            } else {
+                let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
+                let (mut max_x, mut max_y) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+                for &(x, y) in points {
+                    min_x = min_x.min(x);
+                    min_y = min_y.min(y);
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                }
+                (max_x - min_x, max_y - min_y)
+            }
+        }
     }
 }
 
@@ -1368,6 +1416,64 @@ fn render_draw_inner(
                 anim_ctx,
             );
         }
+        DrawCommand::Path {
+            points,
+            color,
+            stroke_width,
+            closed,
+            fill,
+            smooth,
+        } => {
+            if points.len() < 2 {
+                return;
+            }
+            let final_color = if alpha < 1.0 {
+                multiply_alpha(color_override.unwrap_or(*color), alpha)
+            } else {
+                color_override.unwrap_or(*color)
+            };
+
+            // Transform points: apply canvas offset + accumulated offset + scale
+            let transformed: Vec<(f32, f32)> = points
+                .iter()
+                .map(|&(px, py)| (cx + (px + offset_x) * scale, cy + (py + offset_y) * scale))
+                .collect();
+
+            if rotation != 0.0 {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                // Re-transform relative to pivot
+                let pivoted: Vec<(f32, f32)> = transformed
+                    .iter()
+                    .map(|&(px, py)| (px - pivot_x, py - pivot_y))
+                    .collect();
+                if *fill {
+                    renderer.fill_path_points(&pivoted, final_color, *smooth);
+                } else {
+                    renderer.stroke_path(
+                        &pivoted,
+                        *stroke_width * scale,
+                        final_color,
+                        *closed,
+                        *smooth,
+                    );
+                }
+                renderer.restore();
+            } else if *fill {
+                renderer.fill_path_points(&transformed, final_color, *smooth);
+            } else {
+                renderer.stroke_path(
+                    &transformed,
+                    *stroke_width * scale,
+                    final_color,
+                    *closed,
+                    *smooth,
+                );
+            }
+        }
     }
 }
 
@@ -1440,6 +1546,10 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
         DrawCommand::Centered { inner } | DrawCommand::Modified { inner, .. } => {
             extract_draw_values(inner)
         }
+        DrawCommand::Path { color, .. } => PrevDrawValues {
+            color: *color,
+            ..Default::default()
+        },
     }
 }
 
