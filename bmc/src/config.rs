@@ -396,6 +396,18 @@ impl ConfigHandle {
             Err(err) => {
                 warn!(?err, "Failed to load config. Replacing with default config");
 
+                if path.exists() {
+                    let backup_path = path.with_extension("json.bcp");
+                    if let Err(err) = fs::copy(&path, &backup_path).await {
+                        warn!(
+                            "Failed to back up config to {}: {err:#}",
+                            backup_path.display()
+                        );
+                    } else {
+                        warn!("Backed up broken config to {}", backup_path.display());
+                    }
+                }
+
                 let mut default_config = Config::default();
 
                 if let Err(err) = default_config.save(&path).await {
