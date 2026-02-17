@@ -130,6 +130,15 @@ impl WasmWidgetRuntime {
     {
         let mut config = wasmi::Config::default();
         config.consume_fuel(true);
+        config.set_max_cached_stacks(4);
+        // Disable Wasm proposals not used by our Rust-compiled widgets.
+        // Saves validation/translation overhead.
+        config.wasm_tail_call(false);
+        config.wasm_multi_memory(false);
+        config.wasm_memory64(false);
+        config.wasm_extended_const(false);
+        config.wasm_custom_page_sizes(false);
+        config.wasm_wide_arithmetic(false);
         let engine = wasmi::Engine::new(&config);
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
