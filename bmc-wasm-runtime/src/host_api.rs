@@ -7,18 +7,18 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 use serde_json::Value;
+use taffy::prelude::*;
 
 use bmc_wasm_protocol::FormatPreferences;
 
 use crate::gpu::FemtoVgRenderer;
 use crate::interaction::InteractionState;
+use crate::tree::NodeContext;
 
 /// State for a single running animation instance.
 #[derive(Debug, Clone)]
 pub struct AnimationState {
     pub elapsed_ms: u32,
-    /// Current direction for PingPong (true = forward).
-    pub forward: bool,
     /// Frame counter when last seen (for GC).
     pub last_seen_frame: u64,
 }
@@ -64,10 +64,6 @@ pub struct ModalState {
     pub viewport_height: f32,
     /// Whether currently dragging to scroll
     pub is_dragging: bool,
-    /// Y position where drag started
-    pub drag_start_y: i32,
-    /// Scroll offset when drag started
-    pub drag_start_offset: f32,
 }
 
 /// A completed HTTP fetch response ready for delivery to WASM.
@@ -101,7 +97,6 @@ pub struct FrameTimings {
 }
 
 /// Host-side state accessible to WASM via host functions.
-#[expect(dead_code)]
 pub struct HostState {
     /// GPU renderer (FemtoVG + cosmic-text)
     pub renderer: FemtoVgRenderer,
@@ -109,7 +104,8 @@ pub struct HostState {
     /// Interaction state (hit testing, pending clicks)
     pub interaction: InteractionState,
 
-    /// Server-provided state blob
+    /// Server-provided state blob (read by the host runtime, not testbed)
+    #[expect(dead_code)]
     pub state_blob: Option<Vec<u8>>,
 
     /// Whether `request_frame()` was called this frame
@@ -118,7 +114,8 @@ pub struct HostState {
     /// Delay from `request_frame_after(ms)`, if called
     pub frame_delay_ms: Option<u32>,
 
-    /// Whether to request server refresh
+    /// Whether to request server refresh (read by the host runtime, not testbed)
+    #[expect(dead_code)]
     pub refresh_requested: bool,
 
     /// Button clicks from last tree render (for new tree API)
@@ -168,6 +165,9 @@ pub struct HostState {
 
     /// Per-frame timing breakdown from the last rendered frame.
     pub last_timings: FrameTimings,
+
+    /// Reusable Taffy layout tree (cleared each frame, keeps allocations).
+    pub taffy: TaffyTree<NodeContext>,
 }
 
 impl HostState {
@@ -197,6 +197,7 @@ impl HostState {
             next_json_id: 1,
             prefs,
             last_timings: FrameTimings::default(),
+            taffy: TaffyTree::with_capacity(64),
         }
     }
 

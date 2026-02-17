@@ -597,7 +597,7 @@ struct NotificationData {
 
 /// Node data attached to taffy nodes
 #[derive(Clone, Default)]
-struct NodeContext {
+pub(crate) struct NodeContext {
     background: u32,
     paragraph: Option<ParagraphData>,
     button: Option<(u32, String, u8, u8, u16)>, // id, label, style, size, icon_id
@@ -622,8 +622,8 @@ struct ModalInfo {
 ///
 /// Returns `(tree_node, result, has_active_animations, timings)` — the caller
 /// can cache `tree_node` for animation-only frames to skip deserialization.
-#[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
-pub fn process_tree(
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn process_tree(
     data: &[u8],
     width: f32,
     height: f32,
@@ -634,6 +634,7 @@ pub fn process_tree(
     transition_states: &mut HashMap<(u16, u16), TransitionState>,
     frame_counter: u64,
     delta_ms: u32,
+    taffy: &mut TaffyTree<NodeContext>,
 ) -> Result<(TreeNode, TreeResult, bool, FrameTimings)> {
     let mut timings = FrameTimings::default();
 
@@ -654,6 +655,7 @@ pub fn process_tree(
         frame_counter,
         delta_ms,
         &mut timings,
+        taffy,
     )?;
 
     Ok((tree_node, result, has_active, timings))
@@ -662,8 +664,8 @@ pub fn process_tree(
 /// Layout and render a previously deserialized tree.
 ///
 /// Populates `timings.layout_us` and `timings.render_us`.
-#[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
-pub fn layout_and_render(
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn layout_and_render(
     tree_node: &TreeNode,
     width: f32,
     height: f32,
@@ -675,6 +677,7 @@ pub fn layout_and_render(
     frame_counter: u64,
     delta_ms: u32,
     timings: &mut FrameTimings,
+    taffy: &mut TaffyTree<NodeContext>,
 ) -> Result<(TreeResult, bool)> {
     // Phase 2: Build Taffy tree + compute layout
     let t1 = Instant::now();
@@ -683,15 +686,9 @@ pub fn layout_and_render(
     let mut button_id: u32 = 0;
     let mut modals: Vec<ModalInfo> = Vec::new();
 
-    // Build taffy tree (collects modals separately)
-    let mut taffy: TaffyTree<NodeContext> = TaffyTree::new();
-    let root_id = build_taffy_node(
-        &mut taffy,
-        tree_node,
-        &mut result,
-        &mut button_id,
-        &mut modals,
-    )?;
+    // Reuse taffy tree — clear nodes but keep internal allocations
+    taffy.clear();
+    let root_id = build_taffy_node(taffy, tree_node, &mut result, &mut button_id, &mut modals)?;
 
     // Set root size
     if let Ok(style) = taffy.style(root_id) {
@@ -766,7 +763,7 @@ pub fn layout_and_render(
 
     // Render main tree
     render_taffy_node(
-        &taffy,
+        taffy,
         root_id,
         0.0,
         0.0,
@@ -1364,7 +1361,6 @@ fn render_draw_inner(
                         .entry(key)
                         .or_insert_with(|| AnimationState {
                             elapsed_ms: 0,
-                            forward: true,
                             last_seen_frame: anim_ctx.frame_counter,
                         });
                 state.last_seen_frame = anim_ctx.frame_counter;

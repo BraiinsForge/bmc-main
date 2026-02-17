@@ -44,6 +44,10 @@ struct ParagraphLayoutEntry {
     #[expect(dead_code)]
     max_width: f32,
     last_used_frame: u64,
+    /// Concatenated span text (precomputed to avoid per-draw allocation).
+    full_text: String,
+    /// Byte-offset → span-index lookup (precomputed).
+    span_offsets: Vec<(usize, usize, usize)>,
 }
 
 /// Frame-based paragraph layout cache. Evicts entries not accessed in the last 2 frames.
@@ -103,12 +107,16 @@ impl ParagraphLayoutCache {
         let entry = self.entries.entry(key).or_insert_with(|| {
             let (buffer, width, height) =
                 shape_paragraph(font_system, base_style, spans, max_width);
+            let full_text: String = spans.iter().map(|s| s.text.as_str()).collect();
+            let span_offsets = build_span_offsets(spans);
             ParagraphLayoutEntry {
                 buffer,
                 width,
                 height,
                 max_width: max_width.unwrap_or(width),
                 last_used_frame: frame,
+                full_text,
+                span_offsets,
             }
         });
         entry.last_used_frame = frame;
@@ -129,13 +137,13 @@ impl ParagraphLayoutCache {
         y: f32,
         max_width: f32,
     ) {
-        // Ensure layout is cached
+        // Ensure layout is cached (also precomputes full_text + span_offsets)
         self.measure(font_system, base_style, spans, Some(max_width));
         let key = cache_key(base_style, spans, Some(max_width));
         let entry = &self.entries[&key];
 
-        let full_text: String = spans.iter().map(|s| s.text.as_str()).collect();
-        let span_offsets = build_span_offsets(spans);
+        let full_text = &entry.full_text;
+        let span_offsets = &entry.span_offsets;
 
         for run in entry.buffer.layout_runs() {
             let align_offset = match base_style.align {
@@ -152,7 +160,7 @@ impl ParagraphLayoutCache {
             let mut segment_text = String::new();
 
             for glyph in run.glyphs {
-                let span_idx = find_span(glyph.start, &span_offsets);
+                let span_idx = find_span(glyph.start, span_offsets);
 
                 if span_idx != current_span && !segment_text.is_empty() {
                     // Flush previous segment

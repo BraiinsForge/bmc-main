@@ -182,6 +182,12 @@ fn oklab_to_srgb(ol: f32, oa: f32, ob: f32) -> (f32, f32, f32) {
 }
 
 fn lerp_color_oklab(from: u32, to: u32, t: f32) -> u32 {
+    if from == to || t <= 0.0 {
+        return from;
+    }
+    if t >= 1.0 {
+        return to;
+    }
     let (r1, g1, b1, a1) = unpack_rgba(from);
     let (r2, g2, b2, a2) = unpack_rgba(to);
 
@@ -198,6 +204,12 @@ fn lerp_color_oklab(from: u32, to: u32, t: f32) -> u32 {
 }
 
 fn lerp_color_oklch(from: u32, to: u32, t: f32) -> u32 {
+    if from == to || t <= 0.0 {
+        return from;
+    }
+    if t >= 1.0 {
+        return to;
+    }
     let (r1, g1, b1, a1) = unpack_rgba(from);
     let (r2, g2, b2, a2) = unpack_rgba(to);
 
@@ -231,6 +243,12 @@ fn lerp_color_oklch(from: u32, to: u32, t: f32) -> u32 {
 }
 
 fn lerp_color_linear_rgb(from: u32, to: u32, t: f32) -> u32 {
+    if from == to || t <= 0.0 {
+        return from;
+    }
+    if t >= 1.0 {
+        return to;
+    }
     let (r1, g1, b1, a1) = unpack_rgba(from);
     let (r2, g2, b2, a2) = unpack_rgba(to);
 

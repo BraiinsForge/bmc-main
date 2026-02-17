@@ -427,6 +427,7 @@ impl WasmWidgetRuntime {
                         &mut state.transition_states,
                         frame_counter,
                         delta_ms,
+                        &mut state.taffy,
                     ) {
                         Ok((tree_node, result, has_active, timings)) => {
                             let had_clicks = result.clicks.iter().any(|&c| c);
@@ -882,6 +883,7 @@ impl WasmWidgetRuntime {
             frame_counter,
             delta_ms,
             &mut timings,
+            &mut state.taffy,
         ) {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
