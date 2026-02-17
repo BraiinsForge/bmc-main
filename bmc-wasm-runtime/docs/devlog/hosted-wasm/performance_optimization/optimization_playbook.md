@@ -55,7 +55,7 @@ cargo run --release -- --perf-report=reports/00-baseline/perf.json --perf-frames
 # Apply change, collect again
 cargo run --release -- --perf-report=reports/01-change/perf.json --perf-frames=600
 # Compare
-python3 tools/compare_reports.py reports/00-baseline reports/01-change
+python3 tools/perf_compare.py reports/00-baseline reports/01-change
 ```
 
 ### 0c. CPU profiling

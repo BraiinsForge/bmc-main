@@ -4,36 +4,34 @@
 Each phase is a directory containing (all optional, at least one required):
   perf.json          — testbed --perf-report output
   profile.json.gz    — samply profile
-  symbols.json       — symbolication map from symbolicate_profile.py
+  symbols.json       — symbolication map from perf_symbolicate.py
 
 Usage:
     # Compare all phases:
-    ./compare_reports.py reports/00-baseline reports/01-render-loop-fix reports/02-cached-tree
+    ./perf_compare.py reports/00-baseline reports/01-render-loop-fix reports/02-cached-tree
 
     # Or with glob:
-    ./compare_reports.py reports/*/
+    ./perf_compare.py reports/*/
 """
 
+import gzip
 import json
 import sys
-import gzip
-import re
-from collections import Counter
 from pathlib import Path
+
+from _common import crate_breakdown_from_thread, find_testbed_thread, load_symbols
 
 # ANSI colors
 RED = '\033[31m'
 GREEN = '\033[32m'
-YELLOW = '\033[33m'
 BOLD = '\033[1m'
 DIM = '\033[2m'
 RESET = '\033[0m'
 
 PERF_FILE = 'perf.json'
 PROFILE_FILE = 'profile.json.gz'
-SYMBOLS_FILE = 'symbols.json'
 
-METRICS = [
+METRICS: list[tuple[str, str]] = [
     ('avg_frame_us', 'Frame'),
     ('avg_wasm_us', 'WASM'),
     ('avg_tree_us', 'Tree'),
@@ -42,36 +40,25 @@ METRICS = [
     ('avg_flush_us', 'Flush'),
 ]
 
-PERCENTILES = [
+PERCENTILES: list[tuple[str, str]] = [
     ('p50_frame_us', 'p50'),
     ('p95_frame_us', 'p95'),
     ('p99_frame_us', 'p99'),
 ]
 
 
-def fmt_us(us):
+def fmt_us(us: float) -> str:
     """Format microseconds as ms with 1 decimal."""
     return f'{us / 1_000:.1f}ms'
 
 
-def fmt_delta(before, after):
-    """Format a delta with color: green if improved, red if regressed."""
-    if before == 0:
-        return f'{DIM}n/a{RESET}'
-    delta = after - before
-    pct = 100.0 * delta / before
-    sign = '+' if delta >= 0 else ''
-    color = GREEN if delta <= 0 else RED
-    return f'{color}{sign}{pct:.1f}%{RESET}'
-
-
-def phase_name(dir_path):
+def phase_name(dir_path: str) -> str:
     """Extract human-readable phase name from directory name."""
     name = Path(dir_path).name
     return name.replace('-', ' ', 1).replace('-', ' ')
 
 
-def load_phase(dir_path):
+def load_phase(dir_path: str) -> dict:
     """Load a phase directory."""
     d = Path(dir_path)
     if not d.is_dir():
@@ -88,7 +75,7 @@ def load_phase(dir_path):
         )
         sys.exit(1)
 
-    report = {}
+    report: dict = {}
     if perf.exists():
         with open(perf) as f:
             report = json.load(f)
@@ -100,7 +87,7 @@ def load_phase(dir_path):
     return report
 
 
-def print_comparison_table(reports):
+def print_comparison_table(reports: list[dict]) -> None:
     """Print side-by-side comparison of all reports (perf.json data)."""
     names = [phase_name(r['_dir']) for r in reports]
     col_w = max(14, max(len(n) for n in names) + 2)
@@ -115,9 +102,15 @@ def print_comparison_table(reports):
     print(RESET)
     print('─' * (12 + len(names) * col_w + (len(names) - 1) * 10))
 
-    def print_row(row_label, get_val, fmt_val, better_lower=True):
+    def print_row(
+        row_label: str,
+        get_val: object,  # Callable[[dict], float]
+        fmt_val: object,  # Callable[[float], str]
+        *,
+        better_lower: bool = True,
+    ) -> None:
         print(f'{row_label:<12}', end='')
-        prev_val = None
+        prev_val: float | None = None
         for i, r in enumerate(reports):
             if not r['_has_perf']:
                 print(f'{DIM}{"—":>{col_w}}{RESET}', end='')
@@ -153,85 +146,30 @@ def print_comparison_table(reports):
     )
 
 
-def extract_crate(sym):
-    """Extract crate name from a Rust symbol."""
-    if sym.startswith('0x'):
-        return '[unsymbolized]'
-    m = re.match(r'<?(\w+)(?:::|_ir::)', sym)
-    if m:
-        crate = m.group(1)
-        if crate in ('wasmi', 'wasmi_ir'):
-            return 'wasmi'
-        return crate
-    if '::' not in sym and '<' not in sym:
-        return '[system]'
-    return '[other]'
-
-
-def resolve_sym(symbols, sym):
-    """Resolve a symbol address using a symbol map."""
-    return symbols.get(sym, sym)
-
-
-def load_profile_crate_breakdown(phase_dir):
+def load_profile_crate_breakdown(phase_dir: str) -> tuple[dict[str, float], int]:
     """Load a samply profile and return crate-level inclusive breakdown."""
     profile_path = Path(phase_dir) / PROFILE_FILE
-    symbols_path = Path(phase_dir) / SYMBOLS_FILE
 
     with gzip.open(profile_path, 'rt') as f:
-        data = json.load(f)
+        data: dict = json.load(f)
 
-    symbols = {}
-    if symbols_path.exists():
-        with open(symbols_path) as f:
-            symbols = json.load(f)
+    symbols = load_symbols(profile_path)
 
-    # Find the main testbed thread (largest sample count)
-    testbed_threads = [
-        t
-        for t in data['threads']
-        if t['name'] == 'testbed' and t['samples']['length'] > 0
-    ]
-    if not testbed_threads:
+    thread = find_testbed_thread(data)
+    if thread is None:
         return {}, 0
-    t = max(testbed_threads, key=lambda t: t['samples']['length'])
 
-    strings = t['stringArray']
-    func_table = t['funcTable']
-    frame_table = t['frameTable']
-    stack_table = t['stackTable']
-    samples = t['samples']
-
-    stack_counts = Counter(samples['stack'])
-
-    prefixes = stack_table['prefix']
-    frame_list = stack_table['frame']
-
-    total = sum(stack_counts.values())
-
-    # Crate-level breakdown (inclusive, deduplicated per-stack)
-    crate_time = Counter()
-    for stack_idx, count in stack_counts.items():
-        if stack_idx is None:
-            continue
-        seen_crates = set()
-        s = stack_idx
-        while s is not None:
-            fi = frame_list[s]
-            func_idx = frame_table['func'][fi]
-            sym = strings[func_table['name'][func_idx]]
-            crate = extract_crate(resolve_sym(symbols, sym))
-            if crate not in seen_crates:
-                crate_time[crate] += count
-                seen_crates.add(crate)
-            s = prefixes[s]
+    crate_time, total = crate_breakdown_from_thread(thread, symbols)
 
     return {
         crate: 100.0 * count / total for crate, count in crate_time.most_common(15)
     }, total
 
 
-def print_profile_comparison(reports, profile_data):
+def print_profile_comparison(
+    reports: list[dict],
+    profile_data: list[tuple[dict[str, float], int]],
+) -> None:
     """Print crate-level profile comparison."""
     names = [phase_name(r['_dir']) for r in reports]
     col_w = max(14, max(len(n) for n in names) + 2)
@@ -239,7 +177,7 @@ def print_profile_comparison(reports, profile_data):
     print(f'\n{BOLD}=== Profile: Crate Breakdown (inclusive %) ==={RESET}\n')
 
     # Gather all crate names from phases that have profiles
-    all_crates = set()
+    all_crates: set[str] = set()
     for pd, total in profile_data:
         if total > 0:
             all_crates.update(pd.keys())
@@ -261,12 +199,13 @@ def print_profile_comparison(reports, profile_data):
 
     for crate in sorted_crates[:12]:
         print(f'{crate:<20}', end='')
-        prev_pct = None
+        prev_pct: float | None = None
         for i, (pd, total) in enumerate(profile_data):
             if total == 0:
                 print(f'{DIM}{"—":>{col_w}}{RESET}', end='')
                 if i > 0:
                     print(' ' * 10, end='')
+                prev_pct = None
             else:
                 pct = pd.get(crate, 0)
                 print(f'{pct:>{col_w - 1}.1f}%', end='')
@@ -296,7 +235,7 @@ def print_profile_comparison(reports, profile_data):
     print()
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 3:
         print(f'Usage: {sys.argv[0]} <phase_dir> <phase_dir> [...]')
         print(f'       {sys.argv[0]} reports/*/')
@@ -320,7 +259,7 @@ def main():
         print_comparison_table(reports)
 
     if has_profiles:
-        profile_data = []
+        profile_data: list[tuple[dict[str, float], int]] = []
         for r in reports:
             if r['_has_profile']:
                 pd, total = load_profile_crate_breakdown(r['_dir'])

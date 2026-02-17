@@ -7,19 +7,19 @@ symbols.json mapping file. This must be run while the binary still
 matches the profile (i.e. right after recording, before rebuilding).
 
 Usage:
-    ./symbolicate_profile.py <profile.json.gz> <binary> [symbols.json]
+    ./perf_symbolicate.py <profile.json.gz> <binary> [symbols.json]
 
 The output defaults to symbols.json next to the profile.
 """
 
-import json
 import gzip
+import json
 import subprocess
 import sys
 from pathlib import Path
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 3:
         print(
             f'Usage: {sys.argv[0]} <profile.json.gz> <binary> [symbols.json]',
@@ -43,14 +43,14 @@ def main():
         sys.exit(1)
 
     with gzip.open(profile_path, 'rt') as f:
-        data = json.load(f)
+        data: dict = json.load(f)
 
     # Collect all unique hex addresses across all threads
-    addrs = set()
+    addrs: set[str] = set()
     for t in data['threads']:
         if t['samples']['length'] == 0:
             continue
-        strings = t['stringArray']
+        strings: list[str] = t['stringArray']
         for name_idx in t['funcTable']['name']:
             name = strings[name_idx]
             if name.startswith('0x'):
@@ -64,18 +64,18 @@ def main():
 
     addr_list = sorted(addrs)
     proc = subprocess.run(
-        ['addr2line', '-f', '-C', '-e', str(binary_path)] + addr_list,
+        ['addr2line', '-f', '-C', '-e', str(binary_path), *addr_list],
         capture_output=True,
         text=True,
     )
 
     lines = proc.stdout.strip().split('\n')
-    symbols = {}
+    symbols: dict[str, str] = {}
     for i in range(0, len(lines), 2):
         idx = i // 2
         if idx < len(addr_list):
             func_name = lines[i]
-            if func_name != '??' and func_name != '':
+            if func_name not in ('??', ''):
                 symbols[addr_list[idx]] = func_name
 
     resolved = len(symbols)

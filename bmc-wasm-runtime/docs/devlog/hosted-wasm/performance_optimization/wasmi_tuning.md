@@ -41,7 +41,7 @@ config.set_max_cached_stacks(4);
 ### 1c. Minimize host–guest boundary crossings
 
 Each host function call from WASM goes through wasmi's call machinery (register save/restore, fuel accounting, type
-checking). Profile with `analyze_profile.py` to check if host function trampolines appear in hot functions.
+checking). Profile with `perf_analyze.py` to check if host function trampolines appear in hot functions.
 
 Mitigations:
 
@@ -142,10 +142,10 @@ make run EXAMPLE=hello-widget ARGS="--perf-report=reports/04-wasmi-baseline/perf
 
 # CPU profile
 make profile
-python3 tools/analyze_profile.py profile.json.gz
+python3 tools/perf_analyze.py profile.json.gz
 ```
 
-After each change, re-run the same benchmark and compare with `compare_reports.py`. Focus on:
+After each change, re-run the same benchmark and compare with `perf_compare.py`. Focus on:
 
 - `avg_wasm_us` — direct measure of interpreter time per frame (**primary metric**)
 - `avg_frame_us` — end-to-end frame time

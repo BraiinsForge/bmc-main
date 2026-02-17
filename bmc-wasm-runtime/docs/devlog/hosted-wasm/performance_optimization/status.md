@@ -147,9 +147,9 @@ Produces `profile.json.gz` + `symbols.json`. View with `samply load profile.json
 
 ### Analysis scripts (`tools/`)
 
-- `analyze_profile.py <profile.json.gz>` — crate breakdown + hot functions from samply profile
-- `compare_reports.py <dir1> <dir2> ...` — side-by-side perf.json + profile comparison across phases
-- `symbolicate_profile.py <profile.json.gz> <binary>` — batch addr2line (run by `make profile`)
+- `perf_analyze.py <profile.json.gz>` — crate breakdown + hot functions from samply profile
+- `perf_compare.py <dir1> <dir2> ...` — side-by-side perf.json + profile comparison across phases
+- `perf_symbolicate.py <profile.json.gz> <binary>` — batch addr2line (run by `make profile`)
 
 ### Reports directory
 

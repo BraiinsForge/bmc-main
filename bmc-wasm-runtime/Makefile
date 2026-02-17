@@ -1,5 +1,9 @@
-# WASM Widget Runtime - Development Makefile
-# Usage: make dev [EXAMPLE=hello-widget]
+# WASM Widget Runtime — Development Makefile
+#
+# This file is a dumb shell-autocomplete signpost. Each target should be
+# a one-liner delegating to a proper tool (cargo, python3, etc.). Do NOT
+# put real logic here — if a target needs more than a trivial command,
+# write a Python script in tools/ and call it from here.
 
 EXAMPLE ?= hello-widget
 EXAMPLE_DIR := examples/$(EXAMPLE)
@@ -25,60 +29,21 @@ run:
 	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
 	cargo run --features testbed --bin testbed -- $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
 
-# Profiling with samply (install: cargo install samply)
-# Usage: make profile                    — record profile
-#        make profile ARGS="--perf-report reports/03-foo/perf.json --perf-frames 600"
-PROFILING_BINARY := ../target/profiling/testbed
-
+# Profiling: make profile [-e hello-widget] [-r 05-my-change] [-n 1200]
 .PHONY: profile
 profile:
-	@command -v samply >/dev/null 2>&1 || { echo "Error: samply not found. Install with: cargo install samply"; exit 1; }
-	@PARANOID=$$(cat /proc/sys/kernel/perf_event_paranoid); \
-	test "$$PARANOID" -eq -1 || { echo "Error: /proc/sys/kernel/perf_event_paranoid=$$PARANOID (expected -1). Run: echo '-1' | sudo tee /proc/sys/kernel/perf_event_paranoid"; exit 1; }
+	python3 tools/perf_record.py $(ARGS)
 
-	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
-	cargo build --profile profiling --features testbed --bin testbed
-	samply record --save-only -o profile.json.gz \
-		$(PROFILING_BINARY) $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
-	python3 tools/symbolicate_profile.py profile.json.gz $(PROFILING_BINARY)
-	@echo ""
-	@echo "Saved: profile.json.gz + symbols.json"
-	@echo "View:  samply load profile.json.gz"
-
-# Measure WASM binary size (install: brew install binaryen)
-WASM_RELEASE := $(EXAMPLE_DIR)/target/$(WASM_TARGET)/release/$(subst -,_,$(EXAMPLE)).wasm
-WASM_OPT := $(EXAMPLE_DIR)/target/$(WASM_TARGET)/release/$(subst -,_,$(EXAMPLE)).opt.wasm
-
+# WASM binary size: make size [-e hello-widget] [--check] [--limit 65536]
 .PHONY: size
 size:
-	@which wasm-opt > /dev/null || (echo "Error: wasm-opt not found. Install with: brew install binaryen" && exit 1)
-	@which wasm-objdump > /dev/null || (echo "Error: wasm-objdump not found. Install with: brew install wabt" && exit 1)
+	python3 tools/wasm_size.py -e $(EXAMPLE)
 
-	@cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
-	@wasm-opt -Oz $(WASM_RELEASE) -o $(WASM_OPT)
-
-	@echo "=== WASM Binary Size: $(EXAMPLE) ==="
-	@echo "Release:   $$(du -h $(WASM_RELEASE) | cut -f1) ($$(wc -c < $(WASM_RELEASE)) bytes)"
-	@echo "Optimized: $$(du -h $(WASM_OPT) | cut -f1) ($$(wc -c < $(WASM_OPT)) bytes)"
-
-	@echo ""
-	@echo "Sections:"
-	@wasm-objdump -h $(WASM_OPT) 2>/dev/null || true
+.PHONY: size-check
+size-check:
+	python3 tools/wasm_size.py -e $(EXAMPLE) --check
 
 # SDK API docs (opens in browser)
 .PHONY: docs
 docs:
 	cd sdk && cargo doc --target $(WASM_TARGET) --no-deps --open
-
-# Maximum allowed optimized WASM size in bytes (40KB)
-WASM_SIZE_LIMIT := 40960
-
-.PHONY: size-check
-size-check: size
-	@SIZE=$$(wc -c < $(WASM_OPT)); \
-	if [ "$$SIZE" -gt $(WASM_SIZE_LIMIT) ]; then \
-		echo "FAIL: optimized WASM is $$SIZE bytes (limit: $(WASM_SIZE_LIMIT))"; \
-		exit 1; \
-	else \
-		echo "OK: optimized WASM is $$SIZE bytes (limit: $(WASM_SIZE_LIMIT))"; \
-	fi
