@@ -57,16 +57,17 @@ Each `runtime.renderer()` returns `&mut FemtoVgRenderer` — NLL ensures the bor
 
 ## Module structure
 
-| File                       | Purpose                                                                        |
-| -------------------------- | ------------------------------------------------------------------------------ |
-| `src/renderer.rs`          | `Renderer` trait — f32 coords, u32 RGBA colors                                 |
-| `src/gpu/renderer.rs`      | `FemtoVgRenderer` impl — shapes, text, transform stack                         |
-| `src/gpu/text.rs`          | `ParagraphLayoutCache` — cosmic-text layout + FemtoVG rendering                |
-| `src/tree.rs`              | Deserialize widget tree, taffy layout, render via `&mut dyn Renderer`          |
-| `src/runtime.rs`           | `WasmWidgetRuntime` — wasmi store, host function registration                  |
-| `src/host_api.rs`          | WASM host function implementations                                             |
-| `src/components/button.rs` | Immediate-mode button with `&mut dyn Renderer`                                 |
-| `src/bin/testbed.rs`       | Dev testbed — winit + glutin, hot-reload, perf overlay, 4-tile multi-size view |
+| File                       | Purpose                                                                            |
+| -------------------------- | ---------------------------------------------------------------------------------- |
+| `src/renderer.rs`          | `Renderer` trait — f32 coords, u32 RGBA colors                                     |
+| `src/gpu/renderer.rs`      | `FemtoVgRenderer` impl — shapes, text, transform stack                             |
+| `src/gpu/text.rs`          | `ParagraphLayoutCache` — cosmic-text layout + FemtoVG rendering                    |
+| `src/tree.rs`              | Deserialize widget tree, taffy layout, render via `&mut dyn Renderer`              |
+| `src/runtime.rs`           | `WasmWidgetRuntime` — wasmi store, host function registration                      |
+| `src/host_api.rs`          | WASM host function implementations                                                 |
+| `src/perf_overlay.rs`      | `PerfOverlay` — FPS counter, stacked timing chart, legend (`perf-overlay` feature) |
+| `src/components/button.rs` | Immediate-mode button with `&mut dyn Renderer`                                     |
+| `src/bin/testbed.rs`       | Dev testbed — winit + glutin, hot-reload, perf overlay, 4-tile multi-size view     |
 
 ## Paragraph rendering: cosmic-text + FemtoVG
 
@@ -140,10 +141,10 @@ The testbed (`src/bin/testbed.rs`) acts as a minimal host, mimicking the future 
 - **winit 0.30** `ApplicationHandler` for event-driven rendering
 - **glutin 0.32** for GL context (EGL on Wayland, GLX on X11)
 - **Hot-reload**: file watcher on the WASM binary, recreates `WasmWidgetRuntime` on change (GL context persists)
-- **Perf overlay**: frame time chart (microsecond precision) + FPS counter
+- **Perf overlay**: reusable `PerfOverlay` module (frame time chart + FPS counter), feature-gated behind `perf-overlay`
 - **Memory stats**: reads `/proc/self/status` at exit for VmPeak/VmHWM/VmRSS with per-phase breakdown (GL baseline vs
   WASM runtime delta)
-- **No vsync** by default (`SwapInterval::DontWait`) for uncapped throughput measurement
+- **VSync enabled** (`SwapInterval::Wait(1)`) — caps to display refresh rate, avoids CPU spin
 
 ### Multi-size view
 
@@ -175,8 +176,9 @@ between tiles.
 **Labels:** Each tile has a small transparent tag at the top-left corner showing the variant name and pixel dimensions
 (e.g., "FULL (1280×480)").
 
-**Stats panel:** Rendered in the empty bottom-right area using the FULL tile's FemtoVG renderer. Shows frame time
-histogram and performance numbers on a dark inset panel.
+**Stats panel:** Rendered in the empty bottom-right area using the FULL tile's FemtoVG renderer. The testbed draws a
+reload button, then delegates to `PerfOverlay::draw()` for the chart and legend. Uses the same FBO compositing approach
+as the tiles.
 
 ### Drop ordering
 

@@ -38,7 +38,8 @@ winit = { workspace = true, optional = true }
 
 [features]
 default = []
-testbed = ["glutin", "glutin-winit", "notify", "raw-window-handle", "tracing-subscriber", "winit"]
+perf-overlay = []
+testbed = ["perf-overlay", "glutin", "glutin-winit", "notify", "raw-window-handle", "tracing-subscriber", "winit"]
 
 [[bin]]
 name = "testbed"

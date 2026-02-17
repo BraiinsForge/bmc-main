@@ -36,9 +36,9 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowButtons};
 
 use bmc_wasm_protocol::FormatPreferences;
-use bmc_wasm_runtime::colors::*;
 use bmc_wasm_runtime::components::{ButtonSize, ButtonStyle, draw_button};
 use bmc_wasm_runtime::interaction::{InteractionState, TouchEvent};
+use bmc_wasm_runtime::perf_overlay::PerfOverlay;
 use bmc_wasm_runtime::renderer::Renderer;
 use bmc_wasm_runtime::{FrameTimings, RenderStatus, WasmWidgetRuntime};
 
@@ -169,7 +169,7 @@ struct PreviewState {
     pending_reload: bool,
     mouse_pos: (i32, i32),
     mouse_down: bool,
-    fps: FpsTracker,
+    perf_overlay: PerfOverlay,
     stats_interaction: InteractionState,
     /// Total frames rendered (for perf-report exit condition).
     frame_count: u32,
@@ -321,7 +321,7 @@ impl App {
             pending_reload: false,
             mouse_pos: (0, 0),
             mouse_down: false,
-            fps: FpsTracker::new(),
+            perf_overlay: PerfOverlay::new(),
             stats_interaction: InteractionState::new(),
             frame_count: 0,
             perf_samples: Vec::new(),
@@ -353,9 +353,9 @@ impl ApplicationHandler for App {
 
             // Perf report: collect sample after each rendered frame
             if was_redraw && let Some(ref report_path) = self.perf_report_path {
-                let last = state.fps.history[(state.fps.history_idx + state.fps.history.len() - 1)
-                    % state.fps.history.len()];
-                state.perf_samples.push(last.timings);
+                state
+                    .perf_samples
+                    .push(state.perf_overlay.last_sample_timings());
                 state.frame_count += 1;
 
                 if state.frame_count >= self.perf_frames {
@@ -625,7 +625,13 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         renderer.begin_frame(STATS_W, STATS_H);
 
         state.stats_interaction.begin_frame();
-        reload_clicked = draw_stats_panel(renderer, &mut state.stats_interaction, w, h, &state.fps);
+        reload_clicked = draw_stats_panel(
+            renderer,
+            &mut state.stats_interaction,
+            w,
+            h,
+            &state.perf_overlay,
+        );
         renderer.flush();
         unsafe {
             state.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
@@ -681,7 +687,9 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
     }
 
     let render_us = t0.elapsed().as_micros() as u32;
-    state.fps.tick(render_us, any_rendered, frame_timings);
+    state
+        .perf_overlay
+        .tick(render_us, any_rendered, frame_timings);
 
     if let Err(e) = state.gl_surface.swap_buffers(&state.gl_context) {
         eprintln!("Failed to swap buffers: {e}");
@@ -900,25 +908,18 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
 
 // ── Stats overlay ──────────────────────────────────────────────────
 
-// Component colors for timing breakdown
-const COL_WASM: u32 = 0x6A_9F_D8_FF; // blue — wasmi interpreter
-const COL_TREE: u32 = 0xE0_9A_50_FF; // orange — tree deserialization/parsing
-const COL_LAYOUT: u32 = 0xCC_CC_50_FF; // yellow — Taffy layout
-const COL_RENDER: u32 = 0x50_CC_50_FF; // green — tree render
-const COL_FLUSH: u32 = 0xCC_50_CC_FF; // purple — GPU flush
-
 /// Draw stats panel with reload button. Returns `true` if reload was clicked.
 fn draw_stats_panel(
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     w: f32,
     h: f32,
-    fps: &FpsTracker,
+    overlay: &PerfOverlay,
 ) -> bool {
     let pad = 8.0;
-    let mut y = pad;
+    let y = pad;
 
-    // ── Row 1: reload button ──
+    // ── Row 1: reload button (testbed-only) ──
     let btn_sz = ButtonSize::Small;
     let btn_w = btn_sz.width(6, false);
     let btn_h = btn_sz.height();
@@ -935,110 +936,10 @@ fn draw_stats_panel(
         btn_sz,
         0,
     );
-    y += btn_h + 4.0;
+    let y_offset = y + btn_h + 4.0;
 
-    // ── Row 2: avg ms + fps ──
-    let avg_us = fps.avg_render_us();
-    let avg_ms = avg_us as f32 / 1_000.0;
-    let ms_color = if avg_us > 16_000 { RED_50 } else { GREEN_30 };
-    let ms_text = format!("{avg_ms:.1}ms");
-    renderer.draw_text(&ms_text, pad, y, 13.0, ms_color);
-    if fps.display_render > 0 {
-        let ms_w = renderer.measure_text(&ms_text, 13.0);
-        let fps_text = format!("{}fps", fps.display_render);
-        renderer.draw_text(&fps_text, pad + ms_w + 8.0, y, 13.0, GRAY_40);
-    }
-    y += 18.0;
-
-    // ── Chart ──
-    let chart_x = pad;
-    let chart_top = y;
-    let legend_font = 12.0;
-    let legend_h = legend_font + 6.0;
-    let chart_bottom = h - pad - legend_h;
-    let chart_h = chart_bottom - chart_top;
-    let chart_w = w - pad * 2.0;
-    let bar_w = chart_w / fps.history.len() as f32;
-    let scale_us = 20_000.0_f32;
-
-    // Gridlines (drawn before bars so bars paint over them)
-    let axis_font = 10.0;
-    for &grid_us in &[4_000, 8_000, 16_000] {
-        let gy = chart_top + chart_h - (grid_us as f32 * chart_h / scale_us);
-        if gy > chart_top && gy < chart_bottom {
-            renderer.fill_rect(chart_x, gy, chart_w, 1.0, GRAY_90);
-        }
-    }
-
-    // Bars — snap to pixel grid to avoid subpixel gaps
-    for (i, sample) in fps.samples().enumerate() {
-        let bx = (chart_x + i as f32 * bar_w).floor();
-        let bx_next = (chart_x + (i as f32 + 1.0) * bar_w)
-            .floor()
-            .min(chart_x + chart_w);
-        let bw = bx_next - bx;
-        if !sample.rendered {
-            let bh = (sample.us as f32 * chart_h / scale_us).min(chart_h);
-            renderer.fill_rect(bx, chart_top + chart_h - bh, bw, bh, GRAY_80);
-            continue;
-        }
-        let t = &sample.timings;
-        let segments: [(u32, u32); 5] = [
-            (t.flush_us, COL_FLUSH),
-            (t.render_us, COL_RENDER),
-            (t.layout_us, COL_LAYOUT),
-            (t.deserialize_us, COL_TREE),
-            (
-                t.wasm_us
-                    .saturating_sub(t.deserialize_us + t.layout_us + t.render_us),
-                COL_WASM,
-            ),
-        ];
-        let mut y_off = 0.0_f32;
-        for (us, col) in segments {
-            let bh = (us as f32 * chart_h / scale_us).min(chart_h - y_off);
-            if bh > 0.5 {
-                renderer.fill_rect(bx, chart_top + chart_h - y_off - bh, bw, bh, col);
-            }
-            y_off += bh;
-        }
-    }
-
-    // Axis tick labels (drawn on top of bars with black background)
-    let tick_pad = 2.0;
-    for &grid_us in &[4_000, 8_000, 16_000] {
-        let gy = chart_top + chart_h - (grid_us as f32 * chart_h / scale_us);
-        if gy > chart_top && gy < chart_bottom {
-            let label = format!("{}", grid_us / 1_000);
-            let lw = renderer.measure_text(&label, axis_font);
-            let lx = chart_x + chart_w - lw - tick_pad;
-            let ly = gy - axis_font - 1.0;
-            renderer.fill_rect(
-                lx - tick_pad,
-                ly,
-                lw + tick_pad * 2.0,
-                axis_font + 2.0,
-                BLACK,
-            );
-            renderer.draw_text(&label, lx, ly, axis_font, GRAY_60);
-        }
-    }
-
-    // ── Legend (below chart) ──
-    let avg = fps.avg_timings();
-    let legend_y = chart_bottom + 4.0;
-    let mut lx = pad;
-    for (label, us, col) in [
-        ("WASM", avg.wasm_us, COL_WASM),
-        ("Tree", avg.deserialize_us, COL_TREE),
-        ("Lay", avg.layout_us, COL_LAYOUT),
-        ("RNDR", avg.render_us, COL_RENDER),
-        ("GPU", avg.flush_us, COL_FLUSH),
-    ] {
-        let txt = format!("{label} {:.1}", us as f32 / 1_000.0);
-        renderer.draw_text(&txt, lx, legend_y, legend_font, col);
-        lx += renderer.measure_text(&txt, legend_font) + 6.0;
-    }
+    // ── Perf overlay (reusable) ──
+    overlay.draw(renderer, w, h, y_offset);
 
     reload_clicked
 }
@@ -1124,100 +1025,5 @@ fn write_perf_report(path: &Path, samples: &[FrameTimings]) {
             eprintln!("Perf report written to: {}", path.display());
         }
         Err(e) => eprintln!("Failed to write perf report: {e}"),
-    }
-}
-
-// ── FPS tracking ───────────────────────────────────────────────────
-
-#[derive(Clone, Copy)]
-struct FrameSample {
-    us: u32,
-    rendered: bool,
-    timings: FrameTimings,
-}
-
-impl Default for FrameSample {
-    fn default() -> Self {
-        Self {
-            us: 16_000,
-            rendered: false,
-            timings: FrameTimings::default(),
-        }
-    }
-}
-
-struct FpsTracker {
-    last_update: Instant,
-    loop_count: u32,
-    render_count: u32,
-    display_render: u32,
-    history: [FrameSample; 120],
-    history_idx: usize,
-}
-
-impl FpsTracker {
-    fn new() -> Self {
-        Self {
-            last_update: Instant::now(),
-            loop_count: 0,
-            render_count: 0,
-            display_render: 0,
-            history: [FrameSample::default(); 120],
-            history_idx: 0,
-        }
-    }
-
-    fn tick(&mut self, us: u32, rendered: bool, timings: FrameTimings) {
-        self.loop_count += 1;
-        if rendered {
-            self.render_count += 1;
-        }
-        if self.last_update.elapsed().as_secs() >= 1 {
-            self.display_render = self.render_count;
-            self.loop_count = 0;
-            self.render_count = 0;
-            self.last_update = Instant::now();
-        }
-        self.history[self.history_idx] = FrameSample {
-            us,
-            rendered,
-            timings,
-        };
-        self.history_idx = (self.history_idx + 1) % self.history.len();
-    }
-
-    fn samples(&self) -> impl Iterator<Item = &FrameSample> {
-        let (a, b) = self.history.split_at(self.history_idx);
-        b.iter().chain(a.iter())
-    }
-
-    /// Average render time in microseconds.
-    fn avg_render_us(&self) -> u32 {
-        let (sum, count) = self
-            .history
-            .iter()
-            .filter(|s| s.rendered)
-            .fold((0_u32, 0_u32), |(sum, count), s| (sum + s.us, count + 1));
-        if count > 0 { sum / count } else { 0 }
-    }
-
-    /// Average per-component timings across rendered frames.
-    fn avg_timings(&self) -> FrameTimings {
-        let rendered: Vec<_> = self.history.iter().filter(|s| s.rendered).collect();
-        let n = rendered.len() as u32;
-        if n == 0 {
-            return FrameTimings::default();
-        }
-        FrameTimings {
-            wasm_us: rendered.iter().map(|s| s.timings.wasm_us).sum::<u32>() / n,
-            deserialize_us: rendered
-                .iter()
-                .map(|s| s.timings.deserialize_us)
-                .sum::<u32>()
-                / n,
-            layout_us: rendered.iter().map(|s| s.timings.layout_us).sum::<u32>() / n,
-            render_us: rendered.iter().map(|s| s.timings.render_us).sum::<u32>() / n,
-            flush_us: rendered.iter().map(|s| s.timings.flush_us).sum::<u32>() / n,
-        }
     }
 }

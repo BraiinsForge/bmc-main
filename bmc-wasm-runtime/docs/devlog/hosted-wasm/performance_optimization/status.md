@@ -9,7 +9,7 @@ optimize effectively, we need proper instrumentation to see where time actually 
 
 ## Current state
 
-Phases 1–4 complete. Reports and samply profiles collected in `reports/` (per-phase directories).
+Phases 1–6 complete. Reports and samply profiles collected in `reports/` (per-phase directories).
 
 ### Perf report comparison (hello-widget, 600 frames, desktop)
 
@@ -125,12 +125,16 @@ the armv7 target device. See `wasmi_tuning.md` for the detailed optimization gui
 
 ---
 
-## Phase 6: Extract perf overlay as a reusable component
+## Phase 6: Extract perf overlay as a reusable component ✅
 
-**Status:** Not started.
+Moved `FpsTracker` → `PerfOverlay`, `FrameSample`, overlay color constants, and all chart/legend drawing from
+`testbed.rs` into `src/perf_overlay.rs` behind a `perf-overlay` cargo feature (`testbed` implies it). The testbed's
+`draw_stats_panel` is now a thin wrapper: reload button + `overlay.draw()`.
 
-The stats panel (`draw_stats_panel`, `FpsTracker`, `FrameTimings`) currently lives inline in `testbed.rs`. Extract into
-a standalone `perf_overlay` module gated behind a cargo feature so it can be used in both testbed and on-device overlay.
+On-device hosts opt in with `features = ["perf-overlay"]` and call `PerfOverlay::new()` / `tick()` / `draw()` — no
+testbed deps required. See `perf_overlay_extraction.md` for the full integration guide.
+
+**Commit:** `7f1857d wasm: Extract perf overlay as reusable, feature-gated module #BDK-287`
 
 ---
 

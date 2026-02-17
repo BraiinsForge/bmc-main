@@ -95,6 +95,8 @@ pub mod colors {
 }
 pub use bmc_wasm_protocol::color;
 mod host_api;
+#[cfg(feature = "perf-overlay")]
+pub mod perf_overlay;
 mod runtime;
 pub mod tree;
 
