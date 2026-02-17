@@ -35,21 +35,43 @@
             })
           ];
         };
+        lib = pkgs.lib;
 
         # Shared deps used by both workspace.nix (for package builds) and devShells.
         # Single source of truth to keep build derivations and dev environments in sync.
         commonDeps = {
           # Rust build-time deps (protoc for protobufs, diffutils for cargo)
-          buildDeps = with pkgs; [ protobuf diffutils ];
+          buildDeps = with pkgs; [ protobuf diffutils pkg-config ];
 
           # Env vars needed by Slint for font rendering
           env = {
-            FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.corefonts ]; };
+            FONTCONFIG_FILE = pkgs.makeFontsConf {
+              fontDirectories = with pkgs; [
+                corefonts
+                font-awesome_6
+              ];
+            };
+
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS =
+              let
+                rpathLibs = lib.makeLibraryPath commonDeps.guiRuntimeDeps;
+              in
+              "-C link-args=-Wl,-rpath,${rpathLibs}";
+
+            LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath [
+              pkgs.libgcc
+            ]}";
           };
 
+          guiBuildDeps = with pkgs; [
+            fontconfig
+            freetype
+          ];
+
           # Runtime libs for GUI/display development (Slint, winit backends)
-          guiDeps = with pkgs; [
-            fontconfig # runtime dlopen for font enumeration
+          guiRuntimeDeps = with pkgs; [
+            fontconfig
+
             xorg.libX11
             xorg.libXcursor
             xorg.libXrandr
@@ -69,32 +91,40 @@
 
           # Node.js tooling for frontend builds
           frontendDeps = with pkgs; [ nodejs yarn ];
-
-          # Glibc libs for FHS compat - node_modules binaries (biome, sass-embedded)
-          # expect standard /lib64/ld-linux-x86-64.so.2 interpreter
-          fhsLibs = with pkgs; [ stdenv.cc.cc.lib glibc ];
         };
 
         workspace = import ./workspace.nix { inherit self pkgs commonDeps; };
         frontend = import ./frontend { inherit self pkgs; };
 
-        # Full dev shell with Rust + frontend + GUI deps.
-        # Uses buildFHSEnv to provide /lib64/ld-linux-x86-64.so.2 for node_modules binaries.
-        fullDevShell = (pkgs.buildFHSEnv {
-          name = "bmc-full-env";
-          targetPkgs = pkgs: with pkgs; [
-            ii.rustToolchain
-          ]
-          ++ commonDeps.buildDeps
-          ++ commonDeps.frontendDeps
-          ++ commonDeps.fhsLibs
-          ++ commonDeps.guiDeps;
+        # Local dev shell with Rust + frontend + GUI deps (native only).
+        localDevShell = pkgs.mkShell {
+          name = "bmc-local-env";
 
-          runScript = "bash";
-          profile = ''
-            export FONTCONFIG_FILE=${commonDeps.env.FONTCONFIG_FILE}
-          '';
-        }).env;
+          nativeBuildInputs =
+            commonDeps.buildDeps
+            ++ commonDeps.guiBuildDeps
+            ++ commonDeps.frontendDeps;
+
+          buildInputs = with pkgs; [
+            ii.rustToolchain
+          ];
+
+          inherit (commonDeps) env;
+        };
+
+        # Full dev shell: local + ARM cross-compilation support.
+        armv7Cc = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic.stdenv.cc;
+        fullDevShell = pkgs.mkShell {
+          name = "bmc-full-env";
+          inputsFrom = [ localDevShell ];
+          buildInputs = [ armv7Cc ];
+          env = commonDeps.env // {
+            CC_armv7_unknown_linux_musleabihf =
+              "${armv7Cc.targetPrefix}cc";
+            CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER =
+              "${armv7Cc.targetPrefix}cc";
+          };
+        };
       in
       {
         formatter = nixlib.braiinsfmt.${localSystem} {
@@ -131,20 +161,13 @@
           '';
         };
 
-        # default: full local dev (Rust + frontend + GUI)
+        # default: full local dev (Rust + frontend + GUI, both local and for Deck)
         # armv7-*: ARM cross-compile shells from workspace.nix
-        devShells = {
-          inherit (workspace.devShells) armv7-release armv7-debug;
+        # local: Just for local development, no compiler for Deck
+        devShells = workspace.devShells // {
+          local = localDevShell;
+          full = fullDevShell;
           default = fullDevShell;
-
-          frontend = pkgs.mkShell {
-            packages = [ pkgs.yarn pkgs.nodejs ];
-            shellHook = ''
-              export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [
-                pkgs.libgcc
-              ]}:$LD_LIBRARY_PATH
-            '';
-          };
         };
       });
 }
