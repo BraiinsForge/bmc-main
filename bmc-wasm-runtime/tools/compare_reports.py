@@ -115,8 +115,8 @@ def print_comparison_table(reports):
     print(RESET)
     print('─' * (12 + len(names) * col_w + (len(names) - 1) * 10))
 
-    def print_row(label, get_val, fmt_val, better_lower=True):
-        print(f'{label:<12}', end='')
+    def print_row(row_label, get_val, fmt_val, better_lower=True):
+        print(f'{row_label:<12}', end='')
         prev_val = None
         for i, r in enumerate(reports):
             if not r['_has_perf']:

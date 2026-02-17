@@ -1,0 +1,14 @@
+# Ruff linter configuration — catches real bugs in Python utility scripts.
+# Formatting is handled by nix fmt (braiinsfmt).
+
+target-version = "py312"
+line-length = 100
+
+[lint]
+# E: pycodestyle errors, F: pyflakes, W: pycodestyle warnings,
+# A: flake8-builtins (builtin shadowing), PLC/PLE/PLW: pylint
+select = ["E", "F", "W", "A", "PLC", "PLE", "PLW"]
+ignore = [
+    "PLW1510", # subprocess.run without check= (fine for scripts)
+    "E501", # line length (formatter handles this)
+]

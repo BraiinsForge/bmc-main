@@ -7,6 +7,7 @@ format:
 .PHONY: lint
 lint:
 	cargo clippy --workspace --all-targets
+	nix-shell -p ruff --run "ruff check"
 
 .PHONY: cargo-deny
 cargo-deny:

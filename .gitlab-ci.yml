@@ -52,6 +52,16 @@ cargo-deny:
   script:
     - nix-shell -p cargo cargo-deny --run "cargo deny check bans sources"
 
+###################################
+########## Python Checks ##########
+###################################
+
+python-lint:
+  extends: .nix
+  stage: check
+  script:
+    - nix-shell -p ruff --run "ruff check"
+
 ############################
 ######## Apps Stage ########
 ############################
