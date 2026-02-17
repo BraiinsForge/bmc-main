@@ -119,10 +119,22 @@ def main():
 
         total = sum(func_self.values())
 
-        # Crate-level breakdown (inclusive)
+        # Crate-level breakdown (inclusive, deduplicated per-stack)
         crate_time = Counter()
-        for sym, count in func_inclusive.items():
-            crate_time[extract_crate(resolve(sym))] += count
+        for stack_idx, count in stack_counts.items():
+            if stack_idx is None:
+                continue
+            seen_crates = set()
+            s = stack_idx
+            while s is not None:
+                fi = frame_list[s]
+                func_idx = frame_table['func'][fi]
+                sym = strings[func_table['name'][func_idx]]
+                crate = extract_crate(resolve(sym))
+                if crate not in seen_crates:
+                    crate_time[crate] += count
+                    seen_crates.add(crate)
+                s = prefixes[s]
 
         print(f'=== Crate Breakdown — inclusive ({total} samples) ===\n')
         for crate, count in crate_time.most_common(15):

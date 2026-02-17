@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Compare perf reports and profiles across optimization phases.
 
-Each phase is a directory containing:
+Each phase is a directory containing (all optional, at least one required):
   perf.json          — testbed --perf-report output
-  profile.json.gz    — samply profile (optional)
-  symbols.json       — symbolication map from symbolicate_profile.py (optional)
+  profile.json.gz    — samply profile
+  symbols.json       — symbolication map from symbolicate_profile.py
 
 Usage:
     # Compare all phases:
@@ -72,27 +72,39 @@ def phase_name(dir_path):
 
 
 def load_phase(dir_path):
-    """Load a phase directory. Returns (report_dict, profile_path_or_None)."""
+    """Load a phase directory."""
     d = Path(dir_path)
-    perf = d / PERF_FILE
-    if not perf.exists():
-        print(f'{RED}Error: {perf} not found{RESET}', file=sys.stderr)
+    if not d.is_dir():
+        print(f'{RED}Error: {d} is not a directory{RESET}', file=sys.stderr)
         sys.exit(1)
 
-    with open(perf) as f:
-        report = json.load(f)
-    report['_dir'] = str(d)
-
+    perf = d / PERF_FILE
     profile = d / PROFILE_FILE
+
+    if not perf.exists() and not profile.exists():
+        print(
+            f'{RED}Error: {d} has neither {PERF_FILE} nor {PROFILE_FILE}{RESET}',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    report = {}
+    if perf.exists():
+        with open(perf) as f:
+            report = json.load(f)
+
+    report['_dir'] = str(d)
+    report['_has_perf'] = perf.exists()
     report['_has_profile'] = profile.exists()
 
     return report
 
 
 def print_comparison_table(reports):
-    """Print side-by-side comparison of all reports."""
+    """Print side-by-side comparison of all reports (perf.json data)."""
     names = [phase_name(r['_dir']) for r in reports]
     col_w = max(14, max(len(n) for n in names) + 2)
+    ansi_pad = len(GREEN) + len(RESET)
 
     # Header
     print(f'\n{BOLD}{"Metric":<12}', end='')
@@ -103,57 +115,42 @@ def print_comparison_table(reports):
     print(RESET)
     print('─' * (12 + len(names) * col_w + (len(names) - 1) * 10))
 
-    # FPS row
-    print(f'{"FPS":<12}', end='')
-    for i, r in enumerate(reports):
-        fps = r['avg_fps']
-        print(f'{fps:>{col_w}.1f}', end='')
-        if i > 0:
-            prev_fps = reports[i - 1]['avg_fps']
-            delta = fps - prev_fps
-            pct = 100.0 * delta / prev_fps if prev_fps else 0
-            sign = '+' if delta >= 0 else ''
-            color = GREEN if delta >= 0 else RED
-            print(
-                f'{color}{sign}{pct:.1f}%{RESET}'.rjust(10 + len(color) + len(RESET)),
-                end='',
-            )
-    print()
-
-    # Timing metrics
-    for key, label in METRICS:
+    def print_row(label, get_val, fmt_val, better_lower=True):
         print(f'{label:<12}', end='')
+        prev_val = None
         for i, r in enumerate(reports):
-            val = r.get(key, 0)
-            print(f'{fmt_us(val):>{col_w}}', end='')
-            if i > 0:
-                prev = reports[i - 1].get(key, 0)
-                s = fmt_delta(prev, val)
-                print(f'{s}'.rjust(10 + len(GREEN) + len(RESET)), end='')
+            if not r['_has_perf']:
+                print(f'{DIM}{"—":>{col_w}}{RESET}', end='')
+                if i > 0:
+                    print(' ' * 10, end='')
+                prev_val = None
+            else:
+                val = get_val(r)
+                print(f'{fmt_val(val):>{col_w}}', end='')
+                if i > 0 and prev_val is not None:
+                    delta = val - prev_val
+                    pct = 100.0 * delta / prev_val if prev_val else 0
+                    sign = '+' if delta >= 0 else ''
+                    improved = delta <= 0 if better_lower else delta >= 0
+                    color = GREEN if improved else RED
+                    print(
+                        f'{color}{sign}{pct:.1f}%{RESET}'.rjust(10 + ansi_pad), end=''
+                    )
+                elif i > 0:
+                    print(' ' * 10, end='')
+                prev_val = val
         print()
 
-    # Percentiles
+    print_row('FPS', lambda r: r['avg_fps'], lambda v: f'{v:.1f}', better_lower=False)
+    for key, label in METRICS:
+        print_row(label, lambda r, k=key: r.get(k, 0), fmt_us)
     print()
     for key, label in PERCENTILES:
-        print(f'{label:<12}', end='')
-        for i, r in enumerate(reports):
-            val = r.get(key, 0)
-            print(f'{fmt_us(val):>{col_w}}', end='')
-            if i > 0:
-                prev = reports[i - 1].get(key, 0)
-                s = fmt_delta(prev, val)
-                print(f'{s}'.rjust(10 + len(GREEN) + len(RESET)), end='')
-        print()
-
-    # Animation-only percentage
+        print_row(label, lambda r, k=key: r.get(k, 0), fmt_us)
     print()
-    print(f'{"Anim-only":<12}', end='')
-    for i, r in enumerate(reports):
-        pct = r.get('animation_only_pct', 0)
-        print(f'{pct:>{col_w - 1}.1f}%', end='')
-        if i > 0:
-            print(' ' * 10, end='')
-    print()
+    print_row(
+        'Anim-only', lambda r: r.get('animation_only_pct', 0), lambda v: f'{v:.1f}%'
+    )
 
 
 def extract_crate(sym):
@@ -206,30 +203,28 @@ def load_profile_crate_breakdown(phase_dir):
     samples = t['samples']
 
     stack_counts = Counter(samples['stack'])
-    func_inclusive = Counter()
 
     prefixes = stack_table['prefix']
     frame_list = stack_table['frame']
 
+    total = sum(stack_counts.values())
+
+    # Crate-level breakdown (inclusive, deduplicated per-stack)
+    crate_time = Counter()
     for stack_idx, count in stack_counts.items():
         if stack_idx is None:
             continue
-        seen = set()
+        seen_crates = set()
         s = stack_idx
         while s is not None:
             fi = frame_list[s]
             func_idx = frame_table['func'][fi]
             sym = strings[func_table['name'][func_idx]]
-            if sym not in seen:
-                func_inclusive[sym] += count
-                seen.add(sym)
+            crate = extract_crate(resolve_sym(symbols, sym))
+            if crate not in seen_crates:
+                crate_time[crate] += count
+                seen_crates.add(crate)
             s = prefixes[s]
-
-    total = sum(stack_counts.values())
-
-    crate_time = Counter()
-    for sym, count in func_inclusive.items():
-        crate_time[extract_crate(resolve_sym(symbols, sym))] += count
 
     return {
         crate: 100.0 * count / total for crate, count in crate_time.most_common(15)
@@ -306,23 +301,24 @@ def main():
         print(f'Usage: {sys.argv[0]} <phase_dir> <phase_dir> [...]')
         print(f'       {sys.argv[0]} reports/*/')
         print()
-        print('Each phase directory should contain:')
-        print(f'  {PERF_FILE:<24} — testbed --perf-report output (required)')
-        print(f'  {PROFILE_FILE:<24} — samply profile (optional)')
+        print('Each phase directory should contain at least one of:')
+        print(f'  {PERF_FILE:<24} — testbed --perf-report output')
+        print(f'  {PROFILE_FILE:<24} — samply profile')
         sys.exit(1)
 
     # Sort directories for consistent ordering
     dirs = sorted(sys.argv[1:])
 
     reports = [load_phase(d) for d in dirs]
+    has_perf = any(r['_has_perf'] for r in reports)
     has_profiles = any(r['_has_profile'] for r in reports)
 
     print(f'{BOLD}=== Performance Report Comparison ==={RESET}')
-    print(f'{DIM}{len(reports)} phases, {reports[0]["frames"]} frames each{RESET}')
+    print(f'{DIM}{len(reports)} phases{RESET}')
 
-    print_comparison_table(reports)
+    if has_perf:
+        print_comparison_table(reports)
 
-    # Profile comparison (automatic if any phase has a profile)
     if has_profiles:
         profile_data = []
         for r in reports:
