@@ -100,7 +100,7 @@ class View extends Component<Props> {
 
         return (
             <Form className={css.root}>
-                <FieldSet title={intl.formatMessage({ defaultMessage: 'Brigthness' })}>
+                <FieldSet title={intl.formatMessage({ defaultMessage: 'Brightness' })}>
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Screen Brightness' })}
                         disabled={brightness.disabled}
