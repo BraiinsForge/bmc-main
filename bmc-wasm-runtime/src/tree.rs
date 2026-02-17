@@ -550,12 +550,13 @@ pub fn deserialize_tree(data: &[u8]) -> Result<TreeNode> {
 // ============================================================================
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use taffy::prelude::*;
 
 use crate::animation::{apply_easing, compute_animation_value, interpolate_color, multiply_alpha};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
-use crate::host_api::{AnimationState, ModalState, PrevDrawValues, TransitionState};
+use crate::host_api::{AnimationState, FrameTimings, ModalState, PrevDrawValues, TransitionState};
 use crate::interaction::InteractionState;
 use crate::renderer::Renderer;
 
@@ -619,7 +620,8 @@ struct ModalInfo {
 
 /// Process a tree: deserialize, layout, render.
 ///
-/// Returns `(result, has_active_animations)` — caller should request next frame when active.
+/// Returns `(result, has_active_animations, timings)` — caller should request next frame when
+/// active.
 #[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
 pub fn process_tree(
     data: &[u8],
@@ -632,8 +634,51 @@ pub fn process_tree(
     transition_states: &mut HashMap<(u16, u16), TransitionState>,
     frame_counter: u64,
     delta_ms: u32,
-) -> Result<(TreeResult, bool)> {
+) -> Result<(TreeResult, bool, FrameTimings)> {
+    let mut timings = FrameTimings::default();
+
+    // Phase 1: Deserialize
+    let t0 = Instant::now();
     let tree_node = deserialize_tree(data)?;
+    timings.deserialize_us = t0.elapsed().as_micros() as u32;
+
+    let (result, has_active) = layout_and_render(
+        &tree_node,
+        width,
+        height,
+        renderer,
+        interaction,
+        modal_states,
+        animation_states,
+        transition_states,
+        frame_counter,
+        delta_ms,
+        &mut timings,
+    )?;
+
+    Ok((result, has_active, timings))
+}
+
+/// Layout and render a previously deserialized tree.
+///
+/// Populates `timings.layout_us` and `timings.render_us`.
+#[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
+pub fn layout_and_render(
+    tree_node: &TreeNode,
+    width: f32,
+    height: f32,
+    renderer: &mut dyn Renderer,
+    interaction: &mut InteractionState,
+    modal_states: &mut HashMap<u16, ModalState>,
+    animation_states: &mut HashMap<u64, AnimationState>,
+    transition_states: &mut HashMap<(u16, u16), TransitionState>,
+    frame_counter: u64,
+    delta_ms: u32,
+    timings: &mut FrameTimings,
+) -> Result<(TreeResult, bool)> {
+    // Phase 2: Build Taffy tree + compute layout
+    let t1 = Instant::now();
+
     let mut result = TreeResult::default();
     let mut button_id: u32 = 0;
     let mut modals: Vec<ModalInfo> = Vec::new();
@@ -642,7 +687,7 @@ pub fn process_tree(
     let mut taffy: TaffyTree<NodeContext> = TaffyTree::new();
     let root_id = build_taffy_node(
         &mut taffy,
-        &tree_node,
+        tree_node,
         &mut result,
         &mut button_id,
         &mut modals,
@@ -703,6 +748,11 @@ pub fn process_tree(
         },
     )?;
 
+    timings.layout_us = t1.elapsed().as_micros() as u32;
+
+    // Phase 3: Render
+    let t2 = Instant::now();
+
     let mut anim_ctx = AnimationContext {
         animation_states,
         transition_states,
@@ -747,6 +797,8 @@ pub fn process_tree(
     anim_ctx
         .transition_states
         .retain(|_, s| s.last_seen_frame >= frame_counter);
+
+    timings.render_us = t2.elapsed().as_micros() as u32;
 
     // Check modal animations too
     let modal_animating = modal_states

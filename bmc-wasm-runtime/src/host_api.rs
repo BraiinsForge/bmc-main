@@ -85,6 +85,21 @@ pub struct DelayedFetch {
     pub request_id: u32,
 }
 
+/// Per-frame timing breakdown (microseconds).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameTimings {
+    /// Total WASM interpreter time (outer envelope, includes tree processing).
+    pub wasm_us: u32,
+    /// Tree binary deserialization.
+    pub deserialize_us: u32,
+    /// Taffy tree build + layout computation.
+    pub layout_us: u32,
+    /// render_taffy_node + modal rendering.
+    pub render_us: u32,
+    /// FemtoVG canvas.flush().
+    pub flush_us: u32,
+}
+
 /// Host-side state accessible to WASM via host functions.
 #[expect(dead_code)]
 pub struct HostState {
@@ -150,6 +165,9 @@ pub struct HostState {
 
     /// User formatting preferences (number format, unit system, temperature unit).
     pub prefs: FormatPreferences,
+
+    /// Per-frame timing breakdown from the last rendered frame.
+    pub last_timings: FrameTimings,
 }
 
 impl HostState {
@@ -178,6 +196,7 @@ impl HostState {
             json_docs: HashMap::new(),
             next_json_id: 1,
             prefs,
+            last_timings: FrameTimings::default(),
         }
     }
 

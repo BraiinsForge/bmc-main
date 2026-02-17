@@ -232,8 +232,7 @@ def load_profile_crate_breakdown(phase_dir):
         crate_time[extract_crate(resolve_sym(symbols, sym))] += count
 
     return {
-        crate: 100.0 * count / total
-        for crate, count in crate_time.most_common(15)
+        crate: 100.0 * count / total for crate, count in crate_time.most_common(15)
     }, total
 
 

@@ -74,7 +74,8 @@ def main():
 
     # Find the main testbed thread (largest sample count)
     testbed_threads = [
-        t for t in data['threads']
+        t
+        for t in data['threads']
         if t['name'] == 'testbed' and t['samples']['length'] > 0
     ]
     if not testbed_threads:
@@ -83,7 +84,6 @@ def main():
     main_thread = max(testbed_threads, key=lambda t: t['samples']['length'])
 
     for t in [main_thread]:
-
         strings = t['stringArray']
         func_table = t['funcTable']
         frame_table = t['frameTable']

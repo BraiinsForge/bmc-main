@@ -22,7 +22,7 @@ use wasmi::{Caller, Extern, Linker};
 
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::gpu::FemtoVgRenderer;
-use crate::host_api::{CompletedFetch, DelayedFetch, HostState};
+use crate::host_api::{CompletedFetch, DelayedFetch, FrameTimings, HostState};
 use crate::renderer::Renderer;
 use crate::tree;
 
@@ -428,9 +428,10 @@ impl WasmWidgetRuntime {
                         frame_counter,
                         delta_ms,
                     ) {
-                        Ok((result, has_active)) => {
+                        Ok((result, has_active, timings)) => {
                             let had_clicks = result.clicks.iter().any(|&c| c);
                             state.tree_clicks = result.clicks;
+                            state.last_timings = timings;
                             if has_active {
                                 state.frame_requested = true;
                                 // Only skip WASM next frame if no clicks need processing
@@ -824,8 +825,10 @@ impl WasmWidgetRuntime {
 
         // Full frame: run WASM with per-frame fuel budget.
         self.store.set_fuel(self.fuel_per_frame)?;
+        let wasm_t0 = Instant::now();
         match self.render_func.call(&mut self.store, delta_ms) {
             Ok(()) => {
+                self.store.data_mut().last_timings.wasm_us = wasm_t0.elapsed().as_micros() as u32;
                 self.fuel_strikes = 0;
                 Ok(RenderStatus::Ok)
             }
@@ -875,7 +878,9 @@ impl WasmWidgetRuntime {
             frame_counter,
             delta_ms,
         ) {
-            Ok((result, has_active)) => {
+            Ok((result, has_active, timings)) => {
+                state.last_timings = timings;
+                state.last_timings.wasm_us = 0; // no WASM execution on cached frames
                 state.tree_clicks = result.clicks;
                 if has_active {
                     state.frame_requested = true;
@@ -943,13 +948,31 @@ impl WasmWidgetRuntime {
         &mut self.store.data_mut().renderer
     }
 
-    /// Check if WASM requested another frame via `request_frame()`.
+    /// Per-component timing breakdown from the last rendered frame.
+    #[must_use]
+    pub fn last_timings(&self) -> FrameTimings {
+        self.store.data().last_timings
+    }
+
+    /// Whether the widget needs another frame rendered.
+    ///
+    /// Returns `true` after the widget calls `request_frame()` or
+    /// `request_frame_after(ms)`. The host **must not** call [`Self::render`]
+    /// when this returns `false` — doing so wastes CPU and GPU for an
+    /// identical frame.
+    ///
+    /// When this returns `true`, check [`Self::next_frame_delay`] to see if
+    /// the frame should be rendered immediately or after a delay.
     #[must_use]
     pub fn wants_next_frame(&self) -> bool {
         self.store.data().frame_requested
     }
 
-    /// Get the delay if `request_frame_after(ms)` was called.
+    /// Delay before the next frame, if the widget used `request_frame_after(ms)`.
+    ///
+    /// Returns `None` for immediate frames (`request_frame()`), or `Some(ms)`
+    /// for delayed frames. The host should **sleep or schedule a timer** for the
+    /// delay — not busy-wait or render immediately.
     #[must_use]
     pub fn next_frame_delay(&self) -> Option<u32> {
         self.store.data().frame_delay_ms
