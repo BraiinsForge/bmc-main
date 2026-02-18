@@ -7,7 +7,7 @@ format:
 .PHONY: lint
 lint:
 	cargo clippy --workspace --all-targets
-	nix-shell -p ruff --run "ruff check"
+	nix-shell -p ruff uv --run "ruff check && uvx ty check --exclude 'bmc-wasm-runtime/examples/*/tools/'"
 
 .PHONY: cargo-deny
 cargo-deny:

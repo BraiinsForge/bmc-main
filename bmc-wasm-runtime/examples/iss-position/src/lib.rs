@@ -8,8 +8,8 @@
 
 //! ISS Position Widget — WASM runtime (BDK-304).
 //!
-//! Displays live ISS position data with a map tile, orbital track,
-//! and day/night terminator overlay (full size variant).
+//! Displays live ISS position on an equirectangular globe with orbital track,
+//! day/night terminator overlay, and data panels (full/large/medium/small).
 
 use std::cell::{Cell, RefCell};
 use std::f64::consts::PI;
@@ -34,25 +34,37 @@ const MAP_H: f32 = 480.0;
 const API_URL: &str = "https://api.wheretheiss.at/v1/satellites/25544";
 const TLE_URL: &str = "https://api.wheretheiss.at/v1/satellites/25544/tles";
 
-#[rustfmt::skip]
-const MAPBOX_TOKEN: &str = "pk.eyJ1IjoiYnJhaWluc2ZvcmdlIiwiYSI6ImNta3lmZmU0aTA1dzkzaHM2NGQ5Nmhhc2sifQ.HTDxIOIJ7g_9NvMLlVOuVQ";
+/// Earth texture for globe rendering (Natural Earth dark theme, equirectangular).
+const EARTH_TEXTURE: Bitmap = include_bitmap!("textures/natural-earth-dark.jpg");
+/// Globe zoom factor (intuitive scale):
+/// - `1.0` = default full globe view
+/// - `>1.0` zooms in, `<1.0` zooms out
+///
+/// The shader expects a camera distance (>1.0) in sphere radii, so we remap
+/// this value before sending it to the GPU.
+const GLOBE_ZOOM: f32 = 1.0;
+/// Debug: time speed multiplier for globe rotation (1.0 = real-time, 60.0 = 1 orbit/~1.5 min).
+const TIME_SPEED: f64 = 1.0;
 
-/// ISS marker SVG icon (compile-time embedded).
+/// Remap the user-facing zoom scale to the shader's camera distance.
+fn globe_zoom_to_camera(zoom: f32) -> f32 {
+    // Keep a sane, intuitive range around the default.
+    let zoom = zoom.clamp(0.6, 1.6);
+    let camera = 1.8 / zoom;
+    camera.clamp(1.2, 2.6)
+}
+
+/// Smoothing time constant for globe center
+/// - lower = snappier
+/// - higher = smoother
+const GLOBE_SMOOTH_MS: f64 = 300.0;
 const ISS_ICON: Icon = include_icon!("assets/icon-iss.svg");
 
-/// Orbit track color: #1243cd at 80% opacity.
-const ORBIT_COLOR: u32 = 0x1243_CDCC;
-/// Marker fill color: #1243cd opaque.
-const MARKER_COLOR: u32 = 0x1243_CDFF;
-/// Marker outer glow: #1243cd at 20% opacity.
-const MARKER_GLOW: u32 = 0x1243_CD33;
-/// Marker outer glow radius (matches reference 80×80 marker SVG).
+const MARKET_COLOR: u32 = VIOLET_70;
+const ORBIT_COLOR: u32 = color!(MARKET_COLOR, alpha: 0.8);
+const MARKER_GLOW_COLOR: u32 = color!(MARKET_COLOR, alpha: 0.2);
 const MARKER_GLOW_R: f32 = 40.0;
-/// Marker solid circle radius.
 const MARKER_SOLID_R: f32 = 24.0;
-/// Terminator shade: black at 25% opacity.
-const TERMINATOR_COLOR: u32 = 0x0000_0040;
-/// Marker icon size in pixels.
 const MARKER_SIZE: f32 = 56.0;
 
 /// Number of points to compute for the orbit ground track.
@@ -93,10 +105,10 @@ thread_local! {
         height: 480,
     }) };
     static STATE: RefCell<WidgetState> = const { RefCell::new(WidgetState::Loading) };
-    /// Registered bitmap ID for the Mapbox tile (set asynchronously).
-    static MAP_TILE: Cell<Option<u16>> = const { Cell::new(None) };
     /// Cached TLE lines for SGP4 orbital propagation.
     static TLE: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
+    /// Smoothed globe center (lat, lon) in degrees.
+    static SMOOTHED_CENTER: RefCell<Option<(f64, f64)>> = const { RefCell::new(None) };
 }
 
 #[unsafe(no_mangle)]
@@ -140,10 +152,6 @@ fn on_position_data(response: &FetchResponse) {
 
     let fetched_at = SystemTime::now().unix_secs;
 
-    // Fetch map tile centered on new position
-    let url = map_tile_url(latitude, longitude);
-    fetch(&url, None, on_map_tile);
-
     STATE.with(|s| {
         *s.borrow_mut() = WidgetState::Loaded(IssData {
             latitude,
@@ -162,16 +170,6 @@ fn on_position_data(response: &FetchResponse) {
     fetch_after(REFRESH_MS, TLE_URL, None, on_tle_data);
 }
 
-fn on_map_tile(response: &FetchResponse) {
-    if !response.ok() {
-        log_warn!("map tile fetch failed (status {})", response.status);
-        return;
-    }
-    let bitmap_id = host::register_bitmap(response.body());
-    MAP_TILE.set(Some(bitmap_id));
-    request_frame();
-}
-
 fn on_tle_data(response: &FetchResponse) {
     if !response.ok() {
         return;
@@ -183,27 +181,6 @@ fn on_tle_data(response: &FetchResponse) {
         TLE.with(|t| *t.borrow_mut() = Some((l1, l2)));
         request_frame();
     }
-}
-
-/// Construct Mapbox Static Images API URL for a plain dark tile.
-fn map_tile_url(lat: f64, lon: f64) -> String {
-    // Mapbox needs plain decimal coordinates — integer math avoids locale formatting.
-    let lat_10 = (lat * 10.0) as i64;
-    let lon_10 = (lon * 10.0) as i64;
-    let lat_sign = if lat_10 < 0 { "-" } else { "" };
-    let lon_sign = if lon_10 < 0 { "-" } else { "" };
-    let lat_a = if lat_10 < 0 { -lat_10 } else { lat_10 };
-    let lon_a = if lon_10 < 0 { -lon_10 } else { lon_10 };
-    fmt!(
-        "https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/{}{}.{},{}{}.{},1/560x480@2x?logo=false&attribution=false&access_token={}",
-        lon_sign,
-        lon_a / 10,
-        lon_a % 10,
-        lat_sign,
-        lat_a / 10,
-        lat_a % 10,
-        MAPBOX_TOKEN
-    )
 }
 
 #[unsafe(no_mangle)]
@@ -218,9 +195,12 @@ pub extern "C" fn render(_delta_ms: u32) {
                 let elapsed = now.unix_secs - data.fetched_at;
                 let remaining = i64::from(REFRESH_MS) / 1_000 - elapsed;
                 let next_update = format_countdown(remaining);
+                let has_tle = TLE.with(|t| t.borrow().is_some());
                 match size.variant {
-                    SizeVariant::Full => render_full(data, &next_update),
-                    SizeVariant::Large => render_large(data, &next_update),
+                    // Show map panel only once TLE is loaded (avoids orbit track
+                    // popping in and inaccurate API-fallback positioning).
+                    SizeVariant::Full if has_tle => render_full(data, &next_update, _delta_ms),
+                    SizeVariant::Full | SizeVariant::Large => render_large(data, &next_update),
                     SizeVariant::Medium => render_medium(data),
                     SizeVariant::Small => render_small(data),
                 }
@@ -240,7 +220,15 @@ pub extern "C" fn render(_delta_ms: u32) {
     });
 
     let _ = render_ui(size.width, size.height, root);
-    request_frame_after(1_000);
+
+    // Full variant has the 3D globe — render at ~30fps for smooth SGP4 rotation.
+    // Other variants are static text, 1fps is fine.
+    let interval = if size.variant == SizeVariant::Full {
+        33
+    } else {
+        1_000
+    };
+    request_frame_after(interval);
 }
 
 // ============================================================================
@@ -317,46 +305,30 @@ fn eci_to_geodetic(pos: &[f64; 3], gmst: f64) -> (f64, f64) {
     (lat, lon)
 }
 
-/// Convert geographic (lat, lon) to pixel position on the map canvas.
+/// Propagate the current ISS position from TLE + SGP4 for smooth real-time tracking.
 ///
-/// Uses Web Mercator projection matching the Mapbox tile. At zoom 1 the full
-/// world is 512 CSS pixels (256 × 2¹). The canvas viewport (w × h) is centered
-/// on (center_lat, center_lon). No modulo wrapping — antimeridian splitting in
-/// `compute_ground_track` already guarantees no segment crosses ±180°.
-fn geo_to_pixel(
-    lat: f64,
-    lon: f64,
-    center_lat: f64,
-    center_lon: f64,
-    w: f32,
-    h: f32,
-) -> (f32, f32) {
-    // Full world size at zoom 1 in CSS pixels (Mapbox convention)
-    let scale = 512.0_f64;
-    let world_x = |lon: f64| (lon + 180.0) / 360.0 * scale;
-    let world_y = |lat: f64| {
-        let r = lat.to_radians();
-        (1.0 - (r.tan() + 1.0 / r.cos()).ln() / PI) / 2.0 * scale
-    };
-    let cx = world_x(center_lon);
-    let cy = world_y(center_lat);
-    let px = world_x(lon) - cx + f64::from(w) / 2.0;
-    let py = world_y(lat) - cy + f64::from(h) / 2.0;
-    (px as f32, py as f32)
+/// Falls back to `None` if TLE is unavailable or propagation fails.
+fn propagate_current(tle_l1: &str, tle_l2: &str) -> Option<(f64, f64)> {
+    let elements = sgp4::Elements::from_tle(None, tle_l1.as_bytes(), tle_l2.as_bytes()).ok()?;
+    let constants = sgp4::Constants::from_elements(&elements).ok()?;
+    let epoch_unix = elements.datetime.and_utc().timestamp() as f64;
+    let now_unix = SystemTime::now().unix_secs as f64;
+    // Accelerate time relative to TLE epoch (TIME_SPEED=1.0 → real-time)
+    let effective_unix = epoch_unix + (now_unix - epoch_unix) * TIME_SPEED;
+    let t = sgp4::MinutesSinceEpoch((effective_unix - epoch_unix) / 60.0);
+    let prediction = constants.propagate(t).ok()?;
+    let gmst = gmst_radians(effective_unix);
+    Some(eci_to_geodetic(&prediction.position, gmst))
 }
 
-/// Compute ground track as a single continuous polyline from TLE + SGP4.
+/// Compute ground track as geographic coordinates from TLE + SGP4.
 ///
-/// Instead of splitting at the antimeridian, we *unwrap* longitude so it
-/// increases monotonically.  The caller draws shifted copies (±world width)
-/// to handle the map wrapping — giving a perfectly continuous curve like
-/// wheretheiss.at.
+/// Returns `(lat_deg, lon_deg)` pairs for one full orbit centered on "now".
 fn compute_ground_track(
     tle_l1: &str,
     tle_l2: &str,
-    center_lat: f64,
-    center_lon: f64,
-) -> Vec<(f32, f32)> {
+    anchor_center_lon: Option<f64>,
+) -> Vec<(f64, f64)> {
     let Ok(elements) = sgp4::Elements::from_tle(None, tle_l1.as_bytes(), tle_l2.as_bytes()) else {
         return Vec::new();
     };
@@ -367,38 +339,37 @@ fn compute_ground_track(
 
     let epoch_unix = elements.datetime.and_utc().timestamp() as f64;
     let now_unix = SystemTime::now().unix_secs as f64;
-    let minutes_since_epoch = (now_unix - epoch_unix) / 60.0;
+    let effective_unix = epoch_unix + (now_unix - epoch_unix) * TIME_SPEED;
+    let minutes_since_epoch = (effective_unix - epoch_unix) / 60.0;
 
-    // Anchor: propagate at t=0 to find the SGP4 position at "now", then
-    // compute the longitude delta vs the API-reported center_lon.  This
-    // corrects for any TLE staleness or GMST precision drift so the track
-    // stays centered on the map tile.
-    let t0 = sgp4::MinutesSinceEpoch(minutes_since_epoch);
-    let anchor = if let Ok(p0) = constants.propagate(t0) {
-        let gmst0 = gmst_radians(now_unix);
-        let (_, sgp4_lon) = eci_to_geodetic(&p0.position, gmst0);
-        let mut d = center_lon - sgp4_lon;
-        if d > 180.0 {
-            d -= 360.0;
+    // Optional anchor correction: align track to a provided center lon
+    // (e.g. API-reported position if TLE is stale). Disable for smooth
+    // SGP4-only motion to avoid jumps.
+    let anchor = if let Some(center_lon) = anchor_center_lon {
+        let t0 = sgp4::MinutesSinceEpoch(minutes_since_epoch);
+        if let Ok(p0) = constants.propagate(t0) {
+            let gmst0 = gmst_radians(effective_unix);
+            let (_, sgp4_lon) = eci_to_geodetic(&p0.position, gmst0);
+            let mut d = center_lon - sgp4_lon;
+            if d > 180.0 {
+                d -= 360.0;
+            }
+            if d < -180.0 {
+                d += 360.0;
+            }
+            d
+        } else {
+            0.0
         }
-        if d < -180.0 {
-            d += 360.0;
-        }
-        d
     } else {
         0.0
     };
 
-    // Propagate slightly longer than one orbit so the track endpoints extend
-    // past the canvas edges (clipped by scissor), matching Mapbox's edge-to-edge
-    // overlay rendering.  +20 min ≈ +73° lon ≈ +104px per side at zoom 1.
-    let duration_min = f64::from(ORBIT_PERIOD_MIN) + 20.0;
+    let duration_min = f64::from(ORBIT_PERIOD_MIN);
     let half = duration_min / 2.0;
     let interval = duration_min / ORBIT_POINTS as f64;
 
-    // Collect geographic positions and unwrap longitude
-    let mut pixels: Vec<(f32, f32)> = Vec::with_capacity(ORBIT_POINTS);
-    let mut prev_lon = f64::NAN;
+    let mut points: Vec<(f64, f64)> = Vec::with_capacity(ORBIT_POINTS);
 
     for i in 0..ORBIT_POINTS {
         let offset = -half + i as f64 * interval;
@@ -407,89 +378,122 @@ fn compute_ground_track(
             continue;
         };
 
-        let prop_unix = now_unix + offset * 60.0;
+        let prop_unix = effective_unix + offset * 60.0;
         let gmst = gmst_radians(prop_unix);
         let (lat, mut lon) = eci_to_geodetic(&prediction.position, gmst);
         lon += anchor;
+        // Normalize to [-180, 180]
+        lon = ((lon + 540.0) % 360.0) - 180.0;
 
-        // Unwrap: adjust lon so the delta from previous never jumps > 180°
-        if prev_lon.is_finite() {
-            let mut d = lon - prev_lon;
-            if d > 180.0 {
-                d -= 360.0;
-            }
-            if d < -180.0 {
-                d += 360.0;
-            }
-            lon = prev_lon + d;
-        }
-        prev_lon = lon;
-
-        pixels.push(geo_to_pixel(lat, lon, center_lat, center_lon, MAP_W, MAP_H));
+        points.push((lat, lon));
     }
 
-    // The longitude unwrapping can push points past ±180° (e.g. from -179°
-    // to +181°), placing them one full world width (512 px at zoom 1) away
-    // from the map center.  Shift the entire polyline by the nearest
-    // multiple of the world width so the midpoint sits on the canvas.
-    if pixels.len() > 1 {
-        let mid_x = pixels[pixels.len() / 2].0;
-        let world_px = 512.0_f32;
-        let shift = ((MAP_W / 2.0 - mid_x) / world_px).round() * world_px;
-        if shift.abs() > 1.0 {
-            for (x, _) in &mut pixels {
-                *x += shift;
-            }
-        }
-    }
-
-    pixels
+    points
 }
 
-/// Compute day/night terminator shade polygon points.
+/// Project geographic orbit points onto the 3D globe view.
 ///
-/// Uses the same linear y-approximation as the reference widget:
-/// `y = h/2 - (terminator_lat / 180) * h`. At zoom 1 this is close enough
-/// to Mercator and matches the reference visuals exactly.
-fn terminator_points(
-    solar_lat: f64,
-    solar_lon: f64,
+/// Returns visible polyline segments as canvas pixel coordinates. Points on the
+/// far side of the globe break the polyline into separate segments.
+fn project_orbit_to_globe(
+    points: &[(f64, f64)],
+    center_lat: f64,
     center_lon: f64,
+    zoom: f64,
     w: f32,
     h: f32,
-) -> Vec<(f32, f32)> {
-    let solar_lat_rad = solar_lat.to_radians();
-    let night_above = solar_lat < 0.0;
-    let steps = 140;
-    let mut pts: Vec<(f32, f32)> = Vec::with_capacity(steps + 4);
+) -> Vec<Vec<(f32, f32)>> {
+    let clat = center_lat.to_radians();
+    let clon = center_lon.to_radians();
+    let (cos_clat, sin_clat) = (clat.cos(), clat.sin());
+    let (cos_clon, sin_clon) = (clon.cos(), clon.sin());
+    let aspect = f64::from(w) / f64::from(h);
 
-    if night_above {
-        pts.push((0.0, 0.0));
-    } else {
-        pts.push((0.0, h));
+    let mut segments: Vec<Vec<(f32, f32)>> = Vec::new();
+    let mut current: Vec<(f32, f32)> = Vec::new();
+
+    for &(lat_deg, lon_deg) in points {
+        let lat = lat_deg.to_radians();
+        let lon = lon_deg.to_radians();
+
+        // Geographic → unit sphere
+        let px = lat.cos() * lon.sin();
+        let py = lat.sin();
+        let pz = lat.cos() * lon.cos();
+
+        // Forward rotation: Rx(clat) * Ry(-clon) — inverse of shader's undo
+        // Ry(-clon)
+        let p1x = px * cos_clon - pz * sin_clon;
+        let p1y = py;
+        let p1z = px * sin_clon + pz * cos_clon;
+        // Rx(clat)
+        let vx = p1x;
+        let vy = p1y * cos_clat - p1z * sin_clat;
+        let vz = p1y * sin_clat + p1z * cos_clat;
+
+        // Back-face cull: generous margin so Catmull-Rom smoothing can't overshoot
+        if vz <= 0.40 {
+            if current.len() > 1 {
+                segments.push(std::mem::take(&mut current));
+            } else {
+                current.clear();
+            }
+            continue;
+        }
+
+        // Perspective projection matching the shader's camera
+        let scale = zoom / (zoom - vz);
+        let uv_x = vx * scale / aspect;
+        let uv_y = vy * scale;
+
+        // UV [-1, 1] → canvas pixels (Y flipped for top-down canvas)
+        let canvas_x = ((uv_x + 1.0) / 2.0 * f64::from(w)) as f32;
+        let canvas_y = ((1.0 - uv_y) / 2.0 * f64::from(h)) as f32;
+
+        current.push((canvas_x, canvas_y));
     }
 
-    for i in 0..=steps {
-        let frac = i as f64 / steps as f64;
-        let xf = frac as f32 * w;
-        let lon = center_lon + (frac - 0.5) * 360.0;
-        let lon_diff = (lon - solar_lon).to_radians();
-        let term_lat = if solar_lat_rad.abs() < 0.002 {
-            0.0
-        } else {
-            (-lon_diff.cos() / solar_lat_rad.tan()).atan().to_degrees()
+    if current.len() > 1 {
+        segments.push(current);
+    }
+
+    segments
+}
+
+/// Smoothly approach target lat/lon (degrees) with exponential easing.
+struct SmoothedCenter {
+    lat: f64,
+    lon: f64,
+}
+
+fn smooth_globe_center(target_lat: f64, target_lon: f64, delta_ms: u32) -> SmoothedCenter {
+    let dt = f64::from(delta_ms).min(1000.0);
+    let alpha = 1.0 - (-dt / GLOBE_SMOOTH_MS).exp();
+
+    SMOOTHED_CENTER.with(|c| {
+        let mut c = c.borrow_mut();
+        let (mut lat, mut lon) = match *c {
+            Some((lat, lon)) => (lat, lon),
+            None => (target_lat, target_lon),
         };
-        let y = h / 2.0 - (term_lat as f32 / 180.0) * h;
-        pts.push((xf, y));
-    }
 
-    if night_above {
-        pts.push((w, 0.0));
-    } else {
-        pts.push((w, h));
-    }
+        lat += (target_lat - lat) * alpha;
 
-    pts
+        let mut dlon = target_lon - lon;
+        if dlon > 180.0 {
+            dlon -= 360.0;
+        }
+        if dlon < -180.0 {
+            dlon += 360.0;
+        }
+        lon += dlon * alpha;
+
+        // Normalize to [-180, 180]
+        lon = ((lon + 540.0) % 360.0) - 180.0;
+
+        *c = Some((lat, lon));
+        SmoothedCenter { lat, lon }
+    })
 }
 
 // ============================================================================
@@ -587,44 +591,70 @@ fn data_table_compact(font_size: u32, data: &IssData) -> Node {
 // Map panel (full-size only)
 // ============================================================================
 
-/// Render the map canvas with all overlay layers.
-fn map_panel(data: &IssData) -> Node {
+/// Render the 3D globe canvas with orbit track and ISS marker overlays.
+fn map_panel(data: &IssData, delta_ms: u32) -> Node {
     let mut draws: Vec<Draw> = Vec::with_capacity(16);
+    let globe_zoom = globe_zoom_to_camera(GLOBE_ZOOM);
 
-    // Layer 0: Mapbox tile or dark fallback
-    if let Some(id) = MAP_TILE.get() {
-        draws.push(Draw::Bitmap {
-            x: 0.0,
-            y: 0.0,
-            w: MAP_W,
-            h: MAP_H,
-            bitmap_id: id,
-        });
-    } else {
-        draws.push(rect(0.0, 0.0, MAP_W, MAP_H, GRAY_100));
-    }
+    // Use SGP4 real-time position for smooth globe rotation between API updates.
+    // Falls back to the last API position if TLE is unavailable.
+    let mut use_anchor = false;
+    let (globe_lat, globe_lon) = TLE.with(|t| {
+        t.borrow()
+            .as_ref()
+            .and_then(|(l1, l2)| propagate_current(l1, l2))
+            .unwrap_or_else(|| {
+                use_anchor = true;
+                (data.latitude, data.longitude)
+            })
+    });
+    let smoothed = smooth_globe_center(globe_lat, globe_lon, delta_ms);
 
-    // Layer 1: terminator shade (day/night boundary)
-    let shade = terminator_points(data.solar_lat, data.solar_lon, data.longitude, MAP_W, MAP_H);
-    draws.push(path!(shade, fill, color: TERMINATOR_COLOR));
+    // Layer 0: 3D sphere — shader handles rotation, light shading, and terminator.
+    // Always wrap in .transition() so the host can interpolate sphere params.
+    // On the first frame, smoothed center == target so no visible animation fires.
+    draws.push(
+        sphere!(
+            &EARTH_TEXTURE,
+            at: (0.0, 0.0, MAP_W, MAP_H),
+            center: (smoothed.lat as f32, smoothed.lon as f32),
+            zoom: globe_zoom,
+            light: (data.solar_lat as f32, data.solar_lon as f32),
+            atmosphere
+        )
+        .transition(250, Easing::EaseOut),
+    );
 
-    // Layer 2: orbit ground track (smooth polyline from SGP4)
-    // The anchor correction in compute_ground_track ensures the track is
-    // centered on the API position, so no extra shifting is needed.
+    // Layer 1: orbit ground track projected onto the 3D globe
     TLE.with(|t| {
         if let Some((l1, l2)) = &*t.borrow() {
-            let track = compute_ground_track(l1, l2, data.latitude, data.longitude);
-            if track.len() > 1 {
-                draws.push(path!(track, stroke: 4.0, color: ORBIT_COLOR, smooth));
+            let anchor_lon = if use_anchor {
+                Some(data.longitude)
+            } else {
+                None
+            };
+            let geo_track = compute_ground_track(l1, l2, anchor_lon);
+            let segments = project_orbit_to_globe(
+                &geo_track,
+                smoothed.lat,
+                smoothed.lon,
+                f64::from(globe_zoom),
+                MAP_W,
+                MAP_H,
+            );
+            for seg in segments {
+                if seg.len() > 1 {
+                    draws.push(path!(seg, stroke: 3.0, color: ORBIT_COLOR, smooth));
+                }
             }
         }
     });
 
-    // Layer 3: ISS marker at canvas center
+    // Layer 2: ISS marker at globe center (the globe rotates to face the ISS position)
     let cx = MAP_W / 2.0;
     let cy = MAP_H / 2.0;
-    draws.push(circle(cx, cy, MARKER_GLOW_R, MARKER_GLOW));
-    draws.push(circle(cx, cy, MARKER_SOLID_R, MARKER_COLOR));
+    draws.push(circle(cx, cy, MARKER_GLOW_R, MARKER_GLOW_COLOR));
+    draws.push(circle(cx, cy, MARKER_SOLID_R, MARKET_COLOR));
     draws.push(icon(
         cx - MARKER_SIZE / 2.0,
         cy - MARKER_SIZE / 2.0,
@@ -642,7 +672,7 @@ fn map_panel(data: &IssData) -> Node {
 // ============================================================================
 
 /// Full (1280×480): header + 5-row table + map canvas.
-fn render_full(data: &IssData, next_update: &str) -> Node {
+fn render_full(data: &IssData, next_update: &str, delta_ms: u32) -> Node {
     row(
         props!(background: BLACK),
         [
@@ -653,7 +683,7 @@ fn render_full(data: &IssData, next_update: &str) -> Node {
                     data_table_full(24, data, next_update),
                 ],
             ),
-            map_panel(data),
+            map_panel(data, delta_ms),
         ],
     )
 }

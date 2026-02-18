@@ -1,0 +1,11 @@
+[project]
+name = "iss-texture-tools"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "cartopy>=0.23",
+    "matplotlib>=3.9",
+]
+
+[tool.uv]
+# Scripts run via: uv run texture_render.py

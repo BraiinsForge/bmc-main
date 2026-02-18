@@ -36,6 +36,16 @@ pub struct PrevDrawValues {
     pub radius: f32,
     /// Rotation angle (for `Rotated` draw commands).
     pub rotation: f32,
+    /// Sphere camera center latitude (degrees).
+    pub center_lat: f32,
+    /// Sphere camera center longitude (degrees).
+    pub center_lon: f32,
+    /// Sphere camera distance (unitless, in sphere radii).
+    pub zoom: f32,
+    /// Light direction latitude (degrees).
+    pub light_lat: f32,
+    /// Light direction longitude (degrees).
+    pub light_lon: f32,
 }
 
 /// State for a single transition instance.

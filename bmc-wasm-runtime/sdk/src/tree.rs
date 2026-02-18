@@ -16,9 +16,9 @@ use std::cell::RefCell;
 
 use bmc_wasm_protocol::{
     AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
-    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, LoopMode, NODE_BUTTON,
-    NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_ROW,
-    NODE_SPACER,
+    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE, Easing, GRAY_10, LoopMode,
+    NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
+    NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for macro paths
@@ -480,6 +480,20 @@ pub enum Draw {
         fill: bool,
         interpolation: Interpolation,
     },
+    /// 3D sphere: equirectangular texture mapped onto a sphere with optional light shading.
+    Sphere {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+        atmosphere: bool,
+        center_lat: f32,
+        center_lon: f32,
+        zoom: f32,
+        light_lat: f32,
+        light_lon: f32,
+    },
 }
 
 impl Draw {
@@ -904,6 +918,117 @@ pub fn bitmap(x: f32, y: f32, w: f32, h: f32, bmp: &Bitmap) -> Draw {
     }
 }
 
+/// 3D sphere at local position within canvas.
+///
+/// Renders an equirectangular texture mapped onto a sphere with perspective
+/// projection, camera centered at (center_lat, center_lon), and optional
+/// directional light shading from (light_lat, light_lon).
+///
+/// `zoom` is the camera distance from the sphere center in units of sphere
+/// radii (unitless). Values must be > 1.0; smaller values zoom in, larger
+/// values zoom out. Typical full-globe values are ~1.6–2.2. If you want a
+/// more intuitive "scale" parameter, remap it before calling `sphere!`.
+///
+/// Transitions applied via `.transition(...)` will smoothly interpolate
+/// `center_lat`, `center_lon`, `zoom`, and light direction on the host.
+///
+/// When `atmosphere` is true, adds limb darkening and bluish edge glow.
+///
+/// Prefer the [`sphere!`] macro for ergonomic call sites.
+#[must_use]
+#[expect(clippy::too_many_arguments)]
+pub fn make_sphere(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    bmp: &Bitmap,
+    center_lat: f32,
+    center_lon: f32,
+    zoom: f32,
+    light: Option<(f32, f32)>,
+    atmosphere: bool,
+) -> Draw {
+    let bitmap_id = ensure_bitmap_registered(bmp);
+    let (light_lat, light_lon) = light.unwrap_or((f32::NAN, f32::NAN));
+    Draw::Sphere {
+        x,
+        y,
+        w,
+        h,
+        bitmap_id,
+        atmosphere,
+        center_lat,
+        center_lon,
+        zoom,
+        light_lat,
+        light_lon,
+    }
+}
+
+/// Ergonomic sphere construction for canvas draw commands.
+///
+/// # Without light (full brightness)
+/// ```ignore
+/// sphere!(&TEXTURE, at: (0.0, 0.0, 400.0, 400.0), center: (lat, lon), zoom: 1.8)
+/// ```
+///
+/// # With directional light
+/// ```ignore
+/// sphere!(&TEXTURE, at: (0.0, 0.0, 400.0, 400.0), center: (lat, lon), zoom: 1.8,
+///     light: (slat, slon))
+/// ```
+///
+/// # With atmosphere (limb darkening + edge glow)
+/// ```ignore
+/// sphere!(&TEXTURE, at: (0.0, 0.0, 400.0, 400.0), center: (lat, lon), zoom: 1.8, atmosphere)
+/// sphere!(&TEXTURE, at: (0.0, 0.0, 400.0, 400.0), center: (lat, lon), zoom: 1.8,
+///     light: (slat, slon), atmosphere)
+/// ```
+#[macro_export]
+macro_rules! sphere {
+    ($bmp:expr, at: ($x:expr, $y:expr, $w:expr, $h:expr),
+     center: ($lat:expr, $lon:expr), zoom: $z:expr) => {
+        $crate::make_sphere($x, $y, $w, $h, $bmp, $lat, $lon, $z, None, false)
+    };
+    ($bmp:expr, at: ($x:expr, $y:expr, $w:expr, $h:expr),
+     center: ($lat:expr, $lon:expr), zoom: $z:expr, atmosphere) => {
+        $crate::make_sphere($x, $y, $w, $h, $bmp, $lat, $lon, $z, None, true)
+    };
+    ($bmp:expr, at: ($x:expr, $y:expr, $w:expr, $h:expr),
+     center: ($lat:expr, $lon:expr), zoom: $z:expr,
+     light: ($slat:expr, $slon:expr)) => {
+        $crate::make_sphere(
+            $x,
+            $y,
+            $w,
+            $h,
+            $bmp,
+            $lat,
+            $lon,
+            $z,
+            Some(($slat, $slon)),
+            false,
+        )
+    };
+    ($bmp:expr, at: ($x:expr, $y:expr, $w:expr, $h:expr),
+     center: ($lat:expr, $lon:expr), zoom: $z:expr,
+     light: ($slat:expr, $slon:expr), atmosphere) => {
+        $crate::make_sphere(
+            $x,
+            $y,
+            $w,
+            $h,
+            $bmp,
+            $lat,
+            $lon,
+            $z,
+            Some(($slat, $slon)),
+            true,
+        )
+    };
+}
+
 /// Path draw command — polyline or polygon with optional Catmull-Rom smoothing.
 ///
 /// Prefer the [`path!`] macro for ergonomic call sites.
@@ -1175,6 +1300,33 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             if !fill {
                 buf.write_f32(*stroke_width);
             }
+        }
+        Draw::Sphere {
+            x,
+            y,
+            w,
+            h,
+            bitmap_id,
+            atmosphere,
+            center_lat,
+            center_lon,
+            zoom,
+            light_lat,
+            light_lon,
+        } => {
+            buf.write_u8(DRAW_SPHERE);
+            buf.write_f32(*x);
+            buf.write_f32(*y);
+            buf.write_f32(*w);
+            buf.write_f32(*h);
+            buf.write_u16(*bitmap_id);
+            let flags: u8 = u8::from(*atmosphere);
+            buf.write_u8(flags);
+            buf.write_f32(*center_lat);
+            buf.write_f32(*center_lon);
+            buf.write_f32(*zoom);
+            buf.write_f32(*light_lat);
+            buf.write_f32(*light_lon);
         }
     }
 }

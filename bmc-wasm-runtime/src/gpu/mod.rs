@@ -5,6 +5,7 @@
 pub mod bitmap;
 pub mod icons;
 mod renderer;
+mod sphere;
 pub mod text;
 
 pub mod builtin_icons {

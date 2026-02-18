@@ -60,7 +60,7 @@ python-lint:
   extends: .nix
   stage: check
   script:
-    - nix-shell -p ruff --run "ruff check"
+    - nix-shell -p ruff uv --run "ruff check && uvx ty check"
 
 ############################
 ######## Apps Stage ########

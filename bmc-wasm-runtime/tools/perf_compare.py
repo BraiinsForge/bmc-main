@@ -17,6 +17,7 @@ Usage:
 import gzip
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from _common import crate_breakdown_from_thread, find_testbed_thread, load_symbols
@@ -104,8 +105,8 @@ def print_comparison_table(reports: list[dict]) -> None:
 
     def print_row(
         row_label: str,
-        get_val: object,  # Callable[[dict], float]
-        fmt_val: object,  # Callable[[float], str]
+        get_val: Callable[[dict], float],
+        fmt_val: Callable[[float], str],
         *,
         better_lower: bool = True,
     ) -> None:

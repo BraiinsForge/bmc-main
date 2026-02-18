@@ -1,0 +1,5 @@
+# ty type checker configuration — complements ruff linting.
+# https://docs.astral.sh/ty/
+
+[environment]
+python-version = "3.12"

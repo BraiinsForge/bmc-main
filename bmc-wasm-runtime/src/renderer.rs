@@ -87,6 +87,28 @@ pub trait Renderer {
     /// Draw a registered bitmap at the given position and size.
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16);
 
+    // -- Sphere --
+
+    /// Draw an equirectangular texture mapped onto a 3D sphere with optional light shading.
+    ///
+    /// When `light_lat` is `f32::NAN`, shading is disabled (full brightness).
+    /// When `atmosphere` is true, adds limb darkening and bluish edge glow.
+    #[expect(clippy::too_many_arguments)]
+    fn draw_sphere(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+        center_lat: f32,
+        center_lon: f32,
+        zoom: f32,
+        light_lat: f32,
+        light_lon: f32,
+        atmosphere: bool,
+    );
+
     // -- Paths --
 
     /// Stroke a path through the given points.

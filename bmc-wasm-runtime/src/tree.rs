@@ -12,9 +12,9 @@
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::{
     AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
-    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90,
-    GRAY_100, GREEN_40, ICON_CLOSE, ICON_ERROR, ICON_INFO, ICON_SUCCESS, ICON_WARNING, LoopMode,
-    NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
+    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE, Easing, GRAY_10, GRAY_50, GRAY_70,
+    GRAY_90, GRAY_100, GREEN_40, ICON_CLOSE, ICON_ERROR, ICON_INFO, ICON_SUCCESS, ICON_WARNING,
+    LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
     NODE_PARAGRAPH, NODE_ROW, NODE_SPACER, ORANGE_40, RED_60, VIOLET_50,
 };
 
@@ -122,6 +122,19 @@ pub enum DrawCommand {
         closed: bool,
         fill: bool,
         smooth: bool,
+    },
+    Sphere {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+        atmosphere: bool,
+        center_lat: f32,
+        center_lon: f32,
+        zoom: f32,
+        light_lat: f32,
+        light_lon: f32,
     },
 }
 
@@ -525,6 +538,33 @@ impl<'a> TreeReader<'a> {
                     closed,
                     fill,
                     smooth,
+                })
+            }
+            DRAW_SPHERE => {
+                let x = self.read_f32()?;
+                let y = self.read_f32()?;
+                let w = self.read_f32()?;
+                let h = self.read_f32()?;
+                let bitmap_id = self.read_u16()?;
+                let flags = self.read_u8()?;
+                let atmosphere = flags & 0x01 != 0;
+                let center_lat = self.read_f32()?;
+                let center_lon = self.read_f32()?;
+                let zoom = self.read_f32()?;
+                let light_lat = self.read_f32()?;
+                let light_lon = self.read_f32()?;
+                Ok(DrawCommand::Sphere {
+                    x,
+                    y,
+                    w,
+                    h,
+                    bitmap_id,
+                    atmosphere,
+                    center_lat,
+                    center_lon,
+                    zoom,
+                    light_lat,
+                    light_lon,
                 })
             }
             _ => bail!("unknown draw command: {}", draw_type),
@@ -1130,7 +1170,8 @@ fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
     match draw {
         DrawCommand::Rect { w, h, .. }
         | DrawCommand::Icon { w, h, .. }
-        | DrawCommand::Bitmap { w, h, .. } => (*w, *h),
+        | DrawCommand::Bitmap { w, h, .. }
+        | DrawCommand::Sphere { w, h, .. } => (*w, *h),
         DrawCommand::Circle { r, .. } => (*r * 2.0, *r * 2.0),
         DrawCommand::Centered { inner }
         | DrawCommand::Rotated { inner, .. }
@@ -1351,6 +1392,7 @@ fn render_draw_inner(
             let mut acc_offset_y = offset_y;
             let mut acc_orbit_angle = orbit_angle_offset;
             let mut acc_color: Option<u32> = color_override;
+            let mut sphere_override: Option<(f32, f32, f32, f32, f32)> = None;
 
             // Process animations
             for anim_def in animations {
@@ -1442,27 +1484,80 @@ fn render_draw_inner(
                     if interp.color != current_values.color {
                         acc_color = Some(interp.color);
                     }
+                    if matches!(inner.as_ref(), DrawCommand::Sphere { .. }) {
+                        sphere_override = Some((
+                            interp.center_lat,
+                            interp.center_lon,
+                            interp.zoom,
+                            interp.light_lat,
+                            interp.light_lon,
+                        ));
+                    }
                 }
             }
 
             anim_ctx.draw_counter += 1;
 
-            render_draw_inner(
-                renderer,
-                inner,
-                cx,
-                cy,
-                cw,
-                ch,
-                acc_offset_x,
-                acc_offset_y,
-                acc_rotation,
-                acc_scale,
-                acc_alpha,
-                acc_orbit_angle,
-                acc_color,
-                anim_ctx,
-            );
+            if let (
+                Some((center_lat, center_lon, zoom, light_lat, light_lon)),
+                DrawCommand::Sphere {
+                    x,
+                    y,
+                    w,
+                    h,
+                    bitmap_id,
+                    atmosphere,
+                    ..
+                },
+            ) = (sphere_override, inner.as_ref())
+            {
+                let overridden = DrawCommand::Sphere {
+                    x: *x,
+                    y: *y,
+                    w: *w,
+                    h: *h,
+                    bitmap_id: *bitmap_id,
+                    atmosphere: *atmosphere,
+                    center_lat,
+                    center_lon,
+                    zoom,
+                    light_lat,
+                    light_lon,
+                };
+                render_draw_inner(
+                    renderer,
+                    &overridden,
+                    cx,
+                    cy,
+                    cw,
+                    ch,
+                    acc_offset_x,
+                    acc_offset_y,
+                    acc_rotation,
+                    acc_scale,
+                    acc_alpha,
+                    acc_orbit_angle,
+                    acc_color,
+                    anim_ctx,
+                );
+            } else {
+                render_draw_inner(
+                    renderer,
+                    inner,
+                    cx,
+                    cy,
+                    cw,
+                    ch,
+                    acc_offset_x,
+                    acc_offset_y,
+                    acc_rotation,
+                    acc_scale,
+                    acc_alpha,
+                    acc_orbit_angle,
+                    acc_color,
+                    anim_ctx,
+                );
+            }
         }
         DrawCommand::Path {
             points,
@@ -1522,6 +1617,61 @@ fn render_draw_inner(
                 );
             }
         }
+        DrawCommand::Sphere {
+            x,
+            y,
+            w,
+            h,
+            bitmap_id,
+            atmosphere,
+            center_lat,
+            center_lon,
+            zoom,
+            light_lat,
+            light_lon,
+        } => {
+            let ew = *w * scale;
+            let eh = *h * scale;
+            let sx = *x + offset_x + (*w - ew) / 2.0;
+            let sy = *y + offset_y + (*h - eh) / 2.0;
+            let rx = cx + sx;
+            let ry = cy + sy;
+            if rotation == 0.0 {
+                renderer.draw_sphere(
+                    rx,
+                    ry,
+                    ew,
+                    eh,
+                    *bitmap_id,
+                    *center_lat,
+                    *center_lon,
+                    *zoom,
+                    *light_lat,
+                    *light_lon,
+                    *atmosphere,
+                );
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.draw_sphere(
+                    rx - pivot_x,
+                    ry - pivot_y,
+                    ew,
+                    eh,
+                    *bitmap_id,
+                    *center_lat,
+                    *center_lon,
+                    *zoom,
+                    *light_lat,
+                    *light_lon,
+                    *atmosphere,
+                );
+                renderer.restore();
+            }
+        }
     }
 }
 
@@ -1554,6 +1704,29 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             y: *y,
             w: *w,
             h: *h,
+            ..Default::default()
+        },
+        DrawCommand::Sphere {
+            x,
+            y,
+            w,
+            h,
+            center_lat,
+            center_lon,
+            zoom,
+            light_lat,
+            light_lon,
+            ..
+        } => PrevDrawValues {
+            x: *x,
+            y: *y,
+            w: *w,
+            h: *h,
+            center_lat: *center_lat,
+            center_lon: *center_lon,
+            zoom: *zoom,
+            light_lat: *light_lat,
+            light_lon: *light_lon,
             ..Default::default()
         },
         DrawCommand::Rect { x, y, w, h, color }
@@ -1613,6 +1786,18 @@ fn shortest_angle_delta(from: f32, to: f32) -> f32 {
     d
 }
 
+/// Shortest-path delta for degrees (wraps around 360°).
+fn shortest_angle_delta_deg(from: f32, to: f32) -> f32 {
+    let mut d = to - from;
+    if d > 180.0 {
+        d -= 360.0;
+    }
+    if d < -180.0 {
+        d += 360.0;
+    }
+    d
+}
+
 /// Linearly interpolate between two sets of draw values.
 fn interpolate_draw_values(
     a: &PrevDrawValues,
@@ -1633,6 +1818,11 @@ fn interpolate_draw_values(
         angle: a.angle + shortest_angle_delta(a.angle, b.angle) * t,
         radius: a.radius + (b.radius - a.radius) * t,
         rotation: a.rotation + shortest_angle_delta(a.rotation, b.rotation) * t,
+        center_lat: a.center_lat + (b.center_lat - a.center_lat) * t,
+        center_lon: a.center_lon + shortest_angle_delta_deg(a.center_lon, b.center_lon) * t,
+        zoom: a.zoom + (b.zoom - a.zoom) * t,
+        light_lat: a.light_lat + (b.light_lat - a.light_lat) * t,
+        light_lon: a.light_lon + shortest_angle_delta_deg(a.light_lon, b.light_lon) * t,
     }
 }
 

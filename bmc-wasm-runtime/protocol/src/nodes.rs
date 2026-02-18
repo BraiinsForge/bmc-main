@@ -24,6 +24,7 @@ pub const DRAW_CIRCLE: u8 = 0x41;
 pub const DRAW_ICON: u8 = 0x42;
 pub const DRAW_BITMAP: u8 = 0x43;
 pub const DRAW_PATH: u8 = 0x44;
+pub const DRAW_SPHERE: u8 = 0x45;
 
 // Draw commands — transforms (0x60–0x7F)
 pub const DRAW_CENTERED: u8 = 0x60;

@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+
+"""Render dark-themed equirectangular earth textures from Natural Earth data.
+
+Usage:
+    uv run texture_render.py [--output DIR]
+
+Generates 2048x1024 equirectangular JPEG textures using Natural Earth vector
+data (coastlines, borders, country labels) in multiple dark themes.
+"""
+
+import argparse
+from pathlib import Path
+from typing import TypedDict
+
+from _textures import RENDER_H, RENDER_W, TEXTURE_DIR
+
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import matplotlib
+import matplotlib.patheffects as pe
+import matplotlib.pyplot as plt
+from cartopy.io import shapereader
+
+matplotlib.use('Agg')
+
+
+class Theme(TypedDict):
+    id: str
+    name: str
+    ocean: str
+    land: str
+    border: str
+    coast: str
+    lake: str
+    label: str
+    label_halo: str
+
+
+THEMES: list[Theme] = [
+    {
+        'id': 'natural-earth-dark',
+        'name': 'Natural Earth Dark (Mapbox style)',
+        'ocean': '#191a1a',
+        'land': '#2b2b2b',
+        'border': '#555555',
+        'coast': '#555555',
+        'lake': '#191a1a',
+        'label': '#999999',
+        'label_halo': '#191a1a',
+    },
+    {
+        'id': 'natural-earth-gmaps',
+        'name': 'Natural Earth Dark (Google Maps style)',
+        'ocean': '#17263c',
+        'land': '#242f3e',
+        'border': '#4a5568',
+        'coast': '#4a5568',
+        'lake': '#17263c',
+        'label': '#8e9bae',
+        'label_halo': '#1a2332',
+    },
+]
+
+FONT_SIZE = 6.5
+MIN_LABEL_AREA = 25.0
+
+
+def render_texture(theme: Theme, width: int, height: int, output: Path) -> None:
+    """Render a single equirectangular earth texture."""
+    dpi = 100
+    fig_w = width / dpi
+    fig_h = height / dpi
+    halo = [pe.withStroke(linewidth=2.5, foreground=theme['label_halo'])]
+
+    projection = ccrs.PlateCarree()
+    fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=theme['ocean'])
+    ax = fig.add_axes([0, 0, 1, 1], projection=projection, facecolor=theme['ocean'])
+    ax.set_global()
+    ax.spines['geo'].set_visible(False)
+
+    ax.add_feature(
+        cfeature.NaturalEarthFeature('physical', 'land', '50m'),
+        facecolor=theme['land'],
+        edgecolor='none',
+        zorder=1,
+    )
+    ax.add_feature(
+        cfeature.NaturalEarthFeature('physical', 'lakes', '50m'),
+        facecolor=theme['lake'],
+        edgecolor='none',
+        zorder=2,
+    )
+    ax.add_feature(
+        cfeature.NaturalEarthFeature('physical', 'coastline', '50m'),
+        facecolor='none',
+        edgecolor=theme['coast'],
+        linewidth=0.4,
+        zorder=3,
+    )
+    ax.add_feature(
+        cfeature.NaturalEarthFeature('cultural', 'admin_0_boundary_lines_land', '50m'),
+        facecolor='none',
+        edgecolor=theme['border'],
+        linewidth=0.5,
+        zorder=4,
+    )
+
+    _add_country_labels(ax, width, theme, halo)
+
+    fig.savefig(
+        str(output),
+        dpi=dpi,
+        facecolor=fig.get_facecolor(),
+        pad_inches=0,
+        pil_kwargs={'quality': 95},
+    )
+    plt.close(fig)
+
+    size_kb = output.stat().st_size / 1024
+    print(f'  {output.name}: {width}x{height}, {size_kb:.0f} KB')
+
+
+def _add_country_labels(
+    ax: plt.Axes, img_width: int, theme: Theme, halo: list[pe.AbstractPathEffect]
+) -> None:
+    """Add country name labels centered on each country."""
+    scale = img_width / 1024
+    font_size = FONT_SIZE * scale
+
+    shpfile = shapereader.natural_earth('110m', 'cultural', 'admin_0_countries')
+    reader = shapereader.Reader(shpfile)
+
+    for record in reader.records():
+        name = record.attributes.get('NAME', '')
+        geom = record.geometry
+
+        if geom.area < MIN_LABEL_AREA:
+            continue
+
+        centroid = geom.centroid
+        ax.text(
+            centroid.x,
+            centroid.y,
+            name,
+            transform=ccrs.PlateCarree(),
+            fontsize=font_size,
+            fontweight='normal',
+            color=theme['label'],
+            alpha=0.7,
+            ha='center',
+            va='center',
+            path_effects=halo,
+            zorder=10,
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        '--output',
+        type=Path,
+        default=TEXTURE_DIR,
+        help='Output directory (default: ../textures/)',
+    )
+    args = parser.parse_args()
+    args.output.mkdir(exist_ok=True)
+
+    print('Rendering Natural Earth dark textures...')
+    print('  Fetching Natural Earth data (cached after first run)...')
+
+    for theme in THEMES:
+        render_texture(theme, RENDER_W, RENDER_H, args.output / f'{theme["id"]}.jpg')
+
+    print('\nDone. Preview with: uv run texture_preview.py')
+
+
+if __name__ == '__main__':
+    main()

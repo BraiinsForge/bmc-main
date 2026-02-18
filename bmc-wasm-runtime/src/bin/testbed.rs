@@ -524,6 +524,10 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             match create_runtime(wasm_path, &state.gl_config, tile.w, tile.h) {
                 Ok(new_runtime) => {
                     tile.runtime = new_runtime;
+                    // Force a fresh render for the new runtime so constants
+                    // or initial state changes show up immediately.
+                    tile.ever_rendered = false;
+                    tile.logged_dead = false;
                     any_ok = true;
                 }
                 Err(e) => eprintln!("Reload failed ({}): {e}", tile.label),

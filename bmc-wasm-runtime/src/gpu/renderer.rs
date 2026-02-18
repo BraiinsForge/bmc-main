@@ -17,6 +17,7 @@ use femtovg::{Canvas, Color, FontId, Paint, Path, RenderTarget};
 
 use super::bitmap::BitmapRegistry;
 use super::icons::IconRegistry;
+use super::sphere::SphereRenderer;
 use super::text::{ParagraphLayoutCache, to_femtovg_color};
 use crate::renderer::Renderer;
 use crate::tree::{SpanData, TextStyle};
@@ -32,6 +33,7 @@ const FONT_BOLD: &[u8] =
 /// Owns the FemtoVG canvas, font IDs, cosmic-text `FontSystem`, and a
 /// paragraph layout cache. Created once per runtime lifetime.
 pub struct FemtoVgRenderer {
+    gl: glow::Context,
     canvas: Canvas<OpenGl>,
     font_regular: FontId,
     font_bold: FontId,
@@ -39,6 +41,7 @@ pub struct FemtoVgRenderer {
     paragraph_cache: ParagraphLayoutCache,
     icon_registry: IconRegistry,
     bitmap_registry: BitmapRegistry,
+    sphere: Option<SphereRenderer>,
     width: f32,
     height: f32,
     frame_counter: u64,
@@ -66,12 +69,15 @@ impl FemtoVgRenderer {
     ///
     /// # Safety
     /// `load_fn` must return valid OpenGL function pointers for the current GL context.
-    pub unsafe fn new<F>(load_fn: F, width: u32, height: u32, fbo_id: u32) -> Result<Self>
+    pub unsafe fn new<F>(mut load_fn: F, width: u32, height: u32, fbo_id: u32) -> Result<Self>
     where
         F: FnMut(&str) -> *const c_void,
     {
-        // Create FemtoVG OpenGL renderer
-        let mut gl_renderer = unsafe { OpenGl::new_from_function(load_fn) }?;
+        // Create glow context for direct GL access (globe renderer, etc.)
+        let gl = unsafe { glow::Context::from_loader_function(&mut load_fn) };
+
+        // Create FemtoVG OpenGL renderer (shares the same GL context)
+        let mut gl_renderer = unsafe { OpenGl::new_from_function(&mut load_fn) }?;
 
         // Set the FBO as screen target BEFORE creating the Canvas.
         // This is critical for rendering to DMA-BUF exports.
@@ -100,6 +106,7 @@ impl FemtoVgRenderer {
         icon_registry.register_builtins();
 
         Ok(Self {
+            gl,
             canvas,
             font_regular,
             font_bold,
@@ -107,6 +114,7 @@ impl FemtoVgRenderer {
             paragraph_cache: ParagraphLayoutCache::new(),
             icon_registry,
             bitmap_registry: BitmapRegistry::new(),
+            sphere: None,
             width: width as f32,
             height: height as f32,
             frame_counter: 0,
@@ -305,6 +313,61 @@ impl Renderer for FemtoVgRenderer {
         if let Some(image_id) = self.bitmap_registry.get(bitmap_id) {
             super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
         }
+    }
+
+    #[expect(clippy::many_single_char_names)]
+    fn draw_sphere(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+        center_lat: f32,
+        center_lon: f32,
+        zoom: f32,
+        light_lat: f32,
+        light_lon: f32,
+        atmosphere: bool,
+    ) {
+        // Lazy-init sphere renderer on first call
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        if self.sphere.is_none() {
+            match SphereRenderer::new(&self.gl, &mut self.canvas, w as u32, h as u32) {
+                Ok(s) => self.sphere = Some(s),
+                Err(e) => {
+                    tracing::error!("sphere init failed: {e}");
+                    self.draw_bitmap(x, y, w, h, bitmap_id);
+                    return;
+                }
+            }
+        }
+        let sphere = self
+            .sphere
+            .as_mut()
+            .expect("BUG: sphere is initialized above");
+
+        // Lazy-init texture from the registered bitmap
+        if !sphere.has_texture()
+            && let Some(image_id) = self.bitmap_registry.get(bitmap_id)
+            && let Ok(tex) = self.canvas.get_native_texture(image_id)
+        {
+            sphere.set_texture(tex);
+        }
+
+        // When light is NaN, pass zero-vector to disable shading
+        let (sl, sn) = if light_lat.is_nan() {
+            (0.0, 0.0)
+        } else {
+            (light_lat, light_lon)
+        };
+
+        // Render sphere to offscreen FBO (skips if params unchanged)
+        sphere.render(&self.gl, center_lat, center_lon, zoom, sl, sn, atmosphere);
+
+        // Draw the FBO texture via femtovg
+        let image_id = sphere.image_id();
+        super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
     }
 
     // -- Frame lifecycle --
