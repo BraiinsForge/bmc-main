@@ -31,7 +31,7 @@ use super::initial_setup::{try_from_date_time, try_from_time_format};
 use super::shared::{naive_time_to_hhmm, parse_hhmm_to_naive_time, try_from_number_format};
 use super::{GrpcError, SoundController};
 
-const API_BRIGHTNESS_MIN: u32 = 0;
+const API_BRIGHTNESS_MIN: u32 = crate::backlight::MIN_BRIGHTNESS_PCT as u32;
 const API_BRIGHTNESS_MAX: u32 = 100;
 const API_BRIGHTNESS_STEP: u32 = 5;
 
@@ -94,9 +94,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
     }
 
     async fn set_brightness(&self, request: Request<u32>) -> Result<Response<()>, Status> {
-        let value = request.into_inner();
-
-        validate_brightness(value)?;
+        let value = clamp_brightness(request.into_inner());
 
         #[expect(clippy::cast_possible_truncation)]
         self.system_manager
@@ -114,9 +112,8 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         &self,
         request: Request<u32>,
     ) -> Result<Response<()>, Status> {
-        let value = request.into_inner();
+        let value = clamp_brightness(request.into_inner());
 
-        validate_brightness(value)?;
         #[expect(clippy::cast_possible_truncation)]
         self.system_manager
             .set_night_mode_brightness(value as u8)
@@ -564,13 +561,8 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
     }
 }
 
-fn validate_brightness(value: u32) -> Result<(), Status> {
-    if value > API_BRIGHTNESS_MAX {
-        return Err(Status::invalid_argument(format!(
-            "Invalid brightness. Value must be within a range [{API_BRIGHTNESS_MIN}-{API_BRIGHTNESS_MAX}]"
-        )));
-    }
-    Ok(())
+fn clamp_brightness(value: u32) -> u32 {
+    value.clamp(API_BRIGHTNESS_MIN, API_BRIGHTNESS_MAX)
 }
 
 fn validate_sound_volume(value: u32) -> Result<(), Status> {

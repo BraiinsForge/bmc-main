@@ -1,5 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+pub(crate) const MIN_BRIGHTNESS_PCT: u8 = 10;
+
 use std::sync::Arc;
 
 use bmc_display::display_driver::DisplayBacklightDriver;

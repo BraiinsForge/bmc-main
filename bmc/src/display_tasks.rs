@@ -859,7 +859,9 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
                     current_brightness.saturating_add(10).min(100)
                 }
                 bmc_display::display_controller::callback::BrightnessEvent::Decrease => {
-                    current_brightness.saturating_sub(10)
+                    current_brightness
+                        .saturating_sub(10)
+                        .max(crate::backlight::MIN_BRIGHTNESS_PCT)
                 }
             };
 
