@@ -126,26 +126,32 @@ packages.
       "cache_key": "..."
     }
   ],
-  "packages": {
-    "miniminer-display": {
+  "packages": [
+    {
+      "name": "miniminer-display",
       "version": "2.1.0",
       "cache": "default",
       "store_path": "/nix/store/abc123def456-bmc-2.1.0",
       "min_bos_version": "26.01",
-      "min_bmc_version": "26.01",
+      "min_bmc_version": "1.0.0",
       "category": "core",
-      "description": "Main display application for the Deck"
+      "description": "Main display application for the Deck",
+      "upgrade_strategy": "reboot"
+      "install_strategy": false
     },
-    "hashrate-widget": {
+    {
+      "name": "hashrate-widget",
       "version": "1.2.0",
       "cache": "default",
       "store_path": "/nix/store/xyz789ghi012-hashrate-widget-1.2.0",
       "min_bos_version": "25.10",
-      "min_bmc_version": "26.01",
+      "min_bmc_version": "1.0.0",
       "category": "widget",
       "description": "Widget showing current hashrate statistics"
+      "upgrade_strategy": false,
+      "install_strategy": false
     }
-  }
+  ]
 }
 ```
 
@@ -165,14 +171,17 @@ default in user's UI. Specific version might be used by other software.
   * `cache_url` - URL of the binary cache
   * `cache_key` - Public key for signature verification
 * `indexes` - List of URLs pointing to other index pages (for federated package discovery)
-* `packages` - Available packages with their metadata:
-  * `version` - Latest available version
+* `packages` - Array of available packages (a package name can appear multiple times with different versions):
+  * `name` - Package name
+  * `version` - Package version
   * `cache` - The cache that hosts this package. Default cache from the index used if not present.
   * `store_path` - Nix store path for direct `nix copy` from binary cache
   * `min_bos_version` - Minimum BOS version required (YY.MM format, e.g., "26.01")
-  * `min_bmc_version` - Minimum BMC core version required (YY.MM format, e.g., "26.01")
+  * `min_bmc_version` - Minimum BMC core version required (semver, e.g., "1.0.0")
   * `category` - Package category (display, widget, etc.)
   * `description` - Human-readable package description
+  * `upgrade_strategy` - This is the strategy in order to completely update the package. When reboot, the user is asked to reboot
+  * `install_strategy` - This is the strategy in order to copmletely install the package.
 
 ### Factory index structure
 
@@ -327,8 +336,9 @@ existing ones, as long as the current BOS satisfies the package's
                                 │
                                 ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│ 4. BOS Upgrade                                                   │
-│    - BOS upgrade happens BEFORE the profile switch               │
+│ 4. BOS Upgrade (if required)                                     │
+│    - Handled by bmc-upgrade, outside of Nix functions            │
+│    - Triggers reboot; activation flag left on filesystem         │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │
                                 ▼
@@ -384,8 +394,10 @@ a singular script that calls the individual activation scripts.
 The hooks can be added by any package, inside of `hooks/`
 subdirectory. These hooks are executed in order based on the
 lexicographical order of the filenames. Similarly to the activation
-scripts, they will get paths of the old profile and new profile as an
-environment variable.
+scripts, they will get paths of the new profile as environment
+variable. But they will not get the old profile. The hooks should
+never depend on the currently active profile. Only activation can
+depend on currently active profile.
 
 #### Manifest
 
@@ -413,6 +425,10 @@ since all information necessary to build a new profile is kept. Also
 the upgrades will be performed thanks to them, looking at the packages
 based on the names.
 
+We also need to keep where the package has came from, from what index.
+This helps us decide during update what package to choose if there are
+multiple with the same name.
+
 ```
 {
   "packages": {
@@ -421,10 +437,11 @@ based on the names.
       "cache": "default",
       "store_path": "/nix/store/abc123def456-bmc-2.1.0",
       "min_bos_version": "26.01",
-      "min_bmc_version": "26.01",
+      "min_bmc_version": "1.0.0",
       "category": "core",
       "description": "Main display application for the Deck",
       "installed_by": "system",
+      "installed_from": "braiins_server",
       "pinned": false
     },
     "hashrate-widget": {
@@ -432,10 +449,11 @@ based on the names.
       "cache": "default",
       "store_path": "/nix/store/xyz789ghi012-hashrate-widget-1.2.0",
       "min_bos_version": "25.10",
-      "min_bmc_version": "26.01",
+      "min_bmc_version": "1.0.0",
       "category": "widget",
       "description": "Widget showing current hashrate statistics",
       "installed_by": "user",
+      "installed_from": "braiins_server",
       "pinned": false
     }
   }
@@ -449,10 +467,11 @@ based on the names.
   * `cache` - Cache identifier the package was fetched from
   * `store_path` - Nix store path of the installed package
   * `min_bos_version` - Minimum BOS version required (YY.MM format, e.g., "26.01")
-  * `min_bmc_version` - Minimum BMC core version required (YY.MM format, e.g., "26.01")
+  * `min_bmc_version` - Minimum BMC core version required (semver, e.g., "1.0.0")
   * `category` - Package category (core, widget, etc.)
   * `description` - Human-readable package description
   * `installed_by` - What initiated the installation (e.g., "system", "user")
+  * `installed_from` - What server from servers.json configuration this package is installed from
   * `pinned` - Version pinning strategy ("major", "minor", "patch", or false)
 
 ### Phase 4: BOS Upgrade
@@ -460,9 +479,17 @@ based on the names.
 Packages will have a minimum BOS version requirement. When this requirement is not satisfied, the user has to first upgrade.
 During the upgrade, both BOS and the application parts managed through Nix are upgraded to latest version.
 
+The BOS upgrade is handled entirely outside of the Nix functions
+(`bmc-upgrade`). It triggers a reboot. The new Nix profile is built
+before the BOS upgrade but not yet activated. A flag is written to
+the filesystem to indicate a pending profile activation. After the
+reboot, a boot service detects this flag and runs the profile
+activation (Phase 5).
+
 **Important:**
 
-* BOS upgrade happens BEFORE the profile switch (step 5)
+* BOS upgrade happens BEFORE the profile activation (step 5), but triggers a reboot
+* Profile activation runs after boot via a service that checks the pending activation flag
 * BOS is NOT a Nix dependency — it's checked separately via `min_bos_version`
 
 **User experience:** User selected "Install Miniminer Display v2.1.0" and sees installation progress.
@@ -481,10 +508,12 @@ Then the BMC is (re)started.
 ```
 core/
   activation/
-    bmc-service.json
-    bmc-service
-    bmc-start
-    bmc-start.json
+    exe/
+      bmc-service
+      bmc-start
+    config/
+      bmc-start.json
+      bmc-service.json
 ```
 
 Each activation script has its own json. That specifies relations to other services.
@@ -584,7 +613,7 @@ The custom profile manager:
 ```
 /nix/var/nix/gcroots/profiles/
 ├── bmc/                           # Application profiles
-│   ├── bmc-1/                     # Generation 1 (factory)
+│   ├── bmc-1-link/                # Generation 1 (factory)
 │   │   ├── bin/
 │   │   │   ├── miniminer-display -> /nix/store/xxx-miniminer-display-2.0.0/bin/miniminer-display
 │   │   │   └── widget-runner -> /nix/store/yyy-widgets-1.0.0/bin/widget-runner
@@ -592,9 +621,9 @@ The custom profile manager:
 │   │   │   └── ... -> symlinks to store paths
 │   │   └── share/
 │   │       └── ... -> symlinks to store paths
-│   ├── bmc-2/                     # Generation 2
-│   ├── bmc-3/                     # Generation 3 (current)
-│   └── current -> bmc-3           # Atomic symlink to active generation
+│   ├── bmc-2-link/                # Generation 2
+│   ├── bmc-3-link/                # Generation 3 (current)
+│   └── current -> bmc-3-link      # Atomic symlink to active generation
 ```
 
 ### Installation flow
