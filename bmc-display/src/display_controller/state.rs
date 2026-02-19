@@ -772,6 +772,7 @@ impl DisplayController {
         scene_id: SceneId,
         widget_id: WidgetId,
         state: RemoteImageState,
+        stale_text: String,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -781,37 +782,43 @@ impl DisplayController {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
                 // NOTE: we want to keep previous image displayed on error
-                widgets_ref.modify(&widget_id, |widget| match state {
-                    RemoteImageState::Initial => {
-                        widget.remote_image.state = generated::WidgetRemoteImageState::Initial;
-                        widget.remote_image.image = slint::Image::default();
-                    }
-                    RemoteImageState::ConfigurationError => {
-                        widget.remote_image.state =
-                            generated::WidgetRemoteImageState::ConfigurationError;
-                    }
-                    RemoteImageState::Loading => {
-                        widget.remote_image.state = generated::WidgetRemoteImageState::Loading;
-                    }
-                    RemoteImageState::LoadingSuccess(buffer) => {
-                        widget.remote_image.state =
-                            generated::WidgetRemoteImageState::LoadingSuccess;
+                widgets_ref.modify(&widget_id, |widget| {
+                    match state {
+                        RemoteImageState::Initial => {
+                            widget.remote_image.state = generated::WidgetRemoteImageState::Initial;
+                            widget.remote_image.image = slint::Image::default();
+                        }
+                        RemoteImageState::ConfigurationError => {
+                            widget.remote_image.state =
+                                generated::WidgetRemoteImageState::ConfigurationError;
+                        }
+                        RemoteImageState::Loading => {
+                            widget.remote_image.state = generated::WidgetRemoteImageState::Loading;
+                        }
+                        RemoteImageState::LoadingSuccess(buffer) => {
+                            widget.remote_image.state =
+                                generated::WidgetRemoteImageState::LoadingSuccess;
 
-                        widget.remote_image.image = match buffer {
-                            SharedImageBuffer::RGB8(buffer) => slint::Image::from_rgb8(buffer),
-                            SharedImageBuffer::RGBA8(buffer) => slint::Image::from_rgba8(buffer),
-                            SharedImageBuffer::RGBA8Premultiplied(buffer) => {
-                                slint::Image::from_rgba8_premultiplied(buffer)
-                            }
-                        };
+                            widget.remote_image.image = match buffer {
+                                SharedImageBuffer::RGB8(buffer) => slint::Image::from_rgb8(buffer),
+                                SharedImageBuffer::RGBA8(buffer) => {
+                                    slint::Image::from_rgba8(buffer)
+                                }
+                                SharedImageBuffer::RGBA8Premultiplied(buffer) => {
+                                    slint::Image::from_rgba8_premultiplied(buffer)
+                                }
+                            };
+                        }
+                        RemoteImageState::LoadingError(_) => {
+                            widget.remote_image.state =
+                                generated::WidgetRemoteImageState::LoadingError;
+                        }
+                        RemoteImageState::UnexpectedError => {
+                            widget.remote_image.state =
+                                generated::WidgetRemoteImageState::UnexpectedError;
+                        }
                     }
-                    RemoteImageState::LoadingError(_) => {
-                        widget.remote_image.state = generated::WidgetRemoteImageState::LoadingError;
-                    }
-                    RemoteImageState::UnexpectedError => {
-                        widget.remote_image.state =
-                            generated::WidgetRemoteImageState::UnexpectedError;
-                    }
+                    widget.remote_image.stale_text = SharedString::from(stale_text);
                 });
             }
         });
@@ -822,6 +829,7 @@ impl DisplayController {
         scene_id: SceneId,
         widget_id: WidgetId,
         state: RemoteWidgetState,
+        stale_text: String,
     ) {
         self.in_event_loop(move |main_window| {
             let scenes_ref = main_window.get_scenes();
@@ -831,35 +839,42 @@ impl DisplayController {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
                 // NOTE: we want to keep previous image displayed on error
-                widgets_ref.modify(&widget_id, |widget| match state {
-                    RemoteWidgetState::Initial => {
-                        widget.remote_widget.state = generated::RemoteWidgetState::Initial;
-                        widget.remote_widget.image = slint::Image::default();
-                    }
-                    RemoteWidgetState::ConfigurationError => {
-                        widget.remote_widget.state =
-                            generated::RemoteWidgetState::ConfigurationError;
-                    }
-                    RemoteWidgetState::Loading => {
-                        widget.remote_widget.state = generated::RemoteWidgetState::Loading;
-                    }
-                    RemoteWidgetState::LoadingSuccess(buffer) => {
-                        widget.remote_widget.state = generated::RemoteWidgetState::LoadingSuccess;
+                widgets_ref.modify(&widget_id, |widget| {
+                    match state {
+                        RemoteWidgetState::Initial => {
+                            widget.remote_widget.state = generated::RemoteWidgetState::Initial;
+                            widget.remote_widget.image = slint::Image::default();
+                        }
+                        RemoteWidgetState::ConfigurationError => {
+                            widget.remote_widget.state =
+                                generated::RemoteWidgetState::ConfigurationError;
+                        }
+                        RemoteWidgetState::Loading => {
+                            widget.remote_widget.state = generated::RemoteWidgetState::Loading;
+                        }
+                        RemoteWidgetState::LoadingSuccess(buffer) => {
+                            widget.remote_widget.state =
+                                generated::RemoteWidgetState::LoadingSuccess;
 
-                        widget.remote_widget.image = match buffer {
-                            SharedImageBuffer::RGB8(buffer) => slint::Image::from_rgb8(buffer),
-                            SharedImageBuffer::RGBA8(buffer) => slint::Image::from_rgba8(buffer),
-                            SharedImageBuffer::RGBA8Premultiplied(buffer) => {
-                                slint::Image::from_rgba8_premultiplied(buffer)
-                            }
-                        };
+                            widget.remote_widget.image = match buffer {
+                                SharedImageBuffer::RGB8(buffer) => slint::Image::from_rgb8(buffer),
+                                SharedImageBuffer::RGBA8(buffer) => {
+                                    slint::Image::from_rgba8(buffer)
+                                }
+                                SharedImageBuffer::RGBA8Premultiplied(buffer) => {
+                                    slint::Image::from_rgba8_premultiplied(buffer)
+                                }
+                            };
+                        }
+                        RemoteWidgetState::LoadingError(_) => {
+                            widget.remote_widget.state = generated::RemoteWidgetState::LoadingError;
+                        }
+                        RemoteWidgetState::UnexpectedError => {
+                            widget.remote_widget.state =
+                                generated::RemoteWidgetState::UnexpectedError;
+                        }
                     }
-                    RemoteWidgetState::LoadingError(_) => {
-                        widget.remote_widget.state = generated::RemoteWidgetState::LoadingError;
-                    }
-                    RemoteWidgetState::UnexpectedError => {
-                        widget.remote_widget.state = generated::RemoteWidgetState::UnexpectedError;
-                    }
+                    widget.remote_widget.stale_text = SharedString::from(stale_text);
                 });
             }
         });

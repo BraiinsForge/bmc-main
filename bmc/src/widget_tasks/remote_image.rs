@@ -1,7 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::{Context, Result, bail};
-use backon::{BackoffBuilder, ExponentialBuilder};
 use bmc_display::data::{SceneId, WidgetId, WidgetSize};
 use bmc_display::display_controller::DisplayController;
 use bmc_display::remote_image_data::RemoteImageState;
@@ -14,6 +13,8 @@ use tokio::time::{Instant, MissedTickBehavior, interval};
 use tracing::{Instrument, info, instrument, warn};
 use url::Url;
 
+const INITIAL_LOADING_DELAY: Duration = Duration::from_millis(300);
+
 #[instrument(name = "remote_image", skip_all, fields(%scene_id, %widget_id))]
 pub async fn run(
     display_controller: DisplayController,
@@ -23,14 +24,6 @@ pub async fn run(
     url: String,
     refresh_duration: Duration,
 ) {
-    let error_backoff_builder = ExponentialBuilder::new()
-        .with_min_delay(Duration::from_secs(10))
-        .with_max_delay(Duration::from_secs(60 * 5).min(refresh_duration))
-        .with_factor(2.0)
-        .without_max_times();
-
-    let mut error_backoff = error_backoff_builder.build();
-
     let widget_width = widget_size.width();
     let widget_height = widget_size.height();
 
@@ -40,7 +33,6 @@ pub async fn run(
         widget_height,
         url,
         ?refresh_duration,
-        ?error_backoff,
         "Params"
     );
 
@@ -52,6 +44,7 @@ pub async fn run(
                 scene_id.clone(),
                 widget_id.clone(),
                 RemoteImageState::ConfigurationError,
+                String::new(),
             );
             return;
         }
@@ -78,6 +71,7 @@ pub async fn run(
                 scene_id.clone(),
                 widget_id.clone(),
                 RemoteImageState::UnexpectedError,
+                String::new(),
             );
             return;
         }
@@ -98,11 +92,20 @@ pub async fn run(
     let mut interval = interval(refresh_duration);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-    display_controller.update_remote_image(
-        scene_id.clone(),
-        widget_id.clone(),
-        RemoteImageState::Loading,
-    );
+    let mut last_success: Option<Instant> = None;
+    let mut prev_failed = false;
+
+    // Show "Waiting for initial data" after INITIAL_LOADING_DELAY if the
+    // first load hasn't completed yet.
+    let mut loading_task = Some(tokio::spawn({
+        let dc = display_controller.clone();
+        let sid = scene_id.clone();
+        let wid = widget_id.clone();
+        async move {
+            tokio::time::sleep(INITIAL_LOADING_DELAY).await;
+            dc.update_remote_image(sid, wid, RemoteImageState::Loading, String::new());
+        }
+    }));
 
     loop {
         interval.tick().await;
@@ -124,15 +127,39 @@ pub async fn run(
         if let RemoteImageState::LoadingError(err) = &state {
             warn!(?err);
 
-            if let Some(duration) = error_backoff.next() {
-                interval.reset_after(duration);
-            }
-        } else {
-            // NOTE: backoff does not have `reset` method, so we need to recreate it
-            error_backoff = error_backoff_builder.build();
-        }
+            let retry_secs = refresh_duration.as_secs().clamp(10, 60);
+            interval.reset_after(Duration::from_secs(retry_secs));
 
-        display_controller.update_remote_image(scene_id.clone(), widget_id.clone(), state);
+            let stale_text = if prev_failed {
+                last_success
+                    .map(super::format_stale_text)
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            prev_failed = true;
+
+            display_controller.update_remote_image(
+                scene_id.clone(),
+                widget_id.clone(),
+                state,
+                stale_text,
+            );
+        } else {
+            if let Some(task) = loading_task.take() {
+                task.abort();
+            }
+
+            last_success = Some(Instant::now());
+            prev_failed = false;
+
+            display_controller.update_remote_image(
+                scene_id.clone(),
+                widget_id.clone(),
+                state,
+                String::new(),
+            );
+        }
     }
 }
 
@@ -218,6 +245,7 @@ impl Drop for ResetToInitialStateDropGuard {
             self.scene_id.clone(),
             self.widget_id.clone(),
             RemoteImageState::Initial,
+            String::new(),
         );
     }
 }

@@ -809,14 +809,20 @@ impl From<Widget> for generated::Widget {
             }
             WidgetKind::RemoteImage(_config) => {
                 slint_widget.kind = generated::WidgetKind::RemoteImage;
-                slint_widget.remote_image = generated::WidgetRemoteImageData::default();
+                slint_widget.remote_image = generated::WidgetRemoteImageData {
+                    name: "Remote Image".into(),
+                    ..generated::WidgetRemoteImageData::default()
+                };
             }
             WidgetKind::BlockchainData => {
                 slint_widget.kind = generated::WidgetKind::BlockchainData;
             }
-            WidgetKind::RemoteWidget(_config) => {
+            WidgetKind::RemoteWidget(config) => {
                 slint_widget.kind = generated::WidgetKind::RemoteWidget;
-                slint_widget.remote_widget = generated::RemoteWidgetData::default();
+                slint_widget.remote_widget = generated::RemoteWidgetData {
+                    name: config.name.into(),
+                    ..generated::RemoteWidgetData::default()
+                };
             }
             WidgetKind::HalvingCountdown => {
                 slint_widget.kind = generated::WidgetKind::HalvingCountdown;

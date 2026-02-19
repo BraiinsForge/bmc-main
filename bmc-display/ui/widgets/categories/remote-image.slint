@@ -14,21 +14,34 @@ export enum WidgetRemoteImageState {
 export struct WidgetRemoteImageData {
     image: image,
     state: WidgetRemoteImageState,
+    stale-text: string,
+    name: string,
 }
 
 export component WidgetRemoteImage inherits Rectangle {
     in property <WidgetSize> size;
     in property <WidgetRemoteImageData> data;
 
+    property <bool> has-image: root.data.image.width > 0 && root.data.image.height > 0;
+    property <bool> show-full-overlay:
+        root.data.state == WidgetRemoteImageState.ConfigurationError
+        || root.data.state == WidgetRemoteImageState.UnexpectedError
+        || ((root.data.state == WidgetRemoteImageState.Loading || root.data.state == WidgetRemoteImageState.LoadingError) && !root.has-image);
+
     background: Palette.black;
 
-    if root.data.image.width > 0 && root.data.image.height > 0: Image {
+    // Always render the cached image when available (visible behind
+    // the semi-transparent overlay so content peeks through).
+    if root.has-image: Image {
         width: root.width;
         height: root.height;
         source: root.data.image;
     }
 
-    if root.data.state != WidgetRemoteImageState.Initial && root.data.state != WidgetRemoteImageState.LoadingSuccess: Rectangle {
+    // Full overlay: shown when there is no cached image (initial load)
+    // or on configuration/unexpected errors. Uses 80% opacity so cached
+    // content (if any) still peeks through.
+    if !root.has-image || root.show-full-overlay: Rectangle {
 
         Rectangle {
             background: Palette.black;
@@ -57,34 +70,13 @@ export component WidgetRemoteImage inherits Rectangle {
             }
         }
 
-        if root.data.state == WidgetRemoteImageState.Loading: Text {
+        if root.data.state == WidgetRemoteImageState.Loading || root.data.state == WidgetRemoteImageState.LoadingError: Text {
             color: Palette.white;
             font-size: 20px;
             font-weight: Theme.font.weight.bold;
             horizontal-alignment: center;
-            text: "Loading image";
-        }
-
-        if root.data.state == WidgetRemoteImageState.LoadingError: VerticalLayout {
-            alignment: center;
-            spacing: 8px;
-
-            Text {
-                color: Palette.white;
-                font-size: 20px;
-                font-weight: Theme.font.weight.bold;
-                horizontal-alignment: center;
-                text: "Failed to load image";
-            }
-
-            Text {
-                color: Palette.white;
-                font-size: 16px;
-                font-weight: Theme.font.weight.regular;
-                horizontal-alignment: center;
-                wrap: word-wrap;
-                text: "Please check widget configuration";
-            }
+            wrap: word-wrap;
+            text: "Waiting for initial data (" + root.data.name + ")";
         }
 
         if root.data.state == WidgetRemoteImageState.UnexpectedError: Text {
@@ -93,6 +85,26 @@ export component WidgetRemoteImage inherits Rectangle {
             font-weight: Theme.font.weight.bold;
             horizontal-alignment: center;
             text: "Unexpected error";
+        }
+    }
+
+    if root.data.stale-text != "": Rectangle {
+        x: root.width - self.width - 8px;
+        y: root.height - self.height - 8px;
+        width: stale-text-el.preferred-width + 16px;
+        height: stale-text-el.preferred-height + 8px;
+        border-radius: 4px;
+
+        Rectangle {
+            background: Palette.black;
+            opacity: 70%;
+            border-radius: parent.border-radius;
+        }
+
+        stale-text-el := Text {
+            color: Palette.orange-40;
+            font-size: 12px;
+            text: root.data.stale-text;
         }
     }
 }

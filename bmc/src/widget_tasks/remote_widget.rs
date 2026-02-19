@@ -2,7 +2,6 @@
 
 use crate::config::{ConfigHandle, TemperatureUnit, UnitSystem};
 use anyhow::{Context, Result, bail};
-use backon::{BackoffBuilder, ExponentialBuilder};
 use bmc_display::data::{SceneId, WidgetId, WidgetSize};
 use bmc_display::display_controller::DisplayController;
 use bmc_display::remote_widget_data::RemoteWidgetState;
@@ -16,12 +15,13 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, watch};
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::time::{Instant, MissedTickBehavior, interval};
 use tracing::{Instrument, info, instrument, warn};
 use url::Url;
 
 const INIT_REFRESH_PERIOD: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const INITIAL_LOADING_DELAY: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Serialize)]
 struct InvokeBody {
@@ -46,15 +46,7 @@ pub async fn run(
     system_timezone_receiver: watch::Receiver<Timezone>,
     url: String,
 ) {
-    let error_backoff_builder = ExponentialBuilder::new()
-        .with_min_delay(Duration::from_secs(10))
-        .with_max_delay(Duration::from_secs(5 * 60))
-        .with_factor(2.0)
-        .without_max_times();
-
-    let mut error_backoff = error_backoff_builder.build();
-
-    info!(?widget_size, url, ?error_backoff, "Params");
+    info!(?widget_size, url, "Params");
 
     let base_url = match Url::parse(&url) {
         Ok(url) => url,
@@ -64,6 +56,7 @@ pub async fn run(
                 scene_id.clone(),
                 widget_id.clone(),
                 RemoteWidgetState::ConfigurationError,
+                String::new(),
             );
             return;
         }
@@ -78,6 +71,7 @@ pub async fn run(
                 scene_id.clone(),
                 widget_id.clone(),
                 RemoteWidgetState::UnexpectedError,
+                String::new(),
             );
             return;
         }
@@ -91,6 +85,7 @@ pub async fn run(
                 scene_id.clone(),
                 widget_id.clone(),
                 RemoteWidgetState::UnexpectedError,
+                String::new(),
             );
             return;
         }
@@ -110,6 +105,7 @@ pub async fn run(
                         scene_id.clone(),
                         widget_id.clone(),
                         RemoteWidgetState::UnexpectedError,
+                        String::new(),
                     );
                     None
                 }
@@ -163,11 +159,21 @@ pub async fn run(
     let mut interval = interval(INIT_REFRESH_PERIOD);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-    display_controller.update_remote_widget(
-        scene_id.clone(),
-        widget_id.clone(),
-        RemoteWidgetState::Loading,
-    );
+    let mut last_success: Option<Instant> = None;
+    let mut last_known_refresh_secs: u64 = INIT_REFRESH_PERIOD.as_secs();
+    let mut prev_failed = false;
+
+    // Show "Waiting for initial data" after INITIAL_LOADING_DELAY if the
+    // first load hasn't completed yet.
+    let mut loading_task = Some(tokio::spawn({
+        let dc = display_controller.clone();
+        let sid = scene_id.clone();
+        let wid = widget_id.clone();
+        async move {
+            tokio::time::sleep(INITIAL_LOADING_DELAY).await;
+            dc.update_remote_widget(sid, wid, RemoteWidgetState::Loading, String::new());
+        }
+    }));
 
     loop {
         interval.tick().await;
@@ -185,26 +191,62 @@ pub async fn run(
                 if let RemoteWidgetState::LoadingError(err) = &state {
                     warn!(?err);
 
-                    if let Some(duration) = error_backoff.next() {
-                        interval.reset_after(duration);
-                    }
-                } else {
-                    // NOTE: backoff does not have `reset` method, so we need to recreate it
-                    error_backoff = error_backoff_builder.build();
-                    interval.reset_after(Duration::from_secs(invoke_response.next_trigger_secs));
-                }
+                    let retry_secs = invoke_response.next_trigger_secs.clamp(10, 60);
+                    interval.reset_after(Duration::from_secs(retry_secs));
 
-                display_controller.update_remote_widget(scene_id.clone(), widget_id.clone(), state);
+                    let stale_text = if prev_failed {
+                        last_success
+                            .map(super::format_stale_text)
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    prev_failed = true;
+
+                    display_controller.update_remote_widget(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        state,
+                        stale_text,
+                    );
+                } else {
+                    if let Some(task) = loading_task.take() {
+                        task.abort();
+                    }
+
+                    last_success = Some(Instant::now());
+                    last_known_refresh_secs = invoke_response.next_trigger_secs;
+                    prev_failed = false;
+                    interval.reset_after(Duration::from_secs(invoke_response.next_trigger_secs));
+
+                    display_controller.update_remote_widget(
+                        scene_id.clone(),
+                        widget_id.clone(),
+                        state,
+                        String::new(),
+                    );
+                }
             }
             Err(err) => {
                 warn!(?err);
-                if let Some(duration) = error_backoff.next() {
-                    interval.reset_after(duration);
-                }
+
+                let retry_secs = last_known_refresh_secs.clamp(10, 60);
+                interval.reset_after(Duration::from_secs(retry_secs));
+
+                let stale_text = if prev_failed {
+                    last_success
+                        .map(super::format_stale_text)
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                prev_failed = true;
+
                 display_controller.update_remote_widget(
                     scene_id.clone(),
                     widget_id.clone(),
                     RemoteWidgetState::LoadingError(err),
+                    stale_text,
                 );
             }
         }
@@ -295,6 +337,7 @@ impl Drop for ResetToInitialStateDropGuard {
             self.scene_id.clone(),
             self.widget_id.clone(),
             RemoteWidgetState::Initial,
+            String::new(),
         );
     }
 }

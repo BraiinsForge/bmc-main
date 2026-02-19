@@ -23,7 +23,24 @@ use tokio::spawn;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 use tracing::{Instrument, debug, warn};
+
+/// Format how long ago the last successful refresh was.
+/// Returns a human-readable string like "Last refresh 45s ago".
+fn format_stale_text(last_success: Instant) -> String {
+    let elapsed = chrono::TimeDelta::from_std(last_success.elapsed())
+        .unwrap_or(chrono::TimeDelta::max_value());
+    if elapsed.num_minutes() < 2 {
+        format!("Last refresh {}s ago", elapsed.num_seconds())
+    } else if elapsed.num_hours() < 1 {
+        format!("Last refresh {}m ago", elapsed.num_minutes())
+    } else if elapsed.num_days() < 1 {
+        format!("Last refresh {}h ago", elapsed.num_hours())
+    } else {
+        format!("Last refresh {}d ago", elapsed.num_days())
+    }
+}
 
 const BTC_HISTORY_API_URL: &str = "https://public-api.braiins.com/v1/price-history";
 const DATA_HISTORY_TIMEFRAME_PARAM: &str = "timeframe";
