@@ -404,6 +404,7 @@ component WidgetClockDigitalTemplate inherits Rectangle {
     in property <length> top-padding;
     in property <length> bottom-padding;
     in property <bool> show-year;
+    in property <bool> show-weekday: true;
     in property <bool> show-alarm;
     in property <bool> show-formatted-date: false;
     in property <bool> ampm-inline: false;
@@ -419,9 +420,7 @@ component WidgetClockDigitalTemplate inherits Rectangle {
 
     property <string> date-text: show-formatted-date
         ? datetime.date
-        : (show-year
-            ? (datetime.weekday + " " + datetime.day + " " + datetime.month-name + ", " + datetime.year)
-            : (datetime.weekday + " " + datetime.day + " " + datetime.month-name));
+        : ((show-weekday ? datetime.weekday + " " : "") + datetime.day + " " + datetime.month-name + (show-year ? ", " + datetime.year : ""));
 
     property <string> timezone-text: show-utc-offset
         ? (datetime.timezone + " (" + datetime.utc-offset + ")")
@@ -582,7 +581,7 @@ component WidgetClockDigitalMedium inherits Rectangle {
         ampm-font-size: 24px;
         top-padding: 15px;
         bottom-padding: 15px;
-        show-year: false;
+        show-year: true;
         show-alarm: false;
     }
 }
@@ -597,13 +596,14 @@ component WidgetClockDigitalSmall inherits Rectangle {
     WidgetClockDigitalTemplate {
         config: root.config;
         datetime: root.datetime;
-        show-formatted-date: true;
+        show-formatted-date: false;
         time-font-size: 64px;
         header-font-size: 24px;
         ampm-font-size: 24px;
         top-padding: 20px;
         bottom-padding: 20px;
         show-year: false;
+        show-weekday: false;
         show-alarm: false;
     }
 }
