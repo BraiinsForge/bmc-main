@@ -288,56 +288,56 @@ mod tests {
 
     #[test]
     fn test_dd_mm_yyyy_dot() {
-        let date = NaiveDate::from_ymd_opt(2025, 3, 15).unwrap();
+        let date = NaiveDate::from_ymd_opt(2025, 3, 15).expect("BUG: invalid date");
         let fmt = DateFormat::DdMmYyyyDot;
         assert_eq!(date.format(fmt.format_string()).to_string(), "15.03.2025");
     }
 
     #[test]
     fn test_dd_mm_yyyy_slash() {
-        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).expect("BUG: invalid date");
         let fmt = DateFormat::DdMmYyyySlash;
         assert_eq!(date.format(fmt.format_string()).to_string(), "15/08/2025");
     }
 
     #[test]
     fn test_d_m_yyyy_slash() {
-        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).expect("BUG: invalid date");
         let fmt = DateFormat::DMYyyySlash;
         assert_eq!(date.format(fmt.format_string()).to_string(), "15/8/2025");
     }
 
     #[test]
     fn test_m_d_yyyy_slash() {
-        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).expect("BUG: invalid date");
         let fmt = DateFormat::MDYyyySlash;
         assert_eq!(date.format(fmt.format_string()).to_string(), "8/15/2025");
     }
 
     #[test]
     fn test_dd_mm_yyyy_dash() {
-        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).expect("BUG: invalid date");
         let fmt = DateFormat::DdMmYyyyDash;
         assert_eq!(date.format(fmt.format_string()).to_string(), "15-08-2025");
     }
 
     #[test]
     fn test_yyyy_m_d_slash() {
-        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).expect("BUG: invalid date");
         let fmt = DateFormat::YyyyMDSlash;
         assert_eq!(date.format(fmt.format_string()).to_string(), "2025/8/15");
     }
 
     #[test]
     fn test_yyyy_mm_dd_dot() {
-        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).expect("BUG: invalid date");
         let fmt = DateFormat::YyyyMmDdDot;
         assert_eq!(date.format(fmt.format_string()).to_string(), "2025.08.15");
     }
 
     #[test]
     fn test_yyyy_mm_dd_dash() {
-        let date = NaiveDate::from_ymd_opt(2025, 8, 15).unwrap();
+        let date = NaiveDate::from_ymd_opt(2025, 8, 15).expect("BUG: invalid date");
         let fmt = DateFormat::YyyyMmDdDash;
         assert_eq!(date.format(fmt.format_string()).to_string(), "2025-08-15");
     }
