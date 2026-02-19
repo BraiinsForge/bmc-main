@@ -56,4 +56,20 @@ impl<T: DisplayBacklightDriver> DisplayBacklightController<T> {
 
         Ok(())
     }
+
+    pub(crate) async fn is_on(&self) -> anyhow::Result<bool> {
+        self.backlight_driver.lock().await.state()
+    }
+
+    pub(crate) async fn turn_on(&self) -> anyhow::Result<()> {
+        self.backlight_driver.lock().await.turn_on()?;
+        info!("Display backlight turned on");
+        Ok(())
+    }
+
+    pub(crate) async fn turn_off(&self) -> anyhow::Result<()> {
+        self.backlight_driver.lock().await.turn_off()?;
+        info!("Display backlight turned off");
+        Ok(())
+    }
 }

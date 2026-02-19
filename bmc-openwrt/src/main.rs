@@ -24,6 +24,7 @@ use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;
 use slint::platform::software_renderer::RenderingRotation;
+use tokio::sync::Notify;
 use tracing::{error, info};
 
 /// Realtek WiFi adapter vendor ID
@@ -55,7 +56,8 @@ async fn main() -> Result<()> {
     let resolution = ResolutionMetadata::new(1280, 480);
     let display_metadata = DisplayMetadata::new(brightness, resolution);
 
-    let display_controller = get_display_controller(display_metadata)?;
+    let touch_activity = Arc::new(Notify::new());
+    let display_controller = get_display_controller(display_metadata, touch_activity.clone())?;
 
     let display_driver = DisplayDriver::init(backlight_driver, display_controller)?;
 
@@ -111,18 +113,22 @@ async fn main() -> Result<()> {
         led_driver.0,
         firmware_resolver,
         Arc::new(Box::new(UEventButtons)),
+        touch_activity,
     )
     .await?;
 
     Ok(())
 }
 
-fn get_display_controller(display_metadata: DisplayMetadata) -> Result<DisplayController> {
+fn get_display_controller(
+    display_metadata: DisplayMetadata,
+    touch_activity: Arc<Notify>,
+) -> Result<DisplayController> {
     let (ui_handle_sender, ui_handle_receiver) = flume::unbounded();
 
     // Spawn a thread to initiaize linux platform
     std::thread::spawn(move || {
-        if let Err(e) = run_slint_platform(&display_metadata, &ui_handle_sender) {
+        if let Err(e) = run_slint_platform(&display_metadata, &ui_handle_sender, touch_activity) {
             error!("{:#}", e);
         }
     });
@@ -136,6 +142,7 @@ fn get_display_controller(display_metadata: DisplayMetadata) -> Result<DisplayCo
 fn run_slint_platform(
     display_metadata: &DisplayMetadata,
     ui_handle_sender: &flume::Sender<DisplayController>,
+    touch_activity: Arc<Notify>,
 ) -> Result<()> {
     info!("Setting up slint platform for linux framebuffer display");
     slint::platform::set_platform(Box::new(
@@ -143,6 +150,7 @@ fn run_slint_platform(
             display_metadata.resolution.height as usize,
             display_metadata.resolution.width as usize,
             RenderingRotation::Rotate270,
+            touch_activity,
         )
         .context("Cannot create platform")?,
     ))

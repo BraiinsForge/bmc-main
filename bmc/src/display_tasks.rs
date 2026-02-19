@@ -167,6 +167,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         tokio::spawn(Self::run_alarm_event_listener(
             display_controller.clone(),
             alarm_bus.subscribe_events(),
+            system_manager.clone(),
         ));
 
         // NOTE: Propagate brightness events from Slint to system manager
@@ -195,6 +196,12 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
 
         // NOTE: Watch night mode state changes and update UI
         tokio::spawn(Self::run_night_mode_state_watcher(
+            display_controller.clone(),
+            system_manager.clone(),
+        ));
+
+        // NOTE: Propagate touch-to-wake events from Slint to system manager
+        tokio::spawn(Self::run_screen_activity_listener(
             display_controller.clone(),
             system_manager.clone(),
         ));
@@ -787,8 +794,10 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
     async fn run_alarm_event_listener(
         display_controller: DisplayController,
         mut events_rx: broadcast::Receiver<AlarmEvent>,
+        system_manager: SystemManager<U>,
     ) {
         while let Ok(event) = events_rx.recv().await {
+            system_manager.notify_screen_activity();
             match event {
                 AlarmEvent::Stopped { .. } | AlarmEvent::Snoozed => {
                     display_controller.set_clock_alarm_screen(false);
@@ -821,6 +830,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         let mut brightness_receiver = display_controller.on_brightness_events();
         while let Some(event) = brightness_receiver.next().await {
             debug!("Brightness event received [{:?}]", event);
+            system_manager.notify_screen_activity();
 
             let night_mode_is_active = system_manager.is_night_mode_active();
             let display_settings = system_manager.display_settings().await;
@@ -868,6 +878,7 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         let mut sound_receiver = display_controller.on_sound_events();
         while let Some(event) = sound_receiver.next().await {
             debug!("Sound event received [{:?}]", event);
+            system_manager.notify_screen_activity();
 
             let night_mode_is_active = system_manager.is_night_mode_active();
             let sound_settings = system_manager.sound_settings().await;
@@ -955,9 +966,21 @@ impl<T: BmcManager, U: DisplayBacklightDriver> DisplayTasks<T, U> {
         let mut toggle_receiver = display_controller.on_night_mode_toggle_events();
         while toggle_receiver.next().await.is_some() {
             debug!("Night mode toggle event received");
+            system_manager.notify_screen_activity();
             if let Err(e) = system_manager.toggle_night_mode().await {
                 error!("Failed to toggle night mode: {:?}", e);
             }
+        }
+    }
+
+    async fn run_screen_activity_listener(
+        display_controller: DisplayController,
+        system_manager: SystemManager<U>,
+    ) {
+        let mut activity_receiver = display_controller.on_screen_activity_events();
+        while activity_receiver.next().await.is_some() {
+            debug!("Screen activity touch event received");
+            system_manager.notify_screen_activity();
         }
     }
 

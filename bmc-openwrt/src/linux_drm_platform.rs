@@ -14,6 +14,8 @@ use slint::platform::{EventLoopProxy, Platform, software_renderer::MinimalSoftwa
 use slint::platform::{PointerEventButton, WindowEvent};
 use std::iter;
 use std::rc::Rc;
+use std::sync::Arc;
+use tokio::sync::Notify;
 use tracing::{info, trace};
 
 const PIXEL_FORMAT: DrmFourcc = DrmFourcc::Rgb565;
@@ -57,6 +59,7 @@ pub struct LinuxDrmPlatform {
     rotation: RenderingRotation,
     proxy: Box<Proxy>,
     event_receiver: flume::Receiver<ProxyEvent>,
+    touch_activity: Arc<Notify>,
 }
 
 impl Platform for LinuxDrmPlatform {
@@ -316,6 +319,9 @@ impl Platform for LinuxDrmPlatform {
                         }
                         EventSummary::Key(_, KeyCode::BTN_TOUCH, value) => {
                             pressed = value == 1;
+                            if pressed {
+                                self.touch_activity.notify_waiters();
+                            }
                         }
                         EventSummary::Synchronization(_, SynchronizationCode::SYN_REPORT, _) => {
                             let logical_pos = LogicalPosition::new(pos.0, pos.1);
@@ -397,7 +403,12 @@ impl Platform for LinuxDrmPlatform {
 }
 
 impl LinuxDrmPlatform {
-    pub fn new(width: usize, height: usize, rotation: RenderingRotation) -> Result<Self> {
+    pub fn new(
+        width: usize,
+        height: usize,
+        rotation: RenderingRotation,
+        touch_activity: Arc<Notify>,
+    ) -> Result<Self> {
         info!("Creating linux framebuffer platform");
         let window = MinimalSoftwareWindow::new(
             slint::platform::software_renderer::RepaintBufferType::NewBuffer,
@@ -412,6 +423,7 @@ impl LinuxDrmPlatform {
             rotation,
             proxy: Box::new(Proxy::new(event_sender)),
             event_receiver,
+            touch_activity,
         })
     }
 }

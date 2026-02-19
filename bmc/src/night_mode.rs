@@ -208,6 +208,19 @@ impl NightModeController {
         Ok(())
     }
 
+    pub(crate) async fn set_screen_off_timeout(&self, timeout: Option<u32>) -> anyhow::Result<()> {
+        let mut config_handle = self.config_handle.write().await;
+        config_handle.set_night_mode_screen_off_timeout(timeout);
+        config_handle.save().await?;
+
+        info!(
+            timeout_secs = ?timeout,
+            "Night mode screen off timeout updated"
+        );
+
+        Ok(())
+    }
+
     pub(crate) async fn toggle(&self) -> anyhow::Result<()> {
         let config = self.config().await;
         let is_currently_active = self.calculate_is_active().await;

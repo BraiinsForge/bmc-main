@@ -17,7 +17,7 @@ import { SceneCycler, SceneCyclingAdapter } from "controls/scene-cycler.slint";
 import { ScenePreview } from "controls/scene-preview.slint";
 import { Notification } from "components/notification.slint";
 import { Images } from "style/images.slint";
-import { WifiAdapter, ConnectionAdapter, AlarmAdapter, BrightnessAdapter, SoundAdapter, NightModeAdapter, WifiReconfigAdapter, CountdownAdapter } from "controls/adapters.slint";
+import { WifiAdapter, ConnectionAdapter, AlarmAdapter, BrightnessAdapter, SoundAdapter, NightModeAdapter, WifiReconfigAdapter, CountdownAdapter, ScreenActivityAdapter } from "controls/adapters.slint";
 import { StatusOverlay } from "controls/status-overlay.slint";
 import { TopRollette } from "components/top-rollette.slint";
 import { BottomRollette } from "components/bottom-rollette.slint";
@@ -29,7 +29,7 @@ export { WidgetSize, WidgetKind, Widget, RemoteWidgetState }
 export { BraiinsPoolStyle, PoolChartDimensions, PoolWorkerStatus, BraiinsPoolPayouts, PoolPayoutType }
 export { BlockchainDataChartDimensions }
 export { Palette, BaseDimensions }
-export { WifiAdapter, ConnectionAdapter, AlarmAdapter, BrightnessAdapter, SoundAdapter, NightModeAdapter, WifiReconfigAdapter, CountdownAdapter }
+export { WifiAdapter, ConnectionAdapter, AlarmAdapter, BrightnessAdapter, SoundAdapter, NightModeAdapter, WifiReconfigAdapter, CountdownAdapter, ScreenActivityAdapter }
 
 export component MainWindow inherits Window {
     default-font-family: "Braiins Sans";
@@ -38,6 +38,7 @@ export component MainWindow inherits Window {
     height: 480px;
 
     in property <bool> night-mode-enabled;
+    in property <bool> screen-backlight-off: false;
     in property <DateTime> system-datetime;
 
     callback restart();
@@ -133,6 +134,19 @@ export component MainWindow inherits Window {
         if ScreenAdapter.init == InitScreen.SetupSuccess: InitSetupSuccess { }
         if ScreenAdapter.init == InitScreen.GeneralError: InitGeneralError { }
         if ScreenAdapter.init == InitScreen.DeviceSetupQr: InitDeviceSetupQr { }
+    }
+
+    // Touch overlay for screen wake: captures all touches when backlight is off.
+    // NOTE: Ideally this would be always-on to reset the auto-off timer on any
+    // touch, but Slint TouchAreas consume events and block propagation to
+    // components below. When the screen is on, activity detection relies on
+    // component-level event handlers instead.
+    if root.screen-backlight-off: Rectangle {
+        z: 10;
+        background: black;
+        TouchArea {
+            clicked => { ScreenActivityAdapter.any_touch(); }
+        }
     }
 
     // TODO: remove after proper solution for `BOS-3392` is implemented (this is only workaround)

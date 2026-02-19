@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
                 led_driver.0,
                 firmware_resolver,
                 build_buttons(), // Create dummy buttons
+                Arc::new(tokio::sync::Notify::new()),
             )
             .await;
             display_controller.quit();

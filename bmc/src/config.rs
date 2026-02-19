@@ -31,6 +31,7 @@ struct ConfigNotify {
     night_mode_schedule: broadcast::Sender<()>,
     led_settings: broadcast::Sender<()>,
     brightness_settings: broadcast::Sender<()>,
+    screen_off_timeout: broadcast::Sender<Option<u32>>,
 }
 
 impl ConfigNotify {
@@ -39,16 +40,22 @@ impl ConfigNotify {
         let (tx_night_mode_schedule, _rx) = broadcast::channel(CHANNEL_CAPACITY);
         let (tx_led_settings, _rx) = broadcast::channel(CHANNEL_CAPACITY);
         let (tx_brightness_settings, _rx) = broadcast::channel(CHANNEL_CAPACITY);
+        let (tx_screen_off_timeout, _rx) = broadcast::channel(CHANNEL_CAPACITY);
         Self {
             localization: tx_localization,
             night_mode_schedule: tx_night_mode_schedule,
             led_settings: tx_led_settings,
             brightness_settings: tx_brightness_settings,
+            screen_off_timeout: tx_screen_off_timeout,
         }
     }
 
     fn subscribe_localization_change(&self) -> broadcast::Receiver<LocalizationConfig> {
         self.localization.subscribe()
+    }
+
+    fn subscribe_screen_off_timeout_change(&self) -> broadcast::Receiver<Option<u32>> {
+        self.screen_off_timeout.subscribe()
     }
 
     fn localization_changed(&self, config: LocalizationConfig) {
@@ -79,6 +86,12 @@ impl ConfigNotify {
 
     fn brightness_settings_changed(&self) {
         let _ = self.brightness_settings.send(());
+    }
+
+    fn screen_off_timeout_changed(&self, timeout: Option<u32>) {
+        if let Err(err) = self.screen_off_timeout.send(timeout) {
+            warn!(error = %err, "Failed to send screen off timeout changed notification");
+        }
     }
 }
 
@@ -378,6 +391,7 @@ pub struct ConfigHandle {
     night_mode_schedule_dirty: bool,
     led_settings_dirty: bool,
     brightness_settings_dirty: bool,
+    screen_off_timeout_dirty: bool,
     default_brightness_pct: u8,
     default_night_mode_brightness_pct: u8,
     default_sound_volume_pct: u8,
@@ -427,6 +441,7 @@ impl ConfigHandle {
             night_mode_schedule_dirty: false,
             led_settings_dirty: false,
             brightness_settings_dirty: false,
+            screen_off_timeout_dirty: false,
             default_brightness_pct,
             default_night_mode_brightness_pct,
             default_sound_volume_pct,
@@ -450,6 +465,10 @@ impl ConfigHandle {
         self.config_notify.subscribe_brightness_settings_change()
     }
 
+    pub fn subscribe_screen_off_timeout_change(&self) -> broadcast::Receiver<Option<u32>> {
+        self.config_notify.subscribe_screen_off_timeout_change()
+    }
+
     pub async fn save(&mut self) -> Result<()> {
         self.config.save(&self.path).await?;
 
@@ -470,6 +489,11 @@ impl ConfigHandle {
         if self.brightness_settings_dirty {
             self.config_notify.brightness_settings_changed();
             self.brightness_settings_dirty = false;
+        }
+        if self.screen_off_timeout_dirty {
+            let timeout = self.night_mode().screen_off_timeout_secs;
+            self.config_notify.screen_off_timeout_changed(timeout);
+            self.screen_off_timeout_dirty = false;
         }
 
         Ok(())
@@ -538,6 +562,13 @@ impl ConfigHandle {
     pub fn set_led_enabled(&mut self, led_enabled: bool) {
         self.config.set_led_enabled(led_enabled);
         self.led_settings_dirty = true;
+    }
+
+    pub fn set_night_mode_screen_off_timeout(&mut self, timeout: Option<u32>) {
+        self.night_mode
+            .get_or_insert_default()
+            .screen_off_timeout_secs = timeout;
+        self.screen_off_timeout_dirty = true;
     }
 
     pub fn set_sound_volume(&mut self, sound_volume_pct: u8) {
@@ -617,6 +648,8 @@ struct NightModeConfigData {
     sound_volume_pct: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     led_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    screen_off_timeout_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -627,6 +660,7 @@ pub struct NightModeConfig {
     pub brightness_pct: u8,
     pub sound_volume_pct: u8,
     pub led_enabled: bool,
+    pub screen_off_timeout_secs: Option<u32>,
 }
 
 impl NightModeConfig {
@@ -668,6 +702,7 @@ impl NightModeConfigData {
             brightness_pct: self.brightness_pct.unwrap_or(default_brightness),
             sound_volume_pct: self.sound_volume_pct.unwrap_or(default_sound_volume),
             led_enabled: self.led_enabled.unwrap_or(true),
+            screen_off_timeout_secs: self.screen_off_timeout_secs,
         }
     }
 }
@@ -681,6 +716,7 @@ impl Default for NightModeConfigData {
             brightness_pct: None,
             sound_volume_pct: None,
             led_enabled: None,
+            screen_off_timeout_secs: None,
         }
     }
 }

@@ -18,6 +18,7 @@ message DisplaySettingsResponse {
   BrightnessInfo brightness_nightmode = 2;
   bool nightmode_enabled = 3;
   TimeInterval nightmode_interval = 4;
+  google.protobuf.UInt32Value nightmode_screen_off_timeout_secs = 5;
 }
 
 message TimeInterval {
@@ -114,4 +115,5 @@ service ConfigurationService {
   rpc SetLedEnabledNightmode(google.protobuf.BoolValue) returns (google.protobuf.Empty);
   rpc GetBootSoundSettings(google.protobuf.Empty) returns (BootSoundSettingsResponse);
   rpc SetBootSoundEnabled(google.protobuf.BoolValue) returns (google.protobuf.Empty);
+  rpc SetNightmodeScreenOffTimeout(google.protobuf.UInt32Value) returns (google.protobuf.Empty);
 }

@@ -1027,6 +1027,12 @@ impl DisplayController {
         });
     }
 
+    pub fn set_screen_backlight_off(&self, off: bool) {
+        self.in_event_loop(move |main_window| {
+            main_window.set_screen_backlight_off(off);
+        });
+    }
+
     pub fn set_night_mode_ui_state(&self, is_active: bool, status_text: String) {
         self.in_event_loop(move |main_window: generated::MainWindow| {
             let night_mode_adapter = generated::NightModeAdapter::get(&main_window);

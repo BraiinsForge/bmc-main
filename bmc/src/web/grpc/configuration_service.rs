@@ -87,6 +87,9 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
                 from: naive_time_to_hhmm(display_settings.night_mode_config.from),
                 to: naive_time_to_hhmm(display_settings.night_mode_config.to),
             }),
+            nightmode_screen_off_timeout_secs: display_settings
+                .night_mode_config
+                .screen_off_timeout_secs,
         }))
     }
 
@@ -539,6 +542,25 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         })?;
 
         Ok(tonic::Response::new(()))
+    }
+
+    async fn set_nightmode_screen_off_timeout(
+        &self,
+        request: Request<u32>,
+    ) -> Result<Response<()>, Status> {
+        let value = request.into_inner();
+
+        let timeout = if value == 0 { None } else { Some(value) };
+
+        self.system_manager
+            .set_night_mode_screen_off_timeout(timeout)
+            .await
+            .map_err(|e| {
+                error!("Failed to set night mode screen off timeout, error: {e}");
+                Status::internal("Failed to set night mode screen off timeout")
+            })?;
+
+        Ok(Response::new(()))
     }
 }
 

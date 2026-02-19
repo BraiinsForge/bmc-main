@@ -199,6 +199,21 @@ impl DisplayController {
     }
 
     #[must_use]
+    pub fn on_screen_activity_events(&self) -> UnboundedReceiverStream<()> {
+        let (tx, rx) = unbounded_channel();
+
+        self.in_event_loop(move |main_window| {
+            let adapter = main_window.global::<generated::ScreenActivityAdapter<'_>>();
+
+            adapter.on_any_touch(move || {
+                debug!("Screen activity touch detected!");
+                _ = tx.send(());
+            });
+        });
+        UnboundedReceiverStream::new(rx)
+    }
+
+    #[must_use]
     pub fn on_wifi_reconfig_restart_events(&self) -> UnboundedReceiverStream<()> {
         let (tx, rx) = unbounded_channel();
 

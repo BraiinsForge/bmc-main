@@ -59,7 +59,7 @@ where
     U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
-    #[expect(clippy::too_many_lines)]
+    #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
     pub async fn init(
         config: Configuration,
         manager: Arc<T>,
@@ -68,6 +68,7 @@ where
         led_driver: LedDriver,
         firmware_resolver: FirmwareResolver<V>,
         buttons: Arc<Box<dyn Buttons + Send + Sync>>,
+        screen_activity: Arc<tokio::sync::Notify>,
     ) -> Result<Self> {
         let listener = TcpListener::bind(config.address).await?;
 
@@ -165,6 +166,7 @@ where
             sound_controller.clone(),
             led_state_sender.clone(),
             manager.clone(),
+            screen_activity,
         )
         .await;
 
