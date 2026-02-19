@@ -7,13 +7,14 @@ Usage:
 
 Downloads equirectangular earth textures from public sources.
 Skips textures that are already downloaded unless --force is given.
+See _textures.__doc__ for the UV mapping contract.
 """
 
 import argparse
 import subprocess
 from pathlib import Path
 
-from _textures import TEXTURE_DIR, TEXTURES
+from _textures import TARGET_H, TARGET_W, TEXTURE_DIR, TEXTURES, print_texture_contract
 
 
 def main() -> None:
@@ -22,6 +23,7 @@ def main() -> None:
     args = parser.parse_args()
 
     TEXTURE_DIR.mkdir(exist_ok=True)
+    print_texture_contract((TARGET_W, TARGET_H))
 
     for tex in TEXTURES:
         if not tex['url']:

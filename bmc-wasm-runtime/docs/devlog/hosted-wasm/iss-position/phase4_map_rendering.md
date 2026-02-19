@@ -103,7 +103,7 @@ fn eci_to_geodetic(pos: &[f64; 3], gmst: f64) -> (f64, f64) {
 
 **Mercator projection (geo → pixel):**
 
-```rust
+```
 fn geo_to_pixel(lat, lon, center_lat, center_lon, w, h) -> (f32, f32) {
     let scale = 512.0;  // full world at zoom 1 in CSS pixels
     let world_x = |lon| (lon + 180.0) / 360.0 * scale;
@@ -138,9 +138,9 @@ const ISS_ICON: Icon = include_icon!("assets/icon-iss.svg");
 
 At canvas center (280, 240):
 
-1. `circle(cx, cy, 40.0, 0x1243_CD33)` — outer glow (20% opacity)
-2. `circle(cx, cy, 24.0, 0x1243_CDFF)` — solid circle
-3. `icon(cx - 28, cy - 28, 56, 56, &ISS_ICON, WHITE)` — ISS shape
+1. `Draw::circle(cx, cy, 40.0, 0x1243_CD33)` — outer glow (20% opacity)
+2. `Draw::circle(cx, cy, 24.0, 0x1243_CDFF)` — solid circle
+3. `Draw::icon(cx - 28, cy - 28, 56, 56, &ISS_ICON, WHITE)` — ISS shape
 
 ### Files modified
 

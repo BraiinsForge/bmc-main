@@ -5,15 +5,16 @@
 Usage:
     uv run texture_render.py [--output DIR]
 
-Generates 2048x1024 equirectangular JPEG textures using Natural Earth vector
-data (coastlines, borders, country labels) in multiple dark themes.
+Generates equirectangular JPEG textures using Natural Earth vector data
+(coastlines, borders, country labels) in multiple dark themes.
+Resolution configured in _textures.py. See _textures.__doc__ for the UV contract.
 """
 
 import argparse
 from pathlib import Path
 from typing import TypedDict
 
-from _textures import RENDER_H, RENDER_W, TEXTURE_DIR
+from _textures import RENDER_H, RENDER_W, TEXTURE_DIR, print_texture_contract
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -64,6 +65,20 @@ THEMES: list[Theme] = [
 
 FONT_SIZE = 6.5
 MIN_LABEL_AREA = 25.0
+
+# Countries to skip labeling (too small / overlaps with neighbors).
+SKIP_LABELS: set[str] = {
+    'Somaliland',  # overlaps Somalia / Ethiopia
+    'N. Cyprus',  # overlaps Turkey
+    'Kosovo',  # overlaps Serbia
+}
+
+# Manual centroid overrides (name → (lon, lat)) to fix edge-clips and overlaps.
+LABEL_OVERRIDES: dict[str, tuple[float, float]] = {
+    'New Zealand': (170.0, -42.0),  # shift west — default centroid clips at ±180° edge
+    'Nigeria': (8.0, 8.5),  # nudge south to avoid Niger overlap
+    'Dem. Rep. Congo': (24.0, -3.5),  # nudge to avoid overlap with neighbors
+}
 
 
 def render_texture(theme: Theme, width: int, height: int, output: Path) -> None:
@@ -135,13 +150,20 @@ def _add_country_labels(
         name = record.attributes.get('NAME', '')
         geom = record.geometry
 
-        if geom.area < MIN_LABEL_AREA:
+        # Skip tiny countries and known overlap / clip offenders
+        if geom.area < MIN_LABEL_AREA or name in SKIP_LABELS:
             continue
 
-        centroid = geom.centroid
+        # Use manual position if the auto centroid clips or overlaps
+        if name in LABEL_OVERRIDES:
+            lx, ly = LABEL_OVERRIDES[name]
+        else:
+            centroid = geom.centroid
+            lx, ly = centroid.x, centroid.y
+
         ax.text(
-            centroid.x,
-            centroid.y,
+            lx,
+            ly,
             name,
             transform=ccrs.PlateCarree(),
             fontsize=font_size,
@@ -168,6 +190,7 @@ def main() -> None:
     args = parser.parse_args()
     args.output.mkdir(exist_ok=True)
 
+    print_texture_contract((RENDER_W, RENDER_H))
     print('Rendering Natural Earth dark textures...')
     print('  Fetching Natural Earth data (cached after first run)...')
 

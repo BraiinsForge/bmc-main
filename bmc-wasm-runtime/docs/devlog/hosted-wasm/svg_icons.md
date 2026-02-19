@@ -26,14 +26,14 @@ const ARROW: Icon = include_icon!("assets/arrow-right.svg");
 
 // Usage in canvas draw commands — works with all transforms and animations
 canvas(props!(width: 48.0, height: 48.0), [
-    icon(8.0, 8.0, 32.0, 32.0, &SETTINGS, GRAY_10),
-    icon(8.0, 8.0, 24.0, 24.0, &ARROW, RED_50)
+    Draw::icon(8.0, 8.0, 32.0, 32.0, &SETTINGS, GRAY_10),
+    Draw::icon(8.0, 8.0, 24.0, 24.0, &ARROW, RED_50)
         .animate(Alpha, 0.0, 1.0, 1_000, EaseInOut, PingPong),
 ])
 ```
 
-Behind the scenes: `icon()` lazily calls `host_register_icon()` on first use, caches the returned ID in a thread-local
-registry, and emits `Draw::Icon { icon_id, ... }`.
+Behind the scenes: `Draw::icon()` lazily calls `host_register_icon()` on first use, caches the returned ID in a
+thread-local registry, and emits `Draw::Icon { icon_id, ... }`.
 
 ## Architecture
 
@@ -120,7 +120,7 @@ No per-frame data transfer.
 ## Registration flow
 
 1. `include_icon!("star.svg")` compiles SVG → `Icon { data: &'static [u8] }` at build time
-2. First call to `icon(x, y, w, h, &STAR, color)`:
+2. First call to `Draw::icon(x, y, w, h, &STAR, color)`:
    - Checks thread-local `Vec<(usize, u16)>` for `data.as_ptr()`
    - Not found → calls `host_register_icon(data.as_ptr(), data.len()) → icon_id`
    - Stores `(ptr_as_usize, icon_id)` in registry

@@ -66,8 +66,8 @@ Generic 3D sphere draw command, not earth-specific. Any equirectangular texture 
 | File                    | Change                                                               |
 | ----------------------- | -------------------------------------------------------------------- |
 | `protocol/src/nodes.rs` | `DRAW_SPHERE = 0x45`                                                 |
-| `sdk/src/tree.rs`       | `Draw::Sphere`, `make_sphere()`, `sphere!` macro, serialize          |
-| `sdk/src/lib.rs`        | Export `make_sphere`                                                 |
+| `sdk/src/tree.rs`       | `Draw::Sphere`, `Draw::sphere()`, `sphere!` macro, serialize         |
+| `sdk/src/lib.rs`        | Export `Draw` (constructors are associated methods)                  |
 | `src/tree.rs`           | `DrawCommand::Sphere`, decode, layout bounds, render dispatch        |
 | `src/renderer.rs`       | `draw_sphere()` on `Renderer` trait                                  |
 | `src/gpu/renderer.rs`   | `FemtoVgRenderer::draw_sphere()` with lazy init + NaN light handling |
@@ -191,8 +191,8 @@ draw_sphere() called
 | `examples/iss-position/textures/*.jpg`       | A     | Equirectangular earth textures                       |
 | `examples/iss-position/Makefile`             | A     | Texture tooling targets                              |
 | `protocol/src/nodes.rs`                      | B     | `DRAW_SPHERE = 0x45`                                 |
-| `sdk/src/tree.rs`                            | B     | `Draw::Sphere`, `make_sphere()`, `sphere!` macro     |
-| `sdk/src/lib.rs`                             | B     | Export `make_sphere`                                 |
+| `sdk/src/tree.rs`                            | B     | `Draw::Sphere`, `Draw::sphere()`, `sphere!` macro    |
+| `sdk/src/lib.rs`                             | B     | Export `Draw` (constructors are associated methods)  |
 | `src/tree.rs`                                | B+D   | `DrawCommand::Sphere`, decode, transitions, override |
 | `src/renderer.rs`                            | B     | `draw_sphere()` trait method                         |
 | `src/gpu/sphere.rs`                          | C     | `SphereRenderer` — GL shader + FBO                   |

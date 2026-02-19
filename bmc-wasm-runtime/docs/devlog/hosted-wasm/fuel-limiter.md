@@ -76,7 +76,7 @@ Files:
 - `src/lib.rs` — widget with mode toggle via button clicks:
   - **Mode 0 (Normal):** Simple render, well within budget — baseline
   - **Mode 1 (CPU burn):** Tight computation loop (busy math in a `for` loop) that exceeds fuel
-  - **Mode 2 (Draw spam):** Thousands of `rect()` draw calls in a canvas that exhaust fuel
+  - **Mode 2 (Draw spam):** Thousands of `Draw::rect()` calls in a canvas that exhaust fuel
   - Display current mode name + button to cycle modes
   - Each frame shows fuel mode label so the testbed user knows what's active
 

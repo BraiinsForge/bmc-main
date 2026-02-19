@@ -10,7 +10,6 @@ Run texture_download.py first to fetch the textures.
 """
 
 import argparse
-import functools
 import http.server
 import json
 import threading
@@ -18,10 +17,10 @@ import webbrowser
 
 from _textures import TARGET_H, TARGET_W, TEXTURE_DIR, TEXTURES
 
-VIEWER_HTML: str = str(TEXTURE_DIR / 'viewer.html')
+VIEWER_PATH = '/viewer.html'
 
 
-def generate_viewer() -> None:
+def generate_viewer() -> str:
     texture_meta: str = json.dumps(
         [
             {
@@ -360,7 +359,28 @@ loadTexture();
 </body>
 </html>
 """
-    (TEXTURE_DIR / 'viewer.html').write_text(html)
+    return html
+
+
+def _make_handler(viewer_html: bytes):
+    """Create a request handler that serves viewer.html from memory."""
+    texture_dir = str(TEXTURE_DIR)
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=texture_dir, **kwargs)
+
+        def do_GET(self):
+            if self.path in (VIEWER_PATH, '/'):
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(viewer_html)))
+                self.end_headers()
+                self.wfile.write(viewer_html)
+            else:
+                super().do_GET()
+
+    return Handler
 
 
 def main() -> None:
@@ -376,13 +396,11 @@ def main() -> None:
         print('No textures found. Run texture_download.py first.')
         return
 
-    generate_viewer()
-
-    handler = functools.partial(
-        http.server.SimpleHTTPRequestHandler, directory=str(TEXTURE_DIR)
+    viewer_html = generate_viewer().encode()
+    server = http.server.HTTPServer(
+        ('127.0.0.1', args.port), _make_handler(viewer_html)
     )
-    server = http.server.HTTPServer(('127.0.0.1', args.port), handler)
-    url = f'http://127.0.0.1:{args.port}/viewer.html'
+    url = f'http://127.0.0.1:{args.port}{VIEWER_PATH}'
     print(f'Serving at {url}')
     print('Press Ctrl+C to stop.\n')
     threading.Timer(0.5, lambda: webbrowser.open(url)).start()

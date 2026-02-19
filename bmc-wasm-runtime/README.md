@@ -94,4 +94,4 @@ Small) simultaneously in a masonry layout with a performance overlay. Pass extra
 
 - `examples/hello-widget` — Minimal skeleton (default for `make dev`)
 - `examples/spacex-launch` — SpaceX next launch countdown with network fetching and JSON parsing
-- `examples/iss-position` — ISS tracker with live map tile, SGP4 orbital ground track, and day/night terminator overlay
+- `examples/iss-position` — ISS tracker with 3D globe, SGP4 orbital ground track, and day/night terminator overlay

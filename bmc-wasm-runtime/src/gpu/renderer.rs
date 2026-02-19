@@ -20,7 +20,7 @@ use super::icons::IconRegistry;
 use super::sphere::SphereRenderer;
 use super::text::{ParagraphLayoutCache, to_femtovg_color};
 use crate::renderer::Renderer;
-use crate::tree::{SpanData, TextStyle};
+use crate::tree::{SpanData, TextAlign, TextStyle};
 
 // Embed BraiinsSans fonts at compile time.
 const FONT_REGULAR: &[u8] =
@@ -241,6 +241,60 @@ impl Renderer for FemtoVgRenderer {
         self.canvas
             .measure_text(0.0, 0.0, text, &paint)
             .map_or(0.0, |m| m.width())
+    }
+
+    // -- Canvas text --
+
+    fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle) {
+        let font = if style.weight >= 600 {
+            self.font_bold
+        } else {
+            self.font_regular
+        };
+        let size = style.size as f32;
+        let mut paint = Paint::color(to_femtovg_color(style.color));
+        paint.set_font(&[font]);
+        paint.set_font_size(size);
+        paint.set_text_baseline(femtovg::Baseline::Top);
+
+        // Alignment: measure text width and offset x for Center/Right
+        let draw_x = match style.align {
+            TextAlign::Left => x,
+            TextAlign::Center => {
+                let width = self
+                    .canvas
+                    .measure_text(0.0, 0.0, text, &paint)
+                    .map_or(0.0, |m| m.width());
+                x - width / 2.0
+            }
+            TextAlign::Right => {
+                let width = self
+                    .canvas
+                    .measure_text(0.0, 0.0, text, &paint)
+                    .map_or(0.0, |m| m.width());
+                x - width
+            }
+        };
+
+        let _ = self.canvas.fill_text(draw_x, y, text, &paint);
+
+        // Decorations
+        if style.underline || style.strikethrough {
+            let width = self
+                .canvas
+                .measure_text(0.0, 0.0, text, &paint)
+                .map_or(0.0, |m| m.width());
+            let thickness = (size / 14.0).max(1.0);
+
+            if style.underline {
+                let uy = y + size + 1.0;
+                self.fill_rect(draw_x, uy, width, thickness, style.color);
+            }
+            if style.strikethrough {
+                let sy = y + size / 2.0;
+                self.fill_rect(draw_x, sy, width, thickness, style.color);
+            }
+        }
     }
 
     // -- Rich text paragraphs --

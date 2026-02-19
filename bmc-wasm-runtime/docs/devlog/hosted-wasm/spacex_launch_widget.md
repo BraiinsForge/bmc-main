@@ -46,7 +46,7 @@ fn ensure_bitmap_registered(bmp: &Bitmap) -> u16 { ... }
 **Canvas draw command:**
 
 ```
-bitmap(x, y, w, h, &FALCON_9)  // renders at (x,y) scaled to (w,h)
+Draw::bitmap(x, y, w, h, &FALCON_9)  // renders at (x,y) scaled to (w,h)
 ```
 
 ### Host side (runtime)
@@ -68,7 +68,7 @@ per-frame cost. `BitmapRegistry` alongside existing `IconRegistry` in `gpu/`.
 ### Files to modify
 
 - `sdk-macros/src/lib.rs` — `include_bitmap!` proc macro (embed raw PNG bytes)
-- `sdk/src/tree.rs` — `Bitmap` type, `ensure_bitmap_registered()`, `bitmap()` draw fn, serialization
+- `sdk/src/tree.rs` — `Bitmap` type, `ensure_bitmap_registered()`, `Draw::bitmap()`, serialization
 - `sdk/src/host.rs` — `host_register_bitmap` extern + safe wrapper
 - `protocol/src/lib.rs` — `DRAW_BITMAP` constant
 - `src/runtime.rs` — register `host_register_bitmap` host function
@@ -108,12 +108,12 @@ spacex-launch/
 │ Space X   Next Launch                                     ┌────────┐│
 │                                                           │        ││
 │ Starlink Group 7-3                                        │ Rocket ││
-│ Mission name                                              │  PNG   ││
-│                                                           │(star-  ││
-│ Scheduled    30d 02h 14m 32s    Landing    Not confirmed  │ field  ││
-│ Status       Upcoming           Booster    12× flown      │  bg)   ││
+│ Mission name                                              │ PNG    ││
+│                                                           │        ││
+│ Scheduled    30d 02h 14m 32s    Landing    Not confirmed  │        ││
+│ Status       Upcoming           Booster    12× flown      │        ││
 │ Rocket       Falcon 9           Payload    Starlink       │        ││
-│ Place        Cape Canaveral…    Spacecraft Dragon         │        ││
+│ Place        Cape Canaveral…    Spacecraft Dragon         └────────┘│
 └─────────────────────────────────────────────────────────────────────┘
 ```
 

@@ -9,10 +9,10 @@ and custom vector drawing. The ISS widget exercises a significantly broader API 
 
 | Capability          | SpaceX widget          | ISS widget                                            |
 | ------------------- | ---------------------- | ----------------------------------------------------- |
-| Network fetching    | Yes (one API)          | Yes (three APIs: position, TLE, Mapbox tile)          |
+| Network fetching    | Yes (one API)          | Yes (two APIs: position + TLE)                        |
 | JSON parsing        | Yes                    | Yes                                                   |
-| Runtime bitmaps     | No (compile-time only) | Yes (Mapbox tile fetched at runtime)                  |
-| Canvas drawing      | Simple (bitmap + rect) | Complex (orbit path, terminator shade, marker icon)   |
+| Runtime bitmaps     | No (compile-time only) | Yes (compile-time earth texture for 3D globe)         |
+| Canvas drawing      | Simple (bitmap + rect) | Complex (3D globe, orbit path, marker icon)           |
 | External Rust crate | No                     | Yes (`sgp4` — tests dependency impact on binary size) |
 | Periodic refresh    | Yes (5 min)            | Yes (5 min, with live countdown)                      |
 
@@ -69,12 +69,12 @@ Four useful combinations:
 `Interpolation` enum, `Draw::Path` variant, and ergonomic `path!` macro:
 
 ```rust
-path!(points, stroke: 4.0, color: BLUE_50)               // open polyline, linear
-path!(points, stroke: 4.0, color: BLUE_50, smooth)        // open polyline, Catmull-Rom
-path!(points, fill, color: SHADE_BLACK)                    // filled closed polygon, linear
-path!(points, fill, color: SHADE_BLACK, smooth)            // filled closed polygon, smooth
-path!(points, stroke: 2.0, color: WHITE, closed)           // closed stroked path
-path!(points, stroke: 2.0, color: WHITE, closed, smooth)   // closed stroked smooth path
+path!(points, stroke: 4.0, color: BLUE_50);               // open polyline, linear
+path!(points, stroke: 4.0, color: BLUE_50, smooth);       // open polyline, Catmull-Rom
+path!(points, fill, color: SHADE_BLACK);                  // filled closed polygon, linear
+path!(points, fill, color: SHADE_BLACK, smooth);          // filled closed polygon, smooth
+path!(points, stroke: 2.0, color: WHITE, closed);         // closed stroked path
+path!(points, stroke: 2.0, color: WHITE, closed, smooth); // closed stroked smooth path
 ```
 
 The `fill` keyword implies `closed`. The `smooth` keyword switches interpolation to Catmull-Rom.
@@ -114,19 +114,19 @@ Widget crate with all 4 size variants. Project structure, rendering layout, and 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                                                    ┌──────────────────┐│
-│ ISS Position                                       │  Map tile        ││
-│                                                    │  (Mapbox dark)   ││
+│ ISS Position                                       │  3D Globe        ││
+│                                                    │  (earth texture) ││
 │ Orbit period                        92 min         │                  ││
 │ Next update                        4m 32s ←live    │   ~~~orbit~~~    ││
-│ In sunlight                  In Earth shadow       │  shade ░░░░░░░  ││
-│ Velocity                      27 565 km/h          │      ◉ ISS      ││
+│ In sunlight                  In Earth shadow       │  shade ░░░░░░░   ││
+│ Velocity                      27 565 km/h          │      ◉ ISS       ││
 │ Over                       15.9°N, 149.6°E         │                  ││
 │                                                    └──────────────────┘│
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-Left: 5-row data table (labels gray, values bold white). Right: 560×480 canvas with map bitmap, terminator shade, orbit
-path, ISS marker — all drawn as local layers.
+Left: 5-row data table (labels gray, values bold white). Right: 560×480 canvas with 3D globe (GL sphere shader), orbit
+track projected onto the globe, ISS marker at center.
 
 **LARGE (638×480):** Same 5-row table, no map panel.
 
@@ -140,7 +140,6 @@ path, ISS marker — all drawn as local layers.
 struct IssData {
     latitude: f64,
     longitude: f64,
-    altitude: f64,
     velocity: f64,          // km/h from API
     visibility: Visibility, // Daylight | Eclipsed
     solar_lat: f64,
@@ -156,27 +155,23 @@ from a different endpoint and doesn't need to be tied to the position data lifec
 
 ## Phase 3: Network Fetching + Live Data
 
-Three data sources, same as the static widget:
+Two data sources (Mapbox tile fetch removed — replaced by local GL globe rendering):
 
 ### API endpoints
 
 ```
 Position: https://api.wheretheiss.at/v1/satellites/25544
 TLE:      https://api.wheretheiss.at/v1/satellites/25544/tles
-Map tile: https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/{lon},{lat},{zoom}/{w}x{h}@2x?...
 ```
 
-All keys inlined (same as static widget). No auth headers needed for wheretheiss.at. Mapbox key passed as URL query
-parameter.
+No auth headers needed for wheretheiss.at.
 
 ### Fetch strategy
 
 1. **On `init()`:** Fire position + TLE fetches in parallel.
-2. **On position response:** Store data, compute map URL, fire map tile fetch. Schedule re-fetch after `REFRESH_MS`
-   (300s). Also schedules TLE re-fetch.
+2. **On position response:** Store data. Schedule re-fetch after `REFRESH_MS` (300s). Also schedules TLE re-fetch.
 3. **On TLE response:** Store TLE data in the `TLE` thread-local.
-4. **On map tile response:** Register the PNG bytes as a bitmap via `register_bitmap()`. Store the bitmap ID.
-5. **On error:** Show error notification, retry after `RETRY_MS` (30s).
+4. **On error:** Show error notification, retry after `RETRY_MS` (30s).
 
 ### Live countdown: "Next update"
 
@@ -190,21 +185,21 @@ countdown doesn't make sense for a static screenshot. The WASM version restores 
 
 ---
 
-## Phase 4: Map Rendering with Local Overlays
+## Phase 4: 3D Globe Rendering
 
-See [phase4_map_rendering.md](phase4_map_rendering.md) for the full technical design.
+See [globe-rendering.md](../../../examples/iss-position/devlogs/globe-rendering.md) for the full technical design
+(phases A–D, replacing the original Mapbox tile approach from [phase4_map_rendering.md](phase4_map_rendering.md)).
 
-The full-size variant renders a 560×480 canvas with four composited layers:
+The full-size variant renders a 560×480 canvas with composited layers:
 
 ```
-Layer 0 (bottom):  Map bitmap (Mapbox dark tile)
-Layer 1:           Terminator shade (filled polygon, semi-transparent)
-Layer 2:           Orbit ground track (smooth polyline)
-Layer 3 (top):     ISS marker icon
+Layer 0 (bottom):  3D globe (GL sphere shader with earth texture, terminator, atmosphere)
+Layer 1:           Orbit ground track projected onto globe (smooth polyline segments)
+Layer 2 (top):     ISS marker icon at globe center
 ```
 
-This layer ordering is an improvement over the static version, where the terminator shade covered both the orbit path
-and the ISS marker.
+The globe rotates in real-time via SGP4 orbital propagation from TLE data, with exponential center smoothing. Host-side
+transitions interpolate sphere parameters for smooth animation.
 
 ---
 
@@ -219,10 +214,8 @@ The host owns the formatting logic and preferences; widgets just consume results
 
 ## Deferred (not in scope)
 
-- **Cached world atlas with smooth panning** — future improvement, replaces Mapbox API calls entirely
-- **Smooth ISS position interpolation between polls** — animate marker along predicted orbit between 5-min refreshes
-- **Light theme map tile** — not supporting light theme in WASM runtime yet
-- **Bitmap deregistration** — old map tiles accumulate in VRAM; add `host_deregister_bitmap` when it matters
 - **Interactivity** — tap-to-toggle views, satellite selection, etc. — not decided yet
 - **Middleman API server** — future architecture replaces direct API calls with a Braiins-owned proxy (guards keys,
   caches upstream data)
+- **GPU optimization** — see Phase E in [globe-rendering.md](../../../examples/iss-position/devlogs/globe-rendering.md)
+  (profile on real GC400 hardware first)

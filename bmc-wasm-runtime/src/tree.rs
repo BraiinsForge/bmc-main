@@ -8,15 +8,10 @@
     clippy::cast_sign_loss,
     clippy::cast_lossless
 )]
+#![allow(clippy::wildcard_imports)]
 
 use anyhow::{Result, bail};
-use bmc_wasm_protocol::{
-    AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
-    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE, Easing, GRAY_10, GRAY_50, GRAY_70,
-    GRAY_90, GRAY_100, GREEN_40, ICON_CLOSE, ICON_ERROR, ICON_INFO, ICON_SUCCESS, ICON_WARNING,
-    LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
-    NODE_PARAGRAPH, NODE_ROW, NODE_SPACER, ORANGE_40, RED_60, VIOLET_50,
-};
+use bmc_wasm_protocol::*;
 
 // Re-export for other modules
 pub use bmc_wasm_protocol::{PropsData, TextAlign, TextStyle};
@@ -135,6 +130,12 @@ pub enum DrawCommand {
         zoom: f32,
         light_lat: f32,
         light_lon: f32,
+    },
+    Text {
+        x: f32,
+        y: f32,
+        text: String,
+        style: TextStyle,
     },
 }
 
@@ -566,6 +567,14 @@ impl<'a> TreeReader<'a> {
                     light_lat,
                     light_lon,
                 })
+            }
+            DRAW_TEXT => {
+                let x = self.read_f32()?;
+                let y = self.read_f32()?;
+                let style = self.read_text_style()?;
+                let len = self.read_u16()?;
+                let text = self.read_string(len)?;
+                Ok(DrawCommand::Text { x, y, text, style })
             }
             _ => bail!("unknown draw command: {}", draw_type),
         }
@@ -1177,6 +1186,7 @@ fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
         | DrawCommand::Rotated { inner, .. }
         | DrawCommand::Modified { inner, .. }
         | DrawCommand::Orbit { inner, .. } => get_draw_bounds(inner),
+        DrawCommand::Text { .. } => (0.0, 0.0),
         DrawCommand::Path { points, .. } => {
             if points.is_empty() {
                 (0.0, 0.0)
@@ -1617,6 +1627,28 @@ fn render_draw_inner(
                 );
             }
         }
+        DrawCommand::Text { x, y, text, style } => {
+            let rx = cx + *x + offset_x;
+            let ry = cy + *y + offset_y;
+            let mut render_style = *style;
+            render_style.size = (style.size as f32 * scale) as u32;
+            render_style.color = if alpha < 1.0 {
+                multiply_alpha(color_override.unwrap_or(style.color), alpha)
+            } else {
+                color_override.unwrap_or(style.color)
+            };
+            if rotation == 0.0 {
+                renderer.draw_canvas_text(text, rx, ry, &render_style);
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.draw_canvas_text(text, rx - pivot_x, ry - pivot_y, &render_style);
+                renderer.restore();
+            }
+        }
         DrawCommand::Sphere {
             x,
             y,
@@ -1769,6 +1801,12 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
         }
         DrawCommand::Path { color, .. } => PrevDrawValues {
             color: *color,
+            ..Default::default()
+        },
+        DrawCommand::Text { x, y, style, .. } => PrevDrawValues {
+            x: *x,
+            y: *y,
+            color: style.color,
             ..Default::default()
         },
     }

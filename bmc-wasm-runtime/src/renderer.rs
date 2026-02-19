@@ -109,6 +109,14 @@ pub trait Renderer {
         atmosphere: bool,
     );
 
+    // -- Canvas text --
+
+    /// Draw styled text on a canvas at an explicit position.
+    ///
+    /// Alignment is handled by the caller via `TextStyle.align`:
+    /// Left = text starts at x, Center = centered on x, Right = text ends at x.
+    fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle);
+
     // -- Paths --
 
     /// Stroke a path through the given points.

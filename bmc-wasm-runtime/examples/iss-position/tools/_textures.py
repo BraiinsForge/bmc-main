@@ -1,4 +1,20 @@
-"""Shared texture catalog and paths for ISS widget texture tooling."""
+"""Shared texture catalog and paths for ISS widget texture tooling.
+
+TEXTURE MAPPING CONTRACT — the 3D globe shader samples textures using
+equirectangular UV coordinates. The convention MUST be:
+
+    u = 0.0 → lon = -180°  (left edge)
+    u = 0.5 → lon =    0°  (prime meridian, center)
+    u = 1.0 → lon = +180°  (right edge)
+
+    v = 0.0 → lat =  +90°  (north pole, top edge)
+    v = 0.5 → lat =    0°  (equator, center)
+    v = 1.0 → lat =  -90°  (south pole, bottom edge)
+
+This matches the Cartopy PlateCarrée projection. If you change the projection
+or crop the output, the globe shader will show misplaced geography.
+See: bmc-wasm-runtime/src/gpu/sphere.rs (fragment shader UV sampling).
+"""
 
 from pathlib import Path
 from typing import TypedDict
@@ -32,6 +48,24 @@ TARGET_H = int(BASE_TARGET_H * QUALITY_SCALE)
 # Render resolution for locally generated textures (2x target for quality)
 RENDER_W = TARGET_W * 2
 RENDER_H = TARGET_H * 2
+
+
+def print_texture_contract(resolution: tuple[int, int]) -> None:
+    """Print the texture mapping contract with ANSI formatting."""
+    w, h = resolution
+    # ANSI: bold, reset, dim, black-on-yellow background, reset-bg
+    B, R, D = '\033[1m', '\033[0m', '\033[2m'
+    BG, FG = '\033[43;30m', '\033[49;39m'
+    print(f"""
+  {BG}{B} TEXTURE MAPPING CONTRACT {R}{FG} {D}(must match globe shader: src/gpu/sphere.rs){R}
+
+  Resolution: {B}{w}×{h}{R}  Projection: {B}PlateCarrée (equirectangular){R}
+
+  u = 0.0 → lon = -180°  {D}(left){R}    v = 0.0 → lat = +90°  {D}(top, north){R}
+  u = 0.5 → lon =    0°  {D}(center){R}  v = 0.5 → lat =   0°  {D}(center, equator){R}
+  u = 1.0 → lon = +180°  {D}(right){R}   v = 1.0 → lat = -90°  {D}(bottom, south){R}
+""")
+
 
 # Mapbox token from the ISS widget source
 MAPBOX_TOKEN = (

@@ -16,8 +16,8 @@ use std::cell::RefCell;
 
 use bmc_wasm_protocol::{
     AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
-    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE, Easing, GRAY_10, LoopMode,
-    NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
+    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE, DRAW_TEXT, Easing, GRAY_10,
+    LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
     NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
 };
 
@@ -480,6 +480,13 @@ pub enum Draw {
         fill: bool,
         interpolation: Interpolation,
     },
+    /// Styled text at an explicit canvas position.
+    Text {
+        x: f32,
+        y: f32,
+        text: String,
+        style: TextStyle,
+    },
     /// 3D sphere: equirectangular texture mapped onto a sphere with optional light shading.
     Sphere {
         x: f32,
@@ -497,6 +504,202 @@ pub enum Draw {
 }
 
 impl Draw {
+    // ── Constructors ────────────────────────────────────────────────────
+
+    /// Rectangle at local position within canvas.
+    #[must_use]
+    pub fn rect(x: f32, y: f32, w: f32, h: f32, color: u32) -> Self {
+        Self::Rect { x, y, w, h, color }
+    }
+
+    /// Filled circle at local position within canvas.
+    #[must_use]
+    pub fn circle(cx: f32, cy: f32, r: f32, color: u32) -> Self {
+        Self::Circle { cx, cy, r, color }
+    }
+
+    /// Center any draw command in canvas.
+    #[must_use]
+    pub fn centered(inner: Draw) -> Self {
+        Self::Centered {
+            inner: Box::new(inner),
+        }
+    }
+
+    /// Position any draw command at orbit around canvas center.
+    #[must_use]
+    pub fn orbit(radius: f32, angle: f32, inner: Draw) -> Self {
+        Self::Orbit {
+            radius,
+            angle,
+            inner: Box::new(inner),
+        }
+    }
+
+    /// Rotate any draw command around its center.
+    #[must_use]
+    pub fn rotated(angle: f32, inner: Draw) -> Self {
+        Self::Rotated {
+            angle,
+            inner: Box::new(inner),
+        }
+    }
+
+    /// Icon at local position within canvas.
+    ///
+    /// On first call for a given icon, registers its compiled data with the host.
+    /// Subsequent calls reuse the cached host ID — zero per-frame overhead.
+    ///
+    /// Use `TRANSPARENT` (0) as color to render with original SVG colors,
+    /// or pass a color to tint the entire icon.
+    #[must_use]
+    pub fn icon(x: f32, y: f32, w: f32, h: f32, icon_data: &Icon, color: u32) -> Self {
+        let icon_id = ensure_registered(icon_data);
+        Self::Icon {
+            x,
+            y,
+            w,
+            h,
+            color,
+            icon_id,
+        }
+    }
+
+    /// Draw a built-in icon in canvas (no registration needed).
+    ///
+    /// Use `ICON_CLOSE` or other `ICON_*` constants from the protocol crate.
+    #[must_use]
+    pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: u16, color: u32) -> Self {
+        Self::Icon {
+            x,
+            y,
+            w,
+            h,
+            color,
+            icon_id,
+        }
+    }
+
+    /// Bitmap (raster image) at local position within canvas.
+    ///
+    /// On first call for a given bitmap, registers its PNG data with the host
+    /// which decodes and uploads the texture to VRAM. Subsequent calls reuse
+    /// the cached texture — zero per-frame overhead.
+    #[must_use]
+    pub fn bitmap(x: f32, y: f32, w: f32, h: f32, bmp: &Bitmap) -> Self {
+        let bitmap_id = ensure_bitmap_registered(bmp);
+        Self::Bitmap {
+            x,
+            y,
+            w,
+            h,
+            bitmap_id,
+        }
+    }
+
+    /// 3D sphere at local position within canvas.
+    ///
+    /// Renders an equirectangular texture mapped onto a sphere with perspective
+    /// projection, camera centered at (center_lat, center_lon), and optional
+    /// directional light shading from (light_lat, light_lon).
+    ///
+    /// The texture **must** use standard equirectangular (PlateCarrée) layout:
+    ///
+    /// - `u = 0` → lon = -180°, `u = 0.5` → lon = 0° (prime meridian), `u = 1` → lon = +180°
+    /// - `v = 0` → lat = +90° (north pole), `v = 1` → lat = -90° (south pole)
+    ///
+    /// The GPU shader samples using `atan(x,z)` for longitude and `asin(y)` for
+    /// latitude, then maps to UV with `u = lon/(2π) + 0.5`, `v = 0.5 - lat/π`.
+    /// Any texture that doesn't follow this convention will show misplaced geography.
+    ///
+    /// `zoom` is the camera distance from the sphere center in units of sphere
+    /// radii (unitless). Values must be > 1.0; smaller values zoom in, larger
+    /// values zoom out. Typical full-globe values are ~1.6–2.2. If you want a
+    /// more intuitive "scale" parameter, remap it before calling `sphere!`.
+    ///
+    /// Transitions applied via `.transition(...)` will smoothly interpolate
+    /// `center_lat`, `center_lon`, `zoom`, and light direction on the host.
+    ///
+    /// When `atmosphere` is true, adds limb darkening and bluish edge glow.
+    ///
+    /// Prefer the [`sphere!`] macro for ergonomic call sites.
+    #[must_use]
+    #[expect(clippy::too_many_arguments)]
+    pub fn sphere(
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bmp: &Bitmap,
+        center_lat: f32,
+        center_lon: f32,
+        zoom: f32,
+        light: Option<(f32, f32)>,
+        atmosphere: bool,
+    ) -> Self {
+        let bitmap_id = ensure_bitmap_registered(bmp);
+        let (light_lat, light_lon) = light.unwrap_or((f32::NAN, f32::NAN));
+        Self::Sphere {
+            x,
+            y,
+            w,
+            h,
+            bitmap_id,
+            atmosphere,
+            center_lat,
+            center_lon,
+            zoom,
+            light_lat,
+            light_lon,
+        }
+    }
+
+    /// Styled text at an explicit canvas position.
+    ///
+    /// Alignment model: `x` is the anchor point.
+    /// `Left` = text starts at x, `Center` = centered on x, `Right` = text ends at x.
+    ///
+    /// Uses the same font and rendering as the layout system's paragraphs.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// Draw::text(10.0, 20.0, "Hello", style!(size: 14, color: WHITE))
+    /// Draw::text(w / 2.0, 10.0, "Centered", style!(size: 12, color: GRAY_30, align: Center))
+    /// ```
+    #[must_use]
+    pub fn text(x: f32, y: f32, content: impl Into<String>, style: impl Into<TextStyle>) -> Self {
+        Self::Text {
+            x,
+            y,
+            text: content.into(),
+            style: style.into(),
+        }
+    }
+
+    /// Path draw command — polyline or polygon with optional Catmull-Rom smoothing.
+    ///
+    /// Prefer the [`path!`] macro for ergonomic call sites.
+    #[must_use]
+    pub fn path(
+        points: Vec<(f32, f32)>,
+        stroke_width: f32,
+        color: u32,
+        closed: bool,
+        fill: bool,
+        interpolation: Interpolation,
+    ) -> Self {
+        Self::Path {
+            points,
+            color,
+            stroke_width,
+            closed,
+            fill,
+            interpolation,
+        }
+    }
+
+    // ── Modifiers ───────────────────────────────────────────────────────
+
     /// Add a repeating animation to this draw command.
     #[must_use]
     pub fn animate(
@@ -827,145 +1030,6 @@ pub fn modal_styled(
     }
 }
 
-/// Rectangle at local position within canvas
-#[must_use]
-pub fn rect(x: f32, y: f32, w: f32, h: f32, color: u32) -> Draw {
-    Draw::Rect { x, y, w, h, color }
-}
-
-/// Filled circle at local position within canvas
-#[must_use]
-pub fn circle(cx: f32, cy: f32, r: f32, color: u32) -> Draw {
-    Draw::Circle { cx, cy, r, color }
-}
-
-/// Center any draw command in canvas
-#[must_use]
-pub fn centered(inner: Draw) -> Draw {
-    Draw::Centered {
-        inner: Box::new(inner),
-    }
-}
-
-/// Position any draw command at orbit around canvas center
-#[must_use]
-pub fn orbit(radius: f32, angle: f32, inner: Draw) -> Draw {
-    Draw::Orbit {
-        radius,
-        angle,
-        inner: Box::new(inner),
-    }
-}
-
-/// Rotate any draw command around its center
-#[must_use]
-pub fn rotated(angle: f32, inner: Draw) -> Draw {
-    Draw::Rotated {
-        angle,
-        inner: Box::new(inner),
-    }
-}
-
-/// Icon at local position within canvas.
-///
-/// On first call for a given icon, registers its compiled data with the host.
-/// Subsequent calls reuse the cached host ID — zero per-frame overhead.
-///
-/// Use `TRANSPARENT` (0) as color to render with original SVG colors,
-/// or pass a color to tint the entire icon.
-#[must_use]
-pub fn icon(x: f32, y: f32, w: f32, h: f32, icon_data: &Icon, color: u32) -> Draw {
-    let icon_id = ensure_registered(icon_data);
-    Draw::Icon {
-        x,
-        y,
-        w,
-        h,
-        color,
-        icon_id,
-    }
-}
-
-/// Draw a built-in icon in canvas (no registration needed).
-///
-/// Use `ICON_CLOSE` or other `ICON_*` constants from the protocol crate.
-#[must_use]
-pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: u16, color: u32) -> Draw {
-    Draw::Icon {
-        x,
-        y,
-        w,
-        h,
-        color,
-        icon_id,
-    }
-}
-
-/// Bitmap (raster image) at local position within canvas.
-///
-/// On first call for a given bitmap, registers its PNG data with the host
-/// which decodes and uploads the texture to VRAM. Subsequent calls reuse
-/// the cached texture — zero per-frame overhead.
-#[must_use]
-pub fn bitmap(x: f32, y: f32, w: f32, h: f32, bmp: &Bitmap) -> Draw {
-    let bitmap_id = ensure_bitmap_registered(bmp);
-    Draw::Bitmap {
-        x,
-        y,
-        w,
-        h,
-        bitmap_id,
-    }
-}
-
-/// 3D sphere at local position within canvas.
-///
-/// Renders an equirectangular texture mapped onto a sphere with perspective
-/// projection, camera centered at (center_lat, center_lon), and optional
-/// directional light shading from (light_lat, light_lon).
-///
-/// `zoom` is the camera distance from the sphere center in units of sphere
-/// radii (unitless). Values must be > 1.0; smaller values zoom in, larger
-/// values zoom out. Typical full-globe values are ~1.6–2.2. If you want a
-/// more intuitive "scale" parameter, remap it before calling `sphere!`.
-///
-/// Transitions applied via `.transition(...)` will smoothly interpolate
-/// `center_lat`, `center_lon`, `zoom`, and light direction on the host.
-///
-/// When `atmosphere` is true, adds limb darkening and bluish edge glow.
-///
-/// Prefer the [`sphere!`] macro for ergonomic call sites.
-#[must_use]
-#[expect(clippy::too_many_arguments)]
-pub fn make_sphere(
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    bmp: &Bitmap,
-    center_lat: f32,
-    center_lon: f32,
-    zoom: f32,
-    light: Option<(f32, f32)>,
-    atmosphere: bool,
-) -> Draw {
-    let bitmap_id = ensure_bitmap_registered(bmp);
-    let (light_lat, light_lon) = light.unwrap_or((f32::NAN, f32::NAN));
-    Draw::Sphere {
-        x,
-        y,
-        w,
-        h,
-        bitmap_id,
-        atmosphere,
-        center_lat,
-        center_lon,
-        zoom,
-        light_lat,
-        light_lon,
-    }
-}
-
 /// Ergonomic sphere construction for canvas draw commands.
 ///
 /// # Without light (full brightness)
@@ -989,16 +1053,16 @@ pub fn make_sphere(
 macro_rules! sphere {
     ($bmp:expr, at: ($x:expr, $y:expr, $w:expr, $h:expr),
      center: ($lat:expr, $lon:expr), zoom: $z:expr) => {
-        $crate::make_sphere($x, $y, $w, $h, $bmp, $lat, $lon, $z, None, false)
+        $crate::Draw::sphere($x, $y, $w, $h, $bmp, $lat, $lon, $z, None, false)
     };
     ($bmp:expr, at: ($x:expr, $y:expr, $w:expr, $h:expr),
      center: ($lat:expr, $lon:expr), zoom: $z:expr, atmosphere) => {
-        $crate::make_sphere($x, $y, $w, $h, $bmp, $lat, $lon, $z, None, true)
+        $crate::Draw::sphere($x, $y, $w, $h, $bmp, $lat, $lon, $z, None, true)
     };
     ($bmp:expr, at: ($x:expr, $y:expr, $w:expr, $h:expr),
      center: ($lat:expr, $lon:expr), zoom: $z:expr,
      light: ($slat:expr, $slon:expr)) => {
-        $crate::make_sphere(
+        $crate::Draw::sphere(
             $x,
             $y,
             $w,
@@ -1014,7 +1078,7 @@ macro_rules! sphere {
     ($bmp:expr, at: ($x:expr, $y:expr, $w:expr, $h:expr),
      center: ($lat:expr, $lon:expr), zoom: $z:expr,
      light: ($slat:expr, $slon:expr), atmosphere) => {
-        $crate::make_sphere(
+        $crate::Draw::sphere(
             $x,
             $y,
             $w,
@@ -1027,28 +1091,6 @@ macro_rules! sphere {
             true,
         )
     };
-}
-
-/// Path draw command — polyline or polygon with optional Catmull-Rom smoothing.
-///
-/// Prefer the [`path!`] macro for ergonomic call sites.
-#[must_use]
-pub fn make_path(
-    points: Vec<(f32, f32)>,
-    stroke_width: f32,
-    color: u32,
-    closed: bool,
-    fill: bool,
-    interpolation: Interpolation,
-) -> Draw {
-    Draw::Path {
-        points,
-        color,
-        stroke_width,
-        closed,
-        fill,
-        interpolation,
-    }
 }
 
 /// Ergonomic path construction for canvas draw commands.
@@ -1069,10 +1111,10 @@ pub fn make_path(
 #[macro_export]
 macro_rules! path {
     ($pts:expr, stroke: $w:expr, color: $c:expr) => {
-        $crate::make_path($pts, $w, $c, false, false, $crate::Interpolation::Linear)
+        $crate::Draw::path($pts, $w, $c, false, false, $crate::Interpolation::Linear)
     };
     ($pts:expr, stroke: $w:expr, color: $c:expr, smooth) => {
-        $crate::make_path(
+        $crate::Draw::path(
             $pts,
             $w,
             $c,
@@ -1082,16 +1124,16 @@ macro_rules! path {
         )
     };
     ($pts:expr, stroke: $w:expr, color: $c:expr, closed) => {
-        $crate::make_path($pts, $w, $c, true, false, $crate::Interpolation::Linear)
+        $crate::Draw::path($pts, $w, $c, true, false, $crate::Interpolation::Linear)
     };
     ($pts:expr, stroke: $w:expr, color: $c:expr, closed, smooth) => {
-        $crate::make_path($pts, $w, $c, true, false, $crate::Interpolation::CatmullRom)
+        $crate::Draw::path($pts, $w, $c, true, false, $crate::Interpolation::CatmullRom)
     };
     ($pts:expr, fill, color: $c:expr) => {
-        $crate::make_path($pts, 0.0, $c, true, true, $crate::Interpolation::Linear)
+        $crate::Draw::path($pts, 0.0, $c, true, true, $crate::Interpolation::Linear)
     };
     ($pts:expr, fill, color: $c:expr, smooth) => {
-        $crate::make_path($pts, 0.0, $c, true, true, $crate::Interpolation::CatmullRom)
+        $crate::Draw::path($pts, 0.0, $c, true, true, $crate::Interpolation::CatmullRom)
     };
 }
 
@@ -1300,6 +1342,15 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             if !fill {
                 buf.write_f32(*stroke_width);
             }
+        }
+        Draw::Text { x, y, text, style } => {
+            buf.write_u8(DRAW_TEXT);
+            buf.write_f32(*x);
+            buf.write_f32(*y);
+            buf.write_bytes(&style.to_bytes());
+            let bytes = text.as_bytes();
+            buf.write_u16(bytes.len() as u16);
+            buf.write_bytes(bytes);
         }
         Draw::Sphere {
             x,

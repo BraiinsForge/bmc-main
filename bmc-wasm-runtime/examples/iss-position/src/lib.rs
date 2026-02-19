@@ -35,7 +35,7 @@ const API_URL: &str = "https://api.wheretheiss.at/v1/satellites/25544";
 const TLE_URL: &str = "https://api.wheretheiss.at/v1/satellites/25544/tles";
 
 /// Earth texture for globe rendering (Natural Earth dark theme, equirectangular).
-const EARTH_TEXTURE: Bitmap = include_bitmap!("textures/natural-earth-dark.jpg");
+const EARTH_TEXTURE: Bitmap = include_bitmap!("textures/natural-earth-gmaps.jpg");
 /// Globe zoom factor (intuitive scale):
 /// - `1.0` = default full globe view
 /// - `>1.0` zooms in, `<1.0` zooms out
@@ -60,7 +60,7 @@ fn globe_zoom_to_camera(zoom: f32) -> f32 {
 const GLOBE_SMOOTH_MS: f64 = 300.0;
 const ISS_ICON: Icon = include_icon!("assets/icon-iss.svg");
 
-const MARKET_COLOR: u32 = VIOLET_70;
+const MARKET_COLOR: u32 = BLUE_70;
 const ORBIT_COLOR: u32 = color!(MARKET_COLOR, alpha: 0.8);
 const MARKER_GLOW_COLOR: u32 = color!(MARKET_COLOR, alpha: 0.2);
 const MARKER_GLOW_R: f32 = 40.0;
@@ -69,6 +69,10 @@ const MARKER_SIZE: f32 = 56.0;
 
 /// Number of points to compute for the orbit ground track.
 const ORBIT_POINTS: usize = 60;
+
+/// Debug: render landmark dots on the globe for visual validation of texture mapping.
+/// Set to `true`, rebuild, and check that each dot sits on the correct city/location.
+const DEBUG_LANDMARKS: bool = false;
 
 // ============================================================================
 // Data model
@@ -83,8 +87,6 @@ enum Visibility {
 struct IssData {
     latitude: f64,
     longitude: f64,
-    #[allow(dead_code)] // available for future use (display altitude row)
-    altitude: f64,
     velocity: f64,
     visibility: Visibility,
     solar_lat: f64,
@@ -140,7 +142,6 @@ fn on_position_data(response: &FetchResponse) {
 
     let latitude = json.f64("/latitude").unwrap_or(0.0);
     let longitude = json.f64("/longitude").unwrap_or(0.0);
-    let altitude = json.f64("/altitude").unwrap_or(0.0);
     let velocity = json.f64("/velocity").unwrap_or(0.0);
     let solar_lat = json.f64("/solar_lat").unwrap_or(0.0);
     let solar_lon = json.f64("/solar_lon").unwrap_or(0.0);
@@ -156,7 +157,6 @@ fn on_position_data(response: &FetchResponse) {
         *s.borrow_mut() = WidgetState::Loaded(IssData {
             latitude,
             longitude,
-            altitude,
             velocity,
             visibility,
             solar_lat,
@@ -460,6 +460,89 @@ fn project_orbit_to_globe(
     segments
 }
 
+/// Project a single geographic point onto the 3D globe view.
+///
+/// Returns canvas pixel coordinates, or `None` if the point is on the far side.
+fn project_point_to_globe(
+    lat_deg: f64,
+    lon_deg: f64,
+    center_lat: f64,
+    center_lon: f64,
+    zoom: f64,
+    w: f32,
+    h: f32,
+) -> Option<(f32, f32)> {
+    let clat = center_lat.to_radians();
+    let clon = center_lon.to_radians();
+    let (cos_clat, sin_clat) = (clat.cos(), clat.sin());
+    let (cos_clon, sin_clon) = (clon.cos(), clon.sin());
+    let aspect = f64::from(w) / f64::from(h);
+
+    let lat = lat_deg.to_radians();
+    let lon = lon_deg.to_radians();
+
+    let px = lat.cos() * lon.sin();
+    let py = lat.sin();
+    let pz = lat.cos() * lon.cos();
+
+    // Ry(-clon)
+    let p1x = px * cos_clon - pz * sin_clon;
+    let p1z = px * sin_clon + pz * cos_clon;
+    // Rx(clat)
+    let vx = p1x;
+    let vy = py * cos_clat - p1z * sin_clat;
+    let vz = py * sin_clat + p1z * cos_clat;
+
+    if vz <= 0.0 {
+        return None;
+    }
+
+    let scale = zoom / (zoom - vz);
+    let uv_x = vx * scale / aspect;
+    let uv_y = vy * scale;
+
+    let canvas_x = ((uv_x + 1.0) / 2.0 * f64::from(w)) as f32;
+    let canvas_y = ((1.0 - uv_y) / 2.0 * f64::from(h)) as f32;
+
+    Some((canvas_x, canvas_y))
+}
+
+/// Render landmark dots + labels on the globe for visual texture mapping validation.
+fn render_debug_landmarks(draws: &mut Vec<Draw>, center: &SmoothedCenter, zoom: f32) {
+    /// (lat, lon, color, label) — well-known cities spread across all continents + the origin.
+    const LANDMARKS: &[(f64, f64, u32, &str)] = &[
+        (51.5, -0.1, RED_50, "LDN"),      // London
+        (35.7, 139.7, GREEN_50, "TKY"),   // Tokyo
+        (40.7, -74.0, ORANGE_50, "NYC"),  // New York
+        (-23.5, -46.6, VIOLET_50, "SPO"), // São Paulo
+        (-33.9, 18.4, RED_30, "CPT"),     // Cape Town
+        (-33.9, 151.2, GREEN_30, "SYD"),  // Sydney
+        (55.8, 37.6, ORANGE_30, "MSC"),   // Moscow
+        (0.0, 0.0, WHITE, "0,0"),         // origin — Gulf of Guinea
+    ];
+
+    for &(lat, lon, color, label) in LANDMARKS {
+        if let Some((x, y)) = project_point_to_globe(
+            lat,
+            lon,
+            center.lat,
+            center.lon,
+            f64::from(zoom),
+            MAP_W,
+            MAP_H,
+        ) {
+            draws.push(Draw::circle(x, y, 8.0, color));
+            draws.push(Draw::circle(x, y, 3.0, WHITE));
+            draws.push(Draw::text(
+                x + 12.0,
+                y - 3.0,
+                label,
+                style!(size: 12, color: color, weight: 600),
+            ));
+        }
+    }
+}
+
 /// Smoothly approach target lat/lon (degrees) with exponential easing.
 struct SmoothedCenter {
     lat: f64,
@@ -650,12 +733,16 @@ fn map_panel(data: &IssData, delta_ms: u32) -> Node {
         }
     });
 
+    if DEBUG_LANDMARKS {
+        render_debug_landmarks(&mut draws, &smoothed, globe_zoom);
+    }
+
     // Layer 2: ISS marker at globe center (the globe rotates to face the ISS position)
     let cx = MAP_W / 2.0;
     let cy = MAP_H / 2.0;
-    draws.push(circle(cx, cy, MARKER_GLOW_R, MARKER_GLOW_COLOR));
-    draws.push(circle(cx, cy, MARKER_SOLID_R, MARKET_COLOR));
-    draws.push(icon(
+    draws.push(Draw::circle(cx, cy, MARKER_GLOW_R, MARKER_GLOW_COLOR));
+    draws.push(Draw::circle(cx, cy, MARKER_SOLID_R, MARKET_COLOR));
+    draws.push(Draw::icon(
         cx - MARKER_SIZE / 2.0,
         cy - MARKER_SIZE / 2.0,
         MARKER_SIZE,

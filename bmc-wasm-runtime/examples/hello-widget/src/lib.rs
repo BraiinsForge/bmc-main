@@ -6,9 +6,8 @@
 use bmc_wasm_sdk::{
     AnimProperty, Draw, Easing, GRAY_10, GRAY_30, GRAY_40, GRAY_50, GRAY_70, GRAY_80, GRAY_90,
     GREEN_50, ICON_CLOSE, Icon, LoopMode, Node, ORANGE_50, RED_50, SystemTime, VIOLET_50, button,
-    canvas, centered, circle, col, color, fmt, icon, icon_builtin, include_icon, modal, orbit,
-    paragraph, props, rect, render_ui, request_frame_after, rotated, row, spacer, span, style,
-    text, tree, ufmt,
+    canvas, col, color, fmt, include_icon, modal, paragraph, props, render_ui, request_frame_after,
+    row, spacer, span, style, text, tree, ufmt,
 };
 use std::cell::{Cell, RefCell};
 use std::f32::consts::{FRAC_PI_2, TAU};
@@ -104,8 +103,8 @@ fn animations_section(time: &SystemTime) -> Node {
             text("Pulse + Spin + Color", style!(size: 14, color: GRAY_40)),
             canvas(
                 props!(width: 64.0, height: 64.0),
-                [centered(
-                    rect(0.0, 0.0, 32.0, 32.0, RED_50)
+                [Draw::centered(
+                    Draw::rect(0.0, 0.0, 32.0, 32.0, RED_50)
                         .animate(Rotate, 0.0, TAU, 4_000, Linear, Forever)
                         .animate(Scale, 0.5, 1.0, 1_000, EaseInOut, PingPong)
                         .animate_color(RED_50, GREEN_50, 3_000, EaseInOut, PingPong),
@@ -124,29 +123,45 @@ fn clock_canvas(hour_angle: f32, minute_angle: f32, second_angle: f32) -> Node {
     let mut draws: Vec<Draw> = Vec::with_capacity(18);
 
     // Circle background
-    draws.push(circle(C, C, C, GRAY_80));
+    draws.push(Draw::circle(C, C, C, GRAY_80));
 
     // 12 hour marks
     for i in 0..12 {
         let angle = i as f32 / 12.0 * TAU - FRAC_PI_2;
-        draws.push(orbit(54.0, angle, rect(0.0, 0.0, 3.0, 3.0, GRAY_50)));
+        draws.push(Draw::orbit(
+            54.0,
+            angle,
+            Draw::rect(0.0, 0.0, 3.0, 3.0, GRAY_50),
+        ));
     }
 
     // Hands: rotated() pivots around canvas center
     // Hour hand
     draws.push(
-        rotated(hour_angle, rect(C - 3.0, C - 32.0, 6.0, 36.0, GRAY_10)).transition(500, EaseOut),
+        Draw::rotated(
+            hour_angle,
+            Draw::rect(C - 3.0, C - 32.0, 6.0, 36.0, GRAY_10),
+        )
+        .transition(500, EaseOut),
     );
     // Minute hand
     draws.push(
-        rotated(minute_angle, rect(C - 2.0, C - 44.0, 4.0, 48.0, GRAY_30)).transition(500, EaseOut),
+        Draw::rotated(
+            minute_angle,
+            Draw::rect(C - 2.0, C - 44.0, 4.0, 48.0, GRAY_30),
+        )
+        .transition(500, EaseOut),
     );
     // Second hand
     draws.push(
-        rotated(second_angle, rect(C - 1.0, C - 52.0, 1.0, 56.0, RED_50)).transition(200, EaseOut),
+        Draw::rotated(
+            second_angle,
+            Draw::rect(C - 1.0, C - 52.0, 1.0, 56.0, RED_50),
+        )
+        .transition(200, EaseOut),
     );
     // Center dot
-    draws.push(centered(rect(0.0, 0.0, 8.0, 8.0, GRAY_10)));
+    draws.push(Draw::centered(Draw::rect(0.0, 0.0, 8.0, 8.0, GRAY_10)));
 
     canvas(props!(width: S, height: S), draws)
 }
@@ -160,25 +175,25 @@ fn icons_section() -> Node {
             canvas(
                 props!(width: 180.0, height: 40.0),
                 [
-                    icon(0.0, 4.0, 32.0, 32.0, &STAR, VIOLET_50),
-                    icon(40.0, 4.0, 32.0, 32.0, &SETTINGS, GREEN_50),
-                    icon(80.0, 4.0, 32.0, 32.0, &CHECKMARK, RED_50),
-                    icon(120.0, 4.0, 32.0, 32.0, &WARNING, ORANGE_50),
+                    Draw::icon(0.0, 4.0, 32.0, 32.0, &STAR, VIOLET_50),
+                    Draw::icon(40.0, 4.0, 32.0, 32.0, &SETTINGS, GREEN_50),
+                    Draw::icon(80.0, 4.0, 32.0, 32.0, &CHECKMARK, RED_50),
+                    Draw::icon(120.0, 4.0, 32.0, 32.0, &WARNING, ORANGE_50),
                 ],
             ),
             text("Built-in (icon_builtin)", style!(size: 12, color: GRAY_50)),
             canvas(
                 props!(width: 100.0, height: 40.0),
                 [
-                    icon_builtin(0.0, 4.0, 32.0, 32.0, ICON_CLOSE, GRAY_10),
-                    icon_builtin(40.0, 4.0, 32.0, 32.0, ICON_CLOSE, RED_50),
+                    Draw::icon_builtin(0.0, 4.0, 32.0, 32.0, ICON_CLOSE, GRAY_10),
+                    Draw::icon_builtin(40.0, 4.0, 32.0, 32.0, ICON_CLOSE, RED_50),
                 ],
             ),
             text("Animated", style!(size: 12, color: GRAY_50)),
             canvas(
                 props!(width: 64.0, height: 64.0),
-                [centered(
-                    icon(0.0, 0.0, 32.0, 32.0, &STAR, ORANGE_50)
+                [Draw::centered(
+                    Draw::icon(0.0, 0.0, 32.0, 32.0, &STAR, ORANGE_50)
                         .animate(Rotate, 0.0, TAU, 3_000, Linear, Forever)
                         .animate(Scale, 0.6, 1.0, 1_500, EaseInOut, PingPong),
                 )],
@@ -196,21 +211,21 @@ fn colors_section() -> Node {
             canvas(
                 props!(width: 180.0, height: 40.0),
                 [
-                    rect(0.0, 0.0, 36.0, 36.0, VIOLET_50),
-                    rect(44.0, 0.0, 36.0, 36.0, GREEN_50),
-                    rect(88.0, 0.0, 36.0, 36.0, RED_50),
-                    rect(132.0, 0.0, 36.0, 36.0, ORANGE_50),
+                    Draw::rect(0.0, 0.0, 36.0, 36.0, VIOLET_50),
+                    Draw::rect(44.0, 0.0, 36.0, 36.0, GREEN_50),
+                    Draw::rect(88.0, 0.0, 36.0, 36.0, RED_50),
+                    Draw::rect(132.0, 0.0, 36.0, 36.0, ORANGE_50),
                 ],
             ),
             text("Grays", style!(size: 12, color: GRAY_50)),
             canvas(
                 props!(width: 180.0, height: 28.0),
                 [
-                    rect(0.0, 0.0, 28.0, 24.0, GRAY_10),
-                    rect(36.0, 0.0, 28.0, 24.0, GRAY_30),
-                    rect(72.0, 0.0, 28.0, 24.0, GRAY_50),
-                    rect(108.0, 0.0, 28.0, 24.0, GRAY_70),
-                    rect(144.0, 0.0, 28.0, 24.0, GRAY_90),
+                    Draw::rect(0.0, 0.0, 28.0, 24.0, GRAY_10),
+                    Draw::rect(36.0, 0.0, 28.0, 24.0, GRAY_30),
+                    Draw::rect(72.0, 0.0, 28.0, 24.0, GRAY_50),
+                    Draw::rect(108.0, 0.0, 28.0, 24.0, GRAY_70),
+                    Draw::rect(144.0, 0.0, 28.0, 24.0, GRAY_90),
                 ],
             ),
         ],

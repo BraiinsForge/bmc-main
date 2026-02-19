@@ -81,7 +81,10 @@ void main() {
        -p1.x * sin_lon + p1.z * cos_lon
     );
 
-    // Geographic coords -> equirectangular UV
+    // Geographic coords -> equirectangular UV.
+    // This MUST match the texture convention (see tools/texture_render.py):
+    //   u = 0 → lon=-180°, u = 0.5 → lon=0° (prime meridian), u = 1 → lon=+180°
+    //   v = 0 → lat=+90°  (north pole),  v = 1 → lat=-90° (south pole)
     float lon = atan(p2.x, p2.z);
     float lat = asin(clamp(p2.y, -1.0, 1.0));
     vec2 tex_uv = vec2(lon / (2.0 * PI) + 0.5, 0.5 - lat / PI);

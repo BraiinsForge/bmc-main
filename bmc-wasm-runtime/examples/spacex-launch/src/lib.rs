@@ -299,7 +299,7 @@ fn rocket_panel(rocket_name: &str, h: f32) -> Node {
     let bmp = rocket_bitmap(rocket_name);
     canvas(
         props!(width: 320.0, height: h),
-        [bitmap(0.0, 0.0, 320.0, h, bmp)],
+        [Draw::bitmap(0.0, 0.0, 320.0, h, bmp)],
     )
 }
 
