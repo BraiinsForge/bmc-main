@@ -135,3 +135,40 @@ async fn update_display(
         target_block_formatted,
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_format_predicted_datetime_24h_prague() {
+        let timezone: Timezone = "Europe/Prague".parse().expect("BUG: invalid timezone");
+        // 2026-04-15 14:30:00 UTC = 16:30 CEST (UTC+2)
+        let dt = Utc
+            .with_ymd_and_hms(2026, 4, 15, 14, 30, 0)
+            .single()
+            .expect("BUG: invalid date");
+
+        let (date, time) = format_predicted_datetime(dt, &timezone, true, DateFormat::DdMmYyyyDot);
+
+        assert_eq!(date, "15.04.2026");
+        assert_eq!(time, "16:30 Europe/Prague");
+    }
+
+    #[test]
+    fn test_format_predicted_datetime_12h_new_york() {
+        let timezone: Timezone = "America/New_York".parse().expect("BUG: invalid timezone");
+        // 2026-04-15 14:30:00 UTC = 10:30 AM EDT (UTC-4)
+        let dt = Utc
+            .with_ymd_and_hms(2026, 4, 15, 14, 30, 0)
+            .single()
+            .expect("BUG: invalid date");
+
+        let (date, time) =
+            format_predicted_datetime(dt, &timezone, false, DateFormat::YyyyMmDdDash);
+
+        assert_eq!(date, "2026-04-15");
+        assert_eq!(time, "10:30 AM America/New_York");
+    }
+}
