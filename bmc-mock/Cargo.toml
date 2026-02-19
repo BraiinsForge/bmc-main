@@ -8,6 +8,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 winit-software = ["bmc-mock-display/winit-software"]
 winit-skia = ["bmc-mock-display/winit-skia"]
 slint-embed-files = ["bmc-mock-display/slint-embed-files"]
+live-preview = ["bmc-mock-display/live-preview"]
 
 [dependencies]
 anyhow.workspace = true

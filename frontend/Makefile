@@ -53,8 +53,8 @@ dev:
 
 serve: EXTRA_ARGS ?= ;
 serve:
-	cd ..; cargo run \
-		--features=winit-skia \
+	cd ..; SLINT_LIVE_PREVIEW=1 cargo run \
+		--features="winit-skia live-preview" \
 		--package bmc-mock -- \
 		--address="0.0.0.0:6070" \
 		--system-password="root" \
