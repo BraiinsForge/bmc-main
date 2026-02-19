@@ -43,6 +43,7 @@ export default {
         nightLocation: getArg('nightLocation', 'Berlin'),
         onLocationDetect: action('onLocationDetect'),
         nightNotify: getArg('nightNotify', true),
+        nightScreenOffTimeout: getArg('nightScreenOffTimeout', 0),
         nightInterval: {
             ...getArg('nightInterval', pb.create(pb.TimeIntervalSchema, { from: '01:23', to: '12:34' })),
             hasChanged: true,

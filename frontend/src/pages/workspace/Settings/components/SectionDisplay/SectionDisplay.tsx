@@ -15,6 +15,7 @@ import {
     Slider,
     // TextInput,
     TimePicker,
+    Dropdown,
 } from '@carbon/react';
 import {
     //Location as IconLocation,
@@ -29,6 +30,7 @@ export interface SectionDisplayProps {
 
     nightEnabled: iField<boolean>;
     nightBrightness: iField<pb.BrightnessInfo>;
+    nightScreenOffTimeout: iField<number>;
     nightUseLocation: iField<boolean>;
 
     nightLocation: iField<string>;
@@ -40,6 +42,18 @@ export interface SectionDisplayProps {
 interface Props extends SectionDisplayProps {
     intl: IntlShape;
 }
+
+const screenOffTimeoutOptions = [
+    { id: 0, label: 'Never' },
+    { id: 5, label: '5 secs' },
+    { id: 10, label: '10 secs' },
+    { id: 15, label: '15 secs' },
+    { id: 30, label: '30 secs' },
+    { id: 60, label: '1 min' },
+    { id: 120, label: '2 min' },
+    { id: 300, label: '5 min' },
+    { id: 600, label: '10 min' },
+];
 
 const $ = getID('display').get;
 class View extends Component<Props> {
@@ -65,6 +79,9 @@ class View extends Component<Props> {
             }),
         );
     };
+    #screenOffTimeoutChange = (x: { selectedItem: (typeof screenOffTimeoutOptions)[number] }) => {
+        this.props.nightScreenOffTimeout.onChange?.(x.selectedItem.id);
+    };
     #nightIntervalChange = (field: 'from' | 'to') => (e: ChangeEvent<HTMLInputElement>) => {
         const { onChange, value } = this.props.nightInterval;
 
@@ -87,6 +104,7 @@ class View extends Component<Props> {
             // Night mode
             nightEnabled,
             nightBrightness,
+            nightScreenOffTimeout,
             nightInterval,
 
             // nightUseLocation,
@@ -97,6 +115,10 @@ class View extends Component<Props> {
 
         const isNightIntervalDisabled: boolean = nightInterval.disabled || !nightEnabled.value;
         const isNightBrightnessDisabled: boolean = nightBrightness.disabled || !nightEnabled.value;
+        const isScreenOffTimeoutDisabled: boolean = nightScreenOffTimeout.disabled || !nightEnabled.value;
+        const selectedTimeoutItem =
+            screenOffTimeoutOptions.find(o => o.id === (nightScreenOffTimeout.value ?? 0)) ??
+            screenOffTimeoutOptions[0];
 
         return (
             <Form className={css.root}>
@@ -166,6 +188,30 @@ class View extends Component<Props> {
                             invalid={!!nightBrightness.error}
                             invalidText={nightBrightness.error}
                         />
+                    </Field>
+
+                    <Field
+                        title={intl.formatMessage({ defaultMessage: 'Screen Auto-Off' })}
+                        description={intl.formatMessage({
+                            defaultMessage:
+                                'Turn off the screen after a period of inactivity during night mode. Touch to wake.',
+                        })}
+                        disabled={isScreenOffTimeoutDisabled}
+                    >
+                        <CarbonFormField error={nightScreenOffTimeout.error}>
+                            <Dropdown
+                                id={$('night', 'screen-off-timeout')}
+                                titleText=""
+                                label=""
+                                hideLabel
+                                items={screenOffTimeoutOptions}
+                                itemToString={(item: (typeof screenOffTimeoutOptions)[number]) => item?.label ?? ''}
+                                selectedItem={selectedTimeoutItem}
+                                onChange={this.#screenOffTimeoutChange}
+                                disabled={isScreenOffTimeoutDisabled}
+                                style={{ minWidth: '10rem' }}
+                            />
+                        </CarbonFormField>
                     </Field>
 
                     <Field

@@ -124,6 +124,7 @@ interface State {
         displayNightmodeEnabled: FieldState<boolean>;
         displayNightmodeBrightness: FieldState<pb.BrightnessInfo>;
         displayNightmodeInterval: FieldState<pb.TimeInterval>;
+        displayNightmodeScreenOffTimeout: FieldState<number>;
     };
 
     upgradeFromFeedStatus: UpgradeFromFeedStatus;
@@ -167,6 +168,7 @@ const getInitialState = (): State => ({
         displayNightmodeEnabled: getFieldStateDefault(),
         displayNightmodeBrightness: getFieldStateDefault(),
         displayNightmodeInterval: getFieldStateDefault(),
+        displayNightmodeScreenOffTimeout: getFieldStateDefault(),
     } satisfies Record<string, FieldState<any>>,
 
     upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
@@ -726,6 +728,10 @@ class View extends Component<Props, State> {
                         value: d.nightmodeInterval,
                         errors: s.values.displayNightmodeInterval.errors,
                     }),
+                    displayNightmodeScreenOffTimeout: getFieldStateDefault({
+                        value: d.nightmodeScreenOffTimeoutSecs ?? 0,
+                        errors: s.values.displayNightmodeScreenOffTimeout?.errors,
+                    }),
                 } satisfies State['values'],
             }));
         } catch ($) {
@@ -895,6 +901,32 @@ class View extends Component<Props, State> {
         }
     }, 800);
 
+    private displaySetScreenOffTimeoutAbort = pb.abort.get();
+    #displaySetScreenOffTimeout = async (value: number): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            await this.#setField('displayNightmodeScreenOffTimeout', s => ({ ...s, value, isSaving: true }));
+
+            const { signal } = this.displaySetScreenOffTimeoutAbort.replace();
+            await pb.rpc.config.setNightmodeScreenOffTimeout({ value }, { signal });
+
+            toast.success(formatMessage({ defaultMessage: 'Screen auto-off timeout saved' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            const errors = pb.collectAllErrors($) ?? [
+                formatMessage({ defaultMessage: 'Failed to save screen auto-off timeout!' }),
+            ];
+            this.#setFieldAttr('displayNightmodeScreenOffTimeout', 'errors', errors);
+        } finally {
+            await this.#displayFetch();
+            this.#setField('displayNightmodeScreenOffTimeout', s =>
+                getFieldStateDefault({ value: s.value, errors: s.errors }),
+            );
+        }
+    };
+
     #displayRender = (): ReactNode => {
         const {
             data: { displayNightmodeIntervalBackendValue },
@@ -903,6 +935,7 @@ class View extends Component<Props, State> {
                 displayNightmodeBrightness,
                 displayNightmodeEnabled,
                 displayNightmodeInterval,
+                displayNightmodeScreenOffTimeout,
             },
         } = this.state;
 
@@ -916,6 +949,10 @@ class View extends Component<Props, State> {
                     hasChanged: !isEqual(displayNightmodeIntervalBackendValue, displayNightmodeInterval.value),
                     onConfirm: this.#displaySubmitNightmodeInterval,
                 })}
+                nightScreenOffTimeout={this.#getFieldStruct(
+                    displayNightmodeScreenOffTimeout,
+                    this.#displaySetScreenOffTimeout,
+                )}
                 nightNotify={{
                     value: true,
                     disabled: true,
