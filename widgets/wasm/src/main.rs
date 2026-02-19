@@ -39,7 +39,7 @@ fn main() -> Result<()> {
         .with(filter)
         .init();
 
-    tracing::info!("Starting WASM widget");
+    tracing::info!("Starting WASM widget {}", env!("GIT_VERSION"),);
 
     // Connect to Wayland and run
     let mut client = wayland::WaylandClient::connect()?;
