@@ -406,6 +406,9 @@ component WidgetClockDigitalTemplate inherits Rectangle {
     in property <bool> show-year;
     in property <bool> show-alarm;
     in property <bool> show-formatted-date: false;
+    in property <bool> ampm-inline: false;
+    in property <length> ampm-y-offset: 0px;
+    in property <bool> show-utc-offset: false;
 
     width: 100%;
     height: 100%;
@@ -444,20 +447,35 @@ component WidgetClockDigitalTemplate inherits Rectangle {
 
         Rectangle { vertical-stretch: 1; }
 
-        HorizontalLayout {
-            alignment: center;
-            Text {
-                text: time;
-                font-size: time-font-size;
-                font-weight: WidgetUtilsAdapter.font-style-to-font-weight(config.numbers-font-style);
-                font-family: "Braiins Deck Sans";
-                color: Palette.white;
+        Rectangle {
+            time-text := Rectangle {
+                x: (parent.width - self.width) / 2;
+                width: time-text-inner.width;
+                height: time-text-inner.height;
+
+                time-text-inner := Text {
+                    text: time;
+                    font-size: time-font-size;
+                    font-weight: WidgetUtilsAdapter.font-style-to-font-weight(config.numbers-font-style);
+                    font-family: "Braiins Deck Sans";
+                    color: Palette.white;
+                }
+            }
+
+            ampm-text := Text {
+                visible: ampm-inline && !datetime.is-24-format;
+                x: time-text.x + time-text.width + 32px;
+                y: time-text.y + time-font-size / 2 + ampm-y-offset;
+                text: datetime.is_pm ? "PM" : "AM";
+                font-size: ampm-font-size;
+                font-weight: Theme.font.weight.regular;
+                color: Palette.gray-60;
             }
         }
 
         Rectangle { vertical-stretch: 1; }
 
-        HorizontalLayout {
+        if !ampm-inline: HorizontalLayout {
             alignment: center;
             Text {
                 visible: !datetime.is-24-format;
@@ -506,13 +524,19 @@ component WidgetClockDigitalFull inherits Rectangle {
     WidgetClockDigitalTemplate {
         config: root.config;
         datetime: root.datetime;
+        ampm-inline: true;
         time-font-size: 200px;
         header-font-size: 40px;
-        ampm-font-size: 48px;
+        ampm-font-size: 40px;
         top-padding: 50px;
         bottom-padding: 20px;
         show-year: true;
         show-alarm: true;
+        // The font glyphs aren't aligned vertically, so we need
+        // arbitrary offset. This needs to be adapted if font size
+        // changes.
+        // NOTE: this has different result in the mock and on the Deck...
+        ampm-y-offset: -40px;
     }
 }
 
@@ -568,8 +592,8 @@ component WidgetClockDigitalSmall inherits Rectangle {
         datetime: root.datetime;
         show-formatted-date: true;
         time-font-size: 64px;
-        header-font-size: 20px;
-        ampm-font-size: 20px;
+        header-font-size: 24px;
+        ampm-font-size: 24px;
         top-padding: 20px;
         bottom-padding: 20px;
         show-year: false;
