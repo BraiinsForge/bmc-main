@@ -385,7 +385,7 @@ impl<'a> TreeReader<'a> {
                     subtitle,
                 })
             }
-            _ => bail!("unknown node type: {}", node_type),
+            _ => bail!("unknown node type: {node_type}"),
         }
     }
 
@@ -576,7 +576,7 @@ impl<'a> TreeReader<'a> {
                 let text = self.read_string(len)?;
                 Ok(DrawCommand::Text { x, y, text, style })
             }
-            _ => bail!("unknown draw command: {}", draw_type),
+            _ => bail!("unknown draw command: {draw_type}"),
         }
     }
 }
