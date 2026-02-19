@@ -3,8 +3,8 @@
 use chrono::{Duration, TimeZone};
 use chrono_tz::OffsetComponents;
 use core::fmt;
-use serde::{Deserialize, Serialize};
-use serde_with::{DeserializeFromStr, SerializeDisplay};
+use serde::{Deserialize, Serialize, Serializer};
+use serde_with::DeserializeFromStr;
 use std::str::FromStr;
 use strum_macros::{Display, EnumString};
 
@@ -50,7 +50,7 @@ pub(crate) enum TimeSystemWithSeconds {
     Hour24,
 }
 
-#[derive(Clone, Debug, SerializeDisplay, DeserializeFromStr)]
+#[derive(Clone, Debug, DeserializeFromStr)]
 pub struct Timezone {
     chrono: chrono_tz::Tz,
     posix: &'static str,
@@ -82,6 +82,15 @@ impl Timezone {
     #[inline]
     pub fn iana(&self) -> &str {
         self.chrono.name()
+    }
+
+    /// Returns the city part of the IANA name in a human-readable format.
+    /// E.g. `"Europe/Prague"` → `"Prague"`, `"America/New_York"` → `"New York"`.
+    #[must_use]
+    pub fn city_name(&self) -> String {
+        let iana = self.iana();
+        let city = iana.rsplit('/').next().unwrap_or(iana);
+        city.replace('_', " ")
     }
 
     #[must_use]
@@ -116,6 +125,25 @@ impl Timezone {
         let offset_duration = offset.base_utc_offset() + offset.dst_offset();
         Offset::new(offset_duration)
     }
+
+    /// Returns a compact UTC offset string like `"+1"` or `"+5:45"`.
+    #[must_use]
+    pub fn display_offset(&self) -> String {
+        let offset = self.offset();
+        let h = offset.hours();
+        let m = offset.minutes().abs();
+        if m == 0 {
+            format!("{h:+}")
+        } else {
+            format!("{h:+}:{m:02}")
+        }
+    }
+}
+
+impl Serialize for Timezone {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.iana())
+    }
 }
 
 impl FromStr for Timezone {
@@ -143,7 +171,11 @@ impl From<&Timezone> for chrono_tz::Tz {
 
 impl fmt::Display for Timezone {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.iana())
+        if f.alternate() {
+            f.write_str(self.iana())
+        } else {
+            f.write_str(&self.city_name())
+        }
     }
 }
 
@@ -170,6 +202,18 @@ pub struct Offset {
 impl Offset {
     fn new(value: Duration) -> Self {
         Self { inner: value }
+    }
+
+    /// Total offset hours (signed).
+    #[must_use]
+    pub fn hours(&self) -> i64 {
+        self.inner.num_hours()
+    }
+
+    /// Remaining minutes after whole hours (always 0..59).
+    #[must_use]
+    pub fn minutes(&self) -> i64 {
+        self.inner.num_minutes().rem_euclid(60)
     }
 }
 

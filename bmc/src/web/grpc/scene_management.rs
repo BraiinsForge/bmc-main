@@ -1677,7 +1677,7 @@ fn map_clock_to_proto(clock: ClockWidget) -> web::WidgetKind {
         show_date: clock.show_date,
         show_seconds: clock.show_seconds,
         show_timezone: clock.show_timezone,
-        timezone: clock.timezone.map(|timezone| timezone.to_string()),
+        timezone: clock.timezone.map(|timezone| timezone.iana().to_owned()),
     };
 
     web::WidgetKind {

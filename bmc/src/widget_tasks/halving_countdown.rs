@@ -153,7 +153,7 @@ mod tests {
         let (date, time) = format_predicted_datetime(dt, &timezone, true, DateFormat::DdMmYyyyDot);
 
         assert_eq!(date, "15.04.2026");
-        assert_eq!(time, "16:30 Europe/Prague");
+        assert_eq!(time, "16:30 Prague");
     }
 
     #[test]
@@ -169,6 +169,6 @@ mod tests {
             format_predicted_datetime(dt, &timezone, false, DateFormat::YyyyMmDdDash);
 
         assert_eq!(date, "2026-04-15");
-        assert_eq!(time, "10:30 AM America/New_York");
+        assert_eq!(time, "10:30 AM New York");
     }
 }
