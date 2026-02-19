@@ -30,7 +30,7 @@
     gap: mini-units(2);
 }
 .time {
-    flex: 1;
+    flex-shrink: 1;
 }
 .name {
     flex: 1;

@@ -11,13 +11,14 @@ import AppContext, { type AppContextType } from '@/context';
 import { SoundOption } from '../SoundOption';
 import { SoundPlayIcon } from '../SoundPlayIcon';
 import { Button, CarbonFormField } from '@/components';
-import { TextInput, Toggle, Dropdown } from '@carbon/react';
+import { TextInput, Toggle, Dropdown, TimePicker, TimePickerSelect, SelectItem } from '@carbon/react';
 
 // CSS
 import css from './AlarmForm.scss';
 
 export interface AlarmFormProps {
-    time: iField<string>; // hh:mm
+    time: iField<string>; // hh:mm or h:mm AM/PM depending on timeFormat
+    timeFormat: pb.TimeFormat;
     name: iField<string>;
     repeat: iField<pb.Weekday[]>;
     sound: iField<null | pb.SoundInfo['id']> & { options: pb.SoundInfo[] };
@@ -42,7 +43,7 @@ class View extends Component<Props, State> {
     constructor(props: Props, context: AppContextType) {
         super(props);
         const { currentlyPlaying } = context.device.sound;
-        this.state = { isPlaying: currentlyPlaying?.id === props.sound.value };
+        this.state = { isPlaying: currentlyPlaying != null && currentlyPlaying.id === props.sound.value };
     }
     componentDidUpdate(prevProps: Props) {
         const { sound } = this.props;
@@ -50,7 +51,8 @@ class View extends Component<Props, State> {
         const { currentlyPlaying } = this.context.device.sound;
 
         // Something outside played a sound, but we are not marked as playing
-        if (currentlyPlaying?.id === sound.value && !isPlaying) this.setState({ isPlaying: true });
+        if (currentlyPlaying != null && currentlyPlaying.id === sound.value && !isPlaying)
+            this.setState({ isPlaying: true });
         // We think we are playing a sound, but context says otherwise
         else if (isPlaying && !currentlyPlaying) this.setState({ isPlaying: false });
         // Sound changed and we are playing → switch
@@ -107,23 +109,56 @@ class View extends Component<Props, State> {
     #alarmSoundToString = (value: null | pb.SoundInfo): string => value?.name ?? '--';
 
     render() {
-        const { time, name, repeat, sound, snoozeEnabled, snoozeLimit, snoozeDuration, intl } = this.props;
+        const { time, timeFormat, name, repeat, sound, snoozeEnabled, snoozeLimit, snoozeDuration, intl } = this.props;
+        const is12h = timeFormat === pb.TimeFormat.TIME_FORMAT_12_HOUR;
         const { isPlaying } = this.state;
         const { formatMessage } = intl;
+
+        const [timeValue, period] = is12h
+            ? (() => {
+                  const v = time.value ?? '';
+                  const match = v.match(/^(.+?)\s+(AM|PM)$/i);
+                  if (match) return [match[1], match[2].toUpperCase()] as const;
+                  const periodOnly = v.match(/^(AM|PM)$/i);
+                  if (periodOnly) return ['', periodOnly[1].toUpperCase()] as const;
+                  return [v, 'AM'] as const;
+              })()
+            : ([time.value ?? '', 'AM'] as const);
 
         return (
             <Form className={css.root}>
                 <div className={css.rowTop}>
                     <div className={css.time}>
-                        <TextInput
+                        <TimePicker
                             id={$('time')}
                             labelText={formatMessage({ defaultMessage: 'Time' })}
-                            value={time.value ?? ''}
-                            onChange={e => time.onChange?.(e.target.value)}
+                            value={is12h ? timeValue : (time.value ?? '')}
+                            onChange={e => {
+                                if (is12h) {
+                                    const val = e.target.value;
+                                    time.onChange?.(val ? `${val} ${period}` : period);
+                                } else {
+                                    time.onChange?.(e.target.value);
+                                }
+                            }}
                             invalid={!!time.error}
                             invalidText={time.error}
-                            placeholder={formatMessage({ defaultMessage: 'HH:MM' })}
-                        />
+                            placeholder={is12h ? 'h:MM' : 'HH:MM'}
+                        >
+                            {is12h && (
+                                <TimePickerSelect
+                                    id={$('time-period')}
+                                    value={period}
+                                    onChange={e => {
+                                        const p = e.target.value;
+                                        time.onChange?.(timeValue ? `${timeValue} ${p}` : p);
+                                    }}
+                                >
+                                    <SelectItem value="AM" text="AM" />
+                                    <SelectItem value="PM" text="PM" />
+                                </TimePickerSelect>
+                            )}
+                        </TimePicker>
                     </div>
 
                     <div className={css.name}>

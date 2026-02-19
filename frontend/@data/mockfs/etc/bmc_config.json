@@ -342,7 +342,7 @@
     },
     {
       "id": "7cd94f04-462b-43d9-b89b-fe445ab05164",
-      "enabled": true,
+      "enabled": false,
       "kind": "fullscreen",
       "widgets": [
         {
@@ -376,7 +376,7 @@
     }
   ],
   "localization": {
-    "time_system": "Hour24",
+    "time_system": "Hour12",
     "number_format": "SpaceGroupCommaDecimal",
     "date_format": "DdMmYyyyDot",
     "first_day_of_week": "Monday",
@@ -385,6 +385,28 @@
     "unit_system": "Metric"
   },
   "data_collection": false,
+  "alarms": [
+    {
+      "id": "ec91af30-a760-45b6-a792-b62a8e58512a",
+      "enabled": true,
+      "name": "xxx",
+      "time": "10:50:00",
+      "repeat": [
+        "Tuesday",
+        "Saturday",
+        "Thursday",
+        "Friday",
+        "Wednesday",
+        "Sunday",
+        "Monday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": {
+        "limit": "Three",
+        "duration": "FiveMinutes"
+      }
+    }
+  ],
   "boot_sound_enabled": true,
   "autoupgrade": {
     "enabled": true,

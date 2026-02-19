@@ -1,6 +1,7 @@
 import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { getID } from '@/lib/form';
+import { formatAlarmTime } from '@/lib/time';
 
 // App
 import * as pb from '@/proto';
@@ -19,6 +20,7 @@ type TableCol = 'state' | 'time' | 'label' | 'repeat' | 'sound' | 'snooze' | 'ac
 export interface AlarmsTableProps {
     isLoading: boolean;
     data: pb.Alarm[];
+    timeFormat: pb.TimeFormat;
     onEdit(id: pb.Alarm['id']): void;
     onToggle(id: pb.Alarm['id'], checked: boolean): void;
     onDelete(id: pb.Alarm['id']): void;
@@ -73,7 +75,7 @@ class View extends Component<Props> {
         ];
     };
     #getRows = (): Array<DataTableRow<TableCol>> => {
-        const { data, onToggle, onEdit, onDelete, intl } = this.props;
+        const { data, timeFormat, onToggle, onEdit, onDelete, intl } = this.props;
         const { formatMessage } = intl;
 
         return data.map<DataTableRow<TableCol>>(alarm => {
@@ -91,7 +93,7 @@ class View extends Component<Props> {
                             onToggle={checked => onToggle(id, checked)}
                         />
                     ),
-                    time: <strong children={time} />,
+                    time: <strong children={formatAlarmTime(time, timeFormat)} />,
                     label: <span children={name} className={css.labelWrapper} />,
                     repeat: pb.weekdayListToString(intl, repeat),
                     sound: sound?.name ?? '--',

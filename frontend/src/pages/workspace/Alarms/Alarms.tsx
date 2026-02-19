@@ -6,6 +6,7 @@ import { useIntl, type IntlShape, FormattedMessage } from 'react-intl';
 import { getID } from '@/lib/form';
 import { setState } from '@/lib/react';
 import { toast } from '@/lib/toast';
+import { formatAlarmTime, parseAlarmTime, validateTime } from '@/lib/time';
 
 // App
 import * as pb from '@/proto';
@@ -36,6 +37,7 @@ interface State {
     alarms: pb.Alarm[];
     sounds: pb.SoundInfo[];
     alarmDefaults: pb.AlarmInfoResponse;
+    timeFormat: pb.TimeFormat;
 
     openDialog: null | {
         key: 'alarm';
@@ -49,6 +51,7 @@ const getInitialState = (): State => ({
     alarms: [],
     sounds: [],
     alarmDefaults: pb.create(pb.AlarmInfoResponseSchema),
+    timeFormat: pb.TimeFormat.TIME_FORMAT_24_HOUR,
 
     openDialog: null,
 });
@@ -77,12 +80,14 @@ export class View extends Component<Props, State> {
         await setState(this, { isLoading: true });
 
         try {
-            const [{ alarms }, { sounds }, alarmDefaults] = await Promise.all([
+            const [{ alarms }, { sounds }, alarmDefaults, generalSettings] = await Promise.all([
                 pb.rpc.alarm.listAlarms({}, reqOpts),
                 pb.rpc.config.listSounds({}, reqOpts),
                 pb.rpc.alarm.getAlarmInfo({}, reqOpts),
+                pb.rpc.config.getGeneralSettingsData({}, reqOpts),
             ]);
-            this.setState({ isLoading: false, alarms, sounds, alarmDefaults });
+            const timeFormat = generalSettings.timeFormat || pb.TimeFormat.TIME_FORMAT_24_HOUR;
+            this.setState({ isLoading: false, alarms, sounds, alarmDefaults, timeFormat });
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -127,7 +132,7 @@ export class View extends Component<Props, State> {
                     editingID: null,
                     data: {
                         values: {
-                            time: d.time,
+                            time: formatAlarmTime(d.time, s.timeFormat),
                             name: d.name,
                             repeat: d.repeat,
                             soundId: d.soundId,
@@ -157,7 +162,39 @@ export class View extends Component<Props, State> {
         }
 
         const { editingID } = openDialog;
-        const { time, name, repeat, soundId, snoozeEnabled, snoozeDuration, snoozeLimit } = openDialog.data.values;
+        const {
+            time: rawTime,
+            name,
+            repeat,
+            soundId,
+            snoozeEnabled,
+            snoozeDuration,
+            snoozeLimit,
+        } = openDialog.data.values;
+
+        const trimmedTime = rawTime.trim();
+
+        if (!validateTime(trimmedTime, this.state.timeFormat)) {
+            this.setState(s => {
+                if (s.openDialog?.key !== 'alarm') return s;
+                return {
+                    ...s,
+                    openDialog: {
+                        ...s.openDialog,
+                        data: {
+                            ...s.openDialog.data,
+                            errors: {
+                                global: [],
+                                fields: { time: [formatMessage({ defaultMessage: 'Invalid time format' })] },
+                            },
+                        },
+                    },
+                };
+            });
+            return;
+        }
+
+        const time = parseAlarmTime(trimmedTime, this.state.timeFormat);
         const snoozeOptions = pb.create(pb.SnoozeOptionsWrapperSchema, {
             kind: snoozeEnabled
                 ? {
@@ -259,7 +296,7 @@ export class View extends Component<Props, State> {
     #alarmDialogGetChangeHandler = <Key extends keyof FormValues>(key: Key) => {
         return (value: null | FormValues[Key]): void => {
             this.setState(s => {
-                const { openDialog } = this.state;
+                const { openDialog } = s;
                 if (openDialog?.key !== 'alarm') return s;
 
                 return {
@@ -288,7 +325,7 @@ export class View extends Component<Props, State> {
 
     #addRender = (): ReactElement => {
         const { formatMessage } = this.props.intl;
-        const { openDialog, sounds } = this.state;
+        const { openDialog, sounds, timeFormat } = this.state;
         const data = openDialog?.key === 'alarm' ? openDialog.data : null;
 
         const txt = this.#txt;
@@ -326,6 +363,7 @@ export class View extends Component<Props, State> {
 
                 <AlarmForm
                     time={this.#alarmDialogGetFieldStruct('time')}
+                    timeFormat={timeFormat}
                     name={this.#alarmDialogGetFieldStruct('name')}
                     repeat={this.#alarmDialogGetFieldStruct('repeat')}
                     sound={{ ...this.#alarmDialogGetFieldStruct('soundId'), options: sounds }}
@@ -368,7 +406,7 @@ export class View extends Component<Props, State> {
                     editingID: id,
                     data: {
                         values: {
-                            time: d.time,
+                            time: formatAlarmTime(d.time, s.timeFormat),
                             name: d.name,
                             repeat: d.repeat,
                             soundId: d.sound?.id,
@@ -405,7 +443,7 @@ export class View extends Component<Props, State> {
     #onDelete = async (id: pb.Alarm['id']): Promise<void> => {
         const { confirm } = this.context;
         const { intl } = this.props;
-        const { alarms } = this.state;
+        const { alarms, timeFormat } = this.state;
 
         const d = alarms.find(x => x.id === id);
         if (!d) return;
@@ -423,7 +461,7 @@ export class View extends Component<Props, State> {
                         <tbody>
                             <tr>
                                 <FormattedMessage tagName="th" defaultMessage="Time" />
-                                <td children={d.time} />
+                                <td children={formatAlarmTime(d.time, timeFormat)} />
                             </tr>
                             <tr>
                                 <FormattedMessage tagName="th" defaultMessage="Label" />
@@ -469,7 +507,7 @@ export class View extends Component<Props, State> {
     };
 
     render() {
-        const { /* isLoading, */ alarms } = this.state;
+        const { /* isLoading, */ alarms, timeFormat } = this.state;
         const txt = this.#txt;
 
         return (
@@ -496,6 +534,7 @@ export class View extends Component<Props, State> {
                     <AlarmsTable
                         isLoading={false}
                         data={alarms}
+                        timeFormat={timeFormat}
                         onEdit={this.#onEdit}
                         onToggle={this.#onToggle}
                         onDelete={this.#onDelete}
