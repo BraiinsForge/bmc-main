@@ -423,12 +423,16 @@ component WidgetClockDigitalTemplate inherits Rectangle {
             ? (datetime.weekday + " " + datetime.day + " " + datetime.month-name + ", " + datetime.year)
             : (datetime.weekday + " " + datetime.day + " " + datetime.month-name));
 
+    property <string> timezone-text: show-utc-offset
+        ? (datetime.timezone + " (" + datetime.utc-offset + ")")
+        : datetime.timezone;
+
     property <string> header-text:
         (config.show-date && config.show-timezone)
-            ? (date-text + "    " + datetime.timezone)
+            ? (date-text + "    " + timezone-text)
             : config.show-date
                 ? date-text
-                : datetime.timezone;
+                : timezone-text;
 
     VerticalLayout {
         padding-top: top-padding;
@@ -525,6 +529,7 @@ component WidgetClockDigitalFull inherits Rectangle {
         config: root.config;
         datetime: root.datetime;
         ampm-inline: true;
+        show-utc-offset: true;
         time-font-size: 200px;
         header-font-size: 40px;
         ampm-font-size: 40px;
@@ -550,12 +555,13 @@ component WidgetClockDigitalLarge inherits Rectangle {
     WidgetClockDigitalTemplate {
         config: root.config;
         datetime: root.datetime;
+        show-utc-offset: true;
         time-font-size: 120px;
         header-font-size: 32px;
         ampm-font-size: 32px;
         top-padding: 40px;
         bottom-padding: 40px;
-        show-year: false;
+        show-year: true;
         show-alarm: false;
     }
 }
@@ -570,6 +576,7 @@ component WidgetClockDigitalMedium inherits Rectangle {
     WidgetClockDigitalTemplate {
         config: root.config;
         datetime: root.datetime;
+        show-utc-offset: true;
         time-font-size: 96px;
         header-font-size: 24px;
         ampm-font-size: 24px;

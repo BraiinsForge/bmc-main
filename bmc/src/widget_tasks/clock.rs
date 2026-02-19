@@ -40,17 +40,12 @@ pub async fn run(
 
         let clock_data = ClockData::new(now);
 
-        let timezone_display = format!(
-            "{} ({})",
-            timezone.display_city(),
-            timezone.display_offset(&now)
-        );
-
         display_controller.update_clock_widget(
             scene_id.clone(),
             widget_id.clone(),
             now,
             timezone.to_string(),
+            timezone.display_offset(),
             is_24_format,
             date_format,
             clock_data,

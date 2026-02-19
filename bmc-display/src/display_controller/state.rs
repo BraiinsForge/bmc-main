@@ -204,12 +204,14 @@ impl DisplayController {
         });
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub fn update_clock_widget(
         &self,
         scene_id: SceneId,
         widget_id: WidgetId,
         datetime: chrono::DateTime<chrono::FixedOffset>,
         timezone: String,
+        utc_offset: String,
         is_24_format: bool,
         date_format: DateFormat,
         clock_data: ClockData,
@@ -221,7 +223,13 @@ impl DisplayController {
             if let Some(scene) = scenes_ref.get(&scene_id) {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
-                let new_datetime = to_datetime(datetime, timezone, is_24_format, Some(date_format));
+                let new_datetime = to_datetime(
+                    datetime,
+                    timezone,
+                    utc_offset,
+                    is_24_format,
+                    Some(date_format),
+                );
 
                 // NOTE: `modify` always marks row as changed, even if we make no changes inside the closure
                 let datetime_changed = widgets_ref
@@ -1060,6 +1068,7 @@ impl DisplayController {
                 alarm_adapter.set_next_alarm_time(to_datetime(
                     datetime,
                     system_datetime.timezone.to_string(),
+                    String::new(),
                     system_datetime.is_24_format,
                     None,
                 ));
@@ -1074,7 +1083,13 @@ impl DisplayController {
         is_24_format: bool,
     ) {
         self.in_event_loop(move |main_window| {
-            main_window.set_system_datetime(to_datetime(datetime, timezone, is_24_format, None));
+            main_window.set_system_datetime(to_datetime(
+                datetime,
+                timezone,
+                String::new(),
+                is_24_format,
+                None,
+            ));
         });
     }
 
@@ -1148,6 +1163,7 @@ fn indexmap_model_ref<K: 'static, V: 'static>(model_rc: &ModelRc<V>) -> &IndexMa
 fn to_datetime(
     datetime: chrono::DateTime<chrono::FixedOffset>,
     timezone: String,
+    utc_offset: String,
     is_24_format: bool,
     date_format: Option<DateFormat>,
 ) -> generated::DateTime {
@@ -1188,5 +1204,6 @@ fn to_datetime(
         time_24,
         date,
         timezone: timezone.into(),
+        utc_offset: utc_offset.into(),
     }
 }
