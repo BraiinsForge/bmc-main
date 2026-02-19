@@ -405,6 +405,7 @@ component WidgetClockDigitalTemplate inherits Rectangle {
     in property <length> bottom-padding;
     in property <bool> show-year;
     in property <bool> show-alarm;
+    in property <bool> show-formatted-date: false;
 
     width: 100%;
     height: 100%;
@@ -413,9 +414,11 @@ component WidgetClockDigitalTemplate inherits Rectangle {
         ? (config.show-seconds ? datetime.time-sec-24 : datetime.time-24)
         : (config.show-seconds ? datetime.time-sec-12 : datetime.time-12);
 
-    property <string> date-text: show-year
-        ? (datetime.weekday + " " + datetime.day + " " + datetime.month-name + ", " + datetime.year)
-        : (datetime.weekday + " " + datetime.day + " " + datetime.month-name);
+    property <string> date-text: show-formatted-date
+        ? datetime.date
+        : (show-year
+            ? (datetime.weekday + " " + datetime.day + " " + datetime.month-name + ", " + datetime.year)
+            : (datetime.weekday + " " + datetime.day + " " + datetime.month-name));
 
     property <string> header-text:
         (config.show-date && config.show-timezone)
@@ -563,6 +566,7 @@ component WidgetClockDigitalSmall inherits Rectangle {
     WidgetClockDigitalTemplate {
         config: root.config;
         datetime: root.datetime;
+        show-formatted-date: true;
         time-font-size: 64px;
         header-font-size: 20px;
         ampm-font-size: 20px;

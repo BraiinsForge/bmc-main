@@ -34,12 +34,9 @@ pub async fn run(
             .with_timezone(timezone.chrono())
             .fixed_offset();
 
-        let is_24_format = config_handle
-            .read()
-            .await
-            .localization_config()
-            .time_system
-            .is_24();
+        let localization = config_handle.read().await.localization_config();
+        let is_24_format = localization.time_system.is_24();
+        let date_format = localization.date_format;
 
         let clock_data = ClockData::new(now);
 
@@ -55,6 +52,7 @@ pub async fn run(
             now,
             timezone.to_string(),
             is_24_format,
+            date_format,
             clock_data,
         );
 

@@ -211,6 +211,7 @@ impl DisplayController {
         datetime: chrono::DateTime<chrono::FixedOffset>,
         timezone: String,
         is_24_format: bool,
+        date_format: DateFormat,
         clock_data: ClockData,
     ) {
         self.in_event_loop(move |main_window| {
@@ -220,7 +221,7 @@ impl DisplayController {
             if let Some(scene) = scenes_ref.get(&scene_id) {
                 let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
 
-                let new_datetime = to_datetime(datetime, timezone, is_24_format);
+                let new_datetime = to_datetime(datetime, timezone, is_24_format, Some(date_format));
 
                 // NOTE: `modify` always marks row as changed, even if we make no changes inside the closure
                 let datetime_changed = widgets_ref
@@ -1060,6 +1061,7 @@ impl DisplayController {
                     datetime,
                     system_datetime.timezone.to_string(),
                     system_datetime.is_24_format,
+                    None,
                 ));
             }
         });
@@ -1072,7 +1074,7 @@ impl DisplayController {
         is_24_format: bool,
     ) {
         self.in_event_loop(move |main_window| {
-            main_window.set_system_datetime(to_datetime(datetime, timezone, is_24_format));
+            main_window.set_system_datetime(to_datetime(datetime, timezone, is_24_format, None));
         });
     }
 
@@ -1147,6 +1149,7 @@ fn to_datetime(
     datetime: chrono::DateTime<chrono::FixedOffset>,
     timezone: String,
     is_24_format: bool,
+    date_format: Option<DateFormat>,
 ) -> generated::DateTime {
     let hour24 = i32::try_from(datetime.hour()).unwrap_or_default();
     let hour12 = i32::try_from(datetime.hour12().1).unwrap_or_default();
@@ -1162,7 +1165,10 @@ fn to_datetime(
     let time_sec_12 = slint::format!("{hour12:02}:{minute:02}:{second:02}");
     let time_24 = slint::format!("{hour24:02}:{minute:02}");
     let time_12 = slint::format!("{hour12:02}:{minute:02}");
-    let date = slint::format!("{day:02}. {month:02}. {year}");
+    let date = match date_format {
+        Some(fmt) => slint::format!("{}", datetime.format(fmt.format_string())),
+        None => slint::format!("{day:02}. {month:02}. {year}"),
+    };
 
     generated::DateTime {
         is_24_format,
