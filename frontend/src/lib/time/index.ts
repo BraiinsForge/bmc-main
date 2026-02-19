@@ -1,9 +1,53 @@
 import type { Timestamp as PbTimestamp } from '@/proto';
+import { TimeFormat } from '@/proto/gen/web/shared_pb';
 import { isPlainObject } from 'es-toolkit';
 import { timeFormat } from 'd3-time-format';
 
 export * from './tz';
 export * from './validateTime';
+
+/**
+ * Convert a 24h time string ("HH:MM") to 12h format ("h:MM AM/PM").
+ * Returns the input unchanged if it doesn't match "HH:MM".
+ */
+export function time24to12(time24: string): string {
+    const match = time24.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return time24;
+
+    const h = Number(match[1]);
+    const m = match[2];
+    const period = h >= 12 ? 'PM' : 'AM';
+    const hour12 = h % 12 || 12;
+    return `${hour12}:${m} ${period}`;
+}
+
+/**
+ * Convert a 12h time string ("h:MM AM/PM") to 24h format ("HH:MM").
+ * Returns the input unchanged if it doesn't match 12h format.
+ */
+export function time12to24(time12: string): string {
+    const match = time12.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!match) return time12;
+
+    let hour = Number(match[1]);
+    const min = match[2];
+    const period = match[3].toUpperCase();
+
+    if (period === 'PM' && hour !== 12) hour += 12;
+    if (period === 'AM' && hour === 12) hour = 0;
+
+    return `${String(hour).padStart(2, '0')}:${min}`;
+}
+
+/** Format an alarm time string ("HH:MM") according to the given time format setting. */
+export function formatAlarmTime(time24: string, format: TimeFormat): string {
+    return format === TimeFormat.TIME_FORMAT_12_HOUR ? time24to12(time24) : time24;
+}
+
+/** Parse a user-entered alarm time string back to 24h "HH:MM" for the backend. */
+export function parseAlarmTime(input: string, format: TimeFormat): string {
+    return format === TimeFormat.TIME_FORMAT_12_HOUR ? time12to24(input) : input;
+}
 
 type GetTimestamp = (offset?: null | number, date?: Date | number) => number;
 export const getTimestampMs: GetTimestamp = (offset, time): number => {

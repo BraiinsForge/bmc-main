@@ -9,7 +9,7 @@ import { setState } from '@/lib/react';
 import type { iField } from '@/lib/form';
 import { toast } from '@/lib/toast';
 import { assertUnreachable } from '@/lib/ts';
-import { getTimestamp, validateTime } from '@/lib/time';
+import { getTimestamp, validateTime24 } from '@/lib/time';
 import { unloadGuard, Ping, type PingCallback, downloadURL } from '@/lib/dom';
 
 // App
@@ -872,7 +872,7 @@ class View extends Component<Props, State> {
             validationErrors.push(formatMessage({ defaultMessage: 'Time interval must be set!' }));
         else if (value.from === value.to)
             validationErrors.push(formatMessage({ defaultMessage: 'Start and end time cannot be the same!' }));
-        else if (!validateTime(value.from) || !validateTime(value.to))
+        else if (!validateTime24(value.from) || !validateTime24(value.to))
             validationErrors.push(formatMessage({ defaultMessage: 'Time must be in HH:MM format!' }));
 
         // Abort if we have errors
