@@ -846,24 +846,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bmc-compositor"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "calloop 0.14.2",
- "drm 0.14.1",
- "drm-fourcc",
- "gbm 0.17.0",
- "input",
- "libc",
- "smithay",
- "smithay-drm-extras",
- "tracing",
- "tracing-subscriber",
- "udev",
-]
-
-[[package]]
 name = "bmc-display"
 version = "0.1.0"
 dependencies = [
@@ -7134,15 +7116,6 @@ dependencies = [
  "libc",
  "smithay-client-toolkit",
  "wayland-backend",
-]
-
-[[package]]
-name = "smithay-drm-extras"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa68109eb23955c216dadb780b0a82e5b0d1dd4b649d4a52b59100eb83a30e96"
-dependencies = [
- "drm 0.14.1",
 ]
 
 [[package]]
