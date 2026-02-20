@@ -5,12 +5,12 @@ edition = "2024"
 
 [dependencies]
 # Wayland client
-wayland-client = "0.31"
-wayland-backend = { version = "0.3", features = ["client_system"] }
-wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-client = { workspace = true }
+wayland-backend = { workspace = true, features = ["client_system"] }
+wayland-protocols = { workspace = true, features = ["staging"] }
 
 # OpenGL ES - use smithay's EGL wrapper for GBM-based EGL
-glow = "0.16"
+glow = { workspace = true }
 smithay = { workspace = true, default-features = false, features = ["backend_egl", "renderer_glow"] }
 
 # Buffer management (for GBM and DMA-BUF)
@@ -18,9 +18,9 @@ gbm = { workspace = true }
 drm-fourcc = { workspace = true }
 
 # Utilities
-tracing.workspace = true
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-anyhow.workspace = true
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+anyhow = { workspace = true }
 
 [lints]
 workspace = true
