@@ -7,7 +7,9 @@ use bmc_mock::MockSessionManager;
 use bmc_mock::backlight_driver::MockBacklightDriver;
 use bmc_mock::button_driver::build_buttons;
 use bmc_mock::led_driver::PlatformLedDriver;
-use bmc_mock::{cli, manager::Manager, mock_index::MockIndex, mockfs};
+use bmc_mock::{
+    cli, manager::Manager, mock_compositor::MockCompositor, mock_index::MockIndex, mockfs,
+};
 use bmc_upgrade::firmware::FirmwareResolver;
 use clap::Parser;
 use std::sync::{Arc, Mutex};
@@ -46,6 +48,8 @@ async fn main() -> Result<()> {
 
     let firmware_resolver = FirmwareResolver::new(MockIndex);
 
+    let compositor = Arc::new(MockCompositor::new());
+
     bmc::entry::main(
         manager,
         config,
@@ -53,6 +57,7 @@ async fn main() -> Result<()> {
         led_driver.0,
         firmware_resolver,
         build_buttons(),
+        compositor,
     )
     .await
 }

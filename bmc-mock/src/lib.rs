@@ -5,6 +5,7 @@ pub mod button_driver;
 pub mod cli;
 pub mod led_driver;
 pub mod manager;
+pub mod mock_compositor;
 pub mod mock_index;
 pub mod mockfs;
 mod session;
