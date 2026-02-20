@@ -5,36 +5,36 @@ edition = "2024"
 
 [dependencies]
 # Wayland
-wayland-client = "0.31"
-wayland-backend = { version = "0.3", features = ["client_system"] }
-wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-backend = { workspace = true, features = ["client_system"] }
+wayland-client = { workspace = true }
+wayland-protocols = { workspace = true, features = ["staging"] }
 
 # OpenGL ES - use smithay's EGL wrapper which handles platform selection properly
-glow = "0.16"
+glow = { workspace = true }
 smithay = { workspace = true, default-features = false, features = ["backend_egl", "renderer_glow"] }
 
 # Buffer management
-gbm = { workspace = true }
 drm-fourcc = { workspace = true }
+gbm = { workspace = true }
 
 # Event loop
 calloop = { workspace = true }
-calloop-wayland-source = "0.3"
+calloop-wayland-source = { workspace = true }
 
 # Time
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 
 # Font rendering
-ab_glyph = "0.2"
+ab_glyph = { workspace = true }
 
 # 2D tessellation for 3D extrusion
-lyon = "1.0"
+lyon = { workspace = true }
 
 # Utilities
 anyhow = { workspace = true }
-bytemuck = { version = "1.14", features = ["derive"] }
-clap = { version = "4", features = ["derive"] }
+bytemuck = { workspace = true }
+clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
