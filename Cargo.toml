@@ -4,7 +4,6 @@ members = [
     "bmc",
     "bmc-audio",
     "bmc-button",
-    "bmc-compositor",
     "bmc-display",
     "bmc-gpio",
     "bmc-grpc",
