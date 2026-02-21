@@ -218,14 +218,14 @@ impl JobScheduler {
                 };
                 self.save_to_crontab(cron.clone(), command, &config)
                     .await
-                    .map_err(|e| anyhow!("Failed to save to crontab: {}", e))?;
+                    .map_err(|e| anyhow!("Failed to save to crontab: {e}"))?;
             }
         }
 
         let job_id = self
             .internal_schedule(schedule.clone(), task, &config, timezone)
             .await
-            .map_err(|e| anyhow!("Failed to schedule task: {}", e))?;
+            .map_err(|e| anyhow!("Failed to schedule task: {e}"))?;
 
         Ok(job_id)
     }
@@ -445,7 +445,7 @@ impl JobScheduler {
         crontab_manager
             .ensure_scheduler_disclaimer()
             .await
-            .map_err(|e| anyhow!("Failed to ensure disclaimer: {}", e))?;
+            .map_err(|e| anyhow!("Failed to ensure disclaimer: {e}"))?;
         Ok(())
     }
 

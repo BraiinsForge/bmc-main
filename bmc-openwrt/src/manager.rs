@@ -669,7 +669,7 @@ impl BmcManager for Manager {
                     ],
                 )
                 .await
-                .map_err(|e| anyhow!("Failed to remove factory default flag, error: {}", e))
+                .map_err(|e| anyhow!("Failed to remove factory default flag, error: {e}"))
             }
             BmcState::SetupPending => {
                 // Remove setup pending flag
@@ -681,7 +681,7 @@ impl BmcManager for Manager {
                     ],
                 )
                 .await
-                .map_err(|e| anyhow!("Failed to remove setup pending flag, error: {}", e))
+                .map_err(|e| anyhow!("Failed to remove setup pending flag, error: {e}"))
             }
             BmcState::WifiReconfiguration => {
                 // Remove wifi reconfig flag (return to Operational)
@@ -696,7 +696,7 @@ impl BmcManager for Manager {
                     ],
                 )
                 .await
-                .map_err(|e| anyhow!("Failed to remove wifi reconfig flag, error: {}", e))
+                .map_err(|e| anyhow!("Failed to remove wifi reconfig flag, error: {e}"))
             }
             BmcState::Operational => Ok(()),
         }
