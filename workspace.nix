@@ -80,7 +80,7 @@ let
   # Full workspace config for glibc profiles (widgets, compositor)
   workspace = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
-    nativeDeps = _pkgs: commonDeps.buildDeps;
+    nativeDeps = _pkgs: commonDeps.buildDeps ++ commonDeps.guiBuildDeps;
     # packages that will be cross-compiled for target arch
     targetDeps = build_pkgs: with build_pkgs; [
       # Compositor dependencies (require dynamic linking)
@@ -94,8 +94,14 @@ let
       libgbm
       libGL
     ];
-    # environment variables (from commonDeps)
-    inherit (commonDeps) env;
+    # environment variables (from commonDeps, with fontconfig in LD_LIBRARY_PATH
+    # for Slint build script which dlopen's libfontconfig.so.1 during compilation)
+    env = commonDeps.env // {
+      LD_LIBRARY_PATH = lib.makeLibraryPath [
+        pkgs.libgcc
+        pkgs.fontconfig
+      ];
+    };
   };
 
   build-profiles = {
