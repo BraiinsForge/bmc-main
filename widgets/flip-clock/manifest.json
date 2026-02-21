@@ -1,0 +1,37 @@
+{
+  "uid": "550e8400-e29b-41d4-a716-446655440002",
+  "version": "1.0.0",
+  "name": "Flip Clock",
+  "description": "GPU-accelerated split-flap clock with 2D and 3D animation modes",
+  "author": {
+    "name": "Braiins",
+    "url": "https://braiins.com"
+  },
+  "binary": "bin/bmc-widget-flip-clock",
+  "settings": [
+    "timezone",
+    "nightMode",
+    "localization"
+  ],
+  "sizes": [
+    "full"
+  ],
+  "params": {
+    "mode": {
+      "name": "Animation Mode",
+      "type": "string",
+      "description": "Animation style for the flip-clock digits",
+      "default": "extruded",
+      "enum": {
+        "flat": "Flat",
+        "extruded": "Extruded"
+      }
+    },
+    "timezone": {
+      "name": "Timezone",
+      "type": "timezone",
+      "description": "Override timezone (e.g. 'America/New_York'). If not set, uses global timezone setting.",
+      "default": null
+    }
+  }
+}
