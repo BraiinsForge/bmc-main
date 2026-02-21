@@ -32,10 +32,7 @@ impl StorageChecker {
 
         if available_space < required_size {
             return Err(anyhow!(
-                "Not enough space in path: {:?}. Required: {} bytes, got: {} bytes",
-                path,
-                required_size,
-                available_space
+                "Not enough space in path: {path:?}. Required: {required_size} bytes, got: {available_space} bytes"
             ));
         }
 

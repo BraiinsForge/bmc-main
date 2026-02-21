@@ -72,7 +72,7 @@ impl FromStr for ActionType {
             "unbind" => Ok(Unbind),
             "pressed" => Ok(Pressed),
             "released" => Ok(Released),
-            _ => anyhow::bail!("Unexpected action: {}", s),
+            _ => anyhow::bail!("Unexpected action: {s}"),
         }
     }
 }
