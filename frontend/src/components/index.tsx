@@ -3,7 +3,6 @@ export * from './ButtonGroup';
 export * from './ButtonSwitch';
 export * from './CarbonFormField';
 export * from './Checkbox';
-export * from './ColorInput';
 export * from './CopyButton';
 export * from './DataTable';
 export * from './Empty';

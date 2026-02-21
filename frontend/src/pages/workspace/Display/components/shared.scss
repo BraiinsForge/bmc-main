@@ -82,8 +82,3 @@
     composes: withIcon;
     color: $text-secondary;
 }
-
-.colorInputs {
-    composes: horizontal start from 'styles/layout.scss';
-    gap: mini-units(1);
-}

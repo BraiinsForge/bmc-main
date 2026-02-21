@@ -59,9 +59,6 @@ export function ScenePreview(props: ScenePreviewProps) {
         case 'halvingCountdown':
             return <Icons.WidgetHalvingCountdown size={40} />;
 
-        case 'countdown':
-            return <Icons.WidgetCountdown size={40} />;
-
         // case 'image':
         //     return (
         //         <img
