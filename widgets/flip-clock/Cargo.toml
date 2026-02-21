@@ -3,7 +3,16 @@ name = "bmc-widget-flip-clock"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+standalone = []
+
 [dependencies]
+# Widget integration
+bmc-shared-time = { workspace = true }
+bmc-widget = { workspace = true }
+bmc-widget-protocol = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
 # Wayland
 wayland-backend = { workspace = true, features = ["client_system"] }
 wayland-client = { workspace = true }
