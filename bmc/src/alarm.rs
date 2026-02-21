@@ -1,5 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// TODO: display refactor
+#![allow(dead_code)]
+
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Display, Formatter},

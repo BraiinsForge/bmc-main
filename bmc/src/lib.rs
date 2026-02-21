@@ -23,8 +23,12 @@ mod storage_checker;
 mod system_manager;
 mod system_upgrade;
 pub mod utils;
+// TODO: display refactor
+#[expect(dead_code)]
 mod web;
 pub mod widget;
+// TODO: display refactor
+#[expect(dead_code)]
 mod widget_tasks;
 
 pub use manager::BmcManager;

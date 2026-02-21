@@ -1,5 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// TODO: display refactor
+#![allow(dead_code, unused_imports, clippy::too_many_arguments)]
+
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -176,7 +179,7 @@ where
         // );
 
         let (_, last_price_change_24h_receiver) = watch::channel(0.0);
-        let (mut led_controller, led_state_sender) = LedController::new(
+        let (mut led_controller, _led_state_sender) = LedController::new(
             &state_service,
             manager.clone(),
             last_price_change_24h_receiver,

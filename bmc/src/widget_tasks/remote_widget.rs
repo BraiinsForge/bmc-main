@@ -1,5 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// TODO: display refactor
+#![allow(clippy::trivially_copy_pass_by_ref, unused_variables)]
+
 use crate::config::{ConfigHandle, UnitSystem};
 use anyhow::{Context, Result, bail};
 use bmc_display::data::{SceneId, WidgetId, WidgetSize};

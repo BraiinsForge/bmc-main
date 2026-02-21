@@ -1,5 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// TODO: display refactor
+#![allow(clippy::map_identity, unused_mut)]
+
 use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
