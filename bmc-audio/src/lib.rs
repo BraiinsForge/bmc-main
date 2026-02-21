@@ -70,7 +70,7 @@ impl Audio {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            volume: Volume::new(50).unwrap(), // Default volume
+            volume: Volume::new(50).expect("BUG: default volume 50 is within valid range"),
         }
     }
 

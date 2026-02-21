@@ -462,11 +462,13 @@ impl JobScheduler {
         };
 
         // Ensure disclaimer is maintained after removal
-        if result.is_ok() && result.as_ref().unwrap() > &0 {
-            let _ = crontab_manager
-                .ensure_scheduler_disclaimer()
-                .await
-                .map_err(|e| warn!("Failed to ensure disclaimer after removal: {}", e));
+        if let Ok(count) = &result {
+            if count > &0 {
+                let _ = crontab_manager
+                    .ensure_scheduler_disclaimer()
+                    .await
+                    .map_err(|e| warn!("Failed to ensure disclaimer after removal: {}", e));
+            }
         }
 
         result
