@@ -4,7 +4,6 @@ use crate::bitcoin_data::BitcoinData;
 use crate::blockheight_data::BlockheightData;
 use crate::btc_history_data::BtcHistoryData;
 use crate::clock_data::ClockData;
-use crate::countdown_data::CountdownData;
 use crate::data::{
     ConnectInfoScreen, InitScreen, Scene, SceneCycling, SceneCyclingTransition, SceneId,
     SignalStrength, UpgradeScreen, Widget, WidgetId,
@@ -890,35 +889,6 @@ impl DisplayController {
                         }
                     }
                     widget.remote_widget.stale_text = SharedString::from(stale_text);
-                });
-            }
-        });
-    }
-
-    pub fn update_countdown_widget(
-        &self,
-        scene_id: SceneId,
-        widget_id: WidgetId,
-        label: String,
-        countdown_data: CountdownData,
-    ) {
-        self.in_event_loop(move |main_window| {
-            let scenes_ref = main_window.get_scenes();
-            let scenes_ref = indexmap_model_ref::<SceneId, _>(&scenes_ref);
-
-            if let Some(scene) = scenes_ref.get(&scene_id) {
-                let widgets_ref = indexmap_model_ref::<WidgetId, _>(&scene.widgets);
-
-                widgets_ref.modify(&widget_id, |widget| {
-                    widget.countdown.label = label.into();
-                    widget.countdown.is_completed = countdown_data.is_completed;
-                    widget.countdown.primary_value = countdown_data.display.primary_value.into();
-                    widget.countdown.primary_unit = countdown_data.display.primary_unit.into();
-                    widget.countdown.secondary_value =
-                        countdown_data.display.secondary_value.into();
-                    widget.countdown.secondary_unit = countdown_data.display.secondary_unit.into();
-                    widget.countdown.tertiary_value = countdown_data.display.tertiary_value.into();
-                    widget.countdown.tertiary_unit = countdown_data.display.tertiary_unit.into();
                 });
             }
         });

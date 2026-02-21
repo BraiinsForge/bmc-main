@@ -7,7 +7,6 @@ import { WidgetRemoteImageData } from "./categories/remote-image.slint";
 import { BlockchainData } from "./categories/blockchain-data.slint";
 import { RemoteWidgetData } from "./categories/remote-widget.slint";
 import { WidgetHalvingCountdownData } from "./categories/halving-countdown.slint";
-import { WidgetCountdownData } from "./categories/countdown.slint";
 export { WidgetSize }
 
 export enum WidgetKind {
@@ -19,7 +18,6 @@ export enum WidgetKind {
     BlockchainData,
     RemoteWidget,
     HalvingCountdown,
-    Countdown,
 }
 
 export struct Widget {
@@ -36,5 +34,4 @@ export struct Widget {
     blockchain-data: BlockchainData,
     remote-widget: RemoteWidgetData,
     halving-countdown: WidgetHalvingCountdownData,
-    countdown: WidgetCountdownData,
 }

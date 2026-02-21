@@ -3,28 +3,23 @@
 mod blockchain_data;
 mod braiins_pool;
 mod clock;
-mod countdown;
 mod halving_countdown;
 mod remote_image;
 mod remote_widget;
 mod ticker_btc;
 
 use crate::config::ConfigHandle;
-use crate::countdown_types::CountdownCompletionAction;
-use crate::sound::SoundController;
 use bmc_display::blockheight_data::BlockheightData;
 use bmc_display::data::{SceneId, Widget, WidgetId, WidgetKind};
 use bmc_display::display_controller::DisplayController;
-use bmc_led::data::LedCommand;
 use bmc_shared_time::time::Timezone;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::spawn;
-use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
-use tracing::{Instrument, debug, warn};
+use tracing::{Instrument, debug};
 
 /// Format how long ago the last successful refresh was.
 /// Returns a human-readable string like "Last refresh 45s ago".
@@ -61,8 +56,6 @@ pub(crate) struct WidgetTasks {
     display_controller: DisplayController,
     config_handle: Arc<RwLock<ConfigHandle>>,
     system_timezone_receiver: watch::Receiver<Timezone>,
-    led_event_tx: Sender<LedCommand>,
-    sound_controller: SoundController,
     blockheight_receiver: watch::Receiver<BlockheightData>,
 }
 
@@ -71,8 +64,6 @@ impl WidgetTasks {
         display_controller: DisplayController,
         config_handle: Arc<RwLock<ConfigHandle>>,
         system_timezone_receiver: watch::Receiver<Timezone>,
-        led_event_tx: Sender<LedCommand>,
-        sound_controller: SoundController,
         blockheight_receiver: watch::Receiver<BlockheightData>,
     ) -> Self {
         Self {
@@ -80,8 +71,6 @@ impl WidgetTasks {
             display_controller,
             config_handle,
             system_timezone_receiver,
-            led_event_tx,
-            sound_controller,
             blockheight_receiver,
         }
     }
@@ -111,7 +100,6 @@ impl WidgetTasks {
         }
     }
 
-    #[expect(clippy::too_many_lines)]
     fn spawn_internal(&self, scene_id: &SceneId, widget: &Widget) -> Option<TaskHandle> {
         let join_handle = match &widget.kind {
             WidgetKind::Clock(clock_widget) => Some(spawn(
@@ -195,37 +183,6 @@ impl WidgetTasks {
                 )
                 .in_current_span(),
             )),
-            WidgetKind::Countdown(countdown_widget) => {
-                let completion_action =
-                    countdown_widget
-                        .completion_action
-                        .as_ref()
-                        .and_then(|json| {
-                            serde_json::from_value::<CountdownCompletionAction>(json.clone())
-                                .map_err(|err| {
-                                    warn!(
-                                        ?err,
-                                        "Failed to deserialize countdown completion action"
-                                    );
-                                    err
-                                })
-                                .ok()
-                        });
-
-                Some(spawn(
-                    countdown::run(
-                        self.display_controller.clone(),
-                        scene_id.clone(),
-                        widget.id.clone(),
-                        countdown_widget.label.clone(),
-                        countdown_widget.target_timestamp,
-                        completion_action,
-                        Some(self.led_event_tx.clone()),
-                        Some(self.sound_controller.clone()),
-                    )
-                    .in_current_span(),
-                ))
-            }
         };
 
         join_handle
@@ -284,8 +241,6 @@ impl Clone for WidgetTasks {
             display_controller: self.display_controller.clone(),
             config_handle: self.config_handle.clone(),
             system_timezone_receiver: self.system_timezone_receiver.clone(),
-            led_event_tx: self.led_event_tx.clone(),
-            sound_controller: self.sound_controller.clone(),
             blockheight_receiver: self.blockheight_receiver.clone(),
         }
     }

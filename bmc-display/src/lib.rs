@@ -8,7 +8,6 @@ pub mod bitcoin_data;
 pub mod blockheight_data;
 pub mod btc_history_data;
 pub mod clock_data;
-pub mod countdown_data;
 pub mod data;
 pub mod diff_hashrate_data;
 pub mod difficulty_data;

@@ -5,7 +5,6 @@ mod backlight;
 pub mod bootloader_config;
 mod button_manager;
 mod config;
-mod countdown_types;
 mod display_tasks;
 pub mod entry;
 pub mod firmware;

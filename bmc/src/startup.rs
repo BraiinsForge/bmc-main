@@ -120,8 +120,6 @@ where
             display_controller.clone(),
             config_handle.clone(),
             manager.watch_timezone_updates(),
-            led_driver.command_sender.clone(),
-            sound_controller.clone(),
             blockheight_receiver,
         );
 

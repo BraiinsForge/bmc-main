@@ -10,8 +10,6 @@ import { WidgetRemoteImage } from "../widgets/categories/remote-image.slint";
 import { WidgetBlockchainData } from "../widgets/categories/blockchain-data.slint";
 import { RemoteWidget } from "../widgets/categories/remote-widget.slint";
 import { WidgetHalvingCountdown } from "../widgets/categories/halving-countdown.slint";
-import { WidgetCountdown } from "../widgets/categories/countdown.slint";
-import { CountdownAdapter } from "adapters.slint";
 
 component WidgetContainer inherits Rectangle {
     in property <WidgetSize> size;
@@ -86,13 +84,6 @@ export component WidgetBuilder inherits Rectangle {
             if widget.kind == WidgetKind.HalvingCountdown: WidgetHalvingCountdown {
                 size: widget.size;
                 data: widget.halving-countdown;
-            }
-            if widget.kind == WidgetKind.Countdown: WidgetCountdown {
-                size: widget.size;
-                data: widget.countdown;
-                dismissed => {
-                    CountdownAdapter.dismiss_countdown(root.scene_id, widget.id);
-                }
             }
         }
     }
