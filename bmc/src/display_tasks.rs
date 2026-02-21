@@ -1,5 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// TODO: display refactor
+#![allow(dead_code, unused_variables, clippy::unused_async)]
+
 use crate::BmcManager;
 use crate::alarm::{AlarmBus, AlarmEvent};
 use crate::initial_setup::InitSetupState;
