@@ -80,7 +80,7 @@ let
   # Full workspace config for glibc profiles (widgets, compositor)
   workspace = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
-    nativeDeps = _pkgs: commonDeps.buildDeps;
+    nativeDeps = _pkgs: commonDeps.buildDeps ++ commonDeps.guiBuildDeps;
     # packages that will be cross-compiled for target arch
     targetDeps = build_pkgs: with build_pkgs; [
       # Compositor dependencies (require dynamic linking)
