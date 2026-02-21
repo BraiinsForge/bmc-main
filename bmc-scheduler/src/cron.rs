@@ -152,7 +152,7 @@ fn parse_cron_block(source: &str, cron_line: &str) -> anyhow::Result<CronEntry> 
         Err(_) => {
             // If parsing fails, try without seconds
             Cron::from_str(&expr)
-                .map_err(|e| anyhow::anyhow!("Failed to parse cron expression '{}': {}", expr, e))?
+                .map_err(|e| anyhow::anyhow!("Failed to parse cron expression '{expr}': {e}"))?
         }
     };
 

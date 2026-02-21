@@ -84,14 +84,14 @@ impl Audio {
             .arg("-A")
             .arg(self.volume.to_decibels().to_string())
             .spawn()
-            .map_err(|e| anyhow::anyhow!("Failed to spawn madplay: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to spawn madplay: {e}"))?;
 
         tokio::select! {
             result = child.wait() => {
                 match result {
                     Ok(status) if status.success() => Ok(()),
-                    Ok(status) => Err(anyhow::anyhow!("Failed to play audio: {}", status)),
-                    Err(e) => Err(anyhow::anyhow!("Failed to wait on madplay: {}", e)),
+                    Ok(status) => Err(anyhow::anyhow!("Failed to play audio: {status}")),
+                    Err(e) => Err(anyhow::anyhow!("Failed to wait on madplay: {e}")),
                 }
             },
             ()  = cancellation_token.cancelled() => {

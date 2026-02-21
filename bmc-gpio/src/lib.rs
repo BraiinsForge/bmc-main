@@ -263,7 +263,7 @@ impl PinGpiod<Direction> {
                 }
             }
         }
-        Err(anyhow!("BUG: pin name {} not found!", pin_name))
+        Err(anyhow!("BUG: pin name {pin_name} not found!"))
     }
 }
 
