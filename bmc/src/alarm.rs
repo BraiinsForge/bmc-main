@@ -956,7 +956,7 @@ mod tests {
 
         let cron = alarm_data
             .cron()
-            .expect("Failed to create cron from alarm data");
+            .expect("BUG: failed to create cron from alarm data");
 
         let cron_string = cron.to_string();
 
@@ -994,7 +994,7 @@ mod tests {
 
         let cron = alarm_data
             .cron()
-            .expect("Failed to create cron from alarm data");
+            .expect("BUG: failed to create cron from alarm data");
 
         let cron_string = cron.to_string();
 
@@ -1021,7 +1021,7 @@ mod tests {
 
         let cron = alarm_data
             .cron()
-            .expect("Failed to create cron from alarm data");
+            .expect("BUG: failed to create cron from alarm data");
 
         let cron_string = cron.to_string();
 
