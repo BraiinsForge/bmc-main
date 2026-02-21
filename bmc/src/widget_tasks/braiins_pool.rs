@@ -1,5 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// TODO: display refactor
+#![allow(clippy::too_many_lines)]
+
 use crate::config::ConfigHandle;
 use crate::widget_tasks::{API_TIMEOUT, DATA_REFRESH_PERIOD};
 use bmc_display::data::{
