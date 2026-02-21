@@ -4,10 +4,7 @@ package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
-import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
-import "web/shared.proto";
-
 message Scene {
   // required
   string id = 1;
@@ -138,7 +135,6 @@ message WidgetKind {
     BlockchainDataWidget blockchain_data = 6;
     RemoteWidget remote_widget = 7;
     HalvingCountdownWidget halving_countdown = 8;
-    CountdownWidget countdown = 9;
   }
 }
 
@@ -284,40 +280,6 @@ message SetSceneCyclingRequest {
 }
 
 message BlockchainDataWidget {}
-
-// Countdown widget that counts down to a specific date/time.
-// The target_timestamp is an absolute UTC instant. The frontend converts
-// the user-selected local date/time to UTC before sending it.
-// Completion actions (LED, sound) are one-shot: they fire once when the
-// countdown reaches zero and are not repeated.
-message CountdownWidget {
-  // required - Custom name/label for the countdown
-  string label = 1;
-  // required - Absolute UTC instant for the target date/time
-  google.protobuf.Timestamp target_timestamp = 2;
-  // optional - Background color (hex, RGB, or CSS color name)
-  optional string background_color = 3;
-  // required - Font style for the countdown numbers
-  FontStyle numbers_font_style = 4;
-  // optional - Completion action settings
-  optional CountdownCompletionAction completion_action = 5;
-}
-
-// Actions to perform when countdown reaches zero
-message CountdownCompletionAction {
-  optional LedSettings led = 1;
-  optional SoundSettings sound = 2;
-}
-
-message LedSettings {
-  braiins.bmc.web.LedEffect effect = 1;
-  braiins.bmc.web.RgbColor color = 2;
-}
-
-message SoundSettings {
-  string sound_id = 1; // Maps to Sounds enum (e.g., "GreenCandleMorning")
-  uint32 volume = 2; // 0-100
-}
 
 // Configures scenes & widgets for individual scenes.
 // CQRS pattern, commands only modify state, queries only return state.
