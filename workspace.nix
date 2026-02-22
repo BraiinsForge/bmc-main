@@ -24,6 +24,10 @@ let
       path = "./widgets/digital-clock";
       packageName = "bmc-widget-digital-clock";
     };
+    widget-flip-clock = defineCrate {
+      path = "./widgets/flip-clock";
+      packageName = "bmc-widget-flip-clock";
+    };
   };
 
   # Build a widget package with the correct directory structure
@@ -185,6 +189,11 @@ let
       features = [ "standalone" ];
       wrapWithLibs = true;
     };
+    flip-clock = {
+      crate = crates.widget-flip-clock;
+      features = [ "standalone" ];
+      wrapWithLibs = true;
+    };
   };
 
   # Build all widgets for a given profile and combine into a single output
@@ -221,6 +230,13 @@ in
     widget-digital-clock = mkWidgetPackage {
       name = "digital-clock";
       crate = crates.widget-digital-clock;
+      features = [ "standalone" ];
+      wrapWithLibs = true;
+      profile = build-profiles.fast;
+    };
+    widget-flip-clock = mkWidgetPackage {
+      name = "flip-clock";
+      crate = crates.widget-flip-clock;
       features = [ "standalone" ];
       wrapWithLibs = true;
       profile = build-profiles.fast;
