@@ -12,12 +12,14 @@ pub mod ipc;
 mod renderer;
 mod wayland;
 
+use std::fs::OpenOptions;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::{EnvFilter, filter::LevelFilter, fmt, prelude::*};
 
 /// Animation mode for the flip-clock
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -42,11 +44,29 @@ struct Args {
     mode: AnimationMode,
 }
 
+const WIDGET_LOG_PATH: &str = "/var/log/bmc/flip-clock-widget.log";
+
 fn main() -> Result<()> {
+    // Initialize logging to a dedicated file.
+    // Widget stdout/stderr are inherited from BMC but may not be visible,
+    // so we write directly to a log file for reliable debugging.
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(WIDGET_LOG_PATH)
+        .expect("BUG: failed to open flip-clock-widget log file");
+
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::default().add_directive(LevelFilter::INFO.into()));
+
     // Initialize logging
     tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
+        .with(
+            fmt::layer()
+                .with_ansi(false)
+                .with_writer(Mutex::new(log_file)),
+        )
+        .with(filter)
         .init();
 
     let args = Args::parse();
