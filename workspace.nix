@@ -102,7 +102,8 @@ let
       # this via NIX_LDFLAGS, but nix build derivations don't propagate
       # targetDeps the same way. Add the library path via RUSTFLAGS.
       CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS =
-        "-L native=${lib.getLib fixedArmv7Pkgs.libxkbcommon}/lib";
+        "-L native=${lib.getLib fixedArmv7Pkgs.libxkbcommon}/lib"
+          + " -L native=${lib.getLib fixedArmv7Pkgs.libinput}/lib";
     };
   };
 
