@@ -1,0 +1,15 @@
+[package]
+name = "ii-stopwatch"
+version = "0.1.0"
+authors = ["Braiins <braiins@braiins.com>"]
+license = "GPL-3.0-or-later"
+edition = "2024"
+
+[dependencies]
+
+[features]
+default = []
+enabled = []
+
+[lints]
+workspace = true

@@ -1024,6 +1024,7 @@ dependencies = [
  "iana-time-zone",
  "ii-net",
  "ii-net-drv",
+ "ii-stopwatch",
  "log",
  "memmap2",
  "merge-streams",
@@ -3844,6 +3845,10 @@ dependencies = [
  "tracing",
  "wl-nl80211",
 ]
+
+[[package]]
+name = "ii-stopwatch"
+version = "0.1.0"
 
 [[package]]
 name = "image"
