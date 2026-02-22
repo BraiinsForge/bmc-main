@@ -101,12 +101,13 @@ let
         pkgs.libgcc
         pkgs.fontconfig
       ];
-      # Workaround: xkbcommon-rs crate has no build.rs, so it never emits
-      # cargo:rustc-link-search for libxkbcommon. The dev shell provides
-      # this via NIX_LDFLAGS, but nix build derivations don't propagate
-      # targetDeps the same way. Add the library path via RUSTFLAGS.
+      # Workaround: some -sys crates have no build.rs, so they never emit
+      # cargo:rustc-link-search for their native libraries. The dev shell
+      # provides this via NIX_LDFLAGS, but nix build derivations don't
+      # propagate targetDeps the same way. Add library paths via RUSTFLAGS.
       CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS =
-        "-L native=${lib.getLib fixedArmv7Pkgs.libxkbcommon}/lib";
+        "-L native=${lib.getLib fixedArmv7Pkgs.libxkbcommon}/lib"
+          + " -L native=${lib.getLib fixedArmv7Pkgs.libinput}/lib";
     };
   };
 
