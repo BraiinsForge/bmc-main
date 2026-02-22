@@ -8,8 +8,12 @@
 mod digits;
 mod digits3d;
 mod egl;
+pub mod ipc;
 mod renderer;
 mod wayland;
+
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
@@ -29,7 +33,11 @@ pub enum AnimationMode {
 #[derive(Parser, Debug)]
 #[command(name = "flip-clock", about, version)]
 struct Args {
-    /// Animation mode
+    /// Run in standalone mode without IPC
+    #[arg(long)]
+    standalone: bool,
+
+    /// Animation mode (standalone only)
     #[arg(short, long, value_enum, default_value_t = AnimationMode::default())]
     mode: AnimationMode,
 }
@@ -41,18 +49,58 @@ fn main() -> Result<()> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    // Parse command-line arguments
     let args = Args::parse();
 
-    tracing::info!("Starting flip-clock widget (mode: {:?})", args.mode);
+    if args.standalone {
+        run_standalone(args.mode)?;
+    } else {
+        run_with_protocol()?;
+    }
 
-    // Connect to Wayland and run
-    let mut client = wayland::WaylandClient::connect(args.mode)?;
+    Ok(())
+}
 
+fn run_standalone(mode: AnimationMode) -> Result<()> {
+    tracing::info!("Starting flip-clock widget in standalone mode (mode: {mode:?})");
+
+    let timezone = Arc::new(RwLock::new(String::from("UTC")));
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    let mut client = wayland::WaylandClient::connect(mode, 640, 480, timezone, shutdown)?;
     tracing::info!("Connected to Wayland display");
 
-    // Run the event loop
-    client.run()?;
+    client.run(None)?;
+
+    Ok(())
+}
+
+fn run_with_protocol() -> Result<()> {
+    let (instance_id, config) = ipc::read_config()?;
+
+    tracing::info!(
+        "Starting flip-clock widget (mode: {:?}, {}x{}, tz: {})",
+        config.mode,
+        config.width,
+        config.height,
+        config.timezone
+    );
+
+    let timezone = Arc::new(RwLock::new(config.timezone));
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    let (protocol_client, handler) =
+        ipc::setup_protocol(&instance_id, Arc::clone(&timezone), Arc::clone(&shutdown))?;
+
+    let mut client = wayland::WaylandClient::connect(
+        config.mode,
+        config.width,
+        config.height,
+        timezone,
+        shutdown,
+    )?;
+    tracing::info!("Connected to Wayland display");
+
+    client.run(Some((protocol_client, handler)))?;
 
     Ok(())
 }
