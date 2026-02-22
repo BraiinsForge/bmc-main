@@ -94,8 +94,16 @@ let
       libgbm
       libGL
     ];
-    # environment variables (from commonDeps)
-    env = commonDeps.env // { };
+    # environment variables (from commonDeps, with fontconfig in LD_LIBRARY_PATH
+    # for Slint build script which dlopen's libfontconfig.so.1 during compilation)
+    env = commonDeps.env // {
+      # Workaround: xkbcommon-rs crate has no build.rs, so it never emits
+      # cargo:rustc-link-search for libxkbcommon. The dev shell provides
+      # this via NIX_LDFLAGS, but nix build derivations don't propagate
+      # targetDeps the same way. Add the library path via RUSTFLAGS.
+      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS =
+        "-L native=${lib.getLib fixedArmv7Pkgs.libxkbcommon}/lib";
+    };
   };
 
   build-profiles = {
