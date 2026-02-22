@@ -200,8 +200,21 @@ impl EglCompositor {
 
         tracing::info!("Compositor event loop starting");
 
+        #[cfg(feature = "profiling")]
+        let mut loop_w = ii_stopwatch::StopWatch::default();
+        #[cfg(feature = "profiling")]
+        let mut render_w = ii_stopwatch::StopWatch::default();
+        #[cfg(feature = "profiling")]
+        let mut callbacks_w = ii_stopwatch::StopWatch::default();
+        #[cfg(feature = "profiling")]
+        let mut dispatch_w = ii_stopwatch::StopWatch::default();
+        #[cfg(feature = "profiling")]
+        let mut every = ii_stopwatch::Every::new(std::time::Duration::from_secs(5));
+
         // Main event loop: process commands, accept clients, render frames
         loop {
+            ii_stopwatch::stopwatch_start!(loop_w);
+
             while let Ok(cmd) = app_state.command_rx.try_recv() {
                 handle_command(&mut app_state, cmd);
             }
@@ -225,13 +238,16 @@ impl EglCompositor {
 
             process_protocol_events(&mut app_state);
 
+            ii_stopwatch::stopwatch_start!(render_w);
             if let Err(e) = app_state.scene_renderer.render_scene(
                 &app_state.compositor.widgets,
                 &app_state.compositor.widget_buffers,
             ) {
                 tracing::error!("Render error: {}", e);
             }
+            ii_stopwatch::stopwatch_stop!(render_w);
 
+            ii_stopwatch::stopwatch_start!(callbacks_w);
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "wrapping is acceptable for frame time"
@@ -243,14 +259,34 @@ impl EglCompositor {
             app_state.compositor.send_frame_callbacks(time);
 
             let _ = app_state.display.flush_clients();
+            ii_stopwatch::stopwatch_stop!(callbacks_w);
 
             // 16ms dispatch timeout for ~60fps
+            ii_stopwatch::stopwatch_start!(dispatch_w);
             if event_loop
                 .dispatch(Some(Duration::from_millis(16)), &mut app_state)
                 .is_err()
             {
                 tracing::error!("Event loop dispatch error");
                 break;
+            }
+            ii_stopwatch::stopwatch_stop!(dispatch_w);
+
+            ii_stopwatch::stopwatch_stop!(loop_w);
+
+            #[cfg(feature = "profiling")]
+            if ii_stopwatch::every_expired!(every) {
+                tracing::info!(
+                    "compositor: loop={} render={} callbacks={} dispatch={}",
+                    loop_w,
+                    render_w,
+                    callbacks_w,
+                    dispatch_w
+                );
+                ii_stopwatch::stopwatch_reset!(loop_w);
+                ii_stopwatch::stopwatch_reset!(render_w);
+                ii_stopwatch::stopwatch_reset!(callbacks_w);
+                ii_stopwatch::stopwatch_reset!(dispatch_w);
             }
         }
 

@@ -19,6 +19,18 @@ pub struct SceneRenderer {
     egl: EglContext,
     output: DrmOutput,
     buffers: BufferPool,
+    #[cfg(feature = "profiling")]
+    bind_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    clear_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    compose_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    finish_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    flip_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    render_every: ii_stopwatch::Every,
 }
 
 impl SceneRenderer {
@@ -36,6 +48,18 @@ impl SceneRenderer {
             egl,
             output,
             buffers: BufferPool::new(width, height),
+            #[cfg(feature = "profiling")]
+            bind_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            clear_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            compose_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            finish_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            flip_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            render_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
         }
     }
 
@@ -51,6 +75,7 @@ impl SceneRenderer {
         self.output.logical_size()
     }
 
+    #[expect(clippy::too_many_lines)]
     pub fn render_scene(
         &mut self,
         widgets: &WidgetTracker,
@@ -91,9 +116,11 @@ impl SceneRenderer {
             })
             .collect();
 
+        ii_stopwatch::stopwatch_start!(self.bind_w);
         let mut framebuffer = renderer
             .bind(&mut dmabuf)
             .context("Failed to bind render target")?;
+        ii_stopwatch::stopwatch_stop!(self.bind_w);
 
         #[expect(clippy::cast_possible_wrap)]
         let output_size = Size::from((self.output.width() as i32, self.output.height() as i32));
@@ -102,10 +129,13 @@ impl SceneRenderer {
             .render(&mut framebuffer, output_size, Transform::Normal)
             .context("Failed to begin frame")?;
 
+        ii_stopwatch::stopwatch_start!(self.clear_w);
         frame
             .clear(BACKGROUND_COLOR, &[Rectangle::from_size(output_size)])
             .context("Failed to clear")?;
+        ii_stopwatch::stopwatch_stop!(self.clear_w);
 
+        ii_stopwatch::stopwatch_start!(self.compose_w);
         for (texture, placement) in &imported {
             let tex_size = texture.size();
             let src: Rectangle<f64, BufferCoord> = Rectangle::from_loc_and_size(
@@ -156,13 +186,36 @@ impl SceneRenderer {
                 tracing::warn!("Failed to render widget {}: {:?}", placement.instance_id, e);
             }
         }
+        ii_stopwatch::stopwatch_stop!(self.compose_w);
 
+        ii_stopwatch::stopwatch_start!(self.finish_w);
         let _sync = frame.finish().context("Failed to finish frame")?;
         drop(framebuffer);
-
         self.egl.finish_rendering()?;
+        ii_stopwatch::stopwatch_stop!(self.finish_w);
+
+        ii_stopwatch::stopwatch_start!(self.flip_w);
         self.output.page_flip(fb)?;
+        ii_stopwatch::stopwatch_stop!(self.flip_w);
+
         self.buffers.swap();
+
+        #[cfg(feature = "profiling")]
+        if ii_stopwatch::every_expired!(self.render_every) {
+            tracing::info!(
+                "render_scene: bind={} clear={} compose={} finish={} flip={}",
+                self.bind_w,
+                self.clear_w,
+                self.compose_w,
+                self.finish_w,
+                self.flip_w
+            );
+            ii_stopwatch::stopwatch_reset!(self.bind_w);
+            ii_stopwatch::stopwatch_reset!(self.clear_w);
+            ii_stopwatch::stopwatch_reset!(self.compose_w);
+            ii_stopwatch::stopwatch_reset!(self.finish_w);
+            ii_stopwatch::stopwatch_reset!(self.flip_w);
+        }
 
         Ok(())
     }
