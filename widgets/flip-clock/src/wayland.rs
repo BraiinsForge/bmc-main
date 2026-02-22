@@ -9,11 +9,16 @@ use crate::AnimationMode;
 use crate::digits::DigitTextures;
 use crate::digits3d::Digit3DMeshes;
 use crate::egl::{DmaBufInfo, EglState};
+use crate::ipc::EventHandler;
 use crate::renderer::{Mat4, Renderer};
 use anyhow::{Context, Result};
+use bmc_widget::wayland::WidgetProtocolClient;
+use chrono::{Timelike, Utc};
+use chrono_tz::Tz;
 use glow::HasContext;
 use std::os::fd::AsFd;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle,
     protocol::{wl_buffer, wl_callback, wl_compositor, wl_registry, wl_surface},
@@ -34,6 +39,10 @@ pub struct WaylandClient {
     state: WaylandState,
     /// Animation mode
     animation_mode: AnimationMode,
+    /// Timezone string (shared, updated by protocol events)
+    timezone: Arc<RwLock<String>>,
+    /// Shutdown flag (shared, set by protocol events)
+    shutdown: Arc<AtomicBool>,
 }
 
 /// Internal state for Wayland protocol handling
@@ -72,7 +81,13 @@ struct WaylandState {
 
 impl WaylandClient {
     /// Connect to the Wayland display
-    pub fn connect(animation_mode: AnimationMode) -> Result<Self> {
+    pub fn connect(
+        animation_mode: AnimationMode,
+        width: u32,
+        height: u32,
+        timezone: Arc<RwLock<String>>,
+        shutdown: Arc<AtomicBool>,
+    ) -> Result<Self> {
         let conn = Connection::connect_to_env().context("Failed to connect to Wayland display")?;
 
         let mut queue = conn.new_event_queue();
@@ -90,8 +105,8 @@ impl WaylandClient {
             xdg_surface: None,
             xdg_toplevel: None,
             configured: false,
-            width: 640,
-            height: 480,
+            width,
+            height,
             frame_count: 0,
             needs_render: false,
             size_changed: false,
@@ -139,12 +154,19 @@ impl WaylandClient {
             queue,
             state,
             animation_mode,
+            timezone,
+            shutdown,
         })
     }
 
     /// Run the event loop with EGL rendering
+    ///
+    /// If `protocol` is provided, protocol events are polled after each frame.
     #[expect(clippy::too_many_lines, reason = "rendering loop with setup code")]
-    pub fn run(&mut self) -> Result<()> {
+    pub fn run(
+        &mut self,
+        mut protocol: Option<(WidgetProtocolClient, EventHandler)>,
+    ) -> Result<()> {
         let qh = self.queue.handle();
 
         // Initialize GBM-based EGL
@@ -191,6 +213,19 @@ impl WaylandClient {
                 .blocking_dispatch(&mut self.state)
                 .context("Wayland dispatch failed")?;
 
+            // Poll protocol events if connected
+            if let Some((ref mut client, ref mut handler)) = protocol {
+                if client.poll_events().is_ok() {
+                    client.process_events(handler);
+                }
+            }
+
+            // Check shutdown flag (set by protocol handler)
+            if self.shutdown.load(Ordering::Relaxed) {
+                tracing::info!("Shutdown requested via protocol");
+                break;
+            }
+
             // Handle resize if needed
             if self.state.size_changed {
                 egl.resize(self.state.width, self.state.height);
@@ -202,22 +237,29 @@ impl WaylandClient {
             if self.state.needs_render {
                 self.state.needs_render = false;
 
-                // Get actual system time
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("BUG: system time before UNIX epoch");
-                let total_secs = now.as_secs();
-                // subsec_millis returns 0-999, which fits in u16 and f32 without precision loss
-                #[expect(clippy::cast_possible_truncation, reason = "0-999 fits in u16")]
-                let subsec = f32::from(now.subsec_millis() as u16) / 1000.0;
+                // Get current time in the configured timezone
+                let tz_str = self
+                    .timezone
+                    .read()
+                    .expect("BUG: timezone lock poisoned")
+                    .clone();
+                let tz: Tz = tz_str.parse().unwrap_or(chrono_tz::UTC);
+                let now = Utc::now().with_timezone(&tz);
 
-                // Current time components (modulo values always fit in u8)
-                #[expect(clippy::integer_division, reason = "time calculation")]
-                let (hours, minutes, seconds) = (
-                    ((total_secs / 3600) % 24) as u8,
-                    ((total_secs / 60) % 60) as u8,
-                    (total_secs % 60) as u8,
-                );
+                // Timelike::hour() returns 0-23, minute()/second() return 0-59
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "hour 0-23, minute/second 0-59 always fit in u8"
+                )]
+                let (hours, minutes, seconds) =
+                    (now.hour() as u8, now.minute() as u8, now.second() as u8);
+
+                // nanosecond() / 1_000_000 gives 0-999 which fits in u16
+                #[expect(
+                    clippy::integer_division,
+                    reason = "intentional truncation to milliseconds"
+                )]
+                let subsec = f32::from((now.nanosecond() / 1_000_000) as u16) / 1000.0;
 
                 // Begin frame
                 egl.begin_frame()?;
@@ -265,13 +307,13 @@ impl WaylandClient {
 
                 // Previous digit values (for flip animation when digit changes)
                 // Calculate what the previous second's digits would be
-                let prev_total_secs = if total_secs > 0 { total_secs - 1 } else { 0 };
-                #[expect(clippy::integer_division, reason = "time calculation")]
-                let (prev_hours, prev_minutes, prev_seconds) = (
-                    ((prev_total_secs / 3600) % 24) as u8,
-                    ((prev_total_secs / 60) % 60) as u8,
-                    (prev_total_secs % 60) as u8,
-                );
+                let prev = now - chrono::Duration::seconds(1);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "hour 0-23, minute/second 0-59 always fit in u8"
+                )]
+                let (prev_hours, prev_minutes, prev_seconds) =
+                    (prev.hour() as u8, prev.minute() as u8, prev.second() as u8);
 
                 #[expect(clippy::integer_division, reason = "extracting digit values 0-9")]
                 let prev_digits: [u8; 6] = [
