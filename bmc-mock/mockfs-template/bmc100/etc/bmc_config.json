@@ -42,6 +42,23 @@
           }
         }
       ]
+    },
+    {
+      "id": "f4d5e6f7-a8b9-4c0d-1e2f-3a4b5c6d7e8f",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "a5e6f7a8-b9c0-4d1e-2f3a-4b5c6d7e8f9a",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
+          "params": {
+            "mode": "extruded"
+          }
+        }
+      ]
     }
   ]
 }
