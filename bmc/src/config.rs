@@ -318,7 +318,7 @@ impl Default for Config {
         let digital_clock_type_id =
             Uuid::parse_str("550e8400-e29b-41d4-a716-446655440001").expect("BUG: invalid UUID");
 
-        let clock_fullscreen_scene = Scene::fullscreen(
+        let digital_clock_scene = Scene::fullscreen(
             digital_clock_type_id,
             serde_json::json!({
                 "showSeconds": true,
@@ -327,8 +327,20 @@ impl Default for Config {
             }),
         );
 
+        // Flip clock widget type ID from widgets/flip-clock/manifest.json
+        let flip_clock_type_id =
+            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440002").expect("BUG: invalid UUID");
+
+        let flip_clock_scene = Scene::fullscreen(
+            flip_clock_type_id,
+            serde_json::json!({
+                "mode": "extruded"
+            }),
+        );
+
         let scenes = indexmap! {
-            clock_fullscreen_scene.id => clock_fullscreen_scene,
+            digital_clock_scene.id => digital_clock_scene,
+            flip_clock_scene.id => flip_clock_scene,
         };
 
         Self {
