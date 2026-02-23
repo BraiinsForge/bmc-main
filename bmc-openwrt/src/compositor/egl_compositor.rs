@@ -162,21 +162,16 @@ impl EglCompositor {
         );
 
         // Register command channel with calloop for event-driven command dispatch
-        if loop_handle
-            .insert_source(command_channel, |event, (), state| match event {
+        try_init!(
+            loop_handle.insert_source(command_channel, |event, (), state| match event {
                 ChannelEvent::Msg(cmd) => handle_command(state, cmd),
                 ChannelEvent::Closed => {
                     tracing::info!("Command channel closed");
                     state.should_exit = true;
                 }
-            })
-            .is_err()
-        {
-            let err = "Failed to add command channel to event loop".to_owned();
-            tracing::error!("{}", err);
-            let _ = ready_tx.send(Err(err));
-            return;
-        }
+            }),
+            "Failed to add command channel to event loop"
+        );
 
         // Signal ready to main thread
         if ready_tx.send(Ok(socket_name.clone())).is_err() {
@@ -193,6 +188,32 @@ impl EglCompositor {
             event_tx,
             should_exit: false,
         };
+
+        // Add listening socket fd for new Wayland client connections
+        match app_state.listening_socket.as_fd().try_clone_to_owned() {
+            Ok(listener_fd) => {
+                if let Err(e) = loop_handle.insert_source(
+                    Generic::new(listener_fd, Interest::READ, Mode::Level),
+                    |_, _, state| {
+                        if let Ok(Some(client_stream)) = state.listening_socket.accept() {
+                            if let Err(e) = state
+                                .display
+                                .handle()
+                                .insert_client(client_stream, Arc::new(ClientState::default()))
+                            {
+                                tracing::error!("Failed to insert client: {e}");
+                            } else {
+                                tracing::info!("New Wayland client connected");
+                            }
+                        }
+                        Ok(PostAction::Continue)
+                    },
+                ) {
+                    tracing::error!("Failed to add listener fd to event loop: {e}");
+                }
+            }
+            Err(e) => tracing::error!("Failed to clone listener fd: {e}"),
+        }
 
         // Add DRM device fd for vblank/page-flip events
         match app_state
@@ -246,18 +267,6 @@ impl EglCompositor {
             if app_state.should_exit {
                 tracing::info!("Compositor shutting down");
                 break;
-            }
-
-            if let Ok(Some(client_stream)) = app_state.listening_socket.accept() {
-                if let Err(e) = app_state
-                    .display
-                    .handle()
-                    .insert_client(client_stream, Arc::new(ClientState::default()))
-                {
-                    tracing::error!("Failed to insert client: {}", e);
-                } else {
-                    tracing::info!("New Wayland client connected");
-                }
             }
 
             process_protocol_events(&mut app_state);
