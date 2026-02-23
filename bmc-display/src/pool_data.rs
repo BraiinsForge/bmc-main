@@ -363,16 +363,14 @@ pub struct CurrentUserWorkerStats {
     active_workers: u32,
     low_workers: u32,
     offline_workers: u32,
+    disabled_workers: u32,
 }
 
 impl CurrentUserWorkerStats {
     #[must_use]
     pub fn worker_stats(self, number_format: NumberFormat) -> PoolWorkerStatus {
         PoolWorkerStatus {
-            total: SharedString::from(number_format.format_number(
-                self.active_workers + self.low_workers + self.offline_workers,
-                0,
-            )),
+            disabled: SharedString::from(number_format.format_number(self.disabled_workers, 0)),
             active: SharedString::from(number_format.format_number(self.active_workers, 0)),
             low: SharedString::from(number_format.format_number(self.low_workers, 0)),
             offline: SharedString::from(number_format.format_number(self.offline_workers, 0)),

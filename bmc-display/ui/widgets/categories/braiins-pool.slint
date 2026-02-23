@@ -16,10 +16,10 @@ export enum ChartFrame {
 }
 
 export struct PoolWorkerStatus {
-    total: string,
     active: string,
     low: string,
     offline: string,
+    disabled: string,
 }
 
 export enum PoolPayoutType {
@@ -287,7 +287,7 @@ component bordered-box inherits Rectangle {
 }
 
 component workers-box inherits VerticalLayout {
-    in property <bool> show-total;
+    in property <bool> show-disabled;
     in property <length> rect-width;
     in property <length> rect-height;
     in property <length> padding-outer;
@@ -314,20 +314,6 @@ component workers-box inherits VerticalLayout {
                 font-weight: Theme.font.weight.regular;
                 color: Palette.gray-40;
                 vertical-alignment: center;
-            }
-            if show-total: HorizontalLayout {
-                spacing: spacing-workers;
-                    Image {
-                        width: 32px;
-                        source: Images.worker-total;
-                    }
-                Text {
-                    text: worker-status.total;
-                    font-size: 32px;
-                    font-weight: Theme.font.weight.semi-bold;
-                    color: Palette.white;
-                    vertical-alignment: center;
-                }
             }
             HorizontalLayout {
                 spacing: spacing-workers;
@@ -365,6 +351,20 @@ component workers-box inherits VerticalLayout {
                     }
                 Text {
                     text: worker-status.offline;
+                    font-size: 32px;
+                    font-weight: Theme.font.weight.semi-bold;
+                    color: Palette.white;
+                    vertical-alignment: center;
+                }
+            }
+            if show-disabled: HorizontalLayout {
+                spacing: spacing-workers;
+                    Image {
+                        width: 32px;
+                        source: Images.worker-disabled;
+                    }
+                Text {
+                    text: worker-status.disabled;
                     font-size: 32px;
                     font-weight: Theme.font.weight.semi-bold;
                     color: Palette.white;
@@ -434,7 +434,7 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
                 }
             }
             workers-box {
-                show-total: true;
+                show-disabled: true;
                 rowspan: 2;
                 rect-width: 193px;
                 rect-height: 397px;
@@ -562,7 +562,7 @@ export component WidgetBraiinsPoolOverview inherits Rectangle {
             }
         }
         workers-box {
-            show-total: false;
+            show-disabled: false;
             padding-outer: 16px;
             padding-inner: 16px;
             rect-width: 149px;
