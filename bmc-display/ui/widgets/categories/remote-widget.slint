@@ -33,6 +33,7 @@ export component RemoteWidget inherits Rectangle {
     // or on configuration/unexpected errors. Uses 80% opacity so cached
     // content (if any) still peeks through.
     if !root.has-image || root.show-full-overlay: Rectangle {
+        clip: true;
 
         Rectangle {
             background: Palette.black;
@@ -66,8 +67,27 @@ export component RemoteWidget inherits Rectangle {
             font-size: 20px;
             font-weight: Theme.font.weight.bold;
             horizontal-alignment: center;
-            wrap: word-wrap;
-            text: "Waiting for initial data (" + root.data.name + ")";
+            text: root.data.name;
+        }
+
+        if root.data.state == RemoteWidgetState.Loading || root.data.state == RemoteWidgetState.LoadingError: Rectangle {
+            x: 8px;
+            y: root.height - self.height - 8px;
+            width: waiting-text-el.preferred-width + 16px;
+            height: waiting-text-el.preferred-height + 8px;
+            border-radius: 4px;
+
+            Rectangle {
+                background: Palette.black;
+                opacity: 70%;
+                border-radius: parent.border-radius;
+            }
+
+            waiting-text-el := Text {
+                color: Palette.orange-40;
+                font-size: 12px;
+                text: "Waiting for initial data";
+            }
         }
 
         if root.data.state == RemoteWidgetState.UnexpectedError: Text {
@@ -80,7 +100,7 @@ export component RemoteWidget inherits Rectangle {
     }
 
     if root.data.stale-text != "": Rectangle {
-        x: root.width - self.width - 8px;
+        x: 8px;
         y: root.height - self.height - 8px;
         width: stale-text-el.preferred-width + 16px;
         height: stale-text-el.preferred-height + 8px;

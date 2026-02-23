@@ -43,6 +43,7 @@ export component WidgetRemoteImage inherits Rectangle {
     // or on configuration/unexpected errors. Uses 80% opacity so cached
     // content (if any) still peeks through.
     if !root.has-image || root.show-full-overlay: Rectangle {
+        clip: true;
 
         Rectangle {
             background: Palette.black;
@@ -73,24 +74,42 @@ export component WidgetRemoteImage inherits Rectangle {
 
         if root.data.state == WidgetRemoteImageState.Loading || root.data.state == WidgetRemoteImageState.LoadingError: VerticalLayout {
             alignment: center;
-            spacing: 8px;
+            spacing: 4px;
 
             Text {
                 color: Palette.white;
                 font-size: 20px;
                 font-weight: Theme.font.weight.bold;
                 horizontal-alignment: center;
-                wrap: word-wrap;
-                text: "Waiting for initial data (" + root.data.name + ")";
+                text: root.data.name;
             }
 
             if root.data.error-text != "": Text {
                 color: Palette.orange-40;
                 font-size: 14px;
-                font-weight: Theme.font.weight.regular;
                 horizontal-alignment: center;
                 wrap: word-wrap;
                 text: root.data.error-text;
+            }
+        }
+
+        if root.data.state == WidgetRemoteImageState.Loading || root.data.state == WidgetRemoteImageState.LoadingError: Rectangle {
+            x: 8px;
+            y: root.height - self.height - 8px;
+            width: waiting-text-el.preferred-width + 16px;
+            height: waiting-text-el.preferred-height + 8px;
+            border-radius: 4px;
+
+            Rectangle {
+                background: Palette.black;
+                opacity: 70%;
+                border-radius: parent.border-radius;
+            }
+
+            waiting-text-el := Text {
+                color: Palette.orange-40;
+                font-size: 12px;
+                text: "Waiting for initial data";
             }
         }
 
@@ -104,7 +123,7 @@ export component WidgetRemoteImage inherits Rectangle {
     }
 
     if root.data.stale-text != "": Rectangle {
-        x: root.width - self.width - 8px;
+        x: 8px;
         y: root.height - self.height - 8px;
         width: stale-text-el.preferred-width + 16px;
         height: stale-text-el.preferred-height + 8px;
