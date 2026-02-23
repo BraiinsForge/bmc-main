@@ -15,8 +15,6 @@ import { TextInput } from '@carbon/react';
 import css from '../shared.scss';
 
 const $ = getID('remote-image-form').get;
-type Sizes = Record<Exclude<pb.WidgetSize, 0>, string>;
-
 export interface FormWidgetRemoteImageProps {
     isOpen: boolean;
     isEdit: boolean;
@@ -53,12 +51,6 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
         addWidget: formatMessage({ defaultMessage: 'Add Widget' }),
         editWidget: formatMessage({ defaultMessage: 'Edit Widget' }),
     };
-    const sizes: Sizes = {
-        [pb.WidgetSize.SMALL]: '317x238',
-        [pb.WidgetSize.MEDIUM]: '638x238',
-        [pb.WidgetSize.LARGE]: '638x480',
-        [pb.WidgetSize.FULL]: '1280x480',
-    };
     const verb = isEdit ? txt.editWidget : txt.addWidget;
 
     const refreshIntervalOptions = pb
@@ -69,7 +61,7 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
         <Form className={css.form} style={style}>
             <WidgetSizeSelector field={widgetSize} />
 
-            <Rules {...sizes} />
+            <Rules />
 
             <TextInput
                 id={$('url')}
@@ -79,12 +71,7 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
                 onChange={e => url.onChange?.(e.target.value)}
                 invalid={!!url.error}
                 invalidText={url.error}
-                helperText={
-                    <FormattedMessage
-                        defaultMessage="JPG or PNG; {size}"
-                        values={{ size: widgetSize?.value ? sizes[widgetSize.value] : '' }}
-                    />
-                }
+                helperText={intl.formatMessage({ defaultMessage: 'JPG or PNG' })}
             />
 
             <BoundComboBox<number>
@@ -137,7 +124,7 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
     );
 }
 
-function Rules(props: Sizes) {
+function Rules() {
     const { formatMessage } = useIntl();
     const b = (chunks: ReactNode) => <strong key="b">{chunks}</strong>;
 
@@ -158,31 +145,8 @@ function Rules(props: Sizes) {
                 />
                 <FormattedMessage
                     tagName="li"
-                    defaultMessage="Image has exact resolution for chosen widget size:"
-                    values={{ b }}
+                    defaultMessage="Image is automatically scaled to fit the widget while preserving aspect ratio"
                 />
-                <ul>
-                    <FormattedMessage
-                        tagName="li"
-                        defaultMessage="<b>small</b>: 317x238px"
-                        values={{ size: props[pb.WidgetSize.SMALL], b }}
-                    />
-                    <FormattedMessage
-                        tagName="li"
-                        defaultMessage="<b>medium</b>: 638x238px"
-                        values={{ size: props[pb.WidgetSize.MEDIUM], b }}
-                    />
-                    <FormattedMessage
-                        tagName="li"
-                        defaultMessage="<b>large</b>: 638x480px"
-                        values={{ size: props[pb.WidgetSize.LARGE], b }}
-                    />
-                    <FormattedMessage
-                        tagName="li"
-                        defaultMessage="<b>fullscreen</b>: 1280x480px"
-                        values={{ size: props[pb.WidgetSize.FULL], b }}
-                    />
-                </ul>
             </ul>
 
             <p

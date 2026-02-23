@@ -1,11 +1,11 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use bmc_display::data::{SceneId, WidgetId, WidgetSize};
 use bmc_display::display_controller::DisplayController;
 use bmc_display::remote_image_data::RemoteImageState;
 use bmc_display::{SharedImageBuffer, SharedPixelBuffer};
-use image::ImageDecoder;
+use image::GenericImageView;
 use reqwest::Client;
 use std::io;
 use std::time::Duration;
@@ -14,6 +14,7 @@ use tracing::{Instrument, info, instrument, warn};
 use url::Url;
 
 const INITIAL_LOADING_DELAY: Duration = Duration::from_millis(300);
+const MAX_SOURCE_DIMENSION: u32 = 4096;
 
 #[instrument(name = "remote_image", skip_all, fields(%scene_id, %widget_id))]
 pub async fn run(
@@ -86,8 +87,8 @@ pub async fn run(
     };
 
     let mut decoder_limits = image::Limits::no_limits();
-    decoder_limits.max_image_width = Some(widget_width);
-    decoder_limits.max_image_height = Some(widget_height);
+    decoder_limits.max_image_width = Some(MAX_SOURCE_DIMENSION);
+    decoder_limits.max_image_height = Some(MAX_SOURCE_DIMENSION);
 
     let mut interval = interval(refresh_duration);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -189,48 +190,47 @@ async fn load_image(
 
     let mut reader = image::ImageReader::new(io::Cursor::new(bytes));
     reader.limits(decoder_limits.clone());
-    reader.set_format(image::ImageFormat::Png);
 
-    let decoder = reader
+    let decoded = reader
         .with_guessed_format()
         .expect("BUG: Seek for io::Cursor cannot fail")
-        .into_decoder()
-        .context("Failed to initialize image decoder")?;
+        .decode()
+        .context("Failed to decode image")?;
 
-    let (width, height) = decoder.dimensions();
+    let (img_w, img_h) = decoded.dimensions();
 
-    if width != widget_width || height != widget_height {
-        warn!(
-            width,
-            height,
-            expected_width = widget_width,
-            expected_height = widget_height,
-            "Unexpected image dimensions"
+    let fitted = if img_w == widget_width && img_h == widget_height {
+        decoded.into_rgba8()
+    } else {
+        info!(
+            img_w,
+            img_h, widget_width, widget_height, "Scaling image to fit widget"
         );
-        bail!("Unexpected image dimensions");
-    }
+        let resized = decoded
+            .resize(
+                widget_width,
+                widget_height,
+                image::imageops::FilterType::Triangle,
+            )
+            .into_rgba8();
+        let mut canvas =
+            image::RgbaImage::from_pixel(widget_width, widget_height, image::Rgba([0, 0, 0, 255]));
+        #[expect(clippy::integer_division)]
+        let offset_x = (widget_width - resized.width()) / 2;
+        #[expect(clippy::integer_division)]
+        let offset_y = (widget_height - resized.height()) / 2;
+        image::imageops::overlay(
+            &mut canvas,
+            &resized,
+            i64::from(offset_x),
+            i64::from(offset_y),
+        );
+        canvas
+    };
 
-    #[expect(clippy::wildcard_enum_match_arm)]
-    match decoder.color_type() {
-        image::ColorType::Rgb8 => {
-            let mut buffer = SharedPixelBuffer::new(width, height);
-
-            decoder
-                .read_image(buffer.make_mut_bytes())
-                .map(|()| SharedImageBuffer::RGB8(buffer))
-        }
-        image::ColorType::Rgba8 => {
-            let mut buffer = SharedPixelBuffer::new(width, height);
-
-            decoder
-                .read_image(buffer.make_mut_bytes())
-                .map(|()| SharedImageBuffer::RGBA8(buffer))
-        }
-        color_type => {
-            bail!("Unexpected color type: {color_type:?}");
-        }
-    }
-    .context("Failed to decode image")
+    let mut buffer = SharedPixelBuffer::new(widget_width, widget_height);
+    buffer.make_mut_bytes().copy_from_slice(fitted.as_raw());
+    Ok(SharedImageBuffer::RGBA8(buffer))
 }
 
 struct ResetToInitialStateDropGuard {
