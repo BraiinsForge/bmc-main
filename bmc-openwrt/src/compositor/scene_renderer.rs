@@ -2,10 +2,13 @@
 
 //! Scene renderer for compositing multiple widgets.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use smithay::{
+    backend::renderer::gles::GlesTexture,
     backend::renderer::{Bind, Color32F, Frame, ImportDma, ImportMemWl, Renderer, Texture},
-    reexports::wayland_server::protocol::wl_buffer::WlBuffer,
+    reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_buffer::WlBuffer},
     utils::{Buffer as BufferCoord, Rectangle, Size, Transform},
     wayland::dmabuf::get_dmabuf,
 };
@@ -19,6 +22,8 @@ pub struct SceneRenderer {
     egl: EglContext,
     output: DrmOutput,
     buffers: BufferPool,
+    /// Texture cache: maps WlBuffer ObjectId to cached GlesTexture
+    texture_cache: HashMap<ObjectId, GlesTexture>,
     #[cfg(feature = "profiling")]
     bind_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
@@ -48,6 +53,7 @@ impl SceneRenderer {
             egl,
             output,
             buffers: BufferPool::new(width, height),
+            texture_cache: HashMap::new(),
             #[cfg(feature = "profiling")]
             bind_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
@@ -60,6 +66,16 @@ impl SceneRenderer {
             flip_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
             render_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
+        }
+    }
+
+    /// Invalidate cached textures for the given buffer IDs.
+    /// Call this when buffers are destroyed or replaced.
+    pub fn invalidate_textures(&mut self, buffer_ids: &[ObjectId]) {
+        for id in buffer_ids {
+            if self.texture_cache.remove(id).is_some() {
+                tracing::debug!("Invalidated cached texture for buffer {:?}", id);
+            }
         }
     }
 
@@ -91,30 +107,37 @@ impl SceneRenderer {
 
         let scene = widgets.active_scene();
 
-        // Import all textures BEFORE creating the frame (renderer borrow constraint)
-        let renderer = self.egl.renderer();
-        let imported: Vec<_> = buffers
+        // Collect visible widgets as (buffer_id, placement)
+        let to_render: Vec<_> = buffers
             .iter()
             .filter_map(|(client_buffer, instance_id)| {
                 let placement = scene
                     .widgets
                     .iter()
                     .find(|w| &w.instance_id == instance_id && w.visible)?;
-
-                let texture = if let Ok(dmabuf) = get_dmabuf(client_buffer) {
-                    renderer.import_dmabuf(dmabuf, None).ok()
-                } else {
-                    renderer.import_shm_buffer(client_buffer, None, &[]).ok()
-                };
-
-                let texture = texture.or_else(|| {
-                    tracing::warn!("Failed to import buffer for widget {}", instance_id);
-                    None
-                })?;
-
-                Some((texture, placement.clone()))
+                Some((client_buffer.id(), placement.clone()))
             })
             .collect();
+
+        // Import textures — cache DMA-BUF, always reimport SHM.
+        // SHM clients (Slint) repaint into the same WlBuffer without
+        // destroying it, so the ObjectId stays constant while the pixel
+        // data changes. Reusing a stale SHM texture would freeze the
+        // widget visuals after the first frame.
+        let renderer = self.egl.renderer();
+        for (client_buffer, _instance_id) in buffers {
+            let buffer_id = client_buffer.id();
+            if let Ok(dmabuf) = get_dmabuf(client_buffer) {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    self.texture_cache.entry(buffer_id)
+                    && let Ok(texture) = renderer.import_dmabuf(dmabuf, None)
+                {
+                    entry.insert(texture);
+                }
+            } else if let Ok(texture) = renderer.import_shm_buffer(client_buffer, None, &[]) {
+                self.texture_cache.insert(buffer_id, texture);
+            }
+        }
 
         ii_stopwatch::stopwatch_start!(self.bind_w);
         let mut framebuffer = renderer
@@ -136,7 +159,12 @@ impl SceneRenderer {
         ii_stopwatch::stopwatch_stop!(self.clear_w);
 
         ii_stopwatch::stopwatch_start!(self.compose_w);
-        for (texture, placement) in &imported {
+        for (buffer_id, placement) in &to_render {
+            let Some(texture) = self.texture_cache.get(buffer_id) else {
+                tracing::warn!("No cached texture for buffer {:?}", buffer_id);
+                continue;
+            };
+
             let tex_size = texture.size();
             let src: Rectangle<f64, BufferCoord> = Rectangle::from_loc_and_size(
                 (0.0, 0.0),
@@ -166,17 +194,12 @@ impl SceneRenderer {
 
             let dst = Rectangle::from_loc_and_size((physical_x, physical_y), (phys_w, phys_h));
 
-            // Use full output as damage region to avoid per-widget scissoring issues
-            #[expect(clippy::cast_possible_wrap)]
-            let full_damage = Rectangle::from_size(Size::from((
-                self.output.width() as i32,
-                self.output.height() as i32,
-            )));
+            // Use per-widget damage region for efficient partial updates
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
                 dst,
-                &[full_damage],
+                &[dst],
                 &[],
                 Transform::_270,
                 1.0,

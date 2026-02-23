@@ -17,7 +17,7 @@ use smithay::{
     input::{SeatHandler, SeatState},
     reexports::wayland_server::{
         Client, Display, DisplayHandle, Resource,
-        backend::{ClientData, ClientId, DisconnectReason},
+        backend::{ClientData, ClientId, DisconnectReason, ObjectId},
         protocol::{wl_buffer::WlBuffer, wl_callback::WlCallback, wl_surface::WlSurface},
     },
     wayland::{
@@ -57,6 +57,9 @@ pub struct CompositorState {
 
     /// Widget registration and connection tracking.
     pub widgets: WidgetTracker,
+
+    /// Buffer IDs that have been destroyed and need texture cache invalidation.
+    pub invalidated_buffers: Vec<ObjectId>,
 }
 
 impl CompositorState {
@@ -105,6 +108,7 @@ impl CompositorState {
             widget_buffers: Vec::new(),
             pending_frame_callbacks: Vec::new(),
             widgets: WidgetTracker::new(),
+            invalidated_buffers: Vec::new(),
         }
     }
 
@@ -210,7 +214,10 @@ impl ShmHandler for CompositorState {
 }
 
 impl BufferHandler for CompositorState {
-    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
+    fn buffer_destroyed(&mut self, buffer: &WlBuffer) {
+        // Track destroyed buffer for texture cache invalidation
+        self.invalidated_buffers.push(buffer.id());
+    }
 }
 
 impl DmabufHandler for CompositorState {

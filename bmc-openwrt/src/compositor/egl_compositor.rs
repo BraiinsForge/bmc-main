@@ -238,6 +238,13 @@ impl EglCompositor {
 
             process_protocol_events(&mut app_state);
 
+            // Invalidate texture cache for destroyed buffers
+            if !app_state.compositor.invalidated_buffers.is_empty() {
+                let invalidated: Vec<_> =
+                    app_state.compositor.invalidated_buffers.drain(..).collect();
+                app_state.scene_renderer.invalidate_textures(&invalidated);
+            }
+
             ii_stopwatch::stopwatch_start!(render_w);
             if let Err(e) = app_state.scene_renderer.render_scene(
                 &app_state.compositor.widgets,
