@@ -14,7 +14,11 @@ use bmc::compositor::{
 };
 use bmc_widget_protocol::SettingUpdate;
 use smithay::reexports::{
-    calloop::{EventLoop, Interest, Mode, PostAction, generic::Generic},
+    calloop::{
+        EventLoop, Interest, Mode, PostAction,
+        channel::{self as calloop_channel, Event as ChannelEvent},
+        generic::Generic,
+    },
     drm::control::{Device as DrmControlDevice, Event as DrmEvent},
     wayland_server::{Display, ListeningSocket},
 };
@@ -31,11 +35,10 @@ use tokio::sync::mpsc;
 const DEFAULT_GPU_PATH: &str = "/dev/dri/renderD128";
 const DEFAULT_DISPLAY_PATH: &str = "/dev/dri/card1";
 
-#[derive(Debug)]
 pub struct EglCompositor {
     wayland_display: Mutex<Option<String>>,
-    command_tx: flume::Sender<CompositorCommand>,
-    command_rx: flume::Receiver<CompositorCommand>,
+    command_tx: calloop_channel::Sender<CompositorCommand>,
+    command_channel: Mutex<Option<calloop_channel::Channel<CompositorCommand>>>,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
     action_rx: Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
@@ -43,6 +46,15 @@ pub struct EglCompositor {
     thread_handle: Mutex<Option<JoinHandle<()>>>,
     gpu_path: String,
     display_path: String,
+}
+
+impl std::fmt::Debug for EglCompositor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EglCompositor")
+            .field("gpu_path", &self.gpu_path)
+            .field("display_path", &self.display_path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl EglCompositor {
@@ -53,14 +65,14 @@ impl EglCompositor {
 
     #[must_use]
     pub fn with_device_paths(gpu_path: &str, display_path: &str) -> Self {
-        let (command_tx, command_rx) = flume::unbounded();
+        let (command_tx, command_channel) = calloop_channel::channel();
         let (action_tx, action_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         Self {
             wayland_display: Mutex::new(None),
             command_tx,
-            command_rx,
+            command_channel: Mutex::new(Some(command_channel)),
             action_tx,
             event_tx,
             action_rx: Mutex::new(Some(action_rx)),
@@ -75,7 +87,7 @@ impl EglCompositor {
     fn run_compositor_loop(
         gpu_path: &str,
         display_path: &str,
-        command_rx: flume::Receiver<CompositorCommand>,
+        command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: mpsc::UnboundedSender<CompositorEvent>,
         ready_tx: &flume::Sender<Result<String, String>>,
@@ -149,6 +161,23 @@ impl EglCompositor {
             "Failed to add display fd to event loop"
         );
 
+        // Register command channel with calloop for event-driven command dispatch
+        if loop_handle
+            .insert_source(command_channel, |event, (), state| match event {
+                ChannelEvent::Msg(cmd) => handle_command(state, cmd),
+                ChannelEvent::Closed => {
+                    tracing::info!("Command channel closed");
+                    state.should_exit = true;
+                }
+            })
+            .is_err()
+        {
+            let err = "Failed to add command channel to event loop".to_owned();
+            tracing::error!("{}", err);
+            let _ = ready_tx.send(Err(err));
+            return;
+        }
+
         // Signal ready to main thread
         if ready_tx.send(Ok(socket_name.clone())).is_err() {
             tracing::error!("Failed to signal ready - receiver dropped");
@@ -160,7 +189,6 @@ impl EglCompositor {
             compositor: compositor_state,
             scene_renderer,
             listening_socket,
-            command_rx,
             action_tx,
             event_tx,
             should_exit: false,
@@ -214,10 +242,6 @@ impl EglCompositor {
         // Main event loop: process commands, accept clients, render frames
         loop {
             ii_stopwatch::stopwatch_start!(loop_w);
-
-            while let Ok(cmd) = app_state.command_rx.try_recv() {
-                handle_command(&mut app_state, cmd);
-            }
 
             if app_state.should_exit {
                 tracing::info!("Compositor shutting down");
@@ -326,7 +350,6 @@ struct AppState {
     compositor: CompositorState,
     scene_renderer: SceneRenderer,
     listening_socket: ListeningSocket,
-    command_rx: flume::Receiver<CompositorCommand>,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
     should_exit: bool,
@@ -435,7 +458,12 @@ impl Compositor for EglCompositor {
 
         let gpu_path = self.gpu_path.clone();
         let display_path = self.display_path.clone();
-        let command_rx = self.command_rx.clone();
+        let command_channel = self
+            .command_channel
+            .lock()
+            .expect("BUG: command_channel lock poisoned")
+            .take()
+            .expect("BUG: command_channel already taken");
         let action_tx = self.action_tx.clone();
         let event_tx = self.event_tx.clone();
 
@@ -445,7 +473,7 @@ impl Compositor for EglCompositor {
                 Self::run_compositor_loop(
                     &gpu_path,
                     &display_path,
-                    command_rx,
+                    command_channel,
                     action_tx,
                     event_tx,
                     &ready_tx,
