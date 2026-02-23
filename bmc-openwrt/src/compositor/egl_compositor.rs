@@ -321,12 +321,16 @@ impl EglCompositor {
 
             let _ = app_state.display.flush_clients();
 
-            // 16ms dispatch timeout for ~60fps
+            // Block until an event arrives when idle. Use zero timeout when
+            // a redraw is pending so the loop retries immediately after a
+            // DRM vblank wakes us (flip-pending case).
+            let timeout = if app_state.compositor.needs_redraw {
+                Some(Duration::ZERO)
+            } else {
+                None
+            };
             ii_stopwatch::stopwatch_start!(dispatch_w);
-            if event_loop
-                .dispatch(Some(Duration::from_millis(16)), &mut app_state)
-                .is_err()
-            {
+            if event_loop.dispatch(timeout, &mut app_state).is_err() {
                 tracing::error!("Event loop dispatch error");
                 break;
             }
