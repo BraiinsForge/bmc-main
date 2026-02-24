@@ -51,7 +51,6 @@ pub struct CompositorState {
     pub deck_widget_state: DeckWidgetProtocolState,
     pub width: u32,
     pub height: u32,
-    pub surfaces: Vec<WlSurface>,
     pub widget_buffers: Vec<(WlBuffer, InstanceId)>,
     pub pending_frame_callbacks: Vec<WlCallback>,
 
@@ -107,7 +106,6 @@ impl CompositorState {
             deck_widget_state,
             width,
             height,
-            surfaces: Vec::new(),
             widget_buffers: Vec::new(),
             pending_frame_callbacks: Vec::new(),
             widgets: WidgetTracker::new(),
@@ -143,9 +141,6 @@ impl CompositorHandler for CompositorState {
 
     fn commit(&mut self, surface: &WlSurface) {
         tracing::debug!("Surface committed: {:?}", surface.id());
-        if !self.surfaces.iter().any(|s| s.id() == surface.id()) {
-            self.surfaces.push(surface.clone());
-        }
 
         // First try to match by surface directly (for protocol surface)
         let mut instance_id = self
@@ -184,6 +179,14 @@ impl CompositorHandler for CompositorState {
                     BufferAssignment::NewBuffer(buffer) => {
                         self.needs_redraw = true;
                         if let Some(ref id) = instance_id {
+                            // Release previous buffer so the client can reuse or
+                            // destroy it.  Without this the client allocates a new
+                            // buffer every frame and old textures leak.
+                            for (old_buf, _) in
+                                self.widget_buffers.iter().filter(|(_, eid)| eid == id)
+                            {
+                                old_buf.release();
+                            }
                             self.widget_buffers
                                 .retain(|(_, existing_id)| existing_id != id);
                             self.widget_buffers.push((buffer.clone(), id.clone()));
@@ -198,6 +201,11 @@ impl CompositorHandler for CompositorState {
                     }
                     BufferAssignment::Removed => {
                         if let Some(ref id) = instance_id {
+                            for (old_buf, _) in
+                                self.widget_buffers.iter().filter(|(_, eid)| eid == id)
+                            {
+                                old_buf.release();
+                            }
                             self.widget_buffers
                                 .retain(|(_, existing_id)| existing_id != id);
                             tracing::debug!("Buffer removed for widget {}", id);
