@@ -15,6 +15,7 @@ export struct WidgetRemoteImageData {
     image: image,
     state: WidgetRemoteImageState,
     stale-text: string,
+    error-text: string,
     name: string,
 }
 
@@ -70,13 +71,27 @@ export component WidgetRemoteImage inherits Rectangle {
             }
         }
 
-        if root.data.state == WidgetRemoteImageState.Loading || root.data.state == WidgetRemoteImageState.LoadingError: Text {
-            color: Palette.white;
-            font-size: 20px;
-            font-weight: Theme.font.weight.bold;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-            text: "Waiting for initial data (" + root.data.name + ")";
+        if root.data.state == WidgetRemoteImageState.Loading || root.data.state == WidgetRemoteImageState.LoadingError: VerticalLayout {
+            alignment: center;
+            spacing: 8px;
+
+            Text {
+                color: Palette.white;
+                font-size: 20px;
+                font-weight: Theme.font.weight.bold;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+                text: "Waiting for initial data (" + root.data.name + ")";
+            }
+
+            if root.data.error-text != "": Text {
+                color: Palette.orange-40;
+                font-size: 14px;
+                font-weight: Theme.font.weight.regular;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+                text: root.data.error-text;
+            }
         }
 
         if root.data.state == WidgetRemoteImageState.UnexpectedError: Text {

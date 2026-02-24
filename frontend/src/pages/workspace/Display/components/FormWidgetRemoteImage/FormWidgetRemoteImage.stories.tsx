@@ -48,6 +48,12 @@ function Demo() {
             error: err('Ususs sunt lumens de grandis resistentia!'),
             onChange: handleChange('refreshDurationSec'),
         },
+        imageScaleMode: {
+            value: pb.RemoteImageWidget_ImageScaleMode.FIT,
+            disabled: false,
+            error: null,
+            onChange: handleChange('imageScaleMode'),
+        },
     });
 
     return <Component {...args} style={{ padding: 18, backgroundColor: 'var(--cds-layer-01)' }} />;

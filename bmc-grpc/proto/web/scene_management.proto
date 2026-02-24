@@ -222,10 +222,17 @@ enum FontStyle {
 }
 
 message RemoteImageWidget {
+  enum ImageScaleMode {
+    IMAGE_SCALE_MODE_UNSPECIFIED = 0;
+    IMAGE_SCALE_MODE_FIT = 1;
+    IMAGE_SCALE_MODE_FILL = 2;
+  }
+
   // required (can be empty)
   string url = 1;
   // required
   uint32 refresh_duration_sec = 2;
+  ImageScaleMode image_scale_mode = 3;
 }
 
 message RemoteWidget {

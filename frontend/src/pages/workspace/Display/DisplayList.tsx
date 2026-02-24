@@ -821,6 +821,7 @@ class View extends Component<Props, State> {
                     widgetSize={null}
                     url={this.#getFormFieldStruct('remoteImage', 'url')}
                     refreshDurationSec={this.#getFormFieldStruct('remoteImage', 'refreshDurationSec')}
+                    imageScaleMode={this.#getFormFieldStruct('remoteImage', 'imageScaleMode')}
                 />
 
                 <Comp.FormWidgetRemoteWidget

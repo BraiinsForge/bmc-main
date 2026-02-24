@@ -9,7 +9,7 @@ import { Form, type iField, type FormPropsToValuesRec } from '@/lib/form';
 // Components
 import { ModalCustom, InlineNotification, Button } from '@/components';
 import { WidgetSizeSelector, type WidgetSizeSelectorProps, CheckYourScreenForPreview, BoundComboBox } from '../shared';
-import { TextInput } from '@carbon/react';
+import { TextInput, Toggle } from '@carbon/react';
 
 // styles
 import css from '../shared.scss';
@@ -25,6 +25,7 @@ export interface FormWidgetRemoteImageProps {
 
     url: iField<string>;
     refreshDurationSec: iField<number>;
+    imageScaleMode: iField<number>;
 
     style?: CSSProperties;
 }
@@ -42,6 +43,7 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
         widgetSize,
         url,
         refreshDurationSec,
+        imageScaleMode,
 
         style,
     } = props;
@@ -80,6 +82,19 @@ export function FormWidgetRemoteImage(props: FormWidgetRemoteImageProps) {
                 labelText={formatMessage({ defaultMessage: 'Refresh Duration' })}
                 placeholderText="---"
                 items={refreshIntervalOptions}
+            />
+
+            <Toggle
+                id={$('image-scale-mode')}
+                labelText={formatMessage({ defaultMessage: 'Fill mode' })}
+                labelA={formatMessage({ defaultMessage: 'Fit (black bars)' })}
+                labelB={formatMessage({ defaultMessage: 'Fill (crop edges)' })}
+                toggled={imageScaleMode.value === pb.RemoteImageWidget_ImageScaleMode.FILL}
+                onToggle={v =>
+                    imageScaleMode.onChange?.(
+                        v ? pb.RemoteImageWidget_ImageScaleMode.FILL : pb.RemoteImageWidget_ImageScaleMode.FIT,
+                    )
+                }
             />
 
             <CheckYourScreenForPreview />
@@ -145,7 +160,7 @@ function Rules() {
                 />
                 <FormattedMessage
                     tagName="li"
-                    defaultMessage="Image is automatically scaled to fit the widget while preserving aspect ratio"
+                    defaultMessage="Image is automatically scaled to fit the widget while preserving aspect ratio (up to 4K resolution)"
                 />
             </ul>
 
@@ -167,15 +182,15 @@ function Rules() {
             <p
                 children={formatMessage({
                     defaultMessage:
-                        'If you have a custom server which generates images dynamically, you can use following query parameters from the request to prepare image with correct resolution:',
+                        'If you have a custom server which generates images dynamically, you can use following placeholders in the URL to insert the widget dimensions:',
                 })}
             />
             <ul>
                 <li>
-                    <AutoSelected kind="code" children="deck_image_width" />
+                    <AutoSelected kind="code" children="{{width}}" />
                 </li>
                 <li>
-                    <AutoSelected kind="code" children="deck_image_height" />
+                    <AutoSelected kind="code" children="{{height}}" />
                 </li>
             </ul>
         </div>
@@ -189,6 +204,7 @@ export function createRemoteImageWidgetKind(data: FormPropsToValuesRec<FormWidge
             value: pb.create(pb.RemoteImageWidgetSchema, {
                 url: data.url,
                 refreshDurationSec: data.refreshDurationSec,
+                imageScaleMode: data.imageScaleMode,
             }),
         },
     });
@@ -202,5 +218,6 @@ export function unpackRemoteImageWidgetKind(
         widgetSize,
         url: data.value.value.url,
         refreshDurationSec: data.value.value.refreshDurationSec,
+        imageScaleMode: data.value.value.imageScaleMode,
     };
 }

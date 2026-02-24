@@ -796,17 +796,21 @@ impl DisplayController {
                         RemoteImageState::Initial => {
                             widget.remote_image.state = generated::WidgetRemoteImageState::Initial;
                             widget.remote_image.image = slint::Image::default();
+                            widget.remote_image.error_text = SharedString::default();
                         }
                         RemoteImageState::ConfigurationError => {
                             widget.remote_image.state =
                                 generated::WidgetRemoteImageState::ConfigurationError;
+                            widget.remote_image.error_text = SharedString::default();
                         }
                         RemoteImageState::Loading => {
                             widget.remote_image.state = generated::WidgetRemoteImageState::Loading;
+                            widget.remote_image.error_text = SharedString::default();
                         }
                         RemoteImageState::LoadingSuccess(buffer) => {
                             widget.remote_image.state =
                                 generated::WidgetRemoteImageState::LoadingSuccess;
+                            widget.remote_image.error_text = SharedString::default();
 
                             widget.remote_image.image = match buffer {
                                 SharedImageBuffer::RGB8(buffer) => slint::Image::from_rgb8(buffer),
@@ -818,13 +822,15 @@ impl DisplayController {
                                 }
                             };
                         }
-                        RemoteImageState::LoadingError(_) => {
+                        RemoteImageState::LoadingError(err) => {
                             widget.remote_image.state =
                                 generated::WidgetRemoteImageState::LoadingError;
+                            widget.remote_image.error_text = SharedString::from(err.to_string());
                         }
                         RemoteImageState::UnexpectedError => {
                             widget.remote_image.state =
                                 generated::WidgetRemoteImageState::UnexpectedError;
+                            widget.remote_image.error_text = SharedString::default();
                         }
                     }
                     widget.remote_image.stale_text = SharedString::from(stale_text);

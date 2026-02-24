@@ -9,10 +9,10 @@ use crate::web::grpc::GrpcError;
 use crate::widget_tasks::WidgetTasks;
 use bmc_display::data::{
     AccountId, AddWidgetError, BlockHeightWidget, BraiinsPoolWidget, ClockStyle, ClockWidget,
-    CountdownWidget, FontStyle, PoolChartTimeFrame, PoolStyle, RemoteImageWidget, RemoteWidget,
-    RemoteWidgetMetadata, RemoveWidgetError, Scene, SceneCycling, SceneCyclingTransition, SceneId,
-    SceneKind, TickerBtcWidget, TickerTimeFrame, UpdateWidgetError, Widget, WidgetId, WidgetKind,
-    WidgetPosition, WidgetSize,
+    CountdownWidget, FontStyle, ImageScaleMode, PoolChartTimeFrame, PoolStyle, RemoteImageWidget,
+    RemoteWidget, RemoteWidgetMetadata, RemoveWidgetError, Scene, SceneCycling,
+    SceneCyclingTransition, SceneId, SceneKind, TickerBtcWidget, TickerTimeFrame,
+    UpdateWidgetError, Widget, WidgetId, WidgetKind, WidgetPosition, WidgetSize,
 };
 use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
@@ -1465,10 +1465,19 @@ fn parse_remote_image_widget_kind(
         );
     });
 
+    let image_scale_mode = {
+        use web::remote_image_widget::ImageScaleMode as ImageScaleModeProto;
+        match remote_image_proto.image_scale_mode() {
+            ImageScaleModeProto::Unspecified | ImageScaleModeProto::Fit => ImageScaleMode::Fit,
+            ImageScaleModeProto::Fill => ImageScaleMode::Fill,
+        }
+    };
+
     let maybe_kind = refresh_duration.map(|refresh_duration| {
         WidgetKind::RemoteImage(RemoteImageWidget {
             url: remote_image_proto.url,
             refresh_duration,
+            image_scale_mode,
         })
     });
 
@@ -1817,6 +1826,8 @@ fn map_braiins_pool_to_proto(braiins_pool: BraiinsPoolWidget) -> web::WidgetKind
 }
 
 fn map_remote_image_to_proto(remote_image: RemoteImageWidget) -> web::WidgetKind {
+    use web::remote_image_widget::ImageScaleMode as ImageScaleModeProto;
+
     let proto = web::RemoteImageWidget {
         url: remote_image.url,
         refresh_duration_sec: {
@@ -1825,6 +1836,11 @@ fn map_remote_image_to_proto(remote_image: RemoteImageWidget) -> web::WidgetKind
 
             refresh_duration_sec
         },
+        image_scale_mode: match remote_image.image_scale_mode {
+            ImageScaleMode::Fit => ImageScaleModeProto::Fit,
+            ImageScaleMode::Fill => ImageScaleModeProto::Fill,
+        }
+        .into(),
     };
 
     web::WidgetKind {

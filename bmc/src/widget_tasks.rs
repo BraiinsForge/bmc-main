@@ -158,6 +158,7 @@ impl WidgetTasks {
                     widget.size,
                     remote_image_widget.url.clone(),
                     remote_image_widget.refresh_duration,
+                    remote_image_widget.image_scale_mode,
                 )
                 .in_current_span(),
             )),

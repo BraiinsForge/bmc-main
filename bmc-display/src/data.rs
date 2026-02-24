@@ -189,11 +189,21 @@ impl Default for BraiinsPoolWidget {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageScaleMode {
+    #[default]
+    Fit,
+    Fill,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteImageWidget {
     pub url: String,
     #[serde(with = "humantime_serde")]
     pub refresh_duration: Duration,
+    #[serde(default)]
+    pub image_scale_mode: ImageScaleMode,
 }
 
 impl Default for RemoteImageWidget {
@@ -201,6 +211,7 @@ impl Default for RemoteImageWidget {
         Self {
             url: String::new(),
             refresh_duration: Duration::from_secs(60 * 60 * 24),
+            image_scale_mode: ImageScaleMode::default(),
         }
     }
 }

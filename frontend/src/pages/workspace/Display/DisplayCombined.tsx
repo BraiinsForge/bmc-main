@@ -1195,6 +1195,7 @@ class View extends Component<Props, State> {
                     }}
                     url={this.#getField('remoteImage', 'url')}
                     refreshDurationSec={this.#getField('remoteImage', 'refreshDurationSec')}
+                    imageScaleMode={this.#getField('remoteImage', 'imageScaleMode')}
                 />
                 <Comp.FormWidgetHalvingCountdown
                     isOpen={openDialogKind === 'halvingCountdown'}
