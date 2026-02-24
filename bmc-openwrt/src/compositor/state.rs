@@ -178,23 +178,23 @@ impl CompositorHandler for CompositorState {
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
                         self.needs_redraw = true;
-                        if let Some(ref id) = instance_id {
+                        if let Some(id) = instance_id.take() {
                             // Release previous buffer so the client can reuse or
                             // destroy it.  Without this the client allocates a new
                             // buffer every frame and old textures leak.
                             for (old_buf, _) in
-                                self.widget_buffers.iter().filter(|(_, eid)| eid == id)
+                                self.widget_buffers.iter().filter(|(_, eid)| eid == &id)
                             {
                                 old_buf.release();
                             }
                             self.widget_buffers
-                                .retain(|(_, existing_id)| existing_id != id);
-                            self.widget_buffers.push((buffer.clone(), id.clone()));
+                                .retain(|(_, existing_id)| existing_id != &id);
                             tracing::debug!(
                                 "Buffer attached for widget {} (total buffers: {})",
                                 id,
-                                self.widget_buffers.len()
+                                self.widget_buffers.len() + 1
                             );
+                            self.widget_buffers.push((buffer.clone(), id));
                         } else {
                             tracing::debug!("Buffer attached to unknown surface (no instance_id)");
                         }
