@@ -1328,7 +1328,11 @@ fn parse_clock_widget_kind(
                 show_date: clock_proto.show_date,
                 show_seconds: clock_proto.show_seconds,
                 show_timezone: clock_proto.show_timezone,
-                timezone,
+                timezone: if clock_proto.show_timezone {
+                    timezone
+                } else {
+                    None
+                },
             })
         });
 
