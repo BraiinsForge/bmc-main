@@ -140,7 +140,10 @@ class View extends Component<Props> {
                     <BoundComboBox<string>
                         id={$('timezone')}
                         {...timezone}
-                        items={timezone.options.map(x => ({ value: x.id, label: `${x.offset} ${x.label}` }))}
+                        items={[
+                            { value: '', label: formatMessage({ defaultMessage: 'System Timezone' }) },
+                            ...timezone.options.map(x => ({ value: x.id, label: `${x.offset} ${x.label}` })),
+                        ]}
                         labelText={formatMessage({ defaultMessage: 'Timezone' })}
                         decorator={<IconEarth size={20} />}
                     />
@@ -216,7 +219,8 @@ export function createClockWidgetKind(data: FormPropsToValuesRec<FormWidgetClock
                 showSeconds: data.showSeconds,
 
                 showTimezone: data.showTimezone,
-                timezone: data.timezone,
+                // Frontend uses '' as system timezone, but backend expects undefined
+                timezone: data.timezone || undefined,
             }),
         },
     });
@@ -235,6 +239,7 @@ export function unpackClockWidgetKind(
         showDate: clock.showDate,
         showSeconds: clock.showSeconds,
         showTimezone: clock.showTimezone,
-        timezone: clock.timezone,
+        // Backend has undefined as system timezone, but frontend expects ''
+        timezone: clock.timezone ?? '',
     };
 }
