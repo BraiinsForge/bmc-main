@@ -174,7 +174,7 @@ impl CompositorHandler for CompositorState {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             let attributes = guard.current();
 
-            if let Some(assignment) = &attributes.buffer {
+            if let Some(assignment) = attributes.buffer.take() {
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
                         self.needs_redraw = true;
@@ -221,8 +221,12 @@ impl CompositorHandler for CompositorState {
                 self.needs_redraw = true;
             }
 
+            // Drain frame_callbacks and damage to prevent unbounded accumulation.
+            // Smithay's merge_into() uses extend() on these fields, so they grow
+            // indefinitely if not cleared after processing.
             self.pending_frame_callbacks
-                .extend(attributes.frame_callbacks.iter().cloned());
+                .append(&mut attributes.frame_callbacks);
+            attributes.damage.clear();
         });
     }
 }
