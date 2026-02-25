@@ -48,8 +48,10 @@
             FONTCONFIG_FILE = pkgs.makeFontsConf {
               fontDirectories = with pkgs; [
                 corefonts
-                font-awesome_6
               ];
+
+              impureFontDirectories = [ ];
+              includes = [ ];
             };
 
             CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS =

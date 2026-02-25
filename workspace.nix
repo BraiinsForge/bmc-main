@@ -23,7 +23,7 @@ let
       # openssl.dev
     ];
     # environment variables (from commonDeps)
-    inherit (commonDeps) env;
+    env = commonDeps.env // { };
   };
 
   build-profiles = with workspace; {
