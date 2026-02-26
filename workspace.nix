@@ -70,13 +70,13 @@ let
 
     # Env vars needed by Slint for font rendering and runtime linking
     env = {
-      FONTCONFIG_FILE = pkgs.makeFontsConf {
-        fontDirectories = with pkgs; [
-          corefonts
-        ];
-        impureFontDirectories = [ ];
-        includes = [ ];
-      };
+      FONTCONFIG_FILE = pkgs.writeText "fonts.conf" ''
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+        <fontconfig>
+          <dir>${pkgs.corefonts}</dir>
+        </fontconfig>
+      '';
 
       LD_LIBRARY_PATH = "${lib.makeLibraryPath [
         pkgs.libgcc
