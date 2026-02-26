@@ -5,7 +5,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib";
+    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib?ref=fbo/BDK-318/merged";
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
