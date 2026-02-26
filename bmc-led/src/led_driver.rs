@@ -140,7 +140,7 @@ impl LedIndicatorsState {
                 self.scene_persist = Some(LedCommand::SetEffect(
                     LedEffect::Solid(RGB_WHITE),
                     LedEventPersistence::Persistent,
-                    KNIGHT_RIDER_PERIOD,
+                    SOLID_PERIOD,
                 ));
             }
             LedEvent::PreviewSceneEnded => {
