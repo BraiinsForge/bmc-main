@@ -35,6 +35,11 @@ let
     xorg.libXcursor
     xorg.libXi
     xorg.libXrandr
+    xorg.libXinerama
+    xorg.libXext
+    xorg.libXft
+    xorg.libXrender
+    xorg.libxcb
     vulkan-loader
     libGL
   ];
@@ -92,23 +97,8 @@ let
     ];
 
     # Runtime libs for GUI/display development (Slint, winit backends)
-    guiRuntimeDeps = with pkgs; [
-      fontconfig
-
-      xorg.libX11
-      xorg.libXcursor
-      xorg.libXrandr
-      xorg.libXi
-      xorg.libXinerama
-      xorg.libXext
-      xorg.libXft
-      xorg.libXrender
-      xorg.libxcb
-      wayland
-      wayland-protocols
+    guiRuntimeDeps = with pkgs; (waylandRuntimeDeps pkgs) ++ (X11RuntimeDeps pkgs) ++ [
       libxkbcommon
-      libGL
-      vulkan-loader
       mesa
     ];
 
