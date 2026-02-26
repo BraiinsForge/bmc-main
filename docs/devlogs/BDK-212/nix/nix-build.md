@@ -12,7 +12,7 @@ The build infrastructure produces three kinds of artifacts:
 1. **Packages** — individual derivations (widgets, bmc-openwrt, etc.)
 2. **Index** (`miniminer-index.json`) — metadata listing all available
    packages and their store paths
-3. **Tarball** (`.tar.xz`) — initial Nix store snapshot for device
+3. **Tarball** (`.tar.gz`) — initial Nix store snapshot for device
    initialization, containing packages and a pre-built profile
 
 The factory index (`miniminer-factory.json`) is NOT built by Nix — it
@@ -31,7 +31,7 @@ nix/
 ├── workspace.nix          # Rust crates, build profiles, devShells
 ├── mkWidgetPackage.nix    # Build a widget crate into a package derivation
 ├── mkIndex.nix            # Package list → miniminer-index.json
-├── mkTarball.nix          # Package list + bmc-nix CLI → .tar.xz + metadata
+├── mkTarball.nix          # Package list + bmc-nix CLI → .tar.gz + metadata
 └── artifacts.nix          # Package list, index, and tarball definitions
 ```
 
@@ -54,7 +54,7 @@ index and tarball.
         ├──────────────────────────────────┐
         ▼                                  ▼
    ┌──────────────┐                ┌──────────────────┐
-   │ mkIndex       │→ index.json   │ mkTarball         │→ .tar.xz
+   │ mkIndex       │→ index.json   │ mkTarball         │→ .tar.gz
    └──────────────┘                │                   │  + metadata.json
                                    │ 1. generates      │
                                    │    temp index     │
@@ -95,6 +95,7 @@ entries. Each entry pairs a Nix derivation with its metadata:
     min_bmc_version = "1.0.0";
     upgrade_strategy = "reboot"; # "reboot" or false
     install_strategy = false;
+    # cache = "default";    # optional — defaults to first entry in caches
   }
   {
     pkg = <derivation>;
@@ -117,6 +118,10 @@ not derived from the package contents.
 How packages are built (via `mkWidgetPackage`, workspace profiles,
 `callPackage`, etc.) is irrelevant to the index/tarball pipeline.
 
+The optional `cache` field selects which binary cache hosts this
+package. If omitted, `mkIndex` defaults it to the first entry in
+`caches` (or `"default"` when `caches` is empty).
+
 ---
 
 ## Functions
@@ -126,7 +131,7 @@ How packages are built (via `mkWidgetPackage`, workspace profiles,
 **Existing file, moved from repo root to `nix/`.**
 
 Defines Rust crate builds, cross-compilation profiles, and
-development shells. See [the current workspace.nix](../../workspace.nix)
+development shells. See [the current workspace.nix](../../../../workspace.nix)
 for the full implementation.
 
 Responsibilities:
@@ -153,6 +158,12 @@ pipeline. It just produces derivations that go into the package list.
 
 Builds a single widget Rust crate into a package derivation with the
 standard directory layout expected by the device.
+
+Note: The `mkWidgetPackage` defined here is the **internal** API, used
+within our monorepo (takes `crate` + `profile` from the workspace).
+The future `deck-lib` library flake will expose a **third-party** API
+with a different signature (e.g., `src`-based) for external consumers.
+See [Third-Party Flake Convention](#third-party-flake-convention-future).
 
 ```nix
 # nix/mkWidgetPackage.nix
@@ -245,7 +256,7 @@ Builds an initial Nix store tarball for device initialization.
                      # into the tarball root (e.g. /etc/nix/nix.conf)
 }:
 # Output: derivation producing:
-#   $out/miniminer-nix-<bos_version>.tar.xz
+#   $out/miniminer-nix-<bos_version>.tar.gz
 #   $out/metadata.json
 ```
 
@@ -262,6 +273,9 @@ This is the most involved derivation. Steps inside the build:
    full CLI specification. This produces the symlink-based profile
    directory (symlink tree, hooks, manifest) as described in
    [nix-concepts.md](nix-concepts.md#custom-profile-management).
+   Use `--generation 1`, and point `--profile-dir` into the tarball
+   root (e.g., `$rootDir${profile_path}`) so files land inside the
+   archive.
 
    **Note:** The profile is NOT activated during the tarball build.
    Activation scripts reference absolute system paths (`/etc/init.d/`,
@@ -299,6 +313,10 @@ This is the most involved derivation. Steps inside the build:
    nix-store --load-db < ${closureInfo}/registration
    ```
 
+   The `mkTarball` derivation needs `nix` and `gzip` in
+   `nativeBuildInputs` for the `nix-store` command and tarball
+   compression respectively.
+
    This produces `$rootDir/nix/var/nix/db/db.sqlite` — a fully
    populated store database. After extraction on the device, the
    store is immediately functional with no further initialization
@@ -307,10 +325,13 @@ This is the most involved derivation. Steps inside the build:
 5. **Create tarball** — assemble a root directory and tar it up:
    - All store paths listed in `${closureInfo}/store-paths`
    - The populated Nix DB at `nix/var/nix/db/db.sqlite`
-   - The built profile directory at `profile_path`
+   - The built profile directory at `profile_path` — this lives
+     outside `/nix/store` (it is a directory of symlinks pointing
+     into the store, assembled by `bmc-nix-cli` in step 2) and is
+     archived at its relative path within the tarball root
    - Extra files from `extraFiles` (if provided), overlaid at the
      root (e.g., `etc/nix/nix.conf`)
-   - Compress with `xz`
+   - Compress with `gzip`
 
    Example usage of `extraFiles`:
 
@@ -328,12 +349,15 @@ This is the most involved derivation. Steps inside the build:
 {
   "bos_version": "26.01",
   "profile_path": "/nix/var/nix/gcroots/bmc",
-  "tarball_name": "miniminer-nix-26.01.tar.xz"
+  "tarball_name": "miniminer-nix-26.01.tar.gz"
 }
 ```
 
 This metadata is consumed by external tooling to build the factory
-index (`miniminer-factory.json`) across multiple versions.
+index (`miniminer-factory.json`) across multiple versions. The
+external tooling must supply the `download_url` field (not present
+in `metadata.json`) when assembling `miniminer-factory.json`, since
+it depends on where the tarball is ultimately published.
 
 ---
 
@@ -346,7 +370,8 @@ source of truth for what gets released.
 ```nix
 # nix/artifacts.nix
 { self, pkgs, lib, workspace, mkWidgetPackage, mkIndex, mkTarball
-, armv7Pkgs  # pkgs.pkgsCross.armv7l-hf-multiplatform (or .pkgsStatic)
+, armv7Pkgs  # pkgs.pkgsCross.armv7l-hf-multiplatform (glibc; widgets
+             # use armv7-glibc-release profile — see workspace.nix)
 }:
 let
   # Build individual packages (all ARMv7 for the target device)
@@ -408,6 +433,8 @@ let
 
   tarball = mkTarball {
     packages = packageList;
+    # bmc-nix-cli is a [[bin]] target of the bmc-nix crate;
+    # workspace.nix needs to export it as a package
     bmc-nix-cli = workspace.packages.bmc-nix-cli;
     bos_version = "26.01";
     extraFiles = pkgs.writeTextDir "etc/nix/nix.conf" ''
@@ -427,7 +454,7 @@ in
 `artifacts.nix`:
 
 ```nix
-# In flake.nix (relevant excerpt)
+# In flake.nix (target layout, once `nix/` directory exists)
 let
   workspace = import ./nix/workspace.nix { inherit self pkgs commonDeps; };
   mkWidgetPackage = import ./nix/mkWidgetPackage.nix { inherit pkgs lib; };
@@ -442,7 +469,7 @@ in
   packages.x86_64-linux = workspace.packages // {
     inherit (artifacts) index tarball;
     # nix build .#index    → result/miniminer-index.json
-    # nix build .#tarball  → result/miniminer-nix-26.01.tar.xz
+    # nix build .#tarball  → result/miniminer-nix-26.01.tar.gz
     #                        result/metadata.json
   };
 }
@@ -625,3 +652,7 @@ toolchain and closure.
 - **Package version source of truth** — versions are currently
   specified in the package list in flake.nix. Whether to read them
   from Cargo.toml or widget manifest.json instead is left for later.
+
+- **`mkTarball` nativeBuildInputs** — confirm that `nix`, `gzip`, and
+  `bmc-nix-cli` are sufficient as build-time inputs, and that no
+  additional tools (e.g., `sqlite` for DB inspection) are needed.
