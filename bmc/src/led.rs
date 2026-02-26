@@ -52,6 +52,7 @@ where
     T: BmcManager,
 {
     led_event_handler: LedEventHandler,
+    command_sender: Option<Sender<LedCommand>>,
     system_upgrade_receiver: sync::watch::Receiver<Option<SystemUpgradeState>>,
     manager: Arc<T>,
     last_price_change_24h_receiver: watch::Receiver<f32>,
@@ -63,6 +64,7 @@ impl<T: BmcManager> Clone for LedController<T> {
     fn clone(&self) -> Self {
         Self {
             led_event_handler: self.led_event_handler.clone(),
+            command_sender: self.command_sender.clone(),
             system_upgrade_receiver: self.system_upgrade_receiver.clone(),
             manager: self.manager.clone(),
             last_price_change_24h_receiver: self.last_price_change_24h_receiver.clone(),
@@ -89,6 +91,7 @@ where
 
         let this = Self {
             led_event_handler: LedEventHandler::default(),
+            command_sender: None,
             system_upgrade_receiver,
             manager,
             last_price_change_24h_receiver: last_price_change_24h,
@@ -285,6 +288,7 @@ where
     }
 
     pub(crate) fn init(&mut self, led_cmd_tx: Sender<LedCommand>) {
+        self.command_sender = Some(led_cmd_tx.clone());
         let led_event_tx = self.led_event_handler.init(led_cmd_tx);
 
         // NOTE: Enable/Disable led events on start
@@ -303,5 +307,11 @@ where
 
     pub fn push_event(&self, event: LedEvent) {
         self.led_event_handler.push_event(event);
+    }
+
+    pub fn send_command(&self, command: LedCommand) {
+        if let Some(sender) = &self.command_sender {
+            let _ = sender.try_send(command);
+        }
     }
 }
