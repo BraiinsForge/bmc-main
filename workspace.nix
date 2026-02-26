@@ -75,9 +75,7 @@ let
       # openssl.dev
     ];
     env = {
-      FONTCONFIG_FILE = pkgs.makeFontsConf {
-        fontDirectories = [ pkgs.corefonts ];
-      };
+      FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
     };
   };
 
@@ -98,14 +96,7 @@ let
       libgbm
       libGL
     ];
-    # environment variables (from commonDeps, with fontconfig in LD_LIBRARY_PATH
-    # for Slint build script which dlopen's libfontconfig.so.1 during compilation)
-    env = commonDeps.env // {
-      LD_LIBRARY_PATH = lib.makeLibraryPath [
-        pkgs.libgcc
-        pkgs.fontconfig
-      ];
-    };
+    env = commonDeps.env;
   };
 
   build-profiles = {
