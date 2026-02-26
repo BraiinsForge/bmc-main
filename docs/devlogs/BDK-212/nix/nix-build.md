@@ -510,6 +510,116 @@ be used until it demonstrably hits limits.
 
 ---
 
+## Third-Party Flake Convention (future)
+
+Third-party developers (community widget authors, etc.) need a
+standard way to expose their packages so that our build pipeline can
+consume them. This section proposes a convention for flake outputs.
+It does not need to be implemented now.
+
+### `deckPackages` output
+
+Third-party flakes expose a `deckPackages` output as a **function**
+that receives the consumer's package sets. This ensures all packages
+are built against the same nixpkgs, guaranteeing shared library versions.
+
+```nix
+# Example third-party flake (community-widgets/flake.nix)
+{
+  inputs = {
+    # Library flake provides mkWidgetPackage and other helpers
+    deck-lib.url = "github:braiins/deck-lib";
+  };
+
+  outputs = { self, deck-lib, ... }: {
+    deckPackages = { pkgs, armv7Pkgs, lib }: {
+      hashrate-widget = {
+        pkg = deck-lib.lib.mkWidgetPackage {
+          name = "hashrate-widget";
+          src = ./hashrate-widget;
+          # ... widget-specific build options
+        };
+        name = "hashrate-widget";
+        version = "1.2.0";
+        category = "widget";
+        description = "Widget showing current hashrate statistics";
+        min_bos_version = "26.01";
+        min_bmc_version = "1.0.0";
+        upgrade_strategy = false;
+        install_strategy = false;
+      };
+      pool-stats-widget = {
+        pkg = armv7Pkgs.callPackage ./pool-stats { };
+        name = "pool-stats-widget";
+        version = "0.5.0";
+        category = "widget";
+        description = "Mining pool statistics display";
+        min_bos_version = "26.01";
+        min_bmc_version = "1.0.0";
+        upgrade_strategy = false;
+        install_strategy = false;
+      };
+    };
+  };
+}
+```
+
+### Function arguments
+
+| Argument | Description |
+|----------|-------------|
+| `pkgs` | Build host package set (x86_64-linux) |
+| `armv7Pkgs` | Cross-compilation target package set (ARMv7) |
+| `lib` | nixpkgs `lib` for utility functions |
+
+The third party uses `armv7Pkgs` for all target binaries. `pkgs` is
+available for build-time tools (code generators, etc.).
+
+Note that `deckPackages` itself does not provide build helpers — it
+is purely the interface for exposing packages to consumers. Build
+helpers (like widget packaging utilities) are provided separately
+through a **library flake** maintained by us. Third parties add this
+library flake as an input and use its functions to build widget
+packages more easily. They then expose the resulting derivations
+through `deckPackages`. The two mechanisms are complementary:
+
+- **Library flake** — provides `mkWidgetPackage` and similar helpers
+  for building packages that conform to the expected layout
+- **`deckPackages`** — the standardized interface for exposing
+  built packages to consumers
+
+### Return value
+
+An attrset keyed by package name. Each value has the same format as
+an entry in the package list (see
+[Package List Format](#package-list-format)). The `pkg` field is an
+actual Nix derivation built against the provided `armv7Pkgs`.
+
+### Consumer-side usage
+
+```nix
+# In artifacts.nix
+let
+  communityPkgs = inputs.community-widgets.deckPackages {
+    inherit pkgs armv7Pkgs lib;
+  };
+
+  packageList = corePackages ++ lib.attrValues communityPkgs;
+in
+  ...
+```
+
+### Why a function, not a plain attrset
+
+If `deckPackages` were a plain attrset, the third-party flake would
+evaluate its packages against its own nixpkgs pin. This could produce
+ARMv7 binaries linked against a different glibc or with incompatible
+store paths. By accepting `armv7Pkgs` as an argument, the consumer
+controls which nixpkgs is used, ensuring all packages share the same
+toolchain and closure.
+
+---
+
 ## Open Questions
 
 - **Package version source of truth** — versions are currently
