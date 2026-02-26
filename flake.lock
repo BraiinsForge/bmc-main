@@ -150,15 +150,16 @@
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
-        "lastModified": 1764747390,
-        "narHash": "sha256-rUmRDecTTvCRH+uB2/XfQMyt+OSbADIJgh3CFgug9dU=",
-        "ref": "refs/heads/master",
-        "rev": "782fb59b5d4d5511601beba1e04f29b3713ea0d0",
-        "revCount": 100,
+        "lastModified": 1772400321,
+        "narHash": "sha256-aZF3SW+BbqhjW7TdBKpc+Yyfzt5zXhqZk8IX1DLT5T8=",
+        "ref": "fbo/BDK-318/merged",
+        "rev": "c335b5a5404c5f4d40927de7d66952d4eaaac7ce",
+        "revCount": 112,
         "type": "git",
         "url": "ssh://git@gitlab.ii.zone/nix/lib"
       },
       "original": {
+        "ref": "fbo/BDK-318/merged",
         "type": "git",
         "url": "ssh://git@gitlab.ii.zone/nix/lib"
       }
