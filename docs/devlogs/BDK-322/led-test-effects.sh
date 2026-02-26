@@ -7,7 +7,7 @@
 # Usage:
 #   ./led-test-effects.sh DEVICE_IP:PORT PASSWORD
 #
-# Requires: grpcurl, jq
+# Requires: grpcurl
 
 set -euo pipefail
 
@@ -21,13 +21,13 @@ PASSWORD=$2
 DELAY=3
 
 echo "=== Authenticating ==="
-TOKEN=$(grpcurl -plaintext \
+COOKIE=$(grpcurl -plaintext -v \
     -d "{\"password\": \"$PASSWORD\"}" \
     "$ADDR" \
-    braiins.bmc.web.AuthenticationService/Login \
-    | jq -r '.token // empty')
+    braiins.bmc.web.AuthenticationService/Login 2>&1 \
+    | sed -n 's/^set-cookie: \(session_id=[^;]*\).*/\1/p')
 
-if [[ -z "$TOKEN" ]]; then
+if [[ -z "$COOKIE" ]]; then
     echo "ERROR: authentication failed" >&2
     exit 1
 fi
@@ -36,7 +36,7 @@ echo "OK"
 grpc() {
     local method=$1; shift
     grpcurl -plaintext \
-        -H "authorization: Bearer $TOKEN" \
+        -H "cookie: $COOKIE" \
         ${1:+-d "$1"} \
         "$ADDR" \
         "braiins.bmc.web.LedTestService/$method" \
