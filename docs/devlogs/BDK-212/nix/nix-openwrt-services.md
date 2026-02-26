@@ -22,6 +22,16 @@ long, initialization of the store is performed. This binary also
 supports creating an AP so that the user can connect to WiFi for this
 operation.
 
+When the store is present but no profile `current` symlink exists
+(e.g., after extracting the initial tarball), the initializer
+activates the latest profile generation using the `bmc-nix` library
+directly. This is necessary because the tarball does not run
+activation during build (activation scripts reference absolute system
+paths that don't exist in the build sandbox). The initializer breaks
+the chicken-and-egg problem: activating the initial profile installs
+the `nix-activator` service, which handles activation on subsequent
+boots.
+
 This service will run only after the boot has finalized, only as a
 regular service, not using `boot()` function. In case it detects the
 store is initialized, it exits. The service does not show anything on
