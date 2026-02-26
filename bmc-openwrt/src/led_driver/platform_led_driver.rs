@@ -25,10 +25,9 @@ pub struct LedState {
     enabled: bool,
     brightness: u8,
 
-    /// Animation cycle period.  `None` for static effects (Solid, None).
-    period: Option<Duration>,
-    /// Frame tick interval.  `None` when no ticking is needed (static
-    /// effect with no pending temporary-effect expiry).
+    /// Frame tick interval.  `None` for static effects (Solid, None) —
+    /// the worker blocks on `recv()` only.  Animation period is recovered
+    /// via `interval.period() * LED_COUNT * SUB_STEPS`.
     interval: Option<tokio::time::Interval>,
     /// When the current animation cycle started (for phase calculation).
     animation_start: Instant,
@@ -44,7 +43,6 @@ impl LedState {
         Self {
             enabled: true,
             brightness: APA102_MAX_BRIGHTNESS,
-            period: None,
             interval: None,
             animation_start: Instant::now(),
             persistent_effect: LedEffect::None,
@@ -72,15 +70,15 @@ impl LedState {
     #[expect(clippy::cast_possible_truncation)]
     #[expect(clippy::cast_precision_loss)]
     fn phase(&self) -> f32 {
-        match self.period {
-            None => 0.0,
-            Some(period) => {
-                let period_us = period.as_micros() as u64;
-                #[expect(clippy::cast_possible_truncation)]
-                let elapsed = self.animation_start.elapsed().as_micros() as u64 % period_us;
-                (elapsed as f64 / period_us as f64) as f32
-            }
-        }
+        let iv = match &self.interval {
+            Some(iv) => iv,
+            None => return 0.0,
+        };
+        let tick_us = iv.period().as_micros() as u64;
+        let divisor = u64::from(bmc_led::config::LED_COUNT) * u64::from(config::SUB_STEPS);
+        let period_us = tick_us * divisor;
+        let elapsed = self.animation_start.elapsed().as_micros() as u64 % period_us;
+        (elapsed as f64 / period_us as f64) as f32
     }
 
     /// Determine the currently active LED effect, expiring temporary
@@ -92,13 +90,17 @@ impl LedState {
         if self.temporary_effect_started.elapsed() < self.temporary_effect_duration {
             return self.temporary_effect;
         }
-        // Temp expired — clear it and stop the expiry timer if there
-        // is no animation running for the persistent effect.
         self.temporary_effect = LedEffect::None;
-        if self.period.is_none() {
-            self.interval = None;
-        }
         self.persistent_effect
+    }
+
+    /// Expiry instant for the active temporary effect, if any.
+    fn temp_expiry(&self) -> Option<Instant> {
+        if self.temporary_effect != LedEffect::None {
+            Some(self.temporary_effect_started + self.temporary_effect_duration)
+        } else {
+            None
+        }
     }
 
     fn apply_command(&mut self, command: LedCommand) {
@@ -117,7 +119,6 @@ impl LedState {
                     }
                     LedEventPersistence::Persistent => {
                         self.persistent_effect = new_effect;
-                        self.period = period;
                         self.animation_start = Instant::now();
                         self.interval = Self::frame_interval(period).map(Self::make_interval);
                     }
@@ -127,16 +128,6 @@ impl LedState {
                     "Set effect to {:?} with {:?} persistence for {:?}",
                     new_effect, persistence, period
                 );
-
-                // Ensure a static temporary effect has an expiry wake
-                // scheduled.  Runs after every command during a drain —
-                // harmless, the last call leaves the correct state.
-                if self.temporary_effect != LedEffect::None && self.period.is_none() {
-                    let expiry = self.temporary_effect_started + self.temporary_effect_duration;
-                    // The period here is not relevant but has to be non-zero
-                    self.interval =
-                        Some(tokio::time::interval_at(expiry, Duration::from_secs(86400)));
-                }
             }
             LedCommand::Enable => {
                 self.enabled = true;
@@ -244,13 +235,14 @@ async fn led_worker(device_path: PathBuf, mut led_cmd_rx: Receiver<LedCommand>) 
     loop {
         led_state.update_effect(&mut strip);
 
-        // Wait for the next frame tick or a command.  The match on
-        // `led_state.interval` splits the borrow: only the `interval`
-        // field is borrowed across the select, so `apply_command` can
-        // take `&mut self` after the match evaluates to an owned
-        // `WakeReason`.  When interval is `None` (static effect with
-        // no pending temp expiry), we block on recv only.
+        // Compute the temp-expiry deadline as an owned value *before*
+        // borrowing `interval`, so borrow splitting still works.
+        let temp_expiry = led_state.temp_expiry();
+
+        // Wait for the next frame tick, temp expiry, or a command.
         let reason = match &mut led_state.interval {
+            // Animated persistent effect — tick-driven rendering.
+            // Temp effects expire naturally through the render cycle.
             Some(interval) => tokio::select! {
                 _ = interval.tick() => WakeReason::Tick,
                 cmd = led_cmd_rx.recv() => match cmd {
@@ -258,9 +250,22 @@ async fn led_worker(device_path: PathBuf, mut led_cmd_rx: Receiver<LedCommand>) 
                     None => WakeReason::ChannelClosed,
                 },
             },
-            None => match led_cmd_rx.recv().await {
-                Some(c) => WakeReason::Command(c),
-                None => WakeReason::ChannelClosed,
+            // Static persistent effect with a pending temp expiry —
+            // sleep until the temp deadline, then re-render so
+            // active_effect() expires it through the normal path.
+            None => match temp_expiry {
+                Some(expiry) => tokio::select! {
+                    _ = tokio::time::sleep_until(expiry) => WakeReason::Tick,
+                    cmd = led_cmd_rx.recv() => match cmd {
+                        Some(c) => WakeReason::Command(c),
+                        None => WakeReason::ChannelClosed,
+                    },
+                },
+                // No animation, no pending temp — block on recv only.
+                None => match led_cmd_rx.recv().await {
+                    Some(c) => WakeReason::Command(c),
+                    None => WakeReason::ChannelClosed,
+                },
             },
         };
 
