@@ -49,7 +49,6 @@
               fontDirectories = with pkgs; [
                 corefonts
               ];
-
               impureFontDirectories = [ ];
               includes = [ ];
             };
