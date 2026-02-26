@@ -6,14 +6,16 @@ use crate::led_driver::{
     effects,
 };
 use apa102_spi::{Apa102Pixel, SmartLedsWrite};
-use bmc_led::config::SOLID_PERIOD;
 use bmc_led::{
     data::{self, LedCommand, LedEffect, LedEventPersistence},
     led_driver::{LedDriver, LedDriverFactory},
 };
 use spidev::{SpiModeFlags, Spidev, SpidevOptions};
 use std::{path::PathBuf, time::Duration};
-use tokio::{sync::mpsc::Receiver, time::Instant};
+use tokio::{
+    sync::mpsc::Receiver,
+    time::{Instant, MissedTickBehavior},
+};
 use tracing::{debug, error};
 
 const COMMAND_BUFFER_SIZE: usize = 16;
@@ -21,10 +23,15 @@ const COMMAND_BUFFER_SIZE: usize = 16;
 #[derive(Debug)]
 pub struct LedState {
     enabled: bool,
-
-    period_us: u64,
-    frame_interval: Duration,
     brightness: u8,
+
+    /// Animation cycle period.  `None` for static effects (Solid, None).
+    period: Option<Duration>,
+    /// Frame tick interval.  `None` when no ticking is needed (static
+    /// effect with no pending temporary-effect expiry).
+    interval: Option<tokio::time::Interval>,
+    /// When the current animation cycle started (for phase calculation).
+    animation_start: Instant,
 
     persistent_effect: LedEffect,
     temporary_effect: LedEffect,
@@ -33,31 +40,148 @@ pub struct LedState {
 }
 
 impl LedState {
-    fn calc_frame_interval(period_us: u64) -> Duration {
-        let result =
-            Duration::from_micros(period_us.saturating_div(
-                u64::from(bmc_led::config::LED_COUNT) * u64::from(config::SUB_STEPS),
-            ));
-
-        if result == Duration::from_micros(0) {
-            Duration::from_micros(1)
-        } else {
-            result
-        }
-    }
-
-    fn default() -> Self {
-        LedState {
+    fn new() -> Self {
+        Self {
             enabled: true,
-            period_us: u64::try_from(SOLID_PERIOD.as_micros()).unwrap_or_default(),
-            frame_interval: LedState::calc_frame_interval(
-                u64::try_from(SOLID_PERIOD.as_micros()).unwrap_or_default(),
-            ),
             brightness: APA102_MAX_BRIGHTNESS,
+            period: None,
+            interval: None,
+            animation_start: Instant::now(),
             persistent_effect: LedEffect::None,
             temporary_effect: LedEffect::None,
             temporary_effect_started: Instant::now(),
-            temporary_effect_duration: Duration::from_millis(0),
+            temporary_effect_duration: Duration::ZERO,
+        }
+    }
+
+    /// Compute the frame-tick interval from an animation period.
+    /// Returns `None` for static effects (period is `None` or zero).
+    fn frame_interval(period: Option<Duration>) -> Option<Duration> {
+        let period = period?;
+        let period_us = u64::try_from(period.as_micros()).unwrap_or(1);
+        let divisor = u64::from(bmc_led::config::LED_COUNT) * u64::from(config::SUB_STEPS);
+        Some(Duration::from_micros(period_us.saturating_div(divisor)))
+    }
+
+    fn make_interval(duration: Duration) -> tokio::time::Interval {
+        let mut iv = tokio::time::interval(duration);
+        iv.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        iv
+    }
+
+    #[expect(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_precision_loss)]
+    fn phase(&self) -> f32 {
+        match self.period {
+            None => 0.0,
+            Some(period) => {
+                let period_us = period.as_micros() as u64;
+                #[expect(clippy::cast_possible_truncation)]
+                let elapsed = self.animation_start.elapsed().as_micros() as u64 % period_us;
+                (elapsed as f64 / period_us as f64) as f32
+            }
+        }
+    }
+
+    /// Determine the currently active LED effect, expiring temporary
+    /// effects that have exceeded their duration.
+    fn active_effect(&mut self) -> LedEffect {
+        if self.temporary_effect == LedEffect::None {
+            return self.persistent_effect;
+        }
+        if self.temporary_effect_started.elapsed() < self.temporary_effect_duration {
+            return self.temporary_effect;
+        }
+        // Temp expired — clear it and stop the expiry timer if there
+        // is no animation running for the persistent effect.
+        self.temporary_effect = LedEffect::None;
+        if self.period.is_none() {
+            self.interval = None;
+        }
+        self.persistent_effect
+    }
+
+    fn apply_command(&mut self, command: LedCommand) {
+        match command {
+            LedCommand::SetBrightness(new_brightness) => {
+                self.set_brightness(new_brightness);
+            }
+            LedCommand::SetEffect(new_effect, persistence, period) => {
+                let period = if period.is_zero() { None } else { Some(period) };
+
+                match persistence {
+                    LedEventPersistence::Temporary(duration) => {
+                        self.temporary_effect = new_effect;
+                        self.temporary_effect_duration = duration;
+                        self.temporary_effect_started = Instant::now();
+                    }
+                    LedEventPersistence::Persistent => {
+                        self.persistent_effect = new_effect;
+                        self.period = period;
+                        self.animation_start = Instant::now();
+                        self.interval = Self::frame_interval(period).map(Self::make_interval);
+                    }
+                }
+
+                debug!(
+                    "Set effect to {:?} with {:?} persistence for {:?}",
+                    new_effect, persistence, period
+                );
+
+                // Ensure a static temporary effect has an expiry wake
+                // scheduled.  Runs after every command during a drain —
+                // harmless, the last call leaves the correct state.
+                if self.temporary_effect != LedEffect::None && self.period.is_none() {
+                    let expiry = self.temporary_effect_started + self.temporary_effect_duration;
+                    // The period here is not relevant but has to be non-zero
+                    self.interval =
+                        Some(tokio::time::interval_at(expiry, Duration::from_secs(86400)));
+                }
+            }
+            LedCommand::Enable => {
+                self.enabled = true;
+            }
+            LedCommand::Disable => {
+                self.enabled = false;
+            }
+        }
+    }
+
+    /// Render the current frame to the LED strip.
+    fn update_effect<W>(&mut self, strip: &mut W)
+    where
+        W: SmartLedsWrite<Color = Apa102Pixel>,
+    {
+        let effect = self.active_effect();
+        let phase = self.phase();
+
+        match effect {
+            data::LedEffect::Snake(color) => {
+                effects::update_snake(phase, config::SNAKE_LEN, self.brightness, color, strip);
+            }
+            data::LedEffect::Chase(color) => {
+                effects::update_chase(phase, config::SNAKE_LEN, self.brightness, color, strip);
+            }
+            data::LedEffect::Scan(color) => {
+                effects::update_scan(phase, config::SNAKE_LEN, self.brightness, color, strip);
+            }
+            data::LedEffect::KnightRider(color) => {
+                effects::update_knight_rider(
+                    phase,
+                    config::SNAKE_LEN,
+                    config::SNAKE_LEN + 1,
+                    self.brightness,
+                    color,
+                    strip,
+                );
+            }
+            data::LedEffect::Breathe(color) => {
+                effects::update_breathe(phase, self.brightness, color, strip);
+            }
+            data::LedEffect::Solid(color) => {
+                effects::update_solid(self.brightness, color, strip);
+            }
+            data::LedEffect::None => effects::update_none(strip),
         }
     }
 
@@ -81,6 +205,12 @@ impl LedDriverFactory for PlatformLedDriver {
 
         PlatformLedDriver(LedDriver { command_sender })
     }
+}
+
+enum WakeReason {
+    Tick,
+    Command(LedCommand),
+    ChannelClosed,
 }
 
 async fn led_worker(device_path: PathBuf, mut led_cmd_rx: Receiver<LedCommand>) {
@@ -109,114 +239,40 @@ async fn led_worker(device_path: PathBuf, mut led_cmd_rx: Receiver<LedCommand>) 
         bmc_led::config::LED_COUNT as usize,
         apa102_spi::PixelOrder::BGR,
     );
-    let mut led_state: LedState = LedState::default();
-    let mut start = Instant::now();
-    let mut interval = tokio::time::interval(led_state.frame_interval);
-
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut led_state = LedState::new();
 
     loop {
-        if !led_cmd_rx.is_empty() {
-            if let Some(command) = led_cmd_rx.recv().await {
-                match command {
-                    LedCommand::SetBrightness(new_brightness) => {
-                        led_state.set_brightness(new_brightness);
-                    }
-                    LedCommand::SetEffect(new_effect, persistence, period) => {
-                        led_state.period_us = u64::try_from(period.as_micros()).unwrap_or_default();
-                        led_state.frame_interval =
-                            LedState::calc_frame_interval(led_state.period_us);
+        led_state.update_effect(&mut strip);
 
-                        start = Instant::now();
-                        interval = tokio::time::interval(led_state.frame_interval);
+        // Wait for the next frame tick or a command.  The match on
+        // `led_state.interval` splits the borrow: only the `interval`
+        // field is borrowed across the select, so `apply_command` can
+        // take `&mut self` after the match evaluates to an owned
+        // `WakeReason`.  When interval is `None` (static effect with
+        // no pending temp expiry), we block on recv only.
+        let reason = match &mut led_state.interval {
+            Some(interval) => tokio::select! {
+                _ = interval.tick() => WakeReason::Tick,
+                cmd = led_cmd_rx.recv() => match cmd {
+                    Some(c) => WakeReason::Command(c),
+                    None => WakeReason::ChannelClosed,
+                },
+            },
+            None => match led_cmd_rx.recv().await {
+                Some(c) => WakeReason::Command(c),
+                None => WakeReason::ChannelClosed,
+            },
+        };
 
-                        match persistence {
-                            LedEventPersistence::Temporary(duration) => {
-                                led_state.temporary_effect = new_effect;
-                                led_state.temporary_effect_duration = duration;
-                                led_state.temporary_effect_started = Instant::now();
-                            }
-                            LedEventPersistence::Persistent => {
-                                led_state.persistent_effect = new_effect;
-                            }
-                        }
-
-                        debug!(
-                            "Set effect to {:?} with {:?} persistence for {:?}",
-                            new_effect, persistence, period
-                        );
-                    }
-                    LedCommand::Enable => {
-                        led_state.enabled = true;
-                    }
-                    LedCommand::Disable => {
-                        led_state.enabled = false;
-                    }
+        match reason {
+            WakeReason::Tick => {}
+            WakeReason::Command(command) => {
+                led_state.apply_command(command);
+                while let Ok(command) = led_cmd_rx.try_recv() {
+                    led_state.apply_command(command);
                 }
             }
+            WakeReason::ChannelClosed => break,
         }
-
-        #[expect(clippy::cast_possible_truncation)]
-        #[expect(clippy::cast_precision_loss)]
-        let phase = if led_state.period_us == 0 {
-            0.0
-        } else {
-            #[expect(clippy::cast_possible_truncation)]
-            let elapsed = start.elapsed().as_micros() as u64 % led_state.period_us;
-
-            (elapsed as f64 / led_state.period_us as f64) as f32
-        };
-
-        if !led_state.enabled {
-            effects::update_none(&mut strip);
-            interval.tick().await;
-            continue;
-        }
-
-        let effect = if led_state.temporary_effect == LedEffect::None {
-            led_state.persistent_effect
-        } else if led_state.temporary_effect_started.elapsed() < led_state.temporary_effect_duration
-        {
-            led_state.temporary_effect
-        } else {
-            led_state.temporary_effect = LedEffect::None;
-            led_state.persistent_effect
-        };
-
-        update_effect(effect, phase, &led_state, &mut strip);
-
-        interval.tick().await;
-    }
-}
-
-fn update_effect<W>(effect: LedEffect, phase: f32, led_state: &LedState, strip: &mut W)
-where
-    W: SmartLedsWrite<Color = Apa102Pixel>,
-{
-    match effect {
-        data::LedEffect::Snake(color) => {
-            effects::update_snake(phase, config::SNAKE_LEN, led_state.brightness, color, strip);
-        }
-        data::LedEffect::Chase(color) => {
-            effects::update_chase(phase, config::SNAKE_LEN, led_state.brightness, color, strip);
-        }
-        data::LedEffect::Scan(color) => {
-            effects::update_scan(phase, config::SNAKE_LEN, led_state.brightness, color, strip);
-        }
-        data::LedEffect::KnightRider(color) => {
-            effects::update_knight_rider(
-                phase,
-                config::SNAKE_LEN,
-                config::SNAKE_LEN + 1,
-                led_state.brightness,
-                color,
-                strip,
-            );
-        }
-        data::LedEffect::Breathe(color) => {
-            effects::update_breathe(phase, led_state.brightness, color, strip);
-        }
-        data::LedEffect::Solid(color) => effects::update_solid(led_state.brightness, color, strip),
-        data::LedEffect::None => effects::update_none(strip),
     }
 }
