@@ -47,10 +47,36 @@ let
   ];
 
   allRuntimeDeps = pkgs: ((X11RuntimeDeps pkgs) ++ (waylandRuntimeDeps pkgs));
+
+  # Add rpath to produced binaries
+  makeRpathLinkArgument = { packages }:
+    "-C link-args=-Wl,-rpath,${lib.makeLibraryPath packages}";
+
+  # Create RUSTFLAGS for runtime dlopen of libraries in 'runtimePackages'
+  makeRustflagsEnv = { runtimePackages, rustCrossTarget }:
+    let
+      target = lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] rustCrossTarget);
+      value = makeRpathLinkArgument { packages = runtimePackages; };
+    in
+    {
+      "CARGO_TARGET_${target}_RUSTFLAGS" = value;
+    };
+
   # Build a widget package with the correct directory structure
   mkWidgetPackage = { name, crate, profile, features ? [ ], runtimeDeps ? waylandRuntimeDeps }:
     let
-      binary = profile.buildCrate crate { inherit features runtimeDeps; };
+      rustCrossTarget =
+        if profile ? rustCrossTarget
+        then profile.rustCrossTarget
+        else pkgs.stdenv.hostPlatform.rust.rustcTarget;
+      runtimePackages =
+        if builtins.isFunction runtimeDeps
+        then runtimeDeps (profile.build_pkgs or pkgs)
+        else runtimeDeps;
+      binary = profile.buildCrate crate {
+        inherit features;
+        env = makeRustflagsEnv { inherit runtimePackages rustCrossTarget; };
+      };
       widgetSrc = ./widgets + "/${name}";
     in
     pkgs.runCommand "bmc-widget-${name}" { } ''
