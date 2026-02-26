@@ -181,6 +181,20 @@ impl LedState {
     fn set_brightness(&mut self, brightness: f32) {
         self.brightness = ((f32::from(APA102_MAX_BRIGHTNESS)) * brightness.clamp(0.0, 1.0)) as u8;
     }
+
+    /// Wait until the next render is needed: frame tick, temp-effect expiry,
+    /// or block forever (only a command can wake the loop).
+    async fn next_wake(&mut self) {
+        match &mut self.interval {
+            Some(iv) => {
+                iv.tick().await;
+            }
+            None => match self.temp_expiry() {
+                Some(expiry) => tokio::time::sleep_until(expiry).await,
+                None => std::future::pending().await,
+            },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -235,37 +249,11 @@ async fn led_worker(device_path: PathBuf, mut led_cmd_rx: Receiver<LedCommand>) 
     loop {
         led_state.update_effect(&mut strip);
 
-        // Compute the temp-expiry deadline as an owned value *before*
-        // borrowing `interval`, so borrow splitting still works.
-        let temp_expiry = led_state.temp_expiry();
-
-        // Wait for the next frame tick, temp expiry, or a command.
-        let reason = match &mut led_state.interval {
-            // Animated persistent effect — tick-driven rendering.
-            // Temp effects expire naturally through the render cycle.
-            Some(interval) => tokio::select! {
-                _ = interval.tick() => WakeReason::Tick,
-                cmd = led_cmd_rx.recv() => match cmd {
-                    Some(c) => WakeReason::Command(c),
-                    None => WakeReason::ChannelClosed,
-                },
-            },
-            // Static persistent effect with a pending temp expiry —
-            // sleep until the temp deadline, then re-render so
-            // active_effect() expires it through the normal path.
-            None => match temp_expiry {
-                Some(expiry) => tokio::select! {
-                    _ = tokio::time::sleep_until(expiry) => WakeReason::Tick,
-                    cmd = led_cmd_rx.recv() => match cmd {
-                        Some(c) => WakeReason::Command(c),
-                        None => WakeReason::ChannelClosed,
-                    },
-                },
-                // No animation, no pending temp — block on recv only.
-                None => match led_cmd_rx.recv().await {
-                    Some(c) => WakeReason::Command(c),
-                    None => WakeReason::ChannelClosed,
-                },
+        let reason = tokio::select! {
+            () = led_state.next_wake() => WakeReason::Tick,
+            cmd = led_cmd_rx.recv() => match cmd {
+                Some(c) => WakeReason::Command(c),
+                None => WakeReason::ChannelClosed,
             },
         };
 
