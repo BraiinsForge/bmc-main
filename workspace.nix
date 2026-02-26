@@ -1,6 +1,6 @@
-# Workspace config for Rust builds. Receives commonDeps from flake.nix
-# to share dependency definitions with devShells.
-{ self, pkgs, commonDeps }:
+# Workspace config for Rust builds. Defines commonDeps as single source
+# of truth for dependency definitions shared with devShells.
+{ self, pkgs }:
 let lib = pkgs.lib; in
 let
   # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
@@ -62,6 +62,60 @@ let
       "CARGO_TARGET_${target}_RUSTFLAGS" = value;
     };
 
+  # Shared deps used by both package builds and devShells.
+  # Single source of truth to keep build derivations and dev environments in sync.
+  commonDeps = {
+    # Rust build-time deps (protoc for protobufs, diffutils for cargo)
+    buildDeps = with pkgs; [ protobuf diffutils pkg-config ];
+
+    # Env vars needed by Slint for font rendering and runtime linking
+    env = {
+      FONTCONFIG_FILE = pkgs.makeFontsConf {
+        fontDirectories = with pkgs; [
+          corefonts
+        ];
+        impureFontDirectories = [ ];
+        includes = [ ];
+      };
+
+      LD_LIBRARY_PATH = "${lib.makeLibraryPath [
+        pkgs.libgcc
+      ]}";
+    } // makeRustflagsEnv {
+      runtimePackages = commonDeps.guiRuntimeDeps;
+      rustCrossTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+    };
+
+    guiBuildDeps = with pkgs; [
+      fontconfig
+      freetype
+    ];
+
+    # Runtime libs for GUI/display development (Slint, winit backends)
+    guiRuntimeDeps = with pkgs; [
+      fontconfig
+
+      xorg.libX11
+      xorg.libXcursor
+      xorg.libXrandr
+      xorg.libXi
+      xorg.libXinerama
+      xorg.libXext
+      xorg.libXft
+      xorg.libXrender
+      xorg.libxcb
+      wayland
+      wayland-protocols
+      libxkbcommon
+      libGL
+      vulkan-loader
+      mesa
+    ];
+
+    # Node.js tooling for frontend builds
+    frontendDeps = with pkgs; [ nodejs yarn ];
+  };
+
   # Build a widget package with the correct directory structure
   mkWidgetPackage = { name, crate, profile, features ? [ ], runtimeDeps ? waylandRuntimeDeps }:
     let
@@ -91,7 +145,6 @@ let
   # Minimal workspace config for musl profiles (bmc-openwrt, statically linked)
   workspaceMinimal = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
-    # packages that can be executed during compilation (from commonDeps)
     nativeDeps = _pkgs: commonDeps.buildDeps;
     # minimal deps for static linking
     targetDeps = _build_pkgs: [
@@ -227,6 +280,7 @@ let
 
 in
 {
+  inherit commonDeps;
   packages = packages // specialPackages // {
     inherit bmc-video-play-armv7;
     bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
