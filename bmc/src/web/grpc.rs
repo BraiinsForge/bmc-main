@@ -35,6 +35,7 @@ use super::{AlarmController, SystemUpgradeService};
 mod alarm;
 mod configuration_service;
 mod initial_setup;
+mod led_test;
 mod network;
 mod scene_management;
 mod shared;
@@ -172,7 +173,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                     self.config_handle.clone(),
                     self.display_controller,
                     self.widget_tasks,
-                    self.led_controller,
+                    self.led_controller.clone(),
                 ),
             );
 
@@ -183,6 +184,10 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 
         let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
             alarm::AlarmService::new(self.alarm_controller),
+        );
+
+        let led_test_service = web::led_test_service_server::LedTestServiceServer::new(
+            led_test::LedTestService::new(self.led_controller),
         );
 
         let logging_layer = GrpcLoggingLayer::new();
@@ -254,11 +259,16 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                     .service(GrpcWebLayer::new().layer(initial_setup_service)),
             )
             .add_service(
-                tower::ServiceBuilder::new().layer(logging_layer).service(
-                    GrpcWebLayer::new()
-                        .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
-                ),
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(
+                        GrpcWebLayer::new()
+                            .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
+                    ),
             )
+            .add_service(tower::ServiceBuilder::new().layer(logging_layer).service(
+                GrpcWebLayer::new().layer(InterceptorFor::new(led_test_service, auth_interceptor)),
+            ))
     }
 }
 

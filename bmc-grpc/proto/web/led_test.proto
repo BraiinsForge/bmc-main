@@ -1,0 +1,57 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+import "google/protobuf/empty.proto";
+
+// Effect type matching bmc_led::data::LedEffect variants.
+enum LedEffectType {
+  LED_EFFECT_TYPE_UNSPECIFIED = 0;
+  LED_EFFECT_TYPE_NONE = 1;
+  LED_EFFECT_TYPE_CHASE = 2;
+  LED_EFFECT_TYPE_KNIGHT_RIDER = 3;
+  LED_EFFECT_TYPE_SCAN = 4;
+  LED_EFFECT_TYPE_SNAKE = 5;
+  LED_EFFECT_TYPE_BREATHE = 6;
+  LED_EFFECT_TYPE_SOLID = 7;
+}
+
+// RGB color (each component 0–255).
+message RgbColor {
+  uint32 r = 1;
+  uint32 g = 2;
+  uint32 b = 3;
+}
+
+message SetLedEffectRequest {
+  // Required.
+  LedEffectType effect = 1;
+  // Required for all effects except NONE.
+  RgbColor color = 2;
+  // Animation period in milliseconds.  0 = static (no ticking).
+  // Typical values: 1000 (KnightRider), 4000 (Breathe).
+  uint32 period_ms = 3;
+  // If > 0, effect is temporary and expires after this many milliseconds.
+  // 0 = persistent (stays until replaced).
+  uint32 duration_ms = 4;
+}
+
+message SetLedBrightnessRequest {
+  // 0.0–1.0, clamped.
+  float brightness = 1;
+}
+
+// Debug-only service for directly driving LED effects.
+// Bypasses the event handler — commands go straight to the LED worker.
+service LedTestService {
+  // Set an LED effect with optional color, period, and duration.
+  rpc SetEffect(SetLedEffectRequest) returns (google.protobuf.Empty);
+  // Set LED brightness (0.0–1.0).
+  rpc SetBrightness(SetLedBrightnessRequest) returns (google.protobuf.Empty);
+  // Turn LEDs off (sends LedCommand::Disable).
+  rpc Disable(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // Re-enable LEDs (sends LedCommand::Enable).
+  rpc Enable(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

@@ -88,3 +88,48 @@ Change `PreviewScene` from `KNIGHT_RIDER_PERIOD` (1000ms) to `SOLID_PERIOD`
 (0ms) — stop unnecessary frame ticks for a static solid effect.
 
 Reduce idle CPU from ~60% to ~0% for the LED subsystem.
+
+## HW verification
+
+### Architecture
+
+Add a debug gRPC service (`LedTestService`) that injects `LedCommand` directly
+into the LED driver's command channel, bypassing the event handler
+(`LedIndicatorsState`).  This isolates and tests the exact code changed by the
+fix: `LedState::apply_command()`, `update_effect()`, `phase()`, `next_wake()`,
+temp-effect expiry, brightness control, and the idle-CPU behavior.
+
+```
+Normal path:       LedEvent → LedIndicatorsState → LedCommand → led_worker → SPI
+                                  (event handler)
+
+Test path:         grpcurl → LedTestService (gRPC) → LedCommand → led_worker → SPI
+                                  (event handler bypassed)
+```
+
+Store a clone of `Sender<LedCommand>` in `LedController` during `init()` and
+expose a `send_command()` method.  The gRPC service receives the controller
+clone and calls `send_command()` for each RPC (SetEffect, SetBrightness,
+Enable, Disable).
+
+### Security
+
+`LedTestService` is wrapped in the same middleware stack as all other
+authenticated services: `GrpcWebLayer` for HTTP/gRPC-web content-type demux,
+`InterceptorFor` with `AuthInterceptor` for bearer-token validation, and
+`GrpcLoggingLayer` for request logging.  Unauthenticated requests are rejected
+before reaching the service handler.
+
+The test script uses `-plaintext` (no TLS) because the device serves gRPC on
+port 80 without TLS.  Authentication is currently disabled for this endpoint
+during development; re-enable `AuthInterceptor` before shipping.
+
+### Running the test
+
+```sh
+./docs/devlogs/BDK-322/led-test-effects.sh DEVICE_IP
+```
+
+Requires `grpcurl`.  Exercises all 7 effect types, brightness ramp, enable/
+disable, and temp-effect expiry with a 3s pause between steps for visual
+verification.
