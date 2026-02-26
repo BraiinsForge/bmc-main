@@ -30,36 +30,33 @@ let
     };
   };
 
+  X11RuntimeDeps = pkgs: with pkgs; [
+    xorg.libX11
+    xorg.libXcursor
+    xorg.libXi
+    xorg.libXrandr
+    vulkan-loader
+    libGL
+  ];
+
+  waylandRuntimeDeps = pkgs: with pkgs; [
+    wayland
+    libxkbcommon
+    vulkan-loader
+    libGL
+  ];
+
+  allRuntimeDeps = pkgs: ((X11RuntimeDeps pkgs) ++ (waylandRuntimeDeps pkgs));
   # Build a widget package with the correct directory structure
-  mkWidgetPackage = { name, crate, profile, features ? [ ], wrapWithLibs ? false }:
+  mkWidgetPackage = { name, crate, profile, features ? [ ], runtimeDeps ? waylandRuntimeDeps }:
     let
-      binary = profile.buildCrate crate { inherit features; };
+      binary = profile.buildCrate crate { inherit features runtimeDeps; };
       widgetSrc = ./widgets + "/${name}";
-      runtimeLibs = with pkgs; [
-        wayland
-        libxkbcommon
-        xorg.libX11
-        xorg.libXcursor
-        xorg.libXi
-        xorg.libXrandr
-        vulkan-loader
-        libGL
-      ];
     in
-    pkgs.runCommand "bmc-widget-${name}"
-      {
-        nativeBuildInputs = lib.optionals wrapWithLibs [ pkgs.makeWrapper ];
-      } ''
+    pkgs.runCommand "bmc-widget-${name}" { } ''
       mkdir -p $out/lib/bmc-widgets/${name}/bin
       cp ${widgetSrc}/manifest.json $out/lib/bmc-widgets/${name}/
-      if ${if wrapWithLibs then "true" else "false"}; then
-        for bin in ${binary}/bin/*; do
-          makeWrapper "$bin" "$out/lib/bmc-widgets/${name}/bin/$(basename $bin)" \
-            --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtimeLibs}
-        done
-      else
-        cp ${binary}/bin/* $out/lib/bmc-widgets/${name}/bin/
-      fi
+      cp ${binary}/bin/* $out/lib/bmc-widgets/${name}/bin/
       if [ -d "${widgetSrc}/assets" ]; then
         cp -r ${widgetSrc}/assets $out/lib/bmc-widgets/${name}/
       fi
@@ -171,18 +168,17 @@ let
     digital-clock = {
       crate = crates.widget-digital-clock;
       features = [ "standalone" ];
-      wrapWithLibs = true;
+      runtimeDeps = waylandRuntimeDeps;
     };
     flip-clock = {
       crate = crates.widget-flip-clock;
       features = [ "standalone" ];
-      wrapWithLibs = true;
+      runtimeDeps = waylandRuntimeDeps;
     };
   };
 
   # Build all widgets for a given profile and combine into a single output
-  # wrapLibs: whether to wrap binaries with LD_LIBRARY_PATH (only for x86, not cross-compiled)
-  mkAllWidgets = { profile, wrapLibs ? false }: pkgs.symlinkJoin {
+  mkAllWidgets = { profile, runtimeDeps ? waylandRuntimeDeps }: pkgs.symlinkJoin {
     name = "bmc-widgets";
     paths = lib.mapAttrsToList
       (name: widget:
@@ -190,15 +186,14 @@ let
           inherit name profile;
           inherit (widget) crate;
           features = widget.features or [ ];
-          # Only wrap with libs if requested AND the widget wants it
-          wrapWithLibs = wrapLibs && (widget.wrapWithLibs or false);
+          runtimeDeps = widget.runtimeDeps or runtimeDeps;
         }
       )
       widgets;
   };
 
   # x86 widgets (for bmc-mock) - need library wrapper for Nix environment
-  allWidgets = mkAllWidgets { profile = build-profiles.fast; wrapLibs = true; };
+  allWidgets = mkAllWidgets { profile = build-profiles.fast; runtimeDeps = allRuntimeDeps; };
 
   # ARM widgets (glibc, dynamically linked) - compatible with system Wayland libs
   allWidgetsArmv7Release = mkAllWidgets { profile = build-profiles.armv7-glibc-release; };
@@ -215,14 +210,14 @@ in
       name = "digital-clock";
       crate = crates.widget-digital-clock;
       features = [ "standalone" ];
-      wrapWithLibs = true;
+      runtimeDeps = allRuntimeDeps;
       profile = build-profiles.fast;
     };
     widget-flip-clock = mkWidgetPackage {
       name = "flip-clock";
       crate = crates.widget-flip-clock;
       features = [ "standalone" ];
-      wrapWithLibs = true;
+      runtimeDeps = allRuntimeDeps;
       profile = build-profiles.fast;
     };
 
