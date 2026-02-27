@@ -65,13 +65,13 @@ Two problems cause unnecessary CPU load:
 
 Rewrite `LedState` into a self-contained object:
 
-- Use a **fixed 200 Hz frame rate** (`FRAME_RATE_HZ = 200`, 5ms per frame) —
-  create the interval once, share across all effects.  200 fps is well above
-  the perceptible animation threshold and keeps CPU load minimal.
+- Use a **fixed 120 Hz frame rate** (`FRAME_RATE_HZ = 120`, ~8.3ms per frame) —
+  create the interval once, share across all effects.  120 fps matches the LED
+  refresh rate and keeps CPU load minimal.
 - Store period as **`Option<Duration>`** — `None` for static effects (Solid,
   None), `Some(...)` for animated.  Read it directly in `phase()`.
 - Add **`next_wake()`** to decide how to sleep:
-  - Animated (`period = Some`): tick `frame_interval` at 200 Hz
+  - Animated (`period = Some`): tick `frame_interval` at 120 Hz
   - Static with temp expiry: `sleep_until(expiry)` — wake exactly once
   - Fully idle: `std::future::pending()` — block forever, CPU ≈ 0%
 
