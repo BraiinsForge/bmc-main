@@ -1,13 +1,11 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::time::Duration;
-
 use super::data;
 use crate::config::{
     self, BREATHE_PERIOD, ERROR_DURATION, KNIGHT_RIDER_PERIOD, RGB_GREEN, RGB_ORANGE, RGB_RED,
-    RGB_VIOLET60, RGB_WHITE, SOLID_PERIOD, SUCCESS_DURATION,
+    RGB_VIOLET60, RGB_WHITE, SUCCESS_DURATION,
 };
-use crate::data::{LedCommand, LedEffect, LedEvent, LedEventPersistence};
+use crate::data::{LedCommand, LedEffect, LedEvent, LedScene};
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error};
 
@@ -86,11 +84,11 @@ impl LedIndicatorsState {
         match event {
             // Device lifecycle
             LedEvent::DeviceInitializing => {
-                self.device_persist = Some(LedCommand::SetEffect(
-                    LedEffect::KnightRider(RGB_VIOLET60),
-                    LedEventPersistence::Persistent,
-                    KNIGHT_RIDER_PERIOD,
-                ));
+                self.device_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::KnightRider(RGB_VIOLET60),
+                    period: Some(KNIGHT_RIDER_PERIOD),
+                    duration: None,
+                }));
             }
             LedEvent::DeviceReady => {
                 self.device_persist = None;
@@ -98,36 +96,36 @@ impl LedIndicatorsState {
 
             // Wi-Fi
             LedEvent::WifiConnecting => {
-                self.wifi_persist = Some(LedCommand::SetEffect(
-                    LedEffect::KnightRider(RGB_VIOLET60),
-                    LedEventPersistence::Persistent,
-                    KNIGHT_RIDER_PERIOD,
-                ));
+                self.wifi_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::KnightRider(RGB_VIOLET60),
+                    period: Some(KNIGHT_RIDER_PERIOD),
+                    duration: None,
+                }));
                 self.wifi_temp = None;
             }
             LedEvent::WifiConnected => {
                 self.wifi_persist = None;
-                self.wifi_temp = Some(LedCommand::SetEffect(
-                    LedEffect::Solid(RGB_GREEN),
-                    LedEventPersistence::Temporary(SUCCESS_DURATION),
-                    SOLID_PERIOD,
-                ));
+                self.wifi_temp = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::Solid(RGB_GREEN),
+                    period: None,
+                    duration: Some(SUCCESS_DURATION),
+                }));
             }
             LedEvent::WifiNone | LedEvent::WifiError => {
-                self.wifi_persist = Some(LedCommand::SetEffect(
-                    LedEffect::None,
-                    LedEventPersistence::Persistent,
-                    Duration::from_secs(0),
-                ));
+                self.wifi_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::None,
+                    period: None,
+                    duration: None,
+                }));
                 self.wifi_temp = None;
             }
 
             LedEvent::WifiScan => {
-                self.wifi_scan_persist = Some(LedCommand::SetEffect(
-                    LedEffect::KnightRider(RGB_VIOLET60),
-                    LedEventPersistence::Persistent,
-                    KNIGHT_RIDER_PERIOD,
-                ));
+                self.wifi_scan_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::KnightRider(RGB_VIOLET60),
+                    period: Some(KNIGHT_RIDER_PERIOD),
+                    duration: None,
+                }));
                 self.wifi_temp = None;
             }
 
@@ -137,11 +135,11 @@ impl LedIndicatorsState {
 
             // Preview of the scene
             LedEvent::PreviewScene => {
-                self.scene_persist = Some(LedCommand::SetEffect(
-                    LedEffect::Solid(RGB_WHITE),
-                    LedEventPersistence::Persistent,
-                    SOLID_PERIOD,
-                ));
+                self.scene_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::Solid(RGB_WHITE),
+                    period: None,
+                    duration: None,
+                }));
             }
             LedEvent::PreviewSceneEnded => {
                 self.scene_persist = None;
@@ -149,18 +147,18 @@ impl LedIndicatorsState {
 
             // Price
             LedEvent::PriceUp => {
-                self.price_persist = Some(LedCommand::SetEffect(
-                    LedEffect::Breathe(RGB_GREEN),
-                    LedEventPersistence::Persistent,
-                    BREATHE_PERIOD,
-                ));
+                self.price_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::Breathe(RGB_GREEN),
+                    period: Some(BREATHE_PERIOD),
+                    duration: None,
+                }));
             }
             LedEvent::PriceDown => {
-                self.price_persist = Some(LedCommand::SetEffect(
-                    LedEffect::Breathe(RGB_RED),
-                    LedEventPersistence::Persistent,
-                    BREATHE_PERIOD,
-                ));
+                self.price_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::Breathe(RGB_RED),
+                    period: Some(BREATHE_PERIOD),
+                    duration: None,
+                }));
             }
             LedEvent::PriceUpEnded | LedEvent::PriceDownEnded => {
                 self.price_persist = None;
@@ -168,11 +166,11 @@ impl LedIndicatorsState {
 
             // Clock
             LedEvent::ClockAlarm => {
-                self.clock_persist = Some(LedCommand::SetEffect(
-                    LedEffect::Breathe(RGB_ORANGE),
-                    LedEventPersistence::Persistent,
-                    BREATHE_PERIOD,
-                ));
+                self.clock_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::Breathe(RGB_ORANGE),
+                    period: Some(BREATHE_PERIOD),
+                    duration: None,
+                }));
             }
             LedEvent::ClockAlarmEnded => {
                 self.clock_persist = None;
@@ -180,25 +178,25 @@ impl LedIndicatorsState {
 
             // System updates
             LedEvent::DownloadOrUpgradeStarted => {
-                self.sys_persist = Some(LedCommand::SetEffect(
-                    LedEffect::KnightRider(RGB_ORANGE),
-                    LedEventPersistence::Persistent,
-                    KNIGHT_RIDER_PERIOD,
-                ));
+                self.sys_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::KnightRider(RGB_ORANGE),
+                    period: Some(KNIGHT_RIDER_PERIOD),
+                    duration: None,
+                }));
             }
             LedEvent::DownloadOrUpgradeSuccess => {
-                self.sys_persist = Some(LedCommand::SetEffect(
-                    LedEffect::Solid(RGB_GREEN),
-                    LedEventPersistence::Temporary(SUCCESS_DURATION),
-                    SOLID_PERIOD,
-                ));
+                self.sys_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::Solid(RGB_GREEN),
+                    period: None,
+                    duration: Some(SUCCESS_DURATION),
+                }));
             }
             LedEvent::DownloadOrUpgradeError => {
-                self.sys_persist = Some(LedCommand::SetEffect(
-                    LedEffect::Solid(RGB_RED),
-                    LedEventPersistence::Temporary(ERROR_DURATION),
-                    SOLID_PERIOD,
-                ));
+                self.sys_persist = Some(LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::Solid(RGB_RED),
+                    period: None,
+                    duration: Some(ERROR_DURATION),
+                }));
             }
 
             // Global control
@@ -222,17 +220,19 @@ impl LedIndicatorsState {
             || self.wifi_scan_persist.is_some()
     }
 
+    const NONE_SCENE: LedCommand = LedCommand::SetEffect(LedScene {
+        effect: LedEffect::None,
+        period: None,
+        duration: None,
+    });
+
     fn select_persistent(&self, temp_present: bool) -> Option<LedCommand> {
         if temp_present {
             self.device_persist.or(self.clock_persist).or_else(|| {
                 if self.any_persist_active() {
                     None
                 } else {
-                    Some(LedCommand::SetEffect(
-                        LedEffect::None,
-                        LedEventPersistence::Persistent,
-                        Duration::from_secs(0),
-                    ))
+                    Some(Self::NONE_SCENE)
                 }
             })
         } else {
@@ -243,11 +243,7 @@ impl LedIndicatorsState {
                 .or(self.scene_persist)
                 .or(self.wifi_scan_persist)
                 .or(self.price_persist)
-                .or(Some(LedCommand::SetEffect(
-                    LedEffect::None,
-                    LedEventPersistence::Persistent,
-                    Duration::from_secs(0),
-                )))
+                .or(Some(Self::NONE_SCENE))
         }
     }
 }

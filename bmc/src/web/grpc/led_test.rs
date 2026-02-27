@@ -3,7 +3,7 @@
 use crate::BmcManager;
 use crate::led::LedController;
 use bmc_grpc::web;
-use bmc_led::data::{LedCommand, LedEffect, LedEventPersistence, Rgb};
+use bmc_led::data::{LedCommand, LedEffect, LedScene, Rgb};
 use std::time::Duration;
 use tonic::{Request, Response, Status};
 
@@ -25,14 +25,22 @@ impl<T: BmcManager> web::led_test_service_server::LedTestService for LedTestServ
     ) -> Result<Response<()>, Status> {
         let req = request.into_inner();
         let effect = map_effect(req.effect(), req.color)?;
-        let period = Duration::from_millis(req.period_ms.into());
-        let persistence = if req.duration_ms > 0 {
-            LedEventPersistence::Temporary(Duration::from_millis(req.duration_ms.into()))
-        } else {
-            LedEventPersistence::Persistent
+        let period_ms: u64 = req.period_ms.into();
+        let scene = LedScene {
+            effect,
+            period: if period_ms > 0 {
+                Some(Duration::from_millis(period_ms))
+            } else {
+                None
+            },
+            duration: if req.duration_ms > 0 {
+                Some(Duration::from_millis(req.duration_ms.into()))
+            } else {
+                None
+            },
         };
         self.led_controller
-            .send_command(LedCommand::SetEffect(effect, persistence, period));
+            .send_command(LedCommand::SetEffect(scene));
         Ok(Response::new(()))
     }
 

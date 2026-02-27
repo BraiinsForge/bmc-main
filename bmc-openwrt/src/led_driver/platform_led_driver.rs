@@ -7,7 +7,7 @@ use crate::led_driver::{
 };
 use apa102_spi::{Apa102Pixel, SmartLedsWrite};
 use bmc_led::{
-    data::{self, LedCommand, LedEffect, LedEventPersistence, LedScene},
+    data::{self, LedCommand, LedEffect, LedScene},
     led_driver::{LedDriver, LedDriverFactory},
 };
 use spidev::{SpiModeFlags, Spidev, SpidevOptions};
@@ -114,33 +114,14 @@ impl LedState {
             LedCommand::SetBrightness(new_brightness) => {
                 self.set_brightness(new_brightness);
             }
-            LedCommand::SetEffect(effect, persistence, period) => {
-                let period = if period.is_zero() { None } else { Some(period) };
-
-                match persistence {
-                    LedEventPersistence::Temporary(dur) => {
-                        let scene = LedScene {
-                            effect,
-                            period,
-                            duration: Some(dur),
-                        };
-                        self.temporary = Some(ActiveScene::new(scene));
-                    }
-                    LedEventPersistence::Persistent => {
-                        let scene = LedScene {
-                            effect,
-                            period,
-                            duration: None,
-                        };
-                        self.persistent = ActiveScene::new(scene);
-                    }
+            LedCommand::SetEffect(scene) => {
+                debug!("Set effect: {:?}", scene);
+                if scene.duration.is_some() {
+                    self.temporary = Some(ActiveScene::new(scene));
+                } else {
+                    self.persistent = ActiveScene::new(scene);
                 }
                 self.frame_interval.reset();
-
-                debug!(
-                    "Set effect to {:?} with {:?} persistence for {:?}",
-                    effect, persistence, period
-                );
             }
             LedCommand::Enable => {
                 self.enabled = true;

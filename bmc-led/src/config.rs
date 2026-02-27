@@ -20,4 +20,3 @@ pub const SUCCESS_DURATION: Duration = Duration::from_millis(2000);
 pub const SNAKE_PERIOD: Duration = Duration::from_millis(1000);
 pub const KNIGHT_RIDER_PERIOD: Duration = Duration::from_millis(1000);
 pub const BREATHE_PERIOD: Duration = Duration::from_millis(4000);
-pub const SOLID_PERIOD: Duration = Duration::from_millis(0);

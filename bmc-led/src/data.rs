@@ -38,12 +38,6 @@ pub struct LedScene {
     pub duration: Option<Duration>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LedEventPersistence {
-    Temporary(Duration),
-    Persistent,
-}
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum LedEvent {
     DeviceInitializing, // Knight Rider
@@ -74,5 +68,5 @@ pub enum LedCommand {
     Disable,
     Enable,
     SetBrightness(f32),
-    SetEffect(LedEffect, LedEventPersistence, Duration),
+    SetEffect(LedScene),
 }
