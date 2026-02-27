@@ -7,7 +7,7 @@ use crate::led_driver::{
 };
 use apa102_spi::{Apa102Pixel, SmartLedsWrite};
 use bmc_led::{
-    data::{self, LedCommand, LedEffect, LedEventPersistence},
+    data::{self, LedCommand, LedEffect, LedEventPersistence, LedScene},
     led_driver::{LedDriver, LedDriverFactory},
 };
 use spidev::{SpiModeFlags, Spidev, SpidevOptions};
@@ -20,22 +20,66 @@ use tracing::{debug, error};
 
 const COMMAND_BUFFER_SIZE: usize = 16;
 
+/// An active scene: a `LedScene` paired with the instant it was activated.
+#[derive(Debug)]
+struct ActiveScene {
+    scene: LedScene,
+    started: Instant,
+}
+
+impl ActiveScene {
+    fn new(scene: LedScene) -> Self {
+        Self {
+            scene,
+            started: Instant::now(),
+        }
+    }
+
+    /// Whether this scene has expired (only possible when `duration` is set).
+    fn expired(&self) -> bool {
+        match self.scene.duration {
+            Some(duration) => self.started.elapsed() >= duration,
+            None => false,
+        }
+    }
+
+    /// Expiry instant, if this scene has a finite duration.
+    fn expiry(&self) -> Option<Instant> {
+        self.scene.duration.map(|d| self.started + d)
+    }
+
+    fn effect(&self) -> LedEffect {
+        self.scene.effect
+    }
+
+    /// Whether this scene needs frame ticking (has an animation period).
+    fn is_animated(&self) -> bool {
+        self.scene.period.is_some()
+    }
+
+    /// Animation phase (0.0–1.0) within the current period cycle.
+    #[expect(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_precision_loss)]
+    fn phase(&self) -> f32 {
+        let period_us = match self.scene.period {
+            Some(period) => period.as_micros(),
+            None => return 0.0,
+        };
+        let elapsed = self.started.elapsed().as_micros() % period_us;
+        (elapsed as f64 / period_us as f64) as f32
+    }
+}
+
 #[derive(Debug)]
 pub struct LedState {
     enabled: bool,
     brightness: u8,
-    /// Non-static effects have a repetition period, None for static effects (solid, off)
-    period: Option<Duration>,
 
-    /// Frame tick interval used for running non-static effects
+    /// Frame tick interval used for running non-static effects.
     frame_interval: tokio::time::Interval,
-    /// When the current animation cycle started (for phase calculation).
-    animation_start: Instant,
 
-    persistent_effect: LedEffect,
-    temporary_effect: LedEffect,
-    temporary_effect_started: Instant,
-    temporary_effect_duration: Duration,
+    persistent: ActiveScene,
+    temporary: Option<ActiveScene>,
 }
 
 impl LedState {
@@ -47,47 +91,22 @@ impl LedState {
             enabled: true,
             brightness: APA102_MAX_BRIGHTNESS,
             frame_interval,
-            period: None,
-            animation_start: Instant::now(),
-            persistent_effect: LedEffect::None,
-            temporary_effect: LedEffect::None,
-            temporary_effect_started: Instant::now(),
-            temporary_effect_duration: Duration::ZERO,
+            persistent: ActiveScene::new(LedScene {
+                effect: LedEffect::None,
+                period: None,
+                duration: None,
+            }),
+            temporary: None,
         }
     }
 
-    #[expect(clippy::cast_possible_truncation)]
-    #[expect(clippy::cast_precision_loss)]
-    fn phase(&self) -> f32 {
-        let period_us = match &self.period {
-            Some(period) => period.as_micros(),
-            None => return 0.0,
-        };
-
-        let elapsed = self.animation_start.elapsed().as_micros() % period_us;
-        (elapsed as f64 / period_us as f64) as f32
-    }
-
-    /// Determine the currently active LED effect, expiring temporary
-    /// effects that have exceeded their duration.
-    fn active_effect(&mut self) -> LedEffect {
-        if self.temporary_effect == LedEffect::None {
-            return self.persistent_effect;
+    /// Return the currently active scene, expiring temporary scenes that have
+    /// exceeded their duration.
+    fn active_scene(&mut self) -> &ActiveScene {
+        if self.temporary.as_ref().is_some_and(ActiveScene::expired) {
+            self.temporary = None;
         }
-        if self.temporary_effect_started.elapsed() < self.temporary_effect_duration {
-            return self.temporary_effect;
-        }
-        self.temporary_effect = LedEffect::None;
-        self.persistent_effect
-    }
-
-    /// Expiry instant for the active temporary effect, if any.
-    fn temp_expiry(&self) -> Option<Instant> {
-        if self.temporary_effect != LedEffect::None {
-            Some(self.temporary_effect_started + self.temporary_effect_duration)
-        } else {
-            None
-        }
+        self.temporary.as_ref().unwrap_or(&self.persistent)
     }
 
     fn apply_command(&mut self, command: LedCommand) {
@@ -95,26 +114,32 @@ impl LedState {
             LedCommand::SetBrightness(new_brightness) => {
                 self.set_brightness(new_brightness);
             }
-            LedCommand::SetEffect(new_effect, persistence, period) => {
+            LedCommand::SetEffect(effect, persistence, period) => {
                 let period = if period.is_zero() { None } else { Some(period) };
 
                 match persistence {
-                    LedEventPersistence::Temporary(duration) => {
-                        self.temporary_effect = new_effect;
-                        self.temporary_effect_duration = duration;
-                        self.temporary_effect_started = Instant::now();
+                    LedEventPersistence::Temporary(dur) => {
+                        let scene = LedScene {
+                            effect,
+                            period,
+                            duration: Some(dur),
+                        };
+                        self.temporary = Some(ActiveScene::new(scene));
                     }
                     LedEventPersistence::Persistent => {
-                        self.persistent_effect = new_effect;
-                        self.period = period;
-                        self.animation_start = Instant::now();
-                        self.frame_interval.reset();
+                        let scene = LedScene {
+                            effect,
+                            period,
+                            duration: None,
+                        };
+                        self.persistent = ActiveScene::new(scene);
                     }
                 }
+                self.frame_interval.reset();
 
                 debug!(
                     "Set effect to {:?} with {:?} persistence for {:?}",
-                    new_effect, persistence, period
+                    effect, persistence, period
                 );
             }
             LedCommand::Enable => {
@@ -127,12 +152,18 @@ impl LedState {
     }
 
     /// Render the current frame to the LED strip.
-    fn update_effect<W>(&mut self, strip: &mut W)
+    fn render<W>(&mut self, strip: &mut W)
     where
         W: SmartLedsWrite<Color = Apa102Pixel>,
     {
-        let effect = self.active_effect();
-        let phase = self.phase();
+        if !self.enabled {
+            effects::update_none(strip);
+            return;
+        }
+
+        let scene = self.active_scene();
+        let effect = scene.effect();
+        let phase = scene.phase();
 
         match effect {
             data::LedEffect::Snake(color) => {
@@ -173,14 +204,14 @@ impl LedState {
     /// Wait until the next render is needed: frame tick, temp-effect expiry,
     /// or block forever (only a command can wake the loop).
     async fn next_wake(&mut self) {
-        match self.period {
-            Some(_period) => {
-                self.frame_interval.tick().await;
-            }
-            None => match self.temp_expiry() {
+        let animated = self.active_scene().is_animated();
+        if self.enabled && animated {
+            self.frame_interval.tick().await;
+        } else {
+            match self.temporary.as_ref().and_then(ActiveScene::expiry) {
                 Some(expiry) => tokio::time::sleep_until(expiry).await,
                 None => std::future::pending().await,
-            },
+            }
         }
     }
 }
@@ -235,7 +266,7 @@ async fn led_worker(device_path: PathBuf, mut led_cmd_rx: Receiver<LedCommand>) 
     let mut led_state = LedState::new();
 
     loop {
-        led_state.update_effect(&mut strip);
+        led_state.render(&mut strip);
 
         let reason = tokio::select! {
             () = led_state.next_wake() => WakeReason::Tick,

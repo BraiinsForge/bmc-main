@@ -28,6 +28,16 @@ pub enum LedEffect {
     Solid(Rgb),
 }
 
+/// An LED effect bundled with its timing metadata.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct LedScene {
+    pub effect: LedEffect,
+    /// Animation cycle period.  `None` for static effects (Solid, None).
+    pub period: Option<Duration>,
+    /// How long this scene lasts.  `None` = persistent (until replaced).
+    pub duration: Option<Duration>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedEventPersistence {
     Temporary(Duration),
