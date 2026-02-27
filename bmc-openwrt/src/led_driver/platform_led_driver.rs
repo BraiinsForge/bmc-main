@@ -2,7 +2,7 @@
 
 use crate::led_driver::embedded_hal::SpidevHalWrapper;
 use crate::led_driver::{
-    config::{self, APA102_MAX_BRIGHTNESS},
+    config::{self, APA102_MAX_BRIGHTNESS, FRAME_RATE_HZ},
     effects,
 };
 use apa102_spi::{Apa102Pixel, SmartLedsWrite};
@@ -24,11 +24,11 @@ const COMMAND_BUFFER_SIZE: usize = 16;
 pub struct LedState {
     enabled: bool,
     brightness: u8,
+    /// Non-static effects have a repetition period, None for static effects (solid, off)
+    period: Option<Duration>,
 
-    /// Frame tick interval.  `None` for static effects (Solid, None) —
-    /// the worker blocks on `recv()` only.  Animation period is recovered
-    /// via `interval.period() * LED_COUNT * SUB_STEPS`.
-    interval: Option<tokio::time::Interval>,
+    /// Frame tick interval used for running non-static effects
+    frame_interval: tokio::time::Interval,
     /// When the current animation cycle started (for phase calculation).
     animation_start: Instant,
 
@@ -40,10 +40,14 @@ pub struct LedState {
 
 impl LedState {
     fn new() -> Self {
+        let mut frame_interval =
+            tokio::time::interval(Duration::from_secs_f64(1.0 / FRAME_RATE_HZ));
+        frame_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         Self {
             enabled: true,
             brightness: APA102_MAX_BRIGHTNESS,
-            interval: None,
+            frame_interval,
+            period: None,
             animation_start: Instant::now(),
             persistent_effect: LedEffect::None,
             temporary_effect: LedEffect::None,
@@ -52,32 +56,15 @@ impl LedState {
         }
     }
 
-    /// Compute the frame-tick interval from an animation period.
-    /// Returns `None` for static effects (period is `None` or zero).
-    fn frame_interval(period: Option<Duration>) -> Option<Duration> {
-        let period = period?;
-        let period_us = u64::try_from(period.as_micros()).unwrap_or(1);
-        let divisor = u64::from(bmc_led::config::LED_COUNT) * u64::from(config::SUB_STEPS);
-        Some(Duration::from_micros(period_us.saturating_div(divisor)))
-    }
-
-    fn make_interval(duration: Duration) -> tokio::time::Interval {
-        let mut iv = tokio::time::interval(duration);
-        iv.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        iv
-    }
-
     #[expect(clippy::cast_possible_truncation)]
     #[expect(clippy::cast_precision_loss)]
     fn phase(&self) -> f32 {
-        let iv = match &self.interval {
-            Some(iv) => iv,
+        let period_us = match &self.period {
+            Some(period) => period.as_micros(),
             None => return 0.0,
         };
-        let tick_us = iv.period().as_micros() as u64;
-        let divisor = u64::from(bmc_led::config::LED_COUNT) * u64::from(config::SUB_STEPS);
-        let period_us = tick_us * divisor;
-        let elapsed = self.animation_start.elapsed().as_micros() as u64 % period_us;
+
+        let elapsed = self.animation_start.elapsed().as_micros() % period_us;
         (elapsed as f64 / period_us as f64) as f32
     }
 
@@ -119,8 +106,9 @@ impl LedState {
                     }
                     LedEventPersistence::Persistent => {
                         self.persistent_effect = new_effect;
+                        self.period = period;
                         self.animation_start = Instant::now();
-                        self.interval = Self::frame_interval(period).map(Self::make_interval);
+                        self.frame_interval.reset();
                     }
                 }
 
@@ -185,9 +173,9 @@ impl LedState {
     /// Wait until the next render is needed: frame tick, temp-effect expiry,
     /// or block forever (only a command can wake the loop).
     async fn next_wake(&mut self) {
-        match &mut self.interval {
-            Some(iv) => {
-                iv.tick().await;
+        match self.period {
+            Some(_period) => {
+                self.frame_interval.tick().await;
             }
             None => match self.temp_expiry() {
                 Some(expiry) => tokio::time::sleep_until(expiry).await,
