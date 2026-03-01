@@ -64,7 +64,7 @@ pub struct LedEventHandler {
 #[derive(Debug, Default, Clone)]
 struct LedIndicatorsState {
     wifi_persist: Option<LedCommand>,
-    wifi_temp: Option<LedCommand>,
+    temp: Option<LedCommand>,
     wifi_scan_persist: Option<LedCommand>,
     price_persist: Option<LedCommand>,
     clock_persist: Option<LedCommand>,
@@ -101,11 +101,11 @@ impl LedIndicatorsState {
                     period: Some(KNIGHT_RIDER_PERIOD),
                     duration: None,
                 }));
-                self.wifi_temp = None;
+                self.temp = None;
             }
             LedEvent::WifiConnected => {
                 self.wifi_persist = None;
-                self.wifi_temp = Some(LedCommand::SetEffect(LedScene {
+                self.temp = Some(LedCommand::SetEffect(LedScene {
                     effect: LedEffect::Solid(RGB_GREEN),
                     period: None,
                     duration: Some(SUCCESS_DURATION),
@@ -117,7 +117,7 @@ impl LedIndicatorsState {
                     period: None,
                     duration: None,
                 }));
-                self.wifi_temp = None;
+                self.temp = None;
             }
 
             LedEvent::WifiScan => {
@@ -126,7 +126,7 @@ impl LedIndicatorsState {
                     period: Some(KNIGHT_RIDER_PERIOD),
                     duration: None,
                 }));
-                self.wifi_temp = None;
+                self.temp = None;
             }
 
             LedEvent::WifiScanEnded => {
@@ -185,14 +185,16 @@ impl LedIndicatorsState {
                 }));
             }
             LedEvent::DownloadOrUpgradeSuccess => {
-                self.sys_persist = Some(LedCommand::SetEffect(LedScene {
+                self.sys_persist = None;
+                self.temp = Some(LedCommand::SetEffect(LedScene {
                     effect: LedEffect::Solid(RGB_GREEN),
                     period: None,
                     duration: Some(SUCCESS_DURATION),
                 }));
             }
             LedEvent::DownloadOrUpgradeError => {
-                self.sys_persist = Some(LedCommand::SetEffect(LedScene {
+                self.sys_persist = None;
+                self.temp = Some(LedCommand::SetEffect(LedScene {
                     effect: LedEffect::Solid(RGB_RED),
                     period: None,
                     duration: Some(ERROR_DURATION),
@@ -204,7 +206,7 @@ impl LedIndicatorsState {
             LedEvent::Disable => control = Some(LedCommand::Disable),
         }
 
-        let temp = self.wifi_temp.take();
+        let temp = self.temp.take();
         let persistent = self.select_persistent(temp.is_some());
 
         (control, temp, persistent)
