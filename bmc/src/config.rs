@@ -701,7 +701,7 @@ impl NightModeConfigData {
             to: self.to,
             brightness_pct: self.brightness_pct.unwrap_or(default_brightness),
             sound_volume_pct: self.sound_volume_pct.unwrap_or(default_sound_volume),
-            led_enabled: self.led_enabled.unwrap_or(true),
+            led_enabled: self.led_enabled.unwrap_or(false),
             screen_off_timeout_secs: self.screen_off_timeout_secs,
         }
     }
