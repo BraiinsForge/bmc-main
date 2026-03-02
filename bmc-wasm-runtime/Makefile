@@ -34,7 +34,7 @@ run:
 # Profiling: make profile [-e hello-widget] [-r 05-my-change] [-n 1200]
 .PHONY: profile
 profile:
-	python3 tools/perf_record.py $(ARGS)
+	python3 tools/perf_record.py -e $(EXAMPLE) $(ARGS)
 
 # WASM binary size: make size [-e hello-widget] [--check] [--limit 65536]
 .PHONY: size

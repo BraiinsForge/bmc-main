@@ -137,7 +137,11 @@ pub trait Renderer {
 
     // -- Frame lifecycle --
 
-    fn begin_frame(&mut self, width: u32, height: u32);
+    /// Begin a frame with DPI scaling.
+    ///
+    /// `dpi_scale` > 1.0 renders at higher internal resolution for sharper text.
+    /// The coordinate system stays at `width × height` logical pixels.
+    fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32);
     fn flush(&mut self);
     fn width(&self) -> f32;
     fn height(&self) -> f32;

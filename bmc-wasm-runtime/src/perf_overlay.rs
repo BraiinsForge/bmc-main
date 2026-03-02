@@ -63,6 +63,9 @@ pub struct PerfOverlay {
     display_render: u32,
     history: [FrameSample; HISTORY_LEN],
     history_idx: usize,
+    /// Cached averages — held when idle so the legend doesn't decay to zero.
+    cached_avg_us: u32,
+    cached_avg_timings: FrameTimings,
 }
 
 impl fmt::Debug for PerfOverlay {
@@ -83,20 +86,21 @@ impl PerfOverlay {
             display_render: 0,
             history: [FrameSample::default(); HISTORY_LEN],
             history_idx: 0,
+            cached_avg_us: 0,
+            cached_avg_timings: FrameTimings::default(),
         }
     }
 
     /// Record a frame sample.
+    ///
+    /// All frames are pushed to history (idle frames show as gray bars in the
+    /// chart). Cached averages are updated only when rendered frames exist in
+    /// the window, so the legend holds last-known values during idle instead
+    /// of decaying to zero.
     pub fn tick(&mut self, us: u32, rendered: bool, timings: FrameTimings) {
         self.loop_count += 1;
         if rendered {
             self.render_count += 1;
-        }
-        if self.last_update.elapsed().as_secs() >= 1 {
-            self.display_render = self.render_count;
-            self.loop_count = 0;
-            self.render_count = 0;
-            self.last_update = Instant::now();
         }
         self.history[self.history_idx] = FrameSample {
             us,
@@ -104,6 +108,20 @@ impl PerfOverlay {
             timings,
         };
         self.history_idx = (self.history_idx + 1) % self.history.len();
+
+        // Update cached averages only when there's rendered data in the window
+        let live_avg = self.compute_avg_us();
+        if live_avg > 0 {
+            self.cached_avg_us = live_avg;
+            self.cached_avg_timings = self.compute_avg_timings();
+        }
+
+        if self.last_update.elapsed().as_secs() >= 1 {
+            self.display_render = self.render_count;
+            self.loop_count = 0;
+            self.render_count = 0;
+            self.last_update = Instant::now();
+        }
     }
 
     /// Draw the full overlay (FPS text + stacked bar chart + legend).
@@ -120,10 +138,12 @@ impl PerfOverlay {
         let ms_color = if avg_us > 16_000 { RED_50 } else { GREEN_30 };
         let ms_text = format!("{avg_ms:.1}ms");
         renderer.draw_text(&ms_text, pad, y, 13.0, ms_color);
+        let ms_w = renderer.measure_text(&ms_text, 13.0);
         if self.display_render > 0 {
-            let ms_w = renderer.measure_text(&ms_text, 13.0);
             let fps_text = format!("{}fps", self.display_render);
             renderer.draw_text(&fps_text, pad + ms_w + 8.0, y, 13.0, GRAY_40);
+        } else {
+            renderer.draw_text("idle", pad + ms_w + 8.0, y, 13.0, GRAY_60);
         }
         y += 18.0;
 
@@ -218,8 +238,18 @@ impl PerfOverlay {
         }
     }
 
-    /// Average render time in microseconds.
+    /// Average render time in microseconds (holds last value when idle).
     pub fn avg_render_us(&self) -> u32 {
+        self.cached_avg_us
+    }
+
+    /// Average per-component timings (holds last values when idle).
+    pub fn avg_timings(&self) -> FrameTimings {
+        self.cached_avg_timings
+    }
+
+    /// Live average render time from the history window.
+    fn compute_avg_us(&self) -> u32 {
         let (sum, count) = self
             .history
             .iter()
@@ -228,8 +258,8 @@ impl PerfOverlay {
         if count > 0 { sum / count } else { 0 }
     }
 
-    /// Average per-component timings across rendered frames.
-    pub fn avg_timings(&self) -> FrameTimings {
+    /// Live average per-component timings from the history window.
+    fn compute_avg_timings(&self) -> FrameTimings {
         let rendered: Vec<_> = self.history.iter().filter(|s| s.rendered).collect();
         let n = rendered.len() as u32;
         if n == 0 {

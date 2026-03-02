@@ -29,7 +29,7 @@ use glutin_winit::DisplayBuilder;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use raw_window_handle::HasWindowHandle;
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
+use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -49,6 +49,12 @@ const PREVIEW_MARGIN: u32 = 8;
 const PREVIEW_WIDTH: u32 = PREVIEW_MARGIN + 1284 + PREVIEW_MARGIN; // 1300
 // Inner height = 480+8+max(480, 238+8+238) = 480+8+484 = 972
 const PREVIEW_HEIGHT: u32 = PREVIEW_MARGIN + 972 + PREVIEW_MARGIN; // 988
+
+/// Scale a logical pixel value by the DPI factor to get physical pixels.
+#[expect(clippy::cast_sign_loss)]
+fn scaled(logical: u32, dpi: f32) -> u32 {
+    (logical as f32 * dpi) as u32
+}
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -143,6 +149,9 @@ struct PreviewTile {
     y: u32,
     w: u32,
     h: u32,
+    /// Physical pixel dimensions (logical × dpi_scale) for the FBO.
+    pw: u32,
+    ph: u32,
     label: &'static str,
     fbo: glow::Framebuffer,
     _texture: glow::Texture,
@@ -171,6 +180,11 @@ struct PreviewState {
     mouse_down: bool,
     perf_overlay: PerfOverlay,
     stats_interaction: InteractionState,
+    /// Display DPI scale factor for sharper text rendering.
+    dpi_scale: f32,
+    /// Physical pixel dimensions of the screen surface (logical × dpi_scale).
+    phys_w: u32,
+    phys_h: u32,
     /// Total frames rendered (for perf-report exit condition).
     frame_count: u32,
     /// Collected per-frame timings for perf report.
@@ -196,7 +210,9 @@ const TILE_DEFS: [(u32, u32, u32, u32, &str); 4] = [
 impl App {
     #[expect(clippy::too_many_lines)]
     fn init(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        let win_size = PhysicalSize::new(PREVIEW_WIDTH, PREVIEW_HEIGHT);
+        // Use LogicalSize so the window adapts to display DPI — on HiDPI displays
+        // the physical surface is larger, giving us higher-resolution text rendering.
+        let win_size = LogicalSize::new(PREVIEW_WIDTH, PREVIEW_HEIGHT);
         let window_attrs = Window::default_attributes()
             .with_title("WASM Widget Testbed")
             .with_inner_size(win_size)
@@ -259,6 +275,11 @@ impl App {
 
         self.rss_after_gl_kb = current_rss_kb();
 
+        let dpi_scale = window.scale_factor() as f32;
+        let phys_w = scaled(PREVIEW_WIDTH, dpi_scale);
+        let phys_h = scaled(PREVIEW_HEIGHT, dpi_scale);
+        println!("Display DPI scale: {dpi_scale} ({phys_w}×{phys_h} physical)");
+
         let (watcher, watcher_rx) =
             setup_watcher(&self.wasm_path).context("Failed to set up file watcher")?;
 
@@ -272,15 +293,19 @@ impl App {
 
         let mut tiles = Vec::with_capacity(4);
         for &(x, y, w, h, label) in &TILE_DEFS {
+            let pw = scaled(w, dpi_scale);
+            let ph = scaled(h, dpi_scale);
             let runtime = create_runtime(&self.wasm_path, &gl_config, w, h)
                 .context("Failed to create runtime")?;
-            let (fbo, texture) = create_fbo(&gl, w, h)?;
+            let (fbo, texture) = create_fbo(&gl, pw, ph)?;
             tiles.push(PreviewTile {
                 runtime,
                 x,
                 y,
                 w,
                 h,
+                pw,
+                ph,
                 label,
                 fbo,
                 _texture: texture,
@@ -289,9 +314,11 @@ impl App {
             });
         }
 
-        let (checker_fbo, checker_texture) = create_fbo(&gl, PREVIEW_WIDTH, PREVIEW_HEIGHT)?;
-        render_checkerboard_to_fbo(&gl, checker_fbo, PREVIEW_WIDTH, PREVIEW_HEIGHT);
-        let (stats_fbo, stats_texture) = create_fbo(&gl, STATS_W, STATS_H)?;
+        let (checker_fbo, checker_texture) = create_fbo(&gl, phys_w, phys_h)?;
+        render_checkerboard_to_fbo(&gl, checker_fbo, phys_w, phys_h);
+        let stats_pw = scaled(STATS_W, dpi_scale);
+        let stats_ph = scaled(STATS_H, dpi_scale);
+        let (stats_fbo, stats_texture) = create_fbo(&gl, stats_pw, stats_ph)?;
 
         self.rss_after_runtime_kb = current_rss_kb();
 
@@ -323,6 +350,9 @@ impl App {
             mouse_down: false,
             perf_overlay: PerfOverlay::new(),
             stats_interaction: InteractionState::new(),
+            dpi_scale,
+            phys_w,
+            phys_h,
             frame_count: 0,
             perf_samples: Vec::new(),
         });
@@ -374,6 +404,11 @@ impl ApplicationHandler for App {
             s.pending_reload = true;
         }
 
+        let has_async_io = s
+            .tiles
+            .iter()
+            .any(|t| t.runtime.has_pending_fetches() || t.runtime.has_active_websockets());
+
         if s.needs_render || s.pending_reload {
             event_loop.set_control_flow(ControlFlow::Poll);
             s.window.request_redraw();
@@ -392,6 +427,12 @@ impl ApplicationHandler for App {
                 ));
                 s.window.request_redraw();
             }
+        } else if has_async_io {
+            // Active WebSocket/fetch — poll periodically to deliver messages
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(16),
+            ));
+            s.window.request_redraw();
         } else {
             // Fully idle — just poll for hot-reload
             event_loop.set_control_flow(ControlFlow::WaitUntil(
@@ -421,7 +462,9 @@ fn handle_preview_event(
         }
 
         WindowEvent::CursorMoved { position, .. } => {
-            state.mouse_pos = (position.x as i32, position.y as i32);
+            // Convert physical cursor position to logical coordinates
+            let s = f64::from(state.dpi_scale);
+            state.mouse_pos = ((position.x / s) as i32, (position.y / s) as i32);
             if state.mouse_down
                 && let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos)
             {
@@ -554,13 +597,21 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
 
     let t0 = Instant::now();
 
+    // Deliver async I/O to all tiles first (may trigger request_frame inside WASM)
+    for tile in &mut state.tiles {
+        tile.runtime.deliver_fetch_responses();
+        tile.runtime.deliver_ws_messages();
+    }
+
     // Render each tile to its FBO — skip tiles with no pending work
+    let interaction_pending = state.needs_render;
     let mut frame_timings = FrameTimings::default();
     let mut any_rendered = false;
     for (tile_idx, tile) in state.tiles.iter_mut().enumerate() {
         let needs_work = !tile.ever_rendered
             || tile.runtime.wants_next_frame()
-            || tile.runtime.has_pending_fetches();
+            || tile.runtime.has_pending_fetches()
+            || interaction_pending;
         if !needs_work && !state.pending_reload {
             continue; // FBO already holds the last good frame
         }
@@ -569,9 +620,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         any_rendered = true;
         let (tw, th) = (tile.w, tile.h);
 
-        tile.runtime.renderer().begin_frame(tw, th);
-
-        tile.runtime.deliver_fetch_responses();
+        tile.runtime.renderer().begin_frame(tw, th, state.dpi_scale);
         match tile.runtime.render(delta_ms) {
             Ok(RenderStatus::Ok) => {
                 tile.logged_dead = false;
@@ -600,7 +649,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             frame_timings.flush_us = flush_us;
         }
 
-        // Copy rendered content from default FB to tile's FBO
+        // Copy rendered content from default FB to tile's FBO (physical pixel dimensions)
         let fbo = tile.fbo;
         unsafe {
             state.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
@@ -608,12 +657,12 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             state.gl.blit_framebuffer(
                 0,
                 0,
-                tw as i32,
-                th as i32,
+                tile.pw as i32,
+                tile.ph as i32,
                 0,
                 0,
-                tw as i32,
-                th as i32,
+                tile.pw as i32,
+                tile.ph as i32,
                 glow::COLOR_BUFFER_BIT,
                 glow::NEAREST,
             );
@@ -626,7 +675,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         let renderer = state.tiles[0].runtime.renderer();
         let w = STATS_W as f32;
         let h = STATS_H as f32;
-        renderer.begin_frame(STATS_W, STATS_H);
+        renderer.begin_frame(STATS_W, STATS_H, state.dpi_scale);
 
         state.stats_interaction.begin_frame();
         reload_clicked = draw_stats_panel(
@@ -642,15 +691,17 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             state
                 .gl
                 .bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(state.stats_fbo));
+            let spw = scaled(STATS_W, state.dpi_scale) as i32;
+            let sph = scaled(STATS_H, state.dpi_scale) as i32;
             state.gl.blit_framebuffer(
                 0,
                 0,
-                STATS_W as i32,
-                STATS_H as i32,
+                spw,
+                sph,
                 0,
                 0,
-                STATS_W as i32,
-                STATS_H as i32,
+                spw,
+                sph,
                 glow::COLOR_BUFFER_BIT,
                 glow::NEAREST,
             );
@@ -663,22 +714,34 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         state.checker_fbo,
         0,
         0,
-        PREVIEW_WIDTH,
-        PREVIEW_HEIGHT,
+        state.phys_w,
+        state.phys_h,
+        state.phys_h,
     );
 
-    // Blit each tile FBO to its correct position on screen
+    // Blit each tile FBO to its correct position on screen (physical coordinates)
+    let dpi = state.dpi_scale;
+    let sh = state.phys_h;
     for tile in &state.tiles {
-        blit_fbo_to_screen(&state.gl, tile.fbo, tile.x, tile.y, tile.w, tile.h);
+        blit_fbo_to_screen(
+            &state.gl,
+            tile.fbo,
+            scaled(tile.x, dpi),
+            scaled(tile.y, dpi),
+            tile.pw,
+            tile.ph,
+            sh,
+        );
     }
     // Blit stats panel
     blit_fbo_to_screen(
         &state.gl,
         state.stats_fbo,
-        STATS_X,
-        STATS_Y,
-        STATS_W,
-        STATS_H,
+        scaled(STATS_X, dpi),
+        scaled(STATS_Y, dpi),
+        scaled(STATS_W, dpi),
+        scaled(STATS_H, dpi),
+        sh,
     );
 
     // Reset = full WASM reload (same as hot-reload)
@@ -699,22 +762,32 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         eprintln!("Failed to swap buffers: {e}");
     }
 
-    // Request immediate redraw only for tiles that want a frame NOW (no delay)
-    state.needs_render = state.tiles.iter().any(|t| {
-        t.runtime.has_pending_fetches()
-            || (t.runtime.wants_next_frame() && t.runtime.next_frame_delay().is_none())
-    });
+    // Schedule next wake-up. `needs_render` is only set by user interactions
+    // (mouse, scroll, keyboard). WebSocket/fetch activity is handled via the
+    // I/O pre-pass — if messages arrive they trigger request_frame() in WASM.
+    state.needs_render = false;
 }
 
 /// Blit an FBO to a position on the default framebuffer (screen).
+///
+/// All coordinates are in physical pixels. `screen_h` is the physical height
+/// of the screen surface (needed for the OpenGL Y-flip).
 #[expect(clippy::cast_possible_wrap)]
-fn blit_fbo_to_screen(gl: &glow::Context, fbo: glow::Framebuffer, x: u32, y: u32, w: u32, h: u32) {
+fn blit_fbo_to_screen(
+    gl: &glow::Context,
+    fbo: glow::Framebuffer,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    screen_h: u32,
+) {
     unsafe {
         gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(fbo));
         gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
         // OpenGL Y is bottom-up, window Y is top-down
-        let dst_y0 = PREVIEW_HEIGHT as i32 - y as i32 - h as i32;
-        let dst_y1 = PREVIEW_HEIGHT as i32 - y as i32;
+        let dst_y0 = screen_h as i32 - y as i32 - h as i32;
+        let dst_y1 = screen_h as i32 - y as i32;
         gl.blit_framebuffer(
             0,
             0,
@@ -725,7 +798,7 @@ fn blit_fbo_to_screen(gl: &glow::Context, fbo: glow::Framebuffer, x: u32, y: u32
             (x + w) as i32,
             dst_y1,
             glow::COLOR_BUFFER_BIT,
-            glow::NEAREST,
+            glow::LINEAR,
         );
     }
 }
@@ -960,8 +1033,9 @@ fn write_perf_report(path: &Path, samples: &[FrameTimings]) {
     }
 
     let avg = |f: fn(&FrameTimings) -> u32| -> f64 {
-        samples.iter().map(|s| f(s) as f64).sum::<f64>() / n
+        samples.iter().map(|s| f64::from(f(s))).sum::<f64>() / n
     };
+    #[expect(clippy::cast_sign_loss)]
     let percentile = |f: fn(&FrameTimings) -> u32, pct: f64| -> u32 {
         let mut vals: Vec<u32> = samples.iter().map(f).collect();
         vals.sort_unstable();
@@ -971,7 +1045,11 @@ fn write_perf_report(path: &Path, samples: &[FrameTimings]) {
 
     // Total frame time = wasm + flush (wasm includes tree+layout+render)
     let total_frame = |s: &FrameTimings| -> u32 { s.wasm_us + s.flush_us };
-    let avg_frame = samples.iter().map(|s| total_frame(s) as f64).sum::<f64>() / n;
+    let avg_frame = samples
+        .iter()
+        .map(|s| f64::from(total_frame(s)))
+        .sum::<f64>()
+        / n;
     let avg_fps_val = if avg_frame > 0.0 {
         1_000_000.0 / avg_frame
     } else {

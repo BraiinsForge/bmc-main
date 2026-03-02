@@ -12,6 +12,7 @@ pub const NODE_SPACER: u8 = 0x05;
 pub const NODE_CANVAS: u8 = 0x06;
 pub const NODE_MODAL: u8 = 0x07;
 pub const NODE_NOTIFICATION: u8 = 0x08;
+pub const NODE_SCROLL: u8 = 0x09;
 
 // Button size variants (wire value for NODE_BUTTON)
 pub const BUTTON_SIZE_SMALL: u8 = 0;

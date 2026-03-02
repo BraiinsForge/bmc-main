@@ -26,6 +26,7 @@ taffy.workspace = true
 
 # Network + JSON (for host-side fetch and parsing)
 serde_json.workspace = true
+tungstenite.workspace = true
 ureq.workspace = true
 
 # Testbed

@@ -14,7 +14,20 @@ pub enum TextAlign {
     Right = 2,
 }
 
-/// Text style for paragraphs (16 bytes serialized)
+/// Text overflow behavior for single-line text
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TextOverflow {
+    /// Normal line wrapping (default)
+    #[default]
+    Wrap = 0,
+    /// Single line, hard clip at container edge
+    Clip = 1,
+    /// Single line, truncate with "…"
+    Ellipsis = 2,
+}
+
+/// Text style for paragraphs (24 bytes serialized)
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
     pub size: u32,      // default: 16
@@ -26,6 +39,9 @@ pub struct TextStyle {
     pub strikethrough: bool,
     pub line_height: f32, // default: 1.4 (multiplier)
     pub align: TextAlign,
+    pub text_overflow: TextOverflow, // default: Wrap
+    pub outline_color: u32,          // default: 0 (no outline)
+    pub outline_width: f32,          // default: 0.0 (no outline)
 }
 
 impl Default for TextStyle {
@@ -40,15 +56,18 @@ impl Default for TextStyle {
             strikethrough: false,
             line_height: 1.4,
             align: TextAlign::Left,
+            text_overflow: TextOverflow::Wrap,
+            outline_color: 0,
+            outline_width: 0.0,
         }
     }
 }
 
 impl TextStyle {
-    pub const SIZE: usize = 16;
+    pub const SIZE: usize = 24;
 
-    /// Serialize to 16 bytes:
-    /// [size: u32][color: u32][max_width: u32][flags: u32]
+    /// Serialize to 24 bytes:
+    /// [size: u32][color: u32][max_width: u32][flags: u32][outline_color: u32][outline_width: f32]
     /// flags bits:
     ///   0-11:  weight (0-4095)
     ///   12-23: line_height × 100
@@ -56,6 +75,7 @@ impl TextStyle {
     ///   25:    underline
     ///   26:    strikethrough
     ///   27-28: align
+    ///   29-30: text_overflow (0=wrap, 1=clip, 2=ellipsis)
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0_u8; Self::SIZE];
@@ -73,19 +93,30 @@ impl TextStyle {
         let underline_bit = if self.underline { 1 << 25 } else { 0 };
         let strike_bit = if self.strikethrough { 1 << 26 } else { 0 };
         let align_bits = (self.align as u32 & 0x3) << 27;
+        let overflow_bits = (self.text_overflow as u32 & 0x3) << 29;
 
-        let flags = weight_bits | lh_bits | italic_bit | underline_bit | strike_bit | align_bits;
+        let flags = weight_bits
+            | lh_bits
+            | italic_bit
+            | underline_bit
+            | strike_bit
+            | align_bits
+            | overflow_bits;
         buf[12..16].copy_from_slice(&flags.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.outline_color.to_le_bytes());
+        buf[20..24].copy_from_slice(&self.outline_width.to_le_bytes());
         buf
     }
 
-    /// Deserialize from 16 bytes
+    /// Deserialize from 24 bytes
     #[must_use]
     pub fn from_bytes(data: &[u8]) -> Self {
         let size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let color = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
         let max_width = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
         let flags = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
+        let outline_color = u32::from_le_bytes([data[16], data[17], data[18], data[19]]);
+        let outline_width = f32::from_le_bytes([data[20], data[21], data[22], data[23]]);
 
         let weight = (flags & 0xFFF) as u16;
         // 12-bit value (max 4095) fits exactly in f32 mantissa (23 bits), no precision loss
@@ -100,6 +131,11 @@ impl TextStyle {
             2 => TextAlign::Right,
             _ => TextAlign::Left,
         };
+        let text_overflow = match (flags >> 29) & 0x3 {
+            1 => TextOverflow::Clip,
+            2 => TextOverflow::Ellipsis,
+            _ => TextOverflow::Wrap,
+        };
 
         Self {
             size,
@@ -111,11 +147,14 @@ impl TextStyle {
             strikethrough,
             line_height,
             align,
+            text_overflow,
+            outline_color,
+            outline_width,
         }
     }
 }
 
-/// Fixed-size props structure (32 bytes)
+/// Fixed-size props structure (36 bytes)
 #[derive(Clone, Copy, Default, Debug)]
 #[repr(C)]
 pub struct PropsData {
@@ -126,11 +165,12 @@ pub struct PropsData {
     pub width: f32,
     pub height: f32,
     pub flex: f32,
-    pub color: u32,
+    pub max_width: f32,
+    pub max_height: f32,
 }
 
 impl PropsData {
-    pub const SIZE: usize = 32;
+    pub const SIZE: usize = 36;
 
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
@@ -142,7 +182,8 @@ impl PropsData {
         buf[16..20].copy_from_slice(&self.width.to_le_bytes());
         buf[20..24].copy_from_slice(&self.height.to_le_bytes());
         buf[24..28].copy_from_slice(&self.flex.to_le_bytes());
-        buf[28..32].copy_from_slice(&self.color.to_le_bytes());
+        buf[28..32].copy_from_slice(&self.max_width.to_le_bytes());
+        buf[32..36].copy_from_slice(&self.max_height.to_le_bytes());
         buf
     }
 
@@ -156,7 +197,8 @@ impl PropsData {
             width: f32::from_le_bytes([data[16], data[17], data[18], data[19]]),
             height: f32::from_le_bytes([data[20], data[21], data[22], data[23]]),
             flex: f32::from_le_bytes([data[24], data[25], data[26], data[27]]),
-            color: u32::from_le_bytes([data[28], data[29], data[30], data[31]]),
+            max_width: f32::from_le_bytes([data[28], data[29], data[30], data[31]]),
+            max_height: f32::from_le_bytes([data[32], data[33], data[34], data[35]]),
         }
     }
 }

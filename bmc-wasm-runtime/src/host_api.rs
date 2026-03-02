@@ -76,6 +76,13 @@ pub struct ModalState {
     pub is_dragging: bool,
 }
 
+/// State for a scroll container
+#[derive(Debug, Default)]
+pub struct ScrollState {
+    /// Current scroll offset (pixels from top)
+    pub scroll_offset: f32,
+}
+
 /// A completed HTTP fetch response ready for delivery to WASM.
 pub struct CompletedFetch {
     pub request_id: u32,
@@ -89,6 +96,32 @@ pub struct DelayedFetch {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub request_id: u32,
+}
+
+/// A WebSocket event queued for delivery to WASM.
+pub enum WsEvent {
+    /// Connection successfully opened.
+    Open,
+    /// A text message was received.
+    Message(Vec<u8>),
+    /// Connection closed with a status code.
+    Close(u16),
+}
+
+/// An active WebSocket connection managed by a background thread.
+pub struct ActiveWebSocket {
+    /// Channel to send outbound messages to the background write loop.
+    pub msg_tx: mpsc::Sender<WsOutbound>,
+    /// Channel to receive inbound events from the background read loop.
+    pub event_rx: mpsc::Receiver<WsEvent>,
+}
+
+/// Outbound message or control signal for a WebSocket background thread.
+pub enum WsOutbound {
+    /// Send a text message.
+    Text(String),
+    /// Close the connection.
+    Close,
 }
 
 /// Per-frame timing breakdown (microseconds).
@@ -134,6 +167,9 @@ pub struct HostState {
     /// Modal dialog states (keyed by modal_id)
     pub modal_states: HashMap<u16, ModalState>,
 
+    /// Scroll container states (keyed by scroll_id)
+    pub scroll_states: HashMap<u16, ScrollState>,
+
     /// Delta time since last frame (for animations)
     pub delta_ms: u32,
 
@@ -170,6 +206,12 @@ pub struct HostState {
     /// Next JSON document ID.
     pub next_json_id: u32,
 
+    /// Active WebSocket connections, keyed by ws_id.
+    pub websockets: HashMap<u32, ActiveWebSocket>,
+
+    /// Next WebSocket connection ID.
+    pub next_ws_id: u32,
+
     /// User formatting preferences (number format, unit system, temperature unit).
     pub prefs: FormatPreferences,
 
@@ -193,6 +235,7 @@ impl HostState {
             refresh_requested: false,
             tree_clicks: Vec::new(),
             modal_states: HashMap::new(),
+            scroll_states: HashMap::new(),
             delta_ms: 0,
             animation_states: HashMap::new(),
             transition_states: HashMap::new(),
@@ -205,6 +248,8 @@ impl HostState {
             delayed_fetches: Vec::new(),
             json_docs: HashMap::new(),
             next_json_id: 1,
+            websockets: HashMap::new(),
+            next_ws_id: 1,
             prefs,
             last_timings: FrameTimings::default(),
             taffy: TaffyTree::with_capacity(64),

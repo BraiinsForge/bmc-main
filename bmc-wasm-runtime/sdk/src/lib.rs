@@ -26,10 +26,11 @@ pub mod json;
 pub mod log;
 pub mod net;
 pub mod tree;
+pub mod ws;
 
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::{include_bitmap, include_icon};
-pub use format::format_duration;
+pub use format::{format_date, format_duration};
 pub use host::{
     ButtonSize, ButtonStyle, SizeVariant, SystemTime, WidgetSize, draw_text, fill_rect, parse_date,
     request_frame, request_frame_after,
@@ -39,10 +40,11 @@ pub use net::{FetchResponse, fetch, fetch_after};
 pub use tree::{
     AnimationDef, Bitmap, Draw, Icon, Interpolation, ModalProps, Node, NotificationKind, PropsData,
     Span, StyleResult, TextStyle, TransitionDef, TreeRenderResult, begin_tree, canvas, center, col,
-    make_button, modal, modal_styled, notification, paragraph, render_ui, row, spacer, span, text,
-    with_buffer,
+    make_button, modal, modal_styled, notification, paragraph, render_ui, row, scroll, spacer,
+    span, text, with_buffer,
 };
 pub use ufmt;
+pub use ws::{Ws, WsEvent, ws_connect};
 
 /// Helper for `button!` macro — converts label to String.
 #[doc(hidden)]
@@ -126,6 +128,27 @@ macro_rules! button {
     };
 }
 
+/// Connect to a WebSocket with optional headers.
+///
+/// # Examples
+/// ```ignore
+/// ws!("ws://host/api", on_event)
+/// ws!("ws://host/api", on_event, headers: [
+///     ("Authorization", "Bearer xyz"),
+///     ("X-Custom", "value"),
+/// ])
+/// ```
+#[macro_export]
+macro_rules! ws {
+    ($url:expr, $callback:expr $(,)?) => {
+        $crate::ws::ws_connect($url, None, $callback)
+    };
+    ($url:expr, $callback:expr, headers: [$(($k:expr, $v:expr)),+ $(,)?] $(,)?) => {{
+        let joined = [$( concat!($k, ": ", $v) ),+].join("\n");
+        $crate::ws::ws_connect($url, Some(&joined), $callback)
+    }};
+}
+
 /// Lightweight string interpolation without pulling in `core::fmt`.
 /// Drop-in replacement for `format!()` in widget code.
 #[macro_export]
@@ -139,7 +162,18 @@ macro_rules! fmt {
 
 /// Unified style macro for text styling and layout.
 ///
-/// Text style fields: size, weight, italic, underline, strikethrough, line_height, align, max_width
+/// Text style fields:
+///  - size
+///  - weight
+///  - italic
+///  - underline
+///  - strikethrough
+///  - line_height
+///  - align
+///  - max_width
+///  - text_overflow (`TextOverflow::Clip`, `TextOverflow::Ellipsis`)
+///  - outline_color, outline_width
+///
 /// Layout fields: padding, margin, gap, flex, width, height, background
 /// Shared field: color (applies to both)
 ///
@@ -171,7 +205,10 @@ macro_rules! style {
     (@route $ts:expr, $p:expr, strikethrough: $v:expr) => { $ts.strikethrough = $v; };
     (@route $ts:expr, $p:expr, line_height: $v:expr) => { $ts.line_height = $v; };
     (@route $ts:expr, $p:expr, align: $v:expr) => { $ts.align = $v; };
+    (@route $ts:expr, $p:expr, text_overflow: $v:expr) => { $ts.text_overflow = $v; };
     (@route $ts:expr, $p:expr, max_width: $v:expr) => { $ts.max_width = $v; };
+    (@route $ts:expr, $p:expr, outline_color: $v:expr) => { $ts.outline_color = $v; };
+    (@route $ts:expr, $p:expr, outline_width: $v:expr) => { $ts.outline_width = $v; };
     // Layout fields
     (@route $ts:expr, $p:expr, padding: $v:expr) => { $p.padding = $v; };
     (@route $ts:expr, $p:expr, margin: $v:expr) => { $p.margin = $v; };
@@ -180,6 +217,5 @@ macro_rules! style {
     (@route $ts:expr, $p:expr, width: $v:expr) => { $p.width = $v; };
     (@route $ts:expr, $p:expr, height: $v:expr) => { $p.height = $v; };
     (@route $ts:expr, $p:expr, background: $v:expr) => { $p.background = $v; };
-    // Shared field (goes to both)
-    (@route $ts:expr, $p:expr, color: $v:expr) => { $ts.color = $v; $p.color = $v; };
+    (@route $ts:expr, $p:expr, color: $v:expr) => { $ts.color = $v; };
 }

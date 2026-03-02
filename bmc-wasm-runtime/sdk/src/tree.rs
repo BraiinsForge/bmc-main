@@ -18,7 +18,7 @@ use bmc_wasm_protocol::{
     AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
     DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE, DRAW_TEXT, Easing, GRAY_10,
     LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
-    NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    NODE_PARAGRAPH, NODE_ROW, NODE_SCROLL, NODE_SPACER,
 };
 
 // Re-export for macro paths
@@ -329,6 +329,15 @@ impl TreeBuffer {
         self.write_u8(NODE_CANVAS);
         self.write_props(props);
         self.write_u16(draw_count);
+    }
+
+    /// Write a scroll container
+    /// Format: [NODE_SCROLL][scroll_id:u16][props:32B][child_count:u16][children...]
+    pub fn write_scroll(&mut self, scroll_id: u16, props: &PropsData, child_count: u16) {
+        self.write_u8(NODE_SCROLL);
+        self.write_u16(scroll_id);
+        self.write_props(props);
+        self.write_u16(child_count);
     }
 
     /// Write a notification node
@@ -850,6 +859,12 @@ pub enum Node {
         title: String,
         subtitle: String,
     },
+    /// Scrollable container — clips children and allows vertical scrolling.
+    Scroll {
+        scroll_id: u16,
+        props: PropsData,
+        children: Vec<Node>,
+    },
     /// Modal dialog overlay with title, close button, and scrollable body
     Modal {
         modal_id: u16,
@@ -945,6 +960,19 @@ pub fn notification(
 #[must_use]
 pub fn spacer(flex: f32) -> Node {
     Node::Spacer { flex }
+}
+
+/// Scrollable container — clips children and allows vertical scrolling.
+///
+/// - `scroll_id`: Unique ID for state tracking (must be unique per scroll instance)
+/// - `props`: Layout props — **must set `height`** for the viewport
+/// - `children`: Child nodes (laid out as a column)
+pub fn scroll(scroll_id: u16, props: PropsData, children: impl IntoIterator<Item = Node>) -> Node {
+    Node::Scroll {
+        scroll_id,
+        props,
+        children: children.into_iter().collect(),
+    }
 }
 
 /// Canvas for custom drawing with draw commands as children
@@ -1182,6 +1210,16 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
                 serialize_draw(buf, draw);
             }
         }
+        Node::Scroll {
+            scroll_id,
+            props,
+            children,
+        } => {
+            buf.write_scroll(*scroll_id, props, children.len() as u16);
+            for child in children {
+                serialize_node(buf, child);
+            }
+        }
         Node::Notification {
             kind,
             title,
@@ -1388,6 +1426,7 @@ fn count_buttons(node: &Node) -> u32 {
         Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
             children.iter().map(count_buttons).sum()
         }
+        Node::Scroll { children, .. } => children.iter().map(count_buttons).sum(),
         Node::Button { .. } => 1,
         // Modal has an implicit close button when open
         Node::Modal { is_open, body, .. } => {

@@ -22,7 +22,9 @@ use wasmi::{Caller, Extern, Linker};
 
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::gpu::FemtoVgRenderer;
-use crate::host_api::{CompletedFetch, DelayedFetch, FrameTimings, HostState};
+use crate::host_api::{
+    ActiveWebSocket, CompletedFetch, DelayedFetch, FrameTimings, HostState, WsEvent, WsOutbound,
+};
 use crate::renderer::Renderer;
 use crate::tree;
 
@@ -432,6 +434,7 @@ impl WasmWidgetRuntime {
                         &mut state.renderer,
                         &mut state.interaction,
                         &mut state.modal_states,
+                        &mut state.scroll_states,
                         &mut state.animation_states,
                         &mut state.transition_states,
                         frame_counter,
@@ -565,6 +568,67 @@ impl WasmWidgetRuntime {
                 });
 
                 request_id
+            },
+        )?;
+
+        // ── WebSocket ─────────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_ws_connect",
+            |mut caller: Caller<'_, HostState>,
+             url_ptr: u32,
+             url_len: u32,
+             headers_ptr: u32,
+             headers_len: u32|
+             -> u32 {
+                let url = read_string(&caller, url_ptr, url_len);
+                let Some(url) = url else { return 0 };
+                let headers = parse_headers(&caller, headers_ptr, headers_len);
+
+                let state = caller.data_mut();
+                let ws_id = state.next_ws_id;
+                state.next_ws_id += 1;
+
+                let (msg_tx, msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
+                let (event_tx, event_rx) = std::sync::mpsc::channel::<WsEvent>();
+
+                state
+                    .websockets
+                    .insert(ws_id, ActiveWebSocket { msg_tx, event_rx });
+
+                std::thread::spawn(move || {
+                    ws_background_thread(ws_id, &url, &headers, event_tx, msg_rx);
+                });
+
+                ws_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_ws_send",
+            |mut caller: Caller<'_, HostState>, ws_id: u32, msg_ptr: u32, msg_len: u32| -> u32 {
+                let msg = read_string(&caller, msg_ptr, msg_len);
+                let Some(msg) = msg else { return 1 };
+
+                let state = caller.data_mut();
+                let ok = state
+                    .websockets
+                    .get(&ws_id)
+                    .is_some_and(|ws| ws.msg_tx.send(WsOutbound::Text(msg)).is_ok());
+                u32::from(!ok)
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_ws_close",
+            |mut caller: Caller<'_, HostState>, ws_id: u32| {
+                let state = caller.data_mut();
+                if let Some(ws) = state.websockets.remove(&ws_id) {
+                    let _ = ws.msg_tx.send(WsOutbound::Close);
+                }
             },
         )?;
 
@@ -729,6 +793,28 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // host_format_date(timestamp, fmt_ptr, fmt_len, out_ptr, out_len) -> i32
+        // Format a unix timestamp using a chrono strftime pattern.
+        linker.func_wrap(
+            "env",
+            "host_format_date",
+            |mut caller: Caller<'_, HostState>,
+             timestamp: i64,
+             fmt_ptr: u32,
+             fmt_len: u32,
+             out_ptr: u32,
+             out_len: u32|
+             -> i32 {
+                let fmt = read_string(&caller, fmt_ptr, fmt_len);
+                let Some(fmt) = fmt else { return -1 };
+                let Some(dt) = DateTime::<Utc>::from_timestamp(timestamp, 0) else {
+                    return -1;
+                };
+                let formatted = dt.format(&fmt).to_string();
+                write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
+            },
+        )?;
+
         linker.func_wrap(
             "env",
             "host_json_free",
@@ -887,6 +973,7 @@ impl WasmWidgetRuntime {
             &mut state.renderer,
             &mut state.interaction,
             &mut state.modal_states,
+            &mut state.scroll_states,
             &mut state.animation_states,
             &mut state.transition_states,
             frame_counter,
@@ -1134,6 +1221,108 @@ impl WasmWidgetRuntime {
     pub fn has_pending_fetches(&self) -> bool {
         !self.store.data().delayed_fetches.is_empty()
     }
+
+    /// Drain WebSocket events from all active connections and deliver them
+    /// to WASM by calling `__on_ws_event(ws_id, event_type, data_ptr, data_len)`.
+    ///
+    /// Event types: 0 = Open, 1 = Message, 2 = Close (data_ptr/data_len carry
+    /// the close code as two little-endian bytes).
+    ///
+    /// Call this before `render()` each frame (alongside `deliver_fetch_responses`).
+    pub fn deliver_ws_messages(&mut self) -> bool {
+        // Collect events from all connections, noting which ones closed
+        let mut events: Vec<(u32, WsEvent)> = Vec::new();
+        let mut closed_ids: Vec<u32> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&ws_id, ws) in &state.websockets {
+            while let Ok(event) = ws.event_rx.try_recv() {
+                let is_close = matches!(event, WsEvent::Close(_));
+                events.push((ws_id, event));
+                if is_close {
+                    closed_ids.push(ws_id);
+                }
+            }
+        }
+        for id in &closed_ids {
+            state.websockets.remove(id);
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        tracing::debug!("delivering {} WS event(s)", events.len());
+
+        let on_ws_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_ws_event");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_ws_event), Ok(alloc_func)) = (on_ws_event, alloc_func) else {
+            tracing::warn!("widget missing __on_ws_event or __alloc export");
+            return false;
+        };
+
+        for (ws_id, event) in events {
+            let (event_type, data): (u32, &[u8]) = match &event {
+                WsEvent::Open => (0, &[]),
+                WsEvent::Message(bytes) => (1, bytes),
+                WsEvent::Close(code) => (2, &code.to_le_bytes()),
+            };
+
+            let data_len = data.len() as u32;
+
+            let data_ptr = if data_len > 0 {
+                if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                    tracing::error!("set_fuel failed: {e}");
+                    continue;
+                }
+                match alloc_func.call(&mut self.store, data_len) {
+                    Ok(ptr) => {
+                        let memory = self
+                            .instance
+                            .get_export(&self.store, "memory")
+                            .and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let mem_data = memory.data_mut(&mut self.store);
+                            let start = ptr as usize;
+                            let end = start + data_len as usize;
+                            if end <= mem_data.len() {
+                                mem_data[start..end].copy_from_slice(data);
+                            }
+                        }
+                        ptr
+                    }
+                    Err(e) => {
+                        tracing::error!("__alloc failed for WS event: {e}");
+                        continue;
+                    }
+                }
+            } else {
+                0
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) =
+                on_ws_event.call(&mut self.store, (ws_id, event_type, data_ptr, data_len))
+            {
+                tracing::error!("__on_ws_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active WebSocket connections.
+    #[must_use]
+    pub fn has_active_websockets(&self) -> bool {
+        !self.store.data().websockets.is_empty()
+    }
 }
 
 /// Read a UTF-8 string from WASM memory.
@@ -1218,6 +1407,143 @@ fn write_to_wasm(caller: &mut Caller<'_, HostState>, s: &str, out_ptr: u32, out_
     }
 
     actual_len as i32
+}
+
+/// Background thread for a single WebSocket connection.
+///
+/// Connects to `url` with optional extra headers, then runs a loop that
+/// interleaves reading inbound messages (with a 50 ms read timeout to avoid
+/// blocking forever) and draining outbound messages from `msg_rx`.
+#[expect(clippy::needless_pass_by_value)] // ownership needed: moved into spawned thread
+fn ws_background_thread(
+    ws_id: u32,
+    url: &str,
+    headers: &[(String, String)],
+    event_tx: std::sync::mpsc::Sender<WsEvent>,
+    msg_rx: std::sync::mpsc::Receiver<WsOutbound>,
+) {
+    use tungstenite::http::Request;
+    use tungstenite::stream::MaybeTlsStream;
+    use tungstenite::{Message, connect};
+
+    // Connect — use the plain URL when there are no custom headers so tungstenite
+    // generates the required WebSocket handshake headers automatically. When extra
+    // headers are needed, build a Request from the ClientRequestUri which adds them.
+    let connect_result = if headers.is_empty() {
+        connect(url)
+    } else {
+        let uri: tungstenite::http::Uri = match url.parse() {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::error!(ws_id, "WS bad URL: {e}");
+                let _ = event_tx.send(WsEvent::Close(1002));
+                return;
+            }
+        };
+        let mut request = Request::builder()
+            .uri(&uri)
+            .header(
+                "Host",
+                uri.authority()
+                    .map_or_else(|| "localhost".to_owned(), ToString::to_string),
+            )
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tungstenite::handshake::client::generate_key(),
+            );
+        for (k, v) in headers {
+            request = request.header(k.as_str(), v.as_str());
+        }
+        let request = match request.body(()) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(ws_id, "WS bad request: {e}");
+                let _ = event_tx.send(WsEvent::Close(1002));
+                return;
+            }
+        };
+        connect(request)
+    };
+
+    let (mut socket, _response) = match connect_result {
+        Ok(pair) => pair,
+        Err(e) => {
+            tracing::error!(ws_id, "WS connect failed: {e}");
+            let _ = event_tx.send(WsEvent::Close(1006));
+            return;
+        }
+    };
+
+    // Set a short read timeout so we can periodically check for outbound messages
+    // instead of blocking forever on reads.
+    if let MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+        let _ = tcp.set_read_timeout(Some(Duration::from_millis(50)));
+    }
+
+    let _ = event_tx.send(WsEvent::Open);
+    tracing::info!(ws_id, %url, "WS connected");
+
+    loop {
+        // Drain all pending outbound messages
+        loop {
+            match msg_rx.try_recv() {
+                Ok(WsOutbound::Text(text)) => {
+                    if let Err(e) = socket.send(Message::Text(text)) {
+                        tracing::warn!(ws_id, "WS send error: {e}");
+                        let _ = event_tx.send(WsEvent::Close(1006));
+                        return;
+                    }
+                }
+                Ok(WsOutbound::Close) => {
+                    let _ = socket.close(None);
+                    let _ = event_tx.send(WsEvent::Close(1000));
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    let _ = event_tx.send(WsEvent::Close(1006));
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            }
+        }
+
+        // Read one inbound message (blocks up to 50 ms due to read timeout)
+        match socket.read() {
+            Ok(Message::Text(text)) => {
+                if event_tx.send(WsEvent::Message(text.into_bytes())).is_err() {
+                    return;
+                }
+            }
+            Ok(Message::Binary(data)) => {
+                if event_tx.send(WsEvent::Message(data.clone())).is_err() {
+                    return;
+                }
+            }
+            Ok(Message::Close(frame)) => {
+                let code = frame.map_or(1000, |f| f.code.into());
+                let _ = event_tx.send(WsEvent::Close(code));
+                tracing::info!(ws_id, code, "WS closed by server");
+                return;
+            }
+            Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => {}
+            Err(tungstenite::Error::Io(ref e))
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                // Read timeout expired — no data available, loop back to check outbound
+            }
+            Err(e) => {
+                tracing::warn!(ws_id, "WS read error: {e}");
+                break;
+            }
+        }
+    }
+
+    let _ = event_tx.send(WsEvent::Close(1006));
+    tracing::info!(ws_id, "WS background thread exiting");
 }
 
 /// Perform an HTTP GET request, returning (status_code, body).

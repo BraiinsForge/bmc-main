@@ -217,7 +217,9 @@ impl Renderer for FemtoVgRenderer {
 
     fn push_scissor(&mut self, x: f32, y: f32, w: f32, h: f32) {
         self.canvas.save();
-        self.canvas.scissor(x, y, w, h);
+        // Use intersect_scissor so nested clips (e.g. canvas inside scroll) work correctly.
+        // When no scissor is active, intersect_scissor acts like scissor.
+        self.canvas.intersect_scissor(x, y, w, h);
     }
 
     fn pop_scissor(&mut self) {
@@ -275,6 +277,34 @@ impl Renderer for FemtoVgRenderer {
                 x - width
             }
         };
+
+        // Text outline via 8-direction fill_text at each 1px ring up to outline_width.
+        // 8 textured-quad draws per ring — cheap on GPU even on embedded.
+        if style.outline_color != 0 && style.outline_width > 0.0 {
+            let mut outline_paint = Paint::color(to_femtovg_color(style.outline_color));
+            outline_paint.set_font(&[font]);
+            outline_paint.set_font_size(size);
+            outline_paint.set_text_baseline(femtovg::Baseline::Top);
+            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let rings = style.outline_width.ceil() as u32;
+            for ring in 1..=rings {
+                let d = ring as f32;
+                for &(dx, dy) in &[
+                    (d, 0.0),
+                    (-d, 0.0),
+                    (0.0, d),
+                    (0.0, -d),
+                    (d, d),
+                    (-d, -d),
+                    (d, -d),
+                    (-d, d),
+                ] {
+                    let _ = self
+                        .canvas
+                        .fill_text(draw_x + dx, y + dy, text, &outline_paint);
+                }
+            }
+        }
 
         let _ = self.canvas.fill_text(draw_x, y, text, &paint);
 
@@ -426,15 +456,21 @@ impl Renderer for FemtoVgRenderer {
 
     // -- Frame lifecycle --
 
-    fn begin_frame(&mut self, width: u32, height: u32) {
+    fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32) {
         self.width = width as f32;
         self.height = height as f32;
         self.frame_counter += 1;
         // Ensure we render to the configured screen target (the staging FBO)
         self.canvas.set_render_target(RenderTarget::Screen);
-        self.canvas.set_size(width, height, 1.0);
+        self.canvas.set_size(width, height, dpi_scale);
+        // clear_rect uses physical pixels when dpi_scale > 1.0
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let (pw, ph) = (
+            (width as f32 * dpi_scale) as u32,
+            (height as f32 * dpi_scale) as u32,
+        );
         self.canvas
-            .clear_rect(0, 0, width, height, Color::rgbf(0.0, 0.0, 0.0));
+            .clear_rect(0, 0, pw, ph, Color::rgbf(0.0, 0.0, 0.0));
         self.paragraph_cache.begin_frame(self.frame_counter);
     }
 

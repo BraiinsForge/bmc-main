@@ -53,6 +53,7 @@
 //!
 //! 1. `renderer.begin_frame(w, h)` — set up the GL viewport
 //! 2. `runtime.deliver_fetch_responses()` — deliver any completed HTTP fetches
+//!    and `runtime.deliver_ws_messages()` — deliver any pending WebSocket events
 //! 3. `runtime.render(delta_ms)` — execute WASM + layout + draw commands
 //! 4. `renderer.flush()` — submit draw commands to the GPU
 //! 5. Blit / swap buffers
@@ -82,8 +83,9 @@
 //! - **WASM host FFI** — `unsafe extern "C"` blocks declaring host imports and
 //!   `#[unsafe(no_mangle)]` on WASM exports are the only way to cross the
 //!   host↔guest boundary.
-//! - **WASM allocator protocol** — `__alloc`/`__dealloc` and `__on_fetch_response`
-//!   use `Vec::from_raw_parts` to transfer ownership of host-allocated buffers.
+//! - **WASM allocator protocol** — `__alloc`/`__dealloc`, `__on_fetch_response`,
+//!   and `__on_ws_event` use `Vec::from_raw_parts` to transfer ownership of
+//!   host-allocated buffers.
 
 mod animation;
 pub mod gpu;

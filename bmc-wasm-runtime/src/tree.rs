@@ -14,7 +14,7 @@ use anyhow::{Result, bail};
 use bmc_wasm_protocol::*;
 
 // Re-export for other modules
-pub use bmc_wasm_protocol::{PropsData, TextAlign, TextStyle};
+pub use bmc_wasm_protocol::{PropsData, TextAlign, TextOverflow, TextStyle};
 
 /// A text span with style overrides
 #[derive(Clone, Debug)]
@@ -160,6 +160,12 @@ pub enum TreeNode {
         flex: f32,
     },
     Canvas(PropsData, Vec<DrawCommand>),
+    /// Scrollable container
+    Scroll {
+        scroll_id: u16,
+        props: PropsData,
+        children: Vec<TreeNode>,
+    },
     /// Inline notification banner
     Notification {
         kind: u8,
@@ -292,6 +298,7 @@ impl<'a> TreeReader<'a> {
         })
     }
 
+    #[expect(clippy::too_many_lines)]
     fn read_node(&mut self) -> Result<TreeNode> {
         let node_type = self.read_u8()?;
 
@@ -371,6 +378,20 @@ impl<'a> TreeReader<'a> {
                     title,
                     content_height,
                     body,
+                })
+            }
+            NODE_SCROLL => {
+                let scroll_id = self.read_u16()?;
+                let props = self.read_props()?;
+                let child_count = self.read_u16()?;
+                let mut children = Vec::with_capacity(child_count as usize);
+                for _ in 0..child_count {
+                    children.push(self.read_node()?);
+                }
+                Ok(TreeNode::Scroll {
+                    scroll_id,
+                    props,
+                    children,
                 })
             }
             NODE_NOTIFICATION => {
@@ -602,10 +623,13 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use taffy::prelude::*;
+use taffy::{Overflow, Point};
 
 use crate::animation::{apply_easing, compute_animation_value, interpolate_color, multiply_alpha};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
-use crate::host_api::{AnimationState, FrameTimings, ModalState, PrevDrawValues, TransitionState};
+use crate::host_api::{
+    AnimationState, FrameTimings, ModalState, PrevDrawValues, ScrollState, TransitionState,
+};
 use crate::interaction::InteractionState;
 use crate::renderer::Renderer;
 
@@ -652,6 +676,7 @@ pub(crate) struct NodeContext {
     button: Option<(u32, String, u8, u8, u16)>, // id, label, style, size, icon_id
     draws: Vec<DrawCommand>,                    // canvas draw commands
     notification: Option<NotificationData>,
+    scroll_id: Option<u16>,
 }
 
 /// Collected modal info for overlay rendering
@@ -679,6 +704,7 @@ pub(crate) fn process_tree(
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<u16, ModalState>,
+    scroll_states: &mut HashMap<u16, ScrollState>,
     animation_states: &mut HashMap<u64, AnimationState>,
     transition_states: &mut HashMap<(u16, u16), TransitionState>,
     frame_counter: u64,
@@ -699,6 +725,7 @@ pub(crate) fn process_tree(
         renderer,
         interaction,
         modal_states,
+        scroll_states,
         animation_states,
         transition_states,
         frame_counter,
@@ -721,6 +748,7 @@ pub(crate) fn layout_and_render(
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<u16, ModalState>,
+    scroll_states: &mut HashMap<u16, ScrollState>,
     animation_states: &mut HashMap<u64, AnimationState>,
     transition_states: &mut HashMap<(u16, u16), TransitionState>,
     frame_counter: u64,
@@ -773,8 +801,11 @@ pub(crate) fn layout_and_render(
                     AvailableSpace::MaxContent => None,
                 });
 
-                // Use explicit max_width if set, otherwise use available width
-                let max_width = if para.base_style.max_width > 0 {
+                // Use explicit max_width if set, otherwise use available width.
+                // Clip/Ellipsis: don't constrain width — text stays on one line.
+                let max_width = if para.base_style.text_overflow != TextOverflow::Wrap {
+                    None
+                } else if para.base_style.max_width > 0 {
                     Some(
                         (para.base_style.max_width as f32).min(available_width.unwrap_or(f32::MAX)),
                     )
@@ -818,6 +849,7 @@ pub(crate) fn layout_and_render(
         0.0,
         renderer,
         interaction,
+        scroll_states,
         &mut result,
         &mut anim_ctx,
     );
@@ -897,6 +929,7 @@ fn build_taffy_node(
                 padding: padding_uniform(props.padding),
                 margin: margin_uniform(props.margin),
                 size: size_from_props(props),
+                max_size: max_size_from_props(props),
                 flex_grow: if is_center && props.flex == 0.0 {
                     1.0
                 } else {
@@ -991,6 +1024,7 @@ fn build_taffy_node(
         TreeNode::Canvas(props, draws) => {
             let style = Style {
                 size: size_from_props(props),
+                max_size: max_size_from_props(props),
                 flex_grow: props.flex,
                 padding: padding_uniform(props.padding),
                 margin: margin_uniform(props.margin),
@@ -1002,6 +1036,51 @@ fn build_taffy_node(
                 Some(NodeContext {
                     background: props.background,
                     draws: draws.clone(),
+                    ..Default::default()
+                }),
+            )?;
+            Ok(id)
+        }
+
+        TreeNode::Scroll {
+            scroll_id,
+            props,
+            children,
+        } => {
+            let child_ids: Vec<_> = children
+                .iter()
+                .map(|c| build_taffy_node(taffy, c, result, button_id, modals))
+                .collect::<Result<_>>()?;
+
+            // Extra right padding so content doesn't sit under the scrollbar overlay
+            let scrollbar_clearance = 16.0;
+            let mut padding = padding_uniform(props.padding);
+            padding.right = length(props.padding + scrollbar_clearance);
+
+            let style = Style {
+                flex_direction: FlexDirection::Column,
+                gap: Size {
+                    width: length(props.gap),
+                    height: length(props.gap),
+                },
+                padding,
+                margin: margin_uniform(props.margin),
+                size: size_from_props(props),
+                max_size: max_size_from_props(props),
+                flex_grow: props.flex,
+                overflow: Point {
+                    x: Overflow::Hidden,
+                    y: Overflow::Scroll,
+                },
+                ..Default::default()
+            };
+
+            let id = taffy.new_with_children(style, &child_ids)?;
+            taffy.set_node_context(
+                id,
+                Some(NodeContext {
+                    background: props.background,
+                    scroll_id: Some(*scroll_id),
                     ..Default::default()
                 }),
             )?;
@@ -1076,7 +1155,7 @@ fn build_taffy_node(
     }
 }
 
-#[expect(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_taffy_node(
     taffy: &TaffyTree<NodeContext>,
     node_id: taffy::NodeId,
@@ -1084,6 +1163,7 @@ fn render_taffy_node(
     parent_y: f32,
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
+    scroll_states: &mut HashMap<u16, ScrollState>,
     result: &mut TreeResult,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
@@ -1094,6 +1174,11 @@ fn render_taffy_node(
     let y = parent_y + layout.location.y;
     let w = layout.size.width;
     let h = layout.size.height;
+
+    // Extract scroll_id before immutable context borrow
+    let scroll_id = taffy
+        .get_node_context(node_id)
+        .and_then(|ctx| ctx.scroll_id);
 
     if let Some(ctx) = taffy.get_node_context(node_id) {
         if ctx.background != 0 {
@@ -1145,6 +1230,108 @@ fn render_taffy_node(
     let Ok(children) = taffy.children(node_id) else {
         return;
     };
+
+    // Scroll container: scissor-clip + offset children by scroll amount
+    if let Some(sid) = scroll_id {
+        // Compute content height from children's layouts
+        let content_height = children
+            .iter()
+            .filter_map(|&cid| taffy.layout(cid).ok())
+            .map(|cl| cl.location.y + cl.size.height)
+            .fold(0.0_f32, f32::max);
+
+        let max_scroll = (content_height - h).max(0.0);
+        let has_scrollbar = content_height > h;
+
+        // Scrollbar hit region (overlaid, right edge of viewport)
+        let sbar_width_normal = 4.0_f32;
+        let sbar_width_active = 12.0_f32;
+        let sbar_margin = 2.0_f32;
+        // Hit region is generous (active width) so it's easy to grab
+        let sbar_hit_w = sbar_width_active + sbar_margin;
+        let sbar_key = format!("sbar_{sid}");
+        let sbar_pressed = if has_scrollbar {
+            let sbar_hit_rect = crate::interaction::Rect::new(
+                (x + w - sbar_hit_w) as i32,
+                y as i32,
+                sbar_hit_w as u32,
+                h as u32,
+            );
+            interaction.button(&sbar_key, sbar_hit_rect);
+            interaction.is_pressed(&sbar_key)
+        } else {
+            false
+        };
+
+        // Register content hit region for drag/wheel scrolling
+        let scroll_key = format!("scroll_{sid}");
+        let scroll_region = crate::interaction::Rect::new(x as i32, y as i32, w as u32, h as u32);
+        interaction.button(&scroll_key, scroll_region);
+
+        // Read scroll delta — scrollbar drag scales by content/viewport ratio
+        let scroll_delta = if sbar_pressed {
+            let ratio = if h > 0.0 { content_height / h } else { 1.0 };
+            (interaction.get_scroll_delta(&sbar_key) as f32 * ratio) as i32
+        } else if interaction.is_pressed(&scroll_key) {
+            -interaction.get_scroll_delta(&scroll_key)
+        } else {
+            interaction.get_global_scroll_delta()
+        };
+
+        let state = scroll_states.entry(sid).or_default();
+        state.scroll_offset += scroll_delta as f32;
+        state.scroll_offset = state.scroll_offset.clamp(0.0, max_scroll);
+
+        let offset = state.scroll_offset;
+
+        renderer.push_scissor(x, y, w, h);
+        for child_id in children {
+            // Render culling: skip children entirely outside the visible viewport
+            if let Ok(cl) = taffy.layout(child_id) {
+                let child_top = y - offset + cl.location.y;
+                let child_bottom = child_top + cl.size.height;
+                if child_bottom < y || child_top > y + h {
+                    continue;
+                }
+            }
+            render_taffy_node(
+                taffy,
+                child_id,
+                x,
+                y - offset,
+                renderer,
+                interaction,
+                scroll_states,
+                result,
+                anim_ctx,
+            );
+        }
+        renderer.pop_scissor();
+
+        // Draw scrollbar overlay (no reflow — drawn after content, outside scissor)
+        if has_scrollbar {
+            let sbar_w = if sbar_pressed {
+                sbar_width_active
+            } else {
+                sbar_width_normal
+            };
+            let sbar_x = x + w - sbar_w - sbar_margin;
+            let thumb_ratio = h / content_height;
+            let thumb_height = (h * thumb_ratio).max(16.0);
+            let scroll_ratio = if max_scroll > 0.0 {
+                offset / max_scroll
+            } else {
+                0.0
+            };
+            let thumb_y = y + scroll_ratio * (h - thumb_height);
+            let sbar_color = if sbar_pressed { GRAY_50 } else { GRAY_60 };
+
+            renderer.fill_rect(sbar_x, thumb_y, sbar_w, thumb_height, sbar_color);
+        }
+
+        return;
+    }
+
     for child_id in children {
         render_taffy_node(
             taffy,
@@ -1153,6 +1340,7 @@ fn render_taffy_node(
             y,
             renderer,
             interaction,
+            scroll_states,
             result,
             anim_ctx,
         );
@@ -1867,7 +2055,8 @@ fn interpolate_draw_values(
 /// Count buttons in a tree node (for modal body button allocation)
 fn count_tree_buttons(node: &TreeNode, button_id: &mut u32, result: &mut TreeResult) {
     match node {
-        TreeNode::Column(_, children)
+        TreeNode::Scroll { children, .. }
+        | TreeNode::Column(_, children)
         | TreeNode::Row(_, children)
         | TreeNode::Center(_, children) => {
             for child in children {
@@ -2130,7 +2319,8 @@ fn count_modal_body_buttons(body: &[TreeNode]) -> u32 {
 
 fn count_node_buttons(node: &TreeNode) -> u32 {
     match node {
-        TreeNode::Column(_, children)
+        TreeNode::Scroll { children, .. }
+        | TreeNode::Column(_, children)
         | TreeNode::Row(_, children)
         | TreeNode::Center(_, children) => children.iter().map(count_node_buttons).sum(),
         TreeNode::Button { .. } => 1,
@@ -2299,6 +2489,7 @@ fn render_modal_body_node(
             max_height
         }
         TreeNode::Center(..)
+        | TreeNode::Scroll { .. }
         | TreeNode::Spacer { .. }
         | TreeNode::Canvas(..)
         | TreeNode::Modal { .. }
@@ -2535,6 +2726,21 @@ fn size_from_props(props: &PropsData) -> Size<Dimension> {
             Dimension::auto()
         } else {
             length(props.height)
+        },
+    }
+}
+
+fn max_size_from_props(props: &PropsData) -> Size<Dimension> {
+    Size {
+        width: if props.max_width == 0.0 {
+            Dimension::auto()
+        } else {
+            length(props.max_width)
+        },
+        height: if props.max_height == 0.0 {
+            Dimension::auto()
+        } else {
+            length(props.max_height)
         },
     }
 }
