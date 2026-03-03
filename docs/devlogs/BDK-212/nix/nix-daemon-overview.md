@@ -17,12 +17,13 @@ Described in detail in [bmc-nix.md](bmc-nix.md).
 
 ### `bmc-nix-initializer` Binary
 
-A small binary that runs at boot **before** the main `bmc` app. Its
+A small binary that runs after boot, at similar time as the main `bmc` app. Its
 sole purpose is ensuring the Nix store is ready.
 
 Flow:
-1. Check if the Nix store is initialized
-2. If yes — exit immediately, `bmc` starts normally
+1. Check if the Nix store is initialized (`nix_init` U-Boot env var)
+2. If yes — also check `/tmp/nix_activated` to see if activation
+   succeeded, `bmc` starts normally
 3. If no — check for network connectivity
 4. If no WiFi — enter AP mode, present WiFi setup (same pattern as
    the main app's initial setup)
