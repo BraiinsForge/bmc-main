@@ -198,7 +198,7 @@ prevent users not getting Nix initialized.
     {
       "bos_version": "26.01",
       "download_url": "https://cache.braiins.com/v1/miniminer-nix-26.01.tar.xz",
-      "profile_path": "/nix/var/nix/gcroots/bmc"
+      "profile_path": "/nix/var/nix/gcroots/profiles/bmc"
     }
   ]
 }

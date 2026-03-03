@@ -31,7 +31,7 @@ Build a profile from an index JSON file.
 bmc-nix-cli build-profile \
   --index <path>         \  # path to miniminer-index.json
   --profile-dir <path>   \  # where to create the profile
-                            # (e.g. /nix/var/nix/gcroots/bmc)
+                            # (e.g. /nix/var/nix/gcroots/profiles/bmc)
   --generation <number>     # generation number (1 for factory)
 ```
 
@@ -50,12 +50,12 @@ bmc-nix-cli build-profile \
 ```bash
 ${bmc-nix-cli}/bin/bmc-nix-cli build-profile \
   --index ${index}/miniminer-index.json \
-  --profile-dir $rootDir/nix/var/nix/gcroots/bmc \
+  --profile-dir $rootDir/nix/var/nix/gcroots/profiles/bmc \
   --generation 1
 ```
 
 This produces the symlink tree at
-`$rootDir/nix/var/nix/gcroots/bmc/bmc-1-link/` with all packages
+`$rootDir/nix/var/nix/gcroots/profiles/bmc/bmc-1-link/` with all packages
 merged, hooks executed, and manifest written.
 
 ## Implementation Sketch

@@ -251,7 +251,7 @@ Builds an initial Nix store tarball for device initialization.
 { packages          # same format as mkIndex
 , bmc-nix-cli       # derivation of the bmc-nix CLI tool
 , bos_version       # "26.01"
-, profile_path ? "/nix/var/nix/gcroots/bmc"
+, profile_path ? "/nix/var/nix/gcroots/profiles/bmc"
 , extraFiles ? null  # optional derivation whose contents are overlaid
                      # into the tarball root (e.g. /etc/nix/nix.conf)
 }:
@@ -348,7 +348,7 @@ This is the most involved derivation. Steps inside the build:
 ```json
 {
   "bos_version": "26.01",
-  "profile_path": "/nix/var/nix/gcroots/bmc",
+  "profile_path": "/nix/var/nix/gcroots/profiles/bmc",
   "tarball_name": "miniminer-nix-26.01.tar.gz"
 }
 ```

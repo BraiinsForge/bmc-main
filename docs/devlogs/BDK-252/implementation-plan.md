@@ -34,27 +34,18 @@ and activation is necessary for actually using the profile.
 The following are documented in the concept but deferred past the
 initial firmware with Nix support:
 
-- Two-phase activation rollback (Finding A1 from MR !212 review) —
-  v1 treats activation failure as a fatal error requiring manual
-  intervention or factory reset.
 - Store corruption recovery (hash verification + re-download of
   corrupted store paths).
-- Tarball signature/hash verification for the manual Stage 2 bootstrap
-  path. Verification is enforced in Stage 7 production flows.
 - Third-party server support and package browsing UI.
-- Custom server list management and package/server blacklisting.
+- Custom server list management and individual package installation.
+- Disk space pre-flight check before NAR downloads (run GC if needed).
 
 # Risks
 
 1. **Mesa/libglvnd recompilation** — Nixpkgs Mesa is patched to use
    `/run/opengl-driver`. We need a custom Mesa overlay that makes
    DRI driver discovery self-contained. See `mesa-libglvnd.md`.
-2. **bmc-nix-initializer static linking** — The initializer runs
-   before the Nix store exists, so it must be statically linked with
-   all dependencies (Slint, DRM, WiFi, HTTP+TLS). Binary size and
-   long-term maintenance are concerns. Consider whether LED
-   patterns + serial console could replace the Slint UI.
-3. **Cross-repo coordination** — Stages 5 and 7 require changes in
+2. **Cross-repo coordination** — Stages 5 and 7 require changes in
    bos-packages, bos-main, and openwrt repositories.
 
 # Stage 1: Prerequisites
@@ -70,9 +61,10 @@ The tasks here can be done potentially in parallel.
 2. Implement profile building and activation in bmc-nix and bare bones
    bmc-nix-cli:
    - `types.rs` — serde types for PackageIndex, Manifest, ServerRegistry
-   - `profile.rs` — `build_profile()`, `build_symlink_tree()`
-   - `activation.rs` — `activate_profile()`, topological sort of
-     activation scripts
+   - `profile.rs` — `build_profile()`, `build_symlink_tree()`,
+     `activate_profile()`
+   - `activation.rs` — topological sort and execution of activation
+     scripts during profile build
    - `hooks.rs` — `run_hooks()`, lexicographic execution
    - 3 built-in hooks as `[[bin]]` targets: hook-merge-files,
      hook-file-symlinks, hook-activation-resolver
@@ -103,7 +95,10 @@ The tasks here can be done potentially in parallel.
 # Stage 2: Store initialization tarball
 
 Build the Nix derivations that produce the initial store tarball for
-device provisioning.
+device provisioning. The initial profile contains the `nix` binary
+itself (needed for runtime `nix copy` operations), `bmc-openwrt`, and
+the core widgets. Config files (`servers.json`, `nix.conf`) are
+included via `mkTarball`'s `extraFiles` parameter.
 
 1. `mkIndex.nix` — takes package list, caches, indexes, commit hash;
    outputs `miniminer-index.json`.
@@ -145,12 +140,14 @@ Stage 1 implemented profile building and activation. This stage adds
 the runtime operations needed for upgrades and lifecycle management.
 
 Modules to implement:
-- `index.rs` — `fetch_indexes()`, `fetch_and_merge_indexes()`,
+- `index.rs` — `fetch_indexes()`, `fetch_and_merge_indexes()` (with
+  visited-set cycle detection for federated `indexes` URLs),
   `resolve_new_package()`, `resolve_installed_package()`
 - `store.rs` — `copy_store_paths()` (NAR download from binary cache),
   `init_store()`
-- `manifest.rs` — manifest read/write, merge with existing manifest
-- `upgrade.rs` — `compute_upgrade_plan()`, `apply_profile_change()`
+- `manifest.rs` — manifest read/write, merge with existing manifest,
+  `compute_upgrade_plan()`
+- `upgrade.rs` — `apply_profile_change()`
 - `gc.rs` — `cleanup_generations()`, `collect_garbage()`
 
 ## Success criteria
@@ -167,29 +164,28 @@ Modules to implement:
 - Integration test: full upgrade cycle using a local nix-serve
   instance or fixture files.
 
-# Stage 4: Deployment indexes and binary cache
+# Stage 4: Deployment indexes
 
-Moved before self-initialization because the initializer needs to fetch
-indexes and the upgrade flow needs a binary cache to download from.
+Build the Nix derivations and tooling that produce final deployment indexes.
+Some of the work should already be done from stage 2, finish it here.
 
-1. Binary cache setup — decide on Attic, Cachix, or self-hosted
-   nix-serve. Configure CI to upload built closures.
-2. Index publishing — CI pipeline produces `miniminer-index.json` and
-   uploads it alongside the binary cache.
-3. Factory index assembly — external tooling or CI job that collects
+1. `mkFactoryIndex.nix` or equivalent tooling that collects
    `metadata.json` from multiple tarball builds (one per BOS version)
    and produces `miniminer-factory.json`.
+2. Ensure `mkIndex.nix` (from Stage 2) produces a complete
+   `miniminer-index.json` usable for runtime upgrades.
 
 ## Success criteria
 
-- `curl <server>/miniminer-index.json` returns a valid index.
-- `nix copy --to <cache-url>` or equivalent uploads packages.
-- Factory index lists tarballs for at least one BOS version.
+- `nix build` produces a valid `miniminer-index.json`.
+- Factory index can be built listing tarballs for at least one BOS
+  version.
 
 ## Testing
 
-- Smoke test: fetch index, resolve a package, download its NAR from
-  the cache, verify hash.
+- Validate index JSON schema against concept doc specification.
+- Round-trip: build index, feed it to `bmc-nix` index parsing, verify
+  all packages resolve correctly.
 
 # Stage 5: Self-initialization
 
@@ -205,9 +201,6 @@ factory reset, without manual tarball extraction.
      console. See Risk 2 above.
 2. OpenWrt service for `bmc-nix-initializer` — runs on every boot,
    checks for store presence and `/tmp/nix-activated` sentinel.
-
-**Depends on:** Stage 4 (factory index and binary cache must be
-available for the initializer to fetch from).
 
 ## Success criteria
 
@@ -246,7 +239,10 @@ Integrate the Nix upgrade flow into the existing upgrade system.
 **Post-reboot re-validation:** After a BOS upgrade + reboot, the
 `nix-activator` service must re-check BOS compatibility before
 activating the pending profile. If BOS is still old (upgrade failed),
-retry or fall back to previous generation.
+the activator logs the error and does not activate the new generation.
+The previous generation remains active. Automatic rollback to the
+previous generation is out of scope for v1 — the user sees an upgrade
+failure and can retry.
 
 ## Success criteria
 
@@ -277,7 +273,9 @@ layer instead of shipping BMC as an OpenWrt package.
      `/mnt/data/NIX_FACTORY_RESET` marker, deletes `/mnt/data/nix`.
      Must run before any Nix service.
    - `nix-activator` — activates BMC profile on every boot. Handles
-     post-BOS-upgrade activation.
+     post-BOS-upgrade activation. Activation must be idempotent:
+     re-running on an already-active generation must be a fast no-op
+     with no side effects.
    - `nix-service-applier` — restarts services after activation. Waits
      for activation PID to finish, then stops/starts/restarts services
      based on diff of old/new service files.
@@ -286,6 +284,9 @@ layer instead of shipping BMC as an OpenWrt package.
    (before first boot with Nix).
 4. Update bos-main flake.nix to consume `bmc-nix-initializer` from
    bmc-main flake instead of `bmc-openwrt`.
+5. Ship `servers.json` and `factory.json` as part of the firmware
+   image. The initializer reads these on first boot to know where to
+   fetch the tarball from — without them it cannot initialize.
 
 ## Success criteria
 
@@ -302,7 +303,7 @@ layer instead of shipping BMC as an OpenWrt package.
 - Factory reset: set marker, reboot, verify clean re-initialization.
 - COMMAND negative test: tampered tarball is rejected before extraction.
 
-# Stage 8: Interface for users to install
+# Stage 8: Interface for users to install (not done in v1)
 
 Now we're finished with the Nix implementation itself. But users cannot
 use it to download packages such as widgets. So we need to make a frontend
