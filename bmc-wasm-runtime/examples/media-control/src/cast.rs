@@ -82,6 +82,36 @@ pub struct CastMediaStatus {
     pub current_time: f64,
     pub volume_level: f32,
     pub volume_muted: bool,
+    /// Bitmask from `supportedMediaCommands` (0 = unknown/all).
+    pub supported_commands: u32,
+    /// Stream type: "BUFFERED", "LIVE", or "NONE".
+    pub stream_type: Option<String>,
+}
+
+// Cast supportedMediaCommands bitmask flags.
+const CMD_PAUSE: u32 = 1;
+const CMD_SEEK: u32 = 2;
+const CMD_QUEUE_NEXT: u32 = 64;
+const CMD_QUEUE_PREV: u32 = 128;
+
+impl CastMediaStatus {
+    /// Convert Cast capabilities to `TransportActions`.
+    ///
+    /// When `supported_commands == 0` (not yet received), defaults to all-true.
+    pub fn transport_actions(&self) -> crate::upnp::TransportActions {
+        let cmds = self.supported_commands;
+        if cmds == 0 {
+            return crate::upnp::TransportActions::default();
+        }
+        let is_live = self.stream_type.as_deref() == Some("LIVE");
+        crate::upnp::TransportActions {
+            can_play: true, // Cast always allows play
+            can_pause: cmds & CMD_PAUSE != 0,
+            can_seek: cmds & CMD_SEEK != 0 && !is_live,
+            can_next: cmds & CMD_QUEUE_NEXT != 0,
+            can_previous: cmds & CMD_QUEUE_PREV != 0,
+        }
+    }
 }
 
 /// Callback the widget registers to receive state updates.
@@ -188,11 +218,6 @@ pub fn pause() {
     with_media_command("PAUSE", "");
 }
 
-/// Send Stop command.
-pub fn stop() {
-    with_media_command("STOP", "");
-}
-
 /// Seek to position in seconds.
 pub fn seek(position_secs: f64) {
     let secs = position_secs as u32;
@@ -220,12 +245,8 @@ pub fn set_volume(level: f32) {
         let req_id = state.alloc_request_id();
         state.pending_volume_req = Some(req_id);
         let level_str = f32_json(level);
-        let json = fmt!(
-            "{{\"type\": \"SET_VOLUME\", \"volume\": {{\"level\": {}}}, \"requestId\": {}}}",
-            level_str,
-            req_id
-        );
-        send_json(state, NS_RECEIVER, SENDER_ID, RECEIVER_ID, &json);
+        let msg = json!({"type": "SET_VOLUME", "volume": {"level": #(level_str)}, "requestId": #(req_id)});
+        send_json(state, NS_RECEIVER, SENDER_ID, RECEIVER_ID, &msg);
     });
 }
 
@@ -238,12 +259,9 @@ pub fn set_mute(muted: bool) {
         };
         let req_id = state.alloc_request_id();
         state.pending_volume_req = Some(req_id);
-        let json = fmt!(
-            "{{\"type\": \"SET_VOLUME\", \"volume\": {{\"muted\": {}}}, \"requestId\": {}}}",
-            muted,
-            req_id
-        );
-        send_json(state, NS_RECEIVER, SENDER_ID, RECEIVER_ID, &json);
+        let msg =
+            json!({"type": "SET_VOLUME", "volume": {"muted": #(muted)}, "requestId": #(req_id)});
+        send_json(state, NS_RECEIVER, SENDER_ID, RECEIVER_ID, &msg);
     });
 }
 
@@ -319,15 +337,15 @@ fn send_heartbeat(state: &mut CastState) {
         // Re-poll receiver status when waiting for a media app to start
         Phase::AwaitingReceiverStatus => {
             let req_id = state.alloc_request_id();
-            let json = fmt!("{{\"type\": \"GET_STATUS\", \"requestId\": {}}}", req_id);
-            send_json(state, NS_RECEIVER, SENDER_ID, RECEIVER_ID, &json);
+            let msg = json!({"type": "GET_STATUS", "requestId": #(req_id)});
+            send_json(state, NS_RECEIVER, SENDER_ID, RECEIVER_ID, &msg);
         }
         // Poll media status for position updates during active session
         Phase::MediaSession => {
             if let Some(ref tid) = state.transport_id.clone() {
                 let req_id = state.alloc_request_id();
-                let json = fmt!("{{\"type\": \"GET_STATUS\", \"requestId\": {}}}", req_id);
-                send_json(state, NS_MEDIA, SENDER_ID, tid, &json);
+                let msg = json!({"type": "GET_STATUS", "requestId": #(req_id)});
+                send_json(state, NS_MEDIA, SENDER_ID, tid, &msg);
             }
         }
         _ => {}
@@ -365,8 +383,8 @@ fn on_socket_event(_socket: Socket, event: &SocketEvent<'_>) {
 
                 // 2. Request receiver status (to discover running apps)
                 let req_id = state.alloc_request_id();
-                let json = fmt!("{{\"type\": \"GET_STATUS\", \"requestId\": {}}}", req_id);
-                send_json(state, NS_RECEIVER, SENDER_ID, RECEIVER_ID, &json);
+                let msg = json!({"type": "GET_STATUS", "requestId": #(req_id)});
+                send_json(state, NS_RECEIVER, SENDER_ID, RECEIVER_ID, &msg);
 
                 // 3. Send first heartbeat and schedule periodic ticks
                 send_heartbeat(state);
@@ -558,13 +576,13 @@ fn handle_receiver(state: &mut CastState, payload: &str) {
                 state.transport_id = Some(tid.clone());
 
                 // Connect to the app's transport
-                let connect_json = fmt!("{{\"type\": \"CONNECT\", \"origin\": {{}}}}",);
-                send_json(state, NS_CONNECTION, SENDER_ID, tid, &connect_json);
+                let connect_msg = json!({"type": "CONNECT", "origin": {}});
+                send_json(state, NS_CONNECTION, SENDER_ID, tid, &connect_msg);
 
                 // Request media status
                 let req_id = state.alloc_request_id();
-                let json = fmt!("{{\"type\": \"GET_STATUS\", \"requestId\": {}}}", req_id);
-                send_json(state, NS_MEDIA, SENDER_ID, tid, &json);
+                let msg = json!({"type": "GET_STATUS", "requestId": #(req_id)});
+                send_json(state, NS_MEDIA, SENDER_ID, tid, &msg);
 
                 state.phase = Phase::MediaSession;
             }
@@ -677,6 +695,14 @@ fn handle_media(state: &mut CastState, payload: &str) {
         state.status.volume_muted = muted;
     }
 
+    // Capabilities: supportedMediaCommands bitmask + stream type
+    if let Some(cmds) = doc.i64("/status/0/supportedMediaCommands") {
+        state.status.supported_commands = cmds as u32;
+    }
+    if let Some(st) = doc.str("/status/0/media/streamType") {
+        state.status.stream_type = Some(st);
+    }
+
     (state.on_status)(&state.status);
     request_frame();
 }
@@ -740,14 +766,19 @@ fn with_media_command(command_type: &str, extra_fields: &str) {
             session_id,
             tid
         );
-        let json = fmt!(
-            "{{\"type\": \"{}\", \"mediaSessionId\": {}, \"requestId\": {}{}}}",
-            command_type,
-            session_id,
-            req_id,
-            extra_fields
-        );
-        send_json(state, NS_MEDIA, SENDER_ID, &tid, &json);
+        let msg = json!({"type": #s(command_type), "mediaSessionId": #(session_id), "requestId": #(req_id)});
+        // Append extra fields (e.g. ", \"currentTime\": 42") if present
+        let msg = if extra_fields.is_empty() {
+            msg
+        } else {
+            // Insert extra fields before the closing brace
+            let mut s = msg;
+            s.pop(); // remove trailing '}'
+            s.push_str(extra_fields);
+            s.push('}');
+            s
+        };
+        send_json(state, NS_MEDIA, SENDER_ID, &tid, &msg);
     });
 }
 

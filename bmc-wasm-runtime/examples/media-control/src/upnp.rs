@@ -16,8 +16,6 @@
 
 use bmc_wasm_sdk::{FetchRequest, FetchResponse, XmlDoc, fmt, ufmt};
 
-use crate::protocol::{self, DeviceInfo, MediaController, Protocol, ResponseCallback};
-
 // ── Service URNs ─────────────────────────────────────────────────
 
 const AV_TRANSPORT: &str = "urn:schemas-upnp-org:service:AVTransport:1";
@@ -283,6 +281,48 @@ pub fn parse_mute(response_body: &[u8]) -> Option<bool> {
     Some(val == "1" || val == "true")
 }
 
+// ── Capability flags ────────────────────────────────────────────
+
+/// Transport capabilities parsed from `GetCurrentTransportActions`.
+#[derive(Debug, Clone)]
+pub struct TransportActions {
+    pub can_play: bool,
+    pub can_pause: bool,
+    pub can_seek: bool,
+    pub can_next: bool,
+    pub can_previous: bool,
+}
+
+impl Default for TransportActions {
+    fn default() -> Self {
+        Self {
+            can_play: true,
+            can_pause: true,
+            can_seek: true,
+            can_next: true,
+            can_previous: true,
+        }
+    }
+}
+
+/// Parse a `GetCurrentTransportActions` SOAP response.
+///
+/// Returns a comma-separated string like `"Play,Stop,Pause,Seek,Next,Previous"`.
+pub fn parse_transport_actions(response_body: &[u8]) -> Option<TransportActions> {
+    let xml = XmlDoc::parse(response_body);
+    if !xml.is_valid() {
+        return None;
+    }
+    let actions_str = xml.str("//Actions").unwrap_or_default();
+    Some(TransportActions {
+        can_play: actions_str.contains("Play"),
+        can_pause: actions_str.contains("Pause"),
+        can_seek: actions_str.contains("Seek"),
+        can_next: actions_str.contains("Next"),
+        can_previous: actions_str.contains("Previous"),
+    })
+}
+
 // ── AVTransport actions ──────────────────────────────────────────
 
 /// Send `Play` command.
@@ -302,17 +342,6 @@ pub fn pause(device: &UpnpDevice, cb: fn(&FetchResponse)) {
         &device.av_transport_url(),
         AV_TRANSPORT,
         "Pause",
-        &[("InstanceID", "0")],
-        cb,
-    );
-}
-
-/// Send `Stop` command.
-pub fn stop(device: &UpnpDevice, cb: fn(&FetchResponse)) {
-    soap_request(
-        &device.av_transport_url(),
-        AV_TRANSPORT,
-        "Stop",
         &[("InstanceID", "0")],
         cb,
     );
@@ -403,6 +432,17 @@ pub fn get_transport_info_after(delay_ms: u32, device: &UpnpDevice, cb: fn(&Fetc
     );
 }
 
+/// Request `GetCurrentTransportActions` (returns which actions are currently valid).
+pub fn get_transport_actions(device: &UpnpDevice, cb: fn(&FetchResponse)) {
+    soap_request(
+        &device.av_transport_url(),
+        AV_TRANSPORT,
+        "GetCurrentTransportActions",
+        &[("InstanceID", "0")],
+        cb,
+    );
+}
+
 // ── RenderingControl actions ─────────────────────────────────────
 
 /// Request current volume level (0–100).
@@ -457,83 +497,4 @@ pub fn set_mute(device: &UpnpDevice, muted: bool, cb: fn(&FetchResponse)) {
         ],
         cb,
     );
-}
-
-// ── MediaController trait impl ───────────────────────────────────
-
-impl UpnpDevice {
-    /// Create a `DeviceInfo` for this UPnP device.
-    pub fn device_info(&self) -> DeviceInfo {
-        DeviceInfo {
-            name: self.name.clone(),
-            address: self.base_url.clone(),
-            protocol: Protocol::Upnp,
-        }
-    }
-}
-
-impl MediaController for UpnpDevice {
-    fn play(&self, cb: ResponseCallback) {
-        play(self, cb);
-    }
-    fn pause(&self, cb: ResponseCallback) {
-        pause(self, cb);
-    }
-    fn stop(&self, cb: ResponseCallback) {
-        stop(self, cb);
-    }
-    fn next(&self, cb: ResponseCallback) {
-        next(self, cb);
-    }
-    fn previous(&self, cb: ResponseCallback) {
-        previous(self, cb);
-    }
-    fn seek(&self, position_secs: u32, cb: ResponseCallback) {
-        seek(self, position_secs, cb);
-    }
-
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-    fn set_volume(&self, level: f32, cb: ResponseCallback) {
-        let level_u32 = (level * 100.0).round() as u32;
-        set_volume(self, level_u32.min(100), cb);
-    }
-    fn set_mute(&self, muted: bool, cb: ResponseCallback) {
-        set_mute(self, muted, cb);
-    }
-
-    fn poll_position(&self, cb: ResponseCallback) {
-        get_position_info(self, cb);
-    }
-    fn poll_position_after(&self, delay_ms: u32, cb: ResponseCallback) {
-        get_position_info_after(delay_ms, self, cb);
-    }
-    fn poll_transport(&self, cb: ResponseCallback) {
-        get_transport_info(self, cb);
-    }
-    fn poll_volume(&self, cb: ResponseCallback) {
-        get_volume(self, cb);
-    }
-    fn poll_mute(&self, cb: ResponseCallback) {
-        get_mute(self, cb);
-    }
-
-    fn device(&self) -> DeviceInfo {
-        self.device_info()
-    }
-    fn protocol(&self) -> Protocol {
-        Protocol::Upnp
-    }
-}
-
-/// Map UPnP `TransportState` to the protocol-level `PlaybackState`.
-impl From<TransportState> for protocol::PlaybackState {
-    fn from(ts: TransportState) -> Self {
-        match ts {
-            TransportState::Playing => Self::Playing,
-            TransportState::Paused => Self::Paused,
-            TransportState::Stopped => Self::Stopped,
-            TransportState::Transitioning => Self::Transitioning,
-            TransportState::NoMedia => Self::NoMedia,
-        }
-    }
 }

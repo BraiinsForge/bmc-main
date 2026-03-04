@@ -155,6 +155,7 @@ pub enum TreeNode {
         style: u8,
         size: u8,
         icon_id: u16,
+        disabled: bool,
     },
     Spacer {
         flex: f32,
@@ -342,6 +343,7 @@ impl<'a> TreeReader<'a> {
                 let style = self.read_u8()?;
                 let size = self.read_u8()?;
                 let icon_id = self.read_u16()?;
+                let disabled = self.read_u8()? != 0;
                 let len = self.read_u16()?;
                 let label = self.read_string(len)?;
                 Ok(TreeNode::Button {
@@ -349,6 +351,7 @@ impl<'a> TreeReader<'a> {
                     style,
                     size,
                     icon_id,
+                    disabled,
                 })
             }
             NODE_SPACER => {
@@ -707,8 +710,8 @@ struct NotificationData {
 pub(crate) struct NodeContext {
     background: u32,
     paragraph: Option<ParagraphData>,
-    button: Option<(u32, String, u8, u8, u16)>, // id, label, style, size, icon_id
-    draws: Vec<DrawCommand>,                    // canvas draw commands
+    button: Option<(u32, String, u8, u8, u16, bool)>, // id, label, style, size, icon_id, disabled
+    draws: Vec<DrawCommand>,                          // canvas draw commands
     /// Touch interaction key for interactive canvases (None = decorative)
     touch_key: Option<String>,
     notification: Option<NotificationData>,
@@ -1028,6 +1031,7 @@ fn build_taffy_node(
             style: btn_style,
             size: btn_size,
             icon_id,
+            disabled,
         } => {
             let id_num = *button_id;
             *button_id += 1;
@@ -1049,7 +1053,14 @@ fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
-                    button: Some((id_num, label.clone(), *btn_style, *btn_size, *icon_id)),
+                    button: Some((
+                        id_num,
+                        label.clone(),
+                        *btn_style,
+                        *btn_size,
+                        *icon_id,
+                        *disabled,
+                    )),
                     ..Default::default()
                 }),
             )?;
@@ -1240,7 +1251,7 @@ fn render_taffy_node(
             renderer.draw_paragraph(&para.base_style, &para.spans, x, y, w);
         }
 
-        if let Some((btn_id, ref label, style, size, icon_id)) = ctx.button {
+        if let Some((btn_id, ref label, style, size, icon_id, disabled)) = ctx.button {
             let mut key_buf = [0_u8; 16];
             let key = format_btn_key(btn_id, &mut key_buf);
             let (clicked, _) = draw_button(
@@ -1255,6 +1266,7 @@ fn render_taffy_node(
                 ButtonStyle::from(style as u32),
                 ButtonSize::from(size),
                 icon_id,
+                disabled,
             );
             if let Some(slot) = result.clicks.get_mut(btn_id as usize) {
                 *slot = clicked;
@@ -2303,6 +2315,7 @@ fn render_modal(
         ButtonStyle::Ghost,
         ButtonSize::Normal,
         ICON_CLOSE,
+        false,
     );
 
     let (close_was_clicked, _) = close_clicked;
@@ -2495,6 +2508,7 @@ fn render_modal_body_node(
             style,
             size,
             icon_id,
+            disabled,
         } => {
             let btn_id = *button_idx;
             *button_idx += 1;
@@ -2519,6 +2533,7 @@ fn render_modal_body_node(
                     ButtonStyle::from(*style as u32),
                     sz,
                     *icon_id,
+                    *disabled,
                 );
                 let (was_clicked, _) = clicked;
                 if was_clicked && (btn_id as usize) < result.clicks.len() {

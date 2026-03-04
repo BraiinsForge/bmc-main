@@ -34,7 +34,7 @@ pub mod ws;
 pub mod xml;
 
 pub use bmc_wasm_protocol::*;
-pub use bmc_wasm_sdk_macros::{include_bitmap, include_icon};
+pub use bmc_wasm_sdk_macros::{include_bitmap, include_icon, json};
 pub use format::{format_date, format_duration};
 pub use host::{
     ButtonSize, ButtonStyle, SizeVariant, SystemTime, TouchHit, WidgetSize, draw_text, fill_rect,
@@ -88,47 +88,64 @@ macro_rules! button {
             [style: $crate::ButtonStyle::Primary]
             [size: $crate::ButtonSize::Normal]
             [icon: 0u16]
+            [disabled: false]
             $($($rest)*)?
         )
     };
 
     // Terminal — all fields consumed, build the node.
-    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] $(,)?) => {
-        $crate::make_button($crate::__macro_string_from($label), $s, $sz, $i)
+    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr] $(,)?) => {
+        $crate::make_button($crate::__macro_string_from($label), $s, $sz, $i, $d)
     };
 
     // style: Variant
-    (@acc [$label:expr] [style: $_s:expr] [size: $sz:expr] [icon: $i:expr]
+    (@acc [$label:expr] [style: $_s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr]
      style: $v:ident $(, $($rest:tt)*)?) => {
         button!(@acc
             [$label]
             [style: $crate::ButtonStyle::$v]
             [size: $sz]
             [icon: $i]
+            [disabled: $d]
             $($($rest)*)?
         )
     };
 
     // size: Variant
-    (@acc [$label:expr] [style: $s:expr] [size: $_sz:expr] [icon: $i:expr]
+    (@acc [$label:expr] [style: $s:expr] [size: $_sz:expr] [icon: $i:expr] [disabled: $d:expr]
      size: $v:ident $(, $($rest:tt)*)?) => {
         button!(@acc
             [$label]
             [style: $s]
             [size: $crate::ButtonSize::$v]
             [icon: $i]
+            [disabled: $d]
             $($($rest)*)?
         )
     };
 
     // icon: expr
-    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $_i:expr]
+    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $_i:expr] [disabled: $d:expr]
      icon: $v:expr $(, $($rest:tt)*)?) => {
         button!(@acc
             [$label]
             [style: $s]
             [size: $sz]
             [icon: $v]
+            [disabled: $d]
+            $($($rest)*)?
+        )
+    };
+
+    // disabled: expr
+    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $_d:expr]
+     disabled: $v:expr $(, $($rest:tt)*)?) => {
+        button!(@acc
+            [$label]
+            [style: $s]
+            [size: $sz]
+            [icon: $i]
+            [disabled: $v]
             $($($rest)*)?
         )
     };

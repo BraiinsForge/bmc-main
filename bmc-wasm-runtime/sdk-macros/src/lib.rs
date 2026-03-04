@@ -5,6 +5,8 @@
 //! Provides `include_icon!` which compiles SVG files into compact binary path
 //! data at build time using usvg.
 
+mod json;
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{LitStr, parse_macro_input};
@@ -81,4 +83,27 @@ pub fn include_icon(input: TokenStream) -> TokenStream {
     };
 
     expanded.into()
+}
+
+/// Compile-time JSON template that emits a `fmt!(...)` call.
+///
+/// Literal JSON structure is validated at compile time and baked into the
+/// format string with `{{`/`}}` escaping already applied.
+///
+/// - `#(expr)` — raw interpolation (numbers, booleans, pre-built JSON fragments)
+/// - `#s(expr)` — string interpolation (value wrapped in JSON quotes)
+///
+/// # Examples
+///
+/// ```ignore
+/// let body = json!({
+///     "jsonrpc": "2.0",
+///     "method": #s(method),
+///     "params": { "playerid": #(pid) },
+///     "id": #(id)
+/// });
+/// ```
+#[proc_macro]
+pub fn json(input: TokenStream) -> TokenStream {
+    json::expand(input.into()).into()
 }

@@ -44,8 +44,7 @@ pub const PROTO_GOOGLE_CAST: Icon = include_icon!("assets/proto-google-cast.svg"
 #[allow(dead_code)]
 pub const PROTO_DLNA: Icon = include_icon!("assets/proto-dlna.svg");
 #[allow(dead_code)]
-pub const PROTO_AIRPLAY: Icon = include_icon!("assets/proto-airplay.svg");
-
+pub const PROTO_KODI: Icon = include_icon!("assets/proto-kodi.svg");
 // ── Shared icons (no solid/outline distinction) ──────────────────
 
 pub const MUSIC: Icon = include_icon!("assets/music.svg");

@@ -5,11 +5,11 @@
 //! Feature-gated behind `perf-overlay`. The testbed enables it transitively via
 //! the `testbed` feature; on-device hosts can opt in with `features = ["perf-overlay"]`.
 
+#![allow(clippy::wildcard_imports)]
 #![expect(
     clippy::cast_possible_truncation,
     clippy::integer_division,
-    clippy::must_use_candidate,
-    clippy::wildcard_imports
+    clippy::must_use_candidate
 )]
 
 use std::fmt;

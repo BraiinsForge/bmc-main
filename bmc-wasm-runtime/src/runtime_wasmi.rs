@@ -352,6 +352,7 @@ impl WasmWidgetRuntime {
                         ButtonStyle::from(style),
                         ButtonSize::Normal,
                         0,
+                        false,
                     );
                     return i32::from(clicked.0);
                 }

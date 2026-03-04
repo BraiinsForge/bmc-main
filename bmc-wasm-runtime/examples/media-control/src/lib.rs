@@ -7,15 +7,14 @@
 
 //! Media Remote Control Widget — POC (BDK-334).
 //!
-//! Controls media playback on UPnP/DLNA, Google Cast, and DACP devices over LAN.
+//! Controls media playback on UPnP/DLNA, Google Cast, and Kodi devices over LAN.
 //! Discovers devices via mDNS and presents a picker UI.
 //!
-//! **Stage 5:** Device discovery + picker UI.
+//! **Stage 6:** Kodi protocol + unified protocol dispatch via `MediaController` trait.
 
 mod cast;
-mod dacp;
-mod dmap;
 mod icons;
+mod kodi;
 mod protocol;
 mod upnp;
 
@@ -24,32 +23,33 @@ use std::cell::{Cell, RefCell};
 #[allow(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
+use protocol::MediaController;
 use upnp::{
-    PositionInfo, TransportState, UpnpDevice, VolumeInfo, format_duration_hms, parse_mute,
-    parse_position_info, parse_transport_info, parse_volume,
+    PositionInfo, TransportActions, TransportState, UpnpDevice, VolumeInfo, format_duration_hms,
+    parse_mute, parse_position_info, parse_transport_actions, parse_transport_info, parse_volume,
 };
 
 // ── Configuration ────────────────────────────────────────────────
 
 /// Which protocol backend is in use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ActiveProtocol {
+enum DiscoveredProtocol {
     Upnp,
     Cast,
-    Dacp,
+    Kodi,
 }
 
 /// A device found via mDNS discovery.
 #[derive(Debug, Clone)]
 struct DiscoveredDevice {
-    /// Display name (from TXT records: Cast `fn`, DACP `Machine Name`/`CtlN`).
+    /// Display name (from TXT records: Cast `fn`, UPnP service name).
     name: String,
     /// Resolved IP address.
     host: String,
     /// Service port.
     port: u16,
     /// Protocol type.
-    protocol: ActiveProtocol,
+    protocol: DiscoveredProtocol,
     /// mDNS full service name (unique key for deduplication).
     service_name: String,
 }
@@ -71,6 +71,8 @@ struct MediaState {
     transport: TransportState,
     position: PositionInfo,
     volume: VolumeInfo,
+    /// Available transport actions (from protocol capability query).
+    actions: TransportActions,
     /// Album art bitmap ID (0 = none registered).
     art_bitmap_id: u16,
     /// Album art natural aspect ratio (width / height). 1.0 = square.
@@ -89,6 +91,7 @@ impl Default for MediaState {
             transport: TransportState::NoMedia,
             position: PositionInfo::default(),
             volume: VolumeInfo::default(),
+            actions: TransportActions::default(),
             art_bitmap_id: 0,
             art_aspect: 1.0,
             art_url: String::new(),
@@ -101,11 +104,6 @@ impl Default for MediaState {
 enum WidgetState {
     /// Browsing for devices — show device picker.
     Discovering,
-    /// DACP pairing in progress — show PIN screen.
-    Pairing {
-        device: DiscoveredDevice,
-        pin: String,
-    },
     /// Connected to a device, polling state.
     Connected(MediaState),
     /// Device became unreachable after repeated failures.
@@ -126,7 +124,8 @@ thread_local! {
     }) };
     static STATE: RefCell<WidgetState> = RefCell::new(WidgetState::Discovering);
     static DEVICE: RefCell<Option<UpnpDevice>> = const { RefCell::new(None) };
-    static PROTOCOL: Cell<ActiveProtocol> = const { Cell::new(ActiveProtocol::Upnp) };
+    /// Active protocol controller (set on connect, cleared on disconnect).
+    static CONTROLLER: RefCell<Option<Box<dyn MediaController>>> = RefCell::new(None);
     /// Devices found via mDNS (independent of widget state).
     static DISCOVERED: RefCell<Vec<DiscoveredDevice>> = const { RefCell::new(Vec::new()) };
     /// Display name of the currently connected device.
@@ -157,15 +156,15 @@ fn discovery_log(msg: String) {
 pub extern "C" fn init(width: u32, height: u32) {
     SIZE.set(WidgetSize::from_dimensions(width, height));
 
-    // Start mDNS discovery for Cast and DACP devices
+    // Start mDNS discovery for Cast, UPnP, and Kodi devices
     mdns::mdns_browse(
-        &["_googlecast._tcp", "_touch-able._tcp", "_upnp._tcp"],
+        &["_googlecast._tcp", "_upnp._tcp", "_xbmc-jsonrpc-h._tcp"],
         on_mdns_event,
     );
     log_info!("media: mDNS browse started");
     discovery_log("Browsing _googlecast._tcp".into());
-    discovery_log("Browsing _touch-able._tcp".into());
     discovery_log("Browsing _upnp._tcp".into());
+    discovery_log("Browsing _xbmc-jsonrpc-h._tcp".into());
 
     // Check for auto-reconnect target from last session
     if let Some(last) = kv::get_string("last_device") {
@@ -198,29 +197,29 @@ fn on_mdns_found(json: &str) {
 
     let (protocol, display_name) = if service_type.contains("_googlecast._tcp") {
         let display = doc.str("/txt/fn").unwrap_or_else(|| name.clone());
-        (ActiveProtocol::Cast, display)
-    } else if service_type.contains("_touch-able._tcp") {
-        let display = doc
-            .str("/txt/Machine Name")
-            .or_else(|| doc.str("/txt/CtlN"))
-            .unwrap_or_else(|| name.clone());
-        (ActiveProtocol::Dacp, display)
+        (DiscoveredProtocol::Cast, display)
+    } else if service_type.contains("_xbmc-jsonrpc-h._tcp") {
+        let display = name
+            .strip_suffix("._xbmc-jsonrpc-h._tcp.local.")
+            .unwrap_or(&name)
+            .to_string();
+        (DiscoveredProtocol::Kodi, display)
     } else if service_type.contains("_upnp._tcp") {
         // mDNS name is "Foo._upnp._tcp.local." — strip the suffix
         let display = name
             .strip_suffix("._upnp._tcp.local.")
             .unwrap_or(&name)
             .to_string();
-        (ActiveProtocol::Upnp, display)
+        (DiscoveredProtocol::Upnp, display)
     } else {
         return;
     };
 
     let service_name = name;
     let proto_label = match protocol {
-        ActiveProtocol::Cast => "Cast",
-        ActiveProtocol::Dacp => "DACP",
-        ActiveProtocol::Upnp => "UPnP",
+        DiscoveredProtocol::Cast => "Cast",
+        DiscoveredProtocol::Kodi => "Kodi",
+        DiscoveredProtocol::Upnp => "UPnP",
     };
     log_info!(
         "media: found {} ({}) at {}:{}",
@@ -277,18 +276,6 @@ fn on_mdns_removed(name: &str) {
 // ── Connection management ───────────────────────────────────────
 
 fn connect_to_device(device: &DiscoveredDevice) {
-    let proto_str = match device.protocol {
-        ActiveProtocol::Upnp => "UPnP",
-        ActiveProtocol::Cast => "Cast",
-        ActiveProtocol::Dacp => "DACP",
-    };
-    log_info!(
-        "media: connecting to {} ({}) at {}:{}",
-        device.name,
-        proto_str,
-        device.host,
-        device.port
-    );
     // Persist selection for auto-reconnect
     kv::set("last_device", device.service_name.as_bytes());
 
@@ -296,31 +283,19 @@ fn connect_to_device(device: &DiscoveredDevice) {
         *n.borrow_mut() = device.name.clone();
     });
 
-    match device.protocol {
-        ActiveProtocol::Cast => {
-            PROTOCOL.set(ActiveProtocol::Cast);
-            STATE.with(|s| *s.borrow_mut() = WidgetState::Disconnected(MediaState::default()));
+    let controller: Box<dyn MediaController> = match device.protocol {
+        DiscoveredProtocol::Cast => {
             cast::connect(&device.host, device.port, on_cast_status);
+            Box::new(CastAdapter)
         }
-        ActiveProtocol::Dacp => {
-            PROTOCOL.set(ActiveProtocol::Dacp);
-            // Check for stored pairing GUID
-            if let Some(guid) = kv::get_string("dacp_guid") {
-                STATE.with(|s| *s.borrow_mut() = WidgetState::Disconnected(MediaState::default()));
-                dacp::connect(&device.host, device.port, &guid, on_dacp_status);
-            } else {
-                // Need to pair first
-                let pin = dacp::start_pairing(&device.host, device.port, on_dacp_status);
-                STATE.with(|s| {
-                    *s.borrow_mut() = WidgetState::Pairing {
-                        device: device.clone(),
-                        pin,
-                    };
-                });
-            }
+        DiscoveredProtocol::Kodi => {
+            kodi::connect(&device.host, device.port, on_kodi_status);
+            // Grab auth headers after connect (KODI state now exists)
+            Box::new(KodiAdapter {
+                art_headers: kodi::auth_headers(),
+            })
         }
-        ActiveProtocol::Upnp => {
-            PROTOCOL.set(ActiveProtocol::Upnp);
+        DiscoveredProtocol::Upnp => {
             let base_url = fmt!("http://{}:{}", device.host, device.port);
             let upnp_device = UpnpDevice {
                 base_url,
@@ -329,32 +304,35 @@ fn connect_to_device(device: &DiscoveredDevice) {
                 name: device.name.clone(),
             };
             DEVICE.with(|d| *d.borrow_mut() = Some(upnp_device));
-            STATE.with(|s| {
-                *s.borrow_mut() = WidgetState::Disconnected(MediaState::default());
-            });
             // Kick off initial status poll — will transition to Connected on success
             with_device(|d| {
                 upnp::get_position_info(d, on_position_info);
                 upnp::get_transport_info(d, on_transport_info);
+                upnp::get_transport_actions(d, on_transport_actions);
                 upnp::get_volume(d, on_volume);
                 upnp::get_mute(d, on_mute);
             });
+            Box::new(UpnpAdapter)
         }
-    }
+    };
 
+    log_info!(
+        "media: connecting to {} ({}) at {}:{}",
+        device.name,
+        controller.protocol_name(),
+        device.host,
+        device.port
+    );
+
+    CONTROLLER.with(|c| *c.borrow_mut() = Some(controller));
+    STATE.with(|s| *s.borrow_mut() = WidgetState::Disconnected(MediaState::default()));
     request_frame();
 }
 
 fn disconnect_and_return_to_picker() {
     log_info!("media: disconnecting, returning to picker");
-    let proto = PROTOCOL.with(Cell::get);
-    match proto {
-        ActiveProtocol::Cast => cast::disconnect(),
-        ActiveProtocol::Dacp => dacp::disconnect(),
-        ActiveProtocol::Upnp => {
-            DEVICE.with(|d| *d.borrow_mut() = None);
-        }
-    }
+    with_controller(|c| c.disconnect());
+    CONTROLLER.with(|c| *c.borrow_mut() = None);
 
     // Clear auto-reconnect target
     kv::delete("last_device");
@@ -366,38 +344,35 @@ fn disconnect_and_return_to_picker() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
-    let proto = PROTOCOL.with(Cell::get);
+    // Drive protocol timers and detect disconnect (unified across all protocols)
+    let has_controller = CONTROLLER.with(|c| c.borrow().is_some());
+    if has_controller {
+        let mut alive = false;
+        let mut playing_interval = 0u32;
+        let mut idle_interval = 0u32;
 
-    // Drive Cast heartbeat timing and detect disconnect
-    if proto == ActiveProtocol::Cast {
-        cast::tick(delta_ms);
-        if !cast::is_alive() {
+        CONTROLLER.with(|c| {
+            if let Some(ctrl) = c.borrow().as_deref() {
+                ctrl.tick(delta_ms);
+                alive = ctrl.is_alive();
+                playing_interval = ctrl.poll_interval_playing();
+                idle_interval = ctrl.poll_interval_idle();
+            }
+        });
+
+        if !alive {
             transition_to_disconnected();
         }
 
         interpolate_position(delta_ms);
-        if cast::is_alive() {
-            let is_playing = is_transport_playing();
-            let interval = if is_playing {
-                POLL_INTERVAL_MS
+
+        if alive {
+            let interval = if is_transport_playing() {
+                playing_interval
             } else {
-                cast::HEARTBEAT_MS
+                idle_interval
             };
             request_frame_after(interval);
-        }
-    }
-
-    // Drive DACP reconnect timing and interpolate position
-    if proto == ActiveProtocol::Dacp {
-        dacp::tick(delta_ms);
-        if !dacp::is_alive() {
-            transition_to_disconnected();
-        }
-
-        interpolate_position(delta_ms);
-        if dacp::is_connected() {
-            let is_playing = is_transport_playing();
-            request_frame_after(if is_playing { POLL_INTERVAL_MS } else { 3_000 });
         }
     }
 
@@ -407,7 +382,6 @@ pub extern "C" fn render(delta_ms: u32) {
     #[derive(Clone, Copy)]
     enum Screen {
         Discovering,
-        Pairing,
         Media, // Connected or Disconnected
     }
 
@@ -416,7 +390,6 @@ pub extern "C" fn render(delta_ms: u32) {
         let state = s.borrow();
         let (root, screen) = match &*state {
             WidgetState::Discovering => (render_discovering(size), Screen::Discovering),
-            WidgetState::Pairing { pin, .. } => (render_pairing(size, pin), Screen::Pairing),
             WidgetState::Connected(media) => (render_media_screen(size, media), Screen::Media),
             WidgetState::Disconnected(_) => (render_disconnected(size), Screen::Media),
         };
@@ -441,20 +414,29 @@ pub extern "C" fn render(delta_ms: u32) {
             // Touch canvases: "progress", "volume"
 
             // Progress bar: drag for visual feedback, release to seek
-            if let Some(frac) = bar_frac(&result, "progress") {
-                STATE.with(|s| {
-                    let mut state = s.borrow_mut();
-                    if let WidgetState::Connected(media) = &mut *state {
-                        if media.position.duration_secs > 0 {
-                            media.position.position_secs =
-                                (frac * media.position.duration_secs as f32) as u32;
-                        }
-                    }
-                });
-                if result.touch.contains_key("progress") {
-                    seek_to_fraction(frac);
+            let can_seek = STATE.with(|s| {
+                let state = s.borrow();
+                match &*state {
+                    WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.actions.can_seek,
+                    WidgetState::Discovering => false,
                 }
-                request_frame();
+            });
+            if can_seek {
+                if let Some(frac) = bar_frac(&result, "progress") {
+                    STATE.with(|s| {
+                        let mut state = s.borrow_mut();
+                        if let WidgetState::Connected(media) = &mut *state {
+                            if media.position.duration_secs > 0 {
+                                media.position.position_secs =
+                                    (frac * media.position.duration_secs as f32) as u32;
+                            }
+                        }
+                    });
+                    if result.touch.contains_key("progress") {
+                        seek_to_fraction(frac);
+                    }
+                    request_frame();
+                }
             }
 
             // Volume bar: drag for visual feedback, release to commit
@@ -468,16 +450,7 @@ pub extern "C" fn render(delta_ms: u32) {
                     }
                 });
                 if result.touch.contains_key("volume") {
-                    match proto {
-                        ActiveProtocol::Cast => cast::set_volume(frac),
-                        ActiveProtocol::Dacp => dacp::set_volume((frac * 100.0) as u32),
-                        ActiveProtocol::Upnp => {
-                            let new_level = (frac * 100.0) as u32;
-                            with_device(|device| {
-                                upnp::set_volume(device, new_level, on_volume_set);
-                            });
-                        }
-                    }
+                    with_controller(|c| c.set_volume(frac));
                 }
                 request_frame();
             }
@@ -490,27 +463,10 @@ pub extern "C" fn render(delta_ms: u32) {
                     } else {
                         // Media controls (shifted by 1 for the switcher button)
                         let media_idx = i - 1;
-                        match proto {
-                            ActiveProtocol::Cast => handle_cast_click(media_idx),
-                            ActiveProtocol::Dacp => handle_dacp_click(media_idx),
-                            ActiveProtocol::Upnp => {
-                                with_device(|device| match media_idx {
-                                    0 => upnp::previous(device, on_command_response),
-                                    1 => handle_play_pause(device),
-                                    2 => upnp::next(device, on_command_response),
-                                    3 => adjust_volume(device, -5),
-                                    4 => adjust_volume(device, 5),
-                                    5 => toggle_mute(device),
-                                    _ => {}
-                                });
-                            }
-                        }
+                        with_controller(|c| handle_media_click(c, media_idx));
                     }
                 }
             }
-        }
-        Screen::Pairing => {
-            // No interactive buttons on the pairing screen
         }
     }
 }
@@ -523,6 +479,176 @@ fn with_device(f: impl FnOnce(&UpnpDevice)) {
             f(device);
         }
     });
+}
+
+/// Fetch album art through the active controller (handles protocol-specific auth).
+fn fetch_album_art(url: &str) {
+    let url = url.to_string();
+    with_controller(|ctrl| ctrl.fetch_art(&url, on_album_art));
+}
+
+/// Dispatch through the active `MediaController`, if any.
+fn with_controller(f: impl FnOnce(&dyn MediaController)) {
+    CONTROLLER.with(|c| {
+        if let Some(ctrl) = c.borrow().as_deref() {
+            f(ctrl);
+        }
+    });
+}
+
+// ── Protocol adapters ───────────────────────────────────────────
+//
+// Thin structs implementing `MediaController` by delegating to module
+// functions. Adapters live in lib.rs (not in protocol modules) because
+// UPnP commands need response-callback functions defined here.
+
+/// Google Cast adapter — zero-sized, all state in `cast::` thread-locals.
+struct CastAdapter;
+
+impl MediaController for CastAdapter {
+    fn disconnect(&self) {
+        cast::disconnect();
+    }
+    fn is_alive(&self) -> bool {
+        cast::is_alive()
+    }
+    fn tick(&self, delta_ms: u32) {
+        cast::tick(delta_ms);
+    }
+    fn play(&self) {
+        cast::play();
+    }
+    fn pause(&self) {
+        cast::pause();
+    }
+    fn next(&self) {
+        cast::next();
+    }
+    fn previous(&self) {
+        cast::previous();
+    }
+    fn seek(&self, position_secs: u32, _duration_secs: u32) {
+        cast::seek(f64::from(position_secs));
+    }
+    fn set_volume(&self, level: f32) {
+        cast::set_volume(level);
+    }
+    fn set_mute(&self, muted: bool) {
+        cast::set_mute(muted);
+    }
+    fn poll_interval_playing(&self) -> u32 {
+        POLL_INTERVAL_MS
+    }
+    fn poll_interval_idle(&self) -> u32 {
+        cast::HEARTBEAT_MS
+    }
+    fn protocol_name(&self) -> &'static str {
+        "Cast"
+    }
+}
+
+/// Kodi JSON-RPC adapter — zero-sized, all state in `kodi::` thread-locals.
+struct KodiAdapter {
+    /// Cached auth headers for image fetches (avoids re-entrant KODI borrow).
+    art_headers: Option<String>,
+}
+
+impl MediaController for KodiAdapter {
+    fn disconnect(&self) {
+        kodi::disconnect();
+    }
+    fn is_alive(&self) -> bool {
+        kodi::is_alive()
+    }
+    fn tick(&self, delta_ms: u32) {
+        kodi::tick(delta_ms);
+    }
+    fn play(&self) {
+        kodi::play();
+    }
+    fn pause(&self) {
+        kodi::pause();
+    }
+    fn next(&self) {
+        kodi::next();
+    }
+    fn previous(&self) {
+        kodi::previous();
+    }
+    fn seek(&self, position_secs: u32, duration_secs: u32) {
+        if duration_secs == 0 {
+            return;
+        }
+        let frac = f64::from(position_secs) / f64::from(duration_secs);
+        kodi::seek(frac);
+    }
+    fn set_volume(&self, level: f32) {
+        kodi::set_volume(level);
+    }
+    fn set_mute(&self, muted: bool) {
+        kodi::set_mute(muted);
+    }
+    fn poll_interval_playing(&self) -> u32 {
+        kodi::POLL_INTERVAL_MS
+    }
+    fn poll_interval_idle(&self) -> u32 {
+        kodi::POLL_IDLE_INTERVAL_MS
+    }
+    fn protocol_name(&self) -> &'static str {
+        "Kodi"
+    }
+    fn fetch_art(&self, url: &str, callback: fn(&FetchResponse)) {
+        fetch(url, self.art_headers.as_deref(), callback);
+    }
+}
+
+/// UPnP/DLNA adapter — zero-sized, device state in `DEVICE` thread-local.
+/// Response callbacks (`on_command_response`, `on_volume_set`, `on_mute_set`)
+/// are defined in lib.rs, which is why the adapter lives here.
+struct UpnpAdapter;
+
+impl MediaController for UpnpAdapter {
+    fn disconnect(&self) {
+        DEVICE.with(|d| *d.borrow_mut() = None);
+    }
+    fn is_alive(&self) -> bool {
+        // UPnP manages alive state through record_failure()/reset_failures()
+        true
+    }
+    fn tick(&self, _delta_ms: u32) {
+        // UPnP polling is callback-chain driven, no tick needed
+    }
+    fn play(&self) {
+        with_device(|d| upnp::play(d, on_command_response));
+    }
+    fn pause(&self) {
+        with_device(|d| upnp::pause(d, on_command_response));
+    }
+    fn next(&self) {
+        with_device(|d| upnp::next(d, on_command_response));
+    }
+    fn previous(&self) {
+        with_device(|d| upnp::previous(d, on_command_response));
+    }
+    fn seek(&self, position_secs: u32, _duration_secs: u32) {
+        with_device(|d| upnp::seek(d, position_secs, on_command_response));
+    }
+    fn set_volume(&self, level: f32) {
+        let level_pct = (level * 100.0) as u32;
+        with_device(|d| upnp::set_volume(d, level_pct.min(100), on_volume_set));
+    }
+    fn set_mute(&self, muted: bool) {
+        with_device(|d| upnp::set_mute(d, muted, on_mute_set));
+    }
+    fn poll_interval_playing(&self) -> u32 {
+        POLL_INTERVAL_MS
+    }
+    fn poll_interval_idle(&self) -> u32 {
+        POLL_IDLE_INTERVAL_MS
+    }
+    fn protocol_name(&self) -> &'static str {
+        "UPnP"
+    }
 }
 
 // ── Shared protocol helpers ──────────────────────────────────────
@@ -564,111 +690,49 @@ fn is_transport_playing() -> bool {
     })
 }
 
-// ── DACP command handlers ───────────────────────────────────────
+// ── Unified command handlers ─────────────────────────────────────
 
-fn handle_dacp_click(index: usize) {
+/// Handle a media control button click (protocol-agnostic).
+/// Button indices: 0=prev, 1=play/pause, 2=next, 3=vol-, 4=vol+, 5=mute.
+fn handle_media_click(ctrl: &dyn MediaController, index: usize) {
     match index {
-        0 => dacp::previous(),
-        1 => dacp::play_pause(),
-        2 => dacp::next(),
-        3 => adjust_dacp_volume(-5),
-        4 => adjust_dacp_volume(5),
-        _ => {}
-    }
-}
-
-fn adjust_dacp_volume(delta: i32) {
-    let current = STATE.with(|s| {
-        let state = s.borrow();
-        match &*state {
-            WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.volume.level / 10,
-            _ => 50,
-        }
-    });
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-    let new_level = (current as i32 + delta).clamp(0, 100) as u32;
-    dacp::set_volume(new_level);
-}
-
-// ── Cast command handlers ────────────────────────────────────────
-
-fn handle_cast_click(index: usize) {
-    match index {
-        0 => cast::previous(),
+        0 => ctrl.previous(),
         1 => {
-            let is_playing = STATE.with(|s| {
-                let state = s.borrow();
-                matches!(
-                    &*state,
-                    WidgetState::Connected(m) if m.transport == TransportState::Playing
-                )
-            });
-            if is_playing {
-                cast::pause();
+            if is_transport_playing() {
+                ctrl.pause();
             } else {
-                cast::play();
+                ctrl.play();
             }
         }
-        2 => cast::next(),
-        3 => adjust_cast_volume(-0.05),
-        4 => adjust_cast_volume(0.05),
+        2 => ctrl.next(),
+        3 => adjust_volume_by_delta(ctrl, -0.05),
+        4 => adjust_volume_by_delta(ctrl, 0.05),
         5 => {
             let muted = STATE.with(|s| {
                 let state = s.borrow();
                 match &*state {
                     WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.volume.muted,
-                    _ => false,
+                    WidgetState::Discovering => false,
                 }
             });
-            cast::set_mute(!muted);
+            ctrl.set_mute(!muted);
         }
         _ => {}
     }
 }
 
-fn adjust_cast_volume(delta: f32) {
+/// Adjust volume by a fractional delta (0.0–1.0 scale).
+fn adjust_volume_by_delta(ctrl: &dyn MediaController, delta: f32) {
     let current = STATE.with(|s| {
         let state = s.borrow();
         match &*state {
             WidgetState::Connected(m) | WidgetState::Disconnected(m) => {
                 m.volume.level as f32 / 1_000.0
             }
-            _ => 0.5,
+            WidgetState::Discovering => 0.5,
         }
     });
-    cast::set_volume((current + delta).clamp(0.0, 1.0));
-}
-
-// ── UPnP command handlers ───────────────────────────────────────
-
-fn handle_play_pause(device: &UpnpDevice) {
-    let is_playing = STATE.with(|s| {
-        let state = s.borrow();
-        matches!(
-            &*state,
-            WidgetState::Connected(m) | WidgetState::Disconnected(m)
-                if m.transport == TransportState::Playing
-        )
-    });
-
-    if is_playing {
-        upnp::pause(device, on_command_response);
-    } else {
-        upnp::play(device, on_command_response);
-    }
-}
-
-fn adjust_volume(device: &UpnpDevice, delta: i32) {
-    let current_pct = STATE.with(|s| {
-        let state = s.borrow();
-        match &*state {
-            WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.volume.level / 10,
-            _ => 50,
-        }
-    });
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-    let new_level = (current_pct as i32 + delta).clamp(0, 100) as u32;
-    upnp::set_volume(device, new_level, on_volume_set);
+    ctrl.set_volume((current + delta).clamp(0.0, 1.0));
 }
 
 /// Get the touch fraction for a named bar (drag takes priority, then release).
@@ -685,7 +749,7 @@ fn seek_to_fraction(frac: f32) {
         let state = s.borrow();
         match &*state {
             WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.position.duration_secs,
-            _ => 0,
+            WidgetState::Discovering => 0,
         }
     });
     if dur == 0 {
@@ -693,24 +757,7 @@ fn seek_to_fraction(frac: f32) {
     }
 
     let new_pos = (frac * dur as f32) as u32;
-    match PROTOCOL.with(Cell::get) {
-        ActiveProtocol::Cast => cast::seek(f64::from(new_pos)),
-        ActiveProtocol::Dacp => dacp::seek(new_pos),
-        ActiveProtocol::Upnp => {
-            with_device(|device| upnp::seek(device, new_pos, on_command_response));
-        }
-    }
-}
-
-fn toggle_mute(device: &UpnpDevice) {
-    let muted = STATE.with(|s| {
-        let state = s.borrow();
-        match &*state {
-            WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.volume.muted,
-            _ => false,
-        }
-    });
-    upnp::set_mute(device, !muted, on_mute_set);
+    with_controller(|c| c.seek(new_pos, dur));
 }
 
 // ── Response callbacks ───────────────────────────────────────────
@@ -753,7 +800,7 @@ fn on_position_info(response: &FetchResponse) {
                         media.art_url.clone_from(&uri);
                     }
                 });
-                fetch(&uri, None, on_album_art);
+                fetch_album_art(&uri);
             }
         }
 
@@ -778,6 +825,24 @@ fn on_transport_info(response: &FetchResponse) {
             let mut state = s.borrow_mut();
             if let WidgetState::Connected(media) = &mut *state {
                 media.transport = transport;
+            }
+        });
+        request_frame();
+    }
+}
+
+fn on_transport_actions(response: &FetchResponse) {
+    if !response.ok() {
+        return;
+    }
+
+    reset_failures();
+
+    if let Some(actions) = parse_transport_actions(response.body()) {
+        STATE.with(|s| {
+            let mut state = s.borrow_mut();
+            if let WidgetState::Connected(media) = &mut *state {
+                media.actions = actions;
             }
         });
         request_frame();
@@ -854,6 +919,7 @@ fn on_command_response(response: &FetchResponse) {
     with_device(|d| {
         upnp::get_position_info(d, on_position_info);
         upnp::get_transport_info(d, on_transport_info);
+        upnp::get_transport_actions(d, on_transport_actions);
     });
 }
 
@@ -894,10 +960,10 @@ fn downscale_thumbnail_url(url: &str) -> String {
 fn on_cast_status(status: &cast::CastMediaStatus) {
     STATE.with(|s| {
         let mut state = s.borrow_mut();
-        // Transition Discovering/Pairing/Disconnected → Connected on status
+        // Transition Discovering/Disconnected → Connected on status
         if matches!(
             &*state,
-            WidgetState::Disconnected(_) | WidgetState::Discovering | WidgetState::Pairing { .. }
+            WidgetState::Disconnected(_) | WidgetState::Discovering
         ) {
             let taken = std::mem::take(&mut *state);
             match taken {
@@ -936,28 +1002,30 @@ fn on_cast_status(status: &cast::CastMediaStatus) {
             media.volume.level = (status.volume_level * 1_000.0) as u32;
             media.volume.muted = status.volume_muted;
 
+            media.actions = status.transport_actions();
+
             // Fetch album art if URL changed
             if let Some(ref url) = status.album_art_url {
                 // Rewrite YouTube maxres thumbnails to medium quality (smaller file)
                 let fetch_url = downscale_thumbnail_url(url);
                 if media.art_url != fetch_url {
                     media.art_url.clone_from(&fetch_url);
-                    fetch(&fetch_url, None, on_album_art);
+                    fetch_album_art(&fetch_url);
                 }
             }
         }
     });
 }
 
-// ── DACP status callback ────────────────────────────────────────
+// ── Kodi status callback ─────────────────────────────────────────
 
-fn on_dacp_status(status: &dacp::DacpMediaStatus) {
+fn on_kodi_status(status: &kodi::KodiMediaStatus) {
     STATE.with(|s| {
         let mut state = s.borrow_mut();
-        // Transition Discovering/Pairing/Disconnected → Connected on status
+        // Transition Discovering/Disconnected → Connected on status
         if matches!(
             &*state,
-            WidgetState::Disconnected(_) | WidgetState::Discovering | WidgetState::Pairing { .. }
+            WidgetState::Disconnected(_) | WidgetState::Discovering
         ) {
             let taken = std::mem::take(&mut *state);
             match taken {
@@ -966,31 +1034,40 @@ fn on_dacp_status(status: &dacp::DacpMediaStatus) {
             }
         }
         if let WidgetState::Connected(media) = &mut *state {
-            media.transport = match status.player_state {
-                dacp::PlayerState::Playing => TransportState::Playing,
-                dacp::PlayerState::Paused => TransportState::Paused,
-                dacp::PlayerState::Stopped => TransportState::Stopped,
+            // Map Kodi player state to our TransportState
+            media.transport = match status.player_state.as_str() {
+                "playing" => TransportState::Playing,
+                "paused" => TransportState::Paused,
+                _ => TransportState::NoMedia,
             };
 
-            // DACP: duration_ms and remaining_ms → position in seconds
-            media.position.duration_secs = status.duration_ms / 1_000;
-            if status.duration_ms > 0 && status.remaining_ms <= status.duration_ms {
-                media.position.position_secs = (status.duration_ms - status.remaining_ms) / 1_000;
-            }
+            media.position.position_secs = status.current_time as u32;
+            media.position.duration_secs = status.duration_secs as u32;
 
-            if let Some(ref title) = status.track_name {
-                media.position.track_meta.title = Some(title.clone());
-            }
-            if let Some(ref artist) = status.artist {
-                media.position.track_meta.artist = Some(artist.clone());
-            }
-            if let Some(ref album) = status.album {
-                media.position.track_meta.album = Some(album.clone());
-            }
+            media.position.track_meta.title = status.title.clone();
+            media.position.track_meta.artist = status.artist.clone();
+            media.position.track_meta.album = status.album.clone();
 
-            // DACP volume 0–100 → permille
-            media.volume.level = status.volume * 10;
-            media.volume.muted = false; // DACP has no mute concept
+            // Volume: Kodi 0–100 → permille
+            media.volume.level = (status.volume_level * 10.0) as u32;
+            media.volume.muted = status.volume_muted;
+
+            media.actions = TransportActions {
+                can_play: true,
+                can_pause: true,
+                can_seek: status.can_seek,
+                can_next: true,
+                can_previous: true,
+            };
+
+            // Fetch album art if URL changed
+            if let Some(ref url) = status.album_art_url {
+                let fetch_url = downscale_thumbnail_url(url);
+                if media.art_url != fetch_url {
+                    media.art_url.clone_from(&fetch_url);
+                    fetch_album_art(&fetch_url);
+                }
+            }
         }
     });
 }
@@ -1052,6 +1129,7 @@ fn reset_failures() {
         with_device(|d| {
             upnp::get_position_info(d, on_position_info);
             upnp::get_transport_info(d, on_transport_info);
+            upnp::get_transport_actions(d, on_transport_actions);
             upnp::get_volume(d, on_volume);
             upnp::get_mute(d, on_mute);
         });
@@ -1156,9 +1234,9 @@ fn render_discovering(size: WidgetSize) -> Node {
             .iter()
             .map(|dev| {
                 let proto_icon = match dev.protocol {
-                    ActiveProtocol::Cast => &icons::PROTO_GOOGLE_CAST,
-                    ActiveProtocol::Dacp => &icons::PROTO_AIRPLAY,
-                    ActiveProtocol::Upnp => &icons::PROTO_DLNA,
+                    DiscoveredProtocol::Cast => &icons::PROTO_GOOGLE_CAST,
+                    DiscoveredProtocol::Kodi => &icons::PROTO_KODI,
+                    DiscoveredProtocol::Upnp => &icons::PROTO_DLNA,
                 };
                 button!(
                     &dev.name,
@@ -1216,31 +1294,6 @@ fn render_discovery_log(max_lines: usize, right_aligned: bool) -> Node {
     } else {
         col(props!(gap: 4.0, cross_align: CrossAlign::Center), lines)
     }
-}
-
-// ── Pairing screen ───────────────────────────────────────────────
-
-fn render_pairing(size: WidgetSize, pin: &str) -> Node {
-    let pin_sz = match size.variant {
-        SizeVariant::Full | SizeVariant::Large => 72,
-        SizeVariant::Medium => 48,
-        SizeVariant::Small => 36,
-    };
-
-    center(
-        props!(background: GRAY_100),
-        [col(
-            props!(gap: 16.0, cross_align: CrossAlign::Center),
-            [
-                text(pin, style!(size: pin_sz, color: WHITE, weight: 700)),
-                text(
-                    "Enter this code in iTunes/Music",
-                    style!(size: 18, color: GRAY_40),
-                ),
-                text("Waiting for pairing...", style!(size: 14, color: GRAY_60)),
-            ],
-        )],
-    )
 }
 
 // ── Disconnected screen ──────────────────────────────────────────
@@ -1319,21 +1372,25 @@ fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
     let bar_w = avail_w;
 
     // Reserve space for progress bar + controls below the art row
-    let controls_h = 80.0; // progress (~30) + controls (~40) + gaps
-    let art_max_h = (avail_h - controls_h).max(48.0);
+    let controls_h = if size.variant == SizeVariant::Small {
+        76.0 // stacked: 2×32 + 4 gap + 8 col gap
+    } else {
+        80.0 // progress (~30) + controls (~40) + gaps
+    };
+    let art_max_h = (avail_h - controls_h - gap).max(40.0);
     let art_size = match size.variant {
         SizeVariant::Large => art_max_h.min(avail_w * 0.4),
         SizeVariant::Medium => art_max_h.min(avail_w * 0.3),
-        SizeVariant::Small => art_max_h.min(avail_h * 0.6),
+        SizeVariant::Small => art_max_h.min(avail_w * 0.25).min(80.0),
         SizeVariant::Full => 48.0_f32.min(avail_h * 0.4),
     };
 
     col(
         props!(background: GRAY_100, padding: pad, gap: gap),
         [
-            // Top: art + track meta side by side
+            // Top: art + track meta side by side (flex to push controls to bottom)
             row(
-                props!(gap: gap, height: art_size),
+                props!(flex: 1.0, gap: gap),
                 [
                     render_album_art(media, art_size),
                     col(
@@ -1428,15 +1485,21 @@ fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
     col(
         props!(gap: 4.0),
         [
-            // Switcher button (index 0 in the click list)
-            render_switcher_button(),
             text(title, style!(size: title_size, color: GRAY_10, weight: 600)),
-            text(artist, style!(size: detail_size, color: GRAY_40)),
+            text(
+                &fmt!("Artist: {}", artist),
+                style!(size: detail_size, color: GRAY_40),
+            ),
             if !album.is_empty() {
-                text(album, style!(size: detail_size, color: GRAY_50))
+                text(
+                    &fmt!("Album: {}", album),
+                    style!(size: detail_size, color: GRAY_50),
+                )
             } else {
                 spacer(0.0)
             },
+            // Switcher button (index 0 in the click list)
+            render_switcher_button(),
         ],
     )
 }
@@ -1608,22 +1671,23 @@ fn render_progress(media: &MediaState, bar_w: f32) -> Node {
 }
 
 fn render_controls(media: &MediaState) -> Node {
-    let (play_icon, mute_icon, vol_str, vol_frac) = controls_data(media);
+    let cd = controls_data(media);
+    let actions = &media.actions;
 
     row(
         props!(gap: 8.0, cross_align: CrossAlign::Center),
         [
-            button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small),
-            button!("", icon: tree::ensure_registered(play_icon), style: Ghost, size: Small),
-            button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small),
+            button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous),
+            button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled),
+            button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next),
             spacer(1.0),
             button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small),
             button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small),
-            button!("", icon: tree::ensure_registered(mute_icon), style: Ghost, size: Small),
-            volume_bar(vol_frac, VOLUME_BAR_W, false),
+            button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small),
+            volume_bar(cd.vol_frac, VOLUME_BAR_W, false),
             row(
                 props!(width: VOL_LABEL_W),
-                [text(&vol_str, style!(size: 12, color: GRAY_40))],
+                [text(&cd.vol_str, style!(size: 12, color: GRAY_40))],
             ),
         ],
     )
@@ -1636,7 +1700,8 @@ const BTN_GHOST_SMALL_W: f32 = 38.0;
 /// Row 1: prev | play | next | [progress bar] | time
 /// Row 2: vol- | vol+ | mute | [volume bar]   | %
 fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
-    let (play_icon, mute_icon, vol_str, vol_frac) = controls_data(media);
+    let cd = controls_data(media);
+    let actions = &media.actions;
 
     let btns_3 = BTN_GHOST_SMALL_W * 3.0;
     // Row 1: 3 buttons + 4 gaps + progress + time
@@ -1650,9 +1715,9 @@ fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
             row(
                 props!(gap: 8.0, cross_align: CrossAlign::Center),
                 [
-                    button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small),
-                    button!("", icon: tree::ensure_registered(play_icon), style: Ghost, size: Small),
-                    button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small),
+                    button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous),
+                    button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled),
+                    button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next),
                     progress_bar_node(media, progress_w),
                     text(progress_time_str(media), style!(size: 12, color: GRAY_40)),
                 ],
@@ -1662,11 +1727,11 @@ fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
                 [
                     button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small),
                     button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small),
-                    button!("", icon: tree::ensure_registered(mute_icon), style: Ghost, size: Small),
-                    volume_bar(vol_frac, volume_w, true),
+                    button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small),
+                    volume_bar(cd.vol_frac, volume_w, true),
                     row(
                         props!(width: VOL_LABEL_W),
-                        [text(&vol_str, style!(size: 12, color: GRAY_40))],
+                        [text(&cd.vol_str, style!(size: 12, color: GRAY_40))],
                     ),
                 ],
             ),
@@ -1695,11 +1760,25 @@ fn volume_bar(vol_frac: f32, bar_w: f32, stretch: bool) -> Node {
     touchable("volume", bar_props, draws)
 }
 
-fn controls_data(media: &MediaState) -> (&'static Icon, &'static Icon, String, f32) {
-    let play_icon = if media.transport == TransportState::Playing {
+struct ControlsData {
+    play_icon: &'static Icon,
+    play_disabled: bool,
+    mute_icon: &'static Icon,
+    vol_str: String,
+    vol_frac: f32,
+}
+
+fn controls_data(media: &MediaState) -> ControlsData {
+    let is_playing = media.transport == TransportState::Playing;
+    let play_icon = if is_playing {
         &icons::solid::PAUSE
     } else {
         &icons::solid::PLAY
+    };
+    let play_disabled = if is_playing {
+        !media.actions.can_pause
+    } else {
+        !media.actions.can_play
     };
     let mute_icon = if media.volume.muted {
         &icons::solid::VOLUME_MUTE
@@ -1709,5 +1788,11 @@ fn controls_data(media: &MediaState) -> (&'static Icon, &'static Icon, String, f
     let vol_pct = (media.volume.level + 5) / 10; // permille → percent, rounded
     let vol_str = fmt!("{}%", vol_pct);
     let vol_frac = media.volume.level as f32 / 1_000.0;
-    (play_icon, mute_icon, vol_str, vol_frac)
+    ControlsData {
+        play_icon,
+        play_disabled,
+        mute_icon,
+        vol_str,
+        vol_frac,
+    }
 }

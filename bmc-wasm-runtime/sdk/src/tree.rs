@@ -309,11 +309,13 @@ impl TreeBuffer {
         style: ButtonStyle,
         size: ButtonSize,
         icon_id: u16,
+        disabled: bool,
     ) {
         self.write_u8(NODE_BUTTON);
         self.write_u8(style as u8);
         self.write_u8(size as u8);
         self.write_u16(icon_id);
+        self.write_u8(u8::from(disabled));
         let bytes = label.as_bytes();
         self.write_u16(bytes.len() as u16);
         self.write_bytes(bytes);
@@ -872,6 +874,7 @@ pub enum Node {
         style: ButtonStyle,
         size: ButtonSize,
         icon_id: u16,
+        disabled: bool,
     },
     Spacer {
         flex: f32,
@@ -966,12 +969,19 @@ pub fn paragraph(style: StyleResult, spans: impl IntoIterator<Item = Span>) -> N
 }
 
 /// Create a button node (used by the `button!` macro).
-pub fn make_button(label: String, style: ButtonStyle, size: ButtonSize, icon_id: u16) -> Node {
+pub fn make_button(
+    label: String,
+    style: ButtonStyle,
+    size: ButtonSize,
+    icon_id: u16,
+    disabled: bool,
+) -> Node {
     Node::Button {
         label,
         style,
         size,
         icon_id,
+        disabled,
     }
 }
 
@@ -1246,8 +1256,9 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             style,
             size,
             icon_id,
+            disabled,
         } => {
-            buf.write_button(label, *style, *size, *icon_id);
+            buf.write_button(label, *style, *size, *icon_id, *disabled);
         }
         Node::Spacer { flex } => {
             buf.write_spacer(*flex);

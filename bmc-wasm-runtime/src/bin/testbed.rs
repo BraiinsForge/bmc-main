@@ -154,7 +154,7 @@ struct PreviewTile {
     ph: u32,
     label: &'static str,
     fbo: glow::Framebuffer,
-    _texture: glow::Texture,
+    texture: glow::Texture,
     logged_dead: bool,
     ever_rendered: bool,
 }
@@ -325,7 +325,7 @@ impl App {
                 ph,
                 label,
                 fbo,
-                _texture: texture,
+                texture,
                 logged_dead: false,
                 ever_rendered: false,
             });
@@ -589,7 +589,7 @@ fn handle_preview_event(
     }
 }
 
-#[expect(clippy::too_many_lines, clippy::cast_possible_wrap)]
+#[expect(clippy::too_many_lines)]
 fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
     // Hot-reload: recreate all 4 runtimes
     if state.pending_reload {
@@ -608,7 +608,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
                 Ok(new_runtime) => {
                     tile.runtime = new_runtime; // drops old runtime → deletes old FBO
                     tile.fbo = fbo;
-                    tile._texture = texture;
+                    tile.texture = texture;
                     // Force a fresh render for the new runtime so constants
                     // or initial state changes show up immediately.
                     tile.ever_rendered = false;
@@ -795,7 +795,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
 /// `dst_x/dst_y/dst_w/dst_h` = destination on screen (physical pixels).
 /// `screen_h` = physical height of the screen surface (for OpenGL Y-flip).
 /// When src and dst sizes differ, `GL_LINEAR` provides upscale filtering.
-#[expect(clippy::cast_possible_wrap)]
+#[expect(clippy::too_many_arguments, clippy::cast_possible_wrap)]
 fn blit_fbo_to_screen(
     gl: &glow::Context,
     fbo: glow::Framebuffer,
@@ -1063,6 +1063,7 @@ fn draw_stats_panel(
         ButtonStyle::Danger,
         btn_sz,
         0,
+        false,
     );
     let y_offset = y + btn_h + 4.0;
 

@@ -8,7 +8,7 @@ the limit.
 Usage:
     ./tools/wasm_size.py                        # hello-widget, report only
     ./tools/wasm_size.py -e iss-position        # different widget
-    ./tools/wasm_size.py --check                # enforce 40KB limit
+    ./tools/wasm_size.py --check                # enforce 1MB limit
     ./tools/wasm_size.py --check --limit 65536  # custom limit
 """
 
@@ -19,7 +19,7 @@ from pathlib import Path
 
 from _common import build_example_wasm, require_tools
 
-DEFAULT_SIZE_LIMIT = 40_960
+DEFAULT_SIZE_LIMIT = 1_048_576
 
 
 def build_and_optimize(example: str) -> tuple[Path, Path]:

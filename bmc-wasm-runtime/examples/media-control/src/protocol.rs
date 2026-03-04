@@ -1,124 +1,70 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
-#![allow(dead_code)]
 
 //! Unified media controller protocol abstraction.
 //!
-//! Every protocol backend (UPnP, Cast, future) populates a shared
-//! [`MediaState`] and accepts commands through a common [`MediaController`]
-//! trait. The UI works exclusively against this abstraction.
-
-use bmc_wasm_sdk::FetchResponse;
-
-// ── Unified state ────────────────────────────────────────────────
-
-/// Transport state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlaybackState {
-    Playing,
-    Paused,
-    Stopped,
-    Transitioning,
-    NoMedia,
-}
-
-/// Which protocol is in use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Protocol {
-    Upnp,
-    Cast,
-}
-
-/// Connected device identity.
-#[derive(Debug, Clone)]
-pub struct DeviceInfo {
-    pub name: String,
-    pub address: String,
-    pub protocol: Protocol,
-}
-
-/// Track metadata.
-#[derive(Debug, Clone, Default)]
-pub struct TrackInfo {
-    pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
-    pub album_art_uri: Option<String>,
-}
-
-/// Album art + extracted palette.
-#[derive(Debug, Clone, Default)]
-pub struct ArtState {
-    /// Host-side bitmap ID (0 = none).
-    pub bitmap_id: u16,
-    /// Dominant colors extracted from album art (RGB, up to 3).
-    pub palette: Vec<u32>,
-}
-
-/// Volume state.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VolumeState {
-    /// 0.0–1.0 normalized volume.
-    pub level: f32,
-    pub muted: bool,
-}
-
-/// Unified media state that the UI renders from.
-///
-/// Both UPnP and Cast controllers update this shared structure.
-#[derive(Debug, Clone)]
-pub struct MediaState {
-    pub device: DeviceInfo,
-    pub track: TrackInfo,
-    pub art: ArtState,
-    pub playback: PlaybackState,
-    /// Current playback position in seconds.
-    pub position_secs: u32,
-    /// Track duration in seconds.
-    pub duration_secs: u32,
-    pub volume: VolumeState,
-}
+//! Every protocol backend (UPnP, Cast, Kodi, …) implements [`MediaController`].
+//! The widget dispatches commands through it without knowing the underlying
+//! transport. Protocol-specific status callbacks remain separate — each
+//! protocol pushes updates through its own callback registered at connect time.
 
 // ── Controller trait ─────────────────────────────────────────────
-
-/// Common callback type for async protocol operations.
-pub type ResponseCallback = fn(&FetchResponse);
 
 /// Protocol-agnostic media controller interface.
 ///
 /// Each protocol backend implements this trait. The widget dispatches
 /// commands through it without knowing the underlying transport.
+///
+/// **`&self` not `&mut self`** — mutations happen inside protocol modules
+/// through their own thread-locals (Cast, Kodi) or are stateless HTTP (UPnP).
 pub trait MediaController {
+    // ── Lifecycle ────────────────────────────────────────────────
+
+    /// Tear down connection and release resources.
+    fn disconnect(&self);
+
+    /// Whether the remote device is still reachable.
+    fn is_alive(&self) -> bool;
+
+    /// Drive internal timers (heartbeat, poll counters). Called every render.
+    fn tick(&self, delta_ms: u32);
+
+    // ── Commands (fire-and-forget) ──────────────────────────────
+
     /// Start or resume playback.
-    fn play(&self, cb: ResponseCallback);
+    fn play(&self);
+
     /// Pause playback.
-    fn pause(&self, cb: ResponseCallback);
-    /// Stop playback.
-    fn stop(&self, cb: ResponseCallback);
+    fn pause(&self);
+
     /// Skip to next track.
-    fn next(&self, cb: ResponseCallback);
+    fn next(&self);
+
     /// Skip to previous track.
-    fn previous(&self, cb: ResponseCallback);
-    /// Seek to a position in seconds.
-    fn seek(&self, position_secs: u32, cb: ResponseCallback);
+    fn previous(&self);
 
-    /// Set volume (0.0–1.0).
-    fn set_volume(&self, level: f32, cb: ResponseCallback);
+    /// Seek to absolute position. `duration_secs` provided because some
+    /// protocols (Kodi) need it to compute a percentage.
+    fn seek(&self, position_secs: u32, duration_secs: u32);
+
+    /// Set volume level (0.0–1.0 normalized).
+    fn set_volume(&self, level: f32);
+
     /// Set mute state.
-    fn set_mute(&self, muted: bool, cb: ResponseCallback);
+    fn set_mute(&self, muted: bool);
 
-    /// Request current position info (triggers async callback with state update).
-    fn poll_position(&self, cb: ResponseCallback);
-    /// Request current position info after a delay (for periodic polling).
-    fn poll_position_after(&self, delay_ms: u32, cb: ResponseCallback);
-    /// Request current transport state.
-    fn poll_transport(&self, cb: ResponseCallback);
-    /// Request current volume level.
-    fn poll_volume(&self, cb: ResponseCallback);
-    /// Request current mute state.
-    fn poll_mute(&self, cb: ResponseCallback);
+    // ── Protocol metadata ───────────────────────────────────────
 
-    /// Device info for this controller.
-    fn device(&self) -> DeviceInfo;
-    /// Protocol in use.
-    fn protocol(&self) -> Protocol;
+    /// How often to request a render frame while playing (ms).
+    fn poll_interval_playing(&self) -> u32;
+
+    /// How often to request a render frame while idle (ms).
+    fn poll_interval_idle(&self) -> u32;
+
+    /// Human-readable protocol name (e.g. "Cast", "UPnP", "Kodi").
+    fn protocol_name(&self) -> &'static str;
+
+    /// Fetch album art, handling protocol-specific auth.
+    fn fetch_art(&self, url: &str, callback: fn(&bmc_wasm_sdk::FetchResponse)) {
+        bmc_wasm_sdk::fetch(url, None, callback);
+    }
 }

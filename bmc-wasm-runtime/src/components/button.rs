@@ -161,20 +161,29 @@ impl ButtonSize {
             // Icon-only: square
             h
         } else if has_icon {
-            let text_w = (label_len as f32 * self.font_size() * 0.6).max(self.font_size() * 2.5);
+            let text_w = (label_len as f32 * self.font_size() * 0.5).max(self.font_size() * 2.0);
             self.h_padding() + self.icon_size() + self.icon_text_gap() + text_w + self.h_padding()
         } else {
-            let text_w = (label_len as f32 * self.font_size() * 0.6).max(self.font_size() * 7.0);
+            let text_w = (label_len as f32 * self.font_size() * 0.5).max(self.font_size() * 3.0);
             text_w + self.h_padding() * 2.0
         }
     }
 }
+
+// ── Disabled state colors (Carbon Design System, g100 dark theme) ────
+
+const BTN_DISABLED_BG: u32 = crate::color!(GRAY_50, alpha: 0.3);
+const BTN_DISABLED_FG_ON_COLOR: u32 = crate::color!(WHITE, alpha: 0.25);
+const BTN_DISABLED_FG: u32 = crate::color!(GRAY_10, alpha: 0.25);
 
 /// Draw a button with optional icon and label, and check if it was clicked.
 ///
 /// - `icon_id == 0`: text-only button
 /// - `icon_id != 0, label empty`: icon-only button (icon centered)
 /// - `icon_id != 0, label present`: icon + text button
+///
+/// When `disabled` is true, the button renders in a dimmed state per Carbon
+/// guidelines and does not register clicks or pressed state.
 ///
 /// Returns `(clicked, click_position)` where click position is local to the button bounds.
 #[expect(clippy::too_many_arguments)]
@@ -190,8 +199,15 @@ pub fn draw_button(
     style: ButtonStyle,
     size: ButtonSize,
     icon_id: u16,
+    disabled: bool,
 ) -> (bool, Option<(f32, f32)>) {
     let bounds = Rect::new(x as i32, y as i32, w as u32, h as u32);
+
+    if disabled {
+        draw_button_disabled(renderer, label, x, y, w, h, style, size, icon_id);
+        return (false, None);
+    }
+
     let is_pressed = interaction.is_pressed(key);
 
     let (normal_color, active_color) = style.colors();
@@ -223,6 +239,50 @@ pub fn draw_button(
         BTN_FG
     };
 
+    draw_button_content(renderer, label, x, y, w, h, size, icon_id, fg_color);
+
+    interaction.button_with_pos(key, bounds)
+}
+
+/// Draw a disabled button per Carbon Design System guidelines.
+///
+/// - **Primary / Secondary / Danger**: dimmed solid background + dimmed white text/icon.
+/// - **Tertiary / Ghost**: transparent background + dimmed gray-10 text/icon.
+#[expect(clippy::too_many_arguments)]
+fn draw_button_disabled(
+    renderer: &mut dyn Renderer,
+    label: &str,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    style: ButtonStyle,
+    size: ButtonSize,
+    icon_id: u16,
+) {
+    let fg_color = if style.is_ghost() || style.is_outline() {
+        BTN_DISABLED_FG
+    } else {
+        renderer.fill_rect(x, y, w, h, BTN_DISABLED_BG);
+        BTN_DISABLED_FG_ON_COLOR
+    };
+
+    draw_button_content(renderer, label, x, y, w, h, size, icon_id, fg_color);
+}
+
+/// Render button content (icon and/or label) centered in the given bounds.
+#[expect(clippy::too_many_arguments)]
+fn draw_button_content(
+    renderer: &mut dyn Renderer,
+    label: &str,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    size: ButtonSize,
+    icon_id: u16,
+    fg_color: u32,
+) {
     let font_size = size.font_size();
     let icon_sz = size.icon_size();
     let gap = size.icon_text_gap();
@@ -253,6 +313,4 @@ pub fn draw_button(
         let text_y = y + (h - text_h) / 2.0;
         renderer.draw_text(label, text_x, text_y, font_size, fg_color);
     }
-
-    interaction.button_with_pos(key, bounds)
 }
