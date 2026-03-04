@@ -1,6 +1,6 @@
-# Workspace config for Rust builds. Receives commonDeps from flake.nix
-# to share dependency definitions with devShells.
-{ self, pkgs, commonDeps }:
+# Workspace config for Rust builds. Defines commonDeps as single source
+# of truth for dependency definitions shared with devShells.
+{ self, pkgs }:
 let lib = pkgs.lib; in
 let
   # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
@@ -30,36 +30,103 @@ let
     };
   };
 
-  # Build a widget package with the correct directory structure
-  mkWidgetPackage = { name, crate, profile, features ? [ ], wrapWithLibs ? false }:
+  X11RuntimeDeps = pkgs: with pkgs; [
+    xorg.libX11
+    xorg.libXcursor
+    xorg.libXi
+    xorg.libXrandr
+    xorg.libXinerama
+    xorg.libXext
+    xorg.libXft
+    xorg.libXrender
+    xorg.libxcb
+    vulkan-loader
+    libGL
+  ];
+
+  waylandRuntimeDeps = pkgs: with pkgs; [
+    wayland
+    libxkbcommon
+    vulkan-loader
+    libGL
+  ];
+
+  allRuntimeDeps = pkgs: ((X11RuntimeDeps pkgs) ++ (waylandRuntimeDeps pkgs));
+
+  # Add rpath to produced binaries
+  makeRpathLinkArgument = { packages }:
+    "-C link-args=-Wl,-rpath,${lib.makeLibraryPath packages}";
+
+  # Create RUSTFLAGS for runtime dlopen of libraries in 'runtimePackages'
+  makeRustflagsEnv = { runtimePackages, rustCrossTarget }:
     let
-      binary = profile.buildCrate crate { inherit features; };
-      widgetSrc = ./widgets + "/${name}";
-      runtimeLibs = with pkgs; [
-        wayland
-        libxkbcommon
-        xorg.libX11
-        xorg.libXcursor
-        xorg.libXi
-        xorg.libXrandr
-        vulkan-loader
-        libGL
-      ];
+      target = lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] rustCrossTarget);
+      value = makeRpathLinkArgument { packages = runtimePackages; };
     in
-    pkgs.runCommand "bmc-widget-${name}"
-      {
-        nativeBuildInputs = lib.optionals wrapWithLibs [ pkgs.makeWrapper ];
-      } ''
+    {
+      "CARGO_TARGET_${target}_RUSTFLAGS" = value;
+    };
+
+  # Shared deps used by both package builds and devShells.
+  # Single source of truth to keep build derivations and dev environments in sync.
+  commonDeps = {
+    # Rust build-time deps (protoc for protobufs, diffutils for cargo)
+    buildDeps = with pkgs; [ protobuf diffutils pkg-config ];
+
+    # Env vars needed by Slint for font rendering and runtime linking
+    env = {
+      FONTCONFIG_FILE = pkgs.writeText "fonts.conf" ''
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+        <fontconfig>
+          <dir>${pkgs.corefonts}</dir>
+        </fontconfig>
+      '';
+
+      LD_LIBRARY_PATH = "${lib.makeLibraryPath [
+        pkgs.libgcc
+      ]}";
+    } // makeRustflagsEnv {
+      runtimePackages = commonDeps.guiRuntimeDeps;
+      rustCrossTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+    };
+
+    guiBuildDeps = with pkgs; [
+      fontconfig
+      freetype
+    ];
+
+    # Runtime libs for GUI/display development (Slint, winit backends)
+    guiRuntimeDeps = with pkgs; (waylandRuntimeDeps pkgs) ++ (X11RuntimeDeps pkgs) ++ [
+      libxkbcommon
+      mesa
+    ];
+
+    # Node.js tooling for frontend builds
+    frontendDeps = with pkgs; [ nodejs yarn ];
+  };
+
+  # Build a widget package with the correct directory structure
+  mkWidgetPackage = { name, crate, profile, features ? [ ], runtimeDeps ? waylandRuntimeDeps }:
+    let
+      rustCrossTarget =
+        if profile ? rustCrossTarget
+        then profile.rustCrossTarget
+        else pkgs.stdenv.hostPlatform.rust.rustcTarget;
+      runtimePackages =
+        if builtins.isFunction runtimeDeps
+        then runtimeDeps (profile.build_pkgs or pkgs)
+        else runtimeDeps;
+      binary = profile.buildCrate crate {
+        inherit features;
+        env = makeRustflagsEnv { inherit runtimePackages rustCrossTarget; };
+      };
+      widgetSrc = ./widgets + "/${name}";
+    in
+    pkgs.runCommand "bmc-widget-${name}" { } ''
       mkdir -p $out/lib/bmc-widgets/${name}/bin
       cp ${widgetSrc}/manifest.json $out/lib/bmc-widgets/${name}/
-      if ${if wrapWithLibs then "true" else "false"}; then
-        for bin in ${binary}/bin/*; do
-          makeWrapper "$bin" "$out/lib/bmc-widgets/${name}/bin/$(basename $bin)" \
-            --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtimeLibs}
-        done
-      else
-        cp ${binary}/bin/* $out/lib/bmc-widgets/${name}/bin/
-      fi
+      cp ${binary}/bin/* $out/lib/bmc-widgets/${name}/bin/
       if [ -d "${widgetSrc}/assets" ]; then
         cp -r ${widgetSrc}/assets $out/lib/bmc-widgets/${name}/
       fi
@@ -68,16 +135,13 @@ let
   # Minimal workspace config for musl profiles (bmc-openwrt, statically linked)
   workspaceMinimal = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
-    # packages that can be executed during compilation (from commonDeps)
     nativeDeps = _pkgs: commonDeps.buildDeps;
     # minimal deps for static linking
     targetDeps = _build_pkgs: [
       # openssl.dev
     ];
     env = {
-      FONTCONFIG_FILE = pkgs.makeFontsConf {
-        fontDirectories = [ pkgs.corefonts ];
-      };
+      FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
     };
   };
 
@@ -98,21 +162,7 @@ let
       libgbm
       libGL
     ];
-    # environment variables (from commonDeps, with fontconfig in LD_LIBRARY_PATH
-    # for Slint build script which dlopen's libfontconfig.so.1 during compilation)
-    env = commonDeps.env // {
-      LD_LIBRARY_PATH = lib.makeLibraryPath [
-        pkgs.libgcc
-        pkgs.fontconfig
-      ];
-      # Workaround: some -sys crates have no build.rs, so they never emit
-      # cargo:rustc-link-search for their native libraries. The dev shell
-      # provides this via NIX_LDFLAGS, but nix build derivations don't
-      # propagate targetDeps the same way. Add library paths via RUSTFLAGS.
-      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS =
-        "-L native=${lib.getLib fixedArmv7Pkgs.libxkbcommon}/lib"
-          + " -L native=${lib.getLib fixedArmv7Pkgs.libinput}/lib";
-    };
+    env = commonDeps.env;
   };
 
   build-profiles = {
@@ -187,18 +237,17 @@ let
     digital-clock = {
       crate = crates.widget-digital-clock;
       features = [ "standalone" ];
-      wrapWithLibs = true;
+      runtimeDeps = waylandRuntimeDeps;
     };
     flip-clock = {
       crate = crates.widget-flip-clock;
       features = [ "standalone" ];
-      wrapWithLibs = true;
+      runtimeDeps = waylandRuntimeDeps;
     };
   };
 
   # Build all widgets for a given profile and combine into a single output
-  # wrapLibs: whether to wrap binaries with LD_LIBRARY_PATH (only for x86, not cross-compiled)
-  mkAllWidgets = { profile, wrapLibs ? false }: pkgs.symlinkJoin {
+  mkAllWidgets = { profile, runtimeDeps ? waylandRuntimeDeps }: pkgs.symlinkJoin {
     name = "bmc-widgets";
     paths = lib.mapAttrsToList
       (name: widget:
@@ -206,15 +255,14 @@ let
           inherit name profile;
           inherit (widget) crate;
           features = widget.features or [ ];
-          # Only wrap with libs if requested AND the widget wants it
-          wrapWithLibs = wrapLibs && (widget.wrapWithLibs or false);
+          runtimeDeps = widget.runtimeDeps or runtimeDeps;
         }
       )
       widgets;
   };
 
   # x86 widgets (for bmc-mock) - need library wrapper for Nix environment
-  allWidgets = mkAllWidgets { profile = build-profiles.fast; wrapLibs = true; };
+  allWidgets = mkAllWidgets { profile = build-profiles.fast; runtimeDeps = allRuntimeDeps; };
 
   # ARM widgets (glibc, dynamically linked) - compatible with system Wayland libs
   allWidgetsArmv7Release = mkAllWidgets { profile = build-profiles.armv7-glibc-release; };
@@ -222,6 +270,7 @@ let
 
 in
 {
+  inherit commonDeps;
   packages = packages // specialPackages // {
     inherit bmc-video-play-armv7;
     bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
@@ -231,14 +280,14 @@ in
       name = "digital-clock";
       crate = crates.widget-digital-clock;
       features = [ "standalone" ];
-      wrapWithLibs = true;
+      runtimeDeps = allRuntimeDeps;
       profile = build-profiles.fast;
     };
     widget-flip-clock = mkWidgetPackage {
       name = "flip-clock";
       crate = crates.widget-flip-clock;
       features = [ "standalone" ];
-      wrapWithLibs = true;
+      runtimeDeps = allRuntimeDeps;
       profile = build-profiles.fast;
     };
 

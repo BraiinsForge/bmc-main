@@ -5,7 +5,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib";
+    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib?ref=fbo/BDK-318/merged";
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -37,63 +37,8 @@
         };
         lib = pkgs.lib;
 
-        # Shared deps used by both workspace.nix (for package builds) and devShells.
-        # Single source of truth to keep build derivations and dev environments in sync.
-        commonDeps = {
-          # Rust build-time deps (protoc for protobufs, diffutils for cargo)
-          buildDeps = with pkgs; [ protobuf diffutils pkg-config ];
-
-          # Env vars needed by Slint for font rendering
-          env = {
-            FONTCONFIG_FILE = pkgs.makeFontsConf {
-              fontDirectories = with pkgs; [
-                corefonts
-                font-awesome_6
-              ];
-            };
-
-            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS =
-              let
-                rpathLibs = lib.makeLibraryPath commonDeps.guiRuntimeDeps;
-              in
-              "-C link-args=-Wl,-rpath,${rpathLibs}";
-
-            LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath [
-              pkgs.libgcc
-            ]}";
-          };
-
-          guiBuildDeps = with pkgs; [
-            fontconfig
-            freetype
-          ];
-
-          # Runtime libs for GUI/display development (Slint, winit backends)
-          guiRuntimeDeps = with pkgs; [
-            fontconfig
-
-            xorg.libX11
-            xorg.libXcursor
-            xorg.libXrandr
-            xorg.libXi
-            xorg.libXinerama
-            xorg.libXext
-            xorg.libXft
-            xorg.libXrender
-            xorg.libxcb
-            wayland
-            wayland-protocols
-            libxkbcommon
-            libGL
-            vulkan-loader
-            mesa
-          ];
-
-          # Node.js tooling for frontend builds
-          frontendDeps = with pkgs; [ nodejs yarn ];
-        };
-
-        workspace = import ./workspace.nix { inherit self pkgs commonDeps; };
+        workspace = import ./workspace.nix { inherit self pkgs; };
+        inherit (workspace) commonDeps;
         frontend = import ./frontend { inherit self pkgs; };
 
         # Local dev shell with Rust + frontend + GUI deps (native only).
