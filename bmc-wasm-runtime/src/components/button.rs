@@ -3,11 +3,7 @@
 //! Button component with immediate-mode API.
 
 #![allow(clippy::wildcard_imports)]
-#![expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss
-)]
+#![expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 use crate::colors::*;
 use crate::interaction::{InteractionState, Rect};
@@ -152,22 +148,6 @@ impl ButtonSize {
             ButtonSize::Large => 10.0,
         }
     }
-
-    /// Compute button width given label length, icon presence.
-    #[must_use]
-    pub fn width(self, label_len: usize, has_icon: bool) -> f32 {
-        let h = self.height();
-        if has_icon && label_len == 0 {
-            // Icon-only: square
-            h
-        } else if has_icon {
-            let text_w = (label_len as f32 * self.font_size() * 0.5).max(self.font_size() * 2.0);
-            self.h_padding() + self.icon_size() + self.icon_text_gap() + text_w + self.h_padding()
-        } else {
-            let text_w = (label_len as f32 * self.font_size() * 0.5).max(self.font_size() * 3.0);
-            text_w + self.h_padding() * 2.0
-        }
-    }
 }
 
 // ── Disabled state colors (Carbon Design System, g100 dark theme) ────
@@ -290,26 +270,25 @@ fn draw_button_content(
     let has_icon = icon_id != 0;
     let has_label = !label.is_empty();
 
-    if has_icon && has_label {
-        let text_w = renderer.measure_text(label, font_size);
-        let content_w = icon_sz + gap + text_w;
-        let content_x = x + (w - content_w) / 2.0;
+    let pad = size.h_padding();
 
+    if has_icon && has_label {
+        let icon_x = x + pad;
         let icon_y = y + (h - icon_sz) / 2.0;
-        renderer.draw_icon(content_x, icon_y, icon_sz, icon_sz, fg_color, icon_id);
+        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id);
 
         let text_h = font_size * 1.3;
-        let text_x = content_x + icon_sz + gap;
+        let text_x = icon_x + icon_sz + gap;
         let text_y = y + (h - text_h) / 2.0;
         renderer.draw_text(label, text_x, text_y, font_size, fg_color);
     } else if has_icon {
+        // Icon-only: keep centered
         let icon_x = x + (w - icon_sz) / 2.0;
         let icon_y = y + (h - icon_sz) / 2.0;
         renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id);
     } else {
-        let text_w = renderer.measure_text(label, font_size);
         let text_h = font_size * 1.3;
-        let text_x = x + (w - text_w) / 2.0;
+        let text_x = x + pad;
         let text_y = y + (h - text_h) / 2.0;
         renderer.draw_text(label, text_x, text_y, font_size, fg_color);
     }

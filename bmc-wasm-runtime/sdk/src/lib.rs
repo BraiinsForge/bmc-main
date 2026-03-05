@@ -29,6 +29,7 @@ pub mod log;
 pub mod mdns;
 pub mod net;
 pub mod socket;
+pub mod ssdp;
 pub mod tree;
 pub mod ws;
 pub mod xml;

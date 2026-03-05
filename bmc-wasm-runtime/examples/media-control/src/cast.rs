@@ -19,6 +19,7 @@ use prost::Message;
 
 // Generated protobuf types from cast_channel.proto
 mod proto {
+    #![allow(clippy::trivially_copy_pass_by_ref)]
     include!(concat!(env!("OUT_DIR"), "/cast_channel.rs"));
 }
 

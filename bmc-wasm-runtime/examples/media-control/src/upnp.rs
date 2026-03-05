@@ -285,6 +285,7 @@ pub fn parse_mute(response_body: &[u8]) -> Option<bool> {
 
 /// Transport capabilities parsed from `GetCurrentTransportActions`.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct TransportActions {
     pub can_play: bool,
     pub can_pause: bool,

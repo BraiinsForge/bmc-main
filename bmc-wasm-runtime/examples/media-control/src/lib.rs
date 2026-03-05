@@ -2,7 +2,8 @@
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    clippy::items_after_statements
 )]
 
 //! Media Remote Control Widget — POC (BDK-334).
@@ -32,14 +33,16 @@ use upnp::{
 // ── Configuration ────────────────────────────────────────────────
 
 /// Which protocol backend is in use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Variant order defines the display sort order within the same host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum DiscoveredProtocol {
-    Upnp,
     Cast,
     Kodi,
+    Upnp,
 }
 
-/// A device found via mDNS discovery.
+/// A device found via mDNS or SSDP discovery.
 #[derive(Debug, Clone)]
 struct DiscoveredDevice {
     /// Display name (from TXT records: Cast `fn`, UPnP service name).
@@ -50,8 +53,12 @@ struct DiscoveredDevice {
     port: u16,
     /// Protocol type.
     protocol: DiscoveredProtocol,
-    /// mDNS full service name (unique key for deduplication).
+    /// mDNS full service name or SSDP USN (unique key for deduplication).
     service_name: String,
+    /// UPnP control path for AVTransport (from SSDP device description XML).
+    av_transport_path: Option<String>,
+    /// UPnP control path for RenderingControl (from SSDP device description XML).
+    rendering_control_path: Option<String>,
 }
 
 /// How often to poll `GetPositionInfo` while playing (ms).
@@ -83,6 +90,8 @@ struct MediaState {
     is_video: bool,
     /// Consecutive fetch failures for disconnect detection.
     consecutive_failures: u8,
+    /// Whether this session has ever reached Connected state.
+    was_ever_connected: bool,
 }
 
 impl Default for MediaState {
@@ -97,6 +106,7 @@ impl Default for MediaState {
             art_url: String::new(),
             is_video: false,
             consecutive_failures: 0,
+            was_ever_connected: false,
         }
     }
 }
@@ -122,7 +132,7 @@ thread_local! {
         width: 1_280,
         height: 480,
     }) };
-    static STATE: RefCell<WidgetState> = RefCell::new(WidgetState::Discovering);
+    static STATE: RefCell<WidgetState> = const { RefCell::new(WidgetState::Discovering) };
     static DEVICE: RefCell<Option<UpnpDevice>> = const { RefCell::new(None) };
     /// Active protocol controller (set on connect, cleared on disconnect).
     static CONTROLLER: RefCell<Option<Box<dyn MediaController>>> = RefCell::new(None);
@@ -166,12 +176,37 @@ pub extern "C" fn init(width: u32, height: u32) {
     discovery_log("Browsing _upnp._tcp".into());
     discovery_log("Browsing _xbmc-jsonrpc-h._tcp".into());
 
+    // Start SSDP discovery for native UPnP/DLNA renderers
+    ssdp::ssdp_search(
+        "urn:schemas-upnp-org:device:MediaRenderer:1",
+        5,
+        on_ssdp_event,
+    );
+    log_info!("media: SSDP search started");
+    discovery_log("SSDP M-SEARCH MediaRenderer".into());
+
     // Check for auto-reconnect target from last session
     if let Some(last) = kv::get_string("last_device") {
         log_info!("media: last device = {}", last);
     }
 
     request_frame();
+}
+
+/// Insert or update a discovered device, keeping the list sorted by host then protocol.
+fn upsert_discovered(device: DiscoveredDevice) {
+    DISCOVERED.with(|d| {
+        let mut list = d.borrow_mut();
+        if let Some(existing) = list
+            .iter_mut()
+            .find(|d| d.service_name == device.service_name)
+        {
+            *existing = device;
+        } else {
+            list.push(device);
+        }
+        list.sort_by(|a, b| a.host.cmp(&b.host).then(a.protocol.cmp(&b.protocol)));
+    });
 }
 
 // ── mDNS discovery ──────────────────────────────────────────────
@@ -242,17 +277,11 @@ fn on_mdns_found(json: &str) {
         port,
         protocol,
         service_name: service_name.clone(),
+        av_transport_path: None,
+        rendering_control_path: None,
     };
 
-    // Deduplicate by service_name
-    DISCOVERED.with(|d| {
-        let mut list = d.borrow_mut();
-        if let Some(existing) = list.iter_mut().find(|d| d.service_name == service_name) {
-            *existing = device.clone();
-        } else {
-            list.push(device.clone());
-        }
-    });
+    upsert_discovered(device.clone());
 
     // Auto-connect if this matches the last-used device
     let auto_target = kv::get_string("last_device");
@@ -273,6 +302,81 @@ fn on_mdns_removed(name: &str) {
     request_frame();
 }
 
+// ── SSDP discovery ──────────────────────────────────────────────
+
+fn on_ssdp_event(_search: ssdp::SsdpSearch, event: &ssdp::SsdpEvent<'_>) {
+    match event {
+        ssdp::SsdpEvent::Found(json) => on_ssdp_found(json),
+        ssdp::SsdpEvent::Removed(_usn) => { /* future: remove from list */ }
+    }
+}
+
+fn on_ssdp_found(json: &str) {
+    let doc = JsonDoc::parse(json.as_bytes());
+    let name = doc.str("/name").unwrap_or_default();
+    let host = doc.str("/host").unwrap_or_default();
+    let port = doc.i64("/port").unwrap_or(0) as u16;
+    let av_path = doc.str("/av_transport_path").unwrap_or_default();
+    let rc_path = doc.str("/rendering_control_path").unwrap_or_default();
+
+    if host.is_empty() || port == 0 {
+        return;
+    }
+
+    let proto_label = "UPnP";
+    log_info!(
+        "media: SSDP found {} ({}) at {}:{}",
+        name,
+        proto_label,
+        host,
+        port
+    );
+    discovery_log(fmt!("{} (SSDP) at {}:{}", name, host, port));
+
+    // Use host:port as a stable key for deduplication with mDNS-discovered devices
+    let dedup_key = fmt!("ssdp:{}:{}", host, port);
+
+    let device = DiscoveredDevice {
+        name: name.to_string(),
+        host: host.to_string(),
+        port,
+        protocol: DiscoveredProtocol::Upnp,
+        service_name: dedup_key.clone(),
+        av_transport_path: if av_path.is_empty() {
+            None
+        } else {
+            Some(av_path.to_string())
+        },
+        rendering_control_path: if rc_path.is_empty() {
+            None
+        } else {
+            Some(rc_path.to_string())
+        },
+    };
+
+    // Deduplicate: skip if a device with the same host+port already exists
+    // (may have been found via mDNS)
+    let already_exists = DISCOVERED.with(|d| {
+        d.borrow()
+            .iter()
+            .any(|existing| existing.host == host && existing.port == port)
+    });
+    if already_exists {
+        return;
+    }
+
+    upsert_discovered(device.clone());
+
+    // Auto-connect if this matches the last-used device
+    let auto_target = kv::get_string("last_device");
+    if auto_target.as_deref() == Some(&dedup_key) {
+        log_info!("media: auto-connecting to {}", dedup_key);
+        connect_to_device(&device);
+    }
+
+    request_frame();
+}
+
 // ── Connection management ───────────────────────────────────────
 
 fn connect_to_device(device: &DiscoveredDevice) {
@@ -280,7 +384,7 @@ fn connect_to_device(device: &DiscoveredDevice) {
     kv::set("last_device", device.service_name.as_bytes());
 
     CONNECTED_DEVICE_NAME.with(|n| {
-        *n.borrow_mut() = device.name.clone();
+        device.name.clone_into(&mut *n.borrow_mut());
     });
 
     let controller: Box<dyn MediaController> = match device.protocol {
@@ -299,8 +403,14 @@ fn connect_to_device(device: &DiscoveredDevice) {
             let base_url = fmt!("http://{}:{}", device.host, device.port);
             let upnp_device = UpnpDevice {
                 base_url,
-                av_transport_path: "/upnp/control/rendertransport1".into(),
-                rendering_control_path: "/upnp/control/rendercontrol1".into(),
+                av_transport_path: device
+                    .av_transport_path
+                    .clone()
+                    .unwrap_or_else(|| "/upnp/control/rendertransport1".into()),
+                rendering_control_path: device
+                    .rendering_control_path
+                    .clone()
+                    .unwrap_or_else(|| "/upnp/control/rendercontrol1".into()),
                 name: device.name.clone(),
             };
             DEVICE.with(|d| *d.borrow_mut() = Some(upnp_device));
@@ -342,39 +452,45 @@ fn disconnect_and_return_to_picker() {
     request_frame();
 }
 
+/// Drive protocol timers, detect disconnect, and schedule next poll.
+fn tick_protocol(delta_ms: u32) {
+    let has_controller = CONTROLLER.with(|c| c.borrow().is_some());
+    if !has_controller {
+        return;
+    }
+
+    let mut alive = false;
+    let mut playing_interval = 0u32;
+    let mut idle_interval = 0u32;
+
+    CONTROLLER.with(|c| {
+        if let Some(ctrl) = c.borrow().as_deref() {
+            ctrl.tick(delta_ms);
+            alive = ctrl.is_alive();
+            playing_interval = ctrl.poll_interval_playing();
+            idle_interval = ctrl.poll_interval_idle();
+        }
+    });
+
+    if !alive {
+        transition_to_disconnected();
+    }
+
+    interpolate_position(delta_ms);
+
+    if alive {
+        let interval = if is_transport_playing() {
+            playing_interval
+        } else {
+            idle_interval
+        };
+        request_frame_after(interval);
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
-    // Drive protocol timers and detect disconnect (unified across all protocols)
-    let has_controller = CONTROLLER.with(|c| c.borrow().is_some());
-    if has_controller {
-        let mut alive = false;
-        let mut playing_interval = 0u32;
-        let mut idle_interval = 0u32;
-
-        CONTROLLER.with(|c| {
-            if let Some(ctrl) = c.borrow().as_deref() {
-                ctrl.tick(delta_ms);
-                alive = ctrl.is_alive();
-                playing_interval = ctrl.poll_interval_playing();
-                idle_interval = ctrl.poll_interval_idle();
-            }
-        });
-
-        if !alive {
-            transition_to_disconnected();
-        }
-
-        interpolate_position(delta_ms);
-
-        if alive {
-            let interval = if is_transport_playing() {
-                playing_interval
-            } else {
-                idle_interval
-            };
-            request_frame_after(interval);
-        }
-    }
+    tick_protocol(delta_ms);
 
     let size = SIZE.with(Cell::get);
 
@@ -399,7 +515,7 @@ pub extern "C" fn render(delta_ms: u32) {
     // Handle clicks outside the STATE borrow so handlers can borrow_mut
     match screen {
         Screen::Discovering => {
-            // Each button maps to a device in DISCOVERED
+            // Each button maps to a device in DISCOVERED (kept sorted on insert)
             for (i, &clicked) in result.clicks.iter().enumerate() {
                 if clicked {
                     let device = DISCOVERED.with(|d| d.borrow().get(i).cloned());
@@ -762,6 +878,25 @@ fn seek_to_fraction(frac: f32) {
 
 // ── Response callbacks ───────────────────────────────────────────
 
+/// Transition state from Disconnected → Connected on first successful UPnP response.
+fn ensure_connected() {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        if matches!(
+            &*state,
+            WidgetState::Disconnected(_) | WidgetState::Discovering
+        ) {
+            let taken = std::mem::take(&mut *state);
+            let mut m = match taken {
+                WidgetState::Disconnected(m) => m,
+                _ => MediaState::default(),
+            };
+            m.was_ever_connected = true;
+            *state = WidgetState::Connected(m);
+        }
+    });
+}
+
 fn on_position_info(response: &FetchResponse) {
     if !response.ok() {
         log_info!("media: position_info FAILED");
@@ -772,6 +907,7 @@ fn on_position_info(response: &FetchResponse) {
     }
 
     reset_failures();
+    ensure_connected();
 
     if let Some(info) = parse_position_info(response.body()) {
         // Check if album art changed
@@ -819,6 +955,7 @@ fn on_transport_info(response: &FetchResponse) {
     }
 
     reset_failures();
+    ensure_connected();
 
     if let Some(transport) = parse_transport_info(response.body()) {
         STATE.with(|s| {
@@ -837,6 +974,7 @@ fn on_transport_actions(response: &FetchResponse) {
     }
 
     reset_failures();
+    ensure_connected();
 
     if let Some(actions) = parse_transport_actions(response.body()) {
         STATE.with(|s| {
@@ -857,6 +995,7 @@ fn on_volume(response: &FetchResponse) {
     }
 
     reset_failures();
+    ensure_connected();
 
     if let Some(level) = parse_volume(response.body()) {
         STATE.with(|s| {
@@ -877,6 +1016,7 @@ fn on_mute(response: &FetchResponse) {
     }
 
     reset_failures();
+    ensure_connected();
 
     if let Some(muted) = parse_mute(response.body()) {
         STATE.with(|s| {
@@ -893,10 +1033,9 @@ fn on_album_art(response: &FetchResponse) {
     if response.ok() && !response.body().is_empty() {
         let bitmap_id = host::register_bitmap(response.body());
         if bitmap_id > 0 {
-            // Get natural dimensions for aspect ratio
-            let aspect = host::decode_image(response.body()).map_or(1.0, |(_, w, h)| {
-                if h > 0 { w as f32 / h as f32 } else { 1.0 }
-            });
+            // Get natural dimensions for aspect ratio (lightweight — no RGBA allocation)
+            let aspect = host::image_dimensions(response.body())
+                .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
             STATE.with(|s| {
                 let mut state = s.borrow_mut();
                 if let WidgetState::Connected(media) = &mut *state {
@@ -966,10 +1105,12 @@ fn on_cast_status(status: &cast::CastMediaStatus) {
             WidgetState::Disconnected(_) | WidgetState::Discovering
         ) {
             let taken = std::mem::take(&mut *state);
-            match taken {
-                WidgetState::Disconnected(m) => *state = WidgetState::Connected(m),
-                _ => *state = WidgetState::Connected(MediaState::default()),
-            }
+            let mut m = match taken {
+                WidgetState::Disconnected(m) => m,
+                _ => MediaState::default(),
+            };
+            m.was_ever_connected = true;
+            *state = WidgetState::Connected(m);
         }
         if let WidgetState::Connected(media) = &mut *state {
             // Map Cast player state to our TransportState
@@ -1028,10 +1169,12 @@ fn on_kodi_status(status: &kodi::KodiMediaStatus) {
             WidgetState::Disconnected(_) | WidgetState::Discovering
         ) {
             let taken = std::mem::take(&mut *state);
-            match taken {
-                WidgetState::Disconnected(m) => *state = WidgetState::Connected(m),
-                _ => *state = WidgetState::Connected(MediaState::default()),
-            }
+            let mut m = match taken {
+                WidgetState::Disconnected(m) => m,
+                _ => MediaState::default(),
+            };
+            m.was_ever_connected = true;
+            *state = WidgetState::Connected(m);
         }
         if let WidgetState::Connected(media) = &mut *state {
             // Map Kodi player state to our TransportState
@@ -1044,9 +1187,15 @@ fn on_kodi_status(status: &kodi::KodiMediaStatus) {
             media.position.position_secs = status.current_time as u32;
             media.position.duration_secs = status.duration_secs as u32;
 
-            media.position.track_meta.title = status.title.clone();
-            media.position.track_meta.artist = status.artist.clone();
-            media.position.track_meta.album = status.album.clone();
+            status
+                .title
+                .clone_into(&mut media.position.track_meta.title);
+            status
+                .artist
+                .clone_into(&mut media.position.track_meta.artist);
+            status
+                .album
+                .clone_into(&mut media.position.track_meta.album);
 
             // Volume: Kodi 0–100 → permille
             media.volume.level = (status.volume_level * 10.0) as u32;
@@ -1077,26 +1226,35 @@ fn on_kodi_status(status: &kodi::KodiMediaStatus) {
 /// Record a fetch failure. After `DISCONNECT_THRESHOLD` consecutive failures,
 /// transition to `Disconnected` and start reconnect polling.
 fn record_failure() {
-    // Phase 1: increment counter, check threshold
-    let should_disconnect = STATE.with(|s| {
+    let action = STATE.with(|s| {
         let mut state = s.borrow_mut();
-        if let WidgetState::Connected(media) = &mut *state {
-            media.consecutive_failures += 1;
-            media.consecutive_failures >= DISCONNECT_THRESHOLD
-        } else {
-            false
+        match &mut *state {
+            WidgetState::Connected(media) => {
+                media.consecutive_failures += 1;
+                if media.consecutive_failures >= DISCONNECT_THRESHOLD {
+                    // Transition Connected → Disconnected
+                    let taken = std::mem::take(&mut *state);
+                    if let WidgetState::Connected(m) = taken {
+                        *state = WidgetState::Disconnected(m);
+                    }
+                    Some(true) // start reconnect
+                } else {
+                    None // keep polling normally
+                }
+            }
+            WidgetState::Disconnected(media) => {
+                media.consecutive_failures += 1;
+                if media.consecutive_failures >= DISCONNECT_THRESHOLD {
+                    Some(false) // already disconnected, just ensure reconnect timer
+                } else {
+                    None
+                }
+            }
+            WidgetState::Discovering => None,
         }
     });
 
-    if should_disconnect {
-        // Phase 2: transition to Disconnected (separate borrow)
-        STATE.with(|s| {
-            let mut state = s.borrow_mut();
-            let taken = std::mem::take(&mut *state);
-            if let WidgetState::Connected(m) = taken {
-                *state = WidgetState::Disconnected(m);
-            }
-        });
+    if action.is_some() {
         with_device(|d| {
             upnp::get_position_info_after(RECONNECT_INTERVAL_MS, d, on_reconnect);
         });
@@ -1113,6 +1271,7 @@ fn reset_failures() {
             let taken = std::mem::take(&mut *state);
             if let WidgetState::Disconnected(mut m) = taken {
                 m.consecutive_failures = 0;
+                m.was_ever_connected = true;
                 *state = WidgetState::Connected(m);
             }
             true
@@ -1299,14 +1458,26 @@ fn render_discovery_log(max_lines: usize, right_aligned: bool) -> Node {
 // ── Disconnected screen ──────────────────────────────────────────
 
 fn render_disconnected(size: WidgetSize) -> Node {
-    let device_name = CONNECTED_DEVICE_NAME.with(|n| {
-        let name = n.borrow();
-        if name.is_empty() {
-            "device".into()
-        } else {
-            name.clone()
-        }
+    let (device_name, was_connected) = STATE.with(|s| {
+        let state = s.borrow();
+        let was = matches!(&*state, WidgetState::Disconnected(m) if m.was_ever_connected);
+        drop(state);
+        let name = CONNECTED_DEVICE_NAME.with(|n| {
+            let n = n.borrow();
+            if n.is_empty() {
+                "device".into()
+            } else {
+                n.clone()
+            }
+        });
+        (name, was)
     });
+
+    let subtitle = if was_connected {
+        "Reconnecting..."
+    } else {
+        "Connecting..."
+    };
     let msg = fmt!("Connecting to {}...", device_name);
 
     let text_size = match size.variant {
@@ -1320,7 +1491,7 @@ fn render_disconnected(size: WidgetSize) -> Node {
             props!(gap: 8.0),
             [
                 text(&msg, style!(size: text_size, color: GRAY_40)),
-                text("Reconnecting...", style!(size: 14, color: GRAY_60)),
+                text(subtitle, style!(size: 14, color: GRAY_60)),
             ],
         )],
     )
@@ -1331,45 +1502,46 @@ fn render_disconnected(size: WidgetSize) -> Node {
 /// Wraps the media UI with a switcher button at the top (button index 0).
 fn render_media_screen(size: WidgetSize, media: &MediaState) -> Node {
     match size.variant {
-        SizeVariant::Full => render_full(size, media),
+        SizeVariant::Full | SizeVariant::Medium => render_full(size, media),
         _ => render_compact(size, media),
     }
 }
 
-/// Full: art fills left side, everything else in right column.
+/// Full/Medium: art fills left side, everything else in right column.
 fn render_full(size: WidgetSize, media: &MediaState) -> Node {
-    let pad = 16.0;
-    let gap = 16.0;
+    let is_medium = size.variant == SizeVariant::Medium;
+    let pad = if is_medium { 12.0 } else { 16.0 };
+    let gap = if is_medium { 10.0 } else { 16.0 };
+    let inner_gap = if is_medium { 6.0 } else { 12.0 };
     let art_size = size.height as f32 - 2.0 * pad;
-    let bar_w = size.width as f32 - 2.0 * pad - gap - art_size;
+    let col_w = size.width as f32 - 2.0 * pad - gap - art_size;
 
     row(
         props!(background: GRAY_100, padding: pad, gap: gap),
         [
             render_album_art(media, art_size),
             col(
-                props!(flex: 1.0, gap: 12.0),
+                props!(flex: 1.0, gap: inner_gap),
                 [
-                    col(props!(flex: 1.0), [render_track_info(media, size)]),
-                    render_progress(media, bar_w),
-                    render_controls(media),
+                    render_track_info(media, size),
+                    render_progress(media, col_w),
+                    render_controls(media, col_w),
                 ],
             ),
         ],
     )
 }
 
-/// Large/Medium/Small: art + meta row on top, full-width progress + controls below.
+/// Large/Small: art + meta row on top, full-width progress + controls below.
 fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
-    let pad = match size.variant {
-        SizeVariant::Large => 16.0,
-        SizeVariant::Medium => 12.0,
-        _ => 8.0,
+    let pad = if size.variant == SizeVariant::Large {
+        16.0
+    } else {
+        8.0
     };
     let gap = 8.0;
     let avail_h = size.height as f32 - 2.0 * pad;
     let avail_w = size.width as f32 - 2.0 * pad;
-    let bar_w = avail_w;
 
     // Reserve space for progress bar + controls below the art row
     let controls_h = if size.variant == SizeVariant::Small {
@@ -1378,12 +1550,7 @@ fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
         80.0 // progress (~30) + controls (~40) + gaps
     };
     let art_max_h = (avail_h - controls_h - gap).max(40.0);
-    let art_size = match size.variant {
-        SizeVariant::Large => art_max_h.min(avail_w * 0.4),
-        SizeVariant::Medium => art_max_h.min(avail_w * 0.3),
-        SizeVariant::Small => art_max_h.min(avail_w * 0.25).min(80.0),
-        SizeVariant::Full => 48.0_f32.min(avail_h * 0.4),
-    };
+    let art_size = art_max_h.min(avail_w * 0.4);
 
     col(
         props!(background: GRAY_100, padding: pad, gap: gap),
@@ -1405,7 +1572,10 @@ fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
             } else {
                 col(
                     props!(gap: 8.0),
-                    [render_progress(media, bar_w), render_controls(media)],
+                    [
+                        render_progress(media, avail_w),
+                        render_controls(media, avail_w),
+                    ],
                 )
             },
         ],
@@ -1428,7 +1598,7 @@ fn render_album_art(media: &MediaState, art_size: f32) -> Node {
             (art_size, art_size, 0.0, 0.0)
         };
         canvas(
-            props!(width: art_size, height: art_size),
+            props!(width: art_size, height: art_size, max_height: art_size),
             vec![Draw::bitmap_id(bx, by, bw, bh, media.art_bitmap_id)],
         )
     } else {
@@ -1440,7 +1610,7 @@ fn render_album_art(media: &MediaState, art_size: f32) -> Node {
             &icons::MUSIC
         };
         canvas(
-            props!(width: art_size, height: art_size),
+            props!(width: art_size, height: art_size, max_height: art_size),
             vec![
                 Draw::rect(0.0, 0.0, art_size, art_size, GRAY_80),
                 Draw::centered(Draw::icon(
@@ -1457,18 +1627,14 @@ fn render_album_art(media: &MediaState, art_size: f32) -> Node {
 }
 
 fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
+    let has_track = media.position.track_meta.title.is_some();
     let title = media
         .position
         .track_meta
         .title
         .as_deref()
         .unwrap_or("No track");
-    let artist = media
-        .position
-        .track_meta
-        .artist
-        .as_deref()
-        .unwrap_or("Unknown artist");
+    let artist = media.position.track_meta.artist.as_deref().unwrap_or("");
     let album = media.position.track_meta.album.as_deref().unwrap_or("");
 
     let title_size = match size.variant {
@@ -1483,39 +1649,51 @@ fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
     };
 
     col(
-        props!(gap: 4.0),
+        props!(flex: 1.0, gap: 4.0),
         [
             text(title, style!(size: title_size, color: GRAY_10, weight: 600)),
-            text(
-                &fmt!("Artist: {}", artist),
-                style!(size: detail_size, color: GRAY_40),
-            ),
-            if !album.is_empty() {
+            if !has_track || artist.is_empty() {
+                spacer(0.0)
+            } else {
+                text(
+                    &fmt!("Artist: {}", artist),
+                    style!(size: detail_size, color: GRAY_40),
+                )
+            },
+            if !has_track || album.is_empty() {
+                spacer(0.0)
+            } else {
                 text(
                     &fmt!("Album: {}", album),
                     style!(size: detail_size, color: GRAY_50),
                 )
-            } else {
-                spacer(0.0)
             },
-            // Switcher button (index 0 in the click list)
-            render_switcher_button(),
+            // Push switcher button to the bottom-right (button index 0)
+            spacer(1.0),
+            row(props!(), [spacer(1.0), render_switcher_button(size)]),
+            spacer(0.0), // breathing room before seek bar
         ],
     )
 }
 
 /// Interactive button showing protocol icon + connected device name.
 /// Tapping disconnects and returns to the device picker.
-fn render_switcher_button() -> Node {
-    let device_name = CONNECTED_DEVICE_NAME.with(|n| {
-        let name = n.borrow();
-        if name.is_empty() {
-            "Unknown".into()
-        } else {
-            name.clone()
-        }
-    });
-    button!(&device_name, icon: tree::ensure_registered(&icons::DEVICES), style: Ghost, size: Small)
+/// Small variant uses icon-only to save horizontal space.
+fn render_switcher_button(size: WidgetSize) -> Node {
+    let icon = tree::ensure_registered(&icons::DEVICES);
+    if size.variant == SizeVariant::Small {
+        button!("", icon: icon, style: Secondary, size: Small)
+    } else {
+        let device_name = CONNECTED_DEVICE_NAME.with(|n| {
+            let name = n.borrow();
+            if name.is_empty() {
+                "Unknown".into()
+            } else {
+                name.clone()
+            }
+        });
+        button!(&device_name, icon: icon, style: Secondary, size: Small)
+    }
 }
 
 /// Animated sine-wave loader for the discovery screen.
@@ -1533,7 +1711,15 @@ fn squiggle_loader(width: f32, mid_y: f32, color: u32) -> Draw {
         })
         .collect();
 
-    Draw::path(points, 2.0, color, false, false, Interpolation::CatmullRom).animate(
+    Draw::path(
+        points,
+        BAR_TRACK_H,
+        color,
+        false,
+        false,
+        Interpolation::CatmullRom,
+    )
+    .animate(
         AnimProperty::TranslateX,
         0.0,
         -WAVE_LENGTH,
@@ -1543,8 +1729,10 @@ fn squiggle_loader(width: f32, mid_y: f32, color: u32) -> Draw {
     )
 }
 
-/// Sine wave amplitude for the squiggly progress bar.
-const WAVE_AMPLITUDE: f32 = 1.5;
+/// Track thickness for both seek and volume bars (pixels).
+const BAR_TRACK_H: f32 = 2.0;
+/// Sine wave amplitude — matches half the track thickness for visual consistency.
+const WAVE_AMPLITUDE: f32 = BAR_TRACK_H / 2.0;
 /// Points per wave cycle (smoothed by Catmull-Rom on host).
 const WAVE_POINTS_PER_CYCLE: usize = 8;
 /// Wavelength in pixels.
@@ -1567,7 +1755,15 @@ fn squiggle_path(end_x: f32, mid_y: f32) -> Draw {
         })
         .collect();
 
-    Draw::path(points, 2.0, WHITE, false, false, Interpolation::CatmullRom).animate(
+    Draw::path(
+        points,
+        BAR_TRACK_H,
+        WHITE,
+        false,
+        false,
+        Interpolation::CatmullRom,
+    )
+    .animate(
         AnimProperty::TranslateX,
         0.0,
         -WAVE_LENGTH,
@@ -1580,13 +1776,13 @@ fn squiggle_path(end_x: f32, mid_y: f32) -> Draw {
 /// Oversized draw width for background track (canvas clips to layout bounds).
 const OVERSIZED_W: f32 = 1_500.0;
 
-/// Touchable progress bar canvas (flex stretches, fills use `bar_w`).
+/// Touchable progress bar canvas.
 ///
-/// Layout uses `flex: 1.0` so the bar stretches to fill available space.
-/// Background draws use an oversized width (clipped by canvas). Fill position
-/// and dot use `bar_w` (an approximation of the actual layout width) so the
-/// progress fraction is visually correct.
-fn progress_bar_node(media: &MediaState, bar_w: f32) -> Node {
+/// Layout uses `flex: 1.0` so right edges align. Background track uses
+/// `OVERSIZED_W` (clipped by canvas). Fill/dot positions use `draw_w`
+/// (pre-computed expected width) so the progress fraction is correct.
+/// Touch `frac_x` is relative to actual layout width, so seek works.
+fn progress_bar_node(media: &MediaState, draw_w: f32) -> Node {
     let pos = media.position.position_secs;
     let dur = media.position.duration_secs;
     let is_playing = media.transport == TransportState::Playing;
@@ -1597,9 +1793,10 @@ fn progress_bar_node(media: &MediaState, bar_w: f32) -> Node {
         0.0
     };
 
-    let bar_height = DOT_RADIUS * 2.0 + 2.0;
+    let half_track = BAR_TRACK_H / 2.0;
+    let bar_height = DOT_RADIUS * 2.0 + BAR_TRACK_H;
     let mid_y = bar_height / 2.0;
-    let fill_w = bar_w * progress;
+    let fill_w = draw_w * progress;
 
     let mut draws: Vec<Draw> = Vec::new();
 
@@ -1607,9 +1804,15 @@ fn progress_bar_node(media: &MediaState, bar_w: f32) -> Node {
         draws.push(squiggle_path(OVERSIZED_W, mid_y));
     } else {
         // Background track: oversized, clipped by canvas
-        draws.push(Draw::rect(0.0, mid_y - 1.0, OVERSIZED_W, 2.0, GRAY_70));
+        draws.push(Draw::rect(
+            0.0,
+            mid_y - half_track,
+            OVERSIZED_W,
+            BAR_TRACK_H,
+            GRAY_70,
+        ));
 
-        if is_playing && fill_w > 2.0 {
+        if is_playing && fill_w > BAR_TRACK_H {
             draws.push(squiggle_path(fill_w, mid_y));
             draws.push(Draw::rect(
                 fill_w,
@@ -1621,13 +1824,19 @@ fn progress_bar_node(media: &MediaState, bar_w: f32) -> Node {
             let track_x = fill_w + DOT_RADIUS;
             draws.push(Draw::rect(
                 track_x,
-                mid_y - 1.0,
+                mid_y - half_track,
                 OVERSIZED_W - track_x,
-                2.0,
+                BAR_TRACK_H,
                 GRAY_70,
             ));
         } else if fill_w > 0.0 {
-            draws.push(Draw::rect(0.0, mid_y - 1.0, fill_w, 2.0, WHITE));
+            draws.push(Draw::rect(
+                0.0,
+                mid_y - half_track,
+                fill_w,
+                BAR_TRACK_H,
+                WHITE,
+            ));
         }
 
         if fill_w > 0.0 {
@@ -1653,26 +1862,43 @@ fn progress_time_str(media: &MediaState) -> String {
     }
 }
 
-/// Approximate width of the progress time label ("xx:xx / xx:xx" at 12px).
-const PROGRESS_TIME_APPROX_W: f32 = 90.0;
+/// Estimate text width at 12px font for time/percentage labels.
+/// Digits ~7px, punctuation/spaces ~4px, plus small padding.
+fn estimate_label_w(s: &str) -> f32 {
+    let w: f32 = s
+        .chars()
+        .map(|c| if c.is_ascii_digit() { 7.2 } else { 4.0 })
+        .sum();
+    w + 4.0
+}
 
-fn render_progress(media: &MediaState, bar_w: f32) -> Node {
-    let progress_w = (bar_w - 8.0 - PROGRESS_TIME_APPROX_W).max(40.0);
+fn render_progress(media: &MediaState, avail_w: f32) -> Node {
+    let time_str = progress_time_str(media);
+    let label_w = estimate_label_w(&time_str);
+    let bar_draw_w = (avail_w - 8.0 - label_w).max(40.0);
     row(
         props!(gap: 8.0, cross_align: CrossAlign::Center),
         [
-            progress_bar_node(media, progress_w),
+            progress_bar_node(media, bar_draw_w),
             text(
-                progress_time_str(media),
+                time_str,
                 style!(size: 12, color: GRAY_40, text_overflow: TextOverflow::Clip),
             ),
         ],
     )
 }
 
-fn render_controls(media: &MediaState) -> Node {
+/// Ghost Small icon-only button width (square = height = 32px).
+const BTN_SM: f32 = 32.0;
+
+fn render_controls(media: &MediaState, avail_w: f32) -> Node {
     let cd = controls_data(media);
     let actions = &media.actions;
+
+    let vol_label_w = estimate_label_w(&cd.vol_str);
+    // 6 buttons + spacer(flex:1) + vol_bar + vol_label — 8 gaps
+    let fixed = BTN_SM * 6.0 + vol_label_w + 8.0 * 8.0;
+    let vol_draw_w = ((avail_w - fixed) / 2.0).max(20.0);
 
     row(
         props!(gap: 8.0, cross_align: CrossAlign::Center),
@@ -1684,30 +1910,27 @@ fn render_controls(media: &MediaState) -> Node {
             button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small),
             button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small),
             button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small),
-            volume_bar(cd.vol_frac, VOLUME_BAR_W, false),
-            row(
-                props!(width: VOL_LABEL_W),
-                [text(&cd.vol_str, style!(size: 12, color: GRAY_40))],
-            ),
+            volume_bar(cd.vol_frac, vol_draw_w),
+            text(&cd.vol_str, style!(size: 12, color: GRAY_40)),
         ],
     )
 }
 
-/// Ghost Small icon-only button width: 2×h_padding(12) + icon(14) = 38px.
-const BTN_GHOST_SMALL_W: f32 = 38.0;
-
 /// Stacked controls for small layouts:
-/// Row 1: prev | play | next | [progress bar] | time
-/// Row 2: vol- | vol+ | mute | [volume bar]   | %
+/// Row 1: prev | play | next | [progress bar (flex)] | time (fixed)
+/// Row 2: vol- | vol+ | mute | [volume bar (flex)]   | % (fixed)
 fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
     let cd = controls_data(media);
     let actions = &media.actions;
 
-    let btns_3 = BTN_GHOST_SMALL_W * 3.0;
-    // Row 1: 3 buttons + 4 gaps + progress + time
-    let progress_w = (avail_w - btns_3 - 8.0 * 4.0 - PROGRESS_TIME_APPROX_W).max(40.0);
-    // Row 2: 3 buttons + 3 gaps + volume + vol_label
-    let volume_w = (avail_w - btns_3 - 8.0 * 3.0 - VOL_LABEL_W).max(40.0);
+    let time_str = progress_time_str(media);
+    let time_label_w = estimate_label_w(&time_str);
+    let vol_label_w = estimate_label_w(&cd.vol_str);
+
+    // Row 1: 3 buttons + bar + time_label — 4 gaps
+    let prog_draw_w = (avail_w - BTN_SM * 3.0 - time_label_w - 8.0 * 4.0).max(40.0);
+    // Row 2: 3 buttons + bar + vol_label — 4 gaps
+    let vol_draw_w = (avail_w - BTN_SM * 3.0 - vol_label_w - 8.0 * 4.0).max(20.0);
 
     col(
         props!(gap: 4.0),
@@ -1718,8 +1941,8 @@ fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
                     button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous),
                     button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled),
                     button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next),
-                    progress_bar_node(media, progress_w),
-                    text(progress_time_str(media), style!(size: 12, color: GRAY_40)),
+                    progress_bar_node(media, prog_draw_w),
+                    text(time_str, style!(size: 12, color: GRAY_40)),
                 ],
             ),
             row(
@@ -1728,36 +1951,21 @@ fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
                     button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small),
                     button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small),
                     button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small),
-                    volume_bar(cd.vol_frac, volume_w, true),
-                    row(
-                        props!(width: VOL_LABEL_W),
-                        [text(&cd.vol_str, style!(size: 12, color: GRAY_40))],
-                    ),
+                    volume_bar(cd.vol_frac, vol_draw_w),
+                    text(&cd.vol_str, style!(size: 12, color: GRAY_40)),
                 ],
             ),
         ],
     )
 }
 
-/// Fixed width for the volume percentage label (fits "100%").
-const VOL_LABEL_W: f32 = 36.0;
-/// Fixed-width volume bar default width.
-const VOLUME_BAR_W: f32 = 80.0;
-
-fn volume_bar(vol_frac: f32, bar_w: f32, stretch: bool) -> Node {
-    let h = 4.0;
-    let bg_w = if stretch { OVERSIZED_W } else { bar_w };
-    let fill_w = bar_w * vol_frac;
+fn volume_bar(vol_frac: f32, draw_w: f32) -> Node {
+    let fill_w = draw_w * vol_frac;
     let draws = vec![
-        Draw::rect(0.0, 0.0, bg_w, h, GRAY_70),
-        Draw::rect(0.0, 0.0, fill_w, h, GRAY_30),
+        Draw::rect(0.0, 0.0, OVERSIZED_W, BAR_TRACK_H, GRAY_70),
+        Draw::rect(0.0, 0.0, fill_w, BAR_TRACK_H, GRAY_30),
     ];
-    let bar_props = if stretch {
-        props!(flex: 1.0, height: h)
-    } else {
-        props!(width: bar_w, height: h)
-    };
-    touchable("volume", bar_props, draws)
+    touchable("volume", props!(flex: 1.0, height: BAR_TRACK_H), draws)
 }
 
 struct ControlsData {

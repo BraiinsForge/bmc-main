@@ -201,6 +201,8 @@ netlink-packet-route = "0.20.1"
 netlink-sys = "0.8.5"
 nonzero_ext = "0.3.0"
 notify = "8"
+owo-colors = "4.3.0"
+palette = { version = "0.7.6", default-features = false, features = ["libm"] }
 parking_lot = "0.12.3"
 pcap-file = "3.0.0-rc1"
 pin-project = "1.1.10"

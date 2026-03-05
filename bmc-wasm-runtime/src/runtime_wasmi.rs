@@ -24,9 +24,9 @@ use wasmi::{Caller, Extern, Linker};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::gpu::FemtoVgRenderer;
 use crate::host_api::{
-    ActiveHttpListener, ActiveMdnsBrowse, ActiveMdnsRegistration, ActiveSocket, ActiveWebSocket,
-    CompletedFetch, DelayedFetch, FrameTimings, HostState, HttpInboundRequest,
-    HttpListenerResponse, MdnsEvent, SocketEvent, SocketOutbound, WsEvent, WsOutbound,
+    ActiveHttpListener, ActiveMdnsBrowse, ActiveMdnsRegistration, ActiveSocket, ActiveSsdpSearch,
+    ActiveWebSocket, CompletedFetch, DelayedFetch, FrameTimings, HostState, HttpInboundRequest,
+    HttpListenerResponse, MdnsEvent, SocketEvent, SocketOutbound, SsdpEvent, WsEvent, WsOutbound,
 };
 use crate::renderer::Renderer;
 use crate::tree::{self, TouchHit};
@@ -985,6 +985,52 @@ impl WasmWidgetRuntime {
                 if let Some(reg) = state.mdns_registrations.remove(&reg_id) {
                     let _ = reg.daemon.unregister(&reg.fullname);
                     let _ = reg.daemon.shutdown();
+                }
+            },
+        )?;
+
+        // ── SSDP ──────────────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_ssdp_search",
+            |mut caller: Caller<'_, HostState>,
+             st_ptr: u32,
+             st_len: u32,
+             timeout_secs: u32|
+             -> u32 {
+                let raw = read_string(&caller, st_ptr, st_len);
+                let Some(search_target) = raw else { return 0 };
+                if search_target.is_empty() {
+                    return 0;
+                }
+
+                let state = caller.data_mut();
+                let search_id = state.next_ssdp_search_id;
+                state.next_ssdp_search_id += 1;
+
+                let (event_tx, event_rx) = std::sync::mpsc::channel::<SsdpEvent>();
+                let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+
+                state
+                    .ssdp_searches
+                    .insert(search_id, ActiveSsdpSearch { event_rx, stop_tx });
+
+                std::thread::spawn(move || {
+                    ssdp_search_thread(search_target, timeout_secs, event_tx, stop_rx);
+                });
+
+                search_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_ssdp_stop",
+            |mut caller: Caller<'_, HostState>, search_id: u32| {
+                let state = caller.data_mut();
+                if let Some(search) = state.ssdp_searches.remove(&search_id) {
+                    let _ = search.stop_tx.send(());
                 }
             },
         )?;
@@ -2177,6 +2223,94 @@ impl WasmWidgetRuntime {
         !self.store.data().mdns_browses.is_empty()
     }
 
+    /// Drain SSDP events from all active search sessions and deliver them
+    /// to WASM by calling `__on_ssdp_event(search_id, event_type, data_ptr, data_len)`.
+    ///
+    /// Event types: 0 = Found (data = JSON), 1 = Removed (data = USN).
+    ///
+    /// Call this before `render()` each frame.
+    pub fn deliver_ssdp_events(&mut self) -> bool {
+        let mut events: Vec<(u32, SsdpEvent)> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&search_id, search) in &state.ssdp_searches {
+            while let Ok(event) = search.event_rx.try_recv() {
+                events.push((search_id, event));
+            }
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        let on_ssdp_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_ssdp_event");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_ssdp_event), Ok(alloc_func)) = (on_ssdp_event, alloc_func) else {
+            tracing::warn!("widget missing __on_ssdp_event or __alloc export");
+            return false;
+        };
+
+        for (search_id, event) in events {
+            let (event_type, data): (u32, &[u8]) = match &event {
+                SsdpEvent::Found(json) => (0, json.as_bytes()),
+                SsdpEvent::Removed(usn) => (1, usn.as_bytes()),
+            };
+
+            let data_len = data.len() as u32;
+            let data_ptr = if data_len > 0 {
+                if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                    tracing::error!("set_fuel failed: {e}");
+                    continue;
+                }
+                match alloc_func.call(&mut self.store, data_len) {
+                    Ok(ptr) => {
+                        let memory = self
+                            .instance
+                            .get_export(&self.store, "memory")
+                            .and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let mem_data = memory.data_mut(&mut self.store);
+                            let start = ptr as usize;
+                            let end = start + data_len as usize;
+                            if end <= mem_data.len() {
+                                mem_data[start..end].copy_from_slice(data);
+                            }
+                        }
+                        ptr
+                    }
+                    Err(e) => {
+                        tracing::error!("__alloc failed for ssdp event: {e}");
+                        continue;
+                    }
+                }
+            } else {
+                0
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) =
+                on_ssdp_event.call(&mut self.store, (search_id, event_type, data_ptr, data_len))
+            {
+                tracing::error!("__on_ssdp_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active SSDP search sessions.
+    #[must_use]
+    pub fn has_active_ssdp_searches(&self) -> bool {
+        !self.store.data().ssdp_searches.is_empty()
+    }
+
     /// Drain inbound HTTP requests from all active listeners and deliver them
     /// to WASM by calling `__on_http_request(listener_id, request_id, method_ptr,
     /// method_len, path_ptr, path_len, headers_ptr, headers_len, body_ptr, body_len)`.
@@ -2843,6 +2977,266 @@ fn escape_json(s: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+/// Background thread for SSDP M-SEARCH discovery.
+///
+/// Sends M-SEARCH multicast requests and listens for UPnP device responses.
+/// For each responding device, fetches and parses the device description XML
+/// to extract control URLs, then delivers pre-parsed JSON events.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "thread entry point — values are moved in"
+)]
+fn ssdp_search_thread(
+    search_target: String,
+    timeout_secs: u32,
+    event_tx: std::sync::mpsc::Sender<SsdpEvent>,
+    stop_rx: std::sync::mpsc::Receiver<()>,
+) {
+    use std::collections::HashSet;
+    use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+
+    let multicast_group = Ipv4Addr::new(239, 255, 255, 250);
+    let multicast_addr = SocketAddrV4::new(multicast_group, 1900);
+
+    // Socket for M-SEARCH (ephemeral port, receives unicast responses)
+    let search_socket = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("SSDP: failed to bind search socket: {e}");
+            return;
+        }
+    };
+    if let Err(e) = search_socket.set_read_timeout(Some(Duration::from_millis(250))) {
+        tracing::error!("SSDP: failed to set search socket timeout: {e}");
+        return;
+    }
+
+    // Socket for NOTIFY listener (multicast group on port 1900, receives byebye/alive).
+    // Port 1900 may already be in use — that's fine, NOTIFY listener is best-effort.
+    let notify_socket: Option<UdpSocket> =
+        UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 1900))
+            .ok()
+            .and_then(|sock| {
+                if let Err(e) = sock.join_multicast_v4(&multicast_group, &Ipv4Addr::UNSPECIFIED) {
+                    tracing::warn!("SSDP: failed to join multicast group: {e}");
+                    return None;
+                }
+                let _ = sock.set_read_timeout(Some(Duration::from_millis(250)));
+                Some(sock)
+            });
+
+    let mut seen_usns: HashSet<String> = HashSet::new();
+    let overall_timeout = Duration::from_secs(u64::from(timeout_secs).max(3));
+    let resend_interval = Duration::from_secs(30);
+    let mut last_send = Instant::now()
+        .checked_sub(resend_interval)
+        .expect("BUG: system clock too close to epoch for SSDP interval");
+
+    loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+
+        // Send M-SEARCH periodically
+        if last_send.elapsed() >= resend_interval {
+            let request = format!(
+                "M-SEARCH * HTTP/1.1\r\n\
+                 HOST: 239.255.255.250:1900\r\n\
+                 MAN: \"ssdp:discover\"\r\n\
+                 MX: {timeout_secs}\r\n\
+                 ST: {search_target}\r\n\r\n"
+            );
+            if let Err(e) = search_socket.send_to(request.as_bytes(), multicast_addr) {
+                tracing::warn!("SSDP: M-SEARCH send failed: {e}");
+            } else {
+                tracing::debug!("SSDP: sent M-SEARCH for {search_target}");
+            }
+            last_send = Instant::now();
+        }
+
+        // Listen for M-SEARCH responses within the search window
+        let listen_deadline = Instant::now() + overall_timeout;
+        let mut buf = [0_u8; 4096];
+        while Instant::now() < listen_deadline {
+            if stop_rx.try_recv().is_ok() {
+                return;
+            }
+
+            // Poll search socket for M-SEARCH responses
+            if let Ok((n, _addr)) = search_socket.recv_from(&mut buf) {
+                let response = String::from_utf8_lossy(&buf[..n]);
+                if let Some(event) = ssdp_handle_response(&response, &search_target, &mut seen_usns)
+                {
+                    if event_tx.send(event).is_err() {
+                        return;
+                    }
+                }
+            }
+
+            // Poll notify socket for NOTIFY messages (byebye / alive)
+            if let Some(ref sock) = notify_socket {
+                if let Ok((n, _addr)) = sock.recv_from(&mut buf) {
+                    let msg = String::from_utf8_lossy(&buf[..n]);
+                    if let Some(event) = ssdp_handle_notify(&msg, &search_target, &mut seen_usns) {
+                        if event_tx.send(event).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Handle an M-SEARCH response: extract LOCATION + USN, fetch description, return Found event.
+fn ssdp_handle_response(
+    response: &str,
+    search_target: &str,
+    seen_usns: &mut std::collections::HashSet<String>,
+) -> Option<SsdpEvent> {
+    // Verify the ST header matches our search target — devices may respond
+    // with unrelated service types (e.g. upnp:rootdevice) to any M-SEARCH.
+    let st = ssdp_extract_header(response, "ST")?;
+    if st != search_target {
+        return None;
+    }
+
+    let location = ssdp_extract_header(response, "LOCATION")?;
+    let usn = ssdp_extract_header(response, "USN")?;
+
+    if seen_usns.contains(&usn) {
+        return None;
+    }
+    seen_usns.insert(usn.clone());
+
+    tracing::debug!("SSDP: discovered USN={usn} at {location}");
+
+    if let Some(json) = ssdp_fetch_description(&location) {
+        return Some(SsdpEvent::Found(json));
+    }
+    tracing::warn!("SSDP: failed to parse description from {location}");
+    None
+}
+
+/// Handle an SSDP NOTIFY message: detect `ssdp:byebye` for removal, `ssdp:alive` for discovery.
+fn ssdp_handle_notify(
+    msg: &str,
+    search_target: &str,
+    seen_usns: &mut std::collections::HashSet<String>,
+) -> Option<SsdpEvent> {
+    // Only process NOTIFY messages
+    if !msg.starts_with("NOTIFY") {
+        return None;
+    }
+
+    let nts = ssdp_extract_header(msg, "NTS")?;
+    let usn = ssdp_extract_header(msg, "USN")?;
+    let nt = ssdp_extract_header(msg, "NT").unwrap_or_default();
+
+    // Only process events matching our search target
+    if !nt.contains(search_target) && !usn.contains(search_target) {
+        return None;
+    }
+
+    if nts == "ssdp:byebye" {
+        tracing::debug!("SSDP: byebye USN={usn}");
+        seen_usns.remove(&usn);
+        Some(SsdpEvent::Removed(usn))
+    } else if nts == "ssdp:alive" {
+        // Treat as discovery if not already seen
+        let location = ssdp_extract_header(msg, "LOCATION")?;
+        if seen_usns.contains(&usn) {
+            return None;
+        }
+        seen_usns.insert(usn.clone());
+        tracing::debug!("SSDP: alive USN={usn} at {location}");
+        if let Some(json) = ssdp_fetch_description(&location) {
+            return Some(SsdpEvent::Found(json));
+        }
+        tracing::warn!("SSDP: failed to parse description from {location}");
+        None
+    } else {
+        None
+    }
+}
+
+/// Extract a header value from an SSDP HTTP-like response (case-insensitive).
+fn ssdp_extract_header(response: &str, header_name: &str) -> Option<String> {
+    let header_lower = header_name.to_ascii_lowercase();
+    for line in response.lines() {
+        if let Some((key, value)) = line.split_once(':') {
+            if key.trim().to_ascii_lowercase() == header_lower {
+                return Some(value.trim().to_owned());
+            }
+        }
+    }
+    None
+}
+
+/// Fetch a UPnP device description XML and extract relevant fields as JSON.
+fn ssdp_fetch_description(location: &str) -> Option<String> {
+    let response = ureq::get(location).call().ok()?;
+    let body = response.into_body().read_to_string().ok()?;
+    let doc = roxmltree::Document::parse(&body).ok()?;
+    let root = doc.root_element();
+
+    // Extract friendlyName from <device>
+    let device_elem = root.descendants().find(|n| n.has_tag_name("device"))?;
+    let friendly_name = device_elem
+        .descendants()
+        .find(|n| n.has_tag_name("friendlyName"))
+        .and_then(|n| n.text())
+        .unwrap_or("Unknown");
+
+    // Extract control URLs from <serviceList>
+    let mut av_transport_path = String::new();
+    let mut rendering_control_path = String::new();
+
+    for service in device_elem
+        .descendants()
+        .filter(|n| n.has_tag_name("service"))
+    {
+        let svc_type = service
+            .descendants()
+            .find(|n| n.has_tag_name("serviceType"))
+            .and_then(|n| n.text())
+            .unwrap_or("");
+        let control_url = service
+            .descendants()
+            .find(|n| n.has_tag_name("controlURL"))
+            .and_then(|n| n.text())
+            .unwrap_or("");
+
+        if svc_type.contains("AVTransport") {
+            control_url.clone_into(&mut av_transport_path);
+        } else if svc_type.contains("RenderingControl") {
+            control_url.clone_into(&mut rendering_control_path);
+        }
+    }
+
+    // Extract host and port from the LOCATION URL
+    // Format: http://host:port/path
+    let url_body = location.strip_prefix("http://")?;
+    let host_port = url_body.split('/').next()?;
+    let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
+        (h, p.parse::<u16>().ok()?)
+    } else {
+        (host_port, 80)
+    };
+
+    let json = format!(
+        "{{\"usn\":\"\",\"location\":\"{}\",\"name\":\"{}\",\"host\":\"{}\",\"port\":{},\"av_transport_path\":\"{}\",\"rendering_control_path\":\"{}\"}}",
+        escape_json(location),
+        escape_json(friendly_name),
+        escape_json(host),
+        port,
+        escape_json(&av_transport_path),
+        escape_json(&rendering_control_path),
+    );
+
+    Some(json)
 }
 
 /// Background thread for an HTTP listener.

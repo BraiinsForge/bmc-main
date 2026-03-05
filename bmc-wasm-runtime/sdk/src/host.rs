@@ -325,15 +325,12 @@ pub fn register_bitmap(data: &[u8]) -> u16 {
     unsafe { host_register_bitmap(data.as_ptr(), data.len() as u32) as u16 }
 }
 
-/// Decode image data (PNG, JPEG, etc.) to RGBA pixels on the host.
+/// Get the dimensions of an image (PNG, JPEG, etc.) without decoding the full pixel data.
 ///
-/// Returns `Some((rgba_bytes, width, height))` on success, `None` on decode error.
-/// The RGBA buffer is allocated in WASM memory and contains `width * height * 4` bytes.
-///
-/// Useful for color extraction (e.g., palette from album art) without pulling
-/// an image decoder into the WASM binary.
-pub fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    // First call with empty buffer to get dimensions
+/// Returns `Some((width, height))` on success, `None` on decode error.
+/// This is much cheaper than [`decode_image`] as it only probes the header — no RGBA
+/// buffer is allocated.
+pub fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     let packed =
         unsafe { host_decode_image(data.as_ptr(), data.len() as u32, core::ptr::null_mut(), 0) };
     if packed < 0 {
@@ -341,10 +338,25 @@ pub fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     }
     let w = (packed >> 32) as u32;
     let h = (packed & 0xFFFF_FFFF) as u32;
-    let needed = w * h * 4;
-    if needed == 0 {
+    if w == 0 || h == 0 {
         return None;
     }
+    Some((w, h))
+}
+
+/// Decode image data (PNG, JPEG, etc.) to RGBA pixels on the host.
+///
+/// Returns `Some((rgba_bytes, width, height))` on success, `None` on decode error.
+/// The RGBA buffer is allocated in WASM memory and contains `width * height * 4` bytes.
+///
+/// Useful for color extraction (e.g., palette from album art) without pulling
+/// an image decoder into the WASM binary.
+///
+/// If you only need the aspect ratio, use [`image_dimensions`] instead — it avoids
+/// the large RGBA allocation and is much cheaper on fuel.
+pub fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let (w, h) = image_dimensions(data)?;
+    let needed = w * h * 4;
 
     // Allocate buffer and decode into it
     let mut buf = vec![0u8; needed as usize];

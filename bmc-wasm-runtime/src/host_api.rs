@@ -169,6 +169,22 @@ pub struct ActiveMdnsBrowse {
     pub stop_tx: mpsc::Sender<()>,
 }
 
+/// An SSDP event queued for delivery to WASM.
+pub enum SsdpEvent {
+    /// Device found — carries JSON with device details.
+    Found(String),
+    /// Device removed — carries the USN string (from SSDP NOTIFY byebye).
+    Removed(String),
+}
+
+/// An active SSDP search session managed by a background thread.
+pub struct ActiveSsdpSearch {
+    /// Channel to receive SSDP events from the background thread.
+    pub event_rx: mpsc::Receiver<SsdpEvent>,
+    /// Signal the background thread to stop.
+    pub stop_tx: mpsc::Sender<()>,
+}
+
 /// An active mDNS service registration.
 pub struct ActiveMdnsRegistration {
     /// The daemon owning this registration.
@@ -336,6 +352,12 @@ pub struct HostState {
     /// Next mDNS registration ID.
     pub next_mdns_reg_id: u32,
 
+    /// Active SSDP search sessions, keyed by search_id.
+    pub ssdp_searches: HashMap<u32, ActiveSsdpSearch>,
+
+    /// Next SSDP search ID.
+    pub next_ssdp_search_id: u32,
+
     /// Per-widget key-value storage directory (None = persistence disabled).
     pub kv_store_path: Option<PathBuf>,
 
@@ -402,6 +424,8 @@ impl HostState {
             next_mdns_browse_id: 1,
             mdns_registrations: HashMap::new(),
             next_mdns_reg_id: 1,
+            ssdp_searches: HashMap::new(),
+            next_ssdp_search_id: 1,
             kv_store_path: None,
             kv_cache: HashMap::new(),
             http_listeners: HashMap::new(),

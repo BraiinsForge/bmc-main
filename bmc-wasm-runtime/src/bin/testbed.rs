@@ -59,6 +59,7 @@ fn scaled(logical: u32, dpi: f32) -> u32 {
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
+    bmc_wasm_runtime::tree::init_debug_flags();
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -435,6 +436,7 @@ impl ApplicationHandler for App {
                 || t.runtime.has_active_websockets()
                 || t.runtime.has_active_sockets()
                 || t.runtime.has_active_mdns_browses()
+                || t.runtime.has_active_ssdp_searches()
                 || t.runtime.has_active_http_listeners()
         });
 
@@ -652,6 +654,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         tile.runtime.deliver_ws_messages();
         tile.runtime.deliver_socket_events();
         tile.runtime.deliver_mdns_events();
+        tile.runtime.deliver_ssdp_events();
         tile.runtime.deliver_http_requests();
     }
 
@@ -1036,7 +1039,7 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
 
 // ── Stats overlay ──────────────────────────────────────────────────
 
-/// Draw stats panel with reload button. Returns `true` if reload was clicked.
+/// Draw stats panel with reload + debug layout buttons. Returns `true` if reload was clicked.
 fn draw_stats_panel(
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
@@ -1046,25 +1049,54 @@ fn draw_stats_panel(
 ) -> bool {
     let pad = 8.0;
     let y = pad;
-
-    // ── Row 1: reload button (testbed-only) ──
     let btn_sz = ButtonSize::Small;
-    let btn_w = btn_sz.width(6, false);
     let btn_h = btn_sz.height();
+    let gap = 4.0;
+
+    // ── Row 1: debug layout toggle + reload button ──
+    let reload_w =
+        renderer.measure_text("Reload WASM", btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
     let reload_clicked = draw_button(
         renderer,
         interaction,
         "reload",
         "Reload WASM",
-        w - pad - btn_w,
+        w - pad - reload_w,
         y,
-        btn_w,
+        reload_w,
         btn_h,
         ButtonStyle::Danger,
         btn_sz,
         0,
         false,
     );
+
+    let debug_on = bmc_wasm_runtime::tree::debug_layout_enabled();
+    let debug_label = "Debug layout";
+    let debug_w = renderer.measure_text(debug_label, btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
+    let debug_style = if debug_on {
+        ButtonStyle::Primary
+    } else {
+        ButtonStyle::Secondary
+    };
+    let debug_clicked = draw_button(
+        renderer,
+        interaction,
+        "debug_layout",
+        debug_label,
+        w - pad - reload_w - gap - debug_w,
+        y,
+        debug_w,
+        btn_h,
+        debug_style,
+        btn_sz,
+        0,
+        false,
+    );
+    if debug_clicked.0 {
+        bmc_wasm_runtime::tree::toggle_debug_layout();
+    }
+
     let y_offset = y + btn_h + 4.0;
 
     // ── Perf overlay (reusable) ──

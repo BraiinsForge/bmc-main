@@ -10,8 +10,41 @@
 )]
 #![allow(clippy::wildcard_imports)]
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::*;
+
+/// When `DEBUG_LAYOUT=1` env var is set, draw colored outlines around every layout node.
+static DEBUG_LAYOUT: AtomicBool = AtomicBool::new(false);
+
+/// Call once at startup to check the `DEBUG_LAYOUT` env var.
+pub fn init_debug_flags() {
+    if std::env::var("DEBUG_LAYOUT").is_ok_and(|v| v == "1") {
+        DEBUG_LAYOUT.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Returns whether debug layout outlines are enabled.
+pub fn debug_layout_enabled() -> bool {
+    DEBUG_LAYOUT.load(Ordering::Relaxed)
+}
+
+/// Toggle debug layout outlines on/off.
+pub fn toggle_debug_layout() {
+    let prev = DEBUG_LAYOUT.load(Ordering::Relaxed);
+    DEBUG_LAYOUT.store(!prev, Ordering::Relaxed);
+}
+
+/// Hot-pink-ish colors cycling by depth for debug outlines.
+const DEBUG_COLORS: [u32; 6] = [
+    0xFF_00_FF_FF, // magenta
+    0x00_FF_FF_FF, // cyan
+    0xFF_FF_00_FF, // yellow
+    0xFF_00_00_FF, // red
+    0x00_FF_00_FF, // green
+    0xFF_80_00_FF, // orange
+];
 
 // Re-export for other modules
 pub use bmc_wasm_protocol::{CrossAlign, PropsData, TextAlign, TextOverflow, TextStyle};
@@ -830,33 +863,67 @@ pub(crate) fn layout_and_render(
             }
 
             // Measure paragraphs and notifications based on available width
-            if let Some(ctx) = node_context
-                && let Some(ref para) = ctx.paragraph
-            {
-                // Use known width from Taffy if available, else fall back to available_space
-                let available_width = known_dimensions.width.or(match available_space.width {
-                    AvailableSpace::Definite(w) => Some(w),
-                    AvailableSpace::MinContent => Some(0.0),
-                    AvailableSpace::MaxContent => None,
-                });
+            if let Some(ctx) = node_context {
+                if let Some(ref para) = ctx.paragraph {
+                    // Use known width from Taffy if available, else fall back to available_space
+                    let available_width = known_dimensions.width.or(match available_space.width {
+                        AvailableSpace::Definite(w) => Some(w),
+                        AvailableSpace::MinContent => Some(0.0),
+                        AvailableSpace::MaxContent => None,
+                    });
 
-                // Use explicit max_width if set, otherwise use available width.
-                // Clip/Ellipsis: don't constrain width — text stays on one line.
-                let max_width = if para.base_style.text_overflow != TextOverflow::Wrap {
-                    None
-                } else if para.base_style.max_width > 0 {
-                    Some(
-                        (para.base_style.max_width as f32).min(available_width.unwrap_or(f32::MAX)),
-                    )
-                } else {
-                    available_width
-                };
+                    // Use explicit max_width if set, otherwise use available width.
+                    // Clip/Ellipsis: don't constrain width — text stays on one line.
+                    let max_width = if para.base_style.text_overflow != TextOverflow::Wrap {
+                        None
+                    } else if para.base_style.max_width > 0 {
+                        Some(
+                            (para.base_style.max_width as f32)
+                                .min(available_width.unwrap_or(f32::MAX)),
+                        )
+                    } else {
+                        available_width
+                    };
 
-                let (w, h) = renderer.measure_paragraph(&para.base_style, &para.spans, max_width);
-                return Size {
-                    width: known_dimensions.width.unwrap_or(w),
-                    height: known_dimensions.height.unwrap_or(h),
-                };
+                    let (w, h) =
+                        renderer.measure_paragraph(&para.base_style, &para.spans, max_width);
+                    return Size {
+                        width: known_dimensions.width.unwrap_or(w),
+                        height: known_dimensions.height.unwrap_or(h),
+                    };
+                }
+
+                if let Some(ref notif) = ctx.notification {
+                    return measure_notification(
+                        notif,
+                        known_dimensions,
+                        available_space,
+                        renderer,
+                    );
+                }
+
+                if let Some((_, ref label, _, btn_size, icon_id, _)) = ctx.button {
+                    let sz = ButtonSize::from(btn_size);
+                    let h = sz.height();
+                    let w = if icon_id != 0 && label.is_empty() {
+                        // Icon-only: square
+                        h
+                    } else if icon_id != 0 {
+                        let text_w = renderer.measure_text(label, sz.font_size());
+                        sz.h_padding()
+                            + sz.icon_size()
+                            + sz.icon_text_gap()
+                            + text_w
+                            + sz.h_padding()
+                    } else {
+                        let text_w = renderer.measure_text(label, sz.font_size());
+                        text_w + sz.h_padding() * 2.0
+                    };
+                    return Size {
+                        width: known_dimensions.width.unwrap_or(w),
+                        height: known_dimensions.height.unwrap_or(h),
+                    };
+                }
             }
 
             // Default for non-paragraph nodes without explicit size
@@ -891,6 +958,7 @@ pub(crate) fn layout_and_render(
         scroll_states,
         &mut result,
         &mut anim_ctx,
+        0,
     );
 
     // Render modal overlays
@@ -1038,15 +1106,14 @@ fn build_taffy_node(
             result.clicks.push(false);
 
             let sz = ButtonSize::from(*btn_size);
-            let has_icon = *icon_id != 0;
-            let width = sz.width(label.len(), has_icon);
             let height = sz.height();
 
             let style = Style {
                 size: Size {
-                    width: length(width),
+                    width: Dimension::auto(),
                     height: length(height),
                 },
+                align_self: Some(AlignSelf::FlexStart),
                 ..Default::default()
             };
             let id = taffy.new_leaf(style)?;
@@ -1080,10 +1147,13 @@ fn build_taffy_node(
             touch_key,
             draws,
         } => {
+            let has_explicit_size = props.width > 0.0 || props.height > 0.0;
             let style = Style {
                 size: size_from_props(props),
                 max_size: max_size_from_props(props),
                 flex_grow: props.flex,
+                // Prevent taffy from shrinking canvases with explicit sizes
+                flex_shrink: if has_explicit_size { 0.0 } else { 1.0 },
                 padding: padding_uniform(props.padding),
                 margin: margin_uniform(props.margin),
                 ..Default::default()
@@ -1225,6 +1295,7 @@ fn render_taffy_node(
     scroll_states: &mut HashMap<u16, ScrollState>,
     result: &mut TreeResult,
     anim_ctx: &mut AnimationContext<'_>,
+    depth: usize,
 ) {
     let Ok(layout) = taffy.layout(node_id) else {
         return;
@@ -1398,6 +1469,7 @@ fn render_taffy_node(
                 scroll_states,
                 result,
                 anim_ctx,
+                depth + 1,
             );
         }
         renderer.pop_scissor();
@@ -1437,7 +1509,14 @@ fn render_taffy_node(
             scroll_states,
             result,
             anim_ctx,
+            depth + 1,
         );
+    }
+
+    // Debug layout outlines — drawn last so they're on top of everything
+    if DEBUG_LAYOUT.load(Ordering::Relaxed) && w > 0.0 && h > 0.0 {
+        let color = DEBUG_COLORS[depth % DEBUG_COLORS.len()];
+        renderer.stroke_rect(x, y, w, h, 1.0, color);
     }
 }
 
@@ -2514,9 +2593,16 @@ fn render_modal_body_node(
             *button_idx += 1;
 
             let sz = ButtonSize::from(*size);
-            let has_icon = *icon_id != 0;
-            let btn_width = sz.width(label.len(), has_icon);
             let btn_height = sz.height();
+            let btn_width = if *icon_id != 0 && label.is_empty() {
+                btn_height
+            } else if *icon_id != 0 {
+                let text_w = renderer.measure_text(label, sz.font_size());
+                sz.h_padding() + sz.icon_size() + sz.icon_text_gap() + text_w + sz.h_padding()
+            } else {
+                let text_w = renderer.measure_text(label, sz.font_size());
+                text_w + sz.h_padding() * 2.0
+            };
 
             if y < clip_bottom && y + btn_height > clip_top {
                 let mut key_buf = [0_u8; 16];
@@ -2654,7 +2740,6 @@ fn plain_spans(text: &str) -> [SpanData; 1] {
     }]
 }
 
-#[expect(dead_code)]
 fn measure_notification(
     notif: &NotificationData,
     known_dimensions: Size<Option<f32>>,

@@ -205,9 +205,8 @@ pub fn previous() {
 /// Seek to a fractional position (0.0–1.0).
 pub fn seek(fraction: f64) {
     let pct = (fraction * 100.0).clamp(0.0, 100.0) as u32;
-    let (url, headers, pid) = match kodi_url_and_player() {
-        Some(v) => v,
-        None => return,
+    let Some((url, headers, pid)) = kodi_url_and_player() else {
+        return;
     };
     let id = alloc_id();
     let body = json!({
@@ -274,26 +273,23 @@ fn on_active_players(response: &FetchResponse) {
         };
         state.fail_count = 0;
 
-        match player_id {
-            Some(pid) => {
-                state.active_player_id = pid;
-                // Phase 2: parallel status queries
-                state.pending_responses = 3;
-            }
-            None => {
-                // No active player — report NoMedia, poll volume only
-                state.active_player_id = -1;
-                state.status.player_state.clear();
-                state.status.title = None;
-                state.status.artist = None;
-                state.status.album = None;
-                state.status.album_art_url = None;
-                state.status.duration_secs = 0.0;
-                state.status.current_time = 0.0;
-                state.status.speed = 0;
-                state.status.can_seek = false;
-                state.pending_responses = 1; // volume only
-            }
+        if let Some(pid) = player_id {
+            state.active_player_id = pid;
+            // Phase 2: parallel status queries
+            state.pending_responses = 3;
+        } else {
+            // No active player — report NoMedia, poll volume only
+            state.active_player_id = -1;
+            state.status.player_state.clear();
+            state.status.title = None;
+            state.status.artist = None;
+            state.status.album = None;
+            state.status.album_art_url = None;
+            state.status.duration_secs = 0.0;
+            state.status.current_time = 0.0;
+            state.status.speed = 0;
+            state.status.can_seek = false;
+            state.pending_responses = 1; // volume only
         }
     });
 
@@ -307,9 +303,8 @@ fn on_active_players(response: &FetchResponse) {
 // ── Polling — Phase 2a: Player properties ────────────────────────
 
 fn poll_player_properties() {
-    let (url, headers, pid) = match kodi_url_and_player() {
-        Some(v) => v,
-        None => return,
+    let Some((url, headers, pid)) = kodi_url_and_player() else {
+        return;
     };
     let id = alloc_id();
     let body = json!({
@@ -364,9 +359,8 @@ fn on_player_properties(response: &FetchResponse) {
 // ── Polling — Phase 2b: Player item (metadata) ──────────────────
 
 fn poll_player_item() {
-    let (url, headers, pid) = match kodi_url_and_player() {
-        Some(v) => v,
-        None => return,
+    let Some((url, headers, pid)) = kodi_url_and_player() else {
+        return;
     };
     let id = alloc_id();
     let body = json!({
@@ -407,8 +401,7 @@ fn on_player_item(response: &FetchResponse) {
 
         // Thumbnail: Kodi returns "image://..." paths
         if let Some(thumb) = doc.str("/result/item/thumbnail") {
-            if thumb.starts_with("image://") {
-                let image_path = &thumb["image://".len()..];
+            if let Some(image_path) = thumb.strip_prefix("image://") {
                 let encoded = percent_encode(image_path);
                 let art_url = KODI.with(|_| {
                     // Need host:port — already in state
@@ -496,7 +489,7 @@ fn maybe_fire_callback() {
 
 /// Send a command that requires an active player. Re-polls after response.
 fn kodi_command(method: &str, params_fn: fn(&KodiState) -> String) {
-    let (url, headers, params) = match KODI.with(|k| {
+    let Some((url, headers, params)) = KODI.with(|k| {
         let borrow = k.borrow();
         let state = borrow.as_ref()?;
         if state.active_player_id < 0 {
@@ -506,9 +499,8 @@ fn kodi_command(method: &str, params_fn: fn(&KodiState) -> String) {
         let headers = state.headers.clone();
         let params = params_fn(state);
         Some((url, headers, params))
-    }) {
-        Some(v) => v,
-        None => return,
+    }) else {
+        return;
     };
 
     let id = alloc_id();
@@ -631,12 +623,20 @@ const fn hex_char(nibble: u8) -> char {
 fn base64_encode(input: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     let chunks = input.chunks(3);
     for chunk in chunks {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let b0 = u32::from(chunk[0]);
+        let b1 = if chunk.len() > 1 {
+            u32::from(chunk[1])
+        } else {
+            0
+        };
+        let b2 = if chunk.len() > 2 {
+            u32::from(chunk[2])
+        } else {
+            0
+        };
         let triple = (b0 << 16) | (b1 << 8) | b2;
 
         out.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
