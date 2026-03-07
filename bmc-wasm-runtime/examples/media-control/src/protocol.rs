@@ -7,6 +7,46 @@
 //! transport. Protocol-specific status callbacks remain separate — each
 //! protocol pushes updates through its own callback registered at connect time.
 
+// ── Shared types ────────────────────────────────────────────
+
+/// Track metadata pushed by protocols to the view.
+#[derive(Debug, Clone, Default)]
+pub struct TrackMeta {
+    /// Primary display name (rendered big).
+    pub title: Option<String>,
+    /// Secondary metadata lines — protocol decides labels and order.
+    /// e.g. `[("Artist", "Springsteen"), ("Album", "Born to Run")]`
+    /// or `[("Series", "QI"), ("Season", "Season 21")]`
+    pub fields: Vec<(String, String)>,
+    pub album_art_uri: Option<String>,
+    #[allow(dead_code)]
+    pub duration_secs: Option<u32>,
+}
+
+/// A selectable sub-target within a connected device (e.g. a client session).
+#[derive(Debug, Clone)]
+pub struct SubTarget {
+    /// Protocol-specific identifier (e.g. session ID).
+    pub id: String,
+    /// Primary display name (e.g. "Living Room TV").
+    pub name: String,
+    /// Secondary metadata — same pattern as `TrackMeta::fields`.
+    pub fields: Vec<(String, String)>,
+    /// Whether this is the currently controlled sub-target.
+    pub active: bool,
+}
+
+/// Sub-target selection info returned by protocols that support it.
+///
+/// Used by server-based protocols (Emby, Jellyfin, future Plex) where one
+/// server can have multiple controllable client sessions.
+pub struct SubTargets {
+    /// What to call these in the UI (e.g. "Session", "Player").
+    pub term: &'static str,
+    /// Available choices. Empty = still loading / none available.
+    pub items: Vec<SubTarget>,
+}
+
 // ── Controller trait ─────────────────────────────────────────────
 
 /// Protocol-agnostic media controller interface.
@@ -51,6 +91,18 @@ pub trait MediaController {
 
     /// Set mute state.
     fn set_mute(&self, muted: bool);
+
+    // ── Target selection ──────────────────────────────────────
+
+    /// Available sub-targets within this device. `None` means the protocol
+    /// has no sub-target concept (device = target). `Some` with empty items
+    /// means still loading or no targets available yet.
+    fn sub_targets(&self) -> Option<SubTargets> {
+        None
+    }
+
+    /// Select a specific sub-target by ID (from `SubTarget::id`).
+    fn select_sub_target(&self, _id: &str) {}
 
     // ── Protocol metadata ───────────────────────────────────────
 

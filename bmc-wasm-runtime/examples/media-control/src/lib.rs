@@ -6,6 +6,8 @@
 //! Discovers devices via mDNS and presents a picker UI.
 
 mod cast;
+mod emby_jellyfin;
+use emby_jellyfin as media_server;
 mod icons;
 mod kodi;
 mod protocol;
@@ -16,7 +18,7 @@ use std::cell::{Cell, RefCell};
 #[allow(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
-use protocol::MediaController;
+use protocol::{MediaController, SubTarget, SubTargets};
 use upnp::{
     PositionInfo, TransportActions, TransportState, UpnpDevice, VolumeInfo, format_duration_hms,
     parse_mute, parse_position_info, parse_transport_actions, parse_transport_info, parse_volume,
@@ -31,6 +33,8 @@ use upnp::{
 enum DiscoveredProtocol {
     Cast,
     Kodi,
+    Jellyfin,
+    Emby,
     Upnp,
 }
 
@@ -86,6 +90,8 @@ struct MediaState {
     consecutive_failures: u8,
     /// Whether this session has ever reached Connected state.
     was_ever_connected: bool,
+    /// Show the sub-target (session) picker modal overlay.
+    show_sub_target_picker: bool,
 }
 
 impl Default for MediaState {
@@ -102,6 +108,7 @@ impl Default for MediaState {
             is_video: false,
             consecutive_failures: 0,
             was_ever_connected: false,
+            show_sub_target_picker: false,
         }
     }
 }
@@ -180,6 +187,13 @@ pub extern "C" fn init(width: u32, height: u32) {
     log_info!("media: SSDP search started");
     discovery_log("SSDP M-SEARCH MediaRenderer".into());
 
+    // Start UDP broadcast discovery for Jellyfin and Emby servers
+    udp_broadcast::udp_broadcast(7359, "Who is JellyfinServer?", 5, on_jellyfin_broadcast);
+    udp_broadcast::udp_broadcast(7359, "Who is EmbyServer?", 5, on_emby_broadcast);
+    log_info!("media: Jellyfin/Emby UDP broadcast started");
+    discovery_log("UDP broadcast Jellyfin:7359".into());
+    discovery_log("UDP broadcast Emby:7359".into());
+
     request_frame();
 }
 
@@ -256,6 +270,8 @@ fn on_mdns_found(json: &str) {
     let proto_label = match protocol {
         DiscoveredProtocol::Cast => "Cast",
         DiscoveredProtocol::Kodi => "Kodi",
+        DiscoveredProtocol::Jellyfin => "Jellyfin",
+        DiscoveredProtocol::Emby => "Emby",
         DiscoveredProtocol::Upnp => "UPnP",
     };
     log_info!(
@@ -362,7 +378,186 @@ fn on_ssdp_found(json: &str) {
 
     upsert_discovered(device);
 
+    // Probe for Jellyfin/Emby — fire-and-forget GET /System/Info/Public
+    PROBE_QUEUE.with(|q| q.borrow_mut().push((host.to_string(), port)));
+    let probe_url = fmt!("http://{}:{}/System/Info/Public", host, port);
+    FetchRequest::get(&probe_url).send(on_server_probe);
+
     request_frame();
+}
+
+// ── UDP broadcast discovery (Jellyfin/Emby) ─────────────────────
+
+fn on_jellyfin_broadcast(
+    _broadcast: udp_broadcast::UdpBroadcast,
+    event: &udp_broadcast::UdpBroadcastEvent<'_>,
+) {
+    let udp_broadcast::UdpBroadcastEvent::Response { data, .. } = event;
+    handle_server_broadcast(data, DiscoveredProtocol::Jellyfin);
+}
+
+fn on_emby_broadcast(
+    _broadcast: udp_broadcast::UdpBroadcast,
+    event: &udp_broadcast::UdpBroadcastEvent<'_>,
+) {
+    let udp_broadcast::UdpBroadcastEvent::Response { data, .. } = event;
+    handle_server_broadcast(data, DiscoveredProtocol::Emby);
+}
+
+fn handle_server_broadcast(data: &str, server_type: DiscoveredProtocol) {
+    let doc = JsonDoc::parse(data.as_bytes());
+    let address = doc.str("/Address").unwrap_or_default();
+    let server_name = doc.str("/Name").unwrap_or_default();
+    let server_id = doc.str("/Id").unwrap_or_default();
+
+    if address.is_empty() || server_id.is_empty() {
+        return;
+    }
+
+    // Parse host:port from Address URL (e.g. "http://192.168.1.50:8096")
+    let (host, port) = match parse_address_url(&address) {
+        Some(hp) => hp,
+        None => return,
+    };
+
+    let type_label = match server_type {
+        DiscoveredProtocol::Jellyfin => "Jellyfin",
+        DiscoveredProtocol::Emby => "Emby",
+        _ => "Unknown",
+    };
+    log_info!(
+        "media: UDP broadcast found {} ({}) at {}:{}",
+        server_name,
+        type_label,
+        host,
+        port
+    );
+    discovery_log(fmt!(
+        "{} ({}) at {}:{}",
+        server_name,
+        type_label,
+        host,
+        port
+    ));
+
+    let service_prefix = match server_type {
+        DiscoveredProtocol::Jellyfin => "jellyfin",
+        DiscoveredProtocol::Emby => "emby",
+        _ => "unknown",
+    };
+    let service_name = fmt!("{}:{}", service_prefix, server_id);
+
+    // Include host in display name — server names alone are often too vague
+    // (e.g. "nas", "server") since users configure these freely.
+    let display_name = fmt!("{} ({})", server_name, host);
+
+    let device = DiscoveredDevice {
+        name: display_name,
+        host: host.to_string(),
+        port,
+        protocol: server_type,
+        service_name,
+        av_transport_path: None,
+        rendering_control_path: None,
+    };
+
+    upsert_discovered(device);
+    request_frame();
+}
+
+/// Parse `"http://host:port"` into `(host, port)`.
+fn parse_address_url(url: &str) -> Option<(String, u16)> {
+    let stripped = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))?;
+    // Remove any trailing path
+    let authority = stripped.split('/').next()?;
+    if let Some((host, port_str)) = authority.rsplit_once(':') {
+        let port: u16 = port_str.parse().ok()?;
+        Some((host.to_string(), port))
+    } else {
+        Some((authority.to_string(), 8096))
+    }
+}
+
+// ── SSDP probe for Jellyfin/Emby ────────────────────────────────
+
+thread_local! {
+    /// Queue of (host, port) for pending SSDP probes.
+    static PROBE_QUEUE: RefCell<Vec<(String, u16)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn on_server_probe(response: &FetchResponse) {
+    let probe = PROBE_QUEUE.with(|q| {
+        let mut q = q.borrow_mut();
+        if q.is_empty() {
+            None
+        } else {
+            Some(q.remove(0))
+        }
+    });
+    let Some((host, port)) = probe else { return };
+
+    if !response.ok() {
+        return; // Not a Jellyfin/Emby server — leave as UPnP
+    }
+
+    let doc = JsonDoc::parse(response.body());
+    let product_name = doc.str("/ProductName").unwrap_or_default();
+
+    let new_protocol = if product_name.contains("Jellyfin") {
+        Some(DiscoveredProtocol::Jellyfin)
+    } else if product_name.contains("Emby") {
+        Some(DiscoveredProtocol::Emby)
+    } else {
+        None
+    };
+
+    let Some(protocol) = new_protocol else { return };
+
+    // Upgrade the device if it's still UPnP (skip if UDP broadcast already found it)
+    let upgraded = DISCOVERED.with(|d| {
+        let mut list = d.borrow_mut();
+        if let Some(dev) = list
+            .iter_mut()
+            .find(|dev| dev.host == host && dev.port == port)
+        {
+            if dev.protocol == DiscoveredProtocol::Upnp {
+                dev.protocol = protocol;
+                let server_name = doc.str("/ServerName").unwrap_or_default();
+                if !server_name.is_empty() {
+                    dev.name = fmt!("{} ({})", server_name, host);
+                }
+                let server_id = doc.str("/Id").unwrap_or_default();
+                if !server_id.is_empty() {
+                    let prefix = match protocol {
+                        DiscoveredProtocol::Jellyfin => "jellyfin",
+                        DiscoveredProtocol::Emby => "emby",
+                        _ => "unknown",
+                    };
+                    dev.service_name = fmt!("{}:{}", prefix, server_id);
+                }
+                return true;
+            }
+        }
+        false
+    });
+
+    if upgraded {
+        let type_label = match protocol {
+            DiscoveredProtocol::Jellyfin => "Jellyfin",
+            DiscoveredProtocol::Emby => "Emby",
+            _ => "Unknown",
+        };
+        log_info!(
+            "media: SSDP probe upgraded {}:{} to {}",
+            host,
+            port,
+            type_label
+        );
+        discovery_log(fmt!("Probe: {}:{} → {}", host, port, type_label));
+        request_frame();
+    }
 }
 
 // ── Connection management ───────────────────────────────────────
@@ -385,6 +580,22 @@ fn connect_to_device(device: &DiscoveredDevice) {
             // Grab auth headers after connect (KODI state now exists)
             Box::new(KodiAdapter {
                 art_headers: kodi::auth_headers(),
+            })
+        }
+        DiscoveredProtocol::Jellyfin => {
+            let server_type = media_server::ServerType::Jellyfin;
+            media_server::connect(&device.host, device.port, server_type, on_jellyfin_status);
+            Box::new(JellyfinAdapter {
+                server_type,
+                art_headers: media_server::auth_headers(),
+            })
+        }
+        DiscoveredProtocol::Emby => {
+            let server_type = media_server::ServerType::Emby;
+            media_server::connect(&device.host, device.port, server_type, on_jellyfin_status);
+            Box::new(JellyfinAdapter {
+                server_type,
+                art_headers: media_server::auth_headers(),
             })
         }
         DiscoveredProtocol::Upnp => {
@@ -461,6 +672,14 @@ fn tick_protocol(delta_ms: u32) {
     });
 
     if !alive {
+        // If we never got a successful status, give up entirely
+        let never_connected = STATE.with(
+            |s| matches!(&*s.borrow(), WidgetState::Disconnected(m) if !m.was_ever_connected),
+        );
+        if never_connected {
+            disconnect_and_return_to_picker();
+            return;
+        }
         transition_to_disconnected();
     }
 
@@ -486,7 +705,13 @@ pub extern "C" fn render(delta_ms: u32) {
     #[derive(Clone, Copy)]
     enum Screen {
         Discovering,
-        Media, // Connected or Disconnected
+        /// Connected or Disconnected media screen.
+        /// `has_sub_targets` = sub-target button is rendered (shifts button indices).
+        /// `picker_open` = session picker modal overlay is showing.
+        Media {
+            has_sub_targets: bool,
+            picker_open: bool,
+        },
     }
 
     // Build tree inside STATE borrow, capture screen kind, then drop borrow
@@ -494,8 +719,29 @@ pub extern "C" fn render(delta_ms: u32) {
         let state = s.borrow();
         let (root, screen) = match &*state {
             WidgetState::Discovering => (render_discovering(size), Screen::Discovering),
-            WidgetState::Connected(media) => (render_media_screen(size, media), Screen::Media),
-            WidgetState::Disconnected(_) => (render_disconnected(size), Screen::Media),
+            WidgetState::Connected(media) => {
+                let has_sub_targets = CONTROLLER.with(|c| {
+                    c.borrow()
+                        .as_deref()
+                        .and_then(|ctrl| ctrl.sub_targets())
+                        .is_some_and(|st| st.items.len() > 1)
+                });
+                let picker_open = media.show_sub_target_picker && has_sub_targets;
+                (
+                    render_media_screen(size, media, picker_open),
+                    Screen::Media {
+                        has_sub_targets,
+                        picker_open,
+                    },
+                )
+            }
+            WidgetState::Disconnected(_) => (
+                render_disconnected(size),
+                Screen::Media {
+                    has_sub_targets: false,
+                    picker_open: false,
+                },
+            ),
         };
         (render_ui(size.width, size.height, root), screen)
     });
@@ -513,61 +759,106 @@ pub extern "C" fn render(delta_ms: u32) {
                 }
             }
         }
-        Screen::Media => {
-            // Button 0 = switcher (disconnect), rest = media controls (offset by 1)
-            // Touch canvases: "progress", "volume"
-
-            // Progress bar: drag for visual feedback, release to seek
-            let can_seek = STATE.with(|s| {
-                let state = s.borrow();
-                match &*state {
-                    WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.actions.can_seek,
-                    WidgetState::Discovering => false,
-                }
-            });
-            if can_seek {
-                if let Some(frac) = bar_frac(&result, "progress") {
+        Screen::Media {
+            has_sub_targets,
+            picker_open,
+        } => {
+            if picker_open {
+                // Modal buttons are appended after media buttons in the tree.
+                // media buttons = ctrl_offset (switcher btns) + 6 (transport controls)
+                // modal buttons = [session0, ..., sessionN, close_btn]
+                // Host blocks clicks on underlying media buttons via modal backdrop.
+                let media_btn_count = (if has_sub_targets { 2 } else { 1 }) + 6;
+                for (i, &clicked) in result.clicks.iter().enumerate() {
+                    if !clicked || i < media_btn_count {
+                        continue;
+                    }
+                    let modal_idx = i - media_btn_count;
+                    let target_id = CONTROLLER.with(|c| {
+                        c.borrow()
+                            .as_deref()
+                            .and_then(|ctrl| ctrl.sub_targets())
+                            .and_then(|st| st.items.get(modal_idx).map(|t| t.id.clone()))
+                    });
+                    if let Some(id) = target_id {
+                        with_controller(|c| c.select_sub_target(&id));
+                    }
+                    // Close picker on any click (session or close button)
                     STATE.with(|s| {
                         let mut state = s.borrow_mut();
                         if let WidgetState::Connected(media) = &mut *state {
-                            if media.position.duration_secs > 0 {
-                                media.position.position_secs =
-                                    (frac * media.position.duration_secs as f32) as u32;
-                            }
+                            media.show_sub_target_picker = false;
                         }
                     });
-                    if result.touch.contains_key("progress") {
-                        seek_to_fraction(frac);
+                    request_frame();
+                }
+            } else {
+                // Normal media controls
+                // Touch canvases: "progress", "volume"
+
+                // Progress bar: drag for visual feedback, release to seek
+                let can_seek = STATE.with(|s| {
+                    let state = s.borrow();
+                    match &*state {
+                        WidgetState::Connected(m) | WidgetState::Disconnected(m) => {
+                            m.actions.can_seek
+                        }
+                        WidgetState::Discovering => false,
+                    }
+                });
+                if can_seek {
+                    if let Some(frac) = bar_frac(&result, "progress") {
+                        STATE.with(|s| {
+                            let mut state = s.borrow_mut();
+                            if let WidgetState::Connected(media) = &mut *state {
+                                if media.position.duration_secs > 0 {
+                                    media.position.position_secs =
+                                        (frac * media.position.duration_secs as f32) as u32;
+                                }
+                            }
+                        });
+                        if result.touch.contains_key("progress") {
+                            seek_to_fraction(frac);
+                        }
+                        request_frame();
+                    }
+                }
+
+                // Volume bar: drag for visual feedback, release to commit
+                if let Some(frac) = bar_frac(&result, "volume") {
+                    STATE.with(|s| {
+                        let mut state = s.borrow_mut();
+                        if let WidgetState::Connected(media) | WidgetState::Disconnected(media) =
+                            &mut *state
+                        {
+                            media.volume.level = (frac * 1_000.0) as u32;
+                        }
+                    });
+                    if result.touch.contains_key("volume") {
+                        with_controller(|c| c.set_volume(frac));
                     }
                     request_frame();
                 }
-            }
 
-            // Volume bar: drag for visual feedback, release to commit
-            if let Some(frac) = bar_frac(&result, "volume") {
-                STATE.with(|s| {
-                    let mut state = s.borrow_mut();
-                    if let WidgetState::Connected(media) | WidgetState::Disconnected(media) =
-                        &mut *state
-                    {
-                        media.volume.level = (frac * 1_000.0) as u32;
-                    }
-                });
-                if result.touch.contains_key("volume") {
-                    with_controller(|c| c.set_volume(frac));
-                }
-                request_frame();
-            }
-
-            for (i, &clicked) in result.clicks.iter().enumerate() {
-                if clicked {
-                    if i == 0 {
-                        // Switcher button — return to picker
-                        disconnect_and_return_to_picker();
-                    } else {
-                        // Media controls (shifted by 1 for the switcher button)
-                        let media_idx = i - 1;
-                        with_controller(|c| handle_media_click(c, media_idx));
+                let ctrl_offset = if has_sub_targets { 2 } else { 1 };
+                for (i, &clicked) in result.clicks.iter().enumerate() {
+                    if clicked {
+                        if has_sub_targets && i == 0 {
+                            // Sub-target switcher — open picker modal
+                            STATE.with(|s| {
+                                let mut state = s.borrow_mut();
+                                if let WidgetState::Connected(media) = &mut *state {
+                                    media.show_sub_target_picker = true;
+                                }
+                            });
+                            request_frame();
+                        } else if i == (if has_sub_targets { 1 } else { 0 }) {
+                            // Device switcher — return to device picker
+                            disconnect_and_return_to_picker();
+                        } else {
+                            let media_idx = i - ctrl_offset;
+                            with_controller(|c| handle_media_click(c, media_idx));
+                        }
                     }
                 }
             }
@@ -709,6 +1000,96 @@ impl MediaController for KodiAdapter {
     }
     fn protocol_name(&self) -> &'static str {
         "Kodi"
+    }
+    fn fetch_art(&self, url: &str, callback: fn(&FetchResponse)) {
+        fetch(url, self.art_headers.as_deref(), callback);
+    }
+}
+
+/// Jellyfin / Emby adapter — delegates to `media_server::` thread-locals.
+struct JellyfinAdapter {
+    server_type: media_server::ServerType,
+    /// Cached auth headers for image fetches (avoids re-entrant borrow).
+    art_headers: Option<String>,
+}
+
+impl MediaController for JellyfinAdapter {
+    fn disconnect(&self) {
+        media_server::disconnect();
+    }
+    fn is_alive(&self) -> bool {
+        media_server::is_alive()
+    }
+    fn tick(&self, delta_ms: u32) {
+        media_server::tick(delta_ms);
+    }
+    fn play(&self) {
+        media_server::play();
+    }
+    fn pause(&self) {
+        media_server::pause();
+    }
+    fn next(&self) {
+        media_server::next();
+    }
+    fn previous(&self) {
+        media_server::previous();
+    }
+    fn seek(&self, position_secs: u32, _duration_secs: u32) {
+        media_server::seek(position_secs);
+    }
+    fn set_volume(&self, level: f32) {
+        media_server::set_volume(level);
+    }
+    fn set_mute(&self, muted: bool) {
+        media_server::set_mute(muted);
+    }
+    fn poll_interval_playing(&self) -> u32 {
+        media_server::POLL_INTERVAL_MS
+    }
+    fn poll_interval_idle(&self) -> u32 {
+        media_server::POLL_IDLE_INTERVAL_MS
+    }
+    fn protocol_name(&self) -> &'static str {
+        match self.server_type {
+            media_server::ServerType::Jellyfin => "Jellyfin",
+            media_server::ServerType::Emby => "Emby",
+        }
+    }
+    fn sub_targets(&self) -> Option<SubTargets> {
+        let sessions = media_server::sessions();
+        let active_id = media_server::active_session_id();
+        let mut items: Vec<SubTarget> = sessions
+            .into_iter()
+            .map(|s| {
+                let mut fields = Vec::new();
+                if !s.client.is_empty() {
+                    fields.push(("Client".into(), s.client));
+                }
+                if s.has_now_playing {
+                    fields.push(("Status".into(), "Playing".into()));
+                }
+                let active = active_id.as_deref() == Some(&s.id);
+                SubTarget {
+                    id: s.id,
+                    name: s.device_name,
+                    fields,
+                    active,
+                }
+            })
+            .collect();
+        items.sort_by(|a, b| a.name.cmp(&b.name));
+        Some(SubTargets {
+            term: "Session",
+            items,
+        })
+    }
+    fn select_sub_target(&self, id: &str) {
+        if id.is_empty() {
+            media_server::clear_session();
+        } else {
+            media_server::select_session(id);
+        }
     }
     fn fetch_art(&self, url: &str, callback: fn(&FetchResponse)) {
         fetch(url, self.art_headers.as_deref(), callback);
@@ -1139,15 +1520,10 @@ fn on_cast_status(status: &cast::CastMediaStatus) {
             media.position.position_secs = status.current_time as u32;
             media.position.duration_secs = status.duration_secs as u32;
 
-            if let Some(ref title) = status.title {
-                media.position.track_meta.title = Some(title.clone());
-            }
-            if let Some(ref artist) = status.artist {
-                media.position.track_meta.artist = Some(artist.clone());
-            }
-            if let Some(ref album) = status.album {
-                media.position.track_meta.album = Some(album.clone());
-            }
+            status
+                .title
+                .clone_into(&mut media.position.track_meta.title);
+            media.position.track_meta.fields.clone_from(&status.fields);
 
             // Volume: Cast 0.0–1.0 → permille, UPnP 0–100 → ×10
             media.volume.level = (status.volume_level * 1_000.0) as u32;
@@ -1201,14 +1577,69 @@ fn on_kodi_status(status: &kodi::KodiMediaStatus) {
             status
                 .title
                 .clone_into(&mut media.position.track_meta.title);
-            status
-                .artist
-                .clone_into(&mut media.position.track_meta.artist);
-            status
-                .album
-                .clone_into(&mut media.position.track_meta.album);
+            media.position.track_meta.fields.clone_from(&status.fields);
 
             // Volume: Kodi 0–100 → permille
+            media.volume.level = (status.volume_level * 10.0) as u32;
+            media.volume.muted = status.volume_muted;
+
+            media.actions = TransportActions {
+                can_play: true,
+                can_pause: true,
+                can_seek: status.can_seek,
+                can_next: true,
+                can_previous: true,
+            };
+
+            // Fetch album art if URL changed, clear if gone
+            if let Some(ref url) = status.album_art_url {
+                let fetch_url = downscale_thumbnail_url(url);
+                if media.art_url != fetch_url {
+                    media.art_url.clone_from(&fetch_url);
+                    fetch_album_art(&fetch_url);
+                }
+            } else {
+                clear_album_art(media);
+            }
+        }
+    });
+}
+
+// ── Jellyfin status callback ─────────────────────────────────────
+
+fn on_jellyfin_status(status: &media_server::JellyfinMediaStatus) {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        // Transition Discovering/Disconnected → Connected on status
+        if matches!(
+            &*state,
+            WidgetState::Disconnected(_) | WidgetState::Discovering
+        ) {
+            let taken = std::mem::take(&mut *state);
+            let mut m = match taken {
+                WidgetState::Disconnected(m) => m,
+                _ => MediaState::default(),
+            };
+            m.was_ever_connected = true;
+            *state = WidgetState::Connected(m);
+        }
+        if let WidgetState::Connected(media) = &mut *state {
+            // Map Jellyfin player state to our TransportState
+            media.transport = match status.player_state.as_str() {
+                "playing" => TransportState::Playing,
+                "paused" => TransportState::Paused,
+                _ => TransportState::NoMedia,
+            };
+
+            media.position.position_secs = status.current_time as u32;
+            media.position.duration_secs = status.duration_secs as u32;
+
+            status
+                .title
+                .clone_into(&mut media.position.track_meta.title);
+            media.position.track_meta.fields.clone_from(&status.fields);
+
+            // Volume: Jellyfin 0–100 → permille
             media.volume.level = (status.volume_level * 10.0) as u32;
             media.volume.muted = status.volume_muted;
 
@@ -1383,7 +1814,7 @@ fn render_discovering(size: WidgetSize) -> Node {
             // Animated squiggle loader
             canvas(
                 props!(width: loader_w, height: loader_h),
-                vec![squiggle_loader(loader_w, mid_y, GRAY_50)],
+                vec![squiggle(loader_w, mid_y, GRAY_50)],
             ),
         ];
         if !matches!(size.variant, SizeVariant::Small) {
@@ -1408,6 +1839,8 @@ fn render_discovering(size: WidgetSize) -> Node {
                 let proto_icon = match dev.protocol {
                     DiscoveredProtocol::Cast => &icons::PROTO_GOOGLE_CAST,
                     DiscoveredProtocol::Kodi => &icons::PROTO_KODI,
+                    DiscoveredProtocol::Jellyfin => &icons::PROTO_JELLYFIN,
+                    DiscoveredProtocol::Emby => &icons::PROTO_EMBY,
                     DiscoveredProtocol::Upnp => &icons::PROTO_DLNA,
                 };
                 button!(
@@ -1420,13 +1853,13 @@ fn render_discovering(size: WidgetSize) -> Node {
             .collect();
 
         let left = col(
-            props!(gap: 8.0),
+            props!(gap: 8.0, flex: 1.0),
             [
                 text(
                     "Select a device",
                     style!(size: title_sz, color: GRAY_20, weight: 600),
                 ),
-                col(props!(gap: 2.0), buttons),
+                scroll(1, props!(flex: 1.0, gap: 2.0), buttons),
             ],
         );
 
@@ -1486,7 +1919,11 @@ fn render_disconnected(size: WidgetSize) -> Node {
         (name, was)
     });
 
-    let subtitle = if was_connected {
+    let auth_needed = media_server::auth_required();
+
+    let subtitle = if auth_needed {
+        "API key required — set jellyfin_api_key in widget KV"
+    } else if was_connected {
         "Reconnecting..."
     } else {
         "Connecting..."
@@ -1497,6 +1934,7 @@ fn render_disconnected(size: WidgetSize) -> Node {
         SizeVariant::Full | SizeVariant::Large => 24,
         _ => 16,
     };
+    let subtitle_color = if auth_needed { RED_50 } else { GRAY_60 };
 
     center(
         props!(background: GRAY_100),
@@ -1504,7 +1942,7 @@ fn render_disconnected(size: WidgetSize) -> Node {
             props!(gap: 8.0),
             [
                 text(&msg, style!(size: text_size, color: GRAY_40)),
-                text(subtitle, style!(size: 14, color: GRAY_60)),
+                text(subtitle, style!(size: 14, color: subtitle_color)),
             ],
         )],
     )
@@ -1512,12 +1950,75 @@ fn render_disconnected(size: WidgetSize) -> Node {
 
 // ── Media screen (connected) ─────────────────────────────────────
 
-/// Wraps the media UI with a switcher button at the top (button index 0).
-fn render_media_screen(size: WidgetSize, media: &MediaState) -> Node {
-    match size.variant {
+/// Media screen with optional session picker modal overlay.
+fn render_media_screen(size: WidgetSize, media: &MediaState, picker_open: bool) -> Node {
+    let mut content = match size.variant {
         SizeVariant::Full | SizeVariant::Medium => render_full(size, media),
         _ => render_compact(size, media),
+    };
+    // Inject session picker modal into the content node's children.
+    // The modal is an overlay — it doesn't affect layout when closed,
+    // and the host renders it on top with a backdrop when open.
+    let (term, session_buttons) = if picker_open {
+        build_session_picker_body()
+    } else {
+        ("Session", vec![])
+    };
+    let content_height = session_buttons.len() as f32 * 40.0;
+    let modal_padding = match size.variant {
+        SizeVariant::Small => 4,
+        SizeVariant::Large => 12,
+        SizeVariant::Medium => 24,
+        SizeVariant::Full => 48,
+    };
+    let modal_node = modal_styled(
+        1,
+        picker_open,
+        &fmt!("Select {}", term),
+        content_height,
+        ModalProps {
+            padding: modal_padding,
+            backdrop_alpha: 180,
+        },
+        session_buttons,
+    );
+    match &mut content {
+        Node::Column(_, children) | Node::Row(_, children) => children.push(modal_node),
+        _ => {}
     }
+    content
+}
+
+/// Build session picker body: sorted buttons with active one highlighted.
+fn build_session_picker_body() -> (&'static str, Vec<Node>) {
+    CONTROLLER
+        .with(|c| {
+            c.borrow()
+                .as_deref()
+                .and_then(|ctrl| ctrl.sub_targets())
+                .map(|st| {
+                    let buttons: Vec<Node> = st
+                        .items
+                        .iter()
+                        .map(|t| {
+                            let label = if t.fields.is_empty() {
+                                t.name.clone()
+                            } else {
+                                let detail: Vec<&str> =
+                                    t.fields.iter().map(|(_, v)| v.as_str()).collect();
+                                fmt!("{} ({})", t.name, detail.join(", "))
+                            };
+                            if t.active {
+                                button!(&label, style: Primary, size: Small)
+                            } else {
+                                button!(&label, style: Secondary, size: Small)
+                            }
+                        })
+                        .collect();
+                    (st.term, buttons)
+                })
+        })
+        .unwrap_or(("Session", vec![]))
 }
 
 /// Full/Medium: art fills left side, everything else in right column.
@@ -1643,46 +2144,71 @@ fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
         .title
         .as_deref()
         .unwrap_or("No track");
-    let artist = media.position.track_meta.artist.as_deref().unwrap_or("");
-    let album = media.position.track_meta.album.as_deref().unwrap_or("");
 
     let title_size = match size.variant {
-        SizeVariant::Full | SizeVariant::Large => 28,
+        SizeVariant::Full | SizeVariant::Large => 24,
         SizeVariant::Medium => 18,
         SizeVariant::Small => 14,
     };
     let detail_size = match size.variant {
-        SizeVariant::Full | SizeVariant::Large => 18,
+        SizeVariant::Full | SizeVariant::Large => 16,
         SizeVariant::Medium => 14,
         SizeVariant::Small => 12,
     };
 
-    col(
-        props!(flex: 1.0, gap: 4.0),
-        [
-            text(title, style!(size: title_size, color: GRAY_10, weight: 600)),
-            if !has_track || artist.is_empty() {
-                spacer(0.0)
-            } else {
-                text(
-                    &fmt!("Artist: {}", artist),
-                    style!(size: detail_size, color: GRAY_40),
-                )
-            },
-            if !has_track || album.is_empty() {
-                spacer(0.0)
-            } else {
-                text(
-                    &fmt!("Album: {}", album),
-                    style!(size: detail_size, color: GRAY_50),
-                )
-            },
-            // Push switcher button to the bottom-right (button index 0)
-            spacer(1.0),
-            row(props!(), [spacer(1.0), render_switcher_button(size)]),
-            spacer(0.0), // breathing room before seek bar
-        ],
-    )
+    let mut children: Vec<Node> = vec![text(
+        title,
+        style!(size: title_size, color: GRAY_10, weight: 600),
+    )];
+
+    if has_track {
+        for (label, value) in &media.position.track_meta.fields {
+            children.push(text(
+                &fmt!("{}: {}", label, value),
+                style!(size: detail_size, color: GRAY_40),
+            ));
+        }
+    }
+
+    // Show active session name when protocol has sub-targets
+    let active_session_name = CONTROLLER.with(|c| {
+        c.borrow()
+            .as_deref()
+            .and_then(|ctrl| ctrl.sub_targets())
+            .and_then(|st| st.items.iter().find(|t| t.active).map(|t| t.name.clone()))
+    });
+    if let Some(name) = active_session_name {
+        children.push(text(
+            &fmt!("Session: {}", name),
+            style!(size: detail_size, color: GRAY_50),
+        ));
+    }
+
+    // Push switcher buttons to the bottom-right
+    // Button index 0 = sub-target switcher (session picker) — only if available
+    // Button index 1 (or 0 if no sub-targets) = device switcher (disconnect)
+    children.push(spacer(1.0));
+    let has_sub_targets = CONTROLLER.with(|c| {
+        c.borrow()
+            .as_deref()
+            .and_then(|ctrl| ctrl.sub_targets())
+            .is_some_and(|st| st.items.len() > 1)
+    });
+    if has_sub_targets {
+        children.push(row(
+            props!(gap: 8.0),
+            [
+                spacer(1.0),
+                render_sub_target_button(size),
+                render_switcher_button(size),
+            ],
+        ));
+    } else {
+        children.push(row(props!(), [spacer(1.0), render_switcher_button(size)]));
+    }
+    children.push(spacer(0.0)); // breathing room before seek bar
+
+    col(props!(flex: 1.0, gap: 4.0), children)
 }
 
 /// Interactive button showing protocol icon + connected device name.
@@ -1705,8 +2231,38 @@ fn render_switcher_button(size: WidgetSize) -> Node {
     }
 }
 
+/// Sub-target switcher button — shows current session/player name.
+/// Only rendered when the protocol has multiple sub-targets.
+fn render_sub_target_button(size: WidgetSize) -> Node {
+    let icon = tree::ensure_registered(&icons::DEVICES_APPS);
+    if size.variant == SizeVariant::Small {
+        button!("", icon: icon, style: Secondary, size: Small)
+    } else {
+        let label = CONTROLLER.with(|c| {
+            c.borrow()
+                .as_deref()
+                .and_then(|ctrl| ctrl.sub_targets())
+                .map(|st| fmt!("{}s", st.term))
+                .unwrap_or_default()
+        });
+        button!(&label, icon: icon, style: Secondary, size: Small)
+    }
+}
+
 /// Animated sine-wave loader for the discovery screen.
-fn squiggle_loader(width: f32, mid_y: f32, color: u32) -> Draw {
+/// Track thickness for both seek and volume bars (pixels).
+const BAR_TRACK_H: f32 = 2.0;
+/// Sine wave amplitude — matches half the track thickness for visual consistency.
+const WAVE_AMPLITUDE: f32 = BAR_TRACK_H / 2.0;
+/// Points per wave cycle (smoothed by Catmull-Rom on host).
+const WAVE_POINTS_PER_CYCLE: usize = 8;
+/// Wavelength in pixels.
+const WAVE_LENGTH: f32 = 16.0;
+/// Playhead dot radius.
+const DOT_RADIUS: f32 = 4.0;
+
+/// Animated sine-wave path that loops via `TranslateX`.
+fn squiggle(width: f32, mid_y: f32, color: u32) -> Draw {
     let step = WAVE_LENGTH / WAVE_POINTS_PER_CYCLE as f32;
     let start_x = -WAVE_LENGTH;
     let end_x = width + WAVE_LENGTH;
@@ -1724,50 +2280,6 @@ fn squiggle_loader(width: f32, mid_y: f32, color: u32) -> Draw {
         points,
         BAR_TRACK_H,
         color,
-        false,
-        false,
-        Interpolation::CatmullRom,
-    )
-    .animate(
-        AnimProperty::TranslateX,
-        0.0,
-        -WAVE_LENGTH,
-        800,
-        Easing::Linear,
-        LoopMode::Forever,
-    )
-}
-
-/// Track thickness for both seek and volume bars (pixels).
-const BAR_TRACK_H: f32 = 2.0;
-/// Sine wave amplitude — matches half the track thickness for visual consistency.
-const WAVE_AMPLITUDE: f32 = BAR_TRACK_H / 2.0;
-/// Points per wave cycle (smoothed by Catmull-Rom on host).
-const WAVE_POINTS_PER_CYCLE: usize = 8;
-/// Wavelength in pixels.
-const WAVE_LENGTH: f32 = 16.0;
-/// Playhead dot radius.
-const DOT_RADIUS: f32 = 4.0;
-
-/// Animated sine-wave path that loops via `TranslateX`.
-fn squiggle_path(end_x: f32, mid_y: f32) -> Draw {
-    let step = WAVE_LENGTH / WAVE_POINTS_PER_CYCLE as f32;
-    let start_x = -WAVE_LENGTH;
-    let end_x = end_x + WAVE_LENGTH;
-    let n_points = ((end_x - start_x) / step) as usize + 1;
-
-    let points: Vec<(f32, f32)> = (0..n_points)
-        .map(|i| {
-            let x = start_x + i as f32 * step;
-            let phase = x / WAVE_LENGTH * std::f32::consts::TAU;
-            (x, mid_y + phase.sin() * WAVE_AMPLITUDE)
-        })
-        .collect();
-
-    Draw::path(
-        points,
-        BAR_TRACK_H,
-        WHITE,
         false,
         false,
         Interpolation::CatmullRom,
@@ -1810,7 +2322,7 @@ fn progress_bar_node(media: &MediaState, draw_w: f32) -> Node {
     let mut draws: Vec<Draw> = Vec::new();
 
     if is_continuous && is_playing {
-        draws.push(squiggle_path(OVERSIZED_W, mid_y));
+        draws.push(squiggle(OVERSIZED_W, mid_y, WHITE));
     } else {
         // Background track: oversized, clipped by canvas
         draws.push(Draw::rect(
@@ -1822,7 +2334,7 @@ fn progress_bar_node(media: &MediaState, draw_w: f32) -> Node {
         ));
 
         if is_playing && fill_w > BAR_TRACK_H {
-            draws.push(squiggle_path(fill_w, mid_y));
+            draws.push(squiggle(fill_w, mid_y, WHITE));
             draws.push(Draw::rect(
                 fill_w,
                 0.0,
@@ -1900,25 +2412,42 @@ fn render_progress(media: &MediaState, avail_w: f32) -> Node {
 /// Ghost Small icon-only button width (square = height = 32px).
 const BTN_SM: f32 = 32.0;
 
+fn transport_buttons(cd: &ControlsData, actions: &TransportActions) -> [Node; 3] {
+    [
+        button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous),
+        button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled),
+        button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next),
+    ]
+}
+
+fn volume_buttons(cd: &ControlsData) -> [Node; 3] {
+    [
+        button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small),
+        button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small),
+        button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small),
+    ]
+}
+
 fn render_controls(media: &MediaState, avail_w: f32) -> Node {
     let cd = controls_data(media);
-    let actions = &media.actions;
 
     let vol_label_w = estimate_label_w(&cd.vol_str);
     // 6 buttons + spacer(flex:1) + vol_bar + vol_label — 8 gaps
     let fixed = BTN_SM * 6.0 + vol_label_w + 8.0 * 8.0;
     let vol_draw_w = ((avail_w - fixed) / 2.0).max(20.0);
 
+    let [prev, play, next] = transport_buttons(&cd, &media.actions);
+    let [vdn, vup, mute] = volume_buttons(&cd);
     row(
         props!(gap: 8.0, cross_align: CrossAlign::Center),
         [
-            button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous),
-            button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled),
-            button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next),
+            prev,
+            play,
+            next,
             spacer(1.0),
-            button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small),
-            button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small),
-            button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small),
+            vdn,
+            vup,
+            mute,
             volume_bar(cd.vol_frac, vol_draw_w),
             text(&cd.vol_str, style!(size: 12, color: GRAY_40)),
         ],
@@ -1930,7 +2459,6 @@ fn render_controls(media: &MediaState, avail_w: f32) -> Node {
 /// Row 2: vol- | vol+ | mute | [volume bar (flex)]   | % (fixed)
 fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
     let cd = controls_data(media);
-    let actions = &media.actions;
 
     let time_str = progress_time_str(media);
     let time_label_w = estimate_label_w(&time_str);
@@ -1941,15 +2469,17 @@ fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
     // Row 2: 3 buttons + bar + vol_label — 4 gaps
     let vol_draw_w = (avail_w - BTN_SM * 3.0 - vol_label_w - 8.0 * 4.0).max(20.0);
 
+    let [prev, play, next] = transport_buttons(&cd, &media.actions);
+    let [vdn, vup, mute] = volume_buttons(&cd);
     col(
         props!(gap: 4.0),
         [
             row(
                 props!(gap: 8.0, cross_align: CrossAlign::Center),
                 [
-                    button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous),
-                    button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled),
-                    button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next),
+                    prev,
+                    play,
+                    next,
                     progress_bar_node(media, prog_draw_w),
                     text(time_str, style!(size: 12, color: GRAY_40)),
                 ],
@@ -1957,9 +2487,9 @@ fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
             row(
                 props!(gap: 8.0, cross_align: CrossAlign::Center),
                 [
-                    button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small),
-                    button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small),
-                    button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small),
+                    vdn,
+                    vup,
+                    mute,
                     volume_bar(cd.vol_frac, vol_draw_w),
                     text(&cd.vol_str, style!(size: 12, color: GRAY_40)),
                 ],

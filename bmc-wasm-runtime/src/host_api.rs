@@ -185,6 +185,20 @@ pub struct ActiveSsdpSearch {
     pub stop_tx: mpsc::Sender<()>,
 }
 
+/// A UDP broadcast event queued for delivery to WASM.
+pub enum UdpBroadcastEvent {
+    /// Response received — carries (response_data, source_address).
+    Response(String, String),
+}
+
+/// An active UDP broadcast session managed by a background thread.
+pub struct ActiveUdpBroadcast {
+    /// Channel to receive events from the background thread.
+    pub event_rx: mpsc::Receiver<UdpBroadcastEvent>,
+    /// Signal the background thread to stop.
+    pub stop_tx: mpsc::Sender<()>,
+}
+
 /// An active mDNS service registration.
 pub struct ActiveMdnsRegistration {
     /// The daemon owning this registration.
@@ -358,6 +372,12 @@ pub struct HostState {
     /// Next SSDP search ID.
     pub next_ssdp_search_id: u32,
 
+    /// Active UDP broadcast sessions, keyed by broadcast_id.
+    pub udp_broadcasts: HashMap<u32, ActiveUdpBroadcast>,
+
+    /// Next UDP broadcast ID.
+    pub next_udp_broadcast_id: u32,
+
     /// Per-widget key-value storage directory (None = persistence disabled).
     pub kv_store_path: Option<PathBuf>,
 
@@ -426,6 +446,8 @@ impl HostState {
             next_mdns_reg_id: 1,
             ssdp_searches: HashMap::new(),
             next_ssdp_search_id: 1,
+            udp_broadcasts: HashMap::new(),
+            next_udp_broadcast_id: 1,
             kv_store_path: None,
             kv_cache: HashMap::new(),
             http_listeners: HashMap::new(),

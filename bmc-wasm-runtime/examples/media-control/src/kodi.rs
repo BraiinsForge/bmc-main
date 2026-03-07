@@ -1,5 +1,4 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
-#![allow(dead_code)]
 
 //! Kodi JSON-RPC protocol controller.
 //!
@@ -22,10 +21,6 @@ pub const POLL_INTERVAL_MS: u32 = 1_000;
 /// Poll interval when idle/no media (ms).
 pub const POLL_IDLE_INTERVAL_MS: u32 = 3_000;
 
-// TODO: parameterise Kodi credentials — let users specify username/password
-// via widget settings UI (currently hardcoded for development).
-const KODI_PASSWORD: &str = "kodi";
-
 /// Consecutive Phase 1 failures before `is_alive()` returns false.
 const DEAD_THRESHOLD: u8 = 5;
 
@@ -37,8 +32,8 @@ pub struct KodiMediaStatus {
     /// `"playing"`, `"paused"`, or `""` (no media).
     pub player_state: String,
     pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
+    /// Secondary metadata lines.
+    pub fields: Vec<(String, String)>,
     pub album_art_url: Option<String>,
     pub duration_secs: f64,
     pub current_time: f64,
@@ -88,7 +83,14 @@ pub fn connect(host: &str, port: u16, on_status: StatusCallback) {
     log_info!("kodi: connecting to {}:{}", host, port);
     let headers = fmt!(
         "Content-Type: application/json\nAuthorization: Basic {}",
-        base64_encode(fmt!("kodi:{}", KODI_PASSWORD).as_bytes())
+        base64_encode(
+            fmt!(
+                "{}:{}",
+                kv::get_string("kodi_username").unwrap_or_default(),
+                kv::get_string("kodi_password").unwrap_or_default(),
+            )
+            .as_bytes(),
+        )
     );
     KODI.with(|k| {
         *k.borrow_mut() = Some(KodiState {
@@ -117,15 +119,6 @@ pub fn disconnect() {
         }
         *k.borrow_mut() = None;
     });
-}
-
-/// Whether we have received at least one successful response.
-pub fn is_connected() -> bool {
-    KODI.with(|k| {
-        k.borrow()
-            .as_ref()
-            .is_some_and(|s| !s.closed && s.fail_count == 0 && s.active_player_id >= 0)
-    })
 }
 
 /// Get the authorization header string for Kodi image fetches.
@@ -282,8 +275,7 @@ fn on_active_players(response: &FetchResponse) {
             state.active_player_id = -1;
             state.status.player_state.clear();
             state.status.title = None;
-            state.status.artist = None;
-            state.status.album = None;
+            state.status.fields.clear();
             state.status.album_art_url = None;
             state.status.duration_secs = 0.0;
             state.status.current_time = 0.0;
@@ -391,13 +383,17 @@ fn on_player_item(response: &FetchResponse) {
 
         state.status.title = doc.str("/result/item/title");
 
+        state.status.fields.clear();
         // Artist is an array: ["Artist Name"]
-        let artist = doc
+        if let Some(artist) = doc
             .str("/result/item/artist/0")
-            .or_else(|| doc.str("/result/item/artist"));
-        state.status.artist = artist;
-
-        state.status.album = doc.str("/result/item/album");
+            .or_else(|| doc.str("/result/item/artist"))
+        {
+            state.status.fields.push(("Artist".into(), artist));
+        }
+        if let Some(album) = doc.str("/result/item/album") {
+            state.status.fields.push(("Album".into(), album));
+        }
 
         // Thumbnail: Kodi returns "image://..." paths, clear if absent
         state.status.album_art_url = None;

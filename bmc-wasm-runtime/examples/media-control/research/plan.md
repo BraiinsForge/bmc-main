@@ -3,8 +3,8 @@
 ## Context
 
 POC widget for controlling media playback on LAN devices from the Braiins Deck. **Control only** — no casting/streaming.
-The Deck discovers devices and sends commands / reads state. Three protocols: **UPnP/DLNA** (HTTP-based), **Google
-Cast** (`TCP+TLS`, `JSON` over thin `protobuf`), and **Kodi** (HTTP JSON-RPC 2.0).
+The Deck discovers devices and sends commands / reads state. Four protocols: **UPnP/DLNA** (HTTP-based), **Google Cast**
+(`TCP+TLS`, `JSON` over thin `protobuf`), **Kodi** (HTTP JSON-RPC 2.0), and **Jellyfin/Emby** (HTTP REST).
 
 Design philosophy: **generic host primitives, all protocol logic in WASM** — same as the Home Assistant WebSocket demo.
 The host provides `TCP`, `TLS`, `HTTP` methods, `mDNS`, `SSDP`, `KV`, `HTTP listener`. The WASM widget handles
@@ -24,10 +24,12 @@ Widget (WASM)
 │   │   └── XML responses parsed via host_xml_*
 │   ├── Cast: prost-encoded CastMessage over host_tls_connect
 │   │   └── JSON payloads parsed via host_json_*
-│   └── Kodi: HTTP JSON-RPC 2.0 (via host_fetch)
+│   ├── Kodi: HTTP JSON-RPC 2.0 (via host_fetch)
+│   │   └── JSON responses parsed via host_json_*
+│   └── Jellyfin/Emby: HTTP REST + token auth (via host_fetch)
 │       └── JSON responses parsed via host_json_*
 ├── Discovery
-│   ├── mDNS browse (_googlecast._tcp, _upnp._tcp, _xbmc-jsonrpc-h._tcp)
+│   ├── mDNS browse (_googlecast._tcp, _upnp._tcp, _xbmc-jsonrpc-h._tcp, _jellyfin._tcp, _emby._tcp)
 │   └── SSDP M-SEARCH (urn:schemas-upnp-org:device:MediaRenderer:1)
 ├── Unified MediaState
 │   ├── track: title, artist, album
@@ -36,9 +38,10 @@ Widget (WASM)
 │   ├── volume: level, muted
 │   └── actions: TransportActions (can_play/pause/seek/next/previous)
 ├── MediaController trait — unified dispatch (protocol.rs)
-│   ├── CastAdapter   (zero-sized, delegates to cast::*)
-│   ├── KodiAdapter   (zero-sized, delegates to kodi::*)
-│   └── UpnpAdapter   (carries UpnpDevice for SOAP calls)
+│   ├── CastAdapter         (zero-sized, delegates to cast::*)
+│   ├── KodiAdapter         (zero-sized, delegates to kodi::*)
+│   ├── UpnpAdapter         (carries UpnpDevice for SOAP calls)
+│   └── EmbyJellyfinAdapter (zero-sized, delegates to emby_jellyfin::*)
 └── UI (tree API + canvas)
     ├── Device picker (discovery + device list)
     ├── Album art + accent-tinted background
@@ -94,6 +97,7 @@ All stages complete. UI reference image at `research/ui-example-1.png`.
 | 4     | Host discovery primitives      | mDNS via `mdns-sd` (4a), KV persistence — file-backed per-widget store (4b), HTTP listener (4c)                                                           |
 | 5     | Device discovery + picker UI   | mDNS browse 3 service types, SSDP M-SEARCH with device description XML, device picker, auto-reconnect via KV, per-tile KV isolation                       |
 | 6     | Kodi + `MediaController` trait | HTTP JSON-RPC 2.0 with Basic Auth, two-phase polling, `MediaController` trait unifying dispatch across all 3 protocols                                    |
+| 7     | Jellyfin / Emby                | HTTP REST with token auth, shared adapter for both forks, mDNS discovery, session picker modal for multi-session support, `SubTargets` protocol extension |
 
 ---
 
@@ -104,17 +108,6 @@ All stages complete. UI reference image at `research/ui-example-1.png`.
 The Kodi controller uses hardcoded `kodi:kodi` Basic Auth (`KODI_PASSWORD` constant in `kodi.rs`). Needs
 user-configurable credentials: widget settings UI input, pass to `kodi::connect()`, dynamic `Authorization` header.
 Should allow empty password for Kodi instances with auth disabled.
-
-### `request_frame_after()` broken by animation-only loop
-
-**Priority: High — blocks Cast heartbeat, progress updates, and any periodic WASM logic.**
-
-The tree processing code unconditionally overrides `animation_only_frame = true` whenever the tree has active animations
-and no user interaction. This overrides `request_frame_after()` which WASM code uses for periodic timers. The result is
-that WASM render is never called again after the initial burst — heartbeats never fire, progress freezes.
-
-**Proposed fix:** Add `deferred_wasm_render_ms` countdown to `HostState` that counts down on animation frames and forces
-a full WASM render when expired.
 
 ### Volume setting glitchy (Cast)
 
@@ -159,6 +152,11 @@ No emulator available. Test against real Chromecast hardware.
 Enable "Allow remote control via HTTP" in Settings → Services → Web server (default port 8080, default creds
 `kodi:kodi`).
 
+### Jellyfin / Emby
+
+Test against a running Jellyfin or Emby server on the LAN. Discovered via mDNS (`_jellyfin._tcp` / `_emby._tcp`).
+Multi-session support — use the session picker modal to switch between active playback sessions.
+
 ### Running the widget
 
 ```bash
@@ -177,22 +175,66 @@ startup, or click the **Debug layout** button in the testbed stats panel at runt
 
 ### Additional protocols
 
-| Protocol            | Transport                                 | Discovery                              | Complexity | Notes                                                                                                                                                                                      |
-| ------------------- | ----------------------------------------- | -------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Roku ECP**        | HTTP (`POST /keypress/*`, `GET /query/*`) | `_roku._tcp` / SSDP                    | Low        | Every Roku device. Pure REST.                                                                                                                                                              |
-| **Jellyfin / Emby** | HTTP REST + token auth                    | `_jellyfin._tcp` / `_emby._tcp` / SSDP | Low-medium | Jellyfin is open-source fork of Emby (closed-source since 2018). Session control APIs are ~90% identical — one implementation covers both. Jellyfin has better docs and growing community. |
-| **Spotify Connect** | HTTPS REST (Web API)                      | Implicit (user's active device)        | Medium     | OAuth PKCE auth dance is the hard part. Endpoints themselves are trivial REST. Enormous user base.                                                                                         |
-| **MPD**             | Plain-text TCP (line-based key-value)     | Manual config                          | Medium     | Needs `host_tcp_connect` (plain TCP, not TLS). Hugely popular in audiophile/Linux world.                                                                                                   |
-| **Plex**            | HTTP REST + auth token                    | GDM (local) / MyPlex (cloud)           | Medium     | Similar to Jellyfin but with Plex-specific auth.                                                                                                                                           |
-| **Volumio**         | WebSocket + REST                          | `_volumio._tcp`                        | Low        | Niche audiophile (Raspberry Pi).                                                                                                                                                           |
+| Protocol            | Transport                                 | Discovery                           | Complexity | Notes                                                                                              |
+| ------------------- | ----------------------------------------- | ----------------------------------- | ---------- | -------------------------------------------------------------------------------------------------- |
+| **Roku ECP**        | HTTP (`POST /keypress/*`, `GET /query/*`) | `_roku._tcp` / SSDP                 | Low        | Every Roku device. Pure REST.                                                                      |
+| ~~Jellyfin / Emby~~ | ~~HTTP REST + token auth~~                | ~~`_jellyfin._tcp` / `_emby._tcp`~~ | ~~Done~~   | Implemented in `emby_jellyfin.rs` — shared adapter for both, session picker UI, mDNS discovery.    |
+| **Spotify Connect** | HTTPS REST (Web API)                      | Implicit (user's active device)     | Medium     | OAuth PKCE auth dance is the hard part. Endpoints themselves are trivial REST. Enormous user base. |
+| **MPD**             | Plain-text TCP (line-based key-value)     | Manual config                       | Medium     | Needs `host_tcp_connect` (plain TCP, not TLS). Hugely popular in audiophile/Linux world.           |
+| **Plex**            | HTTP REST + auth token                    | GDM (local) / MyPlex (cloud)        | Medium     | Similar to Jellyfin but with Plex-specific auth.                                                   |
+| **Volumio**         | WebSocket + REST                          | `_volumio._tcp`                     | Low        | Niche audiophile (Raspberry Pi).                                                                   |
 
-**Recommended order:** Roku → Jellyfin/Emby → Spotify.
+**Recommended order:** Roku → Spotify.
 
 ### Accent-tinted background from album art
 
 Implemented via `host_bitmap_sample` (samples average RGBA from a bitmap region) + OkLCH color adjustment in the
-`color!` macro. The widget samples the loaded album art bitmap and uses `color!(sampled, lightness: 0.18, chroma: 0.04)`
+`color!` macro. The widget samples the loaded album art bitmap and uses `color!(sampled, lightness: 0.22, chroma: 0.06)`
 to produce a dark-tinted accent background.
+
+### 9-patch skinning (SDK-level feature)
+
+Android-style [9-patch](https://developer.android.com/guide/topics/graphics/drawables#nine-patch) support as a global
+SDK draw primitive. A 9-patch divides a bitmap into 9 regions (4 corners, 4 edges, 1 center) that scale independently —
+corners stay fixed, edges stretch in one axis, center stretches both ways. This lets widgets use rich textured/gradient
+UI elements (buttons, panels, cards, backgrounds) from a single bitmap without distortion.
+
+**Why it fits this architecture:**
+
+- Zero shader work — host slices + stretches with existing GPU bitmap drawing
+- Widgets stay declarative — just `Draw::nine_patch(x, y, w, h, bitmap_id, insets)`
+- Enables visual "skins" — a skin is a set of named 9-patch bitmaps for standard UI elements
+- Album art background solved: host generates a blurred 9-patch from the art bitmap at registration time, widget draws
+  it as a panel background. No per-frame blur shader needed.
+
+**Protocol extension:**
+
+```
+Draw command 0x48: NinePatch
+  [x: f32] [y: f32] [w: f32] [h: f32]
+  [bitmap_id: u16]
+  [left: u16] [top: u16] [right: u16] [bottom: u16]  // inset pixels from each edge
+```
+
+Insets define where the corners end and the stretchable regions begin. The host renderer slices the source bitmap into 9
+quads and draws each with appropriate UV mapping. FemtoVG already supports sub-rect bitmap drawing, so the host
+implementation is straightforward.
+
+**Skin system (future):**
+
+A skin could be a bundle (zip/tar) containing:
+
+- `manifest.json` — maps semantic element names (`button`, `panel`, `slider_track`, etc.) to 9-patch entries
+- `*.png` — source bitmaps
+- Inset metadata (either embedded in PNG as Android-style 1px border, or declared in manifest)
+
+Widgets reference elements by name (`Draw::skin("button", x, y, w, h)`), host resolves to the active skin's bitmap +
+insets. Switching skins = loading a different bundle, zero widget code changes.
+
+**Proof-of-concept test case: Winamp skin.** The classic `.wsz` format (renamed zip) contains all UI elements as bitmaps
+with known fixed layouts. A converter could extract the relevant pieces (main window, playlist, equalizer backgrounds,
+button strips) into 9-patch format. The media-control widget rendering a Winamp skin on the Deck display would be a
+compelling demo of the system's flexibility.
 
 ### Shader escape hatch
 

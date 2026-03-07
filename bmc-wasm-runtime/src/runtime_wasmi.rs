@@ -25,8 +25,9 @@ use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::gpu::FemtoVgRenderer;
 use crate::host_api::{
     ActiveHttpListener, ActiveMdnsBrowse, ActiveMdnsRegistration, ActiveSocket, ActiveSsdpSearch,
-    ActiveWebSocket, CompletedFetch, DelayedFetch, FrameTimings, HostState, HttpInboundRequest,
-    HttpListenerResponse, MdnsEvent, SocketEvent, SocketOutbound, SsdpEvent, WsEvent, WsOutbound,
+    ActiveUdpBroadcast, ActiveWebSocket, CompletedFetch, DelayedFetch, FrameTimings, HostState,
+    HttpInboundRequest, HttpListenerResponse, MdnsEvent, SocketEvent, SocketOutbound, SsdpEvent,
+    UdpBroadcastEvent, WsEvent, WsOutbound,
 };
 use crate::renderer::Renderer;
 use crate::tree::{self, TouchHit};
@@ -1049,6 +1050,53 @@ impl WasmWidgetRuntime {
                 let state = caller.data_mut();
                 if let Some(search) = state.ssdp_searches.remove(&search_id) {
                     let _ = search.stop_tx.send(());
+                }
+            },
+        )?;
+
+        // ── UDP Broadcast ────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_udp_broadcast",
+            |mut caller: Caller<'_, HostState>,
+             port: u32,
+             msg_ptr: u32,
+             msg_len: u32,
+             timeout_secs: u32|
+             -> u32 {
+                let raw = read_string(&caller, msg_ptr, msg_len);
+                let Some(message) = raw else { return 0 };
+                if message.is_empty() {
+                    return 0;
+                }
+
+                let state = caller.data_mut();
+                let broadcast_id = state.next_udp_broadcast_id;
+                state.next_udp_broadcast_id += 1;
+
+                let (event_tx, event_rx) = std::sync::mpsc::channel::<UdpBroadcastEvent>();
+                let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+
+                state
+                    .udp_broadcasts
+                    .insert(broadcast_id, ActiveUdpBroadcast { event_rx, stop_tx });
+
+                std::thread::spawn(move || {
+                    udp_broadcast_thread(port, message, timeout_secs, event_tx, stop_rx);
+                });
+
+                broadcast_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_udp_broadcast_stop",
+            |mut caller: Caller<'_, HostState>, broadcast_id: u32| {
+                let state = caller.data_mut();
+                if let Some(broadcast) = state.udp_broadcasts.remove(&broadcast_id) {
+                    let _ = broadcast.stop_tx.send(());
                 }
             },
         )?;
@@ -2329,6 +2377,131 @@ impl WasmWidgetRuntime {
         !self.store.data().ssdp_searches.is_empty()
     }
 
+    /// Drain UDP broadcast events from all active sessions and deliver them
+    /// to WASM by calling `__on_udp_broadcast_event(broadcast_id, data_ptr,
+    /// data_len, source_ptr, source_len)`.
+    ///
+    /// Call this before `render()` each frame.
+    pub fn deliver_udp_broadcast_events(&mut self) -> bool {
+        let mut events: Vec<(u32, UdpBroadcastEvent)> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&broadcast_id, broadcast) in &state.udp_broadcasts {
+            while let Ok(event) = broadcast.event_rx.try_recv() {
+                events.push((broadcast_id, event));
+            }
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        let on_udp_broadcast_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32, u32), ()>(
+                &self.store,
+                "__on_udp_broadcast_event",
+            );
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_udp_broadcast_event), Ok(alloc_func)) = (on_udp_broadcast_event, alloc_func)
+        else {
+            tracing::warn!("widget missing __on_udp_broadcast_event or __alloc export");
+            return false;
+        };
+
+        for (broadcast_id, event) in events {
+            let UdpBroadcastEvent::Response(ref data, ref source) = event;
+
+            let data_bytes = data.as_bytes();
+            let source_bytes = source.as_bytes();
+
+            // Allocate and copy data string
+            let data_len = data_bytes.len() as u32;
+            let data_ptr = if data_len > 0 {
+                if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                    tracing::error!("set_fuel failed: {e}");
+                    continue;
+                }
+                match alloc_func.call(&mut self.store, data_len) {
+                    Ok(ptr) => {
+                        let memory = self
+                            .instance
+                            .get_export(&self.store, "memory")
+                            .and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let mem_data = memory.data_mut(&mut self.store);
+                            let start = ptr as usize;
+                            let end = start + data_len as usize;
+                            if end <= mem_data.len() {
+                                mem_data[start..end].copy_from_slice(data_bytes);
+                            }
+                        }
+                        ptr
+                    }
+                    Err(e) => {
+                        tracing::error!("__alloc failed for udp broadcast data: {e}");
+                        continue;
+                    }
+                }
+            } else {
+                0
+            };
+
+            // Allocate and copy source string
+            let source_len = source_bytes.len() as u32;
+            let source_ptr = if source_len > 0 {
+                if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                    tracing::error!("set_fuel failed: {e}");
+                    continue;
+                }
+                match alloc_func.call(&mut self.store, source_len) {
+                    Ok(ptr) => {
+                        let memory = self
+                            .instance
+                            .get_export(&self.store, "memory")
+                            .and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let mem_data = memory.data_mut(&mut self.store);
+                            let start = ptr as usize;
+                            let end = start + source_len as usize;
+                            if end <= mem_data.len() {
+                                mem_data[start..end].copy_from_slice(source_bytes);
+                            }
+                        }
+                        ptr
+                    }
+                    Err(e) => {
+                        tracing::error!("__alloc failed for udp broadcast source: {e}");
+                        continue;
+                    }
+                }
+            } else {
+                0
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) = on_udp_broadcast_event.call(
+                &mut self.store,
+                (broadcast_id, data_ptr, data_len, source_ptr, source_len),
+            ) {
+                tracing::error!("__on_udp_broadcast_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active UDP broadcast sessions.
+    #[must_use]
+    pub fn has_active_udp_broadcasts(&self) -> bool {
+        !self.store.data().udp_broadcasts.is_empty()
+    }
+
     /// Drain inbound HTTP requests from all active listeners and deliver them
     /// to WASM by calling `__on_http_request(listener_id, request_id, method_ptr,
     /// method_len, path_ptr, path_len, headers_ptr, headers_len, body_ptr, body_len)`.
@@ -3107,6 +3280,81 @@ fn ssdp_search_thread(
     }
 }
 
+/// Background thread for UDP broadcast: sends a broadcast message and collects responses.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "thread entry point — values are moved in"
+)]
+fn udp_broadcast_thread(
+    port: u32,
+    message: String,
+    timeout_secs: u32,
+    event_tx: std::sync::mpsc::Sender<UdpBroadcastEvent>,
+    stop_rx: std::sync::mpsc::Receiver<()>,
+) {
+    use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+
+    let broadcast_addr = SocketAddrV4::new(Ipv4Addr::BROADCAST, port as u16);
+
+    let socket = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("UDP broadcast: failed to bind socket: {e}");
+            return;
+        }
+    };
+    if let Err(e) = socket.set_broadcast(true) {
+        tracing::error!("UDP broadcast: failed to set broadcast: {e}");
+        return;
+    }
+    if let Err(e) = socket.set_read_timeout(Some(Duration::from_millis(250))) {
+        tracing::error!("UDP broadcast: failed to set read timeout: {e}");
+        return;
+    }
+
+    let resend_interval = Duration::from_secs(30);
+    let listen_window = Duration::from_secs(u64::from(timeout_secs).max(3));
+    let mut last_send = Instant::now()
+        .checked_sub(resend_interval)
+        .expect("BUG: system clock too close to epoch for UDP broadcast interval");
+
+    loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+
+        // Send broadcast periodically
+        if last_send.elapsed() >= resend_interval {
+            if let Err(e) = socket.send_to(message.as_bytes(), broadcast_addr) {
+                tracing::warn!("UDP broadcast: send failed: {e}");
+            } else {
+                tracing::debug!("UDP broadcast: sent to port {port}");
+            }
+            last_send = Instant::now();
+        }
+
+        // Listen for responses
+        let deadline = Instant::now() + listen_window;
+        let mut buf = [0_u8; 4096];
+        while Instant::now() < deadline {
+            if stop_rx.try_recv().is_ok() {
+                return;
+            }
+            if let Ok((n, addr)) = socket.recv_from(&mut buf)
+                && let Ok(data) = std::str::from_utf8(&buf[..n])
+            {
+                let source = addr.to_string();
+                if event_tx
+                    .send(UdpBroadcastEvent::Response(data.to_owned(), source))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /// Handle an M-SEARCH response: extract LOCATION + USN, fetch description, return Found event.
 fn ssdp_handle_response(
     response: &str,
@@ -3441,6 +3689,10 @@ fn do_fetch(
                 Err(e) => (0, format!("body read error: {e}").into_bytes()),
             }
         }
-        Err(e) => (0, format!("fetch error: {e}").into_bytes()),
+        Err(ureq::Error::StatusCode(code)) => {
+            // ureq 3 returns HTTP 4xx/5xx as Err(StatusCode) — pass through
+            (u32::from(code), Vec::new())
+        }
+        Err(_) => (0, Vec::new()),
     }
 }

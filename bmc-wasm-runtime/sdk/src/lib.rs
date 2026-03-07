@@ -31,6 +31,7 @@ pub mod net;
 pub mod socket;
 pub mod ssdp;
 pub mod tree;
+pub mod udp_broadcast;
 pub mod ws;
 pub mod xml;
 

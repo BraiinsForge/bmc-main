@@ -2614,7 +2614,8 @@ fn render_modal_body_node(
             } else {
                 let text_w = renderer.measure_text(label, sz.font_size());
                 text_w + sz.h_padding() * 2.0
-            };
+            }
+            .min(width); // Clamp to available width so labels get ellipsis-truncated
 
             if y < clip_bottom && y + btn_height > clip_top {
                 let mut key_buf = [0_u8; 16];

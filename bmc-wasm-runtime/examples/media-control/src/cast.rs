@@ -1,5 +1,4 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
-#![allow(dead_code)]
 
 //! Google Cast (CastV2) protocol controller.
 //!
@@ -39,8 +38,6 @@ const RECEIVER_ID: &str = "receiver-0";
 
 /// Heartbeat interval (ms).
 pub const HEARTBEAT_MS: u32 = 5_000;
-/// How long without a PONG before we consider the connection dead (ms).
-const HEARTBEAT_TIMEOUT_MS: u32 = 15_000;
 
 // ── State machine ───────────────────────────────────────────────
 
@@ -76,8 +73,8 @@ pub struct CastMediaStatus {
     pub player_state: String,
     pub content_type: ContentType,
     pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
+    /// Secondary metadata lines — protocol decides labels and order.
+    pub fields: Vec<(String, String)>,
     pub album_art_url: Option<String>,
     pub duration_secs: f64,
     pub current_time: f64,
@@ -190,15 +187,6 @@ pub fn disconnect() {
     });
 }
 
-/// Whether we have an active Cast connection in media session phase.
-pub fn is_connected() -> bool {
-    CAST.with(|c| {
-        c.borrow()
-            .as_ref()
-            .is_some_and(|s| s.phase == Phase::MediaSession)
-    })
-}
-
 /// Whether the Cast connection is alive (connecting, awaiting status, or in session).
 /// Returns false when closed or reconnecting.
 pub fn is_alive() -> bool {
@@ -264,11 +252,6 @@ pub fn set_mute(muted: bool) {
             json!({"type": "SET_VOLUME", "volume": {"muted": #(muted)}, "requestId": #(req_id)});
         send_json(state, NS_RECEIVER, SENDER_ID, RECEIVER_ID, &msg);
     });
-}
-
-/// Request a media status update (GET_STATUS on media namespace).
-pub fn poll_status() {
-    with_media_command("GET_STATUS", "");
 }
 
 /// Called from render(delta_ms) to drive heartbeat timing and reconnect.
@@ -671,15 +654,16 @@ fn handle_media(state: &mut CastState, payload: &str) {
     if let Some(title) = title {
         state.status.title = Some(title);
     }
-    if let Some(artist) = doc.str("/status/0/media/metadata/artist") {
-        state.status.artist = Some(artist);
-    } else if let Some(artist) = doc.str("/status/0/media/metadata/albumArtist") {
-        state.status.artist = Some(artist);
-    } else if let Some(subtitle) = doc.str("/status/0/media/metadata/subtitle") {
-        state.status.artist = Some(subtitle);
+    state.status.fields.clear();
+    if let Some(artist) = doc
+        .str("/status/0/media/metadata/artist")
+        .or_else(|| doc.str("/status/0/media/metadata/albumArtist"))
+        .or_else(|| doc.str("/status/0/media/metadata/subtitle"))
+    {
+        state.status.fields.push(("Artist".into(), artist));
     }
     if let Some(album) = doc.str("/status/0/media/metadata/albumName") {
-        state.status.album = Some(album);
+        state.status.fields.push(("Album".into(), album));
     }
 
     // Album art — first image URL

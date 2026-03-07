@@ -184,7 +184,9 @@ pub fn draw_button(
     let bounds = Rect::new(x as i32, y as i32, w as u32, h as u32);
 
     if disabled {
+        renderer.push_scissor(x, y, w, h);
         draw_button_disabled(renderer, label, x, y, w, h, style, size, icon_id);
+        renderer.pop_scissor();
         return (false, None);
     }
 
@@ -219,7 +221,9 @@ pub fn draw_button(
         BTN_FG
     };
 
+    renderer.push_scissor(x, y, w, h);
     draw_button_content(renderer, label, x, y, w, h, size, icon_id, fg_color);
+    renderer.pop_scissor();
 
     interaction.button_with_pos(key, bounds)
 }
@@ -280,7 +284,10 @@ fn draw_button_content(
         let text_h = font_size * 1.3;
         let text_x = icon_x + icon_sz + gap;
         let text_y = y + (h - text_h) / 2.0;
-        renderer.draw_text(label, text_x, text_y, font_size, fg_color);
+        let max_text_w = w - pad - icon_sz - gap - pad;
+        draw_text_ellipsis(
+            renderer, label, text_x, text_y, font_size, max_text_w, fg_color,
+        );
     } else if has_icon {
         // Icon-only: keep centered
         let icon_x = x + (w - icon_sz) / 2.0;
@@ -290,6 +297,55 @@ fn draw_button_content(
         let text_h = font_size * 1.3;
         let text_x = x + pad;
         let text_y = y + (h - text_h) / 2.0;
-        renderer.draw_text(label, text_x, text_y, font_size, fg_color);
+        let max_text_w = w - pad * 2.0;
+        draw_text_ellipsis(
+            renderer, label, text_x, text_y, font_size, max_text_w, fg_color,
+        );
     }
+}
+
+/// Draw text with ellipsis truncation if it exceeds `max_w`.
+fn draw_text_ellipsis(
+    renderer: &mut dyn Renderer,
+    label: &str,
+    x: f32,
+    y: f32,
+    font_size: f32,
+    max_w: f32,
+    color: u32,
+) {
+    if max_w <= 0.0 {
+        return;
+    }
+    let text_w = renderer.measure_text(label, font_size);
+    if text_w <= max_w {
+        renderer.draw_text(label, x, y, font_size, color);
+        return;
+    }
+    // Binary search for the longest prefix that fits with "…"
+    let ellipsis_w = renderer.measure_text("\u{2026}", font_size);
+    let target_w = max_w - ellipsis_w;
+    if target_w <= 0.0 {
+        renderer.draw_text("\u{2026}", x, y, font_size, color);
+        return;
+    }
+    // Find cutoff by character boundary (char_indices yields valid boundaries)
+    let mut end = label.len();
+    for (i, _) in label.char_indices().rev() {
+        let prefix = label
+            .get(..i)
+            .expect("BUG: char_indices yields valid boundaries");
+        let pw = renderer.measure_text(prefix, font_size);
+        if pw <= target_w {
+            end = i;
+            break;
+        }
+    }
+    let mut truncated = String::from(
+        label
+            .get(..end)
+            .expect("BUG: end is from char_indices or len()"),
+    );
+    truncated.push('\u{2026}');
+    renderer.draw_text(&truncated, x, y, font_size, color);
 }

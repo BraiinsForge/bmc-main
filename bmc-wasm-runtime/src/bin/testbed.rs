@@ -318,6 +318,8 @@ impl App {
                 .context("Failed to create runtime")?;
             let kv_path = kv_base.join(label.to_ascii_lowercase());
             runtime.set_kv_store_path(kv_path.clone());
+            // Pre-populate KV from secrets.ini (if present)
+            seed_kv_from_secrets(&self.wasm_path, &kv_path);
             tiles.push(PreviewTile {
                 runtime,
                 x,
@@ -440,6 +442,7 @@ impl ApplicationHandler for App {
                 || t.runtime.has_active_sockets()
                 || t.runtime.has_active_mdns_browses()
                 || t.runtime.has_active_ssdp_searches()
+                || t.runtime.has_active_udp_broadcasts()
                 || t.runtime.has_active_http_listeners()
         });
 
@@ -659,6 +662,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         tile.runtime.deliver_socket_events();
         tile.runtime.deliver_mdns_events();
         tile.runtime.deliver_ssdp_events();
+        tile.runtime.deliver_udp_broadcast_events();
         tile.runtime.deliver_http_requests();
     }
 
@@ -1195,5 +1199,69 @@ fn write_perf_report(path: &Path, samples: &[FrameTimings]) {
             eprintln!("Perf report written to: {}", path.display());
         }
         Err(e) => eprintln!("Failed to write perf report: {e}"),
+    }
+}
+
+/// Load `secrets.ini` from the example directory and write each key-value
+/// pair into the tile's KV directory. The file uses a trivial format:
+///
+/// ```text
+/// # comment
+/// jellyfin_api_key = 3bc104ec9d5247679171d17211ddbe81
+/// kodi_password = kodi
+/// ```
+///
+/// The file is searched relative to the WASM file: walk up from the WASM
+/// binary until we find `secrets.ini` (stops at the `examples/` level).
+fn seed_kv_from_secrets(wasm_path: &Path, kv_dir: &Path) {
+    // Walk up from wasm file to find secrets.ini
+    let mut dir = wasm_path.parent();
+    let mut secrets_path = None;
+    for _ in 0..6 {
+        let Some(d) = dir else { break };
+        let candidate = d.join("secrets.ini");
+        if candidate.exists() {
+            secrets_path = Some(candidate);
+            break;
+        }
+        dir = d.parent();
+    }
+    let Some(path) = secrets_path else { return };
+
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("failed to read {}: {e}", path.display());
+            return;
+        }
+    };
+
+    let _ = std::fs::create_dir_all(kv_dir);
+    let mut count = 0_u32;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let kv_file = kv_dir.join(key);
+        // Only seed if the key doesn't already exist (don't overwrite runtime changes)
+        if !kv_file.exists() {
+            if let Err(e) = std::fs::write(&kv_file, value.as_bytes()) {
+                tracing::warn!("failed to write KV {key}: {e}");
+            } else {
+                count += 1;
+            }
+        }
+    }
+    if count > 0 {
+        tracing::info!("seeded {count} KV key(s) from {}", path.display());
     }
 }

@@ -77,8 +77,9 @@ fn soap_action_header(service_urn: &str, action: &str) -> String {
 
 // ── SOAP request dispatcher ──────────────────────────────────────
 
-/// Send a SOAP action to a UPnP control URL.
-fn soap_request(
+/// Send a SOAP action, optionally after a delay.
+fn soap_request_impl(
+    delay_ms: Option<u32>,
     url: &str,
     service_urn: &str,
     action: &str,
@@ -92,13 +93,26 @@ fn soap_request(
         soap_action,
     );
 
-    FetchRequest::post(url)
+    let req = FetchRequest::post(url)
         .headers(&headers)
-        .body(envelope.as_bytes())
-        .send(cb);
+        .body(envelope.as_bytes());
+    if let Some(ms) = delay_ms {
+        req.send_after(ms, cb);
+    } else {
+        req.send(cb);
+    }
 }
 
-/// Send a SOAP action after a delay (for polling).
+fn soap_request(
+    url: &str,
+    service_urn: &str,
+    action: &str,
+    args: &[(&str, &str)],
+    cb: fn(&FetchResponse),
+) {
+    soap_request_impl(None, url, service_urn, action, args, cb);
+}
+
 fn soap_request_after(
     delay_ms: u32,
     url: &str,
@@ -107,17 +121,7 @@ fn soap_request_after(
     args: &[(&str, &str)],
     cb: fn(&FetchResponse),
 ) {
-    let envelope = soap_envelope(service_urn, action, args);
-    let soap_action = soap_action_header(service_urn, action);
-    let headers = fmt!(
-        "Content-Type: text/xml; charset=\"utf-8\"\nSOAPAction: {}",
-        soap_action,
-    );
-
-    FetchRequest::post(url)
-        .headers(&headers)
-        .body(envelope.as_bytes())
-        .send_after(delay_ms, cb);
+    soap_request_impl(Some(delay_ms), url, service_urn, action, args, cb);
 }
 
 // ── Parsed state from UPnP responses ────────────────────────────
@@ -144,16 +148,7 @@ impl TransportState {
     }
 }
 
-/// Track metadata from DIDL-Lite.
-#[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
-pub struct TrackMeta {
-    pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
-    pub album_art_uri: Option<String>,
-    pub duration_secs: Option<u32>,
-}
+pub use crate::protocol::TrackMeta;
 
 /// Position info from `GetPositionInfo`.
 #[derive(Debug, Clone, Default)]
@@ -220,10 +215,17 @@ pub fn parse_didl_lite(didl_xml: &str) -> TrackMeta {
         return TrackMeta::default();
     }
 
+    let mut fields = Vec::new();
+    if let Some(artist) = xml.str("//creator").or_else(|| xml.str("//artist")) {
+        fields.push(("Artist".into(), artist));
+    }
+    if let Some(album) = xml.str("//album") {
+        fields.push(("Album".into(), album));
+    }
+
     TrackMeta {
         title: xml.str("//title"),
-        artist: xml.str("//creator").or_else(|| xml.str("//artist")),
-        album: xml.str("//album"),
+        fields,
         album_art_uri: xml.str("//albumArtURI"),
         duration_secs: None, // duration comes from GetPositionInfo, not DIDL
     }

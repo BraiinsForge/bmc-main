@@ -94,8 +94,8 @@ impl BitmapRegistry {
 
         let x0 = x.min(bmp.width);
         let y0 = y.min(bmp.height);
-        let x1 = (x + w).min(bmp.width);
-        let y1 = (y + h).min(bmp.height);
+        let x1 = x.saturating_add(w).min(bmp.width);
+        let y1 = y.saturating_add(h).min(bmp.height);
 
         let region_w = x1 - x0;
         let region_h = y1 - y0;
