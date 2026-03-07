@@ -1,6 +1,9 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Color constants for the design system.
+//! Color constants and perceptual color manipulation for the design system.
+//!
+//! Color math uses the OkLCH color space (via the `palette` crate) for
+//! perceptually uniform lightness/chroma/hue adjustments.
 
 pub const GRAY_10: u32 = 0xF4F4_F4FF;
 pub const GRAY_20: u32 = 0xE0E0_E0FF;
@@ -138,28 +141,84 @@ pub const BLACK: u32 = 0x0000_00FF;
 pub const WHITE: u32 = 0xFFFF_FFFF;
 pub const TRANSPARENT: u32 = 0x0000_0000;
 
-/// Color utility macro.
+/// Color utility macro for packed `0xRRGGBBAA` colors.
 ///
-/// - `color!(GRAY_80, alpha: 0.5)` — adjust alpha (0.0–1.0)
-/// - `color!(GRAY_80, lightness: 0.5)` — scale RGB brightness (0.0 = black, 1.0 = unchanged)
-/// - `color!(GRAY_80, alpha: 0.5, lightness: 0.8)` — both
+/// **Simple (compile-time) operations:**
+/// - `color!(c, alpha: 0.5)` — set alpha channel (0.0–1.0)
+/// - `color!(c, brightness: 0.5)` — scale RGB channels (0.0 = black, 1.0 = unchanged)
+/// - `color!(c, alpha: 0.5, brightness: 0.8)` — both
+///
+/// **Perceptual (OkLCH) operations:**
+/// - `color!(c, lightness: 0.12)` — set perceptual lightness (0.0–1.0), preserve hue
+/// - `color!(c, lightness: 0.12, chroma: 0.04)` — set both lightness and chroma
 #[macro_export]
 macro_rules! color {
     ($base:expr, alpha: $a:expr) => {
         ($base & 0xFFFF_FF00) | (($a * 255.0) as u32 & 0xFF)
     };
-    ($base:expr, lightness: $l:expr) => {{
+    ($base:expr, brightness: $l:expr) => {{
         let r = ((($base >> 24) & 0xFF) as f32 * $l).min(255.0) as u32;
         let g = ((($base >> 16) & 0xFF) as f32 * $l).min(255.0) as u32;
         let b = ((($base >> 8) & 0xFF) as f32 * $l).min(255.0) as u32;
         let a = $base & 0xFF;
         (r << 24) | (g << 16) | (b << 8) | a
     }};
-    ($base:expr, alpha: $a:expr, lightness: $l:expr) => {{
+    ($base:expr, alpha: $a:expr, brightness: $l:expr) => {{
         let r = ((($base >> 24) & 0xFF) as f32 * $l).min(255.0) as u32;
         let g = ((($base >> 16) & 0xFF) as f32 * $l).min(255.0) as u32;
         let b = ((($base >> 8) & 0xFF) as f32 * $l).min(255.0) as u32;
         let a = ($a * 255.0) as u32 & 0xFF;
         (r << 24) | (g << 16) | (b << 8) | a
     }};
+    ($base:expr, lightness: $l:expr) => {
+        $crate::colors::oklch_adjust($base, $l, None)
+    };
+    ($base:expr, lightness: $l:expr, chroma: $c:expr) => {
+        $crate::colors::oklch_adjust($base, $l, Some($c))
+    };
+}
+
+/// Unpack a `0xRRGGBBAA` color into `(r, g, b, a)` as `u8`.
+#[inline]
+#[must_use]
+#[expect(clippy::cast_possible_truncation)]
+pub const fn unpack(c: u32) -> (u8, u8, u8, u8) {
+    ((c >> 24) as u8, (c >> 16) as u8, (c >> 8) as u8, c as u8)
+}
+
+/// Pack `(r, g, b, a)` as `u8` into a `0xRRGGBBAA` color.
+#[inline]
+#[must_use]
+pub const fn pack(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    (r as u32) << 24 | (g as u32) << 16 | (b as u32) << 8 | a as u32
+}
+
+/// Adjust a packed color in OkLCH space: set lightness, optionally set chroma.
+///
+/// Hue and alpha are preserved. Useful for creating dark accent backgrounds
+/// from arbitrary source colors while maintaining perceptual color identity.
+#[must_use]
+#[expect(clippy::many_single_char_names)]
+pub fn oklch_adjust(rgba: u32, lightness: f32, chroma: Option<f32>) -> u32 {
+    use palette::{FromColor, IntoColor, Oklch, Srgb};
+
+    let (r, g, b, a) = unpack(rgba);
+    let srgb: Srgb<f32> = Srgb::new(r, g, b).into_format();
+    let mut oklch: Oklch = srgb.into_color();
+
+    // Detect achromatic source — avoid injecting a random hue into true grays.
+    // Only zero chroma when the caller didn't explicitly request one.
+    let is_gray = oklch.chroma < 0.005;
+
+    oklch.l = lightness;
+    match chroma {
+        Some(c) if !is_gray => oklch.chroma = oklch.chroma.max(c),
+        Some(_) => oklch.chroma = 0.0,
+        None if is_gray => oklch.chroma = 0.0,
+        None => {}
+    }
+
+    let out: Srgb<f32> = Srgb::from_color(oklch);
+    let out = out.into_format::<u8>();
+    pack(out.red, out.green, out.blue, a)
 }

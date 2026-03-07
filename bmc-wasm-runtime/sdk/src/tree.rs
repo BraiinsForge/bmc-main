@@ -474,6 +474,7 @@ pub enum Draw {
         h: f32,
         color: u32,
         icon_id: u16,
+        anti_alias: bool,
     },
     /// Bitmap (raster image) at absolute local position
     Bitmap {
@@ -582,6 +583,7 @@ impl Draw {
             h,
             color,
             icon_id,
+            anti_alias: false,
         }
     }
 
@@ -597,7 +599,20 @@ impl Draw {
             h,
             color,
             icon_id,
+            anti_alias: false,
         }
+    }
+
+    /// Enable anti-aliasing on this draw command (currently only affects icons).
+    #[must_use]
+    pub fn with_anti_alias(mut self) -> Self {
+        if let Self::Icon {
+            ref mut anti_alias, ..
+        } = self
+        {
+            *anti_alias = true;
+        }
+        self
     }
 
     /// Bitmap (raster image) at local position within canvas.
@@ -1335,6 +1350,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             h,
             color,
             icon_id,
+            anti_alias,
         } => {
             buf.write_u8(DRAW_ICON);
             buf.write_f32(*x);
@@ -1343,6 +1359,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*h);
             buf.write_u32(*color);
             buf.write_u16(*icon_id);
+            buf.write_u8(u8::from(*anti_alias));
         }
         Draw::Bitmap {
             x,

@@ -275,7 +275,7 @@ fn draw_button_content(
     if has_icon && has_label {
         let icon_x = x + pad;
         let icon_y = y + (h - icon_sz) / 2.0;
-        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id);
+        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
 
         let text_h = font_size * 1.3;
         let text_x = icon_x + icon_sz + gap;
@@ -285,7 +285,7 @@ fn draw_button_content(
         // Icon-only: keep centered
         let icon_x = x + (w - icon_sz) / 2.0;
         let icon_y = y + (h - icon_sz) / 2.0;
-        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id);
+        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
     } else {
         let text_h = font_size * 1.3;
         let text_x = x + pad;

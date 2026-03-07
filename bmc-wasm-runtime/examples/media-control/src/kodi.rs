@@ -399,7 +399,8 @@ fn on_player_item(response: &FetchResponse) {
 
         state.status.album = doc.str("/result/item/album");
 
-        // Thumbnail: Kodi returns "image://..." paths
+        // Thumbnail: Kodi returns "image://..." paths, clear if absent
+        state.status.album_art_url = None;
         if let Some(thumb) = doc.str("/result/item/thumbnail") {
             if let Some(image_path) = thumb.strip_prefix("image://") {
                 let encoded = percent_encode(image_path);

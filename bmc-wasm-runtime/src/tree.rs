@@ -125,6 +125,7 @@ pub enum DrawCommand {
         h: f32,
         color: u32,
         icon_id: u16,
+        anti_alias: bool,
     },
     Bitmap {
         x: f32,
@@ -489,6 +490,7 @@ impl<'a> TreeReader<'a> {
                 let h = self.read_f32()?;
                 let color = self.read_u32()?;
                 let icon_id = self.read_u16()?;
+                let anti_alias = self.read_u8()? != 0;
                 Ok(DrawCommand::Icon {
                     x,
                     y,
@@ -496,6 +498,7 @@ impl<'a> TreeReader<'a> {
                     h,
                     color,
                     icon_id,
+                    anti_alias,
                 })
             }
             DRAW_BITMAP => {
@@ -1618,6 +1621,7 @@ fn render_draw_inner(
             h,
             color,
             icon_id,
+            anti_alias,
         } => {
             let ew = *w * scale;
             let eh = *h * scale;
@@ -1631,14 +1635,22 @@ fn render_draw_inner(
                 color_override.unwrap_or(*color)
             };
             if rotation == 0.0 {
-                renderer.draw_icon(rx, ry, ew, eh, final_color, *icon_id);
+                renderer.draw_icon(rx, ry, ew, eh, final_color, *icon_id, *anti_alias);
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
                 renderer.save();
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
-                renderer.draw_icon(rx - pivot_x, ry - pivot_y, ew, eh, final_color, *icon_id);
+                renderer.draw_icon(
+                    rx - pivot_x,
+                    ry - pivot_y,
+                    ew,
+                    eh,
+                    final_color,
+                    *icon_id,
+                    *anti_alias,
+                );
                 renderer.restore();
             }
         }
@@ -2860,6 +2872,7 @@ pub fn render_notification_banner(
         NOTIF_ICON_SIZE,
         accent,
         icon_id,
+        false,
     );
 
     // Text

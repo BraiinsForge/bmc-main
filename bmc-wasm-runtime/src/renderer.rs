@@ -77,7 +77,17 @@ pub trait Renderer {
     fn register_icon(&mut self, data: &[u8]) -> u16;
 
     /// Draw a registered icon at the given position and size.
-    fn draw_icon(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32, icon_id: u16);
+    #[expect(clippy::too_many_arguments)]
+    fn draw_icon(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: u32,
+        icon_id: u16,
+        anti_alias: bool,
+    );
 
     // -- Bitmaps --
 
@@ -86,6 +96,12 @@ pub trait Renderer {
 
     /// Draw a registered bitmap at the given position and size.
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16);
+
+    /// Sample the average color of a rectangular region within a registered bitmap.
+    ///
+    /// Returns the average RGBA as a packed `u32` (`0xRRGGBBAA`), or `None` if the
+    /// bitmap ID is invalid or the region is empty.
+    fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32>;
 
     // -- Sphere --
 

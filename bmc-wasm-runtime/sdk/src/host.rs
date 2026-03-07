@@ -67,6 +67,9 @@ unsafe extern "C" {
         rgba_out_ptr: *mut u8,
         rgba_out_cap: u32,
     ) -> i64;
+
+    // Bitmap sampling (average color of a region)
+    fn host_bitmap_sample(bitmap_id: u32, x: u32, y: u32, w: u32, h: u32) -> u32;
 }
 
 /// Fill a rectangle with a solid color.
@@ -323,6 +326,19 @@ pub fn parse_date(s: &str) -> Option<i64> {
 #[must_use]
 pub fn register_bitmap(data: &[u8]) -> u16 {
     unsafe { host_register_bitmap(data.as_ptr(), data.len() as u32) as u16 }
+}
+
+/// Sample the average color of a rectangular region within a registered bitmap.
+///
+/// Returns the average RGBA as a packed `u32` (`0xRRGGBBAA`), or `None` if the bitmap
+/// is not registered or the sampled region is empty.
+///
+/// The region is clamped to bitmap dimensions — passing `(0, 0, u32::MAX, u32::MAX)`
+/// samples the entire image.
+#[must_use]
+pub fn bitmap_sample(bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
+    let result = unsafe { host_bitmap_sample(u32::from(bitmap_id), x, y, w, h) };
+    if result == 0 { None } else { Some(result) }
 }
 
 /// Get the dimensions of an image (PNG, JPEG, etc.) without decoding the full pixel data.

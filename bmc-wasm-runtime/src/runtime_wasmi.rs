@@ -420,6 +420,26 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // Sample average color of a rectangular region within a registered bitmap.
+        // Returns packed RGBA u32 (0xRRGGBBAA), or 0 if bitmap not found / empty region.
+        linker.func_wrap(
+            "env",
+            "host_bitmap_sample",
+            |caller: Caller<'_, HostState>,
+             bitmap_id: u32,
+             x: u32,
+             y: u32,
+             w: u32,
+             h: u32|
+             -> u32 {
+                let state = caller.data();
+                state
+                    .renderer
+                    .bitmap_sample(bitmap_id as u16, x, y, w, h)
+                    .unwrap_or(0)
+            },
+        )?;
+
         // Decode image to RGBA pixels (for color extraction in WASM)
         linker.func_wrap(
             "env",
@@ -435,24 +455,22 @@ impl WasmWidgetRuntime {
                     return -1;
                 };
 
-                let reader = match image::ImageReader::new(std::io::Cursor::new(&image_data))
-                    .with_guessed_format()
-                {
-                    Ok(r) => r,
-                    Err(e) => {
-                        tracing::error!("host_decode_image format: {e}");
+                let rgba = match std::panic::catch_unwind(|| {
+                    image::ImageReader::new(std::io::Cursor::new(&image_data))
+                        .with_guessed_format()
+                        .map_err(image::ImageError::IoError)
+                        .and_then(image::ImageReader::decode)
+                }) {
+                    Ok(Ok(img)) => img.to_rgba8(),
+                    Ok(Err(e)) => {
+                        tracing::error!("host_decode_image: {e}");
+                        return -1;
+                    }
+                    Err(_) => {
+                        tracing::error!("host_decode_image: decoder panicked");
                         return -1;
                     }
                 };
-                let img = match reader.decode() {
-                    Ok(img) => img,
-                    Err(e) => {
-                        tracing::error!("host_decode_image decode: {e}");
-                        return -1;
-                    }
-                };
-
-                let rgba = img.to_rgba8();
                 let (w, h) = (rgba.width(), rgba.height());
                 let pixels = rgba.as_raw();
                 let needed = pixels.len() as u32;
@@ -3068,22 +3086,21 @@ fn ssdp_search_thread(
             if let Ok((n, _addr)) = search_socket.recv_from(&mut buf) {
                 let response = String::from_utf8_lossy(&buf[..n]);
                 if let Some(event) = ssdp_handle_response(&response, &search_target, &mut seen_usns)
+                    && event_tx.send(event).is_err()
                 {
-                    if event_tx.send(event).is_err() {
-                        return;
-                    }
+                    return;
                 }
             }
 
             // Poll notify socket for NOTIFY messages (byebye / alive)
-            if let Some(ref sock) = notify_socket {
-                if let Ok((n, _addr)) = sock.recv_from(&mut buf) {
-                    let msg = String::from_utf8_lossy(&buf[..n]);
-                    if let Some(event) = ssdp_handle_notify(&msg, &search_target, &mut seen_usns) {
-                        if event_tx.send(event).is_err() {
-                            return;
-                        }
-                    }
+            if let Some(ref sock) = notify_socket
+                && let Ok((n, _addr)) = sock.recv_from(&mut buf)
+            {
+                let msg = String::from_utf8_lossy(&buf[..n]);
+                if let Some(event) = ssdp_handle_notify(&msg, &search_target, &mut seen_usns)
+                    && event_tx.send(event).is_err()
+                {
+                    return;
                 }
             }
         }
@@ -3166,10 +3183,10 @@ fn ssdp_handle_notify(
 fn ssdp_extract_header(response: &str, header_name: &str) -> Option<String> {
     let header_lower = header_name.to_ascii_lowercase();
     for line in response.lines() {
-        if let Some((key, value)) = line.split_once(':') {
-            if key.trim().to_ascii_lowercase() == header_lower {
-                return Some(value.trim().to_owned());
-            }
+        if let Some((key, value)) = line.split_once(':')
+            && key.trim().to_ascii_lowercase() == header_lower
+        {
+            return Some(value.trim().to_owned());
         }
     }
     None

@@ -104,6 +104,7 @@ impl IconRegistry {
 ///
 /// `color == 0` (TRANSPARENT) → use original SVG colors.
 /// `color != 0` → tint all fills/strokes with the given color.
+#[expect(clippy::too_many_arguments)]
 pub fn draw_icon(
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
     icon: &RegisteredIcon,
@@ -112,6 +113,7 @@ pub fn draw_icon(
     w: f32,
     h: f32,
     color: u32,
+    anti_alias: bool,
 ) {
     if icon.viewbox_w <= 0.0 || icon.viewbox_h <= 0.0 {
         return;
@@ -134,9 +136,7 @@ pub fn draw_icon(
         if let Some(fill_color) = icon_path.fill_color {
             let paint_color = tint.unwrap_or_else(|| to_femtovg_color(fill_color));
             let mut paint = Paint::color(paint_color);
-            // Disable AA fringe — it bleeds into narrow gaps between adjacent
-            // paths, filling them in. FemtoVG's own text renderer does the same.
-            paint.set_anti_alias(false);
+            paint.set_anti_alias(anti_alias);
             if icon_path.is_evenodd {
                 paint.set_fill_rule(FillRule::EvenOdd);
             }

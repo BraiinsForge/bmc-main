@@ -389,9 +389,18 @@ impl Renderer for FemtoVgRenderer {
         self.icon_registry.register(data)
     }
 
-    fn draw_icon(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32, icon_id: u16) {
+    fn draw_icon(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: u32,
+        icon_id: u16,
+        anti_alias: bool,
+    ) {
         if let Some(icon) = self.icon_registry.get(icon_id) {
-            super::icons::draw_icon(&mut self.canvas, icon, x, y, w, h, color);
+            super::icons::draw_icon(&mut self.canvas, icon, x, y, w, h, color, anti_alias);
         }
     }
 
@@ -405,6 +414,10 @@ impl Renderer for FemtoVgRenderer {
         if let Some(image_id) = self.bitmap_registry.get(bitmap_id) {
             super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
         }
+    }
+
+    fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
+        self.bitmap_registry.sample(bitmap_id, x, y, w, h)
     }
 
     #[expect(clippy::many_single_char_names)]

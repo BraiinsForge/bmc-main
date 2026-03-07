@@ -158,6 +158,7 @@ struct PreviewTile {
     texture: glow::Texture,
     logged_dead: bool,
     ever_rendered: bool,
+    kv_path: std::path::PathBuf,
 }
 
 struct PreviewState {
@@ -315,7 +316,8 @@ impl App {
             let fbo_id = fbo.0.get();
             let mut runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id)
                 .context("Failed to create runtime")?;
-            runtime.set_kv_store_path(kv_base.clone());
+            let kv_path = kv_base.join(label.to_ascii_lowercase());
+            runtime.set_kv_store_path(kv_path.clone());
             tiles.push(PreviewTile {
                 runtime,
                 x,
@@ -329,6 +331,7 @@ impl App {
                 texture,
                 logged_dead: false,
                 ever_rendered: false,
+                kv_path,
             });
         }
 
@@ -607,7 +610,8 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             };
             let fbo_id = fbo.0.get();
             match create_runtime(wasm_path, &state.gl_config, tile.w, tile.h, fbo_id) {
-                Ok(new_runtime) => {
+                Ok(mut new_runtime) => {
+                    new_runtime.set_kv_store_path(tile.kv_path.clone());
                     tile.runtime = new_runtime; // drops old runtime → deletes old FBO
                     tile.fbo = fbo;
                     tile.texture = texture;

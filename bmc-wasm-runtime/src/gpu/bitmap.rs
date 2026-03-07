@@ -9,14 +9,24 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Cursor;
+use std::panic;
 
 use femtovg::{ImageFlags, ImageId, ImageSource, Paint, Path};
 use imgref::ImgRef;
 use rgb::{FromSlice as _, RGBA8};
 
-/// Registry mapping opaque widget-side IDs to FemtoVG GPU texture handles.
+/// Decoded bitmap pixels retained for host-side sampling.
+struct StoredBitmap {
+    image_id: ImageId,
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+/// Registry mapping opaque widget-side IDs to FemtoVG GPU texture handles
+/// and retained RGBA pixel data for host-side sampling.
 pub struct BitmapRegistry {
-    bitmaps: HashMap<u16, ImageId>,
+    bitmaps: HashMap<u16, StoredBitmap>,
     next_id: u16,
 }
 
@@ -49,8 +59,16 @@ impl BitmapRegistry {
         self.next_id += 1;
 
         match decode_and_upload(data, canvas) {
-            Ok(image_id) => {
-                self.bitmaps.insert(id, image_id);
+            Ok((image_id, pixels, width, height)) => {
+                self.bitmaps.insert(
+                    id,
+                    StoredBitmap {
+                        image_id,
+                        pixels,
+                        width,
+                        height,
+                    },
+                );
             }
             Err(e) => {
                 tracing::error!("failed to decode/upload bitmap: {e}");
@@ -59,29 +77,82 @@ impl BitmapRegistry {
         id
     }
 
-    /// Get the FemtoVG ImageId for a registered bitmap.
+    /// Get the FemtoVG `ImageId` for a registered bitmap.
     #[must_use]
     pub fn get(&self, id: u16) -> Option<ImageId> {
-        self.bitmaps.get(&id).copied()
+        self.bitmaps.get(&id).map(|b| b.image_id)
+    }
+
+    /// Sample the average RGBA color of a rectangular region within a registered bitmap.
+    ///
+    /// Coordinates are clamped to the bitmap dimensions. Returns `None` if the bitmap ID
+    /// is not registered or the region is empty after clamping.
+    #[must_use]
+    #[expect(clippy::many_single_char_names)]
+    pub fn sample(&self, id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
+        let bmp = self.bitmaps.get(&id)?;
+
+        let x0 = x.min(bmp.width);
+        let y0 = y.min(bmp.height);
+        let x1 = (x + w).min(bmp.width);
+        let y1 = (y + h).min(bmp.height);
+
+        let region_w = x1 - x0;
+        let region_h = y1 - y0;
+        if region_w == 0 || region_h == 0 {
+            return None;
+        }
+
+        let (mut r_sum, mut g_sum, mut b_sum, mut a_sum) = (0_u64, 0_u64, 0_u64, 0_u64);
+        for row in y0..y1 {
+            let row_start = (row * bmp.width + x0) as usize * 4;
+            for col in 0..region_w {
+                let idx = row_start + col as usize * 4;
+                r_sum += u64::from(bmp.pixels[idx]);
+                g_sum += u64::from(bmp.pixels[idx + 1]);
+                b_sum += u64::from(bmp.pixels[idx + 2]);
+                a_sum += u64::from(bmp.pixels[idx + 3]);
+            }
+        }
+
+        let count = u64::from(region_w) * u64::from(region_h);
+        #[expect(clippy::cast_possible_truncation, clippy::integer_division)]
+        let (r, g, b, a) = (
+            (r_sum / count) as u32,
+            (g_sum / count) as u32,
+            (b_sum / count) as u32,
+            (a_sum / count) as u32,
+        );
+        Some((r << 24) | (g << 16) | (b << 8) | a)
     }
 }
 
-/// Decode image bytes to RGBA and upload to the GPU as a FemtoVG texture.
+/// Decode image bytes to RGBA, upload to the GPU, and return the pixel data.
+///
+/// The decode step is wrapped in `catch_unwind` because third-party JPEG decoders
+/// (zune-jpeg AVX2/NEON paths) can panic on certain image dimensions.
 fn decode_and_upload(
     data: &[u8],
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
-) -> anyhow::Result<ImageId> {
-    let img = image::ImageReader::new(Cursor::new(data))
-        .with_guessed_format()?
-        .decode()?;
-    let rgba = img.to_rgba8();
-    let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+) -> anyhow::Result<(ImageId, Vec<u8>, u32, u32)> {
+    // Decode on a owned copy so the closure is UnwindSafe (no &mut references).
+    let data = data.to_vec();
+    let rgba = panic::catch_unwind(|| {
+        image::ImageReader::new(Cursor::new(&data))
+            .with_guessed_format()
+            .map_err(image::ImageError::IoError)
+            .and_then(image::ImageReader::decode)
+    })
+    .map_err(|_| anyhow::anyhow!("image decoder panicked"))?
+    .map_err(|e| anyhow::anyhow!("{e}"))?
+    .to_rgba8();
 
-    let pixels: &[RGBA8] = rgba.as_raw().as_rgba();
+    let (w, h) = (rgba.width(), rgba.height());
+    let pixels_rgba: &[RGBA8] = rgba.as_raw().as_rgba();
 
-    let src = ImageSource::Rgba(ImgRef::new(pixels, w, h));
+    let src = ImageSource::Rgba(ImgRef::new(pixels_rgba, w as usize, h as usize));
     let image_id = canvas.create_image(src, ImageFlags::empty())?;
-    Ok(image_id)
+    Ok((image_id, rgba.into_raw(), w, h))
 }
 
 /// Render a registered bitmap onto the canvas at the given rect.

@@ -92,7 +92,7 @@ All stages complete. UI reference image at `research/ui-example-1.png`.
 | 2     | UPnP/DLNA controller + UI      | SOAP/XML protocol, full transport controls, responsive layout (Full/Large/Medium/Small), album art, seek/volume bars, disconnect detection                |
 | 3     | Google Cast controller         | CastV2 over TLS, prost-encoded framing, heartbeat, receiver/media session state machine, push+pull status                                                 |
 | 4     | Host discovery primitives      | mDNS via `mdns-sd` (4a), KV persistence — file-backed per-widget store (4b), HTTP listener (4c)                                                           |
-| 5     | Device discovery + picker UI   | mDNS browse 3 service types, SSDP M-SEARCH with device description XML, device picker, auto-reconnect via KV                                              |
+| 5     | Device discovery + picker UI   | mDNS browse 3 service types, SSDP M-SEARCH with device description XML, device picker, auto-reconnect via KV, per-tile KV isolation                       |
 | 6     | Kodi + `MediaController` trait | HTTP JSON-RPC 2.0 with Basic Auth, two-phase polling, `MediaController` trait unifying dispatch across all 3 protocols                                    |
 
 ---
@@ -190,10 +190,9 @@ startup, or click the **Debug layout** button in the testbed stats panel at runt
 
 ### Accent-tinted background from album art
 
-1. `decode_image(bytes)` → RGBA pixels
-2. `palette_extract` in WASM → 3 dominant colors
-3. Dark-tint dominant: HSL — saturation ×0.35, lightness →0.12
-4. Use as background color
+Implemented via `host_bitmap_sample` (samples average RGBA from a bitmap region) + OkLCH color adjustment in the
+`color!` macro. The widget samples the loaded album art bitmap and uses `color!(sampled, lightness: 0.18, chroma: 0.04)`
+to produce a dark-tinted accent background.
 
 ### Shader escape hatch
 

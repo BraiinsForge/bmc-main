@@ -1,17 +1,9 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::items_after_statements
-)]
 
 //! Media Remote Control Widget — POC (BDK-334).
 //!
 //! Controls media playback on UPnP/DLNA, Google Cast, and Kodi devices over LAN.
 //! Discovers devices via mDNS and presents a picker UI.
-//!
-//! **Stage 6:** Kodi protocol + unified protocol dispatch via `MediaController` trait.
 
 mod cast;
 mod icons;
@@ -86,6 +78,8 @@ struct MediaState {
     art_aspect: f32,
     /// URL of the currently loaded album art (to avoid re-fetching).
     art_url: String,
+    /// Accent background color extracted from album art (darkened average).
+    accent_bg: u32,
     /// Whether the current media is video, music, etc.
     is_video: bool,
     /// Consecutive fetch failures for disconnect detection.
@@ -104,6 +98,7 @@ impl Default for MediaState {
             art_bitmap_id: 0,
             art_aspect: 1.0,
             art_url: String::new(),
+            accent_bg: GRAY_100,
             is_video: false,
             consecutive_failures: 0,
             was_ever_connected: false,
@@ -185,11 +180,6 @@ pub extern "C" fn init(width: u32, height: u32) {
     log_info!("media: SSDP search started");
     discovery_log("SSDP M-SEARCH MediaRenderer".into());
 
-    // Check for auto-reconnect target from last session
-    if let Some(last) = kv::get_string("last_device") {
-        log_info!("media: last device = {}", last);
-    }
-
     request_frame();
 }
 
@@ -201,12 +191,24 @@ fn upsert_discovered(device: DiscoveredDevice) {
             .iter_mut()
             .find(|d| d.service_name == device.service_name)
         {
-            *existing = device;
+            *existing = device.clone();
         } else {
-            list.push(device);
+            list.push(device.clone());
         }
         list.sort_by(|a, b| a.host.cmp(&b.host).then(a.protocol.cmp(&b.protocol)));
     });
+
+    // Auto-reconnect: if we're on the picker and this device matches the last
+    // connected one, reconnect immediately (handles hot-reload gracefully).
+    let is_discovering = STATE.with(|s| matches!(*s.borrow(), WidgetState::Discovering));
+    if is_discovering {
+        if let Some(last) = kv::get_string("last_device") {
+            if last == device.service_name {
+                log_info!("media: auto-reconnect to {}", device.name);
+                connect_to_device(&device);
+            }
+        }
+    }
 }
 
 // ── mDNS discovery ──────────────────────────────────────────────
@@ -276,19 +278,12 @@ fn on_mdns_found(json: &str) {
         host: host.to_string(),
         port,
         protocol,
-        service_name: service_name.clone(),
+        service_name,
         av_transport_path: None,
         rendering_control_path: None,
     };
 
-    upsert_discovered(device.clone());
-
-    // Auto-connect if this matches the last-used device
-    let auto_target = kv::get_string("last_device");
-    if auto_target.as_deref() == Some(&service_name) {
-        log_info!("media: auto-connecting to {}", service_name);
-        connect_to_device(&device);
-    }
+    upsert_discovered(device);
 
     request_frame();
 }
@@ -365,14 +360,7 @@ fn on_ssdp_found(json: &str) {
         return;
     }
 
-    upsert_discovered(device.clone());
-
-    // Auto-connect if this matches the last-used device
-    let auto_target = kv::get_string("last_device");
-    if auto_target.as_deref() == Some(&dedup_key) {
-        log_info!("media: auto-connecting to {}", dedup_key);
-        connect_to_device(&device);
-    }
+    upsert_discovered(device);
 
     request_frame();
 }
@@ -380,7 +368,7 @@ fn on_ssdp_found(json: &str) {
 // ── Connection management ───────────────────────────────────────
 
 fn connect_to_device(device: &DiscoveredDevice) {
-    // Persist selection for auto-reconnect
+    // Persist selection for auto-reconnect on hot reload
     kv::set("last_device", device.service_name.as_bytes());
 
     CONNECTED_DEVICE_NAME.with(|n| {
@@ -601,6 +589,15 @@ fn with_device(f: impl FnOnce(&UpnpDevice)) {
 fn fetch_album_art(url: &str) {
     let url = url.to_string();
     with_controller(|ctrl| ctrl.fetch_art(&url, on_album_art));
+}
+
+/// Clear album art and accent background on the current media state.
+fn clear_album_art(media: &mut MediaState) {
+    if media.art_bitmap_id > 0 {
+        media.art_bitmap_id = 0;
+        media.art_url.clear();
+        media.accent_bg = GRAY_100;
+    }
 }
 
 /// Dispatch through the active `MediaController`, if any.
@@ -857,7 +854,7 @@ fn bar_frac(result: &TreeRenderResult, key: &str) -> Option<f32> {
         .drag
         .get(key)
         .or_else(|| result.touch.get(key))
-        .map(bmc_wasm_sdk::TouchHit::frac_x)
+        .map(TouchHit::frac_x)
 }
 
 fn seek_to_fraction(frac: f32) {
@@ -920,7 +917,7 @@ fn on_position_info(response: &FetchResponse) {
             }
         });
 
-        // Fetch new album art if URI changed
+        // Fetch new album art if URI changed, clear if gone
         if let Some(uri) = art_uri {
             let should_fetch = STATE.with(|s| {
                 let state = s.borrow();
@@ -938,6 +935,13 @@ fn on_position_info(response: &FetchResponse) {
                 });
                 fetch_album_art(&uri);
             }
+        } else {
+            STATE.with(|s| {
+                let mut state = s.borrow_mut();
+                if let WidgetState::Connected(media) = &mut *state {
+                    clear_album_art(media);
+                }
+            });
         }
 
         request_frame();
@@ -1036,11 +1040,17 @@ fn on_album_art(response: &FetchResponse) {
             // Get natural dimensions for aspect ratio (lightweight — no RGBA allocation)
             let aspect = host::image_dimensions(response.body())
                 .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
+
+            // Sample full image average and darken for background tint
+            let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX)
+                .map_or(GRAY_100, |c| color!(c, lightness: 0.22, chroma: 0.06));
+
             STATE.with(|s| {
                 let mut state = s.borrow_mut();
                 if let WidgetState::Connected(media) = &mut *state {
                     media.art_bitmap_id = bitmap_id;
                     media.art_aspect = aspect;
+                    media.accent_bg = accent_bg;
                 }
             });
             request_frame();
@@ -1145,14 +1155,15 @@ fn on_cast_status(status: &cast::CastMediaStatus) {
 
             media.actions = status.transport_actions();
 
-            // Fetch album art if URL changed
+            // Fetch album art if URL changed, clear if gone
             if let Some(ref url) = status.album_art_url {
-                // Rewrite YouTube maxres thumbnails to medium quality (smaller file)
                 let fetch_url = downscale_thumbnail_url(url);
                 if media.art_url != fetch_url {
                     media.art_url.clone_from(&fetch_url);
                     fetch_album_art(&fetch_url);
                 }
+            } else {
+                clear_album_art(media);
             }
         }
     });
@@ -1209,13 +1220,15 @@ fn on_kodi_status(status: &kodi::KodiMediaStatus) {
                 can_previous: true,
             };
 
-            // Fetch album art if URL changed
+            // Fetch album art if URL changed, clear if gone
             if let Some(ref url) = status.album_art_url {
                 let fetch_url = downscale_thumbnail_url(url);
                 if media.art_url != fetch_url {
                     media.art_url.clone_from(&fetch_url);
                     fetch_album_art(&fetch_url);
                 }
+            } else {
+                clear_album_art(media);
             }
         }
     });
@@ -1517,7 +1530,7 @@ fn render_full(size: WidgetSize, media: &MediaState) -> Node {
     let col_w = size.width as f32 - 2.0 * pad - gap - art_size;
 
     row(
-        props!(background: GRAY_100, padding: pad, gap: gap),
+        props!(background: media.accent_bg, padding: pad, gap: gap),
         [
             render_album_art(media, art_size),
             col(
@@ -1553,7 +1566,7 @@ fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
     let art_size = art_max_h.min(avail_w * 0.4);
 
     col(
-        props!(background: GRAY_100, padding: pad, gap: gap),
+        props!(background: media.accent_bg, padding: pad, gap: gap),
         [
             // Top: art + track meta side by side (flex to push controls to bottom)
             row(
@@ -1613,14 +1626,10 @@ fn render_album_art(media: &MediaState, art_size: f32) -> Node {
             props!(width: art_size, height: art_size, max_height: art_size),
             vec![
                 Draw::rect(0.0, 0.0, art_size, art_size, GRAY_80),
-                Draw::centered(Draw::icon(
-                    0.0,
-                    0.0,
-                    icon_sz,
-                    icon_sz,
-                    placeholder_icon,
-                    GRAY_60,
-                )),
+                Draw::centered(
+                    Draw::icon(0.0, 0.0, icon_sz, icon_sz, placeholder_icon, GRAY_60)
+                        .with_anti_alias(),
+                ),
             ],
         )
     }
@@ -1819,7 +1828,7 @@ fn progress_bar_node(media: &MediaState, draw_w: f32) -> Node {
                 0.0,
                 OVERSIZED_W - fill_w + 1.0,
                 bar_height,
-                GRAY_100,
+                media.accent_bg,
             ));
             let track_x = fill_w + DOT_RADIUS;
             draws.push(Draw::rect(
