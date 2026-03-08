@@ -4,10 +4,10 @@
 let lib = pkgs.lib; in
 let
   rustflags = import ./nix/rustflags.nix { inherit lib; };
-  inherit (rustflags) X11RuntimeDeps waylandRuntimeDeps allRuntimeDeps makeRustflagsEnv;
+  inherit (rustflags) X11RuntimeDeps waylandRuntimeDeps makeRustflagsEnv;
 
   widgetLib = import ./nix/widget.nix {
-    inherit pkgs lib makeRustflagsEnv waylandRuntimeDeps;
+    inherit pkgs lib;
   };
   inherit (widgetLib) mkWidgetPackage mkAllWidgets;
 
@@ -138,6 +138,7 @@ let
       rustProfile = "release";
       rustCrossTarget = "armv7-unknown-linux-gnueabihf";
       build_pkgs = fixedArmv7Pkgs;
+      wrapNixGL = true;
     };
     armv7-glibc-debug = workspace.mkBuildProfile {
       suffix = "armv7";
@@ -145,6 +146,7 @@ let
       rustProfile = "dev";
       rustCrossTarget = "armv7-unknown-linux-gnueabihf";
       build_pkgs = fixedArmv7Pkgs;
+      wrapNixGL = true;
     };
   };
 
@@ -153,12 +155,10 @@ let
     digital-clock = {
       crate = crates.widget-digital-clock;
       features = [ "standalone" ];
-      runtimeDeps = waylandRuntimeDeps;
     };
     flip-clock = {
       crate = crates.widget-flip-clock;
       features = [ "standalone" ];
-      runtimeDeps = waylandRuntimeDeps;
     };
   };
 
@@ -193,7 +193,6 @@ let
     value = mkWidgetPackage {
       inherit (widget) name crate;
       features = widget.features or [ ];
-      runtimeDeps = widget.runtimeDeps or waylandRuntimeDeps;
       profile = build-profiles."${archProfile.arch}-${archProfile.profile}";
     };
   }));
@@ -223,7 +222,6 @@ let
         inherit name;
         inherit (widget) crate;
         features = widget.features or [ ];
-        runtimeDeps = allRuntimeDeps;
         profile = build-profiles.fast;
       };
     })
@@ -237,7 +235,7 @@ in
     bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
 
     # Native widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
-    widgets = mkAllWidgets { inherit widgets; profile = build-profiles.fast; runtimeDeps = allRuntimeDeps; };
+    widgets = mkAllWidgets { inherit widgets; profile = build-profiles.fast; };
   };
   devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) build-profiles;
 }

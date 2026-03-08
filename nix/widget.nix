@@ -1,32 +1,10 @@
 # Widget packaging: build individual widgets and combine them.
-{ pkgs
-, lib
-, makeRustflagsEnv
-, waylandRuntimeDeps
-,
-}:
+{ pkgs, lib }:
 let
-  # Build a widget package with the correct directory structure
   mkWidgetPackage =
-    { name
-    , crate
-    , profile
-    , features ? [ ]
-    , runtimeDeps ? waylandRuntimeDeps
-    ,
-    }:
+    { name, crate, profile, features ? [ ] }:
     let
-      rustCrossTarget =
-        if profile ? rustCrossTarget then
-          profile.rustCrossTarget
-        else
-          pkgs.stdenv.hostPlatform.rust.rustcTarget;
-      runtimePackages =
-        if builtins.isFunction runtimeDeps then runtimeDeps (profile.build_pkgs or pkgs) else runtimeDeps;
-      binary = profile.buildCrate crate {
-        inherit features;
-        env = makeRustflagsEnv { inherit runtimePackages rustCrossTarget; };
-      };
+      binary = profile.buildCrate crate { inherit features; };
       widgetSrc = ../widgets + "/${name}";
     in
     pkgs.runCommand "bmc-widget-${name}" { } ''
@@ -38,24 +16,17 @@ let
       fi
     '';
 
-  # Build all widgets for a given profile and combine into a single output
   mkAllWidgets =
-    { profile
-    , widgets
-    , runtimeDeps ? waylandRuntimeDeps
-    ,
-    }:
+    { profile, widgets }:
     pkgs.symlinkJoin {
       name = "bmc-widgets";
       paths = lib.mapAttrsToList
-        (
-          name: widget:
-            mkWidgetPackage {
-              inherit name profile;
-              inherit (widget) crate;
-              features = widget.features or [ ];
-              runtimeDeps = widget.runtimeDeps or runtimeDeps;
-            }
+        (name: widget:
+          mkWidgetPackage {
+            inherit name profile;
+            inherit (widget) crate;
+            features = widget.features or [ ];
+          }
         )
         widgets;
     };
