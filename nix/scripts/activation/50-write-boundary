@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+profile_dir="$(dirname "$PROFILE_NEW_GENERATION")"
+current_link="$profile_dir/current"
+gen_dir_name="$(basename "$PROFILE_NEW_GENERATION")"
+tmp_link="$profile_dir/current.tmp"
+rm -f "$tmp_link"
+ln -s "$gen_dir_name" "$tmp_link"
+mv -Tf "$tmp_link" "$current_link"
