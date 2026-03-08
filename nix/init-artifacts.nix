@@ -40,7 +40,8 @@ let
     bos_version = "26.02";
     extraFiles = pkgs.writeTextDir "etc/nix/nix.conf" ''
       substituters = https://cache.braiins.com
-      trusted-public-keys = cache.braiins.com:placeholder
+      # trusted-public-keys = cache.braiins.com:placeholder
+      extra-experimental-features = nix-command flakes
     '';
   };
 in
