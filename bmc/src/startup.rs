@@ -190,8 +190,7 @@ where
 
         let button_manager = ButtonManager::new(buttons, manager.clone());
 
-        let widget_manager =
-            WidgetManager::init(config.widgets_paths.clone(), config.widget_linker.clone()).await;
+        let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
         let widget_coordinator = Coordinator::new(widget_manager, compositor);
 
         let timezone = manager.timezone();
@@ -284,7 +283,6 @@ pub struct Configuration {
     pub sounds_dir: PathBuf,
     pub crontab_path: Option<PathBuf>,
     pub widgets_paths: Vec<PathBuf>,
-    pub widget_linker: Option<crate::widget::LinkerConfig>,
 }
 
 impl Configuration {
@@ -312,7 +310,6 @@ impl Default for Configuration {
             sounds_dir: PathBuf::from(Self::SOUNDS_DIR),
             crontab_path: Some(Self::CRONTAB_PATH.into()),
             widgets_paths: vec![],
-            widget_linker: None,
         }
     }
 }

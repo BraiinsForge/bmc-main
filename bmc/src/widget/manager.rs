@@ -11,9 +11,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::coordinator::WidgetEnv;
-use super::{
-    LinkerConfig, PathDiscovery, SpawnError, WaylandSpawner, WidgetDiscovery, WidgetRegistry,
-};
+use super::{PathDiscovery, SpawnError, WaylandSpawner, WidgetDiscovery, WidgetRegistry};
 
 const DEFAULT_XDG_RUNTIME_DIR: &str = "/tmp/run";
 
@@ -25,7 +23,7 @@ pub struct WidgetManager {
 }
 
 impl WidgetManager {
-    pub async fn init(widgets_paths: Vec<PathBuf>, linker: Option<LinkerConfig>) -> Self {
+    pub async fn init(widgets_paths: Vec<PathBuf>) -> Self {
         info!("initializing widget manager");
         for path in &widgets_paths {
             info!(path = %path.display(), "scanning widget directory");
@@ -46,16 +44,7 @@ impl WidgetManager {
             );
         }
 
-        let spawner = match linker {
-            Some(config) => {
-                info!(
-                    linker = %config.linker_path,
-                    "using dynamic linker for widget spawning"
-                );
-                WaylandSpawner::with_linker(config)
-            }
-            None => WaylandSpawner::new(),
-        };
+        let spawner = WaylandSpawner::new();
 
         Self {
             registry,
