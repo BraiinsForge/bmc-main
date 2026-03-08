@@ -148,35 +148,6 @@ let
     };
   };
 
-  # use each profile to build each crate
-  allTuples = lib.cartesianProduct
-    ({
-      # NOTE: Update README.md when changing these sets!
-      arch = [
-        "armv7-glibc"
-      ];
-      profile = [
-        "release"
-        "debug"
-      ];
-      crate = [
-        { def = "bmc-openwrt"; }
-      ];
-    });
-
-  packages = builtins.listToAttrs (lib.forEach allTuples ({ arch, profile, crate }: {
-    name = "${crate.def}-${arch}-${profile}";
-    value = build-profiles."${arch}-${profile}".buildCrate crates.${crate.def} { };
-  }));
-
-  specialPackages = {
-    workspace-deps = build-profiles.fast.deps;
-    inherit (build-profiles.fast) build clippy test nextest;
-  };
-
-  armv7lPkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
-  bmc-video-play-armv7 = armv7lPkgs.callPackage ./bmc-video/package.nix { };
-
   # All widget definitions for building
   widgets = {
     digital-clock = {
@@ -191,42 +162,82 @@ let
     };
   };
 
-  # x86 widgets (for bmc-mock) - need library wrapper for Nix environment
-  allWidgets = mkAllWidgets { inherit widgets; profile = build-profiles.fast; runtimeDeps = allRuntimeDeps; };
+  # Build profile sets for the cartesian product
+  # NOTE: Update README.md when changing these sets!
+  glibcArchProfiles = [
+    { arch = "armv7-glibc"; profile = "release"; }
+    { arch = "armv7-glibc"; profile = "debug"; }
+  ];
 
-  # ARM widgets (glibc, dynamically linked) - compatible with system Wayland libs
-  allWidgetsArmv7Release = mkAllWidgets { inherit widgets; profile = build-profiles.armv7-glibc-release; };
-  allWidgetsArmv7Debug = mkAllWidgets { inherit widgets; profile = build-profiles.armv7-glibc-debug; };
+  # use each profile to build each crate
+  crateTuples = lib.cartesianProduct {
+    archProfile = glibcArchProfiles;
+    crate = [
+      { def = "bmc-openwrt"; }
+    ];
+  };
+
+  cratePackages = builtins.listToAttrs (lib.forEach crateTuples ({ archProfile, crate }: {
+    name = "${crate.def}-${archProfile.arch}-${archProfile.profile}";
+    value = build-profiles."${archProfile.arch}-${archProfile.profile}".buildCrate crates.${crate.def} { };
+  }));
+
+  # Individual widget packages per arch/profile
+  widgetTuples = lib.cartesianProduct {
+    archProfile = glibcArchProfiles;
+    widget = lib.mapAttrsToList (name: def: { inherit name; } // def) widgets;
+  };
+
+  widgetPackages = builtins.listToAttrs (lib.forEach widgetTuples ({ archProfile, widget }: {
+    name = "widget-${widget.name}-${archProfile.arch}-${archProfile.profile}";
+    value = mkWidgetPackage {
+      inherit (widget) name crate;
+      features = widget.features or [ ];
+      runtimeDeps = widget.runtimeDeps or waylandRuntimeDeps;
+      profile = build-profiles."${archProfile.arch}-${archProfile.profile}";
+    };
+  }));
+
+  # Combined widget packages per arch/profile
+  combinedWidgetPackages = builtins.listToAttrs (lib.forEach glibcArchProfiles ({ arch, profile }: {
+    name = "widgets-${arch}-${profile}";
+    value = mkAllWidgets {
+      inherit widgets;
+      profile = build-profiles."${arch}-${profile}";
+    };
+  }));
+
+  specialPackages = {
+    workspace-deps = build-profiles.fast.deps;
+    inherit (build-profiles.fast) build clippy test nextest;
+  };
+
+  armv7lPkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
+  bmc-video-play-armv7 = armv7lPkgs.callPackage ./bmc-video/package.nix { };
+
+  # Native individual widget packages (for bmc-mock)
+  nativeWidgetPackages = builtins.listToAttrs (lib.mapAttrsToList
+    (name: widget: {
+      name = "widget-${name}";
+      value = mkWidgetPackage {
+        inherit name;
+        inherit (widget) crate;
+        features = widget.features or [ ];
+        runtimeDeps = allRuntimeDeps;
+        profile = build-profiles.fast;
+      };
+    })
+    widgets);
 
 in
 {
   inherit commonDeps;
-  packages = packages // specialPackages // {
+  packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // {
     inherit bmc-video-play-armv7;
     bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
 
-    # Individual widget packages (x86)
-    widget-digital-clock = mkWidgetPackage {
-      name = "digital-clock";
-      crate = crates.widget-digital-clock;
-      features = [ "standalone" ];
-      runtimeDeps = allRuntimeDeps;
-      profile = build-profiles.fast;
-    };
-    widget-flip-clock = mkWidgetPackage {
-      name = "flip-clock";
-      crate = crates.widget-flip-clock;
-      features = [ "standalone" ];
-      runtimeDeps = allRuntimeDeps;
-      profile = build-profiles.fast;
-    };
-
-    # All widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
-    widgets = allWidgets;
-
-    # ARM widget packages
-    widgets-armv7-release = allWidgetsArmv7Release;
-    widgets-armv7-debug = allWidgetsArmv7Debug;
+    # Native widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
+    widgets = mkAllWidgets { inherit widgets; profile = build-profiles.fast; runtimeDeps = allRuntimeDeps; };
   };
   devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) build-profiles;
 }
