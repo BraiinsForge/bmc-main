@@ -87,6 +87,9 @@ let
     ];
     env = {
       FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
+    } // makeRustflagsEnv {
+      runtimePackages = waylandRuntimeDeps fixedArmv7Pkgs;
+      rustCrossTarget = "armv7-unknown-linux-gnueabihf";
     };
   };
 
