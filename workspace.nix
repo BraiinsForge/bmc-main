@@ -96,6 +96,7 @@ let
   };
 
   bmc = {
+    armv7-pkgs = fixedArmv7Pkgs;
     lib = import ./nix/lib.nix { inherit pkgs lib; };
     crates = import ./nix/crates.nix { inherit (pkgs.ii.rust) defineCrate; };
     workspaces = {

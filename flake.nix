@@ -104,6 +104,7 @@
 
         legacyPackages = {
           inherit pkgs;
+          inherit (workspace.bmc) armv7-pkgs;
         };
 
         checks = self.packages.${localSystem} // frontend.checks;
