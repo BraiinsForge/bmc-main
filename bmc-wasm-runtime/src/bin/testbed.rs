@@ -805,7 +805,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
 /// `src_w/src_h` = FBO dimensions (logical pixels).
 /// `dst_x/dst_y/dst_w/dst_h` = destination on screen (physical pixels).
 /// `screen_h` = physical height of the screen surface (for OpenGL Y-flip).
-/// When src and dst sizes differ, `GL_LINEAR` provides upscale filtering.
+/// When src and dst sizes differ, `GL_NEAREST` preserves pixel-sharp rendering.
 #[expect(clippy::too_many_arguments, clippy::cast_possible_wrap)]
 fn blit_fbo_to_screen(
     gl: &glow::Context,
@@ -834,7 +834,7 @@ fn blit_fbo_to_screen(
             (dst_x + dst_w) as i32,
             dy1,
             glow::COLOR_BUFFER_BIT,
-            glow::LINEAR,
+            glow::NEAREST,
         );
     }
 }
@@ -928,12 +928,12 @@ fn create_fbo(
         gl.tex_parameter_i32(
             glow::TEXTURE_2D,
             glow::TEXTURE_MIN_FILTER,
-            glow::LINEAR as i32,
+            glow::NEAREST as i32,
         );
         gl.tex_parameter_i32(
             glow::TEXTURE_2D,
             glow::TEXTURE_MAG_FILTER,
-            glow::LINEAR as i32,
+            glow::NEAREST as i32,
         );
 
         let fbo = gl
@@ -1077,6 +1077,7 @@ fn draw_stats_panel(
         btn_sz,
         0,
         false,
+        None,
     );
 
     let debug_on = bmc_wasm_runtime::tree::debug_layout_enabled();
@@ -1100,6 +1101,7 @@ fn draw_stats_panel(
         btn_sz,
         0,
         false,
+        None,
     );
     if debug_clicked.0 {
         bmc_wasm_runtime::tree::toggle_debug_layout();

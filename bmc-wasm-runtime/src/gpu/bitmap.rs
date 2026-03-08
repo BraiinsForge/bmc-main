@@ -50,15 +50,20 @@ impl BitmapRegistry {
 
     /// Decode image bytes (PNG, JPEG, etc.) and upload to GPU as a texture.
     /// Returns the assigned bitmap ID.
+    ///
+    /// Pass `ImageFlags::empty()` for default bilinear filtering, or
+    /// `ImageFlags::NEAREST` for pixel-art / 9-patch assets where bilinear
+    /// filtering would cause color bleeding across sub-rect boundaries.
     pub fn register(
         &mut self,
         data: &[u8],
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
+        flags: ImageFlags,
     ) -> u16 {
         let id = self.next_id;
         self.next_id += 1;
 
-        match decode_and_upload(data, canvas) {
+        match decode_and_upload(data, canvas, flags) {
             Ok((image_id, pixels, width, height)) => {
                 self.bitmaps.insert(
                     id,
@@ -81,6 +86,14 @@ impl BitmapRegistry {
     #[must_use]
     pub fn get(&self, id: u16) -> Option<ImageId> {
         self.bitmaps.get(&id).map(|b| b.image_id)
+    }
+
+    /// Get the FemtoVG `ImageId` and source dimensions for a registered bitmap.
+    #[must_use]
+    pub fn get_with_size(&self, id: u16) -> Option<(ImageId, u32, u32)> {
+        self.bitmaps
+            .get(&id)
+            .map(|b| (b.image_id, b.width, b.height))
     }
 
     /// Sample the average RGBA color of a rectangular region within a registered bitmap.
@@ -134,6 +147,7 @@ impl BitmapRegistry {
 fn decode_and_upload(
     data: &[u8],
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
+    flags: ImageFlags,
 ) -> anyhow::Result<(ImageId, Vec<u8>, u32, u32)> {
     // Decode on a owned copy so the closure is UnwindSafe (no &mut references).
     let data = data.to_vec();
@@ -151,8 +165,158 @@ fn decode_and_upload(
     let pixels_rgba: &[RGBA8] = rgba.as_raw().as_rgba();
 
     let src = ImageSource::Rgba(ImgRef::new(pixels_rgba, w as usize, h as usize));
-    let image_id = canvas.create_image(src, ImageFlags::empty())?;
+    let image_id = canvas.create_image(src, flags)?;
     Ok((image_id, rgba.into_raw(), w, h))
+}
+
+/// Draw a sub-rectangle of a bitmap: sample from `(sx, sy, sw, sh)` in the source
+/// and render it into `(dx, dy, dw, dh)` on the canvas.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_bitmap_subrect(
+    canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
+    image_id: ImageId,
+    src_w: f32,
+    src_h: f32,
+    sx: f32,
+    sy: f32,
+    sw: f32,
+    sh: f32,
+    dx: f32,
+    dy: f32,
+    dw: f32,
+    dh: f32,
+) {
+    if dw <= 0.0 || dh <= 0.0 || sw <= 0.0 || sh <= 0.0 {
+        return;
+    }
+    // Paint::image maps the full image to (ox, oy, ow, oh).
+    // To show only the sub-rect (sx, sy, sw, sh) at (dx, dy, dw, dh),
+    // compute the virtual full-image placement so the sub-rect aligns.
+    let scale_x = dw / sw;
+    let scale_y = dh / sh;
+    let ox = dx - sx * scale_x;
+    let oy = dy - sy * scale_y;
+    let ow = src_w * scale_x;
+    let oh = src_h * scale_y;
+
+    let paint = Paint::image(image_id, ox, oy, ow, oh, 0.0, 1.0).with_anti_alias(false);
+    let mut path = Path::new();
+    path.rect(dx, dy, dw, dh);
+    canvas.fill_path(&path, &paint);
+}
+
+/// (src_x, src_y, src_w, src_h, dst_x, dst_y, dst_w, dst_h)
+type Quad = (f32, f32, f32, f32, f32, f32, f32, f32);
+
+/// Draw a 9-patch bitmap: slice the source into 9 quads using insets and stretch appropriately.
+///
+/// Corners stay at fixed size, edges stretch in one axis, center stretches both.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_nine_patch(
+    canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
+    image_id: ImageId,
+    src_w: f32,
+    src_h: f32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+) {
+    // Source regions
+    let src_center_w = src_w - left - right;
+    let src_center_h = src_h - top - bottom;
+
+    // Destination regions — corners stay at fixed pixel size, only center stretches
+    let dl = left.min(w);
+    let dr = right.min(w - dl);
+    let dt = top.min(h);
+    let db = bottom.min(h - dt);
+    let dst_center_w = (w - dl - dr).max(0.0);
+    let dst_center_h = (h - dt - db).max(0.0);
+    let quads: [Quad; 9] = [
+        // Top-left corner
+        (0.0, 0.0, left, top, x, y, dl, dt),
+        // Top edge
+        (left, 0.0, src_center_w, top, x + dl, y, dst_center_w, dt),
+        // Top-right corner
+        (
+            src_w - right,
+            0.0,
+            right,
+            top,
+            x + dl + dst_center_w,
+            y,
+            dr,
+            dt,
+        ),
+        // Left edge
+        (0.0, top, left, src_center_h, x, y + dt, dl, dst_center_h),
+        // Center
+        (
+            left,
+            top,
+            src_center_w,
+            src_center_h,
+            x + dl,
+            y + dt,
+            dst_center_w,
+            dst_center_h,
+        ),
+        // Right edge
+        (
+            src_w - right,
+            top,
+            right,
+            src_center_h,
+            x + dl + dst_center_w,
+            y + dt,
+            dr,
+            dst_center_h,
+        ),
+        // Bottom-left corner
+        (
+            0.0,
+            src_h - bottom,
+            left,
+            bottom,
+            x,
+            y + dt + dst_center_h,
+            dl,
+            db,
+        ),
+        // Bottom edge
+        (
+            left,
+            src_h - bottom,
+            src_center_w,
+            bottom,
+            x + dl,
+            y + dt + dst_center_h,
+            dst_center_w,
+            db,
+        ),
+        // Bottom-right corner
+        (
+            src_w - right,
+            src_h - bottom,
+            right,
+            bottom,
+            x + dl + dst_center_w,
+            y + dt + dst_center_h,
+            dr,
+            db,
+        ),
+    ];
+
+    for &(sx, sy, sw, sh, dx, dy, dw, dh) in &quads {
+        draw_bitmap_subrect(
+            canvas, image_id, src_w, src_h, sx, sy, sw, sh, dx, dy, dw, dh,
+        );
+    }
 }
 
 /// Render a registered bitmap onto the canvas at the given rect.
@@ -164,7 +328,7 @@ pub fn draw_bitmap(
     w: f32,
     h: f32,
 ) {
-    let paint = Paint::image(image_id, x, y, w, h, 0.0, 1.0);
+    let paint = Paint::image(image_id, x, y, w, h, 0.0, 1.0).with_anti_alias(false);
     let mut path = Path::new();
     path.rect(x, y, w, h);
     canvas.fill_path(&path, &paint);

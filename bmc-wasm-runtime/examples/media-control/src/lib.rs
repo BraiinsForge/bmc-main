@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Media Remote Control Widget — POC (BDK-334).
+//! Media Remote Control Widget
 //!
 //! Controls media playback on UPnP/DLNA, Google Cast, and Kodi devices over LAN.
 //! Discovers devices via mDNS and presents a picker UI.
@@ -23,6 +23,165 @@ use upnp::{
     PositionInfo, TransportActions, TransportState, UpnpDevice, VolumeInfo, format_duration_hms,
     parse_mute, parse_position_info, parse_transport_actions, parse_transport_info, parse_volume,
 };
+
+const WINAMP_SKIN: Skin = include_skin!("assets/skins/winamp/");
+const DEFAULT_PREVIEW: Bitmap = include_bitmap!("assets/skins/default_preview.png");
+
+/// Available skins for the skin picker. Index 0 = default (no skin).
+const SKINS: &[SkinOption] = &[
+    SkinOption {
+        name: "Default",
+        description: "Clean baseline",
+        skin: None,
+        preview: SkinPreview::Standalone(&DEFAULT_PREVIEW),
+    },
+    SkinOption {
+        name: WINAMP_SKIN.name,
+        description: WINAMP_SKIN.description,
+        skin: Some(&WINAMP_SKIN),
+        preview: SkinPreview::FromSkin,
+    },
+];
+
+struct SkinOption {
+    name: &'static str,
+    description: &'static str,
+    skin: Option<&'static Skin>,
+    preview: SkinPreview,
+}
+
+/// Where to get the preview thumbnail from.
+enum SkinPreview {
+    /// Standalone bitmap (for the default skin which has no `Skin` instance).
+    Standalone(&'static Bitmap),
+    /// Get from `skin.preview()` (for real skins with a `preview.png`).
+    FromSkin,
+}
+
+// ── Active skin ─────────────────────────────────────────────────
+
+/// Resolved skin with pre-registered bitmaps, ready for use by components.
+/// Resolved lazily on first access (after `begin_tree()` initializes the
+/// bitmap registrar).
+struct ActiveSkin {
+    /// Source skin to resolve from. `None` = baseline (no skinning).
+    source: Option<&'static Skin>,
+    /// Cached resolved button skin. `None` = not yet resolved or no skin.
+    button: Option<ButtonSkin>,
+    /// Cached resolved slider skin. `None` = not yet resolved or no skin.
+    slider: Option<SliderSkin>,
+    /// Background nine-patch for the whole widget.
+    background: Option<NinePatch>,
+    /// Optional frame around album art.
+    art_frame: Option<SkinEntry>,
+    resolved: bool,
+}
+
+impl ActiveSkin {
+    fn resolve(&mut self) {
+        if self.resolved {
+            return;
+        }
+        self.resolved = true;
+        if let Some(skin) = self.source {
+            let normal = skin.get("button_normal");
+            let pressed = skin.get("button_pressed");
+            self.button = Some(ButtonSkin {
+                normal: normal.nine_patch,
+                pressed: Some(pressed.nine_patch),
+                text_color: normal.color,
+                pressed_text_color: pressed.color,
+                opaque: false,
+            });
+            if let Some(bg) = skin.try_get("main") {
+                self.background = Some(bg.nine_patch);
+            }
+            self.art_frame = skin.try_get("art_frame");
+            // Slider skin: track (9-patch) + thumb bitmaps
+            if let Some(track) = skin.try_get("slider_track") {
+                let thumb = skin.try_get("slider_thumb");
+                let thumb_pressed = skin.try_get("slider_thumb_pressed");
+                self.slider = Some(SliderSkin {
+                    track: track.nine_patch,
+                    track_h: track.height,
+                    thumb_id: thumb.map_or(0, |t| t.nine_patch.bitmap_id),
+                    thumb_w: thumb.map_or(0, |t| t.width),
+                    thumb_h: thumb.map_or(0, |t| t.height),
+                    thumb_pressed_id: thumb_pressed.map_or(0, |t| t.nine_patch.bitmap_id),
+                });
+            }
+        }
+    }
+}
+
+thread_local! {
+    static ACTIVE_SKIN: RefCell<ActiveSkin> = RefCell::new(ActiveSkin {
+        source: None, button: None, slider: None, background: None, art_frame: None, resolved: true,
+    });
+}
+
+/// Set the active skin. Pass `None` for baseline rendering.
+fn set_active_skin(skin: Option<&'static Skin>) {
+    ACTIVE_SKIN.with(|s| {
+        let mut s = s.borrow_mut();
+        s.source = skin;
+        s.button = None;
+        s.slider = None;
+        s.background = None;
+        s.art_frame = None;
+        s.resolved = false;
+    });
+}
+
+fn active_button_skin() -> Option<ButtonSkin> {
+    ACTIVE_SKIN.with(|s| {
+        let mut s = s.borrow_mut();
+        s.resolve();
+        s.button
+    })
+}
+
+fn active_slider_skin() -> Option<SliderSkin> {
+    ACTIVE_SKIN.with(|s| {
+        let mut s = s.borrow_mut();
+        s.resolve();
+        s.slider
+    })
+}
+
+fn active_background() -> Option<NinePatch> {
+    ACTIVE_SKIN.with(|s| {
+        let mut s = s.borrow_mut();
+        s.resolve();
+        s.background
+    })
+}
+
+/// Get the active skin's color palette. Returns default (all zeros) if no skin.
+fn active_palette() -> SkinPalette {
+    ACTIVE_SKIN.with(|s| {
+        let s = s.borrow();
+        s.source.map_or(SkinPalette::default(), |skin| skin.palette)
+    })
+}
+
+fn active_art_frame() -> Option<SkinEntry> {
+    ACTIVE_SKIN.with(|s| {
+        let mut s = s.borrow_mut();
+        s.resolve();
+        s.art_frame
+    })
+}
+
+/// Apply the skin background nine-patch to props, replacing the solid color background.
+/// Falls through to the original color when no skin background is set.
+fn skin_bg_props(mut props: PropsData) -> PropsData {
+    if let Some(np) = active_background() {
+        props.background = 0;
+        props!(@set props, bg_nine_patch: np);
+    }
+    props
+}
 
 // ── Configuration ────────────────────────────────────────────────
 
@@ -92,6 +251,8 @@ struct MediaState {
     was_ever_connected: bool,
     /// Show the sub-target (session) picker modal overlay.
     show_sub_target_picker: bool,
+    /// Show the skin picker modal overlay.
+    show_skin_picker: bool,
 }
 
 impl Default for MediaState {
@@ -109,6 +270,7 @@ impl Default for MediaState {
             consecutive_failures: 0,
             was_ever_connected: false,
             show_sub_target_picker: false,
+            show_skin_picker: false,
         }
     }
 }
@@ -144,6 +306,8 @@ thread_local! {
     static CONNECTED_DEVICE_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Rolling discovery log (newest first, max `DISCOVERY_LOG_MAX` entries).
     static DISCOVERY_LOG: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// Index into `SKINS` array (0 = default, 1 = Winamp, ...).
+    static SKIN_INDEX: Cell<usize> = const { Cell::new(1) };
 }
 
 /// Maximum lines shown in the discovery activity log.
@@ -153,7 +317,7 @@ const DISCOVERY_LOG_MAX: usize = 8;
 fn discovery_log(msg: String) {
     DISCOVERY_LOG.with(|log| {
         let mut log = log.borrow_mut();
-        // Skip duplicate of the most recent entry (e.g. multi-interface mDNS events)
+        // Skip duplicate of the most recent entry (e.g., multi-interface mDNS events)
         if log.first() == Some(&msg) {
             return;
         }
@@ -167,6 +331,9 @@ fn discovery_log(msg: String) {
 #[unsafe(no_mangle)]
 pub extern "C" fn init(width: u32, height: u32) {
     SIZE.set(WidgetSize::from_dimensions(width, height));
+
+    // Activate skin based on current index
+    set_active_skin(SKINS[SKIN_INDEX.with(Cell::get)].skin);
 
     // Start mDNS discovery for Cast, UPnP, and Kodi devices
     mdns::mdns_browse(
@@ -699,6 +866,11 @@ fn tick_protocol(delta_ms: u32) {
 pub extern "C" fn render(delta_ms: u32) {
     tick_protocol(delta_ms);
 
+    // Ensure the skin bitmap registrar is initialized before building the tree,
+    // since skin resolution (active_background, active_button_skin) registers
+    // bitmaps during tree construction — before render_ui() calls begin_tree().
+    begin_tree();
+
     let size = SIZE.with(Cell::get);
 
     // Determine which screen we're on before building the tree
@@ -708,9 +880,11 @@ pub extern "C" fn render(delta_ms: u32) {
         /// Connected or Disconnected media screen.
         /// `has_sub_targets` = sub-target button is rendered (shifts button indices).
         /// `picker_open` = session picker modal overlay is showing.
+        /// `skin_picker_open` = skin picker modal overlay is showing.
         Media {
             has_sub_targets: bool,
             picker_open: bool,
+            skin_picker_open: bool,
         },
     }
 
@@ -727,11 +901,13 @@ pub extern "C" fn render(delta_ms: u32) {
                         .is_some_and(|st| st.items.len() > 1)
                 });
                 let picker_open = media.show_sub_target_picker && has_sub_targets;
+                let skin_picker_open = media.show_skin_picker;
                 (
-                    render_media_screen(size, media, picker_open),
+                    render_media_screen(size, media, picker_open, skin_picker_open),
                     Screen::Media {
                         has_sub_targets,
                         picker_open,
+                        skin_picker_open,
                     },
                 )
             }
@@ -740,6 +916,7 @@ pub extern "C" fn render(delta_ms: u32) {
                 Screen::Media {
                     has_sub_targets: false,
                     picker_open: false,
+                    skin_picker_open: false,
                 },
             ),
         };
@@ -762,13 +939,22 @@ pub extern "C" fn render(delta_ms: u32) {
         Screen::Media {
             has_sub_targets,
             picker_open,
+            skin_picker_open,
         } => {
+            // Switcher button layout (tree order):
+            //   [sub_target_btn(0)?] [skin_btn] [device_btn] [transport×6]
+            // skin_btn_idx: index of the skin picker button
+            // device_btn_idx: index of the device switcher button
+            let skin_btn_idx = if has_sub_targets { 1 } else { 0 };
+            let device_btn_idx = skin_btn_idx + 1;
+            let ctrl_offset = device_btn_idx + 1;
+
             if picker_open {
                 // Modal buttons are appended after media buttons in the tree.
                 // media buttons = ctrl_offset (switcher btns) + 6 (transport controls)
                 // modal buttons = [session0, ..., sessionN, close_btn]
                 // Host blocks clicks on underlying media buttons via modal backdrop.
-                let media_btn_count = (if has_sub_targets { 2 } else { 1 }) + 6;
+                let media_btn_count = ctrl_offset + 6;
                 for (i, &clicked) in result.clicks.iter().enumerate() {
                     if !clicked || i < media_btn_count {
                         continue;
@@ -791,6 +977,39 @@ pub extern "C" fn render(delta_ms: u32) {
                         }
                     });
                     request_frame();
+                }
+            } else if skin_picker_open {
+                // Skin picker modal: touchable preview cards.
+                let mut picked = false;
+                for i in 0..SKINS.len() {
+                    let key = fmt!("skin_{}", i);
+                    if result.touch.contains_key(key.as_str()) {
+                        SKIN_INDEX.set(i);
+                        set_active_skin(SKINS[i].skin);
+                        picked = true;
+                    }
+                }
+                if picked {
+                    STATE.with(|s| {
+                        let mut state = s.borrow_mut();
+                        if let WidgetState::Connected(media) = &mut *state {
+                            media.show_skin_picker = false;
+                        }
+                    });
+                    request_frame();
+                }
+                // Close button is still a regular button
+                let media_btn_count = ctrl_offset + 6;
+                for (i, &clicked) in result.clicks.iter().enumerate() {
+                    if clicked && i >= media_btn_count {
+                        STATE.with(|s| {
+                            let mut state = s.borrow_mut();
+                            if let WidgetState::Connected(media) = &mut *state {
+                                media.show_skin_picker = false;
+                            }
+                        });
+                        request_frame();
+                    }
                 }
             } else {
                 // Normal media controls
@@ -840,7 +1059,6 @@ pub extern "C" fn render(delta_ms: u32) {
                     request_frame();
                 }
 
-                let ctrl_offset = if has_sub_targets { 2 } else { 1 };
                 for (i, &clicked) in result.clicks.iter().enumerate() {
                     if clicked {
                         if has_sub_targets && i == 0 {
@@ -852,7 +1070,16 @@ pub extern "C" fn render(delta_ms: u32) {
                                 }
                             });
                             request_frame();
-                        } else if i == (if has_sub_targets { 1 } else { 0 }) {
+                        } else if i == skin_btn_idx {
+                            // Skin switcher — open skin picker modal
+                            STATE.with(|s| {
+                                let mut state = s.borrow_mut();
+                                if let WidgetState::Connected(media) = &mut *state {
+                                    media.show_skin_picker = true;
+                                }
+                            });
+                            request_frame();
+                        } else if i == device_btn_idx {
                             // Device switcher — return to device picker
                             disconnect_and_return_to_picker();
                         } else {
@@ -1044,18 +1271,6 @@ impl MediaController for JellyfinAdapter {
     fn set_mute(&self, muted: bool) {
         media_server::set_mute(muted);
     }
-    fn poll_interval_playing(&self) -> u32 {
-        media_server::POLL_INTERVAL_MS
-    }
-    fn poll_interval_idle(&self) -> u32 {
-        media_server::POLL_IDLE_INTERVAL_MS
-    }
-    fn protocol_name(&self) -> &'static str {
-        match self.server_type {
-            media_server::ServerType::Jellyfin => "Jellyfin",
-            media_server::ServerType::Emby => "Emby",
-        }
-    }
     fn sub_targets(&self) -> Option<SubTargets> {
         let sessions = media_server::sessions();
         let active_id = media_server::active_session_id();
@@ -1089,6 +1304,18 @@ impl MediaController for JellyfinAdapter {
             media_server::clear_session();
         } else {
             media_server::select_session(id);
+        }
+    }
+    fn poll_interval_playing(&self) -> u32 {
+        media_server::POLL_INTERVAL_MS
+    }
+    fn poll_interval_idle(&self) -> u32 {
+        media_server::POLL_IDLE_INTERVAL_MS
+    }
+    fn protocol_name(&self) -> &'static str {
+        match self.server_type {
+            media_server::ServerType::Jellyfin => "Jellyfin",
+            media_server::ServerType::Emby => "Emby",
         }
     }
     fn fetch_art(&self, url: &str, callback: fn(&FetchResponse)) {
@@ -1788,9 +2015,6 @@ fn render_discovering(size: WidgetSize) -> Node {
     if devices.is_empty() {
         // Empty state with animated loading indicator
         let icon_sz = 48.0;
-        let loader_w: f32 = 80.0;
-        let loader_h: f32 = 6.0;
-        let mid_y = loader_h / 2.0;
         let mut children = vec![
             canvas(
                 props!(width: icon_sz, height: icon_sz),
@@ -1812,16 +2036,16 @@ fn render_discovering(size: WidgetSize) -> Node {
                 style!(size: 14, color: GRAY_60),
             ),
             // Animated squiggle loader
-            canvas(
-                props!(width: loader_w, height: loader_h),
-                vec![squiggle(loader_w, mid_y, GRAY_50)],
+            progress_bar!(ProgressMode::Indeterminate,
+                track_h: BAR_TRACK_H, active: true, fill_color: GRAY_50,
+                track_color: 0, bg_color: 0,
             ),
         ];
         if !matches!(size.variant, SizeVariant::Small) {
             children.push(render_discovery_log(8, false));
         }
         center(
-            props!(background: GRAY_100),
+            skin_bg_props(props!(background: GRAY_100)),
             [col(
                 props!(gap: 12.0, cross_align: CrossAlign::Center),
                 children,
@@ -1847,7 +2071,8 @@ fn render_discovering(size: WidgetSize) -> Node {
                     &dev.name,
                     icon: tree::ensure_registered(proto_icon),
                     style: Secondary,
-                    size: Small
+                    size: Small,
+                    skin: active_button_skin()
                 )
             })
             .collect();
@@ -1864,9 +2089,12 @@ fn render_discovering(size: WidgetSize) -> Node {
         );
 
         match size.variant {
-            SizeVariant::Small => col(props!(background: GRAY_100, padding: pad), [left]),
+            SizeVariant::Small => col(
+                skin_bg_props(props!(background: GRAY_100, padding: pad)),
+                [left],
+            ),
             _ => row(
-                props!(background: GRAY_100, padding: pad, gap: 24.0),
+                skin_bg_props(props!(background: GRAY_100, padding: pad, gap: 24.0)),
                 [left, render_discovery_log(DISCOVERY_LOG_MAX, true)],
             ),
         }
@@ -1937,7 +2165,7 @@ fn render_disconnected(size: WidgetSize) -> Node {
     let subtitle_color = if auth_needed { RED_50 } else { GRAY_60 };
 
     center(
-        props!(background: GRAY_100),
+        skin_bg_props(props!(background: GRAY_100)),
         [col(
             props!(gap: 8.0),
             [
@@ -1950,40 +2178,72 @@ fn render_disconnected(size: WidgetSize) -> Node {
 
 // ── Media screen (connected) ─────────────────────────────────────
 
-/// Media screen with optional session picker modal overlay.
-fn render_media_screen(size: WidgetSize, media: &MediaState, picker_open: bool) -> Node {
+/// Media screen with optional session/skin picker modal overlays.
+fn render_media_screen(
+    size: WidgetSize,
+    media: &MediaState,
+    picker_open: bool,
+    skin_picker_open: bool,
+) -> Node {
     let mut content = match size.variant {
         SizeVariant::Full | SizeVariant::Medium => render_full(size, media),
         _ => render_compact(size, media),
     };
-    // Inject session picker modal into the content node's children.
+    // Inject modal overlays into the content node's children.
     // The modal is an overlay — it doesn't affect layout when closed,
     // and the host renders it on top with a backdrop when open.
-    let (term, session_buttons) = if picker_open {
-        build_session_picker_body()
-    } else {
-        ("Session", vec![])
-    };
-    let content_height = session_buttons.len() as f32 * 40.0;
     let modal_padding = match size.variant {
         SizeVariant::Small => 4,
         SizeVariant::Large => 12,
         SizeVariant::Medium => 24,
         SizeVariant::Full => 48,
     };
-    let modal_node = modal_styled(
+    let pal = active_palette();
+    let modal_props = ModalProps {
+        padding: modal_padding,
+        backdrop_alpha: 180,
+        bg_color: pal.layer1,
+        header_color: pal.layer2,
+        title_color: pal.text_primary,
+    };
+
+    // Session picker modal (id=1)
+    let (term, session_buttons) = if picker_open {
+        build_session_picker_body()
+    } else {
+        ("Session", vec![])
+    };
+    let session_modal = modal_styled(
         1,
         picker_open,
         &fmt!("Select {}", term),
-        content_height,
-        ModalProps {
-            padding: modal_padding,
-            backdrop_alpha: 180,
-        },
+        session_buttons.len() as f32 * 40.0,
+        modal_props,
         session_buttons,
     );
+
+    // Skin picker modal (id=2)
+    let skin_cards = if skin_picker_open {
+        build_skin_picker_body()
+    } else {
+        vec![]
+    };
+    // Each row: 156px card (120 preview + 36 label) + 12px gap
+    let skin_content_height = skin_cards.len() as f32 * 168.0;
+    let skin_modal = modal_styled(
+        2,
+        skin_picker_open,
+        "Select Skin",
+        skin_content_height,
+        modal_props,
+        skin_cards,
+    );
+
     match &mut content {
-        Node::Column(_, children) | Node::Row(_, children) => children.push(modal_node),
+        Node::Column(_, children) | Node::Row(_, children) => {
+            children.push(session_modal);
+            children.push(skin_modal);
+        }
         _ => {}
     }
     content
@@ -2009,9 +2269,9 @@ fn build_session_picker_body() -> (&'static str, Vec<Node>) {
                                 fmt!("{} ({})", t.name, detail.join(", "))
                             };
                             if t.active {
-                                button!(&label, style: Primary, size: Small)
+                                button!(&label, style: Primary, size: Small, skin: active_button_skin())
                             } else {
-                                button!(&label, style: Secondary, size: Small)
+                                button!(&label, style: Secondary, size: Small, skin: active_button_skin())
                             }
                         })
                         .collect();
@@ -2021,6 +2281,79 @@ fn build_session_picker_body() -> (&'static str, Vec<Node>) {
         .unwrap_or(("Session", vec![]))
 }
 
+/// Build skin picker body: grid of clickable preview cards.
+/// Each card is a touchable canvas showing the preview image, name, and description.
+fn build_skin_picker_body() -> Vec<Node> {
+    let current = SKIN_INDEX.with(Cell::get);
+    let pal = active_palette();
+    let name_color = color_or(pal.text_primary, GRAY_10);
+    let desc_color = color_or(pal.text_secondary, GRAY_50);
+    let card_bg = color_or(pal.background, GRAY_90);
+    let accent = color_or(pal.accent, BLUE_50);
+
+    let card_w = 200.0_f32;
+    let preview_h = 120.0_f32;
+    let label_h = 36.0_f32;
+    let card_h = preview_h + label_h;
+    let pad = 8.0_f32;
+
+    let mut rows: Vec<Node> = Vec::new();
+    let mut row_items: Vec<Node> = Vec::new();
+
+    for (i, opt) in SKINS.iter().enumerate() {
+        let preview_bitmap_id = match &opt.preview {
+            SkinPreview::Standalone(bmp) => tree::ensure_bitmap_registered(bmp),
+            SkinPreview::FromSkin => opt
+                .skin
+                .and_then(|s| s.preview())
+                .map_or(0, |e| e.nine_patch.bitmap_id),
+        };
+
+        let is_active = i == current;
+
+        let mut draws = vec![
+            // Card background
+            Draw::rect(0.0, 0.0, card_w, card_h, card_bg),
+            // Preview image
+            Draw::bitmap_id(0.0, 0.0, card_w, preview_h, preview_bitmap_id),
+            // Name text
+            Draw::text(
+                pad,
+                preview_h + 4.0,
+                opt.name,
+                style!(size: 13, color: name_color),
+            ),
+            // Description text
+            Draw::text(
+                pad,
+                preview_h + 20.0,
+                opt.description,
+                style!(size: 10, color: desc_color),
+            ),
+        ];
+        if is_active {
+            // Highlight border for active skin
+            let b = 2.0_f32;
+            draws.push(Draw::rect(0.0, 0.0, card_w, b, accent));
+            draws.push(Draw::rect(0.0, card_h - b, card_w, b, accent));
+            draws.push(Draw::rect(0.0, 0.0, b, card_h, accent));
+            draws.push(Draw::rect(card_w - b, 0.0, b, card_h, accent));
+        }
+
+        let key = fmt!("skin_{}", i);
+        let card = touchable(&key, props!(width: card_w, height: card_h), draws);
+        row_items.push(card);
+
+        if row_items.len() == 2 {
+            rows.push(row(props!(gap: 12.0), std::mem::take(&mut row_items)));
+        }
+    }
+    if !row_items.is_empty() {
+        rows.push(row(props!(gap: 12.0), row_items));
+    }
+    rows
+}
+
 /// Full/Medium: art fills left side, everything else in right column.
 fn render_full(size: WidgetSize, media: &MediaState) -> Node {
     let is_medium = size.variant == SizeVariant::Medium;
@@ -2028,25 +2361,24 @@ fn render_full(size: WidgetSize, media: &MediaState) -> Node {
     let gap = if is_medium { 10.0 } else { 16.0 };
     let inner_gap = if is_medium { 6.0 } else { 12.0 };
     let art_size = size.height as f32 - 2.0 * pad;
-    let col_w = size.width as f32 - 2.0 * pad - gap - art_size;
 
     row(
-        props!(background: media.accent_bg, padding: pad, gap: gap),
+        skin_bg_props(props!(background: media.accent_bg, padding: pad, gap: gap)),
         [
             render_album_art(media, art_size),
             col(
                 props!(flex: 1.0, gap: inner_gap),
                 [
                     render_track_info(media, size),
-                    render_progress(media, col_w),
-                    render_controls(media, col_w),
+                    render_progress(media),
+                    render_controls(media),
                 ],
             ),
         ],
     )
 }
 
-/// Large/Small: art + meta row on top, full-width progress + controls below.
+/// Large/Small: art + meta row on top, full-width progress and controls below.
 fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
     let pad = if size.variant == SizeVariant::Large {
         16.0
@@ -2067,7 +2399,7 @@ fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
     let art_size = art_max_h.min(avail_w * 0.4);
 
     col(
-        props!(background: media.accent_bg, padding: pad, gap: gap),
+        skin_bg_props(props!(background: media.accent_bg, padding: pad, gap: gap)),
         [
             // Top: art + track meta side by side (flex to push controls to bottom)
             row(
@@ -2082,14 +2414,11 @@ fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
             ),
             // Bottom: full-width progress + controls
             if size.variant == SizeVariant::Small {
-                render_controls_stacked(media, avail_w)
+                render_controls_stacked(media)
             } else {
                 col(
                     props!(gap: 8.0),
-                    [
-                        render_progress(media, avail_w),
-                        render_controls(media, avail_w),
-                    ],
+                    [render_progress(media), render_controls(media)],
                 )
             },
         ],
@@ -2097,42 +2426,70 @@ fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
 }
 
 fn render_album_art(media: &MediaState, art_size: f32) -> Node {
-    if media.art_bitmap_id > 0 {
-        // Contain: fit image inside art_size×art_size, center, no cropping
+    let art_frame = active_art_frame();
+    // When a skin provides an art frame, the 9-patch insets eat into the art_size,
+    // so we shrink the inner canvas to leave room for the frame border.
+    let (inset, frame_icon_color) = art_frame.map_or((0.0, 0), |af| {
+        let np = af.nine_patch;
+        (
+            f32::from(np.left.max(np.right).max(np.top).max(np.bottom)),
+            af.color,
+        )
+    });
+    let inner = art_size - inset * 2.0;
+
+    let art_node = if media.art_bitmap_id > 0 {
+        // Contain: fit image inside inner×inner, center, no cropping
         let aspect = media.art_aspect;
         let (bw, bh, bx, by) = if aspect > 1.0 {
-            // Wider than tall — fit width, center vertically
-            let h = art_size / aspect;
-            (art_size, h, 0.0, 0.0)
+            let h = inner / aspect;
+            (inner, h, 0.0, 0.0)
         } else if aspect < 1.0 {
-            // Taller than wide — fit height, center horizontally
-            let w = art_size * aspect;
-            (w, art_size, (art_size - w) / 2.0, 0.0)
+            let w = inner * aspect;
+            (w, inner, (inner - w) / 2.0, 0.0)
         } else {
-            (art_size, art_size, 0.0, 0.0)
+            (inner, inner, 0.0, 0.0)
         };
         canvas(
-            props!(width: art_size, height: art_size, max_height: art_size),
+            props!(width: inner, height: inner, max_height: inner),
             vec![Draw::bitmap_id(bx, by, bw, bh, media.art_bitmap_id)],
         )
     } else {
         // Placeholder with music/video icon
-        let icon_sz = (art_size * 0.4).min(64.0);
+        let icon_sz = (inner * 0.4).min(64.0);
         let placeholder_icon = if media.is_video {
             &icons::VIDEO
         } else {
             &icons::MUSIC
         };
+        // When a skin art frame is active, skip the gray background — the frame
+        // itself provides the visual container. Use the skin's icon color if set.
+        let icon_color = if frame_icon_color != 0 {
+            frame_icon_color
+        } else {
+            GRAY_60
+        };
+        let mut draws = Vec::new();
+        if art_frame.is_none() {
+            draws.push(Draw::rect(0.0, 0.0, inner, inner, GRAY_80));
+        }
+        draws.push(Draw::centered(
+            Draw::icon(0.0, 0.0, icon_sz, icon_sz, placeholder_icon, icon_color).with_anti_alias(),
+        ));
         canvas(
-            props!(width: art_size, height: art_size, max_height: art_size),
-            vec![
-                Draw::rect(0.0, 0.0, art_size, art_size, GRAY_80),
-                Draw::centered(
-                    Draw::icon(0.0, 0.0, icon_sz, icon_sz, placeholder_icon, GRAY_60)
-                        .with_anti_alias(),
-                ),
-            ],
+            props!(width: inner, height: inner, max_height: inner),
+            draws,
         )
+    };
+
+    if let Some(af) = art_frame {
+        center(
+            props!(width: art_size, height: art_size, max_height: art_size,
+                   bg_nine_patch: af.nine_patch),
+            [art_node],
+        )
+    } else {
+        art_node
     }
 }
 
@@ -2185,8 +2542,7 @@ fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
     }
 
     // Push switcher buttons to the bottom-right
-    // Button index 0 = sub-target switcher (session picker) — only if available
-    // Button index 1 (or 0 if no sub-targets) = device switcher (disconnect)
+    // Button order (tree traversal): [sub_target_btn?] [skin_btn] [device_btn]
     children.push(spacer(1.0));
     let has_sub_targets = CONTROLLER.with(|c| {
         c.borrow()
@@ -2194,30 +2550,26 @@ fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
             .and_then(|ctrl| ctrl.sub_targets())
             .is_some_and(|st| st.items.len() > 1)
     });
+    let mut switcher_buttons: Vec<Node> = vec![spacer(1.0)];
     if has_sub_targets {
-        children.push(row(
-            props!(gap: 8.0),
-            [
-                spacer(1.0),
-                render_sub_target_button(size),
-                render_switcher_button(size),
-            ],
-        ));
-    } else {
-        children.push(row(props!(), [spacer(1.0), render_switcher_button(size)]));
+        switcher_buttons.push(render_sub_target_button(size));
     }
+    switcher_buttons.push(render_skin_button());
+    switcher_buttons.push(render_switcher_button(size));
+    children.push(row(props!(gap: 8.0), switcher_buttons));
     children.push(spacer(0.0)); // breathing room before seek bar
 
     col(props!(flex: 1.0, gap: 4.0), children)
 }
 
-/// Interactive button showing protocol icon + connected device name.
+/// Interactive button showing protocol icon and connected device name.
 /// Tapping disconnects and returns to the device picker.
 /// Small variant uses icon-only to save horizontal space.
 fn render_switcher_button(size: WidgetSize) -> Node {
     let icon = tree::ensure_registered(&icons::DEVICES);
+    let skin = active_button_skin();
     if size.variant == SizeVariant::Small {
-        button!("", icon: icon, style: Secondary, size: Small)
+        button!("", icon: icon, style: Secondary, size: Small, skin: skin)
     } else {
         let device_name = CONNECTED_DEVICE_NAME.with(|n| {
             let name = n.borrow();
@@ -2227,7 +2579,7 @@ fn render_switcher_button(size: WidgetSize) -> Node {
                 name.clone()
             }
         });
-        button!(&device_name, icon: icon, style: Secondary, size: Small)
+        button!(&device_name, icon: icon, style: Secondary, size: Small, skin: skin)
     }
 }
 
@@ -2235,8 +2587,9 @@ fn render_switcher_button(size: WidgetSize) -> Node {
 /// Only rendered when the protocol has multiple sub-targets.
 fn render_sub_target_button(size: WidgetSize) -> Node {
     let icon = tree::ensure_registered(&icons::DEVICES_APPS);
+    let skin = active_button_skin();
     if size.variant == SizeVariant::Small {
-        button!("", icon: icon, style: Secondary, size: Small)
+        button!("", icon: icon, style: Secondary, size: Small, skin: skin)
     } else {
         let label = CONTROLLER.with(|c| {
             c.borrow()
@@ -2245,127 +2598,40 @@ fn render_sub_target_button(size: WidgetSize) -> Node {
                 .map(|st| fmt!("{}s", st.term))
                 .unwrap_or_default()
         });
-        button!(&label, icon: icon, style: Secondary, size: Small)
+        button!(&label, icon: icon, style: Secondary, size: Small, skin: skin)
     }
+}
+
+/// Skin picker button — icon-only paintbrush button.
+fn render_skin_button() -> Node {
+    let icon = tree::ensure_registered(&icons::SKIN);
+    button!("", icon: icon, style: Secondary, size: Small, skin: active_button_skin())
 }
 
 /// Animated sine-wave loader for the discovery screen.
 /// Track thickness for both seek and volume bars (pixels).
 const BAR_TRACK_H: f32 = 2.0;
-/// Sine wave amplitude — matches half the track thickness for visual consistency.
-const WAVE_AMPLITUDE: f32 = BAR_TRACK_H / 2.0;
-/// Points per wave cycle (smoothed by Catmull-Rom on host).
-const WAVE_POINTS_PER_CYCLE: usize = 8;
-/// Wavelength in pixels.
-const WAVE_LENGTH: f32 = 16.0;
-/// Playhead dot radius.
-const DOT_RADIUS: f32 = 4.0;
 
-/// Animated sine-wave path that loops via `TranslateX`.
-fn squiggle(width: f32, mid_y: f32, color: u32) -> Draw {
-    let step = WAVE_LENGTH / WAVE_POINTS_PER_CYCLE as f32;
-    let start_x = -WAVE_LENGTH;
-    let end_x = width + WAVE_LENGTH;
-    let n_points = ((end_x - start_x) / step) as usize + 1;
-
-    let points: Vec<(f32, f32)> = (0..n_points)
-        .map(|i| {
-            let x = start_x + i as f32 * step;
-            let phase = x / WAVE_LENGTH * std::f32::consts::TAU;
-            (x, mid_y + phase.sin() * WAVE_AMPLITUDE)
-        })
-        .collect();
-
-    Draw::path(
-        points,
-        BAR_TRACK_H,
-        color,
-        false,
-        false,
-        Interpolation::CatmullRom,
-    )
-    .animate(
-        AnimProperty::TranslateX,
-        0.0,
-        -WAVE_LENGTH,
-        800,
-        Easing::Linear,
-        LoopMode::Forever,
-    )
-}
-
-/// Oversized draw width for background track (canvas clips to layout bounds).
-const OVERSIZED_W: f32 = 1_500.0;
-
-/// Touchable progress bar canvas.
-///
-/// Layout uses `flex: 1.0` so right edges align. Background track uses
-/// `OVERSIZED_W` (clipped by canvas). Fill/dot positions use `draw_w`
-/// (pre-computed expected width) so the progress fraction is correct.
-/// Touch `frac_x` is relative to actual layout width, so seek works.
-fn progress_bar_node(media: &MediaState, draw_w: f32) -> Node {
+/// Build a seek progress bar node for the current media state.
+fn progress_bar_node(media: &MediaState) -> Node {
     let pos = media.position.position_secs;
     let dur = media.position.duration_secs;
     let is_playing = media.transport == TransportState::Playing;
     let is_continuous = dur == 0;
-    let progress = if dur > 0 {
-        (pos as f32 / dur as f32).clamp(0.0, 1.0)
+
+    let mode = if is_continuous {
+        ProgressMode::Indeterminate
+    } else if dur > 0 {
+        ProgressMode::Fraction((pos as f32 / dur as f32).clamp(0.0, 1.0))
     } else {
-        0.0
+        ProgressMode::Fraction(0.0)
     };
 
-    let half_track = BAR_TRACK_H / 2.0;
-    let bar_height = DOT_RADIUS * 2.0 + BAR_TRACK_H;
-    let mid_y = bar_height / 2.0;
-    let fill_w = draw_w * progress;
-
-    let mut draws: Vec<Draw> = Vec::new();
-
-    if is_continuous && is_playing {
-        draws.push(squiggle(OVERSIZED_W, mid_y, WHITE));
-    } else {
-        // Background track: oversized, clipped by canvas
-        draws.push(Draw::rect(
-            0.0,
-            mid_y - half_track,
-            OVERSIZED_W,
-            BAR_TRACK_H,
-            GRAY_70,
-        ));
-
-        if is_playing && fill_w > BAR_TRACK_H {
-            draws.push(squiggle(fill_w, mid_y, WHITE));
-            draws.push(Draw::rect(
-                fill_w,
-                0.0,
-                OVERSIZED_W - fill_w + 1.0,
-                bar_height,
-                media.accent_bg,
-            ));
-            let track_x = fill_w + DOT_RADIUS;
-            draws.push(Draw::rect(
-                track_x,
-                mid_y - half_track,
-                OVERSIZED_W - track_x,
-                BAR_TRACK_H,
-                GRAY_70,
-            ));
-        } else if fill_w > 0.0 {
-            draws.push(Draw::rect(
-                0.0,
-                mid_y - half_track,
-                fill_w,
-                BAR_TRACK_H,
-                WHITE,
-            ));
-        }
-
-        if fill_w > 0.0 {
-            draws.push(Draw::circle(fill_w, mid_y, DOT_RADIUS, WHITE));
-        }
-    }
-
-    touchable("progress", props!(flex: 1.0, height: bar_height), draws)
+    progress_bar!(mode,
+        touch_key: "progress", track_h: BAR_TRACK_H, active: is_playing,
+        track_color: GRAY_70, bg_color: media.accent_bg,
+        skin: active_slider_skin(),
+    )
 }
 
 /// Formatted time string for the progress bar.
@@ -2383,24 +2649,12 @@ fn progress_time_str(media: &MediaState) -> String {
     }
 }
 
-/// Estimate text width at 12px font for time/percentage labels.
-/// Digits ~7px, punctuation/spaces ~4px, plus small padding.
-fn estimate_label_w(s: &str) -> f32 {
-    let w: f32 = s
-        .chars()
-        .map(|c| if c.is_ascii_digit() { 7.2 } else { 4.0 })
-        .sum();
-    w + 4.0
-}
-
-fn render_progress(media: &MediaState, avail_w: f32) -> Node {
+fn render_progress(media: &MediaState) -> Node {
     let time_str = progress_time_str(media);
-    let label_w = estimate_label_w(&time_str);
-    let bar_draw_w = (avail_w - 8.0 - label_w).max(40.0);
     row(
         props!(gap: 8.0, cross_align: CrossAlign::Center),
         [
-            progress_bar_node(media, bar_draw_w),
+            progress_bar_node(media),
             text(
                 time_str,
                 style!(size: 12, color: GRAY_40, text_overflow: TextOverflow::Clip),
@@ -2409,32 +2663,26 @@ fn render_progress(media: &MediaState, avail_w: f32) -> Node {
     )
 }
 
-/// Ghost Small icon-only button width (square = height = 32px).
-const BTN_SM: f32 = 32.0;
-
 fn transport_buttons(cd: &ControlsData, actions: &TransportActions) -> [Node; 3] {
+    let skin = active_button_skin();
     [
-        button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous),
-        button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled),
-        button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next),
+        button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous, skin: skin),
+        button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled, skin: skin),
+        button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next, skin: skin),
     ]
 }
 
 fn volume_buttons(cd: &ControlsData) -> [Node; 3] {
+    let skin = active_button_skin();
     [
-        button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small),
-        button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small),
-        button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small),
+        button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small, skin: skin),
+        button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small, skin: skin),
+        button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small, skin: skin),
     ]
 }
 
-fn render_controls(media: &MediaState, avail_w: f32) -> Node {
+fn render_controls(media: &MediaState) -> Node {
     let cd = controls_data(media);
-
-    let vol_label_w = estimate_label_w(&cd.vol_str);
-    // 6 buttons + spacer(flex:1) + vol_bar + vol_label — 8 gaps
-    let fixed = BTN_SM * 6.0 + vol_label_w + 8.0 * 8.0;
-    let vol_draw_w = ((avail_w - fixed) / 2.0).max(20.0);
 
     let [prev, play, next] = transport_buttons(&cd, &media.actions);
     let [vdn, vup, mute] = volume_buttons(&cd);
@@ -2444,11 +2692,15 @@ fn render_controls(media: &MediaState, avail_w: f32) -> Node {
             prev,
             play,
             next,
-            spacer(1.0),
+            spacer(0.2),
             vdn,
             vup,
             mute,
-            volume_bar(cd.vol_frac, vol_draw_w),
+            progress_bar!(ProgressMode::Fraction(cd.vol_frac),
+                touch_key: "volume", track_h: BAR_TRACK_H,
+                fill_color: GRAY_30, track_color: GRAY_70, bg_color: 0,
+                skin: active_slider_skin(),
+            ),
             text(&cd.vol_str, style!(size: 12, color: GRAY_40)),
         ],
     )
@@ -2457,17 +2709,9 @@ fn render_controls(media: &MediaState, avail_w: f32) -> Node {
 /// Stacked controls for small layouts:
 /// Row 1: prev | play | next | [progress bar (flex)] | time (fixed)
 /// Row 2: vol- | vol+ | mute | [volume bar (flex)]   | % (fixed)
-fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
+fn render_controls_stacked(media: &MediaState) -> Node {
     let cd = controls_data(media);
-
     let time_str = progress_time_str(media);
-    let time_label_w = estimate_label_w(&time_str);
-    let vol_label_w = estimate_label_w(&cd.vol_str);
-
-    // Row 1: 3 buttons + bar + time_label — 4 gaps
-    let prog_draw_w = (avail_w - BTN_SM * 3.0 - time_label_w - 8.0 * 4.0).max(40.0);
-    // Row 2: 3 buttons + bar + vol_label — 4 gaps
-    let vol_draw_w = (avail_w - BTN_SM * 3.0 - vol_label_w - 8.0 * 4.0).max(20.0);
 
     let [prev, play, next] = transport_buttons(&cd, &media.actions);
     let [vdn, vup, mute] = volume_buttons(&cd);
@@ -2480,7 +2724,7 @@ fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
                     prev,
                     play,
                     next,
-                    progress_bar_node(media, prog_draw_w),
+                    progress_bar_node(media),
                     text(time_str, style!(size: 12, color: GRAY_40)),
                 ],
             ),
@@ -2490,21 +2734,16 @@ fn render_controls_stacked(media: &MediaState, avail_w: f32) -> Node {
                     vdn,
                     vup,
                     mute,
-                    volume_bar(cd.vol_frac, vol_draw_w),
+                    progress_bar!(ProgressMode::Fraction(cd.vol_frac),
+                        touch_key: "volume", track_h: BAR_TRACK_H,
+                        fill_color: GRAY_30, track_color: GRAY_70, bg_color: 0,
+                        skin: active_slider_skin(),
+                    ),
                     text(&cd.vol_str, style!(size: 12, color: GRAY_40)),
                 ],
             ),
         ],
     )
-}
-
-fn volume_bar(vol_frac: f32, draw_w: f32) -> Node {
-    let fill_w = draw_w * vol_frac;
-    let draws = vec![
-        Draw::rect(0.0, 0.0, OVERSIZED_W, BAR_TRACK_H, GRAY_70),
-        Draw::rect(0.0, 0.0, fill_w, BAR_TRACK_H, GRAY_30),
-    ];
-    touchable("volume", props!(flex: 1.0, height: BAR_TRACK_H), draws)
 }
 
 struct ControlsData {
@@ -2533,7 +2772,14 @@ fn controls_data(media: &MediaState) -> ControlsData {
         &icons::solid::VOLUME_UP
     };
     let vol_pct = (media.volume.level + 5) / 10; // permille → percent, rounded
-    let vol_str = fmt!("{}%", vol_pct);
+    // U+2007 = figure space (same width as a digit in any font)
+    let vol_str = if vol_pct < 10 {
+        fmt!("\u{2007}\u{2007}{}%", vol_pct)
+    } else if vol_pct < 100 {
+        fmt!("\u{2007}{}%", vol_pct)
+    } else {
+        fmt!("{}%", vol_pct)
+    };
     let vol_frac = media.volume.level as f32 / 1_000.0;
     ControlsData {
         play_icon,

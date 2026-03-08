@@ -171,6 +171,38 @@ pub enum DrawCommand {
         text: String,
         style: TextStyle,
     },
+    NinePatch {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+        left: u16,
+        top: u16,
+        right: u16,
+        bottom: u16,
+    },
+}
+
+/// 9-patch inset data (deserialized from wire format).
+#[derive(Debug, Clone, Copy)]
+pub struct NinePatchData {
+    pub bitmap_id: u16,
+    pub left: u16,
+    pub top: u16,
+    pub right: u16,
+    pub bottom: u16,
+}
+
+/// Button skin override data (deserialized from wire format).
+#[derive(Debug, Clone)]
+pub struct ButtonSkinData {
+    pub normal: NinePatchData,
+    pub pressed: Option<NinePatchData>,
+    pub text_color: u32,
+    pub pressed_text_color: u32,
+    /// Bitmap already contains the visual content — skip rendering icon/label.
+    pub opaque: bool,
 }
 
 /// Deserialized tree node
@@ -190,6 +222,7 @@ pub enum TreeNode {
         size: u8,
         icon_id: u16,
         disabled: bool,
+        skin: Option<ButtonSkinData>,
     },
     Spacer {
         flex: f32,
@@ -222,7 +255,26 @@ pub enum TreeNode {
         backdrop_alpha: u8,
         title: String,
         content_height: f32,
+        /// Modal body background color. `0` = default.
+        bg_color: u32,
+        /// Header background color. `0` = default.
+        header_color: u32,
+        /// Title text color. `0` = default.
+        title_color: u32,
         body: Vec<TreeNode>,
+    },
+    /// Host-rendered progress bar (seek/volume slider)
+    ProgressBar {
+        touch_key: Option<String>,
+        track_h: f32,
+        /// 0 = Fraction, 1 = Indeterminate
+        mode: u8,
+        fraction: f32,
+        active: bool,
+        fill_color: u32,
+        track_color: u32,
+        bg_color: u32,
+        skin: Option<SliderSkinData>,
     },
 }
 
@@ -275,6 +327,16 @@ impl<'a> TreeReader<'a> {
 
     fn read_f32(&mut self) -> Result<f32> {
         Ok(f32::from_bits(self.read_u32()?))
+    }
+
+    fn read_nine_patch_data(&mut self) -> Result<NinePatchData> {
+        Ok(NinePatchData {
+            bitmap_id: self.read_u16()?,
+            left: self.read_u16()?,
+            top: self.read_u16()?,
+            right: self.read_u16()?,
+            bottom: self.read_u16()?,
+        })
     }
 
     fn read_props(&mut self) -> Result<PropsData> {
@@ -380,12 +442,34 @@ impl<'a> TreeReader<'a> {
                 let disabled = self.read_u8()? != 0;
                 let len = self.read_u16()?;
                 let label = self.read_string(len)?;
+                // Trailing optional skin payload
+                let skin = if self.remaining() > 0 && self.read_u8()? != 0 {
+                    let normal = self.read_nine_patch_data()?;
+                    let pressed = if self.read_u8()? != 0 {
+                        Some(self.read_nine_patch_data()?)
+                    } else {
+                        None
+                    };
+                    let text_color = self.read_u32()?;
+                    let pressed_text_color = self.read_u32()?;
+                    let opaque = self.read_u8()? != 0;
+                    Some(ButtonSkinData {
+                        normal,
+                        pressed,
+                        text_color,
+                        pressed_text_color,
+                        opaque,
+                    })
+                } else {
+                    None
+                };
                 Ok(TreeNode::Button {
                     label,
                     style,
                     size,
                     icon_id,
                     disabled,
+                    skin,
                 })
             }
             NODE_SPACER => {
@@ -420,6 +504,9 @@ impl<'a> TreeReader<'a> {
                 let title = self.read_string(title_len)?;
                 let content_height = self.read_f32()?;
                 let child_count = self.read_u16()?;
+                let bg_color = self.read_u32()?;
+                let header_color = self.read_u32()?;
+                let title_color = self.read_u32()?;
                 let mut body = Vec::with_capacity(child_count as usize);
                 for _ in 0..child_count {
                     body.push(self.read_node()?);
@@ -431,6 +518,9 @@ impl<'a> TreeReader<'a> {
                     backdrop_alpha,
                     title,
                     content_height,
+                    bg_color,
+                    header_color,
+                    title_color,
                     body,
                 })
             }
@@ -458,6 +548,50 @@ impl<'a> TreeReader<'a> {
                     kind,
                     title,
                     subtitle,
+                })
+            }
+            NODE_PROGRESS_BAR => {
+                let key_len = self.read_u16()?;
+                let touch_key = if key_len > 0 {
+                    Some(self.read_string(key_len)?)
+                } else {
+                    None
+                };
+                let track_h = self.read_f32()?;
+                let mode = self.read_u8()?;
+                let fraction = self.read_f32()?;
+                let active = self.read_u8()? != 0;
+                let fill_color = self.read_u32()?;
+                let track_color = self.read_u32()?;
+                let bg_color = self.read_u32()?;
+                let skin = if self.read_u8()? != 0 {
+                    Some(SliderSkinData {
+                        track: NinePatchData {
+                            bitmap_id: self.read_u16()?,
+                            left: self.read_u16()?,
+                            top: self.read_u16()?,
+                            right: self.read_u16()?,
+                            bottom: self.read_u16()?,
+                        },
+                        track_h: self.read_u16()?,
+                        thumb_id: self.read_u16()?,
+                        thumb_w: self.read_u16()?,
+                        thumb_h: self.read_u16()?,
+                        thumb_pressed_id: self.read_u16()?,
+                    })
+                } else {
+                    None
+                };
+                Ok(TreeNode::ProgressBar {
+                    touch_key,
+                    track_h,
+                    mode,
+                    fraction,
+                    active,
+                    fill_color,
+                    track_color,
+                    bg_color,
+                    skin,
                 })
             }
             _ => bail!("unknown node type: {node_type}"),
@@ -653,6 +787,28 @@ impl<'a> TreeReader<'a> {
                 let text = self.read_string(len)?;
                 Ok(DrawCommand::Text { x, y, text, style })
             }
+            DRAW_NINE_PATCH => {
+                let x = self.read_f32()?;
+                let y = self.read_f32()?;
+                let w = self.read_f32()?;
+                let h = self.read_f32()?;
+                let bitmap_id = self.read_u16()?;
+                let left = self.read_u16()?;
+                let top = self.read_u16()?;
+                let right = self.read_u16()?;
+                let bottom = self.read_u16()?;
+                Ok(DrawCommand::NinePatch {
+                    x,
+                    y,
+                    w,
+                    h,
+                    bitmap_id,
+                    left,
+                    top,
+                    right,
+                    bottom,
+                })
+            }
             _ => bail!("unknown draw command: {draw_type}"),
         }
     }
@@ -741,17 +897,67 @@ struct NotificationData {
     subtitle: String,
 }
 
+/// Button data stored in taffy node context.
+#[derive(Clone)]
+pub(crate) struct ButtonContext {
+    id: u32,
+    label: String,
+    style: u8,
+    size: u8,
+    icon_id: u16,
+    disabled: bool,
+    skin: Option<ButtonSkinData>,
+}
+
+/// Nine-patch background image data (bitmap_id == 0 means none).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct BgNinePatch {
+    bitmap_id: u16,
+    left: u16,
+    top: u16,
+    right: u16,
+    bottom: u16,
+}
+
+/// Host-side slider skin data (deserialized from wire).
+#[derive(Clone, Debug)]
+pub struct SliderSkinData {
+    track: NinePatchData,
+    track_h: u16,
+    thumb_id: u16,
+    thumb_w: u16,
+    thumb_h: u16,
+    #[expect(dead_code)] // used when touch-pressed state rendering is added
+    thumb_pressed_id: u16,
+}
+
+/// Host-side progress bar rendering data.
+#[derive(Clone, Default)]
+struct ProgressBarData {
+    track_h: f32,
+    /// 0 = Fraction, 1 = Indeterminate
+    mode: u8,
+    fraction: f32,
+    active: bool,
+    fill_color: u32,
+    track_color: u32,
+    bg_color: u32,
+    skin: Option<SliderSkinData>,
+}
+
 /// Node data attached to taffy nodes
 #[derive(Clone, Default)]
 pub(crate) struct NodeContext {
     background: u32,
+    bg_nine_patch: BgNinePatch,
     paragraph: Option<ParagraphData>,
-    button: Option<(u32, String, u8, u8, u16, bool)>, // id, label, style, size, icon_id, disabled
-    draws: Vec<DrawCommand>,                          // canvas draw commands
+    button: Option<ButtonContext>,
+    draws: Vec<DrawCommand>, // canvas draw commands
     /// Touch interaction key for interactive canvases (None = decorative)
     touch_key: Option<String>,
     notification: Option<NotificationData>,
     scroll_id: Option<u16>,
+    progress_bar: Option<ProgressBarData>,
 }
 
 /// Collected modal info for overlay rendering
@@ -762,6 +968,12 @@ struct ModalInfo {
     backdrop_alpha: u8,
     title: String,
     content_height: f32,
+    /// Modal body background color. `0` = default.
+    bg_color: u32,
+    /// Header background color. `0` = default.
+    header_color: u32,
+    /// Title text color. `0` = default.
+    title_color: u32,
     body: Vec<TreeNode>,
     /// Starting button index for this modal's buttons
     button_index_start: u32,
@@ -852,87 +1064,7 @@ pub(crate) fn layout_and_render(
         taffy.set_style(root_id, new_style)?;
     }
 
-    // Compute layout with measure function for paragraphs
-    taffy.compute_layout_with_measure(
-        root_id,
-        Size::MAX_CONTENT,
-        |known_dimensions, available_space, _node_id, node_context, _style| {
-            // If dimensions are already known, use them
-            if let (Some(w), Some(h)) = (known_dimensions.width, known_dimensions.height) {
-                return Size {
-                    width: w,
-                    height: h,
-                };
-            }
-
-            // Measure paragraphs and notifications based on available width
-            if let Some(ctx) = node_context {
-                if let Some(ref para) = ctx.paragraph {
-                    // Use known width from Taffy if available, else fall back to available_space
-                    let available_width = known_dimensions.width.or(match available_space.width {
-                        AvailableSpace::Definite(w) => Some(w),
-                        AvailableSpace::MinContent => Some(0.0),
-                        AvailableSpace::MaxContent => None,
-                    });
-
-                    // Use explicit max_width if set, otherwise use available width.
-                    // Clip/Ellipsis: don't constrain width — text stays on one line.
-                    let max_width = if para.base_style.text_overflow != TextOverflow::Wrap {
-                        None
-                    } else if para.base_style.max_width > 0 {
-                        Some(
-                            (para.base_style.max_width as f32)
-                                .min(available_width.unwrap_or(f32::MAX)),
-                        )
-                    } else {
-                        available_width
-                    };
-
-                    let (w, h) =
-                        renderer.measure_paragraph(&para.base_style, &para.spans, max_width);
-                    return Size {
-                        width: known_dimensions.width.unwrap_or(w),
-                        height: known_dimensions.height.unwrap_or(h),
-                    };
-                }
-
-                if let Some(ref notif) = ctx.notification {
-                    return measure_notification(
-                        notif,
-                        known_dimensions,
-                        available_space,
-                        renderer,
-                    );
-                }
-
-                if let Some((_, ref label, _, btn_size, icon_id, _)) = ctx.button {
-                    let sz = ButtonSize::from(btn_size);
-                    let h = sz.height();
-                    let w = if icon_id != 0 && label.is_empty() {
-                        // Icon-only: square
-                        h
-                    } else if icon_id != 0 {
-                        let text_w = renderer.measure_text(label, sz.font_size());
-                        sz.h_padding()
-                            + sz.icon_size()
-                            + sz.icon_text_gap()
-                            + text_w
-                            + sz.h_padding()
-                    } else {
-                        let text_w = renderer.measure_text(label, sz.font_size());
-                        text_w + sz.h_padding() * 2.0
-                    };
-                    return Size {
-                        width: known_dimensions.width.unwrap_or(w),
-                        height: known_dimensions.height.unwrap_or(h),
-                    };
-                }
-            }
-
-            // Default for non-paragraph nodes without explicit size
-            Size::ZERO
-        },
-    )?;
+    compute_taffy_layout(taffy, root_id, renderer)?;
 
     timings.layout_us = t1.elapsed().as_micros() as u32;
 
@@ -973,8 +1105,11 @@ pub(crate) fn layout_and_render(
             renderer,
             interaction,
             modal_states,
+            scroll_states,
             delta_ms,
             &mut result,
+            &mut anim_ctx,
+            taffy,
         );
     }
 
@@ -1056,11 +1191,12 @@ fn build_taffy_node(
             };
 
             let id = taffy.new_with_children(style, &child_ids)?;
-            if props.background != 0 {
+            if props.background != 0 || props.bg_np_id != 0 {
                 taffy.set_node_context(
                     id,
                     Some(NodeContext {
                         background: props.background,
+                        bg_nine_patch: bg_np_from_props(props),
                         ..Default::default()
                     }),
                 )?;
@@ -1087,6 +1223,7 @@ fn build_taffy_node(
                 id,
                 Some(NodeContext {
                     background: props.background,
+                    bg_nine_patch: bg_np_from_props(props),
                     paragraph: Some(ParagraphData {
                         base_style: *base_style,
                         spans: spans.clone(),
@@ -1103,6 +1240,7 @@ fn build_taffy_node(
             size: btn_size,
             icon_id,
             disabled,
+            skin,
         } => {
             let id_num = *button_id;
             *button_id += 1;
@@ -1123,14 +1261,15 @@ fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
-                    button: Some((
-                        id_num,
-                        label.clone(),
-                        *btn_style,
-                        *btn_size,
-                        *icon_id,
-                        *disabled,
-                    )),
+                    button: Some(ButtonContext {
+                        id: id_num,
+                        label: label.clone(),
+                        style: *btn_style,
+                        size: *btn_size,
+                        icon_id: *icon_id,
+                        disabled: *disabled,
+                        skin: skin.clone(),
+                    }),
                     ..Default::default()
                 }),
             )?;
@@ -1166,6 +1305,7 @@ fn build_taffy_node(
                 id,
                 Some(NodeContext {
                     background: props.background,
+                    bg_nine_patch: bg_np_from_props(props),
                     draws: draws.clone(),
                     touch_key: touch_key.clone(),
                     ..Default::default()
@@ -1212,6 +1352,7 @@ fn build_taffy_node(
                 id,
                 Some(NodeContext {
                     background: props.background,
+                    bg_nine_patch: bg_np_from_props(props),
                     scroll_id: Some(*scroll_id),
                     ..Default::default()
                 }),
@@ -1247,6 +1388,9 @@ fn build_taffy_node(
             backdrop_alpha,
             title,
             content_height,
+            bg_color,
+            header_color,
+            title_color,
             body,
         } => {
             // Record button index start for this modal
@@ -1270,6 +1414,9 @@ fn build_taffy_node(
                 backdrop_alpha: *backdrop_alpha,
                 title: title.clone(),
                 content_height: *content_height,
+                bg_color: *bg_color,
+                header_color: *header_color,
+                title_color: *title_color,
                 body: body.clone(),
                 button_index_start,
             });
@@ -1284,7 +1431,138 @@ fn build_taffy_node(
             };
             Ok(taffy.new_leaf(style)?)
         }
+
+        TreeNode::ProgressBar {
+            touch_key,
+            track_h,
+            mode,
+            fraction,
+            active,
+            fill_color,
+            track_color,
+            bg_color,
+            skin,
+        } => {
+            // When skinned, use the skin's track height for layout
+            let effective_h = skin.as_ref().map_or(*track_h, |s| f32::from(s.track_h));
+            let dot_radius = effective_h * 2.0;
+            let bar_height = if skin.is_some() {
+                // Skinned: thumb may be taller than track
+                let thumb_h = skin.as_ref().map_or(0.0, |s| f32::from(s.thumb_h));
+                effective_h.max(thumb_h)
+            } else {
+                dot_radius * 2.0 + effective_h
+            };
+            let style = Style {
+                size: Size {
+                    width: Dimension::auto(),
+                    height: length(bar_height),
+                },
+                flex_grow: 1.0,
+                ..Default::default()
+            };
+            let id = taffy.new_leaf(style)?;
+            taffy.set_node_context(
+                id,
+                Some(NodeContext {
+                    touch_key: touch_key.clone(),
+                    progress_bar: Some(ProgressBarData {
+                        track_h: *track_h,
+                        mode: *mode,
+                        fraction: *fraction,
+                        active: *active,
+                        fill_color: *fill_color,
+                        track_color: *track_color,
+                        bg_color: *bg_color,
+                        skin: skin.clone(),
+                    }),
+                    ..Default::default()
+                }),
+            )?;
+            Ok(id)
+        }
     }
+}
+
+/// Compute taffy layout with the standard measure function for paragraphs,
+/// notifications, and buttons.
+fn compute_taffy_layout(
+    taffy: &mut TaffyTree<NodeContext>,
+    root_id: taffy::NodeId,
+    renderer: &mut dyn Renderer,
+) -> Result<()> {
+    taffy.compute_layout_with_measure(
+        root_id,
+        Size::MAX_CONTENT,
+        |known_dimensions, available_space, _node_id, node_context, _style| {
+            if let (Some(w), Some(h)) = (known_dimensions.width, known_dimensions.height) {
+                return Size {
+                    width: w,
+                    height: h,
+                };
+            }
+
+            if let Some(ctx) = node_context {
+                if let Some(ref para) = ctx.paragraph {
+                    let available_width = known_dimensions.width.or(match available_space.width {
+                        AvailableSpace::Definite(w) => Some(w),
+                        AvailableSpace::MinContent => Some(0.0),
+                        AvailableSpace::MaxContent => None,
+                    });
+                    let max_width = if para.base_style.text_overflow != TextOverflow::Wrap {
+                        None
+                    } else if para.base_style.max_width > 0 {
+                        Some(
+                            (para.base_style.max_width as f32)
+                                .min(available_width.unwrap_or(f32::MAX)),
+                        )
+                    } else {
+                        available_width
+                    };
+                    let (w, h) =
+                        renderer.measure_paragraph(&para.base_style, &para.spans, max_width);
+                    return Size {
+                        width: known_dimensions.width.unwrap_or(w),
+                        height: known_dimensions.height.unwrap_or(h),
+                    };
+                }
+
+                if let Some(ref notif) = ctx.notification {
+                    return measure_notification(
+                        notif,
+                        known_dimensions,
+                        available_space,
+                        renderer,
+                    );
+                }
+
+                if let Some(ref btn) = ctx.button {
+                    let sz = ButtonSize::from(btn.size);
+                    let h = sz.height();
+                    let w = if btn.icon_id != 0 && btn.label.is_empty() {
+                        h
+                    } else if btn.icon_id != 0 {
+                        let text_w = renderer.measure_text(&btn.label, sz.font_size());
+                        sz.h_padding()
+                            + sz.icon_size()
+                            + sz.icon_text_gap()
+                            + text_w
+                            + sz.h_padding()
+                    } else {
+                        let text_w = renderer.measure_text(&btn.label, sz.font_size());
+                        text_w + sz.h_padding() * 2.0
+                    };
+                    return Size {
+                        width: known_dimensions.width.unwrap_or(w),
+                        height: known_dimensions.height.unwrap_or(h),
+                    };
+                }
+            }
+
+            Size::ZERO
+        },
+    )?;
+    Ok(())
 }
 
 #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -1317,7 +1595,20 @@ fn render_taffy_node(
         .and_then(|ctx| ctx.touch_key.clone());
 
     if let Some(ctx) = taffy.get_node_context(node_id) {
-        if ctx.background != 0 {
+        if ctx.bg_nine_patch.bitmap_id != 0 {
+            let np = &ctx.bg_nine_patch;
+            renderer.draw_nine_patch(
+                x,
+                y,
+                w,
+                h,
+                np.bitmap_id,
+                np.left,
+                np.top,
+                np.right,
+                np.bottom,
+            );
+        } else if ctx.background != 0 {
             renderer.fill_rect(x, y, w, h, ctx.background);
         }
 
@@ -1325,24 +1616,25 @@ fn render_taffy_node(
             renderer.draw_paragraph(&para.base_style, &para.spans, x, y, w);
         }
 
-        if let Some((btn_id, ref label, style, size, icon_id, disabled)) = ctx.button {
+        if let Some(ref btn) = ctx.button {
             let mut key_buf = [0_u8; 16];
-            let key = format_btn_key(btn_id, &mut key_buf);
+            let key = format_btn_key(btn.id, &mut key_buf);
             let (clicked, _) = draw_button(
                 renderer,
                 interaction,
                 key,
-                label,
+                &btn.label,
                 x,
                 y,
                 w,
                 h,
-                ButtonStyle::from(style as u32),
-                ButtonSize::from(size),
-                icon_id,
-                disabled,
+                ButtonStyle::from(btn.style as u32),
+                ButtonSize::from(btn.size),
+                btn.icon_id,
+                btn.disabled,
+                btn.skin.as_ref(),
             );
-            if let Some(slot) = result.clicks.get_mut(btn_id as usize) {
+            if let Some(slot) = result.clicks.get_mut(btn.id as usize) {
                 *slot = clicked;
             }
         }
@@ -1356,6 +1648,16 @@ fn render_taffy_node(
                 anim_ctx.draw_in_canvas += 1;
             }
             anim_ctx.canvas_index += 1;
+            renderer.pop_scissor();
+        }
+
+        // Progress bar: host-rendered track + fill + squiggle + dot
+        if let Some(ref pb) = ctx.progress_bar {
+            renderer.push_scissor(x, y, w, h);
+            let has_active = render_progress_bar(renderer, pb, x, y, w, h, anim_ctx);
+            if has_active {
+                anim_ctx.has_active = true;
+            }
             renderer.pop_scissor();
         }
     }
@@ -1523,6 +1825,169 @@ fn render_taffy_node(
     }
 }
 
+// ── Progress bar rendering ────────────────────────────────────────────
+
+/// Squiggle wave constants (same as the previous WASM-side implementation).
+const PB_WAVE_POINTS_PER_CYCLE: usize = 8;
+const PB_WAVE_LENGTH: f32 = 16.0;
+
+/// Render a host-side progress bar. Returns `true` if animations are active
+/// (caller should request next frame).
+fn render_progress_bar(
+    renderer: &mut dyn Renderer,
+    pb: &ProgressBarData,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    anim_ctx: &mut AnimationContext<'_>,
+) -> bool {
+    if let Some(skin) = &pb.skin {
+        render_progress_bar_skinned(renderer, pb, skin, x, y, w, h)
+    } else {
+        render_progress_bar_flat(renderer, pb, x, y, w, anim_ctx)
+    }
+}
+
+/// Flat (unskinned) progress bar: rects, circles, squiggle.
+fn render_progress_bar_flat(
+    renderer: &mut dyn Renderer,
+    pb: &ProgressBarData,
+    x: f32,
+    y: f32,
+    w: f32,
+    anim_ctx: &mut AnimationContext<'_>,
+) -> bool {
+    let track_h = pb.track_h;
+    let dot_radius = track_h * 2.0;
+    let bar_height = dot_radius * 2.0 + track_h;
+    let half_track = track_h / 2.0;
+    let mid_y = y + bar_height / 2.0;
+    let is_indeterminate = pb.mode == 1;
+    let fraction = pb.fraction.clamp(0.0, 1.0);
+    let fill_w = w * fraction;
+
+    let mut animating = false;
+
+    if is_indeterminate && pb.active {
+        // Full-width animated squiggle
+        render_squiggle(renderer, x, mid_y, w, track_h, pb.fill_color, anim_ctx);
+        animating = true;
+    } else {
+        // Background track (full width)
+        renderer.fill_rect(x, mid_y - half_track, w, track_h, pb.track_color);
+
+        if pb.active && fill_w > track_h {
+            // Animated squiggle on the filled portion
+            render_squiggle(renderer, x, mid_y, fill_w, track_h, pb.fill_color, anim_ctx);
+
+            // Clip rect: hide squiggle past the playhead
+            let clip_x = x + fill_w;
+            renderer.fill_rect(clip_x, y, w - fill_w + 1.0, bar_height, pb.bg_color);
+
+            // Remaining track after the playhead
+            let track_x = clip_x + dot_radius;
+            renderer.fill_rect(
+                track_x,
+                mid_y - half_track,
+                (w - fill_w - dot_radius).max(0.0),
+                track_h,
+                pb.track_color,
+            );
+            animating = true;
+        } else if fill_w > 0.0 {
+            // Static fill (not active, or fill too small for squiggle)
+            renderer.fill_rect(x, mid_y - half_track, fill_w, track_h, pb.fill_color);
+        }
+
+        // Playhead dot
+        if fill_w > 0.0 {
+            renderer.fill_circle(x + fill_w, mid_y, dot_radius, pb.fill_color);
+        }
+    }
+
+    animating
+}
+
+/// Skinned progress bar: 9-patch track + bitmap thumb.
+fn render_progress_bar_skinned(
+    renderer: &mut dyn Renderer,
+    pb: &ProgressBarData,
+    skin: &SliderSkinData,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) -> bool {
+    let np = &skin.track;
+    let track_h = f32::from(skin.track_h);
+    let track_y = y + (h - track_h) / 2.0;
+
+    // Draw track background (9-patch stretched to full width)
+    renderer.draw_nine_patch(
+        x,
+        track_y,
+        w,
+        track_h,
+        np.bitmap_id,
+        np.left,
+        np.top,
+        np.right,
+        np.bottom,
+    );
+
+    // Draw thumb at progress position (scale down when bar is narrow)
+    if skin.thumb_id != 0 && pb.mode == 0 {
+        let fraction = pb.fraction.clamp(0.0, 1.0);
+        let thumb_w = f32::from(skin.thumb_w);
+        let thumb_h = f32::from(skin.thumb_h);
+        let scale = (w / (thumb_w * 4.0)).min(1.0);
+        let tw = thumb_w * scale;
+        let th = thumb_h * scale;
+        let thumb_x = x + fraction * (w - tw);
+        let thumb_y = y + (h - th) / 2.0;
+        renderer.draw_bitmap(thumb_x, thumb_y, tw, th, skin.thumb_id);
+    }
+
+    false // skinned bars don't animate (no squiggle)
+}
+
+/// Render an animated sine-wave squiggle.
+///
+/// The squiggle scrolls left via a time-based phase offset, recreating the
+/// same visual as the old WASM-side `TranslateX` animation.
+fn render_squiggle(
+    renderer: &mut dyn Renderer,
+    x: f32,
+    mid_y: f32,
+    width: f32,
+    track_h: f32,
+    color: u32,
+    anim_ctx: &AnimationContext<'_>,
+) {
+    let amplitude = track_h / 2.0;
+    let step = PB_WAVE_LENGTH / PB_WAVE_POINTS_PER_CYCLE as f32;
+
+    // Time-based scroll offset: one full wavelength per 800ms cycle
+    let cycle_ms = 800.0;
+    let phase_frac = (anim_ctx.frame_counter as f32 * anim_ctx.delta_ms as f32 / cycle_ms).fract();
+    let offset = -phase_frac * PB_WAVE_LENGTH;
+
+    let start_x = -PB_WAVE_LENGTH + offset;
+    let end_x = width + PB_WAVE_LENGTH + offset;
+    let n_points = ((end_x - start_x) / step) as usize + 1;
+
+    let points: Vec<(f32, f32)> = (0..n_points)
+        .map(|i| {
+            let lx = start_x + i as f32 * step;
+            let phase = lx / PB_WAVE_LENGTH * std::f32::consts::TAU;
+            (x + lx - offset, mid_y + phase.sin() * amplitude)
+        })
+        .collect();
+
+    renderer.stroke_path(&points, track_h, color, false, true);
+}
+
 /// Render a draw command with canvas-local coordinates
 fn render_draw_command(
     renderer: &mut dyn Renderer,
@@ -1544,7 +2009,8 @@ fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
         DrawCommand::Rect { w, h, .. }
         | DrawCommand::Icon { w, h, .. }
         | DrawCommand::Bitmap { w, h, .. }
-        | DrawCommand::Sphere { w, h, .. } => (*w, *h),
+        | DrawCommand::Sphere { w, h, .. }
+        | DrawCommand::NinePatch { w, h, .. } => (*w, *h),
         DrawCommand::Circle { r, .. } => (*r * 2.0, *r * 2.0),
         DrawCommand::Centered { inner }
         | DrawCommand::Rotated { inner, .. }
@@ -1676,6 +2142,45 @@ fn render_draw_inner(
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
                 renderer.draw_bitmap(rx - pivot_x, ry - pivot_y, ew, eh, *bitmap_id);
+                renderer.restore();
+            }
+        }
+        DrawCommand::NinePatch {
+            x,
+            y,
+            w,
+            h,
+            bitmap_id,
+            left,
+            top,
+            right,
+            bottom,
+        } => {
+            let ew = *w * scale;
+            let eh = *h * scale;
+            let sx = *x + offset_x + (*w - ew) / 2.0;
+            let sy = *y + offset_y + (*h - eh) / 2.0;
+            let rx = cx + sx;
+            let ry = cy + sy;
+            if rotation == 0.0 {
+                renderer.draw_nine_patch(rx, ry, ew, eh, *bitmap_id, *left, *top, *right, *bottom);
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.draw_nine_patch(
+                    rx - pivot_x,
+                    ry - pivot_y,
+                    ew,
+                    eh,
+                    *bitmap_id,
+                    *left,
+                    *top,
+                    *right,
+                    *bottom,
+                );
                 renderer.restore();
             }
         }
@@ -2104,13 +2609,15 @@ fn animation_key(def: &HostAnimationDef, draw_counter: u32) -> u64 {
 /// Extract the static values from a draw command's innermost content for transition tracking.
 fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
     match draw {
-        DrawCommand::Bitmap { x, y, w, h, .. } => PrevDrawValues {
-            x: *x,
-            y: *y,
-            w: *w,
-            h: *h,
-            ..Default::default()
-        },
+        DrawCommand::Bitmap { x, y, w, h, .. } | DrawCommand::NinePatch { x, y, w, h, .. } => {
+            PrevDrawValues {
+                x: *x,
+                y: *y,
+                w: *w,
+                h: *h,
+                ..Default::default()
+            }
+        }
         DrawCommand::Sphere {
             x,
             y,
@@ -2265,7 +2772,8 @@ fn count_tree_buttons(node: &TreeNode, button_id: &mut u32, result: &mut TreeRes
         TreeNode::Paragraph { .. }
         | TreeNode::Spacer { .. }
         | TreeNode::Canvas { .. }
-        | TreeNode::Notification { .. } => {}
+        | TreeNode::Notification { .. }
+        | TreeNode::ProgressBar { .. } => {}
     }
 }
 
@@ -2283,8 +2791,11 @@ fn render_modal(
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<u16, ModalState>,
+    scroll_states: &mut HashMap<u16, ScrollState>,
     delta_ms: u32,
     result: &mut TreeResult,
+    anim_ctx: &mut AnimationContext<'_>,
+    taffy: &mut TaffyTree<NodeContext>,
 ) {
     // Get or create modal state
     let state = modal_states.entry(modal.modal_id).or_default();
@@ -2348,11 +2859,19 @@ fn render_modal(
     // This prevents ugly alpha blending of text over background content
 
     // Draw modal background
-    let modal_bg = GRAY_90;
+    let modal_bg = if modal.bg_color != 0 {
+        modal.bg_color
+    } else {
+        GRAY_90
+    };
     renderer.fill_rect(modal_x, modal_y, modal_width, modal_height, modal_bg);
 
     // Draw header background
-    let header_bg = GRAY_100;
+    let header_bg = if modal.header_color != 0 {
+        modal.header_color
+    } else {
+        GRAY_100
+    };
     renderer.fill_rect(
         modal_x,
         modal_y,
@@ -2362,10 +2881,15 @@ fn render_modal(
     );
 
     // Draw header title
+    let title_fg = if modal.title_color != 0 {
+        modal.title_color
+    } else {
+        GRAY_10
+    };
     let title_style = TextStyle {
         size: 16,
         weight: 600,
-        color: GRAY_10,
+        color: title_fg,
         ..Default::default()
     };
     let title_spans = vec![SpanData {
@@ -2407,6 +2931,7 @@ fn render_modal(
         ButtonSize::Normal,
         ICON_CLOSE,
         false,
+        None,
     );
 
     let (close_was_clicked, _) = close_clicked;
@@ -2442,24 +2967,55 @@ fn render_modal(
     let max_scroll = (modal.content_height - body_height).max(0.0);
     state.scroll_offset = state.scroll_offset.clamp(0.0, max_scroll);
 
-    // Render body content with scroll offset
-    // For now, render body children in a column layout within the body area
-    let content_y = body_y + body_padding - state.scroll_offset;
-    let clip_top = body_y + body_padding;
-    let clip_bottom = body_y + body_padding + body_height;
-    render_modal_body(
-        &modal.body,
-        body_x + body_padding,
-        content_y,
-        modal_width - body_padding * 2.0,
-        body_height,
-        renderer,
-        interaction,
-        result,
-        modal.button_index_start,
-        clip_top,
-        clip_bottom,
+    // Render body using the full taffy layout engine (same as root content).
+    let body_content_width = modal_width - body_padding * 2.0;
+    let scroll_offset = state.scroll_offset;
+    let body_col = TreeNode::Column(
+        PropsData {
+            gap: 8.0,
+            ..PropsData::default()
+        },
+        modal.body.clone(),
     );
+    let mut modal_button_id = modal.button_index_start;
+    let mut dummy_modals: Vec<ModalInfo> = Vec::new();
+    taffy.clear();
+    if let Ok(body_root) = build_taffy_node(
+        taffy,
+        &body_col,
+        result,
+        &mut modal_button_id,
+        &mut dummy_modals,
+    ) {
+        if let Ok(style) = taffy.style(body_root) {
+            let mut new_style = style.clone();
+            new_style.size = Size {
+                width: length(body_content_width),
+                height: Dimension::auto(),
+            };
+            let _ = taffy.set_style(body_root, new_style);
+        }
+        let _ = compute_taffy_layout(taffy, body_root, renderer);
+        renderer.push_scissor(
+            body_x + body_padding,
+            body_y + body_padding,
+            body_content_width,
+            body_height,
+        );
+        render_taffy_node(
+            taffy,
+            body_root,
+            body_x + body_padding,
+            body_y + body_padding - scroll_offset,
+            renderer,
+            interaction,
+            scroll_states,
+            result,
+            anim_ctx,
+            0,
+        );
+        renderer.pop_scissor();
+    }
 
     // Draw scrollbar if content exceeds viewport
     if modal.content_height > body_height {
@@ -2521,177 +3077,8 @@ fn count_node_buttons(node: &TreeNode) -> u32 {
         TreeNode::Paragraph { .. }
         | TreeNode::Spacer { .. }
         | TreeNode::Canvas { .. }
-        | TreeNode::Notification { .. } => 0,
-    }
-}
-
-/// Render modal body children with clipping
-#[expect(clippy::too_many_arguments)]
-fn render_modal_body(
-    body: &[TreeNode],
-    x: f32,
-    mut y: f32,
-    width: f32,
-    _available_height: f32,
-    renderer: &mut dyn Renderer,
-    interaction: &mut InteractionState,
-    result: &mut TreeResult,
-    button_index_start: u32,
-    clip_top: f32,
-    clip_bottom: f32,
-) {
-    let mut button_idx = button_index_start;
-
-    for node in body {
-        let node_height = render_modal_body_node(
-            node,
-            x,
-            y,
-            width,
-            renderer,
-            interaction,
-            result,
-            &mut button_idx,
-            clip_top,
-            clip_bottom,
-        );
-        y += node_height + 8.0; // 8px gap between items
-    }
-}
-
-/// Render a single modal body node, returning its height
-#[expect(clippy::too_many_arguments, clippy::too_many_lines)]
-fn render_modal_body_node(
-    node: &TreeNode,
-    x: f32,
-    y: f32,
-    width: f32,
-    renderer: &mut dyn Renderer,
-    interaction: &mut InteractionState,
-    result: &mut TreeResult,
-    button_idx: &mut u32,
-    clip_top: f32,
-    clip_bottom: f32,
-) -> f32 {
-    match node {
-        TreeNode::Paragraph {
-            base_style, spans, ..
-        } => {
-            // Measure first to get actual height (cached)
-            let (_, h) = renderer.measure_paragraph(base_style, spans, Some(width));
-
-            // Only render if at least partially visible
-            if y < clip_bottom && y + h > clip_top {
-                renderer.draw_paragraph_clipped(
-                    base_style,
-                    spans,
-                    x,
-                    y,
-                    width,
-                    clip_top,
-                    clip_bottom,
-                );
-            }
-            h
-        }
-        TreeNode::Button {
-            label,
-            style,
-            size,
-            icon_id,
-            disabled,
-        } => {
-            let btn_id = *button_idx;
-            *button_idx += 1;
-
-            let sz = ButtonSize::from(*size);
-            let btn_height = sz.height();
-            let btn_width = if *icon_id != 0 && label.is_empty() {
-                btn_height
-            } else if *icon_id != 0 {
-                let text_w = renderer.measure_text(label, sz.font_size());
-                sz.h_padding() + sz.icon_size() + sz.icon_text_gap() + text_w + sz.h_padding()
-            } else {
-                let text_w = renderer.measure_text(label, sz.font_size());
-                text_w + sz.h_padding() * 2.0
-            }
-            .min(width); // Clamp to available width so labels get ellipsis-truncated
-
-            if y < clip_bottom && y + btn_height > clip_top {
-                let mut key_buf = [0_u8; 16];
-                let key = format_btn_key(btn_id, &mut key_buf);
-                let clicked = draw_button(
-                    renderer,
-                    interaction,
-                    key,
-                    label,
-                    x,
-                    y,
-                    btn_width,
-                    btn_height,
-                    ButtonStyle::from(*style as u32),
-                    sz,
-                    *icon_id,
-                    *disabled,
-                );
-                let (was_clicked, _) = clicked;
-                if was_clicked && (btn_id as usize) < result.clicks.len() {
-                    result.clicks[btn_id as usize] = true;
-                }
-            }
-
-            btn_height
-        }
-        TreeNode::Column(_, children) => {
-            let mut total_height = 0.0_f32;
-            let mut child_y = y;
-            for child in children {
-                let h = render_modal_body_node(
-                    child,
-                    x,
-                    child_y,
-                    width,
-                    renderer,
-                    interaction,
-                    result,
-                    button_idx,
-                    clip_top,
-                    clip_bottom,
-                );
-                child_y += h + 8.0;
-                total_height += h + 8.0;
-            }
-            (total_height - 8.0).max(0.0) // Remove last gap
-        }
-        TreeNode::Row(_, children) => {
-            let child_count = children.len().max(1) as f32;
-            let child_width = width / child_count;
-            let mut max_height = 0.0_f32;
-            let mut child_x = x;
-            for child in children {
-                let h = render_modal_body_node(
-                    child,
-                    child_x,
-                    y,
-                    (child_width - 8.0).max(0.0),
-                    renderer,
-                    interaction,
-                    result,
-                    button_idx,
-                    clip_top,
-                    clip_bottom,
-                );
-                child_x += child_width;
-                max_height = max_height.max(h);
-            }
-            max_height
-        }
-        TreeNode::Center(..)
-        | TreeNode::Scroll { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Canvas { .. }
-        | TreeNode::Modal { .. }
-        | TreeNode::Notification { .. } => 0.0,
+        | TreeNode::Notification { .. }
+        | TreeNode::ProgressBar { .. } => 0,
     }
 }
 
@@ -2895,6 +3282,16 @@ pub fn render_notification_banner(
     }
 }
 
+fn bg_np_from_props(props: &PropsData) -> BgNinePatch {
+    BgNinePatch {
+        bitmap_id: props.bg_np_id,
+        left: props.bg_np_left,
+        top: props.bg_np_top,
+        right: props.bg_np_right,
+        bottom: props.bg_np_bottom,
+    }
+}
+
 fn padding_uniform(v: f32) -> taffy::Rect<LengthPercentage> {
     taffy::Rect {
         top: length(v),
@@ -2969,6 +3366,7 @@ mod tests {
 
     #[test]
     fn test_props_size() {
-        assert_eq!(std::mem::size_of::<PropsData>(), PropsData::SIZE);
+        // In-memory size may differ from wire SIZE due to alignment padding
+        assert!(std::mem::size_of::<PropsData>() >= PropsData::SIZE);
     }
 }

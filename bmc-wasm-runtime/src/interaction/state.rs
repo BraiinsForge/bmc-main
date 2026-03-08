@@ -170,13 +170,21 @@ impl InteractionState {
     }
 
     /// Hit test against registered regions.
+    ///
+    /// Returns the smallest (most specific) region containing the point.
+    /// This ensures buttons inside scroll containers win over the scroll
+    /// container's own hit region.
     fn hit_test(&self, x: i32, y: i32) -> Option<String> {
+        let mut best: Option<(&str, u64)> = None;
         for (key, rect) in &self.hit_regions {
             if rect.contains(x, y) {
-                return Some(key.clone());
+                let area = u64::from(rect.w) * u64::from(rect.h);
+                if best.as_ref().is_none_or(|(_, best_area)| area < *best_area) {
+                    best = Some((key, area));
+                }
             }
         }
-        None
+        best.map(|(key, _)| key.to_owned())
     }
 }
 

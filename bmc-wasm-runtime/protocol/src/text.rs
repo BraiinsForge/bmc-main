@@ -184,7 +184,7 @@ impl TextStyle {
     }
 }
 
-/// Fixed-size props structure (36 bytes)
+/// Fixed-size props structure (50 bytes)
 #[derive(Clone, Copy, Default, Debug)]
 #[repr(C)]
 pub struct PropsData {
@@ -198,10 +198,16 @@ pub struct PropsData {
     pub max_width: f32,
     pub max_height: f32,
     pub cross_align: CrossAlign,
+    /// Nine-patch background image. `bitmap_id == 0` means none.
+    pub bg_np_id: u16,
+    pub bg_np_left: u16,
+    pub bg_np_top: u16,
+    pub bg_np_right: u16,
+    pub bg_np_bottom: u16,
 }
 
 impl PropsData {
-    pub const SIZE: usize = 40;
+    pub const SIZE: usize = 50;
 
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
@@ -216,6 +222,11 @@ impl PropsData {
         buf[28..32].copy_from_slice(&self.max_width.to_le_bytes());
         buf[32..36].copy_from_slice(&self.max_height.to_le_bytes());
         buf[36..40].copy_from_slice(&(self.cross_align as u32).to_le_bytes());
+        buf[40..42].copy_from_slice(&self.bg_np_id.to_le_bytes());
+        buf[42..44].copy_from_slice(&self.bg_np_left.to_le_bytes());
+        buf[44..46].copy_from_slice(&self.bg_np_top.to_le_bytes());
+        buf[46..48].copy_from_slice(&self.bg_np_right.to_le_bytes());
+        buf[48..50].copy_from_slice(&self.bg_np_bottom.to_le_bytes());
         buf
     }
 
@@ -234,6 +245,11 @@ impl PropsData {
             cross_align: CrossAlign::from(u32::from_le_bytes([
                 data[36], data[37], data[38], data[39],
             ])),
+            bg_np_id: u16::from_le_bytes([data[40], data[41]]),
+            bg_np_left: u16::from_le_bytes([data[42], data[43]]),
+            bg_np_top: u16::from_le_bytes([data[44], data[45]]),
+            bg_np_right: u16::from_le_bytes([data[46], data[47]]),
+            bg_np_bottom: u16::from_le_bytes([data[48], data[49]]),
         }
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "bmc-wasm-sdk"
+name = "bmc-wasm-skin"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,9 +8,6 @@ crate-type = ["rlib"]
 
 [dependencies]
 bmc-wasm-protocol = { path = "../protocol" }
-bmc-wasm-sdk-macros = { path = "../sdk-macros" }
-bmc-wasm-skin = { path = "../skin" }
-ufmt = { workspace = true }
 
 [lints.rust]
 unused_must_use = "deny"
@@ -24,6 +21,3 @@ module_name_repetitions = "allow"
 
 # Keep this crate out of the main workspace
 [workspace]
-
-[workspace.dependencies]
-ufmt = { version = "0.2", features = ["std"] }

@@ -407,7 +407,13 @@ impl Renderer for FemtoVgRenderer {
     // -- Bitmaps --
 
     fn register_bitmap(&mut self, data: &[u8]) -> u16 {
-        self.bitmap_registry.register(data, &mut self.canvas)
+        self.bitmap_registry
+            .register(data, &mut self.canvas, femtovg::ImageFlags::empty())
+    }
+
+    fn register_bitmap_nearest(&mut self, data: &[u8]) -> u16 {
+        self.bitmap_registry
+            .register(data, &mut self.canvas, femtovg::ImageFlags::NEAREST)
     }
 
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16) {
@@ -418,6 +424,36 @@ impl Renderer for FemtoVgRenderer {
 
     fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
         self.bitmap_registry.sample(bitmap_id, x, y, w, h)
+    }
+
+    fn draw_nine_patch(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+        left: u16,
+        top: u16,
+        right: u16,
+        bottom: u16,
+    ) {
+        if let Some((image_id, src_w, src_h)) = self.bitmap_registry.get_with_size(bitmap_id) {
+            super::bitmap::draw_nine_patch(
+                &mut self.canvas,
+                image_id,
+                src_w as f32,
+                src_h as f32,
+                x,
+                y,
+                w,
+                h,
+                f32::from(left),
+                f32::from(top),
+                f32::from(right),
+                f32::from(bottom),
+            );
+        }
     }
 
     #[expect(clippy::many_single_char_names)]

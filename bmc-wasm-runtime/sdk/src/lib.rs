@@ -36,7 +36,9 @@ pub mod ws;
 pub mod xml;
 
 pub use bmc_wasm_protocol::*;
-pub use bmc_wasm_sdk_macros::{include_bitmap, include_icon, json};
+pub use bmc_wasm_sdk_macros::{
+    include_bitmap, include_icon, include_nine_patch, include_skin, json,
+};
 pub use format::{format_date, format_duration};
 pub use host::{
     ButtonSize, ButtonStyle, SizeVariant, SystemTime, TouchHit, WidgetSize, draw_text, fill_rect,
@@ -45,10 +47,12 @@ pub use host::{
 pub use json::JsonDoc;
 pub use net::{FetchRequest, FetchResponse, fetch, fetch_after};
 pub use tree::{
-    AnimationDef, Bitmap, Draw, Icon, Interpolation, ModalProps, Node, NotificationKind, PropsData,
-    Span, StyleResult, TextStyle, TransitionDef, TreeRenderResult, begin_tree, canvas, center, col,
-    make_button, modal, modal_styled, notification, paragraph, render_ui, row, scroll, spacer,
-    span, text, touchable, with_buffer,
+    AnimationDef, Bitmap, ButtonSkin, Draw, Icon, Interpolation, ModalProps, NinePatch,
+    NinePatchAsset, Node, NotificationKind, ProgressMode, PropsData, Skin, SkinAsset, SkinEntry,
+    SkinPalette, SliderSkin, Span, StyleResult, TextStyle, TransitionDef, TreeRenderResult,
+    begin_tree, canvas, center, col, color_or, ensure_nine_patch_registered, make_button, modal,
+    modal_styled, notification, paragraph, progress_bar, render_ui, row, scroll, spacer, span,
+    text, touchable, with_buffer,
 };
 pub use ufmt;
 pub use ws::{Ws, WsEvent, ws_connect};
@@ -61,11 +65,28 @@ pub fn __macro_string_from(s: impl Into<String>) -> String {
 }
 
 /// Shorthand for PropsData: `props!()` or `props!(gap: 16.0, background: 0xFF)`
+///
+/// Supports a special `bg_nine_patch: <NinePatch>` field that expands a
+/// `NinePatch` into the underlying `bg_np_*` fields on `PropsData`.
 #[macro_export]
 macro_rules! props {
     () => { $crate::tree::PropsData::default() };
-    ($($field:ident: $value:expr),* $(,)?) => {
-        $crate::tree::PropsData { $($field: $value),*, ..Default::default() }
+    ($($field:ident: $value:expr),* $(,)?) => {{
+        #[allow(unused_mut)]
+        let mut p = $crate::tree::PropsData::default();
+        $(props!(@set p, $field: $value);)*
+        p
+    }};
+    (@set $p:ident, bg_nine_patch: $v:expr) => {{
+        let np = $v;
+        $p.bg_np_id = np.bitmap_id;
+        $p.bg_np_left = np.left;
+        $p.bg_np_top = np.top;
+        $p.bg_np_right = np.right;
+        $p.bg_np_bottom = np.bottom;
+    }};
+    (@set $p:ident, $field:ident: $v:expr) => {
+        $p.$field = $v;
     };
 }
 
@@ -91,17 +112,18 @@ macro_rules! button {
             [size: $crate::ButtonSize::Normal]
             [icon: 0u16]
             [disabled: false]
+            [skin: None]
             $($($rest)*)?
         )
     };
 
     // Terminal — all fields consumed, build the node.
-    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr] $(,)?) => {
-        $crate::make_button($crate::__macro_string_from($label), $s, $sz, $i, $d)
+    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr] [skin: $sk:expr] $(,)?) => {
+        $crate::make_button($crate::__macro_string_from($label), $s, $sz, $i, $d, $sk)
     };
 
     // style: Variant
-    (@acc [$label:expr] [style: $_s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr]
+    (@acc [$label:expr] [style: $_s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr] [skin: $sk:expr]
      style: $v:ident $(, $($rest:tt)*)?) => {
         button!(@acc
             [$label]
@@ -109,12 +131,13 @@ macro_rules! button {
             [size: $sz]
             [icon: $i]
             [disabled: $d]
+            [skin: $sk]
             $($($rest)*)?
         )
     };
 
     // size: Variant
-    (@acc [$label:expr] [style: $s:expr] [size: $_sz:expr] [icon: $i:expr] [disabled: $d:expr]
+    (@acc [$label:expr] [style: $s:expr] [size: $_sz:expr] [icon: $i:expr] [disabled: $d:expr] [skin: $sk:expr]
      size: $v:ident $(, $($rest:tt)*)?) => {
         button!(@acc
             [$label]
@@ -122,12 +145,13 @@ macro_rules! button {
             [size: $crate::ButtonSize::$v]
             [icon: $i]
             [disabled: $d]
+            [skin: $sk]
             $($($rest)*)?
         )
     };
 
     // icon: expr
-    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $_i:expr] [disabled: $d:expr]
+    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $_i:expr] [disabled: $d:expr] [skin: $sk:expr]
      icon: $v:expr $(, $($rest:tt)*)?) => {
         button!(@acc
             [$label]
@@ -135,12 +159,13 @@ macro_rules! button {
             [size: $sz]
             [icon: $v]
             [disabled: $d]
+            [skin: $sk]
             $($($rest)*)?
         )
     };
 
     // disabled: expr
-    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $_d:expr]
+    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $_d:expr] [skin: $sk:expr]
      disabled: $v:expr $(, $($rest:tt)*)?) => {
         button!(@acc
             [$label]
@@ -148,8 +173,113 @@ macro_rules! button {
             [size: $sz]
             [icon: $i]
             [disabled: $v]
+            [skin: $sk]
             $($($rest)*)?
         )
+    };
+
+    // skin: expr
+    (@acc [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr] [skin: $_sk:expr]
+     skin: $v:expr $(, $($rest:tt)*)?) => {
+        button!(@acc
+            [$label]
+            [style: $s]
+            [size: $sz]
+            [icon: $i]
+            [disabled: $d]
+            [skin: $v]
+            $($($rest)*)?
+        )
+    };
+}
+
+/// Progress bar node with keyword-style options and sensible defaults.
+///
+/// The first positional argument is the progress mode (required).
+///
+/// # Examples
+/// ```ignore
+/// progress_bar!(ProgressMode::Fraction(0.5))
+/// progress_bar!(ProgressMode::Indeterminate, active: true)
+/// progress_bar!(ProgressMode::Fraction(vol), touch_key: "volume", skin: slider_skin)
+/// ```
+#[macro_export]
+macro_rules! progress_bar {
+    // Entry point:
+    ($mode:expr $(, $($rest:tt)*)?) => {
+        progress_bar!(@acc
+            [$mode]
+            [touch_key: ""]
+            [track_h: 2.0]
+            [active: false]
+            [fill_color: 0xFFFF_FFFF]
+            [track_color: 0xFF70_7070]
+            [bg_color: 0u32]
+            [skin: None]
+            $($($rest)*)?
+        )
+    };
+
+    // Terminal — all fields consumed, build the node.
+    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
+     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr] $(,)?) => {
+        $crate::progress_bar($tk, $th, $mode, $a, $fc, $tc, $bg, $sk)
+    };
+
+    // touch_key: expr
+    (@acc [$mode:expr] [touch_key: $_tk:expr] [track_h: $th:expr] [active: $a:expr]
+     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
+     touch_key: $v:expr $(, $($rest:tt)*)?) => {
+        progress_bar!(@acc [$mode] [touch_key: $v] [track_h: $th] [active: $a]
+            [fill_color: $fc] [track_color: $tc] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
+    };
+
+    // track_h: expr
+    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $_th:expr] [active: $a:expr]
+     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
+     track_h: $v:expr $(, $($rest:tt)*)?) => {
+        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $v] [active: $a]
+            [fill_color: $fc] [track_color: $tc] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
+    };
+
+    // active: expr
+    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $_a:expr]
+     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
+     active: $v:expr $(, $($rest:tt)*)?) => {
+        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $v]
+            [fill_color: $fc] [track_color: $tc] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
+    };
+
+    // fill_color: expr
+    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
+     [fill_color: $_fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
+     fill_color: $v:expr $(, $($rest:tt)*)?) => {
+        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $a]
+            [fill_color: $v] [track_color: $tc] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
+    };
+
+    // track_color: expr
+    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
+     [fill_color: $fc:expr] [track_color: $_tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
+     track_color: $v:expr $(, $($rest:tt)*)?) => {
+        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $a]
+            [fill_color: $fc] [track_color: $v] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
+    };
+
+    // bg_color: expr
+    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
+     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $_bg:expr] [skin: $sk:expr]
+     bg_color: $v:expr $(, $($rest:tt)*)?) => {
+        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $a]
+            [fill_color: $fc] [track_color: $tc] [bg_color: $v] [skin: $sk] $($($rest)*)?)
+    };
+
+    // skin: expr
+    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
+     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $_sk:expr]
+     skin: $v:expr $(, $($rest:tt)*)?) => {
+        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $a]
+            [fill_color: $fc] [track_color: $tc] [bg_color: $bg] [skin: $v] $($($rest)*)?)
     };
 }
 

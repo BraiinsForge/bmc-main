@@ -1,18 +1,24 @@
 [package]
-name = "bmc-wasm-sdk-macros"
+name = "bmc-wasm-skin-tools"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-proc-macro = true
+[[bin]]
+name = "wsz-to-skin"
+path = "src/main.rs"
+
+[[bin]]
+name = "skin-validate"
+path = "src/validate.rs"
+
+[[bin]]
+name = "skin-zip"
+path = "src/zip_skin.rs"
 
 [dependencies]
-bmc-icon-compiler = { path = "../icon-compiler" }
-bmc-wasm-skin = { path = "../skin" }
-image = { workspace = true, default-features = false, features = ["png"] }
-proc-macro2 = { workspace = true }
-quote = { workspace = true }
-syn = { workspace = true }
+bmc-wasm-skin = { path = ".." }
+clap = { workspace = true, features = ["derive"] }
+image = { workspace = true, default-features = false, features = ["bmp", "png"] }
 toml.workspace = true
 zip = { workspace = true, default-features = false, features = ["deflate"] }
 
@@ -30,9 +36,7 @@ module_name_repetitions = "allow"
 [workspace]
 
 [workspace.dependencies]
+clap = "4"
 image = { version = "0.25", default-features = false }
-proc-macro2 = "1"
-quote = "1"
-syn = "2"
 toml = "0.8"
 zip = { version = "2", default-features = false }

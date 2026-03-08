@@ -354,6 +354,7 @@ impl WasmWidgetRuntime {
                         ButtonSize::Normal,
                         0,
                         false,
+                        None,
                     );
                     return i32::from(clicked.0);
                 }
@@ -415,6 +416,37 @@ impl WasmWidgetRuntime {
                 if let Some(data) = bitmap_data {
                     let state = caller.data_mut();
                     u32::from(state.renderer.register_bitmap(&data))
+                } else {
+                    0
+                }
+            },
+        )?;
+
+        // Bitmap registration with nearest-neighbor filtering (no bilinear interpolation).
+        // For pixel-art / 9-patch skin assets.
+        linker.func_wrap(
+            "env",
+            "host_register_bitmap_nearest",
+            |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
+                let bitmap_data = {
+                    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                    if let Some(memory) = memory {
+                        let data = memory.data(&caller);
+                        let start = data_ptr as usize;
+                        let end = start + data_len as usize;
+                        if end <= data.len() {
+                            Some(data[start..end].to_vec())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(data) = bitmap_data {
+                    let state = caller.data_mut();
+                    u32::from(state.renderer.register_bitmap_nearest(&data))
                 } else {
                     0
                 }

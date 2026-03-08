@@ -94,8 +94,31 @@ pub trait Renderer {
     /// Register bitmap data (PNG/JPEG bytes), decode and upload to GPU. Returns opaque ID.
     fn register_bitmap(&mut self, data: &[u8]) -> u16;
 
+    /// Register bitmap with nearest-neighbor filtering (no bilinear interpolation).
+    /// Use for pixel-art assets (9-patch skins) where bilinear filtering would
+    /// cause color bleeding across sub-rect boundaries.
+    fn register_bitmap_nearest(&mut self, data: &[u8]) -> u16;
+
     /// Draw a registered bitmap at the given position and size.
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16);
+
+    /// Draw a 9-patch bitmap: slice into 9 quads using insets and stretch appropriately.
+    ///
+    /// Corners stay fixed, edges stretch in one axis, center stretches both.
+    /// Insets define the distance from each edge to the stretchable region boundary.
+    #[expect(clippy::too_many_arguments)]
+    fn draw_nine_patch(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+        left: u16,
+        top: u16,
+        right: u16,
+        bottom: u16,
+    );
 
     /// Sample the average color of a rectangular region within a registered bitmap.
     ///

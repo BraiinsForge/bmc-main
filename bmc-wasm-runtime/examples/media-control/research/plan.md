@@ -103,11 +103,10 @@ All stages complete. UI reference image at `research/ui-example-1.png`.
 
 ## Known issues
 
-### Kodi credentials hardcoded
+### Kodi credentials
 
-The Kodi controller uses hardcoded `kodi:kodi` Basic Auth (`KODI_PASSWORD` constant in `kodi.rs`). Needs
-user-configurable credentials: widget settings UI input, pass to `kodi::connect()`, dynamic `Authorization` header.
-Should allow empty password for Kodi instances with auth disabled.
+Kodi credentials are now read from an ini config file (no longer hardcoded). May still need widget settings UI for
+user-configurable credentials in the future.
 
 ### Volume setting glitchy (Cast)
 
@@ -231,10 +230,223 @@ A skin could be a bundle (zip/tar) containing:
 Widgets reference elements by name (`Draw::skin("button", x, y, w, h)`), host resolves to the active skin's bitmap +
 insets. Switching skins = loading a different bundle, zero widget code changes.
 
-**Proof-of-concept test case: Winamp skin.** The classic `.wsz` format (renamed zip) contains all UI elements as bitmaps
-with known fixed layouts. A converter could extract the relevant pieces (main window, playlist, equalizer backgrounds,
-button strips) into 9-patch format. The media-control widget rendering a Winamp skin on the Deck display would be a
-compelling demo of the system's flexibility.
+**Proof-of-concept test case: Winamp skin.** The classic `.wsz` format (renamed zip) contains all UI elements as BMP
+sprite sheets with known fixed pixel layouts. A build-time converter script slices them into individual PNGs and emits a
+manifest with insets. The media-control widget rendering a Winamp skin on the Deck display would be a compelling demo.
+
+Resources:
+
+- [Winamp Skin Museum](https://skins.webamp.org/) — 100k+ skins, browsable with preview
+- [Webamp source](https://github.com/captbaritone/webamp) — JS reimplementation, skin parser is the definitive format
+  reference
+- [How Webamp loads skins](https://jordaneldredge.com/how-winamp2-js-loads-native-skins-in-your-browser/) — detailed
+  walkthrough of sprite sheet slicing
+- [Archive.org collection](https://archive.org/details/winampskins) — bulk download
+- [WSZ format spec](http://wiki.winamp.com/wiki/WSZ_Files) — pixel coordinates for each UI element
+
+**Host-integrated skinning design:**
+
+The preferred approach is optional 9-patch skinning on host-side components (buttons, progress bars), not widget-side
+reimplementation via touchable canvases. The widget passes skin overrides alongside existing component properties; when
+absent, the host renders with default styles (fully backward compatible).
+
+SDK types:
+
+```rust
+/// Parsed 9-patch element — bitmap ID + insets defining stretchable regions.
+/// Created via `NinePatch::from_png()` which reads the Android-format 1px border
+/// markers automatically — developers never specify insets manually.
+struct NinePatch {
+    bitmap_id: u16,
+    left: u16,
+    top: u16,
+    right: u16,
+    bottom: u16,
+}
+
+/// Optional skin override for a button.
+/// Pressed state falls back to normal (with host-side darkening) when not provided —
+/// never falls back to the default solid-color style once a skin is active.
+struct ButtonSkin {
+    normal: NinePatch,
+    pressed: Option<NinePatch>, // None = darken normal 9-patch
+    text_color: u32,            // 0 = use default for the style
+}
+
+/// Optional skin override for a progress/volume bar.
+/// Same fallback rule: missing sub-elements inherit from their parent skin element,
+/// not from the default unskinned rendering.
+struct BarSkin {
+    track_bg: NinePatch,        // background track
+    track_fg: NinePatch,        // filled portion
+    thumb: Option<NinePatch>,   // seek dot — None = circle (current default)
+}
+
+/// Per-widget skin config — built at init from decoded assets.
+struct Skin {
+    button: Option<ButtonSkin>,
+    button_ghost: Option<ButtonSkin>,  // separate skin for ghost buttons
+    bar: Option<BarSkin>,
+    panel: Option<NinePatch>,          // layout background override
+    frame: Option<NinePatch>,          // album art frame
+}
+```
+
+**Fallback rule:** once a skin element is provided for a component, all states of that component stay within the skin.
+For example, if `ButtonSkin.pressed` is `None`, the host darkens the `normal` 9-patch — it never falls back to the
+default solid-color `fill_rect`. This avoids jarring visual mixing between skinned and unskinned states.
+
+Widget usage:
+
+```
+// Buttons — skin is an optional override, style still controls semantics
+button!("Play", icon: play_id, style: Ghost, size: Small, skin: skin.button_ghost)
+
+// Progress bar — host component (not a canvas anymore)
+progress_bar!(value: progress, width: w, height: h, skin: skin.bar)
+
+// Layout panel background — 9-patch instead of solid color
+row(props!(skin: skin.panel, padding: 16.0, gap: 8.0), [...])
+
+// Direct 9-patch draw on canvas — for custom widget elements
+canvas(props!(...), vec![
+    Draw::nine_patch(0.0, 0.0, w, h, skin.frame),
+])
+```
+
+Wire format extension for button (trailing optional payload):
+
+```
+[NODE_BUTTON][style:u8][size:u8][icon_id:u16][disabled:u8][label_len:u16][label...]
+[has_skin:u8]
+  if has_skin != 0:
+    [normal_bitmap_id:u16][n_left:u16][n_top:u16][n_right:u16][n_bottom:u16]
+    [has_pressed:u8]
+      if has_pressed: [pressed_bitmap_id:u16][p_left:u16][p_top:u16][p_right:u16][p_bottom:u16]
+    [text_color:u32]
+```
+
+Host rendering change: in `draw_button()`, check if skin data is present. If so, draw the 9-patch background instead of
+`fill_rect` with the hardcoded style color. When pressed and no pressed 9-patch is provided, apply a darkening tint over
+the normal 9-patch (same approach as the current brightness shift for solid colors). All other button logic (icon
+positioning, text layout, ellipsis, scissoring, click detection) stays identical.
+
+**SDK draw primitive** (opcode `0x48` — `DRAW_NINE_PATCH`):
+
+```
+[DRAW_NINE_PATCH][x:f32][y:f32][w:f32][h:f32][bitmap_id:u16][left:u16][top:u16][right:u16][bottom:u16]
+```
+
+Exposed in the SDK as `Draw::nine_patch()` for direct use in canvas draws. Widgets building custom interactive elements
+via `touchable()` can use this directly without going through the component system. The host renderer slices the bitmap
+into 9 quads with appropriate UV mapping — FemtoVG already supports sub-rect bitmap rendering, so this is
+straightforward.
+
+**SDK helper — `NinePatch::from_png()`:**
+
+Parses the Android-format 1px black-pixel border that encodes stretchable regions, strips the border, registers the
+inner bitmap via `host::register_bitmap()`, and returns a `NinePatch` with insets populated automatically. The developer
+never touches pixel coordinates:
+
+```
+let skin = Skin {
+    button: Some(ButtonSkin {
+        normal: NinePatch::from_png(include_bytes!("skin/button.9.png")),
+        pressed: Some(NinePatch::from_png(include_bytes!("skin/button_pressed.9.png"))),
+        text_color: WHITE,
+    }),
+    ..Default::default()
+};
+```
+
+The parsing logic is ~30 lines (scan top row + left column for black pixel runs). Reference crate:
+[`nine_patch_drawable`](https://github.com/kanru/nine_patch_drawable) — but simple enough to implement inline in the SDK
+without a dependency.
+
+### Skin system — implementation status
+
+**Extracted into `bmc-wasm-skin` crate** (`bmc-wasm-runtime/skin/`). Current state:
+
+**Continuation prompt:**
+
+> Run the testbed with the media-control widget and verify the Winamp-skinned transport buttons render correctly —
+> beveled 9-patch frame with our SVG icons on top, icon colors from `skin.toml` (normal: `#bdced6`, pressed: `#4a5a6b`).
+> The skin zip is at `examples/media-control/assets/skins/winamp.zip`, loaded via `include_skin!` at line 27 of
+> `examples/media-control/src/lib.rs`. If the colors look wrong, the `wsz-to-skin` converter's fg sampling is unreliable
+> (hardcoded pixel offset) — manually edit `skin.toml` inside the zip or improve the sampling logic in
+> `skin/tools/src/main.rs`. After visual verification, continue with the "next tasks" below.
+
+**Done:**
+
+- `bmc-wasm-skin` crate — types (`NinePatch`, `NinePatchAsset`, `ButtonSkin`, `Skin`, `SkinAsset`, `SkinEntry`),
+  registration (callback-based bitmap registrar), 9-patch parsing utility (`parse_nine_patch_insets`)
+- `include_skin!("path.zip")` proc macro — reads zip at compile time, parses `.9.png` borders, reads `skin.toml`
+  metadata (per-asset `color` field), emits `Skin` literal
+- `include_nine_patch!` refactored to use shared `parse_nine_patch_insets()`
+- `skin.toml` metadata format inside skin zips — maps asset names to properties (currently: `color = "#RRGGBB"`)
+- `SkinEntry` — resolved asset with `nine_patch` + `color` from metadata
+- `ButtonSkin` fields: `normal`, `pressed`, `text_color`, `pressed_text_color`, `opaque`
+- Host button renderer: per-state text color, `opaque` flag skips icon/label rendering
+- `wsz-to-skin` Rust CLI tool (`skin/tools/`) — extracts generic button frame from Winamp `.wsz`, clears center symbol,
+  generates proper 9-patch with bevel-aware insets, samples fg colors, writes `skin.toml`
+- Media-control widget: transport buttons skinned with Winamp button frame + our SVG icons, colors from `skin.toml`
+
+**In progress / next:**
+
+- Verify icon colors render correctly with the sampled values from `skin.toml`
+- Improve `wsz-to-skin` fg color sampling (currently hardcoded offset, unreliable for some skins)
+- Consider adding `BarSkin` for progress/volume bars (track bg, track fg, thumb)
+- Consider `panel` / `frame` 9-patch assets for layout backgrounds and album art frames
+- Extract more sprite sheets from `.wsz` (TITLEBAR.BMP, MAIN.BMP, POSBAR.BMP, etc.)
+
+**File layout:**
+
+```
+bmc-wasm-runtime/
+├── skin/                    # bmc-wasm-skin crate (types + parsing, zero deps, WASM-safe)
+│   ├── Cargo.toml
+│   ├── src/lib.rs
+│   └── tools/               # wsz-to-skin converter (standalone binary crate)
+│       ├── Cargo.toml
+│       └── src/main.rs
+├── sdk-macros/               # include_skin!, include_nine_patch! (build-time, depends on skin + image + zip + toml)
+├── sdk/                      # re-exports skin types, init callback in begin_tree()
+└── src/components/button.rs  # host renderer: 9-patch bg, per-state text color, opaque flag
+```
+
+**Skin zip format:**
+
+```
+my-skin.zip
+├── button_normal.9.png    # 9-patch with 1px border (stretch markers for center only)
+├── button_pressed.9.png
+└── skin.toml              # per-asset metadata
+```
+
+```toml
+[button_normal]
+color = "#bdced6"   # fg/icon color for normal state (RRGGBB)
+
+[button_pressed]
+color = "#4a5a6b"   # fg/icon color for pressed state
+```
+
+**Widget usage:**
+
+```
+const SKIN: Skin = include_skin!("assets/skins/winamp.zip");
+
+let normal = SKIN.get("button_normal");  // → SkinEntry { nine_patch, color }
+let pressed = SKIN.get("button_pressed");
+let skin = Some(ButtonSkin {
+    normal: normal.nine_patch,
+    pressed: Some(pressed.nine_patch),
+    text_color: normal.color,
+    pressed_text_color: pressed.color,
+    opaque: false,
+});
+button!("", icon: play_id, style: Ghost, size: Small, skin: skin)
+```
 
 ### Shader escape hatch
 

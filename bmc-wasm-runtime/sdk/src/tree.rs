@@ -17,13 +17,18 @@ use std::cell::RefCell;
 
 use bmc_wasm_protocol::{
     AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
-    DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE, DRAW_TEXT, Easing, GRAY_10,
-    LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
-    NODE_PARAGRAPH, NODE_ROW, NODE_SCROLL, NODE_SPACER,
+    DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE, DRAW_TEXT,
+    Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
+    NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER,
 };
 
 // Re-export for macro paths
 pub use bmc_wasm_protocol::{PropsData, TextStyle};
+
+pub use bmc_wasm_skin::{
+    ButtonSkin, NinePatch, NinePatchAsset, Skin, SkinAsset, SkinEntry, SkinPalette, SliderSkin,
+    color_or, ensure_nine_patch_registered,
+};
 
 use crate::host::{ButtonSize, ButtonStyle};
 
@@ -389,6 +394,60 @@ impl TreeBuffer {
         self.write_u16(child_count);
     }
 
+    /// Write a progress bar node
+    /// Format: [NODE_PROGRESS_BAR][key_len:u16][key_bytes...][track_h:f32]
+    ///         [mode:u8][fraction:f32][active:u8][fill_color:u32][track_color:u32][bg_color:u32]
+    #[expect(clippy::too_many_arguments)]
+    pub fn write_progress_bar(
+        &mut self,
+        touch_key: &str,
+        track_h: f32,
+        mode: &ProgressMode,
+        active: bool,
+        fill_color: u32,
+        track_color: u32,
+        bg_color: u32,
+        skin: &Option<SliderSkin>,
+    ) {
+        self.write_u8(NODE_PROGRESS_BAR);
+        let key_bytes = touch_key.as_bytes();
+        self.write_u16(key_bytes.len() as u16);
+        self.write_bytes(key_bytes);
+        self.write_f32(track_h);
+        match mode {
+            ProgressMode::Fraction(f) => {
+                self.write_u8(0);
+                self.write_f32(*f);
+            }
+            ProgressMode::Indeterminate => {
+                self.write_u8(1);
+                self.write_f32(0.0); // unused, keeps format fixed-size
+            }
+        }
+        self.write_u8(u8::from(active));
+        self.write_u32(fill_color);
+        self.write_u32(track_color);
+        self.write_u32(bg_color);
+        // Optional slider skin
+        if let Some(sk) = skin {
+            self.write_u8(1);
+            // Track 9-patch: bitmap_id + insets
+            self.write_u16(sk.track.bitmap_id);
+            self.write_u16(sk.track.left);
+            self.write_u16(sk.track.top);
+            self.write_u16(sk.track.right);
+            self.write_u16(sk.track.bottom);
+            self.write_u16(sk.track_h);
+            // Thumb
+            self.write_u16(sk.thumb_id);
+            self.write_u16(sk.thumb_w);
+            self.write_u16(sk.thumb_h);
+            self.write_u16(sk.thumb_pressed_id);
+        } else {
+            self.write_u8(0);
+        }
+    }
+
     /// Write a rect draw command (local coords)
     pub fn write_draw_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32) {
         self.write_u8(DRAW_RECT);
@@ -413,6 +472,10 @@ std::thread_local! {
 
 /// Begin building a tree (clears buffer)
 pub fn begin_tree() {
+    use std::sync::Once;
+    static SKIN_INIT: Once = Once::new();
+    SKIN_INIT.call_once(|| bmc_wasm_skin::init(host::register_bitmap_nearest));
+
     TREE_BUFFER.with(|buf| buf.borrow_mut().clear());
 }
 
@@ -507,6 +570,14 @@ pub enum Draw {
         y: f32,
         text: String,
         style: TextStyle,
+    },
+    /// 9-patch bitmap: sliced into 9 quads, corners stay fixed, edges stretch.
+    NinePatch {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        nine_patch: NinePatch,
     },
     /// 3D sphere: equirectangular texture mapped onto a sphere with optional light shading.
     Sphere {
@@ -644,6 +715,34 @@ impl Draw {
             w,
             h,
             bitmap_id,
+        }
+    }
+
+    /// 9-patch bitmap at local position within canvas.
+    ///
+    /// On first call for a given asset, registers its bitmap with the host.
+    /// Subsequent calls reuse the cached ID — zero per-frame overhead.
+    #[must_use]
+    pub fn nine_patch(x: f32, y: f32, w: f32, h: f32, asset: &NinePatchAsset) -> Self {
+        let np = ensure_nine_patch_registered(asset);
+        Self::NinePatch {
+            x,
+            y,
+            w,
+            h,
+            nine_patch: np,
+        }
+    }
+
+    /// 9-patch from a pre-registered [`NinePatch`] (for dynamically created 9-patches).
+    #[must_use]
+    pub fn nine_patch_id(x: f32, y: f32, w: f32, h: f32, np: NinePatch) -> Self {
+        Self::NinePatch {
+            x,
+            y,
+            w,
+            h,
+            nine_patch: np,
         }
     }
 
@@ -874,6 +973,15 @@ impl Draw {
     }
 }
 
+/// Progress bar display mode.
+#[derive(Clone, Copy, Debug)]
+pub enum ProgressMode {
+    /// Known progress as a fraction (0.0–1.0). Shows fill + playhead dot.
+    Fraction(f32),
+    /// Unknown duration — animated indicator across full width.
+    Indeterminate,
+}
+
 /// A UI node in the tree (for building before serialization)
 pub enum Node {
     Column(PropsData, Vec<Node>),
@@ -890,6 +998,7 @@ pub enum Node {
         size: ButtonSize,
         icon_id: u16,
         disabled: bool,
+        skin: Option<ButtonSkin>,
     },
     Spacer {
         flex: f32,
@@ -919,7 +1028,27 @@ pub enum Node {
         content_height: f32,
         padding: u16,
         backdrop_alpha: u8,
+        /// Modal body background color. `0` = default (`GRAY_90`).
+        bg_color: u32,
+        /// Modal header background color. `0` = default (`GRAY_100`).
+        header_color: u32,
+        /// Modal title text color. `0` = default (`GRAY_10`).
+        title_color: u32,
         body: Vec<Node>,
+    },
+    /// Host-rendered progress bar — seek/volume slider.
+    ///
+    /// Rendered entirely host-side: track, fill, animated squiggle, playhead dot.
+    /// Uses `flex: 1.0` layout. Touch interaction via `touch_key`.
+    ProgressBar {
+        touch_key: String,
+        track_h: f32,
+        mode: ProgressMode,
+        active: bool,
+        fill_color: u32,
+        track_color: u32,
+        bg_color: u32,
+        skin: Option<SliderSkin>,
     },
 }
 
@@ -990,6 +1119,7 @@ pub fn make_button(
     size: ButtonSize,
     icon_id: u16,
     disabled: bool,
+    skin: Option<ButtonSkin>,
 ) -> Node {
     Node::Button {
         label,
@@ -997,6 +1127,7 @@ pub fn make_button(
         size,
         icon_id,
         disabled,
+        skin,
     }
 }
 
@@ -1053,6 +1184,41 @@ pub fn touchable(key: &str, props: PropsData, draws: impl IntoIterator<Item = Dr
     }
 }
 
+/// Host-rendered progress bar with optional touch interaction.
+///
+/// Uses `flex: 1.0` layout. The host computes all drawing (track, fill,
+/// squiggle animation, playhead dot) — zero per-frame draw data on the wire.
+///
+/// - `touch_key`: interaction key for drag/click. Pass `""` for non-interactive.
+/// - `track_h`: track thickness in pixels (also controls squiggle amplitude).
+/// - `mode`: `ProgressMode::Fraction(0.0..=1.0)` or `ProgressMode::Indeterminate`.
+/// - `active`: when true, filled portion uses animated squiggle.
+/// - `fill_color`: fill, playhead dot, and squiggle color.
+/// - `track_color`: background track color.
+/// - `bg_color`: used to clip squiggle past the playhead. Pass `0` when not active.
+#[expect(clippy::too_many_arguments)]
+pub fn progress_bar(
+    touch_key: &str,
+    track_h: f32,
+    mode: ProgressMode,
+    active: bool,
+    fill_color: u32,
+    track_color: u32,
+    bg_color: u32,
+    skin: Option<SliderSkin>,
+) -> Node {
+    Node::ProgressBar {
+        touch_key: String::from(touch_key),
+        track_h,
+        mode,
+        active,
+        fill_color,
+        track_color,
+        bg_color,
+        skin,
+    }
+}
+
 /// Modal dialog configuration
 #[derive(Clone, Copy, Default)]
 pub struct ModalProps {
@@ -1067,6 +1233,15 @@ pub struct ModalProps {
     /// Lower values make more of the background visible through the overlay.
     /// Default: 128 (50% opacity)
     pub backdrop_alpha: u8,
+
+    /// Modal body background color. `0` = use default (GRAY_90).
+    pub bg_color: u32,
+
+    /// Modal header background color. `0` = use default (GRAY_100).
+    pub header_color: u32,
+
+    /// Modal title text color. `0` = use default (GRAY_10).
+    pub title_color: u32,
 }
 
 impl ModalProps {
@@ -1127,6 +1302,9 @@ pub fn modal_styled(
         } else {
             props.backdrop_alpha
         },
+        bg_color: props.bg_color,
+        header_color: props.header_color,
+        title_color: props.title_color,
         body: body.into_iter().collect(),
     }
 }
@@ -1272,8 +1450,35 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             size,
             icon_id,
             disabled,
+            skin,
         } => {
             buf.write_button(label, *style, *size, *icon_id, *disabled);
+            // Trailing optional skin payload
+            if let Some(s) = skin {
+                buf.write_u8(1); // has_skin
+                // Normal 9-patch
+                buf.write_u16(s.normal.bitmap_id);
+                buf.write_u16(s.normal.left);
+                buf.write_u16(s.normal.top);
+                buf.write_u16(s.normal.right);
+                buf.write_u16(s.normal.bottom);
+                // Pressed 9-patch (optional)
+                if let Some(p) = &s.pressed {
+                    buf.write_u8(1); // has_pressed
+                    buf.write_u16(p.bitmap_id);
+                    buf.write_u16(p.left);
+                    buf.write_u16(p.top);
+                    buf.write_u16(p.right);
+                    buf.write_u16(p.bottom);
+                } else {
+                    buf.write_u8(0);
+                }
+                buf.write_u32(s.text_color);
+                buf.write_u32(s.pressed_text_color);
+                buf.write_u8(u8::from(s.opaque));
+            } else {
+                buf.write_u8(0); // no skin
+            }
         }
         Node::Spacer { flex } => {
             buf.write_spacer(*flex);
@@ -1312,6 +1517,9 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             content_height,
             padding,
             backdrop_alpha,
+            bg_color,
+            header_color,
+            title_color,
             body,
         } => {
             buf.write_modal(
@@ -1323,9 +1531,33 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
                 *content_height,
                 body.len() as u16,
             );
+            buf.write_u32(*bg_color);
+            buf.write_u32(*header_color);
+            buf.write_u32(*title_color);
             for child in body {
                 serialize_node(buf, child);
             }
+        }
+        Node::ProgressBar {
+            touch_key,
+            track_h,
+            mode,
+            active,
+            fill_color,
+            track_color,
+            bg_color,
+            skin,
+        } => {
+            buf.write_progress_bar(
+                touch_key,
+                *track_h,
+                mode,
+                *active,
+                *fill_color,
+                *track_color,
+                *bg_color,
+                skin,
+            );
         }
     }
 }
@@ -1497,6 +1729,24 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*light_lat);
             buf.write_f32(*light_lon);
         }
+        Draw::NinePatch {
+            x,
+            y,
+            w,
+            h,
+            nine_patch: np,
+        } => {
+            buf.write_u8(DRAW_NINE_PATCH);
+            buf.write_f32(*x);
+            buf.write_f32(*y);
+            buf.write_f32(*w);
+            buf.write_f32(*h);
+            buf.write_u16(np.bitmap_id);
+            buf.write_u16(np.left);
+            buf.write_u16(np.top);
+            buf.write_u16(np.right);
+            buf.write_u16(np.bottom);
+        }
     }
 }
 
@@ -1528,6 +1778,9 @@ fn collect_touch_keys(node: &Node, keys: &mut Vec<String>) {
             touch_key: Some(key),
             ..
         } => keys.push(key.clone()),
+        Node::ProgressBar { touch_key, .. } if !touch_key.is_empty() => {
+            keys.push(touch_key.clone());
+        }
         Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
             for child in children {
                 collect_touch_keys(child, keys);

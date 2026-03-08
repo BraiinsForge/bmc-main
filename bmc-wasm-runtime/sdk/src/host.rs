@@ -59,6 +59,7 @@ unsafe extern "C" {
 
     // Bitmap registration
     fn host_register_bitmap(data_ptr: *const u8, data_len: u32) -> u32;
+    fn host_register_bitmap_nearest(data_ptr: *const u8, data_len: u32) -> u32;
 
     // Image decoding (returns RGBA pixels)
     fn host_decode_image(
@@ -326,6 +327,16 @@ pub fn parse_date(s: &str) -> Option<i64> {
 #[must_use]
 pub fn register_bitmap(data: &[u8]) -> u16 {
     unsafe { host_register_bitmap(data.as_ptr(), data.len() as u32) as u16 }
+}
+
+/// Register bitmap data with nearest-neighbor filtering (no bilinear interpolation).
+///
+/// Use for pixel-art assets (9-patch skins) where bilinear filtering would cause
+/// color bleeding across sub-rect boundaries.
+#[expect(clippy::cast_possible_truncation)]
+#[must_use]
+pub fn register_bitmap_nearest(data: &[u8]) -> u16 {
+    unsafe { host_register_bitmap_nearest(data.as_ptr(), data.len() as u32) as u16 }
 }
 
 /// Sample the average color of a rectangular region within a registered bitmap.

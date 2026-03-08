@@ -8,6 +8,7 @@
 use crate::colors::*;
 use crate::interaction::{InteractionState, Rect};
 use crate::renderer::Renderer;
+use crate::tree::ButtonSkinData;
 
 // Button semantic colors (normal, active/pressed)
 const BTN_PRIMARY_BG: u32 = VIOLET_60;
@@ -165,6 +166,10 @@ const BTN_DISABLED_FG: u32 = crate::color!(GRAY_10, alpha: 0.25);
 /// When `disabled` is true, the button renders in a dimmed state per Carbon
 /// guidelines and does not register clicks or pressed state.
 ///
+/// When `skin` is `Some`, the button background is a 9-patch bitmap instead of
+/// a solid-color fill. The pressed state uses `skin.pressed` if available, otherwise
+/// darkens the normal 9-patch — never falls back to solid-color rendering.
+///
 /// Returns `(clicked, click_position)` where click position is local to the button bounds.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_button(
@@ -180,50 +185,87 @@ pub fn draw_button(
     size: ButtonSize,
     icon_id: u16,
     disabled: bool,
+    skin: Option<&ButtonSkinData>,
 ) -> (bool, Option<(f32, f32)>) {
     let bounds = Rect::new(x as i32, y as i32, w as u32, h as u32);
 
     if disabled {
         renderer.push_scissor(x, y, w, h);
-        draw_button_disabled(renderer, label, x, y, w, h, style, size, icon_id);
+        draw_button_disabled(renderer, label, x, y, w, h, style, size, icon_id, skin);
         renderer.pop_scissor();
         return (false, None);
     }
 
     let is_pressed = interaction.is_pressed(key);
 
-    let (normal_color, active_color) = style.colors();
-    let bg_color = if is_pressed {
-        active_color
-    } else {
-        normal_color
-    };
-
-    // Draw button background or border
-    if style.is_ghost() {
+    // Draw button background
+    if let Some(skin) = skin {
+        // Skinned: always use 9-patch, never fall back to solid color
+        let np = if is_pressed {
+            skin.pressed.as_ref().unwrap_or(&skin.normal)
+        } else {
+            &skin.normal
+        };
+        renderer.draw_nine_patch(
+            x,
+            y,
+            w,
+            h,
+            np.bitmap_id,
+            np.left,
+            np.top,
+            np.right,
+            np.bottom,
+        );
+        // Darken overlay when pressed and no dedicated pressed asset
+        if is_pressed && skin.pressed.is_none() {
+            renderer.fill_rect(x, y, w, h, 0x00_00_00_40);
+        }
+    } else if style.is_ghost() {
         // Ghost: no chrome normally, subtle rectangular fill on press
         if is_pressed {
-            renderer.fill_rect(x, y, w, h, bg_color);
+            let (_, active_color) = style.colors();
+            renderer.fill_rect(x, y, w, h, active_color);
         }
     } else if style.is_outline() {
         if is_pressed {
-            renderer.fill_rect(x, y, w, h, bg_color);
+            let (_, active_color) = style.colors();
+            renderer.fill_rect(x, y, w, h, active_color);
         } else {
             renderer.stroke_rect(x, y, w, h, 1.0, style.border_color());
         }
     } else {
+        let (normal_color, active_color) = style.colors();
+        let bg_color = if is_pressed {
+            active_color
+        } else {
+            normal_color
+        };
         renderer.fill_rect(x, y, w, h, bg_color);
     }
 
-    let fg_color = if style.is_outline() && is_pressed {
+    let fg_color = if let Some(skin) = skin {
+        let base = if skin.text_color != 0 {
+            skin.text_color
+        } else {
+            BTN_FG
+        };
+        if is_pressed && skin.pressed_text_color != 0 {
+            skin.pressed_text_color
+        } else {
+            base
+        }
+    } else if style.is_outline() && is_pressed {
         BTN_TERTIARY_FG_ACTIVE
     } else {
         BTN_FG
     };
 
-    renderer.push_scissor(x, y, w, h);
-    draw_button_content(renderer, label, x, y, w, h, size, icon_id, fg_color);
-    renderer.pop_scissor();
+    if !skin.is_some_and(|s| s.opaque) {
+        renderer.push_scissor(x, y, w, h);
+        draw_button_content(renderer, label, x, y, w, h, size, icon_id, fg_color);
+        renderer.pop_scissor();
+    }
 
     interaction.button_with_pos(key, bounds)
 }
@@ -232,6 +274,7 @@ pub fn draw_button(
 ///
 /// - **Primary / Secondary / Danger**: dimmed solid background + dimmed white text/icon.
 /// - **Tertiary / Ghost**: transparent background + dimmed gray-10 text/icon.
+/// - **Skinned**: 9-patch with darkened overlay + dimmed text/icon.
 #[expect(clippy::too_many_arguments)]
 fn draw_button_disabled(
     renderer: &mut dyn Renderer,
@@ -243,15 +286,37 @@ fn draw_button_disabled(
     style: ButtonStyle,
     size: ButtonSize,
     icon_id: u16,
+    skin: Option<&ButtonSkinData>,
 ) {
-    let fg_color = if style.is_ghost() || style.is_outline() {
+    let fg_color = if let Some(skin) = skin {
+        let np = &skin.normal;
+        renderer.draw_nine_patch(
+            x,
+            y,
+            w,
+            h,
+            np.bitmap_id,
+            np.left,
+            np.top,
+            np.right,
+            np.bottom,
+        );
+        renderer.fill_rect(x, y, w, h, 0x00_00_00_80); // darken overlay for disabled
+        if skin.text_color != 0 {
+            crate::color!(skin.text_color, alpha: 0.25)
+        } else {
+            BTN_DISABLED_FG_ON_COLOR
+        }
+    } else if style.is_ghost() || style.is_outline() {
         BTN_DISABLED_FG
     } else {
         renderer.fill_rect(x, y, w, h, BTN_DISABLED_BG);
         BTN_DISABLED_FG_ON_COLOR
     };
 
-    draw_button_content(renderer, label, x, y, w, h, size, icon_id, fg_color);
+    if !skin.is_some_and(|s| s.opaque) {
+        draw_button_content(renderer, label, x, y, w, h, size, icon_id, fg_color);
+    }
 }
 
 /// Render button content (icon and/or label) centered in the given bounds.

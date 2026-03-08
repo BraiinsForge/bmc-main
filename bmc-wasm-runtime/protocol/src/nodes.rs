@@ -13,6 +13,7 @@ pub const NODE_CANVAS: u8 = 0x06;
 pub const NODE_MODAL: u8 = 0x07;
 pub const NODE_NOTIFICATION: u8 = 0x08;
 pub const NODE_SCROLL: u8 = 0x09;
+pub const NODE_PROGRESS_BAR: u8 = 0x0A;
 
 // Button size variants (wire value for NODE_BUTTON)
 pub const BUTTON_SIZE_SMALL: u8 = 0;
@@ -27,6 +28,7 @@ pub const DRAW_BITMAP: u8 = 0x43;
 pub const DRAW_PATH: u8 = 0x44;
 pub const DRAW_SPHERE: u8 = 0x45;
 pub const DRAW_TEXT: u8 = 0x46;
+pub const DRAW_NINE_PATCH: u8 = 0x48;
 
 // Draw commands — transforms (0x60–0x7F)
 pub const DRAW_CENTERED: u8 = 0x60;
