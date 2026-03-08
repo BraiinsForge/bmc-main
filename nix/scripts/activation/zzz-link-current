@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+profile_dir="$(dirname "$PROFILE_NEW_GENERATION")"
+current="$profile_dir/current"
+target="/run/current-profile"
+tmp="/run/current-profile.tmp"
+rm -f "$tmp"
+ln -s "$current" "$tmp"
+mv -Tf "$tmp" "$target"

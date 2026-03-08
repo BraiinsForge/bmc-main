@@ -11,6 +11,10 @@ let
   };
   inherit (widgetLib) mkWidgetPackage mkAllWidgets;
 
+  mkIndex = import ./nix/mkIndex.nix { inherit pkgs lib; };
+  mkTarball = import ./nix/mkTarball.nix { inherit pkgs lib mkIndex; };
+  mkActivationPackage = import ./nix/mkActivationPackage.nix { inherit pkgs lib; };
+
   # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
   # The man output fails to build for ARMv7 glibc targets
   fixedArmv7Pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.extend (final: prev: {
@@ -27,6 +31,26 @@ let
     bmc-openwrt = defineCrate {
       path = "./bmc-openwrt";
       packageName = "bmc-openwrt";
+    };
+    bmc-nix-cli = defineCrate {
+      path = "./bmc-nix";
+      packageName = "bmc-nix";
+      binName = "bmc-nix-cli";
+    };
+    bmc-hook-merge-files = defineCrate {
+      path = "./bmc-nix";
+      packageName = "bmc-nix";
+      binName = "bmc-hook-merge-files";
+    };
+    bmc-hook-file-symlinks = defineCrate {
+      path = "./bmc-nix";
+      packageName = "bmc-nix";
+      binName = "bmc-hook-file-symlinks";
+    };
+    bmc-hook-activation-resolver = defineCrate {
+      path = "./bmc-nix";
+      packageName = "bmc-nix";
+      binName = "bmc-hook-activation-resolver";
     };
     widget-digital-clock = defineCrate {
       path = "./widgets/digital-clock";
@@ -230,12 +254,55 @@ let
     })
     widgets);
 
+  # Native activation package (hooks run on build host during init tarball build)
+  nativeActivationPackage = mkActivationPackage {
+    bmc-hook-merge-files = build-profiles.fast.buildCrate crates.bmc-hook-merge-files { };
+    bmc-hook-file-symlinks = build-profiles.fast.buildCrate crates.bmc-hook-file-symlinks { };
+    bmc-hook-activation-resolver = build-profiles.fast.buildCrate crates.bmc-hook-activation-resolver { };
+  };
+
+  # ARM packages for the init tarball
+  armv7Packages = {
+    bmc = build-profiles.armv7-glibc-release.buildCrate crates.bmc-openwrt { };
+    nix = fixedArmv7Pkgs.nix;
+    bmc-nix-activation = mkActivationPackage {
+      bmc-hook-merge-files = build-profiles.armv7-glibc-release.buildCrate crates.bmc-hook-merge-files { };
+      bmc-hook-file-symlinks = build-profiles.armv7-glibc-release.buildCrate crates.bmc-hook-file-symlinks { };
+      bmc-hook-activation-resolver = build-profiles.armv7-glibc-release.buildCrate crates.bmc-hook-activation-resolver { };
+    };
+    digital-clock = mkWidgetPackage {
+      name = "digital-clock";
+      crate = crates.widget-digital-clock;
+      profile = build-profiles.armv7-glibc-release;
+      features = [ "standalone" ];
+    };
+    flip-clock = mkWidgetPackage {
+      name = "flip-clock";
+      crate = crates.widget-flip-clock;
+      profile = build-profiles.armv7-glibc-release;
+      features = [ "standalone" ];
+    };
+  };
+
+  armv7PackageDefs = import ./nix/packages.nix { inherit armv7Packages; };
+
+  initArtifacts = import ./nix/init-artifacts.nix {
+    inherit self pkgs lib mkIndex mkTarball;
+    packages = armv7PackageDefs;
+    bmc-nix-cli = build-profiles.fast.buildCrate crates.bmc-nix-cli { };
+    hooksOverridePath = "${nativeActivationPackage}/hooks";
+  };
+
 in
 {
-  inherit commonDeps;
-  packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // {
+  inherit commonDeps build-profiles crates;
+  packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
     inherit bmc-video-play-armv7;
     bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
+    bmc-nix-cli = build-profiles.fast.buildCrate crates.bmc-nix-cli { };
+    bmc-hook-merge-files = build-profiles.fast.buildCrate crates.bmc-hook-merge-files { };
+    bmc-hook-file-symlinks = build-profiles.fast.buildCrate crates.bmc-hook-file-symlinks { };
+    bmc-hook-activation-resolver = build-profiles.fast.buildCrate crates.bmc-hook-activation-resolver { };
 
     # Native widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
     widgets = mkAllWidgets { inherit widgets; profile = build-profiles.fast; };
