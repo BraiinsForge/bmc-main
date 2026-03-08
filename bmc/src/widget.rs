@@ -12,4 +12,4 @@ pub use coordinator::{Coordinator, WidgetEnv};
 pub use discovery::{PathDiscovery, WidgetDiscovery};
 pub use manager::WidgetManager;
 pub use registry::{RegistryError, WidgetInfo, WidgetRegistry};
-pub use spawner::{LinkerConfig, SpawnError, WaylandSpawner};
+pub use spawner::{SpawnError, WaylandSpawner};

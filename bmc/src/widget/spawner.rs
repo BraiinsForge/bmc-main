@@ -21,37 +21,13 @@ pub enum SpawnError {
     SerializeLocalization(serde_json::Error),
 }
 
-/// Configuration for spawning glibc-linked widgets via the dynamic linker.
-#[derive(Debug, Clone)]
-pub struct LinkerConfig {
-    /// Path to the glibc dynamic linker (e.g., `/nix/store/.../ld-linux-armhf.so.3`)
-    pub linker_path: String,
-    /// Library search path (equivalent to `LD_LIBRARY_PATH`)
-    pub library_path: String,
-    /// Mesa GBM backends path (GBM_BACKENDS_PATH)
-    pub gbm_backends_path: Option<String>,
-    /// Mesa DRI drivers path (LIBGL_DRIVERS_PATH)
-    pub libgl_drivers_path: Option<String>,
-    /// EGL vendor library filenames (__EGL_VENDOR_LIBRARY_FILENAMES)
-    pub egl_vendor_library: Option<String>,
-}
-
 #[derive(Debug)]
-pub struct WaylandSpawner {
-    linker: Option<LinkerConfig>,
-}
+pub struct WaylandSpawner;
 
 impl WaylandSpawner {
     #[must_use]
     pub fn new() -> Self {
-        Self { linker: None }
-    }
-
-    #[must_use]
-    pub fn with_linker(linker: LinkerConfig) -> Self {
-        Self {
-            linker: Some(linker),
-        }
+        Self
     }
 
     pub fn spawn(
@@ -63,29 +39,7 @@ impl WaylandSpawner {
         let params_json =
             serde_json::to_string(&env.params).map_err(SpawnError::SerializeParams)?;
 
-        // If linker config is provided, run via the dynamic linker
-        // Otherwise run the binary directly
-        let mut cmd = if let Some(ref linker) = self.linker {
-            let mut c = Command::new(&linker.linker_path);
-            c.arg("--library-path")
-                .arg(&linker.library_path)
-                .arg(&widget.binary_path);
-
-            // Mesa/EGL environment for GPU rendering
-            if let Some(ref path) = linker.gbm_backends_path {
-                c.env("GBM_BACKENDS_PATH", path);
-            }
-            if let Some(ref path) = linker.libgl_drivers_path {
-                c.env("LIBGL_DRIVERS_PATH", path);
-            }
-            if let Some(ref path) = linker.egl_vendor_library {
-                c.env("__EGL_VENDOR_LIBRARY_FILENAMES", path);
-            }
-
-            c
-        } else {
-            Command::new(&widget.binary_path)
-        };
+        let mut cmd = Command::new(&widget.binary_path);
 
         // Standard Wayland environment
         cmd.env("WAYLAND_DISPLAY", &env.wayland_display)
@@ -128,7 +82,7 @@ impl WaylandSpawner {
 
 impl Default for WaylandSpawner {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 

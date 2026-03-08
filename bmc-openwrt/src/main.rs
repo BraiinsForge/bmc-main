@@ -6,7 +6,6 @@ use std::{str::FromStr, sync::Arc};
 use anyhow::Result;
 use bmc::backlight::DisplayBacklightDriver;
 use bmc::compositor::Compositor;
-use bmc::widget::LinkerConfig;
 use bmc::{BmcManager, Configuration};
 use bmc_led::led_driver::LedDriverFactory;
 use bmc_openwrt::cli::Parser;
@@ -50,33 +49,8 @@ async fn main() -> Result<()> {
 
     let led_driver = PlatformLedDriver::new("/dev/spidev0.0");
 
-    // Build widget linker config from CLI args
-    let widget_linker = match (&args.widget_linker, &args.widget_library_path) {
-        (Some(linker), Some(lib_path)) => Some(LinkerConfig {
-            linker_path: linker.clone(),
-            library_path: lib_path.clone(),
-            gbm_backends_path: args.widget_gbm_backends_path.clone(),
-            libgl_drivers_path: args.widget_libgl_drivers_path.clone(),
-            egl_vendor_library: args.widget_egl_vendor_library.clone(),
-        }),
-        (Some(_), None) => {
-            error!("--widget-linker requires --widget-library-path");
-            return Err(anyhow::anyhow!(
-                "--widget-linker requires --widget-library-path"
-            ));
-        }
-        (None, Some(_)) => {
-            error!("--widget-library-path requires --widget-linker");
-            return Err(anyhow::anyhow!(
-                "--widget-library-path requires --widget-linker"
-            ));
-        }
-        (None, None) => None,
-    };
-
     let config = Configuration {
         widgets_paths: args.widgets_paths,
-        widget_linker,
         ..Configuration::default()
     };
 
