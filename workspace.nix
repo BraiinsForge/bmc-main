@@ -3,6 +3,14 @@
 { self, pkgs }:
 let lib = pkgs.lib; in
 let
+  rustflags = import ./nix/rustflags.nix { inherit lib; };
+  inherit (rustflags) X11RuntimeDeps waylandRuntimeDeps allRuntimeDeps makeRustflagsEnv;
+
+  widgetLib = import ./nix/widget.nix {
+    inherit pkgs lib makeRustflagsEnv waylandRuntimeDeps;
+  };
+  inherit (widgetLib) mkWidgetPackage mkAllWidgets;
+
   # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
   # The man output fails to build for ARMv7 glibc targets
   fixedArmv7Pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.extend (final: prev: {
@@ -29,43 +37,6 @@ let
       packageName = "bmc-widget-flip-clock";
     };
   };
-
-  X11RuntimeDeps = pkgs: with pkgs; [
-    xorg.libX11
-    xorg.libXcursor
-    xorg.libXi
-    xorg.libXrandr
-    xorg.libXinerama
-    xorg.libXext
-    xorg.libXft
-    xorg.libXrender
-    xorg.libxcb
-    vulkan-loader
-    libGL
-  ];
-
-  waylandRuntimeDeps = pkgs: with pkgs; [
-    wayland
-    libxkbcommon
-    vulkan-loader
-    libGL
-  ];
-
-  allRuntimeDeps = pkgs: ((X11RuntimeDeps pkgs) ++ (waylandRuntimeDeps pkgs));
-
-  # Add rpath to produced binaries
-  makeRpathLinkArgument = { packages }:
-    "-C link-args=-Wl,-rpath,${lib.makeLibraryPath packages}";
-
-  # Create RUSTFLAGS for runtime dlopen of libraries in 'runtimePackages'
-  makeRustflagsEnv = { runtimePackages, rustCrossTarget }:
-    let
-      target = lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] rustCrossTarget);
-      value = makeRpathLinkArgument { packages = runtimePackages; };
-    in
-    {
-      "CARGO_TARGET_${target}_RUSTFLAGS" = value;
-    };
 
   # Shared deps used by both package builds and devShells.
   # Single source of truth to keep build derivations and dev environments in sync.
@@ -105,32 +76,6 @@ let
     # Node.js tooling for frontend builds
     frontendDeps = with pkgs; [ nodejs yarn ];
   };
-
-  # Build a widget package with the correct directory structure
-  mkWidgetPackage = { name, crate, profile, features ? [ ], runtimeDeps ? waylandRuntimeDeps }:
-    let
-      rustCrossTarget =
-        if profile ? rustCrossTarget
-        then profile.rustCrossTarget
-        else pkgs.stdenv.hostPlatform.rust.rustcTarget;
-      runtimePackages =
-        if builtins.isFunction runtimeDeps
-        then runtimeDeps (profile.build_pkgs or pkgs)
-        else runtimeDeps;
-      binary = profile.buildCrate crate {
-        inherit features;
-        env = makeRustflagsEnv { inherit runtimePackages rustCrossTarget; };
-      };
-      widgetSrc = ./widgets + "/${name}";
-    in
-    pkgs.runCommand "bmc-widget-${name}" { } ''
-      mkdir -p $out/lib/bmc-widgets/${name}/bin
-      cp ${widgetSrc}/manifest.json $out/lib/bmc-widgets/${name}/
-      cp ${binary}/bin/* $out/lib/bmc-widgets/${name}/bin/
-      if [ -d "${widgetSrc}/assets" ]; then
-        cp -r ${widgetSrc}/assets $out/lib/bmc-widgets/${name}/
-      fi
-    '';
 
   # Minimal workspace config for musl profiles (bmc-openwrt, statically linked)
   workspaceMinimal = pkgs.ii.rust.mkWorkspaceConfig {
@@ -246,27 +191,12 @@ let
     };
   };
 
-  # Build all widgets for a given profile and combine into a single output
-  mkAllWidgets = { profile, runtimeDeps ? waylandRuntimeDeps }: pkgs.symlinkJoin {
-    name = "bmc-widgets";
-    paths = lib.mapAttrsToList
-      (name: widget:
-        mkWidgetPackage {
-          inherit name profile;
-          inherit (widget) crate;
-          features = widget.features or [ ];
-          runtimeDeps = widget.runtimeDeps or runtimeDeps;
-        }
-      )
-      widgets;
-  };
-
   # x86 widgets (for bmc-mock) - need library wrapper for Nix environment
-  allWidgets = mkAllWidgets { profile = build-profiles.fast; runtimeDeps = allRuntimeDeps; };
+  allWidgets = mkAllWidgets { inherit widgets; profile = build-profiles.fast; runtimeDeps = allRuntimeDeps; };
 
   # ARM widgets (glibc, dynamically linked) - compatible with system Wayland libs
-  allWidgetsArmv7Release = mkAllWidgets { profile = build-profiles.armv7-glibc-release; };
-  allWidgetsArmv7Debug = mkAllWidgets { profile = build-profiles.armv7-glibc-debug; };
+  allWidgetsArmv7Release = mkAllWidgets { inherit widgets; profile = build-profiles.armv7-glibc-release; };
+  allWidgetsArmv7Debug = mkAllWidgets { inherit widgets; profile = build-profiles.armv7-glibc-debug; };
 
 in
 {
