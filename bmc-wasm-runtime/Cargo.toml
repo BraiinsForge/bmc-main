@@ -7,6 +7,7 @@ edition = "2024"
 anyhow.workspace = true
 bmc-wasm-protocol = { path = "protocol" }
 chrono.workspace = true
+chrono-tz.workspace = true
 formato.workspace = true
 tracing.workspace = true
 
@@ -27,6 +28,7 @@ taffy.workspace = true
 # Network + JSON/XML (for host-side fetch and parsing)
 mdns-sd.workspace = true
 roxmltree.workspace = true
+rrule.workspace = true
 rustls.workspace = true
 serde_json.workspace = true
 tungstenite.workspace = true

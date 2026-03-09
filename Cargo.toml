@@ -222,6 +222,7 @@ resvg = "0.45.1"
 rgb = "0.8"
 ring = { version = "0.17.8", default-features = false }
 roxmltree = "0.21.1"
+rrule = "0.14.0"
 rtnetlink = { git = "https://github.com/rust-netlink/rtnetlink.git", rev = "d6e8b4c" } # FIXME: change to a crates.io version after they update netlink-packet-route
 rustls = { version = "0.23.37", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 schemars = "0.8.22"

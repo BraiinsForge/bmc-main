@@ -20,6 +20,7 @@ pub extern "C" fn __bmc_sdk_version() -> u64 {
 }
 
 pub mod alloc;
+pub mod calendar;
 pub mod format;
 pub mod host;
 pub mod http_listener;

@@ -35,6 +35,8 @@ use crate::json::JsonDoc;
 pub struct FetchResponse {
     /// HTTP status code (200, 404, etc.). 0 if network error.
     pub status: u32,
+    /// Request ID returned by [`FetchRequest::send`], for correlating responses.
+    pub request_id: u32,
     body: Vec<u8>,
 }
 
@@ -208,8 +210,8 @@ impl<'a> FetchRequest<'a> {
         self
     }
 
-    /// Send the request immediately.
-    pub fn send(self, callback: Callback) {
+    /// Send the request immediately. Returns the request ID for tracking.
+    pub fn send(self, callback: Callback) -> u32 {
         let cb_idx = register_callback(callback);
         let (m_ptr, m_len) = (self.method.as_ptr(), self.method.len() as u32);
         let (h_ptr, h_len) = optional_raw(self.headers);
@@ -227,6 +229,7 @@ impl<'a> FetchRequest<'a> {
             )
         };
         PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
+        request_id
     }
 
     /// Send the request after a delay (in milliseconds).
@@ -280,7 +283,11 @@ pub extern "C" fn __on_fetch_response(request_id: u32, status: u32, body_ptr: u3
         Vec::new()
     };
 
-    let response = FetchResponse { status, body };
+    let response = FetchResponse {
+        status,
+        request_id,
+        body,
+    };
 
     // Look up the registered callback. We must copy the function pointer out
     // before invoking it, because the callback may call `fetch()` which needs

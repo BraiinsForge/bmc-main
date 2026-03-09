@@ -1176,6 +1176,7 @@ dependencies = [
  "bmc-icon-compiler",
  "bmc-wasm-protocol",
  "chrono",
+ "chrono-tz",
  "cosmic-text",
  "femtovg",
  "formato",
@@ -1189,6 +1190,7 @@ dependencies = [
  "raw-window-handle",
  "rgb",
  "roxmltree 0.21.1",
+ "rrule",
  "rustls 0.23.37",
  "serde_json",
  "taffy",
@@ -6601,6 +6603,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "rrule"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "720acfb4980b9d8a6a430f6d7a11933e701ebbeba5eee39cc9d8c5f932aaff74"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "log",
+ "regex",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

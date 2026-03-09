@@ -1692,6 +1692,86 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // ── Calendar ──────────────────────────────────────────────────
+
+        // host_expand_rrule(input_ptr, input_len, out_ptr, out_cap) -> i32
+        // Two-call pattern: out_cap=0 returns required size, else fills buffer.
+        // Input: JSON {rrule, dtstart, tzid?, window_start, window_end, max_count}
+        // Output: packed i64[] LE (UTC timestamps)
+        linker.func_wrap(
+            "env",
+            "host_expand_rrule",
+            |mut caller: Caller<'_, HostState>,
+             input_ptr: u32,
+             input_len: u32,
+             out_ptr: u32,
+             out_cap: u32|
+             -> i32 {
+                let input_str = read_string(&caller, input_ptr, input_len);
+                let Some(input_str) = input_str else {
+                    return -1;
+                };
+
+                let timestamps = expand_rrule_impl(&input_str);
+                let needed = timestamps.len() * 8;
+                let needed_i32 = i32::try_from(needed).unwrap_or(i32::MAX);
+
+                if out_cap == 0 {
+                    return needed_i32;
+                }
+
+                if (out_cap as usize) < needed {
+                    return needed_i32;
+                }
+
+                // Write packed i64[] LE to WASM memory
+                let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                if let Some(memory) = memory {
+                    let data = memory.data_mut(&mut caller);
+                    let start = out_ptr as usize;
+                    for (i, &ts) in timestamps.iter().enumerate() {
+                        let offset = start + i * 8;
+                        if offset + 8 <= data.len() {
+                            data[offset..offset + 8].copy_from_slice(&ts.to_le_bytes());
+                        }
+                    }
+                }
+                needed_i32
+            },
+        )?;
+
+        // host_tz_convert(unix_secs, tz_ptr, tz_len, out_ptr) -> i32
+        // Converts UTC timestamp to wall-clock time in a named IANA timezone.
+        // Output: 20-byte SystemTime struct. Returns 0 on success, -1 on error.
+        linker.func_wrap(
+            "env",
+            "host_tz_convert",
+            |mut caller: Caller<'_, HostState>,
+             unix_secs: i64,
+             tz_ptr: u32,
+             tz_len: u32,
+             out_ptr: u32|
+             -> i32 {
+                let tz_name = read_string(&caller, tz_ptr, tz_len);
+                let Some(tz_name) = tz_name else {
+                    return -1;
+                };
+
+                let buf = tz_convert_impl(unix_secs, &tz_name);
+                let Some(buf) = buf else { return -1 };
+
+                let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                if let Some(memory) = memory {
+                    let data = memory.data_mut(&mut caller);
+                    let start = out_ptr as usize;
+                    if start + 20 <= data.len() {
+                        data[start..start + 20].copy_from_slice(&buf);
+                    }
+                }
+                0
+            },
+        )?;
+
         Ok(())
     }
 
@@ -3844,4 +3924,112 @@ fn do_fetch(
         }
         Err(_) => (0, Vec::new()),
     }
+}
+
+// ── Calendar host functions ─────────────────────────────────────────
+
+/// Expand an RRULE string into concrete UTC timestamps.
+///
+/// Input is JSON: `{rrule, dtstart, tzid?, window_start, window_end, max_count}`
+fn expand_rrule_impl(input_json: &str) -> Vec<i64> {
+    use rrule::RRuleSet;
+    use std::fmt::Write;
+
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(input_json) else {
+        tracing::warn!("expand_rrule: invalid JSON input");
+        return Vec::new();
+    };
+
+    let rrule_str = v["rrule"].as_str().unwrap_or("");
+    let dtstart_str = v["dtstart"].as_str().unwrap_or("");
+    let tzid = v["tzid"].as_str();
+    let window_start = v["window_start"].as_i64().unwrap_or(0);
+    let window_end = v["window_end"].as_i64().unwrap_or(i64::MAX);
+    let max_count = v["max_count"].as_u64().unwrap_or(200) as u16;
+
+    // Build an RFC-style RRULE string that the rrule crate can parse
+    let mut rrule_input = String::with_capacity(256);
+
+    // DTSTART line
+    if let Some(tz) = tzid {
+        let _ = writeln!(rrule_input, "DTSTART;TZID={tz}:{dtstart_str}");
+    } else if dtstart_str.ends_with('Z') {
+        let _ = writeln!(rrule_input, "DTSTART:{dtstart_str}");
+    } else {
+        // Assume UTC if no timezone
+        let _ = writeln!(rrule_input, "DTSTART:{dtstart_str}Z");
+    }
+
+    // RRULE line
+    let _ = write!(rrule_input, "RRULE:{rrule_str}");
+
+    let rrule_set: RRuleSet = match rrule_input.parse() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("expand_rrule: failed to parse RRULE: {e}");
+            return Vec::new();
+        }
+    };
+
+    let result = rrule_set.all(max_count);
+
+    result
+        .dates
+        .into_iter()
+        .map(|dt| dt.timestamp())
+        .filter(|&ts| ts >= window_start && ts < window_end)
+        .collect()
+}
+
+/// Convert a UTC unix timestamp to wall-clock time in a named IANA timezone.
+/// Returns the 20-byte SystemTime wire format, or `None` on error.
+fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]> {
+    use chrono::{Datelike, TimeZone, Timelike};
+
+    use chrono::Offset;
+
+    let dt_utc = DateTime::from_timestamp(unix_secs, 0)?;
+
+    // "Local" is a special case — use the system's local timezone
+    let (year, month, day, hour, minute, second, weekday, utc_offset) = if tz_name == "Local" {
+        let local = dt_utc.with_timezone(&Local);
+        (
+            local.year(),
+            local.month(),
+            local.day(),
+            local.hour(),
+            local.minute(),
+            local.second(),
+            local.weekday().num_days_from_monday(),
+            local.offset().local_minus_utc(),
+        )
+    } else {
+        let tz: chrono_tz::Tz = tz_name.parse().ok()?;
+        let local = tz.from_utc_datetime(&dt_utc.naive_utc());
+        (
+            local.year(),
+            local.month(),
+            local.day(),
+            local.hour(),
+            local.minute(),
+            local.second(),
+            local.weekday().num_days_from_monday(),
+            local.offset().fix().local_minus_utc(),
+        )
+    };
+
+    let mut buf = [0_u8; 20];
+    buf[0..8].copy_from_slice(&unix_secs.to_le_bytes());
+    buf[8..12].copy_from_slice(&utc_offset.to_le_bytes());
+    #[expect(clippy::cast_sign_loss)]
+    let y = year as u16;
+    buf[12..14].copy_from_slice(&y.to_le_bytes());
+    buf[14] = month as u8;
+    buf[15] = day as u8;
+    buf[16] = hour as u8;
+    buf[17] = minute as u8;
+    buf[18] = second as u8;
+    buf[19] = weekday as u8;
+
+    Some(buf)
 }
