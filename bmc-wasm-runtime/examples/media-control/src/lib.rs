@@ -10,6 +10,7 @@ mod emby_jellyfin;
 use emby_jellyfin as media_server;
 mod icons;
 mod kodi;
+mod mpd;
 mod protocol;
 mod upnp;
 
@@ -192,6 +193,7 @@ fn skin_bg_props(mut props: PropsData) -> PropsData {
 enum DiscoveredProtocol {
     Cast,
     Kodi,
+    Mpd,
     Jellyfin,
     Emby,
     Upnp,
@@ -335,15 +337,21 @@ pub extern "C" fn init(width: u32, height: u32) {
     // Activate skin based on current index
     set_active_skin(SKINS[SKIN_INDEX.with(Cell::get)].skin);
 
-    // Start mDNS discovery for Cast, UPnP, and Kodi devices
+    // Start mDNS discovery for Cast, UPnP, Kodi, and MPD devices
     mdns::mdns_browse(
-        &["_googlecast._tcp", "_upnp._tcp", "_xbmc-jsonrpc-h._tcp"],
+        &[
+            "_googlecast._tcp",
+            "_upnp._tcp",
+            "_xbmc-jsonrpc-h._tcp",
+            "_mpd._tcp",
+        ],
         on_mdns_event,
     );
     log_info!("media: mDNS browse started");
     discovery_log("Browsing _googlecast._tcp".into());
     discovery_log("Browsing _upnp._tcp".into());
     discovery_log("Browsing _xbmc-jsonrpc-h._tcp".into());
+    discovery_log("Browsing _mpd._tcp".into());
 
     // Start SSDP discovery for native UPnP/DLNA renderers
     ssdp::ssdp_search(
@@ -422,6 +430,12 @@ fn on_mdns_found(json: &str) {
             .unwrap_or(&name)
             .to_string();
         (DiscoveredProtocol::Kodi, display)
+    } else if service_type.contains("_mpd._tcp") {
+        let display = name
+            .strip_suffix("._mpd._tcp.local.")
+            .unwrap_or(&name)
+            .to_string();
+        (DiscoveredProtocol::Mpd, display)
     } else if service_type.contains("_upnp._tcp") {
         // mDNS name is "Foo._upnp._tcp.local." — strip the suffix
         let display = name
@@ -437,6 +451,7 @@ fn on_mdns_found(json: &str) {
     let proto_label = match protocol {
         DiscoveredProtocol::Cast => "Cast",
         DiscoveredProtocol::Kodi => "Kodi",
+        DiscoveredProtocol::Mpd => "MPD",
         DiscoveredProtocol::Jellyfin => "Jellyfin",
         DiscoveredProtocol::Emby => "Emby",
         DiscoveredProtocol::Upnp => "UPnP",
@@ -749,6 +764,10 @@ fn connect_to_device(device: &DiscoveredDevice) {
                 art_headers: kodi::auth_headers(),
             })
         }
+        DiscoveredProtocol::Mpd => {
+            mpd::connect(&device.host, device.port, on_mpd_status, on_mpd_art);
+            Box::new(MpdAdapter)
+        }
         DiscoveredProtocol::Jellyfin => {
             let server_type = media_server::ServerType::Jellyfin;
             media_server::connect(&device.host, device.port, server_type, on_jellyfin_status);
@@ -777,7 +796,6 @@ fn connect_to_device(device: &DiscoveredDevice) {
                     .rendering_control_path
                     .clone()
                     .unwrap_or_else(|| "/upnp/control/rendercontrol1".into()),
-                name: device.name.clone(),
             };
             DEVICE.with(|d| *d.borrow_mut() = Some(upnp_device));
             // Kick off initial status poll — will transition to Connected on success
@@ -1230,6 +1248,51 @@ impl MediaController for KodiAdapter {
     }
     fn fetch_art(&self, url: &str, callback: fn(&FetchResponse)) {
         fetch(url, self.art_headers.as_deref(), callback);
+    }
+}
+
+/// MPD adapter — zero-sized, all state in `mpd::` thread-locals.
+struct MpdAdapter;
+
+impl MediaController for MpdAdapter {
+    fn disconnect(&self) {
+        mpd::disconnect();
+    }
+    fn is_alive(&self) -> bool {
+        mpd::is_alive()
+    }
+    fn tick(&self, delta_ms: u32) {
+        mpd::tick(delta_ms);
+    }
+    fn play(&self) {
+        mpd::play();
+    }
+    fn pause(&self) {
+        mpd::pause();
+    }
+    fn next(&self) {
+        mpd::next();
+    }
+    fn previous(&self) {
+        mpd::previous();
+    }
+    fn seek(&self, position_secs: u32, _duration_secs: u32) {
+        mpd::seek(f64::from(position_secs));
+    }
+    fn set_volume(&self, level: f32) {
+        mpd::set_volume((level * 100.0) as u32);
+    }
+    fn set_mute(&self, muted: bool) {
+        mpd::set_mute(muted);
+    }
+    fn poll_interval_playing(&self) -> u32 {
+        30_000 // idle mode handles push updates
+    }
+    fn poll_interval_idle(&self) -> u32 {
+        30_000
+    }
+    fn protocol_name(&self) -> &'static str {
+        "MPD"
     }
 }
 
@@ -1832,6 +1895,93 @@ fn on_kodi_status(status: &kodi::KodiMediaStatus) {
     });
 }
 
+// ── MPD status callback ──────────────────────────────────────────
+
+fn on_mpd_status(status: &mpd::MpdMediaStatus) {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        // Transition Discovering/Disconnected → Connected on status
+        if matches!(
+            &*state,
+            WidgetState::Disconnected(_) | WidgetState::Discovering
+        ) {
+            let taken = std::mem::take(&mut *state);
+            let mut m = match taken {
+                WidgetState::Disconnected(m) => m,
+                _ => MediaState::default(),
+            };
+            m.was_ever_connected = true;
+            *state = WidgetState::Connected(m);
+        }
+        if let WidgetState::Connected(media) = &mut *state {
+            media.transport = match status.state.as_str() {
+                "play" => TransportState::Playing,
+                "pause" => TransportState::Paused,
+                "stop" => TransportState::Stopped,
+                _ => TransportState::NoMedia,
+            };
+
+            media.position.position_secs = status.elapsed_secs as u32;
+            media.position.duration_secs = status.duration_secs as u32;
+
+            // Build track metadata
+            media.position.track_meta.title = status.title.clone();
+            media.position.track_meta.fields.clear();
+            if let Some(ref artist) = status.artist {
+                media
+                    .position
+                    .track_meta
+                    .fields
+                    .push(("Artist".into(), artist.clone()));
+            }
+            if let Some(ref album) = status.album {
+                media
+                    .position
+                    .track_meta
+                    .fields
+                    .push(("Album".into(), album.clone()));
+            }
+
+            // Volume: MPD 0–100 → permille
+            media.volume.level = status.volume * 10;
+            media.volume.muted = status.volume == 0;
+
+            media.actions = TransportActions {
+                can_play: true,
+                can_pause: true,
+                can_seek: status.duration_secs > 0.0,
+                can_next: true,
+                can_previous: true,
+            };
+        }
+    });
+    request_frame();
+}
+
+/// MPD album art — binary image data from `readpicture`.
+fn on_mpd_art(data: &[u8]) {
+    if data.is_empty() {
+        return;
+    }
+    let bitmap_id = host::register_bitmap(data);
+    if bitmap_id > 0 {
+        let aspect = host::image_dimensions(data)
+            .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
+        let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX)
+            .map_or(GRAY_100, |c| color!(c, lightness: 0.22, chroma: 0.06));
+
+        STATE.with(|s| {
+            let mut state = s.borrow_mut();
+            if let WidgetState::Connected(media) = &mut *state {
+                media.art_bitmap_id = bitmap_id;
+                media.art_aspect = aspect;
+                media.accent_bg = accent_bg;
+            }
+        });
+        request_frame();
+    }
+}
+
 // ── Jellyfin status callback ─────────────────────────────────────
 
 fn on_jellyfin_status(status: &media_server::JellyfinMediaStatus) {
@@ -2063,6 +2213,7 @@ fn render_discovering(size: WidgetSize) -> Node {
                 let proto_icon = match dev.protocol {
                     DiscoveredProtocol::Cast => &icons::PROTO_GOOGLE_CAST,
                     DiscoveredProtocol::Kodi => &icons::PROTO_KODI,
+                    DiscoveredProtocol::Mpd => &icons::PROTO_MPD,
                     DiscoveredProtocol::Jellyfin => &icons::PROTO_JELLYFIN,
                     DiscoveredProtocol::Emby => &icons::PROTO_EMBY,
                     DiscoveredProtocol::Upnp => &icons::PROTO_DLNA,
@@ -2120,10 +2271,7 @@ fn render_discovery_log(max_lines: usize, right_aligned: bool) -> Node {
         })
         .collect();
     if right_aligned {
-        col(
-            props!(gap: 4.0, cross_align: CrossAlign::End, flex: 1.0),
-            lines,
-        )
+        col(props!(gap: 4.0, cross_align: CrossAlign::End), lines)
     } else {
         col(props!(gap: 4.0, cross_align: CrossAlign::Center), lines)
     }
@@ -2557,8 +2705,6 @@ fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
     switcher_buttons.push(render_skin_button());
     switcher_buttons.push(render_switcher_button(size));
     children.push(row(props!(gap: 8.0), switcher_buttons));
-    children.push(spacer(0.0)); // breathing room before seek bar
-
     col(props!(flex: 1.0, gap: 4.0), children)
 }
 
@@ -2566,7 +2712,7 @@ fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
 /// Tapping disconnects and returns to the device picker.
 /// Small variant uses icon-only to save horizontal space.
 fn render_switcher_button(size: WidgetSize) -> Node {
-    let icon = tree::ensure_registered(&icons::DEVICES);
+    let icon = tree::ensure_registered(&icons::DEVICES_APPS);
     let skin = active_button_skin();
     if size.variant == SizeVariant::Small {
         button!("", icon: icon, style: Secondary, size: Small, skin: skin)
@@ -2666,17 +2812,17 @@ fn render_progress(media: &MediaState) -> Node {
 fn transport_buttons(cd: &ControlsData, actions: &TransportActions) -> [Node; 3] {
     let skin = active_button_skin();
     [
-        button!("", icon: tree::ensure_registered(&icons::solid::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous, skin: skin),
+        button!("", icon: tree::ensure_registered(&icons::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous, skin: skin),
         button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled, skin: skin),
-        button!("", icon: tree::ensure_registered(&icons::solid::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next, skin: skin),
+        button!("", icon: tree::ensure_registered(&icons::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next, skin: skin),
     ]
 }
 
 fn volume_buttons(cd: &ControlsData) -> [Node; 3] {
     let skin = active_button_skin();
     [
-        button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_DOWN), style: Ghost, size: Small, skin: skin),
-        button!("", icon: tree::ensure_registered(&icons::solid::VOLUME_UP), style: Ghost, size: Small, skin: skin),
+        button!("", icon: tree::ensure_registered(&icons::VOLUME_DOWN), style: Ghost, size: Small, skin: skin),
+        button!("", icon: tree::ensure_registered(&icons::VOLUME_UP), style: Ghost, size: Small, skin: skin),
         button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small, skin: skin),
     ]
 }
@@ -2757,9 +2903,9 @@ struct ControlsData {
 fn controls_data(media: &MediaState) -> ControlsData {
     let is_playing = media.transport == TransportState::Playing;
     let play_icon = if is_playing {
-        &icons::solid::PAUSE
+        &icons::PAUSE
     } else {
-        &icons::solid::PLAY
+        &icons::PLAY
     };
     let play_disabled = if is_playing {
         !media.actions.can_pause
@@ -2767,9 +2913,9 @@ fn controls_data(media: &MediaState) -> ControlsData {
         !media.actions.can_play
     };
     let mute_icon = if media.volume.muted {
-        &icons::solid::VOLUME_MUTE
+        &icons::VOLUME_MUTE
     } else {
-        &icons::solid::VOLUME_UP
+        &icons::VOLUME_UP
     };
     let vol_pct = (media.volume.level + 5) / 10; // permille → percent, rounded
     // U+2007 = figure space (same width as a digit in any font)

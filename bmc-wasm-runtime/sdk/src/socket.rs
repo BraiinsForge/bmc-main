@@ -38,6 +38,7 @@ use std::collections::HashMap;
 // Host function imports
 unsafe extern "C" {
     fn host_tls_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
+    fn host_tcp_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
     fn host_socket_write(socket_id: u32, data_ptr: *const u8, data_len: u32) -> u32;
     fn host_socket_close(socket_id: u32);
 }
@@ -100,6 +101,16 @@ fn register_callback(cb: Callback) -> usize {
 pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Socket {
     let cb_idx = register_callback(callback);
     let socket_id = unsafe { host_tls_connect(host.as_ptr(), host.len() as u32, u32::from(port)) };
+    CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
+    Socket(socket_id)
+}
+
+/// Connect to a plain TCP socket. The host performs the TCP connect in the
+/// background. When events arrive (connected, data, closed), `callback` is
+/// called.
+pub fn tcp_connect(host: &str, port: u16, callback: Callback) -> Socket {
+    let cb_idx = register_callback(callback);
+    let socket_id = unsafe { host_tcp_connect(host.as_ptr(), host.len() as u32, u32::from(port)) };
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
     Socket(socket_id)
 }

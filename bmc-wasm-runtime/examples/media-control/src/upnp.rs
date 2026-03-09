@@ -27,7 +27,6 @@ const RENDERING_CONTROL: &str = "urn:schemas-upnp-org:service:RenderingControl:1
 ///
 /// For POC: hardcoded from the device's description XML.
 /// Future: populated by SSDP discovery (Stage 5).
-#[allow(dead_code)]
 pub struct UpnpDevice {
     /// Base URL of the device (e.g. `http://192.168.1.50:49152`).
     pub base_url: String,
@@ -35,8 +34,6 @@ pub struct UpnpDevice {
     pub av_transport_path: String,
     /// Control URL path for RenderingControl (e.g. `/RenderingControl/Control`).
     pub rendering_control_path: String,
-    /// Device friendly name.
-    pub name: String,
 }
 
 impl UpnpDevice {
@@ -227,7 +224,6 @@ pub fn parse_didl_lite(didl_xml: &str) -> TrackMeta {
         title: xml.str("//title"),
         fields,
         album_art_uri: xml.str("//albumArtURI"),
-        duration_secs: None, // duration comes from GetPositionInfo, not DIDL
     }
 }
 
@@ -373,7 +369,6 @@ pub fn previous(device: &UpnpDevice, cb: fn(&FetchResponse)) {
 }
 
 /// Send `Seek` to a position (in seconds).
-#[allow(dead_code)]
 pub fn seek(device: &UpnpDevice, position_secs: u32, cb: fn(&FetchResponse)) {
     let target = format_duration_hms(position_secs);
     soap_request(

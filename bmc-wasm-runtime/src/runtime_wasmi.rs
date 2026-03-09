@@ -837,6 +837,35 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // ── TCP Sockets (plain) ─────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_tcp_connect",
+            |mut caller: Caller<'_, HostState>, host_ptr: u32, host_len: u32, port: u32| -> u32 {
+                let host = read_string(&caller, host_ptr, host_len);
+                let Some(host) = host else { return 0 };
+
+                let state = caller.data_mut();
+                let socket_id = state.next_socket_id;
+                state.next_socket_id += 1;
+
+                let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
+                let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
+
+                state
+                    .sockets
+                    .insert(socket_id, ActiveSocket { write_tx, event_rx });
+
+                let port = port as u16;
+                std::thread::spawn(move || {
+                    tcp_background_thread(socket_id, &host, port, event_tx, write_rx);
+                });
+
+                socket_id
+            },
+        )?;
+
         // ── TLS Sockets ─────────────────────────────────────────────
 
         linker.func_wrap(
@@ -2917,6 +2946,94 @@ fn ws_background_thread(
 
     let _ = event_tx.send(WsEvent::Close(1006));
     tracing::info!(ws_id, "WS background thread exiting");
+}
+
+/// Background thread for a plain TCP socket connection.
+///
+/// Connects to `host:port`, then loops: drain outbound writes from
+/// `write_rx`, read inbound data with a 50 ms timeout.
+#[expect(clippy::needless_pass_by_value)] // ownership needed: moved into spawned thread
+fn tcp_background_thread(
+    socket_id: u32,
+    host: &str,
+    port: u16,
+    event_tx: std::sync::mpsc::Sender<SocketEvent>,
+    write_rx: std::sync::mpsc::Receiver<SocketOutbound>,
+) {
+    use std::io::{Read as _, Write as _};
+
+    let addr = format!("{host}:{port}");
+    let mut tcp = match std::net::TcpStream::connect(&addr) {
+        Ok(tcp) => tcp,
+        Err(e) => {
+            tracing::error!(socket_id, %addr, "TCP connect failed: {e}");
+            let _ = event_tx.send(SocketEvent::Closed(1));
+            return;
+        }
+    };
+
+    if let Err(e) = tcp.set_read_timeout(Some(Duration::from_millis(50))) {
+        tracing::warn!(socket_id, "failed to set read timeout: {e}");
+    }
+
+    let _ = event_tx.send(SocketEvent::Connected);
+    tracing::info!(socket_id, %addr, "TCP connected");
+
+    let mut read_buf = vec![0_u8; 16_384];
+
+    loop {
+        // Drain outbound writes
+        loop {
+            match write_rx.try_recv() {
+                Ok(SocketOutbound::Data(data)) => {
+                    if let Err(e) = tcp.write_all(&data) {
+                        tracing::warn!(socket_id, "TCP write error: {e}");
+                        let _ = event_tx.send(SocketEvent::Closed(1));
+                        return;
+                    }
+                    if let Err(e) = tcp.flush() {
+                        tracing::warn!(socket_id, "TCP flush error: {e}");
+                        let _ = event_tx.send(SocketEvent::Closed(1));
+                        return;
+                    }
+                }
+                Ok(SocketOutbound::Close) => {
+                    let _ = event_tx.send(SocketEvent::Closed(0));
+                    tracing::info!(socket_id, "TCP socket closed by widget");
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    let _ = event_tx.send(SocketEvent::Closed(1));
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            }
+        }
+
+        // Read inbound data (blocks up to 50 ms due to read timeout)
+        match tcp.read(&mut read_buf) {
+            Ok(0) => {
+                let _ = event_tx.send(SocketEvent::Closed(0));
+                tracing::info!(socket_id, "TCP EOF");
+                return;
+            }
+            Ok(n) => {
+                if event_tx
+                    .send(SocketEvent::Data(read_buf[..n].to_vec()))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e) => {
+                tracing::warn!(socket_id, "TCP read error: {e}");
+                let _ = event_tx.send(SocketEvent::Closed(1));
+                return;
+            }
+        }
+    }
 }
 
 /// Background thread for a single TLS socket connection.

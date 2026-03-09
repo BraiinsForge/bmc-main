@@ -19,8 +19,6 @@ pub struct TrackMeta {
     /// or `[("Series", "QI"), ("Season", "Season 21")]`
     pub fields: Vec<(String, String)>,
     pub album_art_uri: Option<String>,
-    #[allow(dead_code)]
-    pub duration_secs: Option<u32>,
 }
 
 /// A selectable sub-target within a connected device (e.g. a client session).

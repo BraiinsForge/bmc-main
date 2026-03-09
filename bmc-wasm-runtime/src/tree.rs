@@ -1421,12 +1421,9 @@ fn build_taffy_node(
                 button_index_start,
             });
 
-            // Modal doesn't participate in normal layout - zero-size placeholder
+            // Modal doesn't participate in normal layout — hidden from flex/gap.
             let style = Style {
-                size: Size {
-                    width: length(0.0),
-                    height: length(0.0),
-                },
+                display: Display::None,
                 ..Default::default()
             };
             Ok(taffy.new_leaf(style)?)
@@ -1943,10 +1940,9 @@ fn render_progress_bar_skinned(
         let thumb_h = f32::from(skin.thumb_h);
         let scale = (w / (thumb_w * 4.0)).min(1.0);
         let tw = thumb_w * scale;
-        let th = thumb_h * scale;
         let thumb_x = x + fraction * (w - tw);
-        let thumb_y = y + (h - th) / 2.0;
-        renderer.draw_bitmap(thumb_x, thumb_y, tw, th, skin.thumb_id);
+        let thumb_y = y + (h - thumb_h) / 2.0;
+        renderer.draw_bitmap(thumb_x, thumb_y, tw, thumb_h, skin.thumb_id);
     }
 
     false // skinned bars don't animate (no squiggle)
