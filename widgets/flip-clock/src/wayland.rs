@@ -804,16 +804,20 @@ fn create_buffer_from_dmabuf(
         modifier_lo,
     );
 
-    // Create buffer immediately (synchronous)
+    // Create buffer immediately (synchronous). The params object is single-use
+    // and must be destroyed after create_immed per the protocol spec.
     #[expect(clippy::cast_possible_wrap, reason = "buffer dimensions fit in i32")]
-    params.create_immed(
+    let buffer = params.create_immed(
         info.width as i32,
         info.height as i32,
         info.format as u32,
         zwp_linux_buffer_params_v1::Flags::empty(),
         qh,
         (),
-    )
+    );
+    params.destroy();
+
+    buffer
 }
 
 // === Protocol Implementations ===
