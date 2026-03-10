@@ -146,19 +146,15 @@ title, truncated with ellipsis **Interaction**: vertical scroll if events overfl
 
 ## Implementation Stages
 
-### Stage 0: Project scaffolding + iCal parsing proof
+All stages complete (POC). See `stage5-grid-and-polish.md` for future work.
+
+### Stage 0: Project scaffolding + iCal parsing proof — DONE
 
 **Goal**: new `calendar` example that fetches a hardcoded iCal URL and logs parsed events to console.
 
-**Files**:
-
-- `examples/calendar/Cargo.toml` — depends on `bmc-wasm-sdk`, `ical`
-- `examples/calendar/src/lib.rs` — minimal widget: fetch URL on init, parse with `ical`, log events
-- `examples/calendar/research/plan.md` — this plan (copy)
-
 **Success**: `make run EXAMPLE=calendar` shows parsed VEVENT summaries + dates in testbed log.
 
-### Stage 1: Host RRULE expansion primitive
+### Stage 1: Host RRULE expansion primitive — DONE
 
 **Goal**: add `host_expand_rrule` and `host_tz_convert` to the SDK and runtime.
 
@@ -172,7 +168,7 @@ title, truncated with ellipsis **Interaction**: vertical scroll if events overfl
 
 **Success**: widget calls `expand_rrule(...)` with a WEEKLY RRULE, gets back correct occurrence timestamps.
 
-### Stage 2: Event data model + calendar merging
+### Stage 2: Event data model + calendar merging — DONE
 
 **Goal**: proper data model for calendar sources and expanded events. Multi-feed support.
 
@@ -212,7 +208,7 @@ struct DayGroup {
 
 **Success**: multiple .ics feeds fetched, parsed, RRULE-expanded, merged chronologically, grouped by day.
 
-### Stage 3: Agenda view rendering — Full + Large
+### Stage 3: Agenda view rendering — Full + Large — DONE
 
 **Goal**: render the agenda view at Full and Large sizes with scrolling.
 
@@ -231,7 +227,7 @@ struct DayGroup {
 
 **Success**: Full and Large sizes show scrollable agenda with real iCal data.
 
-### Stage 4: Medium + Small rendering
+### Stage 4: Medium + Small rendering — DONE
 
 **Goal**: compact rendering for Medium and Small tiles.
 
@@ -244,7 +240,7 @@ struct DayGroup {
 
 **Success**: all 4 size variants render correctly in testbed.
 
-### Stage 5: Polish + interaction
+### Stage 5: Polish + interaction — DONE (POC scope)
 
 **Goal**: tap-to-expand event details, error/loading/empty states, visual polish.
 

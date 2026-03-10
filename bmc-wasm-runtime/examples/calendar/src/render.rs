@@ -213,11 +213,24 @@ fn render_loading(size: WidgetSize) -> Node {
 
 fn render_empty(state: &CalendarState, size: WidgetSize) -> Node {
     let theme = active_theme();
-    let msg = if state.sources.iter().any(|s| s.error.is_some()) {
+    let has_errors = state.sources.iter().any(|s| s.error.is_some());
+    let msg = if has_errors {
         "Failed to load calendars"
     } else {
         "No upcoming events"
     };
+
+    let mut children: Vec<Node> = vec![
+        spacer(1.0),
+        text(msg, style!(size: 20, color: theme.text_secondary)),
+    ];
+
+    if has_errors {
+        children.push(button!("retry", "Retry", style: Tertiary, size: Small));
+    }
+
+    children.push(spacer(1.0));
+
     with_fab_overlay(
         col(
             props!(
@@ -227,11 +240,7 @@ fn render_empty(state: &CalendarState, size: WidgetSize) -> Node {
                 height: size.height as f32,
                 gap: 8.0
             ),
-            [
-                spacer(1.0),
-                text(msg, style!(size: 20, color: theme.text_secondary)),
-                spacer(1.0),
-            ],
+            children,
         ),
         theme,
     )
@@ -345,7 +354,6 @@ fn draw_grid_week(
 ) {
     let theme = active_theme();
     let col_step = col_w + GRID_GAP;
-    let max_text_w = px_to_u32(col_w - 14.0);
 
     // Cell backgrounds + day numbers
     for (ci, cell) in week.cells.iter().enumerate() {
@@ -460,20 +468,22 @@ fn draw_grid_week(
             let color = event_color(event, state);
             let ey = events_y + ei as f32 * EVENT_LINE_H;
 
-            // Color dot
-            draws.push(Draw::circle(cx + 5.0, ey + 5.0, 2.5, color));
+            // Color dot (vertically centered with 9px text)
+            draws.push(Draw::circle(cx + 5.0, ey + 6.5, 2.5, color));
 
-            // Time or "All Day" label
+            // Time+title or "all day" label, truncated to fit cell
+            let max_chars = (col_w - 14.0) as usize * 2 / 9;
             let label = if event.all_day {
                 "\u{2022} all day".to_string()
             } else {
-                event_time(event, state)
+                let full = format!("{} {}", event_time(event, state), event.summary);
+                truncate_str(&full, max_chars).to_string()
             };
             draws.push(Draw::text(
                 cx + 11.0,
                 ey,
                 label,
-                style!(size: 9, color: text_color, max_width: max_text_w),
+                style!(size: 9, color: text_color),
             ));
         }
     }
@@ -886,7 +896,7 @@ fn event_time(event: &CalendarEvent, state: &CalendarState) -> String {
     if state.use_24h {
         format_date(event.start, "%H:%M")
     } else {
-        format_date(event.start, "%I:%M %p")
+        format_date(event.start, "%-I:%M %p")
     }
 }
 

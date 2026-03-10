@@ -161,6 +161,23 @@ fn on_ics_response(response: &FetchResponse) {
     request_frame();
 }
 
+fn retry_failed_sources() {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        for (idx, source) in state.sources.iter_mut().enumerate() {
+            if source.error.is_some() {
+                source.error = None;
+                source.loading = true;
+                log_info!("retrying calendar {}: {}", idx, source.url);
+                let request_id = FetchRequest::get(&source.url).send(on_ics_response);
+                PENDING.with(|p| p.borrow_mut().insert(request_id, idx));
+            }
+        }
+        state.any_loading = true;
+    });
+    request_frame();
+}
+
 fn toggle_theme() {
     THEME_KEY.with(|t| {
         let mut current = t.borrow_mut();
@@ -203,6 +220,9 @@ pub extern "C" fn render(_delta_ms: u32) {
 
         if result.clicks.contains_key("theme_toggle") {
             toggle_theme();
+        }
+        if result.clicks.contains_key("retry") {
+            retry_failed_sources();
         }
 
         // If chunks remain, request immediate next frame to continue draining.

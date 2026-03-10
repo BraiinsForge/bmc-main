@@ -638,4 +638,24 @@ fn inject_test_events(events: &mut Vec<CalendarEvent>, now: &SystemTime) {
         all_day: true,
         source_idx: 3,
     });
+
+    // Timed events — exercise 24h/12h format rendering
+    events.push(CalendarEvent {
+        summary: "[TEST] Evening Run".into(),
+        description: None,
+        location: Some("Stromovka".into()),
+        start: today_midnight + 18 * 3_600 + 45 * 60, // 18:45
+        end: today_midnight + 19 * 3_600 + 30 * 60,   // 19:30
+        all_day: false,
+        source_idx: 3,
+    });
+    events.push(CalendarEvent {
+        summary: "[TEST] Architecture Review".into(),
+        description: Some("Review the new widget rendering pipeline.".into()),
+        location: None,
+        start: today_midnight + 86_400 + 14 * 3_600 + 15 * 60, // tomorrow 14:15
+        end: today_midnight + 86_400 + 15 * 3_600 + 30 * 60,   // tomorrow 15:30
+        all_day: false,
+        source_idx: 2,
+    });
 }
