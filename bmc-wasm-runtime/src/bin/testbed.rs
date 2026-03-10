@@ -42,6 +42,7 @@ use bmc_wasm_runtime::interaction::{InteractionState, TouchEvent};
 use bmc_wasm_runtime::perf_overlay::PerfOverlay;
 use bmc_wasm_runtime::renderer::Renderer;
 use bmc_wasm_runtime::{FrameTimings, RenderStatus, WasmWidgetRuntime};
+use chrono::Local;
 
 // Layout constants
 const PREVIEW_GAP: u32 = 8;
@@ -192,6 +193,8 @@ struct PreviewState {
     frame_count: u32,
     /// Collected per-frame timings for perf report.
     perf_samples: Vec<FrameTimings>,
+    /// Monotonic reference point for host-provided time.
+    start_instant: Instant,
 }
 
 // Stats panel position: empty area right of SMALL tile
@@ -387,6 +390,7 @@ impl App {
             phys_h,
             frame_count: 0,
             perf_samples: Vec::new(),
+            start_instant: Instant::now(),
         });
         Ok(())
     }
@@ -654,6 +658,13 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
     state.last_frame = now;
 
     let t0 = Instant::now();
+
+    // Set host-provided time on all tiles
+    let mono_ms = state.start_instant.elapsed().as_millis() as u64;
+    let wall_time = Local::now();
+    for tile in &mut state.tiles {
+        tile.runtime.set_time(wall_time, mono_ms);
+    }
 
     // Deliver async I/O to all tiles first (may trigger request_frame inside WASM)
     for tile in &mut state.tiles {

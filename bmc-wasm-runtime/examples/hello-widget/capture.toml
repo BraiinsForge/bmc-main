@@ -1,0 +1,26 @@
+# Capture configuration for visual regression testing.
+#
+# This file controls how the headless capture binary renders and screenshots
+# your widget. All fields are optional — sensible defaults are used when omitted.
+
+# ── Timing ───────────────────────────────────────────────────────────
+
+# Override the start time for deterministic rendering (default: 2026-01-01T12:00:00).
+# time = "2026-06-15T09:30:00"
+
+# Settlement timeout in frames before force-capturing (default: 300 = ~5s).
+# Increase for widgets with slow network I/O.
+# timeout = 300
+
+# Extra frames to wait after I/O settles before capturing (default: 0).
+# Useful when the widget animates after data arrives.
+# settle_delay = 30
+
+# ── Capture mode (pick one) ──────────────────────────────────────────
+
+# Duration-based: capture for N seconds after the widget is ready.
+duration = 6.0
+
+# Capture every Nth frame during duration capture (default: 1 = every frame).
+# 15 ≈ 1 fps, 30 ≈ 0.5 fps at the 60fps simulation rate.
+capture_every = 1

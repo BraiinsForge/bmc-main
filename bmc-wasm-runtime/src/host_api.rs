@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::Instant;
 
 use serde_json::Value;
 use taffy::prelude::*;
@@ -93,7 +92,7 @@ pub struct CompletedFetch {
 
 /// A delayed fetch waiting for its fire time.
 pub struct DelayedFetch {
-    pub fire_at: Instant,
+    pub fire_at_ms: u64,
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -101,7 +100,91 @@ pub struct DelayedFetch {
     pub request_id: u32,
 }
 
+/// A pre-recorded fetch response for deterministic capture.
+#[derive(Debug)]
+pub struct FixtureResponse {
+    pub status: u32,
+    pub body: Vec<u8>,
+}
+
+/// A timestamped event for fixture replay (SSDP, mDNS, WebSocket, etc.).
+#[derive(Debug)]
+pub struct FixtureEvent {
+    /// Virtual time (monotonic ms) when this event should fire.
+    pub at_ms: u64,
+    /// The event payload.
+    pub kind: FixtureEventKind,
+}
+
+/// Payload for a single fixture event.
+#[derive(Debug)]
+pub enum FixtureEventKind {
+    SsdpFound {
+        search_id: u32,
+        data: String,
+    },
+    SsdpRemoved {
+        search_id: u32,
+        data: String,
+    },
+    MdnsFound {
+        browse_id: u32,
+        data: String,
+    },
+    MdnsRemoved {
+        browse_id: u32,
+        data: String,
+    },
+    WsOpen {
+        ws_id: u32,
+    },
+    WsMessage {
+        ws_id: u32,
+        data: Vec<u8>,
+    },
+    WsClose {
+        ws_id: u32,
+        code: u16,
+    },
+    SocketConnected {
+        socket_id: u32,
+    },
+    SocketData {
+        socket_id: u32,
+        data: Vec<u8>,
+    },
+    SocketClosed {
+        socket_id: u32,
+        code: u32,
+    },
+    UdpResponse {
+        broadcast_id: u32,
+        data: String,
+        source: String,
+    },
+}
+
+/// State for event fixture replay — holds sorted events and stub channel senders.
+#[derive(Debug)]
+pub struct FixtureEventState {
+    /// Events sorted by `at_ms` (ascending).
+    pub events: Vec<FixtureEvent>,
+    /// Next event index to replay.
+    pub cursor: usize,
+    /// Senders for injecting WebSocket events into stub connections.
+    pub ws_event_txs: HashMap<u32, mpsc::Sender<WsEvent>>,
+    /// Senders for injecting socket events into stub connections.
+    pub socket_event_txs: HashMap<u32, mpsc::Sender<SocketEvent>>,
+    /// Senders for injecting mDNS events into stub browse sessions.
+    pub mdns_event_txs: HashMap<u32, mpsc::Sender<MdnsEvent>>,
+    /// Senders for injecting SSDP events into stub search sessions.
+    pub ssdp_event_txs: HashMap<u32, mpsc::Sender<SsdpEvent>>,
+    /// Senders for injecting UDP broadcast events into stub sessions.
+    pub udp_event_txs: HashMap<u32, mpsc::Sender<UdpBroadcastEvent>>,
+}
+
 /// A WebSocket event queued for delivery to WASM.
+#[derive(Debug)]
 pub enum WsEvent {
     /// Connection successfully opened.
     Open,
@@ -128,6 +211,7 @@ pub enum WsOutbound {
 }
 
 /// A TLS socket event queued for delivery to WASM.
+#[derive(Debug)]
 pub enum SocketEvent {
     /// Connection successfully established.
     Connected,
@@ -154,6 +238,7 @@ pub enum SocketOutbound {
 }
 
 /// An mDNS event queued for delivery to WASM.
+#[derive(Debug)]
 pub enum MdnsEvent {
     /// Service found/resolved — carries JSON with service details.
     Found(String),
@@ -170,6 +255,7 @@ pub struct ActiveMdnsBrowse {
 }
 
 /// An SSDP event queued for delivery to WASM.
+#[derive(Debug)]
 pub enum SsdpEvent {
     /// Device found — carries JSON with device details.
     Found(String),
@@ -186,6 +272,7 @@ pub struct ActiveSsdpSearch {
 }
 
 /// A UDP broadcast event queued for delivery to WASM.
+#[derive(Debug)]
 pub enum UdpBroadcastEvent {
     /// Response received — carries (response_data, source_address).
     Response(String, String),
@@ -251,26 +338,18 @@ pub struct FrameTimings {
 }
 
 /// Host-side state accessible to WASM via host functions.
-pub struct HostState {
+pub(crate) struct HostState {
     /// GPU renderer (FemtoVG + cosmic-text)
     pub renderer: FemtoVgRenderer,
 
     /// Interaction state (hit testing, pending clicks)
     pub interaction: InteractionState,
 
-    /// Server-provided state blob (read by the host runtime, not testbed)
-    #[expect(dead_code)]
-    pub state_blob: Option<Vec<u8>>,
-
     /// Whether `request_frame()` was called this frame
     pub frame_requested: bool,
 
     /// Delay from `request_frame_after(ms)`, if called
     pub frame_delay_ms: Option<u32>,
-
-    /// Whether to request server refresh (read by the host runtime, not testbed)
-    #[expect(dead_code)]
-    pub refresh_requested: bool,
 
     /// One-shot clicks on buttons and interactive canvases (on finger-up)
     pub tree_clicks: HashMap<String, crate::tree::TouchHit>,
@@ -302,15 +381,23 @@ pub struct HostState {
     /// Whether the next frame only needs animation updates (no WASM execution).
     pub animation_only_frame: bool,
 
-    /// Wall-clock deadline for the next forced WASM render (from
-    /// `request_frame_after`). Uses `Instant` instead of counting down by
+    /// Monotonic deadline (ms) for the next forced WASM render (from
+    /// `request_frame_after`). Uses monotonic_ms instead of counting down by
     /// `delta_ms` because sub-millisecond frames truncate to 0 and stall
     /// countdown timers.
-    pub deferred_wasm_render_at: Option<Instant>,
+    pub deferred_wasm_render_at_ms: Option<u64>,
 
-    /// Wall-clock time of the last full WASM render. Used to compute the
+    /// Monotonic ms at the last full WASM render. Used to compute the
     /// real elapsed delta for WASM (not just the animation frame's ~16ms).
-    pub last_wasm_render_at: Instant,
+    pub last_wasm_render_at_ms: u64,
+
+    /// Current wall-clock time, set by the host before each render().
+    /// Used by `host_get_system_time()` — the runtime never calls `Local::now()`.
+    pub system_time: chrono::DateTime<chrono::Local>,
+
+    /// Monotonic clock in ms, set by the host before each render().
+    /// Used for deferred timer checks and wasm_delta computation.
+    pub monotonic_ms: u64,
 
     /// Next request ID for fetch.
     pub next_request_id: u32,
@@ -390,6 +477,21 @@ pub struct HostState {
     /// Per-request response senders: request_id → sender for the response.
     pub http_response_txs: HashMap<u32, mpsc::Sender<HttpListenerResponse>>,
 
+    /// Fixture responses keyed by "METHOD URL".
+    /// When present, `host_fetch` serves from here instead of the network.
+    pub fixtures: Option<HashMap<String, FixtureResponse>>,
+
+    /// If set, record real fetch responses to this directory for fixture generation.
+    pub fixture_record_dir: Option<PathBuf>,
+
+    /// Event fixture replay state (SSDP, mDNS, WebSocket, etc.).
+    /// When present, host functions create stub channels instead of real connections.
+    pub event_fixtures: Option<FixtureEventState>,
+
+    /// Buffer for recording live events when `fixture_record_dir` is set.
+    /// Populated by `deliver_*` methods; drained via `take_recorded_events()`.
+    pub recorded_events: Vec<FixtureEvent>,
+
     /// User formatting preferences (number format, unit system, temperature unit).
     pub prefs: FormatPreferences,
 
@@ -407,10 +509,8 @@ impl HostState {
         Self {
             renderer,
             interaction: InteractionState::new(),
-            state_blob: None,
             frame_requested: false,
             frame_delay_ms: None,
-            refresh_requested: false,
             tree_clicks: HashMap::new(),
             tree_drags: HashMap::new(),
             modal_states: HashMap::new(),
@@ -421,8 +521,10 @@ impl HostState {
             frame_counter: 0,
             cached_tree: None,
             animation_only_frame: false,
-            deferred_wasm_render_at: None,
-            last_wasm_render_at: Instant::now(),
+            deferred_wasm_render_at_ms: None,
+            last_wasm_render_at_ms: 0,
+            system_time: chrono::Local::now(),
+            monotonic_ms: 0,
             next_request_id: 1,
             fetch_rx,
             fetch_tx,
@@ -449,6 +551,10 @@ impl HostState {
             http_listeners: HashMap::new(),
             next_http_listener_id: 1,
             http_response_txs: HashMap::new(),
+            fixtures: None,
+            fixture_record_dir: None,
+            event_fixtures: None,
+            recorded_events: Vec::new(),
             prefs,
             last_timings: FrameTimings::default(),
             taffy: TaffyTree::with_capacity(64),

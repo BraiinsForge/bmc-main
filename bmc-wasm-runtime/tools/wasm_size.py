@@ -1,5 +1,9 @@
-#!/usr/bin/env python3
-"""Measure and optionally enforce WASM binary size limits.
+#!/usr/bin/env nix
+#!nix shell nixpkgs#python312
+#!nix --command python3
+
+"""
+Measure and optionally enforce WASM binary size limits.
 
 Builds the widget in release mode, runs wasm-opt, and prints a size
 breakdown. With --check, exits non-zero if the optimized binary exceeds

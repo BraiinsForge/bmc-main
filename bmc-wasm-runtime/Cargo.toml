@@ -34,23 +34,47 @@ serde_json.workspace = true
 tungstenite.workspace = true
 ureq.workspace = true
 
-# Testbed
+# Host binaries (GL windowing)
 glutin = { workspace = true, optional = true }
 glutin-winit = { workspace = true, optional = true }
-notify = { workspace = true, optional = true }
 raw-window-handle = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
 
+# Testbed only
+notify = { workspace = true, optional = true }
+
+# Fixtures (shared between capture and testbed)
+flate2 = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+# Capture only
+askama = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
+owo-colors = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+sevenz-rust2 = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+
 [features]
 default = []
 perf-overlay = []
-testbed = ["perf-overlay", "glutin", "glutin-winit", "notify", "raw-window-handle", "tracing-subscriber", "winit"]
+host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
+testbed = ["host", "perf-overlay", "notify"]
+capture = ["host", "base64", "libc", "toml"]
 
 [[bin]]
 name = "testbed"
 path = "src/bin/testbed.rs"
 required-features = ["testbed"]
+
+[[bin]]
+name = "capture"
+path = "src/bin/capture.rs"
+required-features = ["capture"]
 
 [build-dependencies]
 bmc-icon-compiler = { path = "icon-compiler" }

@@ -1,5 +1,9 @@
-#!/usr/bin/env python3
-"""Batch-symbolicate a samply profile using addr2line.
+#!/usr/bin/env nix
+#!nix shell nixpkgs#python312
+#!nix --command python3
+
+"""
+Batch-symbolicate a samply profile using addr2line.
 
 Extracts all hex addresses from the profile's funcTable, resolves them
 against the binary that was used during recording, and writes a

@@ -32,6 +32,7 @@ fmt-svg:
 validate-wasm:
 	nix fmt -- bmc-wasm-runtime
 	cargo clippy -p bmc-wasm-runtime --all-targets --features testbed
+	cargo clippy -p bmc-wasm-runtime --bin capture --features capture
 	cargo nextest run -p bmc-wasm-runtime
 	@for dir in bmc-wasm-runtime/examples/*/; do \
 		echo "── Building $${dir} ──"; \

@@ -1,5 +1,9 @@
-#!/usr/bin/env python3
-"""Compare perf reports and profiles across optimization phases.
+#!/usr/bin/env nix
+#!nix shell nixpkgs#python312 nixpkgs#odiff
+#!nix --command python3
+
+"""
+Compare perf reports and profiles across optimization phases.
 
 Each phase is a directory containing (all optional, at least one required):
   perf.json          — testbed --perf-report output
@@ -13,8 +17,6 @@ Usage:
     # Or with glob:
     ./perf_compare.py reports/*/
 """
-
-from __future__ import annotations
 
 import gzip
 import json

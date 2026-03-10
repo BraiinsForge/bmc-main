@@ -1,5 +1,9 @@
-#!/usr/bin/env python3
-"""Record a full performance profile for a WASM widget.
+#!/usr/bin/env nix
+#!nix shell nixpkgs#python312
+#!nix --command python3
+
+"""
+Record a full performance profile for a WASM widget.
 
 Collects samply CPU profile, symbolication, and internal frame timing
 into a single report directory under reports/.

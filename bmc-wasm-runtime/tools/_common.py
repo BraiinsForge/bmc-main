@@ -1,6 +1,6 @@
-"""Shared utilities for WASM runtime development tools."""
-
-from __future__ import annotations
+"""
+Shared utilities for WASM runtime development tools.
+"""
 
 import gzip
 import json
@@ -12,6 +12,14 @@ from collections import Counter
 from pathlib import Path
 
 WASM_TARGET = 'wasm32-unknown-unknown'
+
+# Standard widget capture sizes: (name, WxH)
+CAPTURE_SIZES = [
+    ('full', '1280x480'),
+    ('large', '638x480'),
+    ('medium', '638x238'),
+    ('small', '317x238'),
+]
 
 
 def require_tools(*tools: tuple[str, str]) -> None:

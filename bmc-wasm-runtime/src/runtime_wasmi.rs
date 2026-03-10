@@ -25,9 +25,9 @@ use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::gpu::FemtoVgRenderer;
 use crate::host_api::{
     ActiveHttpListener, ActiveMdnsBrowse, ActiveMdnsRegistration, ActiveSocket, ActiveSsdpSearch,
-    ActiveUdpBroadcast, ActiveWebSocket, CompletedFetch, DelayedFetch, FrameTimings, HostState,
-    HttpInboundRequest, HttpListenerResponse, MdnsEvent, SocketEvent, SocketOutbound, SsdpEvent,
-    UdpBroadcastEvent, WsEvent, WsOutbound,
+    ActiveUdpBroadcast, ActiveWebSocket, CompletedFetch, DelayedFetch, FixtureEvent,
+    FixtureEventKind, FrameTimings, HostState, HttpInboundRequest, HttpListenerResponse, MdnsEvent,
+    SocketEvent, SocketOutbound, SsdpEvent, UdpBroadcastEvent, WsEvent, WsOutbound,
 };
 use crate::renderer::Renderer;
 use crate::tree::{self, TouchHit};
@@ -287,8 +287,7 @@ impl WasmWidgetRuntime {
                 state.frame_requested = true;
                 state.frame_delay_ms = Some(delay_ms);
                 state.animation_only_frame = false;
-                state.deferred_wasm_render_at =
-                    Some(Instant::now() + Duration::from_millis(u64::from(delay_ms)));
+                state.deferred_wasm_render_at_ms = Some(state.monotonic_ms + u64::from(delay_ms));
             },
         )?;
 
@@ -651,7 +650,7 @@ impl WasmWidgetRuntime {
             "env",
             "host_get_system_time",
             |mut caller: Caller<'_, HostState>, out_ptr: u32| {
-                let now = Local::now();
+                let now = caller.data().system_time;
                 let mut buf = [0_u8; 20];
                 buf[0..8].copy_from_slice(&now.timestamp().to_le_bytes());
                 buf[8..12].copy_from_slice(&now.offset().local_minus_utc().to_le_bytes());
@@ -702,10 +701,25 @@ impl WasmWidgetRuntime {
                 let request_id = state.next_request_id;
                 state.next_request_id += 1;
 
+                // Fixture intercept: serve pre-recorded responses when available
+                let fixture_key = format!("{method} {url}");
+                if let Some(fixture) = state.fixtures.as_ref().and_then(|f| f.get(&fixture_key)) {
+                    let _ = state.fetch_tx.send(CompletedFetch {
+                        request_id,
+                        status: fixture.status,
+                        body: fixture.body.clone(),
+                    });
+                    return request_id;
+                }
+
                 let tx = state.fetch_tx.clone();
+                let record_dir = state.fixture_record_dir.clone();
                 state.in_flight_fetches += 1;
                 std::thread::spawn(move || {
                     let (status, resp_body) = do_fetch(&method, &url, &headers, body.as_deref());
+                    if let Some(ref dir) = record_dir {
+                        record_fixture(dir, &fixture_key, status, &resp_body);
+                    }
                     let _ = tx.send(CompletedFetch {
                         request_id,
                         status,
@@ -742,9 +756,9 @@ impl WasmWidgetRuntime {
                 let request_id = state.next_request_id;
                 state.next_request_id += 1;
 
-                let fire_at = Instant::now() + Duration::from_millis(u64::from(delay_ms));
+                let fire_at_ms = state.monotonic_ms + u64::from(delay_ms);
                 state.delayed_fetches.push(DelayedFetch {
-                    fire_at,
+                    fire_at_ms,
                     method,
                     url,
                     headers,
@@ -775,16 +789,29 @@ impl WasmWidgetRuntime {
                 let ws_id = state.next_ws_id;
                 state.next_ws_id += 1;
 
-                let (msg_tx, msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
                 let (event_tx, event_rx) = std::sync::mpsc::channel::<WsEvent>();
 
-                state
-                    .websockets
-                    .insert(ws_id, ActiveWebSocket { msg_tx, event_rx });
-
-                std::thread::spawn(move || {
-                    ws_background_thread(ws_id, &url, &headers, event_tx, msg_rx);
-                });
+                if state.event_fixtures.is_some() {
+                    // Stub mode: no background thread, fixture replay injects events
+                    let (msg_tx, _msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
+                    state
+                        .websockets
+                        .insert(ws_id, ActiveWebSocket { msg_tx, event_rx });
+                    state
+                        .event_fixtures
+                        .as_mut()
+                        .expect("BUG: checked above")
+                        .ws_event_txs
+                        .insert(ws_id, event_tx);
+                } else {
+                    let (msg_tx, msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
+                    state
+                        .websockets
+                        .insert(ws_id, ActiveWebSocket { msg_tx, event_rx });
+                    std::thread::spawn(move || {
+                        ws_background_thread(ws_id, &url, &headers, event_tx, msg_rx);
+                    });
+                }
 
                 ws_id
             },
@@ -830,17 +857,30 @@ impl WasmWidgetRuntime {
                 let socket_id = state.next_socket_id;
                 state.next_socket_id += 1;
 
-                let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
                 let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
 
-                state
-                    .sockets
-                    .insert(socket_id, ActiveSocket { write_tx, event_rx });
-
-                let port = port as u16;
-                std::thread::spawn(move || {
-                    tcp_background_thread(socket_id, &host, port, event_tx, write_rx);
-                });
+                if state.event_fixtures.is_some() {
+                    // Stub mode: no background thread, fixture replay injects events
+                    let (write_tx, _write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
+                    state
+                        .sockets
+                        .insert(socket_id, ActiveSocket { write_tx, event_rx });
+                    state
+                        .event_fixtures
+                        .as_mut()
+                        .expect("BUG: checked above")
+                        .socket_event_txs
+                        .insert(socket_id, event_tx);
+                } else {
+                    let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
+                    state
+                        .sockets
+                        .insert(socket_id, ActiveSocket { write_tx, event_rx });
+                    let port = port as u16;
+                    std::thread::spawn(move || {
+                        tcp_background_thread(socket_id, &host, port, event_tx, write_rx);
+                    });
+                }
 
                 socket_id
             },
@@ -859,17 +899,30 @@ impl WasmWidgetRuntime {
                 let socket_id = state.next_socket_id;
                 state.next_socket_id += 1;
 
-                let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
                 let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
 
-                state
-                    .sockets
-                    .insert(socket_id, ActiveSocket { write_tx, event_rx });
-
-                let port = port as u16;
-                std::thread::spawn(move || {
-                    tls_background_thread(socket_id, &host, port, event_tx, write_rx);
-                });
+                if state.event_fixtures.is_some() {
+                    // Stub mode: no background thread, fixture replay injects events
+                    let (write_tx, _write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
+                    state
+                        .sockets
+                        .insert(socket_id, ActiveSocket { write_tx, event_rx });
+                    state
+                        .event_fixtures
+                        .as_mut()
+                        .expect("BUG: checked above")
+                        .socket_event_txs
+                        .insert(socket_id, event_tx);
+                } else {
+                    let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
+                    state
+                        .sockets
+                        .insert(socket_id, ActiveSocket { write_tx, event_rx });
+                    let port = port as u16;
+                    std::thread::spawn(move || {
+                        tls_background_thread(socket_id, &host, port, event_tx, write_rx);
+                    });
+                }
 
                 socket_id
             },
@@ -942,9 +995,15 @@ impl WasmWidgetRuntime {
                     .mdns_browses
                     .insert(browse_id, ActiveMdnsBrowse { event_rx, stop_tx });
 
-                std::thread::spawn(move || {
-                    mdns_browse_thread(service_types, event_tx, stop_rx);
-                });
+                if let Some(ref mut ef) = state.event_fixtures {
+                    // Stub mode: no background thread, fixture replay injects events
+                    drop(stop_rx);
+                    ef.mdns_event_txs.insert(browse_id, event_tx);
+                } else {
+                    std::thread::spawn(move || {
+                        mdns_browse_thread(service_types, event_tx, stop_rx);
+                    });
+                }
 
                 browse_id
             },
@@ -1076,9 +1135,15 @@ impl WasmWidgetRuntime {
                     .ssdp_searches
                     .insert(search_id, ActiveSsdpSearch { event_rx, stop_tx });
 
-                std::thread::spawn(move || {
-                    ssdp_search_thread(search_target, timeout_secs, event_tx, stop_rx);
-                });
+                if let Some(ref mut ef) = state.event_fixtures {
+                    // Stub mode: no background thread, fixture replay injects events
+                    drop(stop_rx);
+                    ef.ssdp_event_txs.insert(search_id, event_tx);
+                } else {
+                    std::thread::spawn(move || {
+                        ssdp_search_thread(search_target, timeout_secs, event_tx, stop_rx);
+                    });
+                }
 
                 search_id
             },
@@ -1123,9 +1188,15 @@ impl WasmWidgetRuntime {
                     .udp_broadcasts
                     .insert(broadcast_id, ActiveUdpBroadcast { event_rx, stop_tx });
 
-                std::thread::spawn(move || {
-                    udp_broadcast_thread(port, message, timeout_secs, event_tx, stop_rx);
-                });
+                if let Some(ref mut ef) = state.event_fixtures {
+                    // Stub mode: no background thread, fixture replay injects events
+                    drop(stop_rx);
+                    ef.udp_event_txs.insert(broadcast_id, event_tx);
+                } else {
+                    std::thread::spawn(move || {
+                        udp_broadcast_thread(port, message, timeout_secs, event_tx, stop_rx);
+                    });
+                }
 
                 broadcast_id
             },
@@ -1782,13 +1853,13 @@ impl WasmWidgetRuntime {
             && !state.interaction.has_pending_events()
             && state.cached_tree.is_some();
 
-        // Check wall-clock deadline for deferred WASM render (request_frame_after).
-        // Uses Instant instead of delta_ms countdown because sub-millisecond
+        // Check monotonic deadline for deferred WASM render (request_frame_after).
+        // Uses monotonic_ms instead of delta_ms countdown because sub-millisecond
         // frames truncate delta_ms to 0 and stall countdown-based timers.
-        if let Some(deadline) = state.deferred_wasm_render_at
-            && Instant::now() >= deadline
+        if let Some(deadline_ms) = state.deferred_wasm_render_at_ms
+            && state.monotonic_ms >= deadline_ms
         {
-            state.deferred_wasm_render_at = None;
+            state.deferred_wasm_render_at_ms = None;
             animation_only = false;
         }
 
@@ -1803,9 +1874,8 @@ impl WasmWidgetRuntime {
 
         // Full WASM frame: compute real elapsed time since last WASM render
         // (not just the animation frame's ~0-16ms delta).
-        let now = Instant::now();
-        let wasm_delta = now.duration_since(state.last_wasm_render_at).as_millis() as u32;
-        state.last_wasm_render_at = now;
+        let wasm_delta = (state.monotonic_ms - state.last_wasm_render_at_ms) as u32;
+        state.last_wasm_render_at_ms = state.monotonic_ms;
 
         // Full frame: run WASM with per-frame fuel budget.
         self.store.set_fuel(self.fuel_per_frame)?;
@@ -1936,6 +2006,132 @@ impl WasmWidgetRuntime {
         self.fuel_dead = false;
     }
 
+    /// Set the wall-clock time and monotonic clock for the next render.
+    ///
+    /// Must be called before each `render()`. The testbed sets these from real
+    /// clocks; the capture binary increments by fixed 16ms steps.
+    pub fn set_time(&mut self, system_time: chrono::DateTime<chrono::Local>, monotonic_ms: u64) {
+        let state = self.store.data_mut();
+        state.system_time = system_time;
+        state.monotonic_ms = monotonic_ms;
+    }
+
+    /// Set fixture responses for deterministic fetch replay.
+    pub fn set_fixtures(
+        &mut self,
+        fixtures: Option<HashMap<String, crate::host_api::FixtureResponse>>,
+    ) {
+        self.store.data_mut().fixtures = fixtures;
+    }
+
+    /// Set the directory for recording fetch responses as fixtures.
+    pub fn set_fixture_record_dir(&mut self, dir: Option<std::path::PathBuf>) {
+        self.store.data_mut().fixture_record_dir = dir;
+    }
+
+    /// Take all recorded events (drains the buffer). Used by the capture binary
+    /// to write the combined fixture file after the capture loop finishes.
+    pub fn take_recorded_events(&mut self) -> Vec<crate::host_api::FixtureEvent> {
+        std::mem::take(&mut self.store.data_mut().recorded_events)
+    }
+
+    /// Set event fixtures for deterministic replay of SSDP, mDNS, WebSocket, etc.
+    ///
+    /// When set, host functions that create network connections (ws_connect,
+    /// ssdp_search, mdns_browse, etc.) will create stub channels instead of
+    /// spawning real background threads. Call [`Self::inject_fixture_events`]
+    /// each frame to feed events into the stubs at the right virtual time.
+    pub fn set_event_fixtures(&mut self, events: Vec<crate::host_api::FixtureEvent>) {
+        self.store.data_mut().event_fixtures = Some(crate::host_api::FixtureEventState {
+            events,
+            cursor: 0,
+            ws_event_txs: HashMap::new(),
+            socket_event_txs: HashMap::new(),
+            mdns_event_txs: HashMap::new(),
+            ssdp_event_txs: HashMap::new(),
+            udp_event_txs: HashMap::new(),
+        });
+    }
+
+    /// Inject fixture events whose `at_ms` <= `monotonic_ms` into stub channels.
+    ///
+    /// Must be called each frame before `deliver_*` methods. Events are injected
+    /// in order; the cursor advances so each event fires exactly once.
+    pub fn inject_fixture_events(&mut self, monotonic_ms: u64) {
+        use crate::host_api::FixtureEventKind;
+
+        let state = self.store.data_mut();
+        let Some(ref mut ef) = state.event_fixtures else {
+            return;
+        };
+
+        while ef.cursor < ef.events.len() && ef.events[ef.cursor].at_ms <= monotonic_ms {
+            let event = &ef.events[ef.cursor];
+            match &event.kind {
+                FixtureEventKind::WsOpen { ws_id } => {
+                    if let Some(tx) = ef.ws_event_txs.get(ws_id) {
+                        let _ = tx.send(WsEvent::Open);
+                    }
+                }
+                FixtureEventKind::WsMessage { ws_id, data } => {
+                    if let Some(tx) = ef.ws_event_txs.get(ws_id) {
+                        let _ = tx.send(WsEvent::Message(data.clone()));
+                    }
+                }
+                FixtureEventKind::WsClose { ws_id, code } => {
+                    if let Some(tx) = ef.ws_event_txs.get(ws_id) {
+                        let _ = tx.send(WsEvent::Close(*code));
+                    }
+                }
+                FixtureEventKind::SocketConnected { socket_id } => {
+                    if let Some(tx) = ef.socket_event_txs.get(socket_id) {
+                        let _ = tx.send(SocketEvent::Connected);
+                    }
+                }
+                FixtureEventKind::SocketData { socket_id, data } => {
+                    if let Some(tx) = ef.socket_event_txs.get(socket_id) {
+                        let _ = tx.send(SocketEvent::Data(data.clone()));
+                    }
+                }
+                FixtureEventKind::SocketClosed { socket_id, code } => {
+                    if let Some(tx) = ef.socket_event_txs.get(socket_id) {
+                        let _ = tx.send(SocketEvent::Closed(*code));
+                    }
+                }
+                FixtureEventKind::SsdpFound { search_id, data } => {
+                    if let Some(tx) = ef.ssdp_event_txs.get(search_id) {
+                        let _ = tx.send(SsdpEvent::Found(data.clone()));
+                    }
+                }
+                FixtureEventKind::SsdpRemoved { search_id, data } => {
+                    if let Some(tx) = ef.ssdp_event_txs.get(search_id) {
+                        let _ = tx.send(SsdpEvent::Removed(data.clone()));
+                    }
+                }
+                FixtureEventKind::MdnsFound { browse_id, data } => {
+                    if let Some(tx) = ef.mdns_event_txs.get(browse_id) {
+                        let _ = tx.send(MdnsEvent::Found(data.clone()));
+                    }
+                }
+                FixtureEventKind::MdnsRemoved { browse_id, data } => {
+                    if let Some(tx) = ef.mdns_event_txs.get(browse_id) {
+                        let _ = tx.send(MdnsEvent::Removed(data.clone()));
+                    }
+                }
+                FixtureEventKind::UdpResponse {
+                    broadcast_id,
+                    data,
+                    source,
+                } => {
+                    if let Some(tx) = ef.udp_event_txs.get(broadcast_id) {
+                        let _ = tx.send(UdpBroadcastEvent::Response(data.clone(), source.clone()));
+                    }
+                }
+            }
+            ef.cursor += 1;
+        }
+    }
+
     /// Access the GPU renderer (for begin_frame, flush, and testbed drawing).
     pub fn renderer(&mut self) -> &mut FemtoVgRenderer {
         &mut self.store.data_mut().renderer
@@ -2000,11 +2196,11 @@ impl WasmWidgetRuntime {
     /// Call this before `render()` each frame.
     pub fn deliver_fetch_responses(&mut self) {
         // Fire any delayed fetches whose time has come
-        let now = Instant::now();
         let state = self.store.data_mut();
+        let now_ms = state.monotonic_ms;
         let mut ready = Vec::new();
         state.delayed_fetches.retain(|df| {
-            if now >= df.fire_at {
+            if now_ms >= df.fire_at_ms {
                 ready.push((
                     df.method.clone(),
                     df.url.clone(),
@@ -2147,6 +2343,25 @@ impl WasmWidgetRuntime {
             state.websockets.remove(id);
         }
 
+        // Record events for fixture generation
+        if state.fixture_record_dir.is_some() {
+            let at_ms = state.monotonic_ms;
+            for (ws_id, event) in &events {
+                let kind = match event {
+                    WsEvent::Open => FixtureEventKind::WsOpen { ws_id: *ws_id },
+                    WsEvent::Message(data) => FixtureEventKind::WsMessage {
+                        ws_id: *ws_id,
+                        data: data.clone(),
+                    },
+                    WsEvent::Close(code) => FixtureEventKind::WsClose {
+                        ws_id: *ws_id,
+                        code: *code,
+                    },
+                };
+                state.recorded_events.push(FixtureEvent { at_ms, kind });
+            }
+        }
+
         if events.is_empty() {
             return false;
         }
@@ -2247,6 +2462,27 @@ impl WasmWidgetRuntime {
             state.sockets.remove(id);
         }
 
+        // Record events for fixture generation
+        if state.fixture_record_dir.is_some() {
+            let at_ms = state.monotonic_ms;
+            for (socket_id, event) in &events {
+                let kind = match event {
+                    SocketEvent::Connected => FixtureEventKind::SocketConnected {
+                        socket_id: *socket_id,
+                    },
+                    SocketEvent::Data(data) => FixtureEventKind::SocketData {
+                        socket_id: *socket_id,
+                        data: data.clone(),
+                    },
+                    SocketEvent::Closed(code) => FixtureEventKind::SocketClosed {
+                        socket_id: *socket_id,
+                        code: *code,
+                    },
+                };
+                state.recorded_events.push(FixtureEvent { at_ms, kind });
+            }
+        }
+
         if events.is_empty() {
             return false;
         }
@@ -2334,6 +2570,24 @@ impl WasmWidgetRuntime {
         for (&browse_id, browse) in &state.mdns_browses {
             while let Ok(event) = browse.event_rx.try_recv() {
                 events.push((browse_id, event));
+            }
+        }
+
+        // Record events for fixture generation
+        if state.fixture_record_dir.is_some() {
+            let at_ms = state.monotonic_ms;
+            for (browse_id, event) in &events {
+                let kind = match event {
+                    MdnsEvent::Found(data) => FixtureEventKind::MdnsFound {
+                        browse_id: *browse_id,
+                        data: data.clone(),
+                    },
+                    MdnsEvent::Removed(data) => FixtureEventKind::MdnsRemoved {
+                        browse_id: *browse_id,
+                        data: data.clone(),
+                    },
+                };
+                state.recorded_events.push(FixtureEvent { at_ms, kind });
             }
         }
 
@@ -2425,6 +2679,24 @@ impl WasmWidgetRuntime {
             }
         }
 
+        // Record events for fixture generation
+        if state.fixture_record_dir.is_some() {
+            let at_ms = state.monotonic_ms;
+            for (search_id, event) in &events {
+                let kind = match event {
+                    SsdpEvent::Found(data) => FixtureEventKind::SsdpFound {
+                        search_id: *search_id,
+                        data: data.clone(),
+                    },
+                    SsdpEvent::Removed(data) => FixtureEventKind::SsdpRemoved {
+                        search_id: *search_id,
+                        data: data.clone(),
+                    },
+                };
+                state.recorded_events.push(FixtureEvent { at_ms, kind });
+            }
+        }
+
         if events.is_empty() {
             return false;
         }
@@ -2509,6 +2781,22 @@ impl WasmWidgetRuntime {
         for (&broadcast_id, broadcast) in &state.udp_broadcasts {
             while let Ok(event) = broadcast.event_rx.try_recv() {
                 events.push((broadcast_id, event));
+            }
+        }
+
+        // Record events for fixture generation
+        if state.fixture_record_dir.is_some() {
+            let at_ms = state.monotonic_ms;
+            for (broadcast_id, event) in &events {
+                let UdpBroadcastEvent::Response(data, source) = event;
+                state.recorded_events.push(FixtureEvent {
+                    at_ms,
+                    kind: FixtureEventKind::UdpResponse {
+                        broadcast_id: *broadcast_id,
+                        data: data.clone(),
+                        source: source.clone(),
+                    },
+                });
             }
         }
 
@@ -3904,6 +4192,46 @@ fn do_fetch(
         Err(_) => (0, Vec::new()),
     }
 }
+
+/// Record a fetch response to the fixture directory for later replay.
+///
+/// Appends to `fetch_responses.json` in the directory, creating it if absent.
+/// Uses base64 encoding for the body to handle binary responses.
+#[cfg(feature = "capture")]
+fn record_fixture(dir: &std::path::Path, key: &str, status: u32, body: &[u8]) {
+    use base64::Engine;
+    use std::io::Write;
+
+    let _ = std::fs::create_dir_all(dir);
+    let path = dir.join("fetch_responses.json");
+
+    // Load existing fixtures or start fresh
+    let mut map: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    let body_value = if let Ok(text) = std::str::from_utf8(body) {
+        serde_json::json!({ "text": text })
+    } else {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(body);
+        serde_json::json!({ "b64": b64 })
+    };
+    map.insert(
+        key.to_owned(),
+        serde_json::json!({ "status": status, "body": body_value }),
+    );
+
+    if let Ok(mut f) = std::fs::File::create(&path) {
+        let json =
+            serde_json::to_string_pretty(&serde_json::Value::Object(map)).unwrap_or_default();
+        let _ = f.write_all(json.as_bytes());
+        tracing::info!("recorded fixture: {key} → {}", path.display());
+    }
+}
+
+#[cfg(not(feature = "capture"))]
+fn record_fixture(_dir: &std::path::Path, _key: &str, _status: u32, _body: &[u8]) {}
 
 // ── Calendar host functions ─────────────────────────────────────────
 

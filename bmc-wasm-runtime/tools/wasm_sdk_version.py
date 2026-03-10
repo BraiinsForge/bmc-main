@@ -1,5 +1,9 @@
-#!/usr/bin/env python3
-"""Print the embedded BMC SDK version from a compiled WASM widget.
+#!/usr/bin/env nix
+#!nix shell nixpkgs#python312
+#!nix --command python3
+
+"""
+Print the embedded BMC SDK version from a compiled WASM widget.
 
 Usage:
     ./tools/wasm_sdk_version.py path/to/widget.wasm

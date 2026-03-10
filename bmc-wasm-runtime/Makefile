@@ -50,3 +50,27 @@ size-check:
 .PHONY: docs
 docs:
 	cd sdk && cargo doc --target $(WASM_TARGET) --no-deps --open
+
+# ── Capture & Visual Regression ──────────────────────────────────────
+
+CAPTURE_DIR := captures/$(EXAMPLE)
+
+.PHONY: capture
+capture:
+	tools/capture_run.py -e $(EXAMPLE) $(ARGS)
+
+.PHONY: capture-all
+capture-all:
+	tools/capture_run.py $(ARGS)
+
+.PHONY: update-baselines
+update-baselines: capture
+	rm -rf $(CAPTURE_DIR)/baselines
+	cp -r $(CAPTURE_DIR)/current $(CAPTURE_DIR)/baselines
+
+.PHONY: regression-test
+regression-test: capture
+	tools/capture_diff.py \
+		--baseline=$(CAPTURE_DIR)/baselines \
+		--current=$(CAPTURE_DIR)/current \
+		--diff=$(CAPTURE_DIR)/diff

@@ -1,5 +1,9 @@
-#!/usr/bin/env python3
-"""Analyze samply profile and show hot functions.
+#!/usr/bin/env nix
+#!nix shell nixpkgs#python312 nixpkgs#odiff
+#!nix --command python3
+
+"""
+Analyze samply profile and show hot functions.
 
 Usage:
     ./perf_analyze.py <profile.json.gz>
@@ -8,8 +12,6 @@ Symbols are loaded from symbols.json next to the profile (produced by
 perf_symbolicate.py or ``make profile``). Without it, raw hex addresses
 are shown.
 """
-
-from __future__ import annotations
 
 import sys
 from collections import Counter
