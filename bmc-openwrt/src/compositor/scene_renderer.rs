@@ -96,7 +96,6 @@ impl SceneRenderer {
         }
 
         let buffer = self.buffers.back_buffer(&self.output)?;
-        let mut dmabuf = buffer.dmabuf.clone();
         let fb = buffer.fb;
 
         let scene = widgets.active_scene();
@@ -135,7 +134,7 @@ impl SceneRenderer {
 
         ii_stopwatch::stopwatch_start!(self.bind_w);
         let mut framebuffer = renderer
-            .bind(&mut dmabuf)
+            .bind(&mut buffer.dmabuf)
             .context("Failed to bind render target")?;
         ii_stopwatch::stopwatch_stop!(self.bind_w);
 

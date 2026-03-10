@@ -37,13 +37,13 @@ impl BufferPool {
         }
     }
 
-    pub fn back_buffer(&mut self, output: &DrmOutput) -> Result<&RenderBuffer> {
+    pub fn back_buffer(&mut self, output: &DrmOutput) -> Result<&mut RenderBuffer> {
         let slot = 1 - self.current_slot;
         if self.buffers[slot].is_none() {
             self.buffers[slot] = Some(Self::allocate_buffer(output, self.width, self.height)?);
         }
         Ok(self.buffers[slot]
-            .as_ref()
+            .as_mut()
             .expect("BUG: buffer should exist"))
     }
 
