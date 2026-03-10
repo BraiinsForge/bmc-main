@@ -16,9 +16,10 @@ use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, ImageFlags, ImageId, ImageInfo, PixelFormat};
 use glow::HasContext;
 
-// ── Shaders (GLSL ES 1.00) ─────────────────────────────────────────
+// ── Shaders (GLSL ES 1.00 / #version 100) ──────────────────────────
 
 const VERTEX_SHADER: &str = "\
+#version 100
 attribute vec2 a_pos;
 varying vec2 v_uv;
 void main() {
@@ -30,6 +31,7 @@ void main() {
 ";
 
 const FRAGMENT_SHADER: &str = "\
+#version 100
 precision mediump float;
 
 uniform vec2 u_center;        // (lat_rad, lon_rad)

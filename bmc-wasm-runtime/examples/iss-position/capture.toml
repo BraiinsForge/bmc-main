@@ -1,0 +1,6 @@
+# Capture configuration for visual regression testing.
+
+time = "2026-03-10T18:00:00"
+
+# ISS needs time so the globe renders with the fetched position.
+settle_delay = 5

@@ -5,4 +5,6 @@
 #[path = "runtime_wasmi.rs"]
 mod backend;
 
-pub use backend::{RenderStatus, WasmWidgetRuntime};
+pub use backend::{
+    FetchInterceptor, FetchObserver, RenderStatus, RuntimeConfig, WasmWidgetRuntime,
+};

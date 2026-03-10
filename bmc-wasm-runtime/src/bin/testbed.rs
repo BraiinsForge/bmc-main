@@ -35,13 +35,12 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowButtons};
 
-use bmc_wasm_protocol::FormatPreferences;
 use bmc_wasm_runtime::components::{ButtonSize, ButtonStyle, draw_button};
 use bmc_wasm_runtime::gpu::FemtoVgRenderer;
 use bmc_wasm_runtime::interaction::{InteractionState, TouchEvent};
 use bmc_wasm_runtime::perf_overlay::PerfOverlay;
 use bmc_wasm_runtime::renderer::Renderer;
-use bmc_wasm_runtime::{FrameTimings, RenderStatus, WasmWidgetRuntime};
+use bmc_wasm_runtime::{FrameTimings, RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use chrono::Local;
 
 // Layout constants
@@ -317,12 +316,11 @@ impl App {
             let (pw, ph) = (w, h);
             let (fbo, texture) = create_fbo(&gl, pw, ph, true)?;
             let fbo_id = fbo.0.get();
-            let mut runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id)
-                .context("Failed to create runtime")?;
             let kv_path = kv_base.join(label.to_ascii_lowercase());
-            runtime.set_kv_store_path(kv_path.clone());
             // Pre-populate KV from secrets.ini (if present)
             seed_kv_from_secrets(&self.wasm_path, &kv_path);
+            let runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, &kv_path)
+                .context("Failed to create runtime")?;
             tiles.push(PreviewTile {
                 runtime,
                 x,
@@ -616,9 +614,15 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
                 continue;
             };
             let fbo_id = fbo.0.get();
-            match create_runtime(wasm_path, &state.gl_config, tile.w, tile.h, fbo_id) {
-                Ok(mut new_runtime) => {
-                    new_runtime.set_kv_store_path(tile.kv_path.clone());
+            match create_runtime(
+                wasm_path,
+                &state.gl_config,
+                tile.w,
+                tile.h,
+                fbo_id,
+                &tile.kv_path,
+            ) {
+                Ok(new_runtime) => {
                     tile.runtime = new_runtime; // drops old runtime → deletes old FBO
                     tile.fbo = fbo;
                     tile.texture = texture;
@@ -1001,6 +1005,7 @@ fn create_runtime(
     width: u32,
     height: u32,
     fbo_id: u32,
+    kv_path: &Path,
 ) -> Result<WasmWidgetRuntime> {
     let wasm_bytes = std::fs::read(wasm_path).context("Failed to read WASM file")?;
     let gl_display = gl_config.display();
@@ -1011,8 +1016,10 @@ fn create_runtime(
             width,
             height,
             fbo_id,
-            WasmWidgetRuntime::FUEL_PER_FRAME,
-            FormatPreferences::default(),
+            RuntimeConfig {
+                kv_store_path: Some(kv_path.to_owned()),
+                ..RuntimeConfig::default()
+            },
         )
     }
     .context("Failed to create runtime")

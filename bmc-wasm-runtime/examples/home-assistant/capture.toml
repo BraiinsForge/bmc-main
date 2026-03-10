@@ -1,0 +1,8 @@
+# Capture configuration for visual regression testing.
+
+time = "2026-03-10T18:00:00"
+settle_delay = 10
+
+# Capture a few seconds of animation after data loads.
+duration = 10
+capture_every = 5

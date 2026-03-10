@@ -105,7 +105,5 @@ pub mod tree;
 pub mod components;
 pub mod interaction;
 
-pub use host_api::{
-    FixtureEvent, FixtureEventKind, FixtureEventState, FixtureResponse, FrameTimings,
-};
-pub use runtime::{RenderStatus, WasmWidgetRuntime};
+pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState, FrameTimings};
+pub use runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};

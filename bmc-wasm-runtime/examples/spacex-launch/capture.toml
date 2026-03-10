@@ -1,0 +1,4 @@
+# Capture configuration for visual regression testing.
+
+time = "2026-03-10T18:00:00"
+settle_delay = 5

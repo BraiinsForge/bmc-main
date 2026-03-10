@@ -1,0 +1,14 @@
+{
+  "GET https://api.wheretheiss.at/v1/satellites/25544": {
+    "body": {
+      "text": "{\"name\":\"iss\",\"id\":25544,\"latitude\":-33.679230465738,\"longitude\":-146.92514112599,\"altitude\":427.58384842023,\"velocity\":27564.946694671,\"visibility\":\"daylight\",\"footprint\":4545.8471691223,\"timestamp\":1773162591,\"daynum\":2461110.2151736,\"solar_lat\":-3.9064629603524,\"solar_lon\":285.08519514385,\"units\":\"kilometers\"}"
+    },
+    "status": 200
+  },
+  "GET https://api.wheretheiss.at/v1/satellites/25544/tles": {
+    "body": {
+      "text": "{\"requested_timestamp\":1773162591,\"tle_timestamp\":1773075478,\"id\":\"25544\",\"name\":\"iss\",\"header\":\"ISS (ZARYA)\",\"line1\":\"1 25544U 98067A   26068.70691881  .00007976  00000+0  15510-3 0  9995\",\"line2\":\"2 25544  51.6323  72.2710 0008019 174.6781 185.4294 15.48547200556334\"}"
+    },
+    "status": 200
+  }
+}

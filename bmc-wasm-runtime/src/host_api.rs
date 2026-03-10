@@ -100,13 +100,6 @@ pub struct DelayedFetch {
     pub request_id: u32,
 }
 
-/// A pre-recorded fetch response for deterministic capture.
-#[derive(Debug)]
-pub struct FixtureResponse {
-    pub status: u32,
-    pub body: Vec<u8>,
-}
-
 /// A timestamped event for fixture replay (SSDP, mDNS, WebSocket, etc.).
 #[derive(Debug)]
 pub struct FixtureEvent {
@@ -477,18 +470,25 @@ pub(crate) struct HostState {
     /// Per-request response senders: request_id → sender for the response.
     pub http_response_txs: HashMap<u32, mpsc::Sender<HttpListenerResponse>>,
 
-    /// Fixture responses keyed by "METHOD URL".
-    /// When present, `host_fetch` serves from here instead of the network.
-    pub fixtures: Option<HashMap<String, FixtureResponse>>,
+    /// Optional host-provided interceptor for fetch requests.
+    /// Called with `(method, url)` before hitting the network.
+    /// Return `Some((status, body))` to short-circuit, `None` to proceed normally.
+    pub fetch_interceptor: Option<crate::runtime::FetchInterceptor>,
 
-    /// If set, record real fetch responses to this directory for fixture generation.
-    pub fixture_record_dir: Option<PathBuf>,
+    /// Called when a fetch response is delivered. Use for recording/logging.
+    pub fetch_observer: Option<crate::runtime::FetchObserver>,
+
+    /// Maps `request_id` → fixture key (e.g. "GET https://...") for the observer.
+    pub fetch_keys: HashMap<u32, String>,
+
+    /// Whether to record network events for fixture generation.
+    pub record_events: bool,
 
     /// Event fixture replay state (SSDP, mDNS, WebSocket, etc.).
     /// When present, host functions create stub channels instead of real connections.
     pub event_fixtures: Option<FixtureEventState>,
 
-    /// Buffer for recording live events when `fixture_record_dir` is set.
+    /// Buffer for recording live events when `record_events` is enabled.
     /// Populated by `deliver_*` methods; drained via `take_recorded_events()`.
     pub recorded_events: Vec<FixtureEvent>,
 
@@ -551,8 +551,10 @@ impl HostState {
             http_listeners: HashMap::new(),
             next_http_listener_id: 1,
             http_response_txs: HashMap::new(),
-            fixtures: None,
-            fixture_record_dir: None,
+            fetch_interceptor: None,
+            fetch_observer: None,
+            fetch_keys: HashMap::new(),
+            record_events: false,
             event_fixtures: None,
             recorded_events: Vec::new(),
             prefs,

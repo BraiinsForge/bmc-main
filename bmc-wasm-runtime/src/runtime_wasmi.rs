@@ -100,6 +100,52 @@ pub enum RenderStatus {
     Dead,
 }
 
+/// A callback that can intercept fetch requests before they hit the network.
+/// Return `Some((status, body))` to short-circuit, `None` to proceed normally.
+pub type FetchInterceptor = Box<dyn Fn(&str, &str) -> Option<(u32, Vec<u8>)>>;
+
+/// A callback invoked when a fetch response is delivered.
+/// Called with `(method_and_url, status, body)`.
+pub type FetchObserver = Box<dyn Fn(&str, u32, &[u8])>;
+
+/// Configuration for creating a [`WasmWidgetRuntime`].
+///
+/// All optional fields are applied **before** the WASM `init()` export runs,
+/// so interceptors and KV are available from the widget's first instruction.
+#[expect(missing_debug_implementations)]
+pub struct RuntimeConfig {
+    /// Instruction budget per frame (default: [`WasmWidgetRuntime::FUEL_PER_FRAME`]).
+    pub fuel_per_frame: u64,
+    /// Format preferences (12h/24h, date format, etc.).
+    pub prefs: FormatPreferences,
+    /// Key-value storage directory for this widget.
+    pub kv_store_path: Option<std::path::PathBuf>,
+    /// Intercept fetch requests before they hit the network.
+    /// Return `Some((status, body))` to short-circuit, `None` to proceed normally.
+    pub fetch_interceptor: Option<FetchInterceptor>,
+    /// Called when a fetch response is delivered. Use for recording/logging.
+    pub fetch_observer: Option<FetchObserver>,
+    /// Enable recording of network events (SSDP, mDNS, WebSocket, etc.).
+    /// Recorded events are drained via [`WasmWidgetRuntime::take_recorded_events`].
+    pub record_events: bool,
+    /// Pre-recorded event timeline for deterministic replay.
+    pub event_fixtures: Vec<FixtureEvent>,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self {
+            fuel_per_frame: WasmWidgetRuntime::FUEL_PER_FRAME,
+            prefs: FormatPreferences::default(),
+            kv_store_path: None,
+            fetch_interceptor: None,
+            fetch_observer: None,
+            record_events: false,
+            event_fixtures: Vec::new(),
+        }
+    }
+}
+
 /// WebAssembly widget runtime.
 ///
 /// Executes WASM modules in a sandboxed environment with fuel metering.
@@ -126,14 +172,9 @@ impl WasmWidgetRuntime {
 
     /// Create a new runtime from WASM bytes and a GL function loader.
     ///
-    /// The `fbo_id` is the OpenGL framebuffer object that FemtoVG should render to.
-    /// This is typically the staging FBO from the EGL two-FBO pipeline.
-    ///
-    /// `fuel_per_frame` sets the instruction budget per frame. Use
-    /// [`Self::FUEL_PER_FRAME`] for the default.
-    ///
-    /// The runtime creates and owns the GPU renderer. The host (testbed / BMC)
-    /// only provides the GL context and event loop.
+    /// All configuration from [`RuntimeConfig`] is applied **before** the WASM
+    /// `init()` export runs, so interceptors, KV, and event fixtures are
+    /// available from the widget's first instruction.
     ///
     /// # Safety
     /// `load_fn` must return valid OpenGL function pointers for the current GL context.
@@ -143,44 +184,57 @@ impl WasmWidgetRuntime {
         width: u32,
         height: u32,
         fbo_id: u32,
-        fuel_per_frame: u64,
-        prefs: FormatPreferences,
+        config: RuntimeConfig,
     ) -> Result<Self>
     where
         F: FnMut(&str) -> *const c_void,
     {
-        let mut config = wasmi::Config::default();
-        config.consume_fuel(true);
-        config.set_max_cached_stacks(4);
+        let mut engine_config = wasmi::Config::default();
+        engine_config.consume_fuel(true);
+        engine_config.set_max_cached_stacks(4);
         // Disable Wasm proposals not used by our Rust-compiled widgets.
         // Saves validation/translation overhead.
-        config.wasm_tail_call(false);
-        config.wasm_multi_memory(false);
-        config.wasm_memory64(false);
-        config.wasm_extended_const(false);
-        config.wasm_custom_page_sizes(false);
-        config.wasm_wide_arithmetic(false);
-        let engine = wasmi::Engine::new(&config);
+        engine_config.wasm_tail_call(false);
+        engine_config.wasm_multi_memory(false);
+        engine_config.wasm_memory64(false);
+        engine_config.wasm_extended_const(false);
+        engine_config.wasm_custom_page_sizes(false);
+        engine_config.wasm_wide_arithmetic(false);
+        let engine = wasmi::Engine::new(&engine_config);
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
         let renderer = unsafe { FemtoVgRenderer::new(load_fn, width, height, fbo_id) }?;
-        let host_state = HostState::new(renderer, prefs);
+        let host_state = HostState::new(renderer, config.prefs);
 
         let mut store = wasmi::Store::new(&engine, host_state);
-        store.set_fuel(fuel_per_frame)?;
+        store.set_fuel(config.fuel_per_frame)?;
 
         let mut linker = Linker::new(&engine);
         Self::register_host_functions(&mut linker)?;
 
         let instance = linker.instantiate_and_start(&mut store, &module)?;
-
-        // Check SDK version before running any widget code
         let sdk_version = check_sdk_version(instance, &mut store)?;
-
-        // Get render function
         let render_func = instance.get_typed_func::<u32, ()>(&store, "render")?;
 
-        // Call init if present
+        // Apply config before init() so interceptors/KV are available immediately.
+        let state = store.data_mut();
+        state.kv_store_path = config.kv_store_path;
+        state.fetch_interceptor = config.fetch_interceptor;
+        state.fetch_observer = config.fetch_observer;
+        state.record_events = config.record_events;
+        if !config.event_fixtures.is_empty() {
+            state.event_fixtures = Some(crate::host_api::FixtureEventState {
+                events: config.event_fixtures,
+                cursor: 0,
+                ws_event_txs: HashMap::new(),
+                socket_event_txs: HashMap::new(),
+                mdns_event_txs: HashMap::new(),
+                ssdp_event_txs: HashMap::new(),
+                udp_event_txs: HashMap::new(),
+            });
+        }
+
+        // Call init — all host config is in place
         if let Ok(init_func) = instance.get_typed_func::<(u32, u32), ()>(&store, "init") {
             init_func.call(&mut store, (width, height))?;
         }
@@ -190,7 +244,7 @@ impl WasmWidgetRuntime {
             instance,
             render_func,
             sdk_version,
-            fuel_per_frame,
+            fuel_per_frame: config.fuel_per_frame,
             fuel_strikes: 0,
             fuel_dead: false,
             max_fuel_strikes: 5,
@@ -700,26 +754,28 @@ impl WasmWidgetRuntime {
                 let state = caller.data_mut();
                 let request_id = state.next_request_id;
                 state.next_request_id += 1;
+                state.in_flight_fetches += 1;
+                state
+                    .fetch_keys
+                    .insert(request_id, format!("{method} {url}"));
 
-                // Fixture intercept: serve pre-recorded responses when available
-                let fixture_key = format!("{method} {url}");
-                if let Some(fixture) = state.fixtures.as_ref().and_then(|f| f.get(&fixture_key)) {
+                // Host interceptor: let the host short-circuit the fetch
+                let intercepted = state
+                    .fetch_interceptor
+                    .as_ref()
+                    .and_then(|f| f(&method, &url));
+                if let Some((status, body)) = intercepted {
                     let _ = state.fetch_tx.send(CompletedFetch {
                         request_id,
-                        status: fixture.status,
-                        body: fixture.body.clone(),
+                        status,
+                        body,
                     });
                     return request_id;
                 }
 
                 let tx = state.fetch_tx.clone();
-                let record_dir = state.fixture_record_dir.clone();
-                state.in_flight_fetches += 1;
                 std::thread::spawn(move || {
                     let (status, resp_body) = do_fetch(&method, &url, &headers, body.as_deref());
-                    if let Some(ref dir) = record_dir {
-                        record_fixture(dir, &fixture_key, status, &resp_body);
-                    }
                     let _ = tx.send(CompletedFetch {
                         request_id,
                         status,
@@ -2010,47 +2066,16 @@ impl WasmWidgetRuntime {
     ///
     /// Must be called before each `render()`. The testbed sets these from real
     /// clocks; the capture binary increments by fixed 16ms steps.
-    pub fn set_time(&mut self, system_time: chrono::DateTime<chrono::Local>, monotonic_ms: u64) {
+    pub fn set_time(&mut self, system_time: DateTime<Local>, monotonic_ms: u64) {
         let state = self.store.data_mut();
         state.system_time = system_time;
         state.monotonic_ms = monotonic_ms;
     }
 
-    /// Set fixture responses for deterministic fetch replay.
-    pub fn set_fixtures(
-        &mut self,
-        fixtures: Option<HashMap<String, crate::host_api::FixtureResponse>>,
-    ) {
-        self.store.data_mut().fixtures = fixtures;
-    }
-
-    /// Set the directory for recording fetch responses as fixtures.
-    pub fn set_fixture_record_dir(&mut self, dir: Option<std::path::PathBuf>) {
-        self.store.data_mut().fixture_record_dir = dir;
-    }
-
     /// Take all recorded events (drains the buffer). Used by the capture binary
     /// to write the combined fixture file after the capture loop finishes.
-    pub fn take_recorded_events(&mut self) -> Vec<crate::host_api::FixtureEvent> {
+    pub fn take_recorded_events(&mut self) -> Vec<FixtureEvent> {
         std::mem::take(&mut self.store.data_mut().recorded_events)
-    }
-
-    /// Set event fixtures for deterministic replay of SSDP, mDNS, WebSocket, etc.
-    ///
-    /// When set, host functions that create network connections (ws_connect,
-    /// ssdp_search, mdns_browse, etc.) will create stub channels instead of
-    /// spawning real background threads. Call [`Self::inject_fixture_events`]
-    /// each frame to feed events into the stubs at the right virtual time.
-    pub fn set_event_fixtures(&mut self, events: Vec<crate::host_api::FixtureEvent>) {
-        self.store.data_mut().event_fixtures = Some(crate::host_api::FixtureEventState {
-            events,
-            cursor: 0,
-            ws_event_txs: HashMap::new(),
-            socket_event_txs: HashMap::new(),
-            mdns_event_txs: HashMap::new(),
-            ssdp_event_txs: HashMap::new(),
-            udp_event_txs: HashMap::new(),
-        });
     }
 
     /// Inject fixture events whose `at_ms` <= `monotonic_ms` into stub channels.
@@ -2215,8 +2240,26 @@ impl WasmWidgetRuntime {
         });
         for (method, url, headers, body, request_id) in ready {
             tracing::info!(request_id, %method, %url, "firing HTTP fetch");
-            let tx = state.fetch_tx.clone();
+            state
+                .fetch_keys
+                .insert(request_id, format!("{method} {url}"));
             state.in_flight_fetches += 1;
+
+            // Host interceptor: let the host short-circuit the fetch
+            let intercepted = state
+                .fetch_interceptor
+                .as_ref()
+                .and_then(|f| f(&method, &url));
+            if let Some((status, body)) = intercepted {
+                let _ = state.fetch_tx.send(CompletedFetch {
+                    request_id,
+                    status,
+                    body,
+                });
+                continue;
+            }
+
+            let tx = state.fetch_tx.clone();
             std::thread::spawn(move || {
                 let (status, resp_body) = do_fetch(&method, &url, &headers, body.as_deref());
                 tracing::info!(request_id, status, body_len = resp_body.len(), %url, "fetch completed");
@@ -2238,6 +2281,18 @@ impl WasmWidgetRuntime {
 
         if responses.is_empty() {
             return;
+        }
+
+        // Notify fetch observer and clean up key tracking
+        {
+            let state = self.store.data_mut();
+            for resp in &responses {
+                if let Some(key) = state.fetch_keys.remove(&resp.request_id) {
+                    if let Some(ref observer) = state.fetch_observer {
+                        observer(&key, resp.status, &resp.body);
+                    }
+                }
+            }
         }
 
         tracing::debug!("delivering {} fetch response(s)", responses.len());
@@ -2344,7 +2399,7 @@ impl WasmWidgetRuntime {
         }
 
         // Record events for fixture generation
-        if state.fixture_record_dir.is_some() {
+        if state.record_events {
             let at_ms = state.monotonic_ms;
             for (ws_id, event) in &events {
                 let kind = match event {
@@ -2463,7 +2518,7 @@ impl WasmWidgetRuntime {
         }
 
         // Record events for fixture generation
-        if state.fixture_record_dir.is_some() {
+        if state.record_events {
             let at_ms = state.monotonic_ms;
             for (socket_id, event) in &events {
                 let kind = match event {
@@ -2574,7 +2629,7 @@ impl WasmWidgetRuntime {
         }
 
         // Record events for fixture generation
-        if state.fixture_record_dir.is_some() {
+        if state.record_events {
             let at_ms = state.monotonic_ms;
             for (browse_id, event) in &events {
                 let kind = match event {
@@ -2680,7 +2735,7 @@ impl WasmWidgetRuntime {
         }
 
         // Record events for fixture generation
-        if state.fixture_record_dir.is_some() {
+        if state.record_events {
             let at_ms = state.monotonic_ms;
             for (search_id, event) in &events {
                 let kind = match event {
@@ -2785,7 +2840,7 @@ impl WasmWidgetRuntime {
         }
 
         // Record events for fixture generation
-        if state.fixture_record_dir.is_some() {
+        if state.record_events {
             let at_ms = state.monotonic_ms;
             for (broadcast_id, event) in &events {
                 let UdpBroadcastEvent::Response(data, source) = event;
@@ -3019,11 +3074,6 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn has_active_http_listeners(&self) -> bool {
         !self.store.data().http_listeners.is_empty()
-    }
-
-    /// Set the key-value storage path for this widget.
-    pub fn set_kv_store_path(&mut self, path: std::path::PathBuf) {
-        self.store.data_mut().kv_store_path = Some(path);
     }
 }
 
@@ -4192,46 +4242,6 @@ fn do_fetch(
         Err(_) => (0, Vec::new()),
     }
 }
-
-/// Record a fetch response to the fixture directory for later replay.
-///
-/// Appends to `fetch_responses.json` in the directory, creating it if absent.
-/// Uses base64 encoding for the body to handle binary responses.
-#[cfg(feature = "capture")]
-fn record_fixture(dir: &std::path::Path, key: &str, status: u32, body: &[u8]) {
-    use base64::Engine;
-    use std::io::Write;
-
-    let _ = std::fs::create_dir_all(dir);
-    let path = dir.join("fetch_responses.json");
-
-    // Load existing fixtures or start fresh
-    let mut map: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
-
-    let body_value = if let Ok(text) = std::str::from_utf8(body) {
-        serde_json::json!({ "text": text })
-    } else {
-        let b64 = base64::engine::general_purpose::STANDARD.encode(body);
-        serde_json::json!({ "b64": b64 })
-    };
-    map.insert(
-        key.to_owned(),
-        serde_json::json!({ "status": status, "body": body_value }),
-    );
-
-    if let Ok(mut f) = std::fs::File::create(&path) {
-        let json =
-            serde_json::to_string_pretty(&serde_json::Value::Object(map)).unwrap_or_default();
-        let _ = f.write_all(json.as_bytes());
-        tracing::info!("recorded fixture: {key} → {}", path.display());
-    }
-}
-
-#[cfg(not(feature = "capture"))]
-fn record_fixture(_dir: &std::path::Path, _key: &str, _status: u32, _body: &[u8]) {}
 
 // ── Calendar host functions ─────────────────────────────────────────
 
