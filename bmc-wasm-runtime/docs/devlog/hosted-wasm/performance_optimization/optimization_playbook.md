@@ -80,7 +80,7 @@ The single biggest win. A broken render loop can burn 100% CPU even when nothing
 
 ### 1a. Enable VSync
 
-```rust
+```
 // Before: spins as fast as possible
 surface.swap_buffers(SwapInterval::DontWait);
 
@@ -115,7 +115,7 @@ Avoid re-doing work that hasn't changed since the last frame.
 If your pipeline is `binary → deserialize → layout → render`, cache the deserialized tree and skip deserialization on
 frames where only animations need updating (no new WASM execution).
 
-```rust
+```
 // In host state:
 pub cached_tree: Option<(TreeNode, f32, f32)>,
 pub animation_only_frame: bool,
@@ -138,7 +138,7 @@ Split your processing pipeline into `process_tree()` (full: deserialize + layout
 If you use a layout library (Taffy, Yoga, etc.), persist the tree object across frames and call `clear()` instead of
 allocating a new one each frame. Most layout libraries keep internal allocations on `clear()`.
 
-```rust
+```
 // In host state (initialized once):
 pub taffy: TaffyTree<NodeContext>,
 
@@ -175,7 +175,7 @@ Apply them anyway — they're free and may help on weaker hardware.
 
 ### 3a. Stack caching
 
-```rust
+```
 config.set_max_cached_stacks(4);  // default is 2
 ```
 
@@ -183,7 +183,7 @@ Avoids reallocating the value stack on each `render_func.call()`. The effect sca
 
 ### 3b. Disable unused Wasm proposals
 
-```rust
+```
 config.wasm_tail_call(false);
 config.wasm_multi_memory(false);
 config.wasm_memory64(false);
@@ -208,7 +208,7 @@ Guard all `store.set_fuel()` calls when fuel is disabled — they'll error if th
 
 ### 3d. Lazy compilation (startup only)
 
-```rust
+```
 config.compilation_mode(wasmi::CompilationMode::Lazy);
 ```
 

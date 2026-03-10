@@ -221,14 +221,13 @@ pub extern "C" fn render(_delta_ms: u32) {
 
     let _ = render_ui(size.width, size.height, root);
 
-    // Full variant has the 3D globe — render at ~30fps for smooth SGP4 rotation.
-    // Other variants are static text, 1fps is fine.
-    let interval = if size.variant == SizeVariant::Full {
-        33
-    } else {
-        1_000
-    };
-    request_frame_after(interval);
+    // Full variant renders the 3D globe at ~30fps for smooth SGP4 rotation,
+    // but only when we actually have TLE data for the globe. Loading/error
+    // states are static text — 1fps keeps the embedded GPU cool.
+    let has_globe = size.variant == SizeVariant::Full
+        && STATE.with(|s| matches!(&*s.borrow(), WidgetState::Loaded(_)))
+        && TLE.with(|t| t.borrow().is_some());
+    request_frame_after(if has_globe { 33 } else { 1_000 });
 }
 
 // ============================================================================

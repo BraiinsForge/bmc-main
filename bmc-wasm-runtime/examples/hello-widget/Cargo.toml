@@ -19,6 +19,12 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 
+[profile.dev]
+opt-level = "z"
+lto = true
+panic = "abort"
+strip = true
+
 [profile.release]
 lto = true
 codegen-units = 1

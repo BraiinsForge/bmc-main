@@ -6,7 +6,9 @@ result**
 .claude
 .idea
 
-# OS artifacts
-*.log
-**/*#
+# Misc Artifacts
 .DS_Store
+*.log
+*.pyc
+**/*#
+*~

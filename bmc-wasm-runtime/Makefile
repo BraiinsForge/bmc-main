@@ -10,6 +10,8 @@ EXAMPLE_DIR := examples/$(EXAMPLE)
 WASM_TARGET := wasm32-unknown-unknown
 WASM_FILE := $(EXAMPLE_DIR)/target/$(WASM_TARGET)/debug/$(subst -,_,$(EXAMPLE)).wasm
 
+CARGO_FEATURES := --features testbed
+
 .PHONY: clean
 clean:
 	cargo clean
@@ -17,17 +19,17 @@ clean:
 
 .PHONY: dev
 dev:
-	@cargo build --features testbed --bin testbed
+	@cargo build $(CARGO_FEATURES) --bin testbed
 	@cd $(EXAMPLE_DIR) && cargo build --target $(WASM_TARGET)
 	RUST_LOG=bmc_wasm_runtime=debug mprocs \
 		--names "watch,testbed" \
 		"cd $(EXAMPLE_DIR) && cargo watch -x 'build --target $(WASM_TARGET)'" \
-		"cargo run --features testbed --bin testbed -- $(WASM_FILE) $(ARGS)"
+		"cargo run $(CARGO_FEATURES) --bin testbed -- $(WASM_FILE) $(ARGS)"
 
 .PHONY: run
 run:
 	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
-	cargo run --features testbed --bin testbed -- $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
+	cargo run $(CARGO_FEATURES) --bin testbed -- $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
 
 # Profiling: make profile [-e hello-widget] [-r 05-my-change] [-n 1200]
 .PHONY: profile
