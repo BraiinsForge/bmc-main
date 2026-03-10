@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use std::panic;
+use std::path::PathBuf;
 use std::{str::FromStr, sync::Arc};
 
 use anyhow::Result;
@@ -50,7 +51,9 @@ async fn main() -> Result<()> {
     let led_driver = PlatformLedDriver::new("/dev/spidev0.0");
 
     let config = Configuration {
-        widgets_paths: args.widgets_paths,
+        widgets_paths: args
+            .widgets_paths
+            .unwrap_or_else(|| vec![PathBuf::from("/run/current-profile/lib/bmc-widgets")]),
         ..Configuration::default()
     };
 
