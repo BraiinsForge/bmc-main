@@ -11,5 +11,5 @@ pub struct Args {
 
     /// Path to widget directories (can be specified multiple times)
     #[clap(long = "widgets-path")]
-    pub widgets_paths: Vec<PathBuf>,
+    pub widgets_paths: Option<Vec<PathBuf>>,
 }
