@@ -980,6 +980,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-nix"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
 name = "bmc-openwrt"
 version = "0.1.0"
 dependencies = [

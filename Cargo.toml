@@ -12,6 +12,7 @@ members = [
     "bmc-led",
     "bmc-mock",
     "bmc-mock-display",
+    "bmc-nix",
     "bmc-openwrt",
     "bmc-platform",
     "bmc-scheduler",
