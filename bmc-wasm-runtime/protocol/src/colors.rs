@@ -2,8 +2,19 @@
 
 //! Color constants and perceptual color manipulation for the design system.
 //!
-//! Color math uses the OkLCH color space (via the `palette` crate) for
-//! perceptually uniform lightness/chroma/hue adjustments.
+//! **All color math in this module uses OkLCH** (via the `palette` crate).
+//! This is deliberate — naive RGB operations produce perceptually uneven
+//! results: mid-gray blends shift toward blue, brightness scaling distorts
+//! saturation, and hue interpolation takes wrong-way arcs through muddy
+//! tones. OkLCH avoids all of this by operating in a perceptually uniform
+//! space where lightness, chroma, and hue behave as humans expect.
+//!
+//! If you add new color operations here, keep them in OkLCH. The only
+//! exceptions are trivial channel extractions (`alpha`, `brightness` as a
+//! raw RGB multiply) that are clearly labeled as non-perceptual.
+//!
+//! Use `palette` trait methods (`Mix`, `Lighten`, `ShiftHue`, etc.) instead
+//! of hand-rolling math. Don't reimplement what upstream already provides.
 
 pub const GRAY_10: u32 = 0xF4F4_F4FF;
 pub const GRAY_20: u32 = 0xE0E0_E0FF;
@@ -141,6 +152,22 @@ pub const BLACK: u32 = 0x0000_00FF;
 pub const WHITE: u32 = 0xFFFF_FFFF;
 pub const TRANSPARENT: u32 = 0x0000_0000;
 
+/// Mix two packed `0xRRGGBBAA` colors in OkLCH perceptual space.
+///
+/// `t` is the fraction: 0.0 = all `a`, 1.0 = all `b`.
+/// Lightness, chroma, and hue are interpolated perceptually so a 50% mix
+/// actually looks halfway. Alpha is linearly interpolated.
+///
+/// ```ignore
+/// let mid = color_mix!(RED_50, GRAY_90, 0.3); // 30% toward GRAY_90
+/// ```
+#[macro_export]
+macro_rules! color_mix {
+    ($a:expr, $b:expr, $t:expr) => {
+        $crate::colors::oklch_mix($a, $b, $t)
+    };
+}
+
 /// Color utility macro for packed `0xRRGGBBAA` colors.
 ///
 /// **Simple (compile-time) operations:**
@@ -221,4 +248,24 @@ pub fn oklch_adjust(rgba: u32, lightness: f32, chroma: Option<f32>) -> u32 {
     let out: Srgb<f32> = Srgb::from_color(oklch);
     let out = out.into_format::<u8>();
     pack(out.red, out.green, out.blue, a)
+}
+
+/// Mix two packed `0xRRGGBBAA` colors in OkLCH perceptual space.
+///
+/// Uses `palette::Mix` for shortest-arc hue interpolation. Alpha is linear.
+#[must_use]
+pub fn oklch_mix(a: u32, b: u32, t: f32) -> u32 {
+    use palette::{FromColor, IntoColor, Mix, Oklch, Srgb};
+
+    let (ar, ag, ab, aa) = unpack(a);
+    let (br, bg, bb, ba) = unpack(b);
+
+    let a_lch: Oklch = Srgb::new(ar, ag, ab).into_format::<f32>().into_color();
+    let b_lch: Oklch = Srgb::new(br, bg, bb).into_format::<f32>().into_color();
+
+    let out: Srgb<f32> = Srgb::from_color(a_lch.mix(b_lch, t));
+    let out = out.into_format::<u8>();
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let out_a = (f32::from(aa) * (1.0 - t) + f32::from(ba) * t) as u8;
+    pack(out.red, out.green, out.blue, out_a)
 }

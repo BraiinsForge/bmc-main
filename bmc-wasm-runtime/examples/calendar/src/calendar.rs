@@ -2,6 +2,8 @@
 
 //! Calendar data model — sources, expanded events, day grouping.
 
+use std::collections::VecDeque;
+
 #[allow(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
@@ -73,6 +75,9 @@ pub struct DayGroup {
     pub timed: Vec<usize>,
 }
 
+/// Maximum VEVENT chunks to parse per render frame.
+const PARSE_BATCH_SIZE: usize = 20;
+
 /// Top-level calendar state.
 #[derive(Debug)]
 pub struct CalendarState {
@@ -87,6 +92,8 @@ pub struct CalendarState {
     pub any_loading: bool,
     /// Whether raw events have changed and need rebuilding.
     pub dirty: bool,
+    /// Queue of unparsed VEVENT chunks: (source_idx, chunk_text).
+    pub parse_queue: VecDeque<(usize, String)>,
     /// First day of the week: 0=Monday, 6=Sunday.
     pub first_day_of_week: u8,
     /// Whether to use 24-hour time format.
@@ -102,6 +109,7 @@ impl CalendarState {
             now: SystemTime::now(),
             any_loading: true,
             dirty: false,
+            parse_queue: VecDeque::new(),
             first_day_of_week: 0,
             use_24h: true,
         }
@@ -110,6 +118,40 @@ impl CalendarState {
     /// Update the current time.
     pub fn update_time(&mut self) {
         self.now = SystemTime::now();
+    }
+
+    /// Returns `true` if there are unparsed chunks remaining.
+    pub fn has_pending_chunks(&self) -> bool {
+        !self.parse_queue.is_empty()
+    }
+
+    /// Parse up to [`PARSE_BATCH_SIZE`] chunks from the queue into `raw_events`.
+    /// Returns `true` if any events were parsed (caller should mark dirty).
+    pub fn drain_parse_queue(&mut self) -> bool {
+        if self.parse_queue.is_empty() {
+            return false;
+        }
+
+        let batch = self.parse_queue.len().min(PARSE_BATCH_SIZE);
+        let mut parsed_any = false;
+
+        for _ in 0..batch {
+            let Some((source_idx, chunk)) = self.parse_queue.pop_front() else {
+                break;
+            };
+            if let Some(event) = crate::ical_parser::parse_chunk(&chunk) {
+                if let Some(source) = self.sources.get_mut(source_idx) {
+                    source.raw_events.push(event);
+                    parsed_any = true;
+                }
+            }
+        }
+
+        if parsed_any {
+            self.dirty = true;
+        }
+
+        parsed_any
     }
 
     /// Expand all raw events (including RRULEs) and rebuild the sorted event list + day groups.
@@ -187,12 +229,6 @@ impl CalendarState {
         }
     }
 
-    /// Handle a button click by index.
-    #[allow(clippy::unused_self)]
-    pub fn on_click(&self, _index: usize) {
-        // Will be used for event expansion / retry in later stages
-    }
-
     /// Load source URLs from KV store.
     pub fn load_sources_from_kv(&mut self) {
         if let Some(data) = kv::get_string("calendar_sources") {
@@ -255,7 +291,7 @@ fn expand_raw_event(
             raw.tzid.as_deref(),
             window_start,
             window_end,
-            200,
+            200_u16,
         );
         for occ_start in occurrences {
             result.push(CalendarEvent {

@@ -17,7 +17,7 @@
 //!     Some("Europe/Prague"),
 //!     1_741_564_800,
 //!     1_742_774_400,
-//!     200,
+//!     200_u16,
 //! );
 //!
 //! // Convert UTC timestamp to wall-clock in a timezone
@@ -46,6 +46,22 @@ unsafe extern "C" {
 ///
 /// Returns an empty vec if the RRULE is invalid or no occurrences fall
 /// within the window.
+///
+/// ## Wire format (input)
+///
+/// ```text
+/// window_start: i64 LE    [0..8]
+/// window_end:   i64 LE    [8..16]
+/// max_count:    u16 LE    [16..18]
+/// tzid_len:     u16 LE    [18..20]   (0 = no TZID)
+/// tzid:         [u8]      [20..20+tzid_len]
+/// dtstart_len:  u16 LE    [..]
+/// dtstart:      [u8]
+/// rrule_len:    u16 LE    [..]
+/// rrule:        [u8]
+/// ```
+///
+/// Output: packed `i64[]` LE (UTC timestamps), unchanged from before.
 #[must_use]
 pub fn expand_rrule(
     rrule: &str,
@@ -53,42 +69,33 @@ pub fn expand_rrule(
     tzid: Option<&str>,
     window_start: i64,
     window_end: i64,
-    max_count: u32,
+    max_count: u16,
 ) -> Vec<i64> {
-    // Build JSON input manually to avoid pulling serde into WASM
-    let mut input = String::with_capacity(256);
-    input.push_str("{\"rrule\":\"");
-    push_json_escaped(&mut input, rrule);
-    input.push_str("\",\"dtstart\":\"");
-    push_json_escaped(&mut input, dtstart);
-    input.push('"');
-    if let Some(tz) = tzid {
-        input.push_str(",\"tzid\":\"");
-        push_json_escaped(&mut input, tz);
-        input.push('"');
-    }
-    input.push_str(",\"window_start\":");
-    push_i64(&mut input, window_start);
-    input.push_str(",\"window_end\":");
-    push_i64(&mut input, window_end);
-    input.push_str(",\"max_count\":");
-    push_u32(&mut input, max_count);
-    input.push('}');
+    let tzid = tzid.unwrap_or("");
+    let cap = 18 + 2 + tzid.len() + 2 + dtstart.len() + 2 + rrule.len();
+    let mut buf = Vec::with_capacity(cap);
 
-    // Two-call pattern: first get required size
+    buf.extend_from_slice(&window_start.to_le_bytes());
+    buf.extend_from_slice(&window_end.to_le_bytes());
+    buf.extend_from_slice(&max_count.to_le_bytes());
+    push_str(&mut buf, tzid);
+    push_str(&mut buf, dtstart);
+    push_str(&mut buf, rrule);
+
+    // Two-call pattern: first get required output size
     let needed =
-        unsafe { host_expand_rrule(input.as_ptr(), input.len() as u32, core::ptr::null_mut(), 0) };
+        unsafe { host_expand_rrule(buf.as_ptr(), buf.len() as u32, core::ptr::null_mut(), 0) };
     if needed <= 0 {
         return Vec::new();
     }
 
     // Allocate and fill
-    let mut buf = vec![0u8; needed as usize];
+    let mut out = vec![0u8; needed as usize];
     let written = unsafe {
         host_expand_rrule(
-            input.as_ptr(),
-            input.len() as u32,
-            buf.as_mut_ptr(),
+            buf.as_ptr(),
+            buf.len() as u32,
+            out.as_mut_ptr(),
             needed as u32,
         )
     };
@@ -97,25 +104,17 @@ pub fn expand_rrule(
     }
 
     // Decode packed i64[] little-endian
-    let count = written as usize / 8;
-    let mut result = Vec::with_capacity(count);
-    for i in 0..count {
-        let offset = i * 8;
-        if offset + 8 <= buf.len() {
-            let ts = i64::from_le_bytes([
-                buf[offset],
-                buf[offset + 1],
-                buf[offset + 2],
-                buf[offset + 3],
-                buf[offset + 4],
-                buf[offset + 5],
-                buf[offset + 6],
-                buf[offset + 7],
-            ]);
-            result.push(ts);
-        }
-    }
-    result
+    out.truncate(written as usize);
+    out.chunks_exact(8)
+        .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
+        .collect()
+}
+
+/// Push a length-prefixed string into a binary buffer (u16 LE length + bytes).
+fn push_str(buf: &mut Vec<u8>, s: &str) {
+    let len = s.len().min(u16::MAX as usize) as u16;
+    buf.extend_from_slice(&len.to_le_bytes());
+    buf.extend_from_slice(&s.as_bytes()[..len as usize]);
 }
 
 /// Convert a UTC unix timestamp to wall-clock time in a named IANA timezone.
@@ -148,29 +147,4 @@ pub fn tz_convert(unix_secs: i64, timezone: &str) -> Option<SystemTime> {
         second: buf[18],
         weekday: buf[19],
     })
-}
-
-// ── JSON helpers (no serde needed) ──────────────────────────────────
-
-fn push_json_escaped(out: &mut String, s: &str) {
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c => out.push(c),
-        }
-    }
-}
-
-fn push_i64(out: &mut String, n: i64) {
-    use core::fmt::Write;
-    let _ = write!(out, "{n}");
-}
-
-fn push_u32(out: &mut String, n: u32) {
-    use core::fmt::Write;
-    let _ = write!(out, "{n}");
 }

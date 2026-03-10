@@ -1155,7 +1155,18 @@ fn build_taffy_node(
                 FlexDirection::Column
             };
 
+            let is_abs = props.is_absolute();
             let style = Style {
+                position: if is_abs {
+                    taffy::Position::Absolute
+                } else {
+                    taffy::Position::Relative
+                },
+                inset: if is_abs {
+                    inset_from_props(props)
+                } else {
+                    taffy::Rect::auto()
+                },
                 flex_direction: flex_dir,
                 justify_content: if is_center {
                     Some(JustifyContent::Center)
@@ -1209,8 +1220,19 @@ fn build_taffy_node(
             base_style,
             spans,
         } => {
+            let is_abs = props.is_absolute();
             // Don't pre-measure - use Taffy's measure callback with available width
             let style = Style {
+                position: if is_abs {
+                    taffy::Position::Absolute
+                } else {
+                    taffy::Position::Relative
+                },
+                inset: if is_abs {
+                    inset_from_props(props)
+                } else {
+                    taffy::Rect::auto()
+                },
                 padding: padding_uniform(props.padding),
                 margin: margin_uniform(props.margin),
                 flex_grow: props.flex,
@@ -1290,7 +1312,18 @@ fn build_taffy_node(
             draws,
         } => {
             let has_explicit_size = props.width > 0.0 || props.height > 0.0;
+            let is_abs = props.is_absolute();
             let style = Style {
+                position: if is_abs {
+                    taffy::Position::Absolute
+                } else {
+                    taffy::Position::Relative
+                },
+                inset: if is_abs {
+                    inset_from_props(props)
+                } else {
+                    taffy::Rect::auto()
+                },
                 size: size_from_props(props),
                 max_size: max_size_from_props(props),
                 flex_grow: props.flex,
@@ -3333,6 +3366,24 @@ fn max_size_from_props(props: &PropsData) -> Size<Dimension> {
         } else {
             length(props.max_height)
         },
+    }
+}
+
+/// Convert `PropsData` inset fields to Taffy `position` and `inset`.
+/// Finite values become `LengthPercentageAuto::Length`, NAN becomes `Auto`.
+fn inset_from_props(props: &PropsData) -> taffy::Rect<LengthPercentageAuto> {
+    fn inset_val(v: f32) -> LengthPercentageAuto {
+        if v.is_finite() {
+            LengthPercentageAuto::length(v)
+        } else {
+            LengthPercentageAuto::auto()
+        }
+    }
+    taffy::Rect {
+        top: inset_val(props.inset_top),
+        right: inset_val(props.inset_right),
+        bottom: inset_val(props.inset_bottom),
+        left: inset_val(props.inset_left),
     }
 }
 

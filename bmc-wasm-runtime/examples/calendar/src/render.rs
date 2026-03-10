@@ -6,6 +6,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::calendar::{CalendarEvent, CalendarState, DayGroup};
+use core::sync::atomic::{AtomicU8, Ordering};
 
 // ── Theme ───────────────────────────────────────────────────────────
 
@@ -36,6 +37,28 @@ struct Theme {
     calendar_fallback: u32,
 }
 
+struct ThemeSet {
+    light: Theme,
+    dark: Theme,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ThemeKey {
+    Light = 0,
+    Dark = 1,
+}
+
+impl ThemeKey {
+    fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Light,
+            1 => Self::Dark,
+            _ => Self::Dark,
+        }
+    }
+}
+
 impl Theme {
     fn dark() -> Self {
         Self {
@@ -52,9 +75,47 @@ impl Theme {
             calendar_fallback: GRAY_50,
         }
     }
+
+    fn light() -> Self {
+        Self {
+            surface: GRAY_10,
+            surface_sidebar: WHITE,
+            surface_event: WHITE,
+            surface_grid_cell: WHITE,
+            surface_grid_weekend: color!(GRAY_10, lightness: 0.98),
+            surface_grid_other: color!(GRAY_20, lightness: 0.95),
+            text_primary: GRAY_100,
+            text_secondary: GRAY_60,
+            text_day_header: GRAY_80,
+            now_line: RED_60,
+            calendar_fallback: GRAY_60,
+        }
+    }
 }
 
-static THEME: std::sync::LazyLock<Theme> = std::sync::LazyLock::new(Theme::dark);
+static THEMES: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(|| ThemeSet {
+    light: Theme::light(),
+    dark: Theme::dark(),
+});
+static THEME_KEY: AtomicU8 = AtomicU8::new(ThemeKey::Dark as u8);
+
+const THEME_DARK_ICON: Icon = include_icon!("assets/icons/theme-dark.svg");
+const THEME_LIGHT_ICON: Icon = include_icon!("assets/icons/theme-light.svg");
+
+pub fn set_theme_key(key: ThemeKey) {
+    THEME_KEY.store(key as u8, Ordering::Relaxed);
+}
+
+fn theme_key() -> ThemeKey {
+    ThemeKey::from_u8(THEME_KEY.load(Ordering::Relaxed))
+}
+
+fn active_theme() -> &'static Theme {
+    match theme_key() {
+        ThemeKey::Light => &THEMES.light,
+        ThemeKey::Dark => &THEMES.dark,
+    }
+}
 
 /// Weekday names (0=Mon..6=Sun).
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -86,43 +147,93 @@ pub fn render_agenda(state: &CalendarState, size: WidgetSize) -> Node {
 
 // ── Loading / Empty ─────────────────────────────────────────────────
 
-fn render_loading(size: WidgetSize) -> Node {
-    col(
-        props!(
-            background: THEME.surface,
-            padding: 24.0,
-            width: size.width as f32,
-            height: size.height as f32
-        ),
+fn theme_toggle_fab(theme: &Theme) -> Node {
+    let icon = if theme_key() == ThemeKey::Dark {
+        tree::ensure_registered(&THEME_LIGHT_ICON)
+    } else {
+        tree::ensure_registered(&THEME_DARK_ICON)
+    };
+    let size = 36.0;
+    let r = size / 2.0;
+    let icon_inset = 10.0;
+    let icon_size = size - icon_inset * 2.0;
+    touchable(
+        "theme_toggle",
+        props!(width: size, height: size, inset_bottom: 12.0, inset_right: 12.0),
         [
-            spacer(1.0),
-            text(
-                "Loading calendars...",
-                style!(size: 20, color: THEME.text_secondary),
+            // Subtle outline ring — text color mixed toward the button face
+            Draw::circle(
+                r,
+                r,
+                r,
+                color_mix!(theme.text_secondary, theme.surface_sidebar, 0.7),
             ),
-            spacer(1.0),
+            // Button face — uses sidebar surface for theme-aware contrast
+            Draw::circle(r, r, r - 1.0, theme.surface_sidebar),
+            // Icon
+            Draw::icon_builtin(
+                icon_inset,
+                icon_inset,
+                icon_size,
+                icon_size,
+                icon,
+                theme.text_secondary,
+            ),
         ],
     )
 }
 
+fn with_fab_overlay(content: Node, theme: &Theme) -> Node {
+    col(props!(), [content, theme_toggle_fab(theme)])
+}
+
+fn render_loading(size: WidgetSize) -> Node {
+    let theme = active_theme();
+    with_fab_overlay(
+        col(
+            props!(
+                background: theme.surface,
+                padding: 24.0,
+                width: size.width as f32,
+                height: size.height as f32,
+                gap: 8.0
+            ),
+            [
+                spacer(1.0),
+                text(
+                    "Loading calendars...",
+                    style!(size: 20, color: theme.text_secondary),
+                ),
+                spacer(1.0),
+            ],
+        ),
+        theme,
+    )
+}
+
 fn render_empty(state: &CalendarState, size: WidgetSize) -> Node {
+    let theme = active_theme();
     let msg = if state.sources.iter().any(|s| s.error.is_some()) {
         "Failed to load calendars"
     } else {
         "No upcoming events"
     };
-    col(
-        props!(
-            background: THEME.surface,
-            padding: 24.0,
-            width: size.width as f32,
-            height: size.height as f32
+    with_fab_overlay(
+        col(
+            props!(
+                background: theme.surface,
+                padding: 24.0,
+                width: size.width as f32,
+                height: size.height as f32,
+                gap: 8.0
+            ),
+            [
+                spacer(1.0),
+                text(msg, style!(size: 20, color: theme.text_secondary)),
+                spacer(1.0),
+            ],
         ),
-        [
-            spacer(1.0),
-            text(msg, style!(size: 20, color: THEME.text_secondary)),
-            spacer(1.0),
-        ],
+        theme,
     )
 }
 
@@ -139,6 +250,7 @@ const MAX_SPAN_LANES: u8 = 2;
 const EVENT_LINE_H: f32 = 12.0;
 
 fn render_full(state: &CalendarState, size: WidgetSize) -> Node {
+    let theme = active_theme();
     let w = size.width as f32;
     let h = size.height as f32;
     let sidebar_w: f32 = 200.0;
@@ -147,26 +259,29 @@ fn render_full(state: &CalendarState, size: WidgetSize) -> Node {
     let grid_w = w - sidebar_w - gap - GRID_PAD * 2.0;
     let grid_h = h - GRID_PAD * 2.0;
 
-    row(
-        props!(background: THEME.surface, width: w, height: h, gap: gap),
-        [
-            // Sidebar
-            col(
-                props!(
-                    width: sidebar_w,
-                    height: h,
-                    padding: 16.0,
-                    gap: 12.0,
-                    background: THEME.surface_sidebar
+    with_fab_overlay(
+        row(
+            props!(background: theme.surface, width: w, height: h, gap: gap),
+            [
+                // Sidebar
+                col(
+                    props!(
+                        width: sidebar_w,
+                        height: h,
+                        padding: 16.0,
+                        gap: 12.0,
+                        background: theme.surface_sidebar
+                    ),
+                    render_today_card(state),
                 ),
-                render_today_card(state),
-            ),
-            // Month grid — single canvas
-            canvas(
-                props!(flex: 1.0, height: h, padding: GRID_PAD),
-                render_month_grid_canvas(&grid, state, grid_w, grid_h),
-            ),
-        ],
+                // Month grid — single canvas
+                canvas(
+                    props!(flex: 1.0, height: h, padding: GRID_PAD),
+                    render_month_grid_canvas(&grid, state, grid_w, grid_h),
+                ),
+            ],
+        ),
+        theme,
     )
 }
 
@@ -177,6 +292,7 @@ fn render_month_grid_canvas(
     w: f32,
     h: f32,
 ) -> Vec<Draw> {
+    let theme = active_theme();
     let mut draws = Vec::new();
     let num_weeks = grid.weeks.len() as f32;
 
@@ -193,7 +309,7 @@ fn render_month_grid_canvas(
         4.0,
         2.0,
         format!("{month_name} {}", grid.year),
-        style!(size: 18, weight: 700, color: THEME.text_primary),
+        style!(size: 18, weight: 700, color: theme.text_primary),
     ));
 
     // Day name headers
@@ -204,7 +320,7 @@ fn render_month_grid_canvas(
             cx,
             TITLE_H,
             *name,
-            style!(size: 11, weight: 700, color: THEME.text_secondary, align: TextAlign::Center),
+            style!(size: 11, weight: 700, color: theme.text_secondary, align: TextAlign::Center),
         ));
     }
 
@@ -227,6 +343,7 @@ fn draw_grid_week(
     col_w: f32,
     row_h: f32,
 ) {
+    let theme = active_theme();
     let col_step = col_w + GRID_GAP;
     let max_text_w = px_to_u32(col_w - 14.0);
 
@@ -234,17 +351,17 @@ fn draw_grid_week(
     for (ci, cell) in week.cells.iter().enumerate() {
         let cx = ci as f32 * col_step;
         let bg = if !cell.is_current_month {
-            THEME.surface_grid_other
+            theme.surface_grid_other
         } else if cell.is_weekend {
-            THEME.surface_grid_weekend
+            theme.surface_grid_weekend
         } else {
-            THEME.surface_grid_cell
+            theme.surface_grid_cell
         };
         draws.push(Draw::rect(cx, wy, col_w, row_h, bg));
 
         // Day number (today gets a filled circle badge)
         if cell.is_today {
-            draws.push(Draw::circle(cx + 10.0, wy + 9.0, 8.0, THEME.now_line));
+            draws.push(Draw::circle(cx + 10.0, wy + 9.0, 8.0, theme.now_line));
             draws.push(Draw::text(
                 cx + 10.0,
                 wy + 1.0,
@@ -253,9 +370,9 @@ fn draw_grid_week(
             ));
         } else {
             let (color, size, weight) = if cell.is_current_month {
-                (THEME.text_primary, 11, 400)
+                (theme.text_primary, 11, 400)
             } else {
-                (THEME.text_secondary, 11, 400)
+                (theme.text_secondary, 11, 400)
             };
             draws.push(Draw::text(
                 cx + 3.0,
@@ -314,9 +431,9 @@ fn draw_grid_week(
     for (ci, cell) in week.cells.iter().enumerate() {
         let cx = ci as f32 * col_step;
         let text_color = if cell.is_current_month {
-            THEME.text_primary
+            theme.text_primary
         } else {
-            THEME.text_secondary
+            theme.text_secondary
         };
 
         // If there are more events than fit, reserve one line for "+N" overflow
@@ -335,7 +452,7 @@ fn draw_grid_week(
                     cx + 3.0,
                     ey,
                     format!("+{remaining}"),
-                    style!(size: 9, color: THEME.text_secondary),
+                    style!(size: 9, color: theme.text_secondary),
                 ));
                 break;
             }
@@ -365,32 +482,41 @@ fn draw_grid_week(
 // ── Agenda views (Large / Medium / Small) ───────────────────────────
 
 fn render_large(state: &CalendarState, size: WidgetSize) -> Node {
-    scroll(
-        1,
-        props!(
-            background: THEME.surface,
-            width: size.width as f32,
-            height: size.height as f32,
-            padding: 16.0
+    let theme = active_theme();
+    with_fab_overlay(
+        scroll(
+            1,
+            props!(
+                background: theme.surface,
+                width: size.width as f32,
+                height: size.height as f32,
+                padding: 16.0
+            ),
+            [col(props!(gap: 12.0), render_agenda_stream(state, false))],
         ),
-        [col(props!(gap: 12.0), render_agenda_stream(state, false))],
+        theme,
     )
 }
 
 fn render_medium(state: &CalendarState, size: WidgetSize) -> Node {
-    scroll(
-        1,
-        props!(
-            background: THEME.surface,
-            width: size.width as f32,
-            height: size.height as f32,
-            padding: 12.0
+    let theme = active_theme();
+    with_fab_overlay(
+        scroll(
+            1,
+            props!(
+                background: theme.surface,
+                width: size.width as f32,
+                height: size.height as f32,
+                padding: 12.0
+            ),
+            [col(props!(gap: 10.0), render_agenda_stream(state, true))],
         ),
-        [col(props!(gap: 10.0), render_agenda_stream(state, true))],
+        theme,
     )
 }
 
 fn render_small(state: &CalendarState, size: WidgetSize) -> Node {
+    let theme = active_theme();
     const MAX_EVENTS: usize = 8;
     let mut sections: Vec<Node> = Vec::new();
     let mut event_count = 0;
@@ -412,15 +538,18 @@ fn render_small(state: &CalendarState, size: WidgetSize) -> Node {
         return render_empty(state, size);
     }
 
-    scroll(
-        1,
-        props!(
-            background: THEME.surface,
-            width: size.width as f32,
-            height: size.height as f32,
-            padding: 10.0
+    with_fab_overlay(
+        scroll(
+            1,
+            props!(
+                background: theme.surface,
+                width: size.width as f32,
+                height: size.height as f32,
+                padding: 10.0
+            ),
+            [col(props!(gap: 8.0), sections)],
         ),
-        [col(props!(gap: 8.0), sections)],
+        theme,
     )
 }
 
@@ -507,6 +636,7 @@ fn render_day_section(
 // ── Shared components ───────────────────────────────────────────────
 
 fn render_today_card(state: &CalendarState) -> Vec<Node> {
+    let theme = active_theme();
     let mut children = Vec::new();
 
     // Today's date header
@@ -518,9 +648,9 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
 
     children.push(text(
         format!("{weekday}, {month} {}", now.day),
-        style!(size: 24, weight: 700, color: THEME.text_primary),
+        style!(size: 24, weight: 700, color: theme.text_primary),
     ));
-    children.push(text("Today", style!(size: 14, color: THEME.text_primary)));
+    children.push(text("Today", style!(size: 14, color: theme.text_primary)));
 
     // Count today's events
     let today_group = state.day_groups.iter().find(|g| g.is_today);
@@ -528,7 +658,7 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
         let count = group.all_day.len() + group.timed.len();
         children.push(text(
             format!("{count} event{}", if count == 1 { "" } else { "s" }),
-            style!(size: 16, color: THEME.text_primary),
+            style!(size: 16, color: theme.text_primary),
         ));
 
         // Show next upcoming event
@@ -539,17 +669,17 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
             .filter_map(|&idx| state.events.get(idx))
             .find(|e| e.end > now_ts);
         if let Some(event) = next {
-            children.push(text("Next:", style!(size: 12, color: THEME.text_primary)));
+            children.push(text("Next:", style!(size: 12, color: theme.text_primary)));
             let time = event_time(event, state);
             children.push(text(
                 format!("{time} {}", event.summary),
-                style!(size: 14, color: THEME.text_primary),
+                style!(size: 14, color: theme.text_primary),
             ));
         }
     } else {
         children.push(text(
             "No events today",
-            style!(size: 16, color: THEME.text_primary),
+            style!(size: 16, color: theme.text_primary),
         ));
     }
 
@@ -566,7 +696,7 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
                         props!(width: 10.0, height: 10.0),
                         [Draw::circle(5.0, 5.0, 5.0, source.color)],
                     ),
-                    text(&source.label, style!(size: 12, color: THEME.text_primary)),
+                    text(&source.label, style!(size: 12, color: theme.text_primary)),
                 ],
             )
         })
@@ -578,6 +708,7 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
 
 /// Day header (e.g. "Today • Mon, Mar 10" or "Fri, Mar 13").
 fn day_header(group: &DayGroup, wide: bool) -> Node {
+    let theme = active_theme();
     let weekday = WEEKDAYS.get(group.weekday as usize).unwrap_or(&"???");
     let month = MONTHS
         .get(group.month.wrapping_sub(1) as usize)
@@ -599,7 +730,7 @@ fn day_header(group: &DayGroup, wide: bool) -> Node {
         style!(
             size: font_size,
             weight: 700,
-            color: THEME.text_day_header,
+            color: theme.text_day_header,
             padding: pad
         ),
     )
@@ -607,18 +738,19 @@ fn day_header(group: &DayGroup, wide: bool) -> Node {
 
 /// Current time indicator line — a bold red line marking "now" in the agenda.
 fn now_indicator() -> Node {
+    let theme = active_theme();
     row(
         props!(gap: 6.0, cross_align: CrossAlign::Center, padding: 2.0),
         [
             // Circle dot on the left
             canvas(
                 props!(width: 8.0, height: 8.0),
-                [Draw::circle(4.0, 4.0, 4.0, THEME.now_line)],
+                [Draw::circle(4.0, 4.0, 4.0, theme.now_line)],
             ),
             // Horizontal line
             canvas(
                 props!(height: 2.0, flex: 1.0),
-                [Draw::rect(0.0, 0.0, 9_999.0, 2.0, THEME.now_line)],
+                [Draw::rect(0.0, 0.0, 9_999.0, 2.0, theme.now_line)],
             ),
         ],
     )
@@ -626,6 +758,7 @@ fn now_indicator() -> Node {
 
 /// Full event row with time, color bar, title, optional location, and description.
 fn event_row_full(event: &CalendarEvent, state: &CalendarState, is_all_day: bool) -> Node {
+    let theme = active_theme();
     let color = event_color(event, state);
     let time_str = if is_all_day {
         "All Day".to_string()
@@ -635,16 +768,16 @@ fn event_row_full(event: &CalendarEvent, state: &CalendarState, is_all_day: bool
 
     let is_past = event.end < state.now.unix_secs;
     let text_color = if is_past {
-        THEME.text_secondary
+        theme.text_secondary
     } else {
-        THEME.text_primary
+        theme.text_primary
     };
 
     let mut title_row: Vec<Node> = vec![
         // Time
         text(
             &time_str,
-            style!(size: 13, color: THEME.text_secondary, width: 56.0),
+            style!(size: 13, color: theme.text_secondary, width: 56.0),
         ),
         // Title
         text(
@@ -657,7 +790,7 @@ fn event_row_full(event: &CalendarEvent, state: &CalendarState, is_all_day: bool
     if let Some(loc) = &event.location {
         title_row.push(text(
             loc,
-            style!(size: 12, color: THEME.text_secondary, max_width: 200),
+            style!(size: 12, color: theme.text_secondary, max_width: 200),
         ));
     }
 
@@ -676,7 +809,7 @@ fn event_row_full(event: &CalendarEvent, state: &CalendarState, is_all_day: bool
                     col(props!(width: 56.0), []),
                     text(
                         snippet,
-                        style!(size: 12, color: THEME.text_secondary, flex: 1.0),
+                        style!(size: 12, color: theme.text_secondary, flex: 1.0),
                     ),
                 ],
             ));
@@ -687,7 +820,7 @@ fn event_row_full(event: &CalendarEvent, state: &CalendarState, is_all_day: bool
         props!(
             gap: 4.0,
             padding: 4.0,
-            background: THEME.surface_event,
+            background: theme.surface_event,
             cross_align: CrossAlign::Start
         ),
         [
@@ -703,6 +836,7 @@ fn event_row_full(event: &CalendarEvent, state: &CalendarState, is_all_day: bool
 
 /// Compact event row — time + title only.
 fn event_row_compact(event: &CalendarEvent, state: &CalendarState) -> Node {
+    let theme = active_theme();
     let color = event_color(event, state);
     let time_str = if event.all_day {
         "All Day".to_string()
@@ -712,9 +846,9 @@ fn event_row_compact(event: &CalendarEvent, state: &CalendarState) -> Node {
 
     let is_past = event.end < state.now.unix_secs;
     let text_color = if is_past {
-        THEME.text_secondary
+        theme.text_secondary
     } else {
-        THEME.text_primary
+        theme.text_primary
     };
 
     row(
@@ -727,7 +861,7 @@ fn event_row_compact(event: &CalendarEvent, state: &CalendarState) -> Node {
             ),
             text(
                 &time_str,
-                style!(size: 12, color: THEME.text_secondary, width: 48.0),
+                style!(size: 12, color: theme.text_secondary, width: 48.0),
             ),
             text(
                 &event.summary,
@@ -740,10 +874,11 @@ fn event_row_compact(event: &CalendarEvent, state: &CalendarState) -> Node {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn event_color(event: &CalendarEvent, state: &CalendarState) -> u32 {
+    let theme = active_theme();
     state
         .sources
         .get(event.source_idx)
-        .map_or(THEME.calendar_fallback, |s| s.color)
+        .map_or(theme.calendar_fallback, |s| s.color)
 }
 
 /// Format event time respecting the user's 24h/12h preference.

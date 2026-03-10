@@ -184,8 +184,8 @@ impl TextStyle {
     }
 }
 
-/// Fixed-size props structure (50 bytes)
-#[derive(Clone, Copy, Default, Debug)]
+/// Fixed-size props structure (66 bytes)
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct PropsData {
     pub padding: f32,
@@ -204,10 +204,51 @@ pub struct PropsData {
     pub bg_np_top: u16,
     pub bg_np_right: u16,
     pub bg_np_bottom: u16,
+    /// Absolute positioning insets. `NAN` means "auto" (unset).
+    /// Setting any inset to a finite value makes the node absolutely positioned.
+    pub inset_top: f32,
+    pub inset_right: f32,
+    pub inset_bottom: f32,
+    pub inset_left: f32,
+}
+
+impl Default for PropsData {
+    fn default() -> Self {
+        Self {
+            padding: 0.0,
+            margin: 0.0,
+            gap: 0.0,
+            background: 0,
+            width: 0.0,
+            height: 0.0,
+            flex: 0.0,
+            max_width: 0.0,
+            max_height: 0.0,
+            cross_align: CrossAlign::Stretch,
+            bg_np_id: 0,
+            bg_np_left: 0,
+            bg_np_top: 0,
+            bg_np_right: 0,
+            bg_np_bottom: 0,
+            inset_top: f32::NAN,
+            inset_right: f32::NAN,
+            inset_bottom: f32::NAN,
+            inset_left: f32::NAN,
+        }
+    }
 }
 
 impl PropsData {
-    pub const SIZE: usize = 50;
+    pub const SIZE: usize = 66;
+
+    /// Returns `true` if any inset is set (finite), meaning this node is absolutely positioned.
+    #[must_use]
+    pub fn is_absolute(&self) -> bool {
+        self.inset_top.is_finite()
+            || self.inset_right.is_finite()
+            || self.inset_bottom.is_finite()
+            || self.inset_left.is_finite()
+    }
 
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
@@ -227,6 +268,10 @@ impl PropsData {
         buf[44..46].copy_from_slice(&self.bg_np_top.to_le_bytes());
         buf[46..48].copy_from_slice(&self.bg_np_right.to_le_bytes());
         buf[48..50].copy_from_slice(&self.bg_np_bottom.to_le_bytes());
+        buf[50..54].copy_from_slice(&self.inset_top.to_le_bytes());
+        buf[54..58].copy_from_slice(&self.inset_right.to_le_bytes());
+        buf[58..62].copy_from_slice(&self.inset_bottom.to_le_bytes());
+        buf[62..66].copy_from_slice(&self.inset_left.to_le_bytes());
         buf
     }
 
@@ -250,6 +295,10 @@ impl PropsData {
             bg_np_top: u16::from_le_bytes([data[44], data[45]]),
             bg_np_right: u16::from_le_bytes([data[46], data[47]]),
             bg_np_bottom: u16::from_le_bytes([data[48], data[49]]),
+            inset_top: f32::from_le_bytes([data[50], data[51], data[52], data[53]]),
+            inset_right: f32::from_le_bytes([data[54], data[55], data[56], data[57]]),
+            inset_bottom: f32::from_le_bytes([data[58], data[59], data[60], data[61]]),
+            inset_left: f32::from_le_bytes([data[62], data[63], data[64], data[65]]),
         }
     }
 }

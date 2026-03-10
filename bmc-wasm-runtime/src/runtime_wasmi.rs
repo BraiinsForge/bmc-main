@@ -1696,7 +1696,7 @@ impl WasmWidgetRuntime {
 
         // host_expand_rrule(input_ptr, input_len, out_ptr, out_cap) -> i32
         // Two-call pattern: out_cap=0 returns required size, else fills buffer.
-        // Input: JSON {rrule, dtstart, tzid?, window_start, window_end, max_count}
+        // Input: binary packed (see sdk/src/calendar.rs for wire format)
         // Output: packed i64[] LE (UTC timestamps)
         linker.func_wrap(
             "env",
@@ -1707,12 +1707,12 @@ impl WasmWidgetRuntime {
              out_ptr: u32,
              out_cap: u32|
              -> i32 {
-                let input_str = read_string(&caller, input_ptr, input_len);
-                let Some(input_str) = input_str else {
+                let input_bytes = read_bytes(&caller, input_ptr, input_len);
+                let Some(input_bytes) = input_bytes else {
                     return -1;
                 };
 
-                let timestamps = expand_rrule_impl(&input_str);
+                let timestamps = expand_rrule_impl(&input_bytes);
                 let needed = timestamps.len() * 8;
                 let needed_i32 = i32::try_from(needed).unwrap_or(i32::MAX);
 
@@ -3930,22 +3930,57 @@ fn do_fetch(
 
 /// Expand an RRULE string into concrete UTC timestamps.
 ///
-/// Input is JSON: `{rrule, dtstart, tzid?, window_start, window_end, max_count}`
-fn expand_rrule_impl(input_json: &str) -> Vec<i64> {
+/// Input is a binary-packed buffer (see `sdk/src/calendar.rs` for wire format):
+/// ```text
+/// window_start: i64 LE, window_end: i64 LE, max_count: u16 LE,
+/// tzid_len: u16 LE, tzid: [u8], dtstart_len: u16 LE, dtstart: [u8],
+/// rrule_len: u16 LE, rrule: [u8]
+/// ```
+fn expand_rrule_impl(input: &[u8]) -> Vec<i64> {
     use rrule::RRuleSet;
     use std::fmt::Write;
 
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(input_json) else {
-        tracing::warn!("expand_rrule: invalid JSON input");
+    if input.len() < 18 {
+        tracing::warn!("expand_rrule: input too short ({} bytes)", input.len());
         return Vec::new();
+    }
+
+    let window_start = i64::from_le_bytes(input[0..8].try_into().unwrap_or_default());
+    let window_end = i64::from_le_bytes(input[8..16].try_into().unwrap_or_default());
+    let max_count = u16::from_le_bytes(input[16..18].try_into().unwrap_or_default());
+
+    let mut pos = 18;
+    let read_str = |pos: &mut usize| -> Option<&str> {
+        if *pos + 2 > input.len() {
+            return None;
+        }
+        let len = u16::from_le_bytes(input[*pos..*pos + 2].try_into().ok()?) as usize;
+        *pos += 2;
+        if *pos + len > input.len() {
+            return None;
+        }
+        let s = core::str::from_utf8(&input[*pos..*pos + len]).ok()?;
+        *pos += len;
+        Some(s)
     };
 
-    let rrule_str = v["rrule"].as_str().unwrap_or("");
-    let dtstart_str = v["dtstart"].as_str().unwrap_or("");
-    let tzid = v["tzid"].as_str();
-    let window_start = v["window_start"].as_i64().unwrap_or(0);
-    let window_end = v["window_end"].as_i64().unwrap_or(i64::MAX);
-    let max_count = v["max_count"].as_u64().unwrap_or(200) as u16;
+    let Some(tzid_raw) = read_str(&mut pos) else {
+        tracing::warn!("expand_rrule: failed to read tzid");
+        return Vec::new();
+    };
+    let tzid = if tzid_raw.is_empty() {
+        None
+    } else {
+        Some(tzid_raw)
+    };
+    let Some(dtstart_str) = read_str(&mut pos) else {
+        tracing::warn!("expand_rrule: failed to read dtstart");
+        return Vec::new();
+    };
+    let Some(rrule_str) = read_str(&mut pos) else {
+        tracing::warn!("expand_rrule: failed to read rrule");
+        return Vec::new();
+    };
 
     // Build an RFC-style RRULE string that the rrule crate can parse
     let mut rrule_input = String::with_capacity(256);
@@ -3971,14 +4006,21 @@ fn expand_rrule_impl(input_json: &str) -> Vec<i64> {
         }
     };
 
-    let result = rrule_set.all(max_count);
+    // Constrain to the window so the iterator skips directly past
+    // occurrences before window_start instead of expanding from DTSTART
+    // forward (which could be years of weekly events).
+    let Some(after) = DateTime::from_timestamp(window_start, 0) else {
+        return Vec::new();
+    };
+    let Some(before) = DateTime::from_timestamp(window_end, 0) else {
+        return Vec::new();
+    };
+    let after = after.with_timezone(&rrule::Tz::UTC);
+    let before = before.with_timezone(&rrule::Tz::UTC);
 
-    result
-        .dates
-        .into_iter()
-        .map(|dt| dt.timestamp())
-        .filter(|&ts| ts >= window_start && ts < window_end)
-        .collect()
+    let result = rrule_set.after(after).before(before).all(max_count);
+
+    result.dates.into_iter().map(|dt| dt.timestamp()).collect()
 }
 
 /// Convert a UTC unix timestamp to wall-clock time in a named IANA timezone.

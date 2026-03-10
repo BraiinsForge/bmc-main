@@ -8,9 +8,6 @@
 //! - Properties are `NAME:VALUE` or `NAME;PARAM=VAL:VALUE`
 //! - Long lines are folded: continuation lines start with a space or tab
 
-#[allow(clippy::wildcard_imports)]
-use bmc_wasm_sdk::*;
-
 /// A single parsed event before RRULE expansion.
 #[derive(Debug, Clone)]
 pub struct RawEvent {
@@ -29,38 +26,59 @@ pub struct RawEvent {
     pub rrule: Option<String>,
 }
 
-/// Parse an iCal (.ics) string and extract all VEVENTs.
-pub fn parse_ics(data: &str) -> Vec<RawEvent> {
-    let mut events = Vec::new();
-    let lines = unfold_lines(data);
+/// Split raw iCal data into per-VEVENT chunks for incremental parsing.
+///
+/// This is a cheap byte scan — no line unfolding, no property parsing.
+/// Each returned string contains everything between (exclusive)
+/// `BEGIN:VEVENT` and `END:VEVENT`, ready to be passed to [`parse_chunk`].
+pub fn split_into_chunks(data: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut search_from = 0;
 
-    let mut in_vevent = false;
-    let mut current: Option<RawEventBuilder> = None;
+    loop {
+        // Find the next BEGIN:VEVENT (must be at line start or after \n)
+        let begin = match find_line(data, search_from, "BEGIN:VEVENT") {
+            Some(pos) => pos,
+            None => break,
+        };
+        let body_start = begin + "BEGIN:VEVENT".len();
 
-    for line in &lines {
-        if line == "BEGIN:VEVENT" {
-            in_vevent = true;
-            current = Some(RawEventBuilder::default());
-            continue;
-        }
-        if line == "END:VEVENT" {
-            if let Some(builder) = current.take() {
-                if let Some(event) = builder.build() {
-                    events.push(event);
-                }
-            }
-            in_vevent = false;
-            continue;
-        }
-        if !in_vevent {
-            continue;
-        }
-        if let Some(builder) = current.as_mut() {
-            builder.parse_line(line);
-        }
+        // Find the matching END:VEVENT
+        let end = match find_line(data, body_start, "END:VEVENT") {
+            Some(pos) => pos,
+            None => break,
+        };
+
+        chunks.push(data[body_start..end].to_string());
+        search_from = end + "END:VEVENT".len();
     }
 
-    events
+    chunks
+}
+
+/// Parse a single VEVENT chunk (the text between BEGIN:VEVENT and END:VEVENT).
+pub fn parse_chunk(chunk: &str) -> Option<RawEvent> {
+    let lines = unfold_lines(chunk);
+    let mut builder = RawEventBuilder::default();
+    for line in &lines {
+        builder.parse_line(line);
+    }
+    builder.build()
+}
+
+/// Find `needle` at a line boundary starting from `from`.
+/// Returns the byte offset of the start of `needle`, or `None`.
+fn find_line(data: &str, from: usize, needle: &str) -> Option<usize> {
+    let mut pos = from;
+    loop {
+        let idx = data[pos..].find(needle)?;
+        let abs = pos + idx;
+        // Must be at start of data or preceded by \n (possibly \r\n)
+        if abs == 0 || data.as_bytes()[abs - 1] == b'\n' {
+            return Some(abs);
+        }
+        pos = abs + 1;
+    }
 }
 
 /// Unfold RFC 5545 line folding: continuation lines start with a space or tab.
@@ -165,7 +183,6 @@ impl RawEventBuilder {
         let summary = self.summary.unwrap_or_default();
 
         if summary.is_empty() {
-            log_info!("skipping VEVENT with no SUMMARY");
             return None;
         }
 
@@ -211,4 +228,217 @@ fn extract_param<'a>(params: &'a str, key: &str) -> Option<&'a str> {
         }
     }
     None
+}
+
+/// Parse all VEVENTs from an iCal string in one pass (old non-batched path).
+/// Kept for testing equivalence with the chunked path.
+#[cfg(test)]
+fn parse_ics_oneshot(data: &str) -> Vec<RawEvent> {
+    let lines = unfold_lines(data);
+    let mut events = Vec::new();
+    let mut in_vevent = false;
+    let mut current: Option<RawEventBuilder> = None;
+
+    for line in &lines {
+        if line == "BEGIN:VEVENT" {
+            in_vevent = true;
+            current = Some(RawEventBuilder::default());
+            continue;
+        }
+        if line == "END:VEVENT" {
+            if let Some(builder) = current.take() {
+                if let Some(event) = builder.build() {
+                    events.push(event);
+                }
+            }
+            in_vevent = false;
+            continue;
+        }
+        if !in_vevent {
+            continue;
+        }
+        if let Some(builder) = current.as_mut() {
+            builder.parse_line(line);
+        }
+    }
+
+    events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: run the chunked path and collect all events.
+    fn parse_ics_chunked(data: &str) -> Vec<RawEvent> {
+        split_into_chunks(data)
+            .iter()
+            .filter_map(|chunk| parse_chunk(chunk))
+            .collect()
+    }
+
+    /// Assert two event lists are field-identical.
+    fn assert_events_eq(old: &[RawEvent], new: &[RawEvent]) {
+        assert_eq!(old.len(), new.len(), "event count mismatch");
+        for (i, (a, b)) in old.iter().zip(new.iter()).enumerate() {
+            assert_eq!(a.summary, b.summary, "event {i}: summary mismatch");
+            assert_eq!(a.dtstart, b.dtstart, "event {i}: dtstart mismatch");
+            assert_eq!(a.dtend, b.dtend, "event {i}: dtend mismatch");
+            assert_eq!(a.tzid, b.tzid, "event {i}: tzid mismatch");
+            assert_eq!(a.all_day, b.all_day, "event {i}: all_day mismatch");
+            assert_eq!(a.rrule, b.rrule, "event {i}: rrule mismatch");
+            assert_eq!(
+                a.description, b.description,
+                "event {i}: description mismatch"
+            );
+            assert_eq!(a.location, b.location, "event {i}: location mismatch");
+        }
+    }
+
+    #[test]
+    fn chunked_matches_oneshot_basic() {
+        let ics = "\
+BEGIN:VCALENDAR\r\n\
+VERSION:2.0\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART:20260310T090000Z\r\n\
+DTEND:20260310T100000Z\r\n\
+SUMMARY:Morning standup\r\n\
+LOCATION:Room 42\r\n\
+END:VEVENT\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART;VALUE=DATE:20260315\r\n\
+SUMMARY:Company holiday\r\n\
+DESCRIPTION:Day off\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+        let old = parse_ics_oneshot(ics);
+        let new = parse_ics_chunked(ics);
+        assert_events_eq(&old, &new);
+        assert_eq!(old.len(), 2);
+    }
+
+    #[test]
+    fn chunked_matches_oneshot_rrule_and_tzid() {
+        let ics = "\
+BEGIN:VCALENDAR\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART;TZID=Europe/Prague:20260101T080000\r\n\
+DTEND;TZID=Europe/Prague:20260101T090000\r\n\
+RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR\r\n\
+SUMMARY:Recurring meeting\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+        let old = parse_ics_oneshot(ics);
+        let new = parse_ics_chunked(ics);
+        assert_events_eq(&old, &new);
+        assert_eq!(old[0].rrule.as_deref(), Some("FREQ=WEEKLY;BYDAY=MO,WE,FR"));
+        assert_eq!(old[0].tzid.as_deref(), Some("Europe/Prague"));
+    }
+
+    #[test]
+    fn chunked_matches_oneshot_folded_lines() {
+        // Note: RFC 5545 folded continuation lines start with a space or tab.
+        // Can't use Rust `\` line continuation here — it eats leading whitespace.
+        let ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20260310T090000Z\r\nSUMMARY:This is a very long summary that gets\r\n  folded across multiple lines\r\nDESCRIPTION:Also\r\n folded\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        let old = parse_ics_oneshot(ics);
+        let new = parse_ics_chunked(ics);
+        assert_events_eq(&old, &new);
+        assert_eq!(
+            old[0].summary,
+            "This is a very long summary that gets folded across multiple lines"
+        );
+        assert_eq!(old[0].description.as_deref(), Some("Alsofolded"));
+    }
+
+    #[test]
+    fn chunked_matches_oneshot_quoted_tzid() {
+        let ics = "\
+BEGIN:VCALENDAR\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART;TZID=\"US/Eastern\":20260310T090000\r\n\
+SUMMARY:Quoted TZ\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+        let old = parse_ics_oneshot(ics);
+        let new = parse_ics_chunked(ics);
+        assert_events_eq(&old, &new);
+        assert_eq!(old[0].tzid.as_deref(), Some("US/Eastern"));
+    }
+
+    #[test]
+    fn split_skips_non_vevent_components() {
+        let ics = "\
+BEGIN:VCALENDAR\r\n\
+BEGIN:VTIMEZONE\r\n\
+TZID:Europe/Prague\r\n\
+BEGIN:STANDARD\r\n\
+DTSTART:19701025T030000\r\n\
+END:STANDARD\r\n\
+END:VTIMEZONE\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART:20260310T090000Z\r\n\
+SUMMARY:Real event\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+        let chunks = split_into_chunks(ics);
+        assert_eq!(chunks.len(), 1);
+        let old = parse_ics_oneshot(ics);
+        let new = parse_ics_chunked(ics);
+        assert_events_eq(&old, &new);
+    }
+
+    #[test]
+    fn empty_and_no_summary_skipped() {
+        let ics = "\
+BEGIN:VCALENDAR\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART:20260310T090000Z\r\n\
+END:VEVENT\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART:20260311T090000Z\r\n\
+SUMMARY:Valid\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+        let old = parse_ics_oneshot(ics);
+        let new = parse_ics_chunked(ics);
+        assert_events_eq(&old, &new);
+        assert_eq!(old.len(), 1);
+        assert_eq!(old[0].summary, "Valid");
+    }
+
+    #[test]
+    fn chunked_matches_oneshot_real_feed() {
+        let ics = include_str!("../testdata/finland.ics");
+        let old = parse_ics_oneshot(ics);
+        let new = parse_ics_chunked(ics);
+        assert_events_eq(&old, &new);
+        assert!(
+            old.len() >= 20,
+            "expected at least 20 events, got {}",
+            old.len()
+        );
+    }
+
+    #[test]
+    fn unix_line_endings() {
+        let ics = "\
+BEGIN:VCALENDAR\n\
+BEGIN:VEVENT\n\
+DTSTART:20260310T090000Z\n\
+SUMMARY:Unix LF\n\
+END:VEVENT\n\
+END:VCALENDAR\n";
+
+        let old = parse_ics_oneshot(ics);
+        let new = parse_ics_chunked(ics);
+        assert_events_eq(&old, &new);
+        assert_eq!(old.len(), 1);
+    }
 }

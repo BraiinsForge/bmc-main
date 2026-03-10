@@ -65,6 +65,7 @@ const DEFAULT_SOURCES: &[ICalSource] = &[
 thread_local! {
     static STATE: RefCell<CalendarState> = RefCell::new(CalendarState::new());
     static SIZE: RefCell<WidgetSize> = RefCell::new(WidgetSize::from_dimensions(1_280, 480));
+    static THEME_KEY: RefCell<render::ThemeKey> = const { RefCell::new(render::ThemeKey::Dark) };
     /// Maps fetch request_id → source index. HTTP responses arrive in arbitrary
     /// order, so we cannot use a FIFO queue.
     static PENDING: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
@@ -74,6 +75,13 @@ thread_local! {
 pub extern "C" fn init(width: u32, height: u32) {
     install_panic_hook();
     SIZE.with(|s| *s.borrow_mut() = WidgetSize::from_dimensions(width, height));
+    THEME_KEY.with(|t| {
+        *t.borrow_mut() = match kv::get_string("theme").as_deref() {
+            Some("light") => render::ThemeKey::Light,
+            Some("dark") => render::ThemeKey::Dark,
+            _ => render::ThemeKey::Dark,
+        };
+    });
 
     STATE.with(|state| {
         let mut state = state.borrow_mut();
@@ -131,23 +139,23 @@ fn on_ics_response(response: &FetchResponse) {
 
     let body = response.text().unwrap_or("");
 
-    // Parse OUTSIDE the STATE borrow — ical parsing is expensive and could
-    // exhaust WASM fuel. If fuel runs out while STATE is borrowed, the RefCell
-    // is permanently locked and all subsequent calls panic.
-    let raw_events = ical_parser::parse_ics(body);
-    log_info!("parsed {} events from calendar {}", raw_events.len(), idx);
+    // Split into per-VEVENT chunks — cheap byte scan, no allocations per line.
+    // Actual parsing is deferred to render() in batches to stay within fuel.
+    let chunks = ical_parser::split_into_chunks(body);
+    log_info!("split {} VEVENT chunks from calendar {}", chunks.len(), idx);
 
-    // Store parsed events and mark dirty. Don't rebuild here — RRULE expansion
-    // is expensive and would exhaust the fetch callback's fuel budget. The render
-    // function gets its own fuel budget and will rebuild when it sees the dirty flag.
     STATE.with(|s| {
         let mut s = s.borrow_mut();
         if let Some(source) = s.sources.get_mut(idx) {
-            source.raw_events = raw_events;
+            source.raw_events.clear();
             source.loading = false;
             source.error = None;
         }
-        s.dirty = true;
+        // Purge any stale chunks from a previous fetch of the same source
+        s.parse_queue.retain(|(si, _)| *si != idx);
+        for chunk in chunks {
+            s.parse_queue.push_back((idx, chunk));
+        }
     });
 
     request_frame();
@@ -157,12 +165,18 @@ fn on_ics_response(response: &FetchResponse) {
 pub extern "C" fn render(_delta_ms: u32) {
     let size = SIZE.with(|s| *s.borrow());
 
+    let theme_key = THEME_KEY.with(|t| *t.borrow());
+    render::set_theme_key(theme_key);
+
     STATE.with(|state| {
         let mut state = state.borrow_mut();
         state.update_time();
 
-        // Rebuild expanded events if sources changed (deferred from fetch callback
-        // to avoid exhausting the callback's fuel budget)
+        // Parse the next batch of VEVENT chunks (deferred from fetch callback
+        // to stay within fuel budget — large .ics files can have hundreds of events).
+        state.drain_parse_queue();
+
+        // Rebuild expanded events if sources changed
         if state.dirty {
             state.dirty = false;
             state.rebuild_events();
@@ -171,14 +185,29 @@ pub extern "C" fn render(_delta_ms: u32) {
         let tree = render::render_agenda(&state, size);
         let result = render_ui(size.width, size.height, tree);
 
-        // Handle button clicks
-        for (i, &clicked) in result.clicks.iter().enumerate() {
-            if clicked {
-                state.on_click(i);
-            }
+        // Theme toggle is the only button (index 0)
+        if result.clicks.first().copied().unwrap_or(false) {
+            THEME_KEY.with(|t| {
+                let mut current = t.borrow_mut();
+                *current = match *current {
+                    render::ThemeKey::Light => render::ThemeKey::Dark,
+                    render::ThemeKey::Dark => render::ThemeKey::Light,
+                };
+                let value = match *current {
+                    render::ThemeKey::Light => "light",
+                    render::ThemeKey::Dark => "dark",
+                };
+                kv::set("theme", value.as_bytes());
+            });
+            request_frame();
+        }
+
+        // If chunks remain, request immediate next frame to continue draining.
+        // Otherwise, slow-tick for clock updates.
+        if state.has_pending_chunks() {
+            request_frame();
+        } else {
+            request_frame_after(60_000);
         }
     });
-
-    // Keep refreshing for clock updates (every 60s is fine for agenda)
-    request_frame_after(60_000);
 }
