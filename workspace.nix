@@ -6,14 +6,8 @@ let
   rustflags = import ./nix/rustflags.nix { inherit lib; };
   inherit (rustflags) X11RuntimeDeps waylandRuntimeDeps makeRustflagsEnv;
 
-  widgetLib = import ./nix/widget.nix {
-    inherit pkgs lib;
-  };
-  inherit (widgetLib) mkWidgetPackage mkAllWidgets;
-
   mkIndex = import ./nix/mkIndex.nix { inherit pkgs lib; };
   mkTarball = import ./nix/mkTarball.nix { inherit pkgs lib mkIndex; };
-  mkCorePackage = import ./nix/pkgs/core/package.nix { inherit pkgs lib; };
 
   # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
   # The man output fails to build for ARMv7 glibc targets
@@ -22,45 +16,6 @@ let
       outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
     });
   });
-
-  crates = with pkgs.ii.rust; {
-    bmc-mock = defineCrate {
-      path = "./bmc-mock";
-      packageName = "bmc-mock";
-    };
-    bmc-openwrt = defineCrate {
-      path = "./bmc-openwrt";
-      packageName = "bmc-openwrt";
-    };
-    bmc-nix-cli = defineCrate {
-      path = "./bmc-nix";
-      packageName = "bmc-nix";
-      binName = "bmc-nix-cli";
-    };
-    bmc-hook-merge-files = defineCrate {
-      path = "./bmc-nix";
-      packageName = "bmc-nix";
-      binName = "bmc-hook-merge-files";
-    };
-    bmc-hook-file-symlinks = defineCrate {
-      path = "./bmc-nix";
-      packageName = "bmc-nix";
-      binName = "bmc-hook-file-symlinks";
-    };
-    bmc-hook-activation-resolver = defineCrate {
-      path = "./bmc-nix";
-      packageName = "bmc-nix";
-      binName = "bmc-hook-activation-resolver";
-    };
-    widget-digital-clock = defineCrate {
-      path = "./widgets/digital-clock";
-      packageName = "bmc-widget-digital-clock";
-    };
-    widget-flip-clock = defineCrate {
-      path = "./widgets/flip-clock";
-      packageName = "bmc-widget-flip-clock";
-    };
-  };
 
   # Shared deps used by both package builds and devShells.
   # Single source of truth to keep build derivations and dev environments in sync.
@@ -140,54 +95,27 @@ let
     env = commonDeps.env;
   };
 
-  build-profiles = {
-    # fast profile (no cross compilation, non-portable binaries)
-    fast = workspace.mkBuildProfile {
-      minimal_deps = false;
-      rustProfile = "fast";
+  bmc = {
+    lib = import ./nix/lib.nix { inherit pkgs lib; };
+    crates = import ./nix/crates.nix { inherit (pkgs.ii.rust) defineCrate; };
+    workspaces = {
+      full = workspace;
+      minimal = workspaceMinimal;
     };
-    # musl profiles for bmc-openwrt (statically linked)
-    armv7-release = workspaceMinimal.mkBuildProfile {
-      suffix = "armv7";
-      minimal_deps = true;
-      rustProfile = "release";
-      rustCrossTarget = "armv7-unknown-linux-musleabihf";
-      build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
-    };
-    armv7-debug = workspaceMinimal.mkBuildProfile {
-      suffix = "armv7";
-      minimal_deps = false;
-      rustProfile = "dev";
-      rustCrossTarget = "armv7-unknown-linux-musleabihf";
-      build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
-    };
-    # glibc profiles for widgets/compositor (dynamically linked)
-    armv7-glibc-release = workspace.mkBuildProfile {
-      suffix = "armv7";
-      minimal_deps = true;
-      rustProfile = "release";
-      rustCrossTarget = "armv7-unknown-linux-gnueabihf";
-      build_pkgs = fixedArmv7Pkgs;
-      wrapNixGL = true;
-    };
-    armv7-glibc-debug = workspace.mkBuildProfile {
-      suffix = "armv7";
-      minimal_deps = false;
-      rustProfile = "dev";
-      rustCrossTarget = "armv7-unknown-linux-gnueabihf";
-      build_pkgs = fixedArmv7Pkgs;
-      wrapNixGL = true;
+    profiles = import ./nix/profiles.nix {
+      inherit (bmc) workspaces;
+      inherit pkgs fixedArmv7Pkgs;
     };
   };
 
   # All widget definitions for building
   widgets = {
     digital-clock = {
-      crate = crates.widget-digital-clock;
+      crate = bmc.crates.widget-digital-clock;
       features = [ "standalone" ];
     };
     flip-clock = {
-      crate = crates.widget-flip-clock;
+      crate = bmc.crates.widget-flip-clock;
       features = [ "standalone" ];
     };
   };
@@ -209,7 +137,7 @@ let
 
   cratePackages = builtins.listToAttrs (lib.forEach crateTuples ({ archProfile, crate }: {
     name = "${crate.def}-${archProfile.arch}-${archProfile.profile}";
-    value = build-profiles."${archProfile.arch}-${archProfile.profile}".buildCrate crates.${crate.def} { };
+    value = bmc.profiles."${archProfile.arch}-${archProfile.profile}".buildCrate bmc.crates.${crate.def} { };
   }));
 
   # Individual widget packages per arch/profile
@@ -220,25 +148,25 @@ let
 
   widgetPackages = builtins.listToAttrs (lib.forEach widgetTuples ({ archProfile, widget }: {
     name = "widget-${widget.name}-${archProfile.arch}-${archProfile.profile}";
-    value = mkWidgetPackage {
+    value = bmc.lib.mkWidgetPackage {
       inherit (widget) name crate;
       features = widget.features or [ ];
-      profile = build-profiles."${archProfile.arch}-${archProfile.profile}";
+      profile = bmc.profiles."${archProfile.arch}-${archProfile.profile}";
     };
   }));
 
   # Combined widget packages per arch/profile
   combinedWidgetPackages = builtins.listToAttrs (lib.forEach glibcArchProfiles ({ arch, profile }: {
     name = "widgets-${arch}-${profile}";
-    value = mkAllWidgets {
+    value = bmc.lib.mkAllWidgets {
       inherit widgets;
-      profile = build-profiles."${arch}-${profile}";
+      profile = bmc.profiles."${arch}-${profile}";
     };
   }));
 
   specialPackages = {
-    workspace-deps = build-profiles.fast.deps;
-    inherit (build-profiles.fast) build clippy test nextest;
+    workspace-deps = bmc.profiles.fast.deps;
+    inherit (bmc.profiles.fast) build clippy test nextest;
   };
 
   armv7lPkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
@@ -248,67 +176,44 @@ let
   nativeWidgetPackages = builtins.listToAttrs (lib.mapAttrsToList
     (name: widget: {
       name = "widget-${name}";
-      value = mkWidgetPackage {
+      value = bmc.lib.mkWidgetPackage {
         inherit name;
         inherit (widget) crate;
         features = widget.features or [ ];
-        profile = build-profiles.fast;
+        profile = bmc.profiles.fast;
       };
     })
     widgets);
 
   # Native activation package (hooks run on build host during init tarball build)
-  nativeCorePackage = mkCorePackage {
-    bmc-hook-merge-files = build-profiles.fast.buildCrate crates.bmc-hook-merge-files { };
-    bmc-hook-file-symlinks = build-profiles.fast.buildCrate crates.bmc-hook-file-symlinks { };
-    bmc-hook-activation-resolver = build-profiles.fast.buildCrate crates.bmc-hook-activation-resolver { };
+  nativeCorePackage = bmc.lib.mkCorePackage {
+    bmc-hook-merge-files = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-merge-files { };
+    bmc-hook-file-symlinks = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-file-symlinks { };
+    bmc-hook-activation-resolver = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-activation-resolver { };
   };
 
-  # ARM packages for the init tarball
-  armv7Packages = {
-    nix = fixedArmv7Pkgs.nix;
-    core = mkCorePackage {
-      bmc-openwrt = build-profiles.armv7-glibc-release.buildCrate crates.bmc-openwrt { };
-      bmc-hook-merge-files = build-profiles.armv7-glibc-release.buildCrate crates.bmc-hook-merge-files { };
-      bmc-hook-file-symlinks = build-profiles.armv7-glibc-release.buildCrate crates.bmc-hook-file-symlinks { };
-      bmc-hook-activation-resolver = build-profiles.armv7-glibc-release.buildCrate crates.bmc-hook-activation-resolver { };
-    };
-    digital-clock = mkWidgetPackage {
-      name = "digital-clock";
-      crate = crates.widget-digital-clock;
-      profile = build-profiles.armv7-glibc-release;
-      features = [ "standalone" ];
-    };
-    flip-clock = mkWidgetPackage {
-      name = "flip-clock";
-      crate = crates.widget-flip-clock;
-      profile = build-profiles.armv7-glibc-release;
-      features = [ "standalone" ];
-    };
-  };
-
-  armv7PackageDefs = import ./nix/packages.nix { inherit armv7Packages; };
+  armv7PackageDefs = import ./nix/packages.nix { inherit bmc fixedArmv7Pkgs; };
 
   initArtifacts = import ./nix/init-artifacts.nix {
     inherit self pkgs lib mkIndex mkTarball;
     packages = armv7PackageDefs;
-    bmc-nix-cli = build-profiles.fast.buildCrate crates.bmc-nix-cli { };
+    bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
     hooksOverridePath = "${nativeCorePackage}/hooks";
   };
 
 in
 {
-  inherit commonDeps build-profiles crates;
+  inherit commonDeps bmc;
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
     inherit bmc-video-play-armv7;
-    bmc-mock = build-profiles.fast.buildCrate crates.bmc-mock { };
-    bmc-nix-cli = build-profiles.fast.buildCrate crates.bmc-nix-cli { };
-    bmc-hook-merge-files = build-profiles.fast.buildCrate crates.bmc-hook-merge-files { };
-    bmc-hook-file-symlinks = build-profiles.fast.buildCrate crates.bmc-hook-file-symlinks { };
-    bmc-hook-activation-resolver = build-profiles.fast.buildCrate crates.bmc-hook-activation-resolver { };
+    bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
+    bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
+    bmc-hook-merge-files = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-merge-files { };
+    bmc-hook-file-symlinks = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-file-symlinks { };
+    bmc-hook-activation-resolver = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-activation-resolver { };
 
     # Native widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
-    widgets = mkAllWidgets { inherit widgets; profile = build-profiles.fast; };
+    widgets = bmc.lib.mkAllWidgets { inherit widgets; profile = bmc.profiles.fast; };
   };
-  devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) build-profiles;
+  devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) bmc.profiles;
 }
