@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+export XDG_RUNTIME_DIR="$(mktemp -d /tmp/runtime-XXXXXX)"
+mkdir -p "$XDG_RUNTIME_DIR"
+exec "$@"

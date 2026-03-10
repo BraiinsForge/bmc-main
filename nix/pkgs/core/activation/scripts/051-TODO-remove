@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+[ -f ~/.profile ] && exit 0
+cat > ~/.profile <<'EOF'
+export PATH=/run/current-profile/bin:$PATH
+EOF
