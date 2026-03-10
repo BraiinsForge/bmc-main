@@ -84,6 +84,9 @@ let
     } // makeRustflagsEnv {
       runtimePackages = commonDeps.guiRuntimeDeps;
       rustCrossTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+    } // makeRustflagsEnv {
+      runtimePackages = waylandRuntimeDeps fixedArmv7Pkgs;
+      rustCrossTarget = "armv7-unknown-linux-gnueabihf";
     };
 
     guiBuildDeps = with pkgs; [
