@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use smithay::{
     backend::renderer::gles::GlesTexture,
-    backend::renderer::{Bind, Color32F, Frame, ImportDma, ImportMemWl, Renderer, Texture},
+    backend::renderer::{Bind, Frame, ImportDma, ImportMemWl, Renderer, Texture},
     reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_buffer::WlBuffer},
     utils::{Buffer as BufferCoord, Rectangle, Size, Transform},
     wayland::dmabuf::get_dmabuf,
@@ -15,8 +15,6 @@ use smithay::{
 
 use super::render::{BufferPool, DrmOutput, EglContext};
 use super::widget_tracker::WidgetTracker;
-
-const BACKGROUND_COLOR: Color32F = Color32F::new(0.05, 0.05, 0.1, 1.0);
 
 pub struct SceneRenderer {
     egl: EglContext,
@@ -26,8 +24,6 @@ pub struct SceneRenderer {
     texture_cache: HashMap<ObjectId, GlesTexture>,
     #[cfg(feature = "profiling")]
     bind_w: ii_stopwatch::StopWatch,
-    #[cfg(feature = "profiling")]
-    clear_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
     compose_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
@@ -56,8 +52,6 @@ impl SceneRenderer {
             texture_cache: HashMap::new(),
             #[cfg(feature = "profiling")]
             bind_w: ii_stopwatch::StopWatch::default(),
-            #[cfg(feature = "profiling")]
-            clear_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
             compose_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
@@ -152,12 +146,6 @@ impl SceneRenderer {
             .render(&mut framebuffer, output_size, Transform::Normal)
             .context("Failed to begin frame")?;
 
-        ii_stopwatch::stopwatch_start!(self.clear_w);
-        frame
-            .clear(BACKGROUND_COLOR, &[Rectangle::from_size(output_size)])
-            .context("Failed to clear")?;
-        ii_stopwatch::stopwatch_stop!(self.clear_w);
-
         ii_stopwatch::stopwatch_start!(self.compose_w);
         for (buffer_id, placement) in &to_render {
             let Some(texture) = self.texture_cache.get(buffer_id) else {
@@ -226,15 +214,13 @@ impl SceneRenderer {
         #[cfg(feature = "profiling")]
         if ii_stopwatch::every_expired!(self.render_every) {
             tracing::info!(
-                "render_scene: bind={} clear={} compose={} finish={} flip={}",
+                "render_scene: bind={} compose={} finish={} flip={}",
                 self.bind_w,
-                self.clear_w,
                 self.compose_w,
                 self.finish_w,
                 self.flip_w
             );
             ii_stopwatch::stopwatch_reset!(self.bind_w);
-            ii_stopwatch::stopwatch_reset!(self.clear_w);
             ii_stopwatch::stopwatch_reset!(self.compose_w);
             ii_stopwatch::stopwatch_reset!(self.finish_w);
             ii_stopwatch::stopwatch_reset!(self.flip_w);
