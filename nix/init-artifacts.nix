@@ -13,9 +13,8 @@
 }:
 let
   initPackageNames = [
-    "bmc"
+    "core"
     "nix"
-    "bmc-nix-activation"
     "digital-clock"
     "flip-clock"
   ];

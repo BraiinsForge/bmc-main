@@ -8,11 +8,11 @@
 # keyed by name (e.g. { bmc = <drv>; nix = <drv>; ... }).
 { armv7Packages }:
 {
-  bmc = {
-    pkg = armv7Packages.bmc;
+  core = {
+    pkg = armv7Packages.core;
     version = "0.1.0";
     category = "core";
-    description = "Main display application";
+    description = "Core system package (bmc-openwrt + activation/hooks)";
     upgrade_strategy = "reboot";
     install_strategy = null;
   };
@@ -23,14 +23,6 @@
     description = "Nix package manager";
     upgrade_strategy = "reboot";
     install_strategy = null;
-  };
-  bmc-nix-activation = {
-    pkg = armv7Packages.bmc-nix-activation;
-    version = "0.1.0";
-    category = "core";
-    description = "Profile hooks and activation scripts";
-    upgrade_strategy = "reboot";
-    install_strategy = false;
   };
   digital-clock = {
     pkg = armv7Packages.digital-clock;

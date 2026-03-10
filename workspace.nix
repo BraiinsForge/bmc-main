@@ -13,7 +13,7 @@ let
 
   mkIndex = import ./nix/mkIndex.nix { inherit pkgs lib; };
   mkTarball = import ./nix/mkTarball.nix { inherit pkgs lib mkIndex; };
-  mkActivationPackage = import ./nix/mkActivationPackage.nix { inherit pkgs lib; };
+  mkCorePackage = import ./nix/pkgs/core/package.nix { inherit pkgs lib; };
 
   # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
   # The man output fails to build for ARMv7 glibc targets
@@ -255,7 +255,7 @@ let
     widgets);
 
   # Native activation package (hooks run on build host during init tarball build)
-  nativeActivationPackage = mkActivationPackage {
+  nativeCorePackage = mkCorePackage {
     bmc-hook-merge-files = build-profiles.fast.buildCrate crates.bmc-hook-merge-files { };
     bmc-hook-file-symlinks = build-profiles.fast.buildCrate crates.bmc-hook-file-symlinks { };
     bmc-hook-activation-resolver = build-profiles.fast.buildCrate crates.bmc-hook-activation-resolver { };
@@ -263,9 +263,9 @@ let
 
   # ARM packages for the init tarball
   armv7Packages = {
-    bmc = build-profiles.armv7-glibc-release.buildCrate crates.bmc-openwrt { };
     nix = fixedArmv7Pkgs.nix;
-    bmc-nix-activation = mkActivationPackage {
+    core = mkCorePackage {
+      bmc-openwrt = build-profiles.armv7-glibc-release.buildCrate crates.bmc-openwrt { };
       bmc-hook-merge-files = build-profiles.armv7-glibc-release.buildCrate crates.bmc-hook-merge-files { };
       bmc-hook-file-symlinks = build-profiles.armv7-glibc-release.buildCrate crates.bmc-hook-file-symlinks { };
       bmc-hook-activation-resolver = build-profiles.armv7-glibc-release.buildCrate crates.bmc-hook-activation-resolver { };
@@ -290,7 +290,7 @@ let
     inherit self pkgs lib mkIndex mkTarball;
     packages = armv7PackageDefs;
     bmc-nix-cli = build-profiles.fast.buildCrate crates.bmc-nix-cli { };
-    hooksOverridePath = "${nativeActivationPackage}/hooks";
+    hooksOverridePath = "${nativeCorePackage}/hooks";
   };
 
 in
