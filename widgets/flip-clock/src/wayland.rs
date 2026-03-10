@@ -77,6 +77,8 @@ struct WaylandState {
     needs_render: bool,
     /// Whether size changed (needs EGL resize)
     size_changed: bool,
+    /// Cached wl_buffer per double-buffer slot (avoids per-frame create/destroy)
+    cached_buffers: [Option<wl_buffer::WlBuffer>; 2],
 }
 
 impl WaylandClient {
@@ -110,6 +112,7 @@ impl WaylandClient {
             frame_count: 0,
             needs_render: false,
             size_changed: false,
+            cached_buffers: [None, None],
         };
 
         // Roundtrip to get globals
@@ -228,6 +231,12 @@ impl WaylandClient {
 
             // Handle resize if needed
             if self.state.size_changed {
+                // Destroy cached wl_buffers — they reference the old size
+                for cached in &mut self.state.cached_buffers {
+                    if let Some(buf) = cached.take() {
+                        buf.destroy();
+                    }
+                }
                 egl.resize(self.state.width, self.state.height);
                 renderer.resize(self.state.width, self.state.height);
                 self.state.size_changed = false;
@@ -747,13 +756,16 @@ impl WaylandClient {
 
                 // End frame and get DMA-BUF
                 let dmabuf_info = egl.end_frame()?;
+                let slot = egl.last_rendered_slot();
 
-                // Create wl_buffer from DMA-BUF
-                let buffer = create_buffer_from_dmabuf(&linux_dmabuf, &dmabuf_info, &qh);
+                // Reuse cached wl_buffer for this slot, or create one on first use
+                let buffer = self.state.cached_buffers[slot].get_or_insert_with(|| {
+                    create_buffer_from_dmabuf(&linux_dmabuf, &dmabuf_info, &qh)
+                });
 
                 // Attach buffer to surface
                 if let Some(ref surface) = self.state.surface {
-                    surface.attach(Some(&buffer), 0, 0);
+                    surface.attach(Some(buffer), 0, 0);
                     #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
                     surface.damage_buffer(
                         0,
@@ -1039,9 +1051,9 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for WaylandState {
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            // Buffer is no longer in use by the compositor
-            // We can reuse or destroy it
-            buffer.destroy();
+            // Buffer released by compositor — it will be reused on the next
+            // frame for this double-buffer slot, so do not destroy it.
+            let _ = buffer;
         }
     }
 }

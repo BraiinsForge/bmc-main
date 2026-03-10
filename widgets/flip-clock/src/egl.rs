@@ -387,6 +387,11 @@ impl EglState {
         &self.gl
     }
 
+    /// Index of the buffer that was just rendered (valid after `end_frame`).
+    pub fn last_rendered_slot(&self) -> usize {
+        1 - self.current_buffer
+    }
+
     /// Get current dimensions
     #[expect(dead_code)]
     pub fn dimensions(&self) -> (u32, u32) {
