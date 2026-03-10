@@ -58,15 +58,15 @@ pub extern "C" fn render(_delta_ms: u32) {
             props!(gap: 8.0),
             if small {
                 vec![
-                    button!("Normal", style: Primary, size: Small),
-                    button!("CPU Burn", style: Danger, size: Small),
-                    button!("Draw Spam", style: Secondary, size: Small),
+                    button!("normal", "Normal", style: Primary, size: Small),
+                    button!("cpu_burn", "CPU Burn", style: Danger, size: Small),
+                    button!("draw_spam", "Draw Spam", style: Secondary, size: Small),
                 ]
             } else {
                 vec![
-                    button!("Normal", style: Primary),
-                    button!("CPU Burn", style: Danger),
-                    button!("Draw Spam", style: Secondary),
+                    button!("normal", "Normal", style: Primary),
+                    button!("cpu_burn", "CPU Burn", style: Danger),
+                    button!("draw_spam", "Draw Spam", style: Secondary),
                 ]
             },
         ),
@@ -76,10 +76,12 @@ pub extern "C" fn render(_delta_ms: u32) {
 
     // Submit tree and process clicks BEFORE the expensive work.
     let result = render_ui(w, h, root);
-    for (i, &clicked) in result.clicks.iter().enumerate() {
-        if clicked {
-            MODE.set(i as u32);
-        }
+    if result.clicks.contains_key("normal") {
+        MODE.set(0);
+    } else if result.clicks.contains_key("cpu_burn") {
+        MODE.set(1);
+    } else if result.clicks.contains_key("draw_spam") {
+        MODE.set(2);
     }
 
     // Expensive work runs AFTER the tree is submitted.

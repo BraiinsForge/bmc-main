@@ -49,19 +49,19 @@ fn buttons_section(counts: [u32; 4]) -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    button!(fmt!("Primary {}", counts[0]), style: Primary),
-                    button!(fmt!("Secondary {}", counts[1]), style: Secondary),
+                    button!("primary", fmt!("Primary {}", counts[0]), style: Primary),
+                    button!("secondary", fmt!("Secondary {}", counts[1]), style: Secondary),
                 ],
             ),
             row(
                 props!(gap: 8.0),
                 [
-                    button!(fmt!("Tertiary {}", counts[2]), style: Tertiary),
-                    button!(fmt!("Danger {}", counts[3]), style: Danger),
+                    button!("tertiary", fmt!("Tertiary {}", counts[2]), style: Tertiary),
+                    button!("danger", fmt!("Danger {}", counts[3]), style: Danger),
                 ],
             ),
             spacer(1.0),
-            button!("Open Modal", style: Primary),
+            button!("open_modal", "Open Modal", style: Primary),
         ],
     )
 }
@@ -74,16 +74,16 @@ fn icon_buttons_section() -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    button!("Settings", style: Primary, icon: tree::ensure_registered(&SETTINGS)),
-                    button!("Apply", style: Secondary, icon: tree::ensure_registered(&CHECKMARK)),
+                    button!("settings", "Settings", style: Primary, icon: tree::ensure_registered(&SETTINGS)),
+                    button!("apply", "Apply", style: Secondary, icon: tree::ensure_registered(&CHECKMARK)),
                 ],
             ),
             row(
                 props!(gap: 8.0),
                 [
-                    button!("", style: Secondary, icon: tree::ensure_registered(&SEARCH)),
-                    button!("", style: Danger, icon: tree::ensure_registered(&WARNING)),
-                    button!("", style: Primary, icon: ICON_CLOSE),
+                    button!("search", "", style: Secondary, icon: tree::ensure_registered(&SEARCH)),
+                    button!("warning", "", style: Danger, icon: tree::ensure_registered(&WARNING)),
+                    button!("close", "", style: Primary, icon: ICON_CLOSE),
                 ],
             ),
         ],
@@ -294,7 +294,7 @@ fn text_styles_demo() -> Node {
 
 fn about_modal() -> Node {
     modal(
-        1,
+        "about",
         MODAL_OPEN.get(),
         "About This Demo",
         600.0,
@@ -393,25 +393,24 @@ pub extern "C" fn render(_delta_ms: u32) {
         ),
     );
 
-    // Handle button clicks
-    // 0-3: counter buttons, 4: Open Modal
-    // 5-6: icon+text buttons (Settings, Apply)
-    // 7-9: icon-only buttons (Search, Warning, Close)
-    // 10: modal close (auto-added by host)
-    for (i, &clicked) in result.clicks.iter().enumerate() {
-        if clicked {
-            match i {
-                0..=3 => {
-                    COUNTS.with(|c| {
-                        let mut counts = c.borrow_mut();
-                        counts[i] = counts[i].saturating_add(1);
-                    });
-                }
-                4 => MODAL_OPEN.set(true),
-                10 => MODAL_OPEN.set(false),
-                _ => {}
-            }
+    handle_clicks(&result);
+}
+
+fn handle_clicks(result: &bmc_wasm_sdk::TreeRenderResult) {
+    let counter_buttons = ["primary", "secondary", "tertiary", "danger"];
+    for (i, id) in counter_buttons.iter().enumerate() {
+        if result.clicks.contains_key(*id) {
+            COUNTS.with(|c| {
+                let mut counts = c.borrow_mut();
+                counts[i] = counts[i].saturating_add(1);
+            });
         }
+    }
+    if result.clicks.contains_key("open_modal") {
+        MODAL_OPEN.set(true);
+    }
+    if result.clicks.contains_key("about::close") {
+        MODAL_OPEN.set(false);
     }
 
     request_frame_after(1_000);

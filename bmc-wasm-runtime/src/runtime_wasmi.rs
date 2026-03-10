@@ -572,12 +572,10 @@ impl WasmWidgetRuntime {
                         &mut state.taffy,
                     ) {
                         Ok((tree_node, result, has_active, timings)) => {
-                            let had_interaction = result.clicks.iter().any(|&c| c)
-                                || !result.touch_clicks.is_empty()
-                                || !result.touch_drags.is_empty();
+                            let had_interaction =
+                                !result.clicks.is_empty() || !result.drags.is_empty();
                             state.tree_clicks = result.clicks;
-                            state.tree_touch_clicks = result.touch_clicks;
-                            state.tree_touch_drags = result.touch_drags;
+                            state.tree_drags = result.drags;
                             state.last_timings = timings;
                             if has_active || had_interaction {
                                 state.frame_requested = true;
@@ -591,24 +589,6 @@ impl WasmWidgetRuntime {
                         }
                     }
                 }
-            },
-        )?;
-
-        linker.func_wrap(
-            "env",
-            "host_get_button_count",
-            |caller: Caller<'_, HostState>| -> u32 { caller.data().tree_clicks.len() as u32 },
-        )?;
-
-        linker.func_wrap(
-            "env",
-            "host_get_click",
-            |caller: Caller<'_, HostState>, index: u32| -> i32 {
-                caller
-                    .data()
-                    .tree_clicks
-                    .get(index as usize)
-                    .map_or(0, |&c| i32::from(c))
             },
         )?;
 
@@ -632,7 +612,7 @@ impl WasmWidgetRuntime {
                     })
                 };
                 let Some(key) = key else { return 0 };
-                let hit = caller.data().tree_touch_clicks.get(&key).copied();
+                let hit = caller.data().tree_clicks.get(&key).copied();
                 let Some(hit) = hit else { return 0 };
                 write_touch_hit(&mut caller, out_ptr, &hit);
                 1
@@ -659,7 +639,7 @@ impl WasmWidgetRuntime {
                     })
                 };
                 let Some(key) = key else { return 0 };
-                let hit = caller.data().tree_touch_drags.get(&key).copied();
+                let hit = caller.data().tree_drags.get(&key).copied();
                 let Some(hit) = hit else { return 0 };
                 write_touch_hit(&mut caller, out_ptr, &hit);
                 1
@@ -1891,11 +1871,10 @@ impl WasmWidgetRuntime {
         ) {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
-                let had_interaction = !result.touch_drags.is_empty();
+                let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
                 // No WASM execution, no deserialization on cached frames
                 state.tree_clicks = result.clicks;
-                state.tree_touch_clicks = result.touch_clicks;
-                state.tree_touch_drags = result.touch_drags;
+                state.tree_drags = result.drags;
                 if has_active || had_interaction {
                     state.frame_requested = true;
                     state.animation_only_frame = !had_interaction;

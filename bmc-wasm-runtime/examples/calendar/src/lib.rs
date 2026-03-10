@@ -161,6 +161,22 @@ fn on_ics_response(response: &FetchResponse) {
     request_frame();
 }
 
+fn toggle_theme() {
+    THEME_KEY.with(|t| {
+        let mut current = t.borrow_mut();
+        *current = match *current {
+            render::ThemeKey::Light => render::ThemeKey::Dark,
+            render::ThemeKey::Dark => render::ThemeKey::Light,
+        };
+        let value = match *current {
+            render::ThemeKey::Light => "light",
+            render::ThemeKey::Dark => "dark",
+        };
+        kv::set("theme", value.as_bytes());
+    });
+    request_frame();
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
     let size = SIZE.with(|s| *s.borrow());
@@ -185,21 +201,8 @@ pub extern "C" fn render(_delta_ms: u32) {
         let tree = render::render_agenda(&state, size);
         let result = render_ui(size.width, size.height, tree);
 
-        // Theme toggle is the only button (index 0)
-        if result.clicks.first().copied().unwrap_or(false) {
-            THEME_KEY.with(|t| {
-                let mut current = t.borrow_mut();
-                *current = match *current {
-                    render::ThemeKey::Light => render::ThemeKey::Dark,
-                    render::ThemeKey::Dark => render::ThemeKey::Light,
-                };
-                let value = match *current {
-                    render::ThemeKey::Light => "light",
-                    render::ThemeKey::Dark => "dark",
-                };
-                kv::set("theme", value.as_bytes());
-            });
-            request_frame();
+        if result.clicks.contains_key("theme_toggle") {
+            toggle_theme();
         }
 
         // If chunks remain, request immediate next frame to continue draining.

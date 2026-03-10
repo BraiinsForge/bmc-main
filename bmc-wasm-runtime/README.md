@@ -21,7 +21,7 @@ Widgets build a declarative UI tree that gets serialized and sent to the host fo
 transitions are declared in the tree and computed host-side, keeping WASM binaries small by offloading text shaping,
 layout, and animation math to native code.
 
-See [GPU Rendering](docs/devlog/hosted-wasm/gpu_rendering.md) and [SVG Icons](docs/devlog/hosted-wasm/svg_icons.md) for
+See [GPU Rendering](docs/devlog/hosted-wasm/gpu-rendering.md) and [SVG Icons](docs/devlog/hosted-wasm/svg-icons.md) for
 architecture details.
 
 ## Quick Start

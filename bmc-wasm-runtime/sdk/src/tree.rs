@@ -5,7 +5,7 @@
 //! Format: Each node is [type:u8][data...]
 //! Container nodes: [type][props:32B][child_count:u16][children...]
 //! Paragraph: [type][props:32B][text_style:16B][span_count:u16][spans...]
-//! Button: [type][style:u8][size:u8][icon_id:u16][len:u16][bytes...]
+//! Button: [type][id_len:u16][id_bytes...][style:u8][size:u8][icon_id:u16][label_len:u16][label_bytes...]
 //! Spacer: [type][flex:f32]
 //! Canvas: [type][props:32B]
 
@@ -308,8 +308,11 @@ impl TreeBuffer {
     }
 
     /// Write a button node
+    ///
+    /// Wire format: `[NODE_BUTTON][id_len:u16][id_bytes...][style:u8][size:u8][icon_id:u16][disabled:u8][label_len:u16][label_bytes...]`
     pub fn write_button(
         &mut self,
+        id: &str,
         label: &str,
         style: ButtonStyle,
         size: ButtonSize,
@@ -317,6 +320,9 @@ impl TreeBuffer {
         disabled: bool,
     ) {
         self.write_u8(NODE_BUTTON);
+        let id_bytes = id.as_bytes();
+        self.write_u16(id_bytes.len() as u16);
+        self.write_bytes(id_bytes);
         self.write_u8(style as u8);
         self.write_u8(size as u8);
         self.write_u16(icon_id);
@@ -370,11 +376,11 @@ impl TreeBuffer {
     }
 
     /// Write a modal node
-    /// Format: [NODE_MODAL][modal_id:u16][is_open:u8][padding:u16][backdrop_alpha:u8][title_len:u16][title_bytes...][content_height:f32][child_count:u16][children...]
+    /// Format: [NODE_MODAL][id_len:u16][id_bytes...][is_open:u8][padding:u16][backdrop_alpha:u8][title_len:u16][title_bytes...][content_height:f32][child_count:u16][children...]
     #[expect(clippy::too_many_arguments)]
     pub fn write_modal(
         &mut self,
-        modal_id: u16,
+        modal_id: &str,
         is_open: bool,
         padding: u16,
         backdrop_alpha: u8,
@@ -383,7 +389,9 @@ impl TreeBuffer {
         child_count: u16,
     ) {
         self.write_u8(NODE_MODAL);
-        self.write_u16(modal_id);
+        let id_bytes = modal_id.as_bytes();
+        self.write_u16(id_bytes.len() as u16);
+        self.write_bytes(id_bytes);
         self.write_u8(u8::from(is_open));
         self.write_u16(padding);
         self.write_u8(backdrop_alpha);
@@ -993,6 +1001,7 @@ pub enum Node {
         spans: Vec<Span>,
     },
     Button {
+        id: String,
         label: String,
         style: ButtonStyle,
         size: ButtonSize,
@@ -1022,7 +1031,7 @@ pub enum Node {
     },
     /// Modal dialog overlay with title, close button, and scrollable body
     Modal {
-        modal_id: u16,
+        modal_id: String,
         is_open: bool,
         title: String,
         content_height: f32,
@@ -1055,12 +1064,10 @@ pub enum Node {
 /// Result from tree rendering
 #[derive(Default)]
 pub struct TreeRenderResult {
-    /// Click state for each button (in order of appearance)
-    pub clicks: Vec<bool>,
-    /// One-shot touch clicks on interactive canvases (on finger-up)
-    pub touch: HashMap<String, host::TouchHit>,
+    /// One-shot clicks on buttons and interactive canvases (on finger-up)
+    pub clicks: HashMap<String, host::TouchHit>,
     /// Active drag positions on interactive canvases (while finger is down)
-    pub drag: HashMap<String, host::TouchHit>,
+    pub drags: HashMap<String, host::TouchHit>,
 }
 
 /// Column layout
@@ -1114,6 +1121,7 @@ pub fn paragraph(style: StyleResult, spans: impl IntoIterator<Item = Span>) -> N
 
 /// Create a button node (used by the `button!` macro).
 pub fn make_button(
+    id: String,
     label: String,
     style: ButtonStyle,
     size: ButtonSize,
@@ -1122,6 +1130,7 @@ pub fn make_button(
     skin: Option<ButtonSkin>,
 ) -> Node {
     Node::Button {
+        id,
         label,
         style,
         size,
@@ -1253,16 +1262,14 @@ impl ModalProps {
 
 /// Modal dialog overlay with title, close button, and scrollable body.
 ///
-/// - `modal_id`: Unique ID for state tracking (must be unique per modal instance)
+/// - `modal_id`: String ID for state tracking and interaction scoping (must be unique).
+///   The close button gets the interaction key `"{modal_id}::close"`.
 /// - `is_open`: Whether the modal is visible
 /// - `title`: Header title text
 /// - `content_height`: Estimated total height of body content (for scroll sizing)
 /// - `body`: Child nodes for the modal body
-///
-/// The close button is automatically included in the header. It uses the next
-/// available button index after any buttons in the body.
 pub fn modal(
-    modal_id: u16,
+    modal_id: impl Into<String>,
     is_open: bool,
     title: impl Into<String>,
     content_height: f32,
@@ -1280,7 +1287,7 @@ pub fn modal(
 
 /// Modal dialog with custom styling props.
 pub fn modal_styled(
-    modal_id: u16,
+    modal_id: impl Into<String>,
     is_open: bool,
     title: impl Into<String>,
     content_height: f32,
@@ -1288,7 +1295,7 @@ pub fn modal_styled(
     body: impl IntoIterator<Item = Node>,
 ) -> Node {
     Node::Modal {
-        modal_id,
+        modal_id: modal_id.into(),
         is_open,
         title: title.into(),
         content_height,
@@ -1445,6 +1452,7 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             buf.write_paragraph(props, base_style, spans);
         }
         Node::Button {
+            id,
             label,
             style,
             size,
@@ -1452,7 +1460,7 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             disabled,
             skin,
         } => {
-            buf.write_button(label, *style, *size, *icon_id, *disabled);
+            buf.write_button(id, label, *style, *size, *icon_id, *disabled);
             // Trailing optional skin payload
             if let Some(s) = skin {
                 buf.write_u8(1); // has_skin
@@ -1523,7 +1531,7 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             body,
         } => {
             buf.write_modal(
-                *modal_id,
+                modal_id,
                 *is_open,
                 *padding,
                 *backdrop_alpha,
@@ -1750,30 +1758,10 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
     }
 }
 
-/// Count buttons in the tree
-fn count_buttons(node: &Node) -> u32 {
+/// Collect interaction keys from the tree (buttons, touchable canvases, progress bars).
+fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
     match node {
-        Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
-            children.iter().map(count_buttons).sum()
-        }
-        Node::Scroll { children, .. } => children.iter().map(count_buttons).sum(),
-        Node::Button { .. } => 1,
-        // Modal has an implicit close button when open
-        Node::Modal { is_open, body, .. } => {
-            let body_buttons: u32 = body.iter().map(count_buttons).sum();
-            if *is_open {
-                body_buttons + 1 // +1 for close button
-            } else {
-                0 // closed modal contributes no buttons
-            }
-        }
-        _ => 0,
-    }
-}
-
-/// Collect touch keys from the tree (for querying after render).
-fn collect_touch_keys(node: &Node, keys: &mut Vec<String>) {
-    match node {
+        Node::Button { id, .. } => keys.push(id.clone()),
         Node::Canvas {
             touch_key: Some(key),
             ..
@@ -1783,19 +1771,25 @@ fn collect_touch_keys(node: &Node, keys: &mut Vec<String>) {
         }
         Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
             for child in children {
-                collect_touch_keys(child, keys);
+                collect_interaction_keys(child, keys);
             }
         }
         Node::Scroll { children, .. } => {
             for child in children {
-                collect_touch_keys(child, keys);
+                collect_interaction_keys(child, keys);
             }
         }
-        Node::Modal { is_open, body, .. } => {
+        Node::Modal {
+            is_open,
+            modal_id,
+            body,
+            ..
+        } => {
             if *is_open {
                 for child in body {
-                    collect_touch_keys(child, keys);
+                    collect_interaction_keys(child, keys);
                 }
+                keys.push(std::format!("{modal_id}::close"));
             }
         }
         _ => {}
@@ -1803,32 +1797,26 @@ fn collect_touch_keys(node: &Node, keys: &mut Vec<String>) {
 }
 
 /// Render UI tree using host-side layout.
-/// Returns button clicks and touch positions.
+/// Returns click and drag interactions keyed by string IDs.
 #[must_use]
 #[expect(clippy::needless_pass_by_value)] // Node is consumed by serialization
 pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
-    let button_count = count_buttons(&root);
-    let mut touch_keys = Vec::new();
-    collect_touch_keys(&root, &mut touch_keys);
+    let mut keys = Vec::new();
+    collect_interaction_keys(&root, &mut keys);
 
     // Serialize tree to buffer and submit to host for layout and rendering
     begin_tree();
     with_buffer(|buf| serialize_node(buf, &root));
     submit_and_clear(width, height);
 
-    // Collect button click results
+    // Collect all interactions (clicks and active drags)
     let mut result = TreeRenderResult::default();
-    for i in 0..button_count {
-        result.clicks.push(host::get_click(i));
-    }
-
-    // Collect touch interactions (clicks and active drags)
-    for key in &touch_keys {
+    for key in &keys {
         if let Some(hit) = host::get_touch_click(key) {
-            result.touch.insert(key.clone(), hit);
+            result.clicks.insert(key.clone(), hit);
         }
         if let Some(hit) = host::get_touch_drag(key) {
-            result.drag.insert(key.clone(), hit);
+            result.drags.insert(key.clone(), hit);
         }
     }
 

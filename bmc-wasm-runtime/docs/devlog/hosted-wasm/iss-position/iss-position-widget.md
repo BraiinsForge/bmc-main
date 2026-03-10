@@ -24,7 +24,7 @@ rendering layers.
 
 - Static widget: `deckfeeder/assets/widgets/iss-position/`
 - Figma design: `figma.com/design/vyuVYAgizKPSuSHJ7Uwd8C` node `12062-108043`
-- SpaceX devlog: spacex_launch_widget (patterns reused here)
+- SpaceX devlog: spacex-launch-widget (patterns reused here)
 
 ---
 
@@ -187,8 +187,7 @@ countdown doesn't make sense for a static screenshot. The WASM version restores 
 
 ## Phase 4: 3D Globe Rendering
 
-See [globe-rendering.md](../../../examples/iss-position/devlogs/globe-rendering.md) for the full technical design
-(phases A–D, replacing the original Mapbox tile approach from [phase4_map_rendering.md](phase4_map_rendering.md)).
+See [globe-rendering.md](globe-rendering.md) for the full technical design (phases A–D).
 
 The full-size variant renders a 560×480 canvas with composited layers:
 
@@ -205,7 +204,7 @@ transitions interpolate sphere parameters for smooth animation.
 
 ## Host-side Formatting
 
-See [host_side_formatting.md](host_side_formatting.md) for the full design.
+See [host-side-formatting.md](host-side-formatting.md) for the full design.
 
 Widgets call `format_speed!(velocity, 0)` and get back a preference-formatted string like "27 565 km/h" or "17,126 mph".
 The host owns the formatting logic and preferences; widgets just consume results.

@@ -272,17 +272,14 @@ pub struct HostState {
     #[expect(dead_code)]
     pub refresh_requested: bool,
 
-    /// Button clicks from last tree render (for new tree API)
-    pub tree_clicks: Vec<bool>,
-
-    /// One-shot touch clicks on interactive canvases (on finger-up)
-    pub tree_touch_clicks: HashMap<String, crate::tree::TouchHit>,
+    /// One-shot clicks on buttons and interactive canvases (on finger-up)
+    pub tree_clicks: HashMap<String, crate::tree::TouchHit>,
 
     /// Active drag positions on interactive canvases (while finger is down)
-    pub tree_touch_drags: HashMap<String, crate::tree::TouchHit>,
+    pub tree_drags: HashMap<String, crate::tree::TouchHit>,
 
-    /// Modal dialog states (keyed by modal_id)
-    pub modal_states: HashMap<u16, ModalState>,
+    /// Modal dialog states (keyed by modal_id string)
+    pub modal_states: HashMap<String, ModalState>,
 
     /// Scroll container states (keyed by scroll_id)
     pub scroll_states: HashMap<u16, ScrollState>,
@@ -414,9 +411,8 @@ impl HostState {
             frame_requested: false,
             frame_delay_ms: None,
             refresh_requested: false,
-            tree_clicks: Vec::new(),
-            tree_touch_clicks: HashMap::new(),
-            tree_touch_drags: HashMap::new(),
+            tree_clicks: HashMap::new(),
+            tree_drags: HashMap::new(),
             modal_states: HashMap::new(),
             scroll_states: HashMap::new(),
             delta_ms: 0,

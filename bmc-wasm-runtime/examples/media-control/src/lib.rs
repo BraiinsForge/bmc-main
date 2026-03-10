@@ -896,11 +896,9 @@ pub extern "C" fn render(delta_ms: u32) {
     enum Screen {
         Discovering,
         /// Connected or Disconnected media screen.
-        /// `has_sub_targets` = sub-target button is rendered (shifts button indices).
         /// `picker_open` = session picker modal overlay is showing.
         /// `skin_picker_open` = skin picker modal overlay is showing.
         Media {
-            has_sub_targets: bool,
             picker_open: bool,
             skin_picker_open: bool,
         },
@@ -923,7 +921,6 @@ pub extern "C" fn render(delta_ms: u32) {
                 (
                     render_media_screen(size, media, picker_open, skin_picker_open),
                     Screen::Media {
-                        has_sub_targets,
                         picker_open,
                         skin_picker_open,
                     },
@@ -932,7 +929,6 @@ pub extern "C" fn render(delta_ms: u32) {
             WidgetState::Disconnected(_) => (
                 render_disconnected(size),
                 Screen::Media {
-                    has_sub_targets: false,
                     picker_open: false,
                     skin_picker_open: false,
                 },
@@ -943,172 +939,133 @@ pub extern "C" fn render(delta_ms: u32) {
 
     // Handle clicks outside the STATE borrow so handlers can borrow_mut
     match screen {
-        Screen::Discovering => {
-            // Each button maps to a device in DISCOVERED (kept sorted on insert)
-            for (i, &clicked) in result.clicks.iter().enumerate() {
-                if clicked {
-                    let device = DISCOVERED.with(|d| d.borrow().get(i).cloned());
-                    if let Some(device) = device {
-                        connect_to_device(&device);
-                    }
-                }
-            }
-        }
+        Screen::Discovering => handle_discovery_clicks(&result),
         Screen::Media {
-            has_sub_targets,
             picker_open,
             skin_picker_open,
         } => {
-            // Switcher button layout (tree order):
-            //   [sub_target_btn(0)?] [skin_btn] [device_btn] [transport×6]
-            // skin_btn_idx: index of the skin picker button
-            // device_btn_idx: index of the device switcher button
-            let skin_btn_idx = if has_sub_targets { 1 } else { 0 };
-            let device_btn_idx = skin_btn_idx + 1;
-            let ctrl_offset = device_btn_idx + 1;
-
             if picker_open {
-                // Modal buttons are appended after media buttons in the tree.
-                // media buttons = ctrl_offset (switcher btns) + 6 (transport controls)
-                // modal buttons = [session0, ..., sessionN, close_btn]
-                // Host blocks clicks on underlying media buttons via modal backdrop.
-                let media_btn_count = ctrl_offset + 6;
-                for (i, &clicked) in result.clicks.iter().enumerate() {
-                    if !clicked || i < media_btn_count {
-                        continue;
-                    }
-                    let modal_idx = i - media_btn_count;
-                    let target_id = CONTROLLER.with(|c| {
-                        c.borrow()
-                            .as_deref()
-                            .and_then(|ctrl| ctrl.sub_targets())
-                            .and_then(|st| st.items.get(modal_idx).map(|t| t.id.clone()))
-                    });
-                    if let Some(id) = target_id {
-                        with_controller(|c| c.select_sub_target(&id));
-                    }
-                    // Close picker on any click (session or close button)
-                    STATE.with(|s| {
-                        let mut state = s.borrow_mut();
-                        if let WidgetState::Connected(media) = &mut *state {
-                            media.show_sub_target_picker = false;
-                        }
-                    });
-                    request_frame();
-                }
+                handle_session_picker_clicks(&result);
             } else if skin_picker_open {
-                // Skin picker modal: touchable preview cards.
-                let mut picked = false;
-                for i in 0..SKINS.len() {
-                    let key = fmt!("skin_{}", i);
-                    if result.touch.contains_key(key.as_str()) {
-                        SKIN_INDEX.set(i);
-                        set_active_skin(SKINS[i].skin);
-                        picked = true;
-                    }
-                }
-                if picked {
-                    STATE.with(|s| {
-                        let mut state = s.borrow_mut();
-                        if let WidgetState::Connected(media) = &mut *state {
-                            media.show_skin_picker = false;
-                        }
-                    });
-                    request_frame();
-                }
-                // Close button is still a regular button
-                let media_btn_count = ctrl_offset + 6;
-                for (i, &clicked) in result.clicks.iter().enumerate() {
-                    if clicked && i >= media_btn_count {
-                        STATE.with(|s| {
-                            let mut state = s.borrow_mut();
-                            if let WidgetState::Connected(media) = &mut *state {
-                                media.show_skin_picker = false;
-                            }
-                        });
-                        request_frame();
-                    }
-                }
+                handle_skin_picker_clicks(&result);
             } else {
-                // Normal media controls
-                // Touch canvases: "progress", "volume"
-
-                // Progress bar: drag for visual feedback, release to seek
-                let can_seek = STATE.with(|s| {
-                    let state = s.borrow();
-                    match &*state {
-                        WidgetState::Connected(m) | WidgetState::Disconnected(m) => {
-                            m.actions.can_seek
-                        }
-                        WidgetState::Discovering => false,
-                    }
-                });
-                if can_seek {
-                    if let Some(frac) = bar_frac(&result, "progress") {
-                        STATE.with(|s| {
-                            let mut state = s.borrow_mut();
-                            if let WidgetState::Connected(media) = &mut *state {
-                                if media.position.duration_secs > 0 {
-                                    media.position.position_secs =
-                                        (frac * media.position.duration_secs as f32) as u32;
-                                }
-                            }
-                        });
-                        if result.touch.contains_key("progress") {
-                            seek_to_fraction(frac);
-                        }
-                        request_frame();
-                    }
-                }
-
-                // Volume bar: drag for visual feedback, release to commit
-                if let Some(frac) = bar_frac(&result, "volume") {
-                    STATE.with(|s| {
-                        let mut state = s.borrow_mut();
-                        if let WidgetState::Connected(media) | WidgetState::Disconnected(media) =
-                            &mut *state
-                        {
-                            media.volume.level = (frac * 1_000.0) as u32;
-                        }
-                    });
-                    if result.touch.contains_key("volume") {
-                        with_controller(|c| c.set_volume(frac));
-                    }
-                    request_frame();
-                }
-
-                for (i, &clicked) in result.clicks.iter().enumerate() {
-                    if clicked {
-                        if has_sub_targets && i == 0 {
-                            // Sub-target switcher — open picker modal
-                            STATE.with(|s| {
-                                let mut state = s.borrow_mut();
-                                if let WidgetState::Connected(media) = &mut *state {
-                                    media.show_sub_target_picker = true;
-                                }
-                            });
-                            request_frame();
-                        } else if i == skin_btn_idx {
-                            // Skin switcher — open skin picker modal
-                            STATE.with(|s| {
-                                let mut state = s.borrow_mut();
-                                if let WidgetState::Connected(media) = &mut *state {
-                                    media.show_skin_picker = true;
-                                }
-                            });
-                            request_frame();
-                        } else if i == device_btn_idx {
-                            // Device switcher — return to device picker
-                            disconnect_and_return_to_picker();
-                        } else {
-                            let media_idx = i - ctrl_offset;
-                            with_controller(|c| handle_media_click(c, media_idx));
-                        }
-                    }
-                }
+                handle_media_controls(&result);
             }
         }
     }
+}
+
+fn handle_discovery_clicks(result: &TreeRenderResult) {
+    let device_count = DISCOVERED.with(|d| d.borrow().len());
+    for i in 0..device_count {
+        let key = fmt!("dev_{}", i);
+        if result.clicks.contains_key(key.as_str()) {
+            let device = DISCOVERED.with(|d| d.borrow().get(i).cloned());
+            if let Some(device) = device {
+                connect_to_device(&device);
+            }
+            return;
+        }
+    }
+}
+
+fn handle_session_picker_clicks(result: &TreeRenderResult) {
+    let session_count = CONTROLLER.with(|c| {
+        c.borrow()
+            .as_deref()
+            .and_then(|ctrl| ctrl.sub_targets())
+            .map_or(0, |st| st.items.len())
+    });
+    for i in 0..session_count {
+        let key = fmt!("session_{}", i);
+        if result.clicks.contains_key(key.as_str()) {
+            let target_id = CONTROLLER.with(|c| {
+                c.borrow()
+                    .as_deref()
+                    .and_then(|ctrl| ctrl.sub_targets())
+                    .and_then(|st| st.items.get(i).map(|t| t.id.clone()))
+            });
+            if let Some(id) = target_id {
+                with_controller(|c| c.select_sub_target(&id));
+            }
+            close_sub_target_picker();
+            return;
+        }
+    }
+    if result.clicks.contains_key("session_picker::close") {
+        close_sub_target_picker();
+    }
+}
+
+fn handle_skin_picker_clicks(result: &TreeRenderResult) {
+    for i in 0..SKINS.len() {
+        let key = fmt!("skin_{}", i);
+        if result.clicks.contains_key(key.as_str()) {
+            SKIN_INDEX.set(i);
+            set_active_skin(SKINS[i].skin);
+            close_skin_picker();
+            return;
+        }
+    }
+    if result.clicks.contains_key("skin_picker::close") {
+        close_skin_picker();
+    }
+}
+
+fn handle_media_controls(result: &TreeRenderResult) {
+    // Progress bar: drag for visual feedback, release to seek
+    let can_seek = STATE.with(|s| {
+        let state = s.borrow();
+        match &*state {
+            WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.actions.can_seek,
+            WidgetState::Discovering => false,
+        }
+    });
+    if can_seek {
+        if let Some(frac) = bar_frac(result, "progress") {
+            STATE.with(|s| {
+                let mut state = s.borrow_mut();
+                if let WidgetState::Connected(media) = &mut *state {
+                    if media.position.duration_secs > 0 {
+                        media.position.position_secs =
+                            (frac * media.position.duration_secs as f32) as u32;
+                    }
+                }
+            });
+            if result.clicks.contains_key("progress") {
+                seek_to_fraction(frac);
+            }
+            request_frame();
+        }
+    }
+
+    // Volume bar: drag for visual feedback, release to commit
+    if let Some(frac) = bar_frac(result, "volume") {
+        STATE.with(|s| {
+            let mut state = s.borrow_mut();
+            if let WidgetState::Connected(media) | WidgetState::Disconnected(media) = &mut *state {
+                media.volume.level = (frac * 1_000.0) as u32;
+            }
+        });
+        if result.clicks.contains_key("volume") {
+            with_controller(|c| c.set_volume(frac));
+        }
+        request_frame();
+    }
+
+    // Switcher buttons
+    if result.clicks.contains_key("sub_target") {
+        open_sub_target_picker();
+    }
+    if result.clicks.contains_key("skin") {
+        open_skin_picker();
+    }
+    if result.clicks.contains_key("device") {
+        disconnect_and_return_to_picker();
+    }
+
+    // Transport and volume
+    handle_transport_clicks(result);
 }
 
 // ── Device access helper ─────────────────────────────────────────
@@ -1478,30 +1435,77 @@ fn is_transport_playing() -> bool {
 
 /// Handle a media control button click (protocol-agnostic).
 /// Button indices: 0=prev, 1=play/pause, 2=next, 3=vol-, 4=vol+, 5=mute.
-fn handle_media_click(ctrl: &dyn MediaController, index: usize) {
-    match index {
-        0 => ctrl.previous(),
-        1 => {
+fn open_sub_target_picker() {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        if let WidgetState::Connected(media) = &mut *state {
+            media.show_sub_target_picker = true;
+        }
+    });
+    request_frame();
+}
+
+fn close_sub_target_picker() {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        if let WidgetState::Connected(media) = &mut *state {
+            media.show_sub_target_picker = false;
+        }
+    });
+    request_frame();
+}
+
+fn open_skin_picker() {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        if let WidgetState::Connected(media) = &mut *state {
+            media.show_skin_picker = true;
+        }
+    });
+    request_frame();
+}
+
+fn close_skin_picker() {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        if let WidgetState::Connected(media) = &mut *state {
+            media.show_skin_picker = false;
+        }
+    });
+    request_frame();
+}
+
+fn handle_transport_clicks(result: &TreeRenderResult) {
+    if result.clicks.contains_key("prev") {
+        with_controller(|c| c.previous());
+    }
+    if result.clicks.contains_key("play") {
+        with_controller(|c| {
             if is_transport_playing() {
-                ctrl.pause();
+                c.pause();
             } else {
-                ctrl.play();
+                c.play();
             }
-        }
-        2 => ctrl.next(),
-        3 => adjust_volume_by_delta(ctrl, -0.05),
-        4 => adjust_volume_by_delta(ctrl, 0.05),
-        5 => {
-            let muted = STATE.with(|s| {
-                let state = s.borrow();
-                match &*state {
-                    WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.volume.muted,
-                    WidgetState::Discovering => false,
-                }
-            });
-            ctrl.set_mute(!muted);
-        }
-        _ => {}
+        });
+    }
+    if result.clicks.contains_key("next") {
+        with_controller(|c| c.next());
+    }
+    if result.clicks.contains_key("vol_down") {
+        with_controller(|c| adjust_volume_by_delta(c, -0.05));
+    }
+    if result.clicks.contains_key("vol_up") {
+        with_controller(|c| adjust_volume_by_delta(c, 0.05));
+    }
+    if result.clicks.contains_key("mute") {
+        let muted = STATE.with(|s| {
+            let state = s.borrow();
+            match &*state {
+                WidgetState::Connected(m) | WidgetState::Disconnected(m) => m.volume.muted,
+                WidgetState::Discovering => false,
+            }
+        });
+        with_controller(|c| c.set_mute(!muted));
     }
 }
 
@@ -1522,9 +1526,9 @@ fn adjust_volume_by_delta(ctrl: &dyn MediaController, delta: f32) {
 /// Get the touch fraction for a named bar (drag takes priority, then release).
 fn bar_frac(result: &TreeRenderResult, key: &str) -> Option<f32> {
     result
-        .drag
+        .drags
         .get(key)
-        .or_else(|| result.touch.get(key))
+        .or_else(|| result.clicks.get(key))
         .map(TouchHit::frac_x)
 }
 
@@ -2209,7 +2213,8 @@ fn render_discovering(size: WidgetSize) -> Node {
         };
         let buttons: Vec<Node> = devices
             .iter()
-            .map(|dev| {
+            .enumerate()
+            .map(|(i, dev)| {
                 let proto_icon = match dev.protocol {
                     DiscoveredProtocol::Cast => &icons::PROTO_GOOGLE_CAST,
                     DiscoveredProtocol::Kodi => &icons::PROTO_KODI,
@@ -2219,6 +2224,7 @@ fn render_discovering(size: WidgetSize) -> Node {
                     DiscoveredProtocol::Upnp => &icons::PROTO_DLNA,
                 };
                 button!(
+                    fmt!("dev_{}", i),
                     &dev.name,
                     icon: tree::ensure_registered(proto_icon),
                     style: Secondary,
@@ -2355,14 +2361,14 @@ fn render_media_screen(
         title_color: pal.text_primary,
     };
 
-    // Session picker modal (id=1)
+    // Session picker modal
     let (term, session_buttons) = if picker_open {
         build_session_picker_body()
     } else {
         ("Session", vec![])
     };
     let session_modal = modal_styled(
-        1,
+        "session_picker",
         picker_open,
         &fmt!("Select {}", term),
         session_buttons.len() as f32 * 40.0,
@@ -2370,7 +2376,7 @@ fn render_media_screen(
         session_buttons,
     );
 
-    // Skin picker modal (id=2)
+    // Skin picker modal
     let skin_cards = if skin_picker_open {
         build_skin_picker_body()
     } else {
@@ -2379,7 +2385,7 @@ fn render_media_screen(
     // Each row: 156px card (120 preview + 36 label) + 12px gap
     let skin_content_height = skin_cards.len() as f32 * 168.0;
     let skin_modal = modal_styled(
-        2,
+        "skin_picker",
         skin_picker_open,
         "Select Skin",
         skin_content_height,
@@ -2408,7 +2414,8 @@ fn build_session_picker_body() -> (&'static str, Vec<Node>) {
                     let buttons: Vec<Node> = st
                         .items
                         .iter()
-                        .map(|t| {
+                        .enumerate()
+                        .map(|(i, t)| {
                             let label = if t.fields.is_empty() {
                                 t.name.clone()
                             } else {
@@ -2416,10 +2423,11 @@ fn build_session_picker_body() -> (&'static str, Vec<Node>) {
                                     t.fields.iter().map(|(_, v)| v.as_str()).collect();
                                 fmt!("{} ({})", t.name, detail.join(", "))
                             };
+                            let id = fmt!("session_{}", i);
                             if t.active {
-                                button!(&label, style: Primary, size: Small, skin: active_button_skin())
+                                button!(&id, &label, style: Primary, size: Small, skin: active_button_skin())
                             } else {
-                                button!(&label, style: Secondary, size: Small, skin: active_button_skin())
+                                button!(&id, &label, style: Secondary, size: Small, skin: active_button_skin())
                             }
                         })
                         .collect();
@@ -2715,7 +2723,7 @@ fn render_switcher_button(size: WidgetSize) -> Node {
     let icon = tree::ensure_registered(&icons::DEVICES_APPS);
     let skin = active_button_skin();
     if size.variant == SizeVariant::Small {
-        button!("", icon: icon, style: Secondary, size: Small, skin: skin)
+        button!("device", "", icon: icon, style: Secondary, size: Small, skin: skin)
     } else {
         let device_name = CONNECTED_DEVICE_NAME.with(|n| {
             let name = n.borrow();
@@ -2725,7 +2733,7 @@ fn render_switcher_button(size: WidgetSize) -> Node {
                 name.clone()
             }
         });
-        button!(&device_name, icon: icon, style: Secondary, size: Small, skin: skin)
+        button!("device", &device_name, icon: icon, style: Secondary, size: Small, skin: skin)
     }
 }
 
@@ -2735,7 +2743,7 @@ fn render_sub_target_button(size: WidgetSize) -> Node {
     let icon = tree::ensure_registered(&icons::DEVICES_APPS);
     let skin = active_button_skin();
     if size.variant == SizeVariant::Small {
-        button!("", icon: icon, style: Secondary, size: Small, skin: skin)
+        button!("sub_target", "", icon: icon, style: Secondary, size: Small, skin: skin)
     } else {
         let label = CONTROLLER.with(|c| {
             c.borrow()
@@ -2744,14 +2752,14 @@ fn render_sub_target_button(size: WidgetSize) -> Node {
                 .map(|st| fmt!("{}s", st.term))
                 .unwrap_or_default()
         });
-        button!(&label, icon: icon, style: Secondary, size: Small, skin: skin)
+        button!("sub_target", &label, icon: icon, style: Secondary, size: Small, skin: skin)
     }
 }
 
 /// Skin picker button — icon-only paintbrush button.
 fn render_skin_button() -> Node {
     let icon = tree::ensure_registered(&icons::SKIN);
-    button!("", icon: icon, style: Secondary, size: Small, skin: active_button_skin())
+    button!("skin", "", icon: icon, style: Secondary, size: Small, skin: active_button_skin())
 }
 
 /// Animated sine-wave loader for the discovery screen.
@@ -2812,18 +2820,18 @@ fn render_progress(media: &MediaState) -> Node {
 fn transport_buttons(cd: &ControlsData, actions: &TransportActions) -> [Node; 3] {
     let skin = active_button_skin();
     [
-        button!("", icon: tree::ensure_registered(&icons::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous, skin: skin),
-        button!("", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled, skin: skin),
-        button!("", icon: tree::ensure_registered(&icons::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next, skin: skin),
+        button!("prev", "", icon: tree::ensure_registered(&icons::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous, skin: skin),
+        button!("play", "", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled, skin: skin),
+        button!("next", "", icon: tree::ensure_registered(&icons::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next, skin: skin),
     ]
 }
 
 fn volume_buttons(cd: &ControlsData) -> [Node; 3] {
     let skin = active_button_skin();
     [
-        button!("", icon: tree::ensure_registered(&icons::VOLUME_DOWN), style: Ghost, size: Small, skin: skin),
-        button!("", icon: tree::ensure_registered(&icons::VOLUME_UP), style: Ghost, size: Small, skin: skin),
-        button!("", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small, skin: skin),
+        button!("vol_down", "", icon: tree::ensure_registered(&icons::VOLUME_DOWN), style: Ghost, size: Small, skin: skin),
+        button!("vol_up", "", icon: tree::ensure_registered(&icons::VOLUME_UP), style: Ghost, size: Small, skin: skin),
+        button!("mute", "", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small, skin: skin),
     ]
 }
 

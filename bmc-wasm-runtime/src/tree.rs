@@ -217,6 +217,7 @@ pub enum TreeNode {
         spans: Vec<SpanData>,
     },
     Button {
+        id: String,
         label: String,
         style: u8,
         size: u8,
@@ -229,7 +230,7 @@ pub enum TreeNode {
     },
     /// Canvas with optional touch interaction key.
     /// When `touch_key` is `Some`, the canvas registers a hit region and reports
-    /// click position via `TreeResult::touch_clicks`.
+    /// click position via `TreeResult::clicks`.
     Canvas {
         props: PropsData,
         touch_key: Option<String>,
@@ -249,7 +250,7 @@ pub enum TreeNode {
     },
     /// Modal dialog overlay
     Modal {
-        modal_id: u16,
+        modal_id: String,
         is_open: bool,
         padding: u16,
         backdrop_alpha: u8,
@@ -436,6 +437,8 @@ impl<'a> TreeReader<'a> {
                 })
             }
             NODE_BUTTON => {
+                let id_len = self.read_u16()?;
+                let id = self.read_string(id_len)?;
                 let style = self.read_u8()?;
                 let size = self.read_u8()?;
                 let icon_id = self.read_u16()?;
@@ -464,6 +467,7 @@ impl<'a> TreeReader<'a> {
                     None
                 };
                 Ok(TreeNode::Button {
+                    id,
                     label,
                     style,
                     size,
@@ -496,7 +500,8 @@ impl<'a> TreeReader<'a> {
                 })
             }
             NODE_MODAL => {
-                let modal_id = self.read_u16()?;
+                let id_len = self.read_u16()?;
+                let modal_id = self.read_string(id_len)?;
                 let is_open = self.read_u8()? != 0;
                 let padding = self.read_u16()?;
                 let backdrop_alpha = self.read_u8()?;
@@ -874,12 +879,10 @@ pub struct TouchHit {
 /// Result from processing a tree
 #[derive(Debug, Default)]
 pub struct TreeResult {
-    /// Click state for each button (in order of appearance)
-    pub clicks: Vec<bool>,
-    /// One-shot touch clicks on interactive canvases (on finger-up)
-    pub touch_clicks: HashMap<String, TouchHit>,
+    /// One-shot clicks on buttons and interactive canvases (on finger-up)
+    pub clicks: HashMap<String, TouchHit>,
     /// Active drag positions on interactive canvases (while finger is down)
-    pub touch_drags: HashMap<String, TouchHit>,
+    pub drags: HashMap<String, TouchHit>,
 }
 
 /// Paragraph data for measurement and rendering
@@ -900,7 +903,7 @@ struct NotificationData {
 /// Button data stored in taffy node context.
 #[derive(Clone)]
 pub(crate) struct ButtonContext {
-    id: u32,
+    id: String,
     label: String,
     style: u8,
     size: u8,
@@ -962,7 +965,7 @@ pub(crate) struct NodeContext {
 
 /// Collected modal info for overlay rendering
 struct ModalInfo {
-    modal_id: u16,
+    modal_id: String,
     is_open: bool,
     padding: u16,
     backdrop_alpha: u8,
@@ -975,8 +978,6 @@ struct ModalInfo {
     /// Title text color. `0` = default.
     title_color: u32,
     body: Vec<TreeNode>,
-    /// Starting button index for this modal's buttons
-    button_index_start: u32,
 }
 
 /// Process a tree: deserialize, layout, render.
@@ -990,7 +991,7 @@ pub(crate) fn process_tree(
     height: f32,
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
-    modal_states: &mut HashMap<u16, ModalState>,
+    modal_states: &mut HashMap<String, ModalState>,
     scroll_states: &mut HashMap<u16, ScrollState>,
     animation_states: &mut HashMap<u64, AnimationState>,
     transition_states: &mut HashMap<(u16, u16), TransitionState>,
@@ -1034,7 +1035,7 @@ pub(crate) fn layout_and_render(
     height: f32,
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
-    modal_states: &mut HashMap<u16, ModalState>,
+    modal_states: &mut HashMap<String, ModalState>,
     scroll_states: &mut HashMap<u16, ScrollState>,
     animation_states: &mut HashMap<u64, AnimationState>,
     transition_states: &mut HashMap<(u16, u16), TransitionState>,
@@ -1047,12 +1048,11 @@ pub(crate) fn layout_and_render(
     let t1 = Instant::now();
 
     let mut result = TreeResult::default();
-    let mut button_id: u32 = 0;
     let mut modals: Vec<ModalInfo> = Vec::new();
 
     // Reuse taffy tree — clear nodes but keep internal allocations
     taffy.clear();
-    let root_id = build_taffy_node(taffy, tree_node, &mut result, &mut button_id, &mut modals)?;
+    let root_id = build_taffy_node(taffy, tree_node, &mut result, &mut modals)?;
 
     // Set root size
     if let Ok(style) = taffy.style(root_id) {
@@ -1131,12 +1131,11 @@ pub(crate) fn layout_and_render(
     Ok((result, anim_ctx.has_active || modal_animating))
 }
 
-#[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, clippy::only_used_in_recursion)]
 fn build_taffy_node(
     taffy: &mut TaffyTree<NodeContext>,
     node: &TreeNode,
     result: &mut TreeResult,
-    button_id: &mut u32,
     modals: &mut Vec<ModalInfo>,
 ) -> Result<taffy::NodeId> {
     match node {
@@ -1145,7 +1144,7 @@ fn build_taffy_node(
         | TreeNode::Center(props, children) => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_taffy_node(taffy, c, result, button_id, modals))
+                .map(|c| build_taffy_node(taffy, c, result, modals))
                 .collect::<Result<_>>()?;
 
             let is_center = matches!(node, TreeNode::Center(_, _));
@@ -1257,6 +1256,7 @@ fn build_taffy_node(
         }
 
         TreeNode::Button {
+            id: btn_id,
             label,
             style: btn_style,
             size: btn_size,
@@ -1264,10 +1264,6 @@ fn build_taffy_node(
             disabled,
             skin,
         } => {
-            let id_num = *button_id;
-            *button_id += 1;
-            result.clicks.push(false);
-
             let sz = ButtonSize::from(*btn_size);
             let height = sz.height();
 
@@ -1284,7 +1280,7 @@ fn build_taffy_node(
                 id,
                 Some(NodeContext {
                     button: Some(ButtonContext {
-                        id: id_num,
+                        id: btn_id.clone(),
                         label: label.clone(),
                         style: *btn_style,
                         size: *btn_size,
@@ -1354,7 +1350,7 @@ fn build_taffy_node(
         } => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_taffy_node(taffy, c, result, button_id, modals))
+                .map(|c| build_taffy_node(taffy, c, result, modals))
                 .collect::<Result<_>>()?;
 
             // Extra right padding so content doesn't sit under the scrollbar overlay
@@ -1426,22 +1422,9 @@ fn build_taffy_node(
             title_color,
             body,
         } => {
-            // Record button index start for this modal
-            let button_index_start = *button_id;
-
-            // Count buttons in modal body and allocate slots
-            if *is_open {
-                for child in body {
-                    count_tree_buttons(child, button_id, result);
-                }
-                // Close button gets the next index
-                result.clicks.push(false);
-                *button_id += 1;
-            }
-
             // Store modal for overlay rendering
             modals.push(ModalInfo {
-                modal_id: *modal_id,
+                modal_id: modal_id.clone(),
                 is_open: *is_open,
                 padding: *padding,
                 backdrop_alpha: *backdrop_alpha,
@@ -1451,7 +1434,6 @@ fn build_taffy_node(
                 header_color: *header_color,
                 title_color: *title_color,
                 body: body.clone(),
-                button_index_start,
             });
 
             // Modal doesn't participate in normal layout — hidden from flex/gap.
@@ -1647,12 +1629,10 @@ fn render_taffy_node(
         }
 
         if let Some(ref btn) = ctx.button {
-            let mut key_buf = [0_u8; 16];
-            let key = format_btn_key(btn.id, &mut key_buf);
-            let (clicked, _) = draw_button(
+            let (clicked, click_pos) = draw_button(
                 renderer,
                 interaction,
-                key,
+                &btn.id,
                 &btn.label,
                 x,
                 y,
@@ -1664,8 +1644,16 @@ fn render_taffy_node(
                 btn.disabled,
                 btn.skin.as_ref(),
             );
-            if let Some(slot) = result.clicks.get_mut(btn.id as usize) {
-                *slot = clicked;
+            if clicked {
+                result.clicks.insert(
+                    btn.id.clone(),
+                    TouchHit {
+                        x: click_pos.map_or(0.0, |p| p.0),
+                        y: click_pos.map_or(0.0, |p| p.1),
+                        width: w,
+                        height: h,
+                    },
+                );
             }
         }
 
@@ -1697,7 +1685,7 @@ fn render_taffy_node(
         let bounds = crate::interaction::Rect::new(x as i32, y as i32, w as u32, h as u32);
         let (clicked, click_pos) = interaction.button_with_pos(tk, bounds);
         if clicked && let Some((lx, ly)) = click_pos {
-            result.touch_clicks.insert(
+            result.clicks.insert(
                 tk.clone(),
                 TouchHit {
                     x: lx,
@@ -1709,7 +1697,7 @@ fn render_taffy_node(
         }
         // Active drag: finger is down on this element
         if let Some((lx, ly)) = interaction.get_drag_pos(tk, bounds) {
-            result.touch_drags.insert(
+            result.drags.insert(
                 tk.clone(),
                 TouchHit {
                     x: lx,
@@ -2773,39 +2761,6 @@ fn interpolate_draw_values(
     }
 }
 
-/// Count buttons in a tree node (for modal body button allocation)
-fn count_tree_buttons(node: &TreeNode, button_id: &mut u32, result: &mut TreeResult) {
-    match node {
-        TreeNode::Scroll { children, .. }
-        | TreeNode::Column(_, children)
-        | TreeNode::Row(_, children)
-        | TreeNode::Center(_, children) => {
-            for child in children {
-                count_tree_buttons(child, button_id, result);
-            }
-        }
-        TreeNode::Button { .. } => {
-            result.clicks.push(false);
-            *button_id += 1;
-        }
-        TreeNode::Modal { is_open, body, .. } => {
-            if *is_open {
-                for child in body {
-                    count_tree_buttons(child, button_id, result);
-                }
-                // Close button
-                result.clicks.push(false);
-                *button_id += 1;
-            }
-        }
-        TreeNode::Paragraph { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Canvas { .. }
-        | TreeNode::Notification { .. }
-        | TreeNode::ProgressBar { .. } => {}
-    }
-}
-
 // Modal rendering constants
 const MODAL_HEADER_HEIGHT: f32 = 48.0;
 const MODAL_ANIMATION_OPEN_MS: f32 = 250.0;
@@ -2819,7 +2774,7 @@ fn render_modal(
     height: f32,
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
-    modal_states: &mut HashMap<u16, ModalState>,
+    modal_states: &mut HashMap<String, ModalState>,
     scroll_states: &mut HashMap<u16, ScrollState>,
     delta_ms: u32,
     result: &mut TreeResult,
@@ -2827,7 +2782,7 @@ fn render_modal(
     taffy: &mut TaffyTree<NodeContext>,
 ) {
     // Get or create modal state
-    let state = modal_states.entry(modal.modal_id).or_default();
+    let state = modal_states.entry(modal.modal_id.clone()).or_default();
 
     // Detect state transitions and update animation
     let was_open = state.is_open;
@@ -2942,15 +2897,12 @@ fn render_modal(
     let close_btn_y = modal_y;
     let close_btn_size = MODAL_HEADER_HEIGHT;
 
-    // Close button uses the last button index for this modal
-    let close_btn_id = modal.button_index_start + count_modal_body_buttons(&modal.body);
-    let mut key_buf = [0_u8; 16];
-    let close_key = format_btn_key(close_btn_id, &mut key_buf);
+    let close_key = format!("{}::close", modal.modal_id);
 
-    let close_clicked = draw_button(
+    let (close_was_clicked, _) = draw_button(
         renderer,
         interaction,
-        close_key,
+        &close_key,
         "",
         close_btn_x,
         close_btn_y,
@@ -2963,9 +2915,16 @@ fn render_modal(
         None,
     );
 
-    let (close_was_clicked, _) = close_clicked;
-    if close_was_clicked && (close_btn_id as usize) < result.clicks.len() {
-        result.clicks[close_btn_id as usize] = true;
+    if close_was_clicked {
+        result.clicks.insert(
+            close_key,
+            TouchHit {
+                x: 0.0,
+                y: 0.0,
+                width: close_btn_size,
+                height: close_btn_size,
+            },
+        );
     }
 
     // Body area with scrolling
@@ -2973,7 +2932,7 @@ fn render_modal(
     let body_y = modal_y + MODAL_HEADER_HEIGHT;
 
     // Register scroll region for touch handling
-    let body_key = format!("modal_{}_body", modal.modal_id);
+    let body_key = format!("{}::body", modal.modal_id);
     let scroll_region = crate::interaction::Rect::new(
         body_x as i32,
         body_y as i32,
@@ -3006,16 +2965,9 @@ fn render_modal(
         },
         modal.body.clone(),
     );
-    let mut modal_button_id = modal.button_index_start;
     let mut dummy_modals: Vec<ModalInfo> = Vec::new();
     taffy.clear();
-    if let Ok(body_root) = build_taffy_node(
-        taffy,
-        &body_col,
-        result,
-        &mut modal_button_id,
-        &mut dummy_modals,
-    ) {
+    if let Ok(body_root) = build_taffy_node(taffy, &body_col, result, &mut dummy_modals) {
         if let Ok(style) = taffy.style(body_root) {
             let mut new_style = style.clone();
             new_style.size = Size {
@@ -3077,37 +3029,6 @@ fn render_modal(
             thumb_height,
             thumb_color,
         );
-    }
-}
-
-/// Count buttons in modal body (excluding close button)
-fn count_modal_body_buttons(body: &[TreeNode]) -> u32 {
-    let mut count = 0;
-    for node in body {
-        count += count_node_buttons(node);
-    }
-    count
-}
-
-fn count_node_buttons(node: &TreeNode) -> u32 {
-    match node {
-        TreeNode::Scroll { children, .. }
-        | TreeNode::Column(_, children)
-        | TreeNode::Row(_, children)
-        | TreeNode::Center(_, children) => children.iter().map(count_node_buttons).sum(),
-        TreeNode::Button { .. } => 1,
-        TreeNode::Modal { is_open, body, .. } => {
-            if *is_open {
-                count_modal_body_buttons(body) + 1
-            } else {
-                0
-            }
-        }
-        TreeNode::Paragraph { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Canvas { .. }
-        | TreeNode::Notification { .. }
-        | TreeNode::ProgressBar { .. } => 0,
     }
 }
 
@@ -3385,26 +3306,6 @@ fn inset_from_props(props: &PropsData) -> taffy::Rect<LengthPercentageAuto> {
         bottom: inset_val(props.inset_bottom),
         left: inset_val(props.inset_left),
     }
-}
-
-fn format_btn_key(id: u32, buf: &mut [u8; 16]) -> &str {
-    buf[0..4].copy_from_slice(b"btn_");
-    if id == 0 {
-        buf[4] = b'0';
-        // Safety: buffer contains only ASCII bytes
-        return core::str::from_utf8(&buf[0..5]).unwrap_or("btn_0");
-    }
-    let mut n = id;
-    let mut i = 16;
-    while n > 0 {
-        i -= 1;
-        buf[i] = b'0' + (n % 10) as u8;
-        n /= 10;
-    }
-    let num_len = 16 - i;
-    buf.copy_within(i..16, 4);
-    // Safety: buffer contains only ASCII bytes
-    core::str::from_utf8(&buf[0..4 + num_len]).unwrap_or("btn_?")
 }
 
 #[cfg(test)]

@@ -115,7 +115,7 @@ All config variations produce \<2% difference on desktop (Ryzen 9 7950X) — fir
 | Full tuning + Lazy compilation | 1.8ms       | \<1% (noise)  |
 
 **Conclusion:** On fast x86 hardware the interpreter is fast enough that config tuning is invisible. The real test is on
-the armv7 target device. See `wasmi_tuning.md` for the detailed optimization guide.
+the armv7 target device. See `wasmi-tuning.md` for the detailed optimization guide.
 
 ### Not pursued (yet)
 
@@ -132,7 +132,7 @@ Moved `FpsTracker` → `PerfOverlay`, `FrameSample`, overlay color constants, an
 `draw_stats_panel` is now a thin wrapper: reload button + `overlay.draw()`.
 
 On-device hosts opt in with `features = ["perf-overlay"]` and call `PerfOverlay::new()` / `tick()` / `draw()` — no
-testbed deps required. See `perf_overlay_extraction.md` for the full integration guide.
+testbed deps required. See `perf-overlay-extraction.md` for the full integration guide.
 
 **Commit:** `7f1857d wasm: Extract perf overlay as reusable, feature-gated module #BDK-287`
 
