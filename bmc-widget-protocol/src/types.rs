@@ -228,6 +228,9 @@ pub enum LedEffect {
 ///
 /// Each variant maps 1:1 to a typed request in the `deck_widget_v1`
 /// protocol (no JSON envelope).
+///
+/// `period_ms` on the LED variants controls the per-effect animation
+/// speed; `0` means "use the effect's default".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "name", content = "payload", rename_all = "snake_case")]
 pub enum ActionPayload {
@@ -238,11 +241,13 @@ pub enum ActionPayload {
     LedTemporary {
         effect: LedEffect,
         color: RgbColor,
+        period_ms: u32,
         duration_ms: u32,
     },
     LedEndless {
         effect: LedEffect,
         color: RgbColor,
+        period_ms: u32,
     },
     StopLed {},
 }
@@ -292,6 +297,7 @@ mod tests {
         let action = ActionPayload::LedTemporary {
             effect: LedEffect::Breathe,
             color: RgbColor { r: 255, g: 0, b: 0 },
+            period_ms: 750,
             duration_ms: 5000,
         };
         let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
@@ -300,6 +306,7 @@ mod tests {
         assert_eq!(json["payload"]["color"]["r"], 255);
         assert_eq!(json["payload"]["color"]["g"], 0);
         assert_eq!(json["payload"]["color"]["b"], 0);
+        assert_eq!(json["payload"]["period_ms"], 750);
         assert_eq!(json["payload"]["duration_ms"], 5000);
     }
 
@@ -308,11 +315,13 @@ mod tests {
         let action = ActionPayload::LedEndless {
             effect: LedEffect::Solid,
             color: RgbColor { r: 0, g: 255, b: 0 },
+            period_ms: 0,
         };
         let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
         assert_eq!(json["name"], "led_endless");
         assert_eq!(json["payload"]["effect"], "solid");
         assert_eq!(json["payload"]["color"]["g"], 255);
+        assert_eq!(json["payload"]["period_ms"], 0);
     }
 
     #[test]

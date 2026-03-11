@@ -219,6 +219,12 @@ where
             );
         }
 
+        crate::widget::action_handler::spawn_action_handler(
+            compositor.action_receiver(),
+            sound_controller.clone(),
+            led_controller.clone(),
+        );
+
         {
             let config_guard = config_handle.read().await;
             let localization = config_guard.localization_config();
