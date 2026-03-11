@@ -182,6 +182,10 @@ impl<D> Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D> for DeckWidgetPr
 where
     D: Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D> + DeckWidgetHandler + 'static,
 {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "single big match over the protocol surface; splitting per-arm helpers would add indirection without clarity"
+    )]
     fn request(
         state: &mut D,
         _client: &Client,
@@ -226,6 +230,7 @@ where
                 r,
                 g,
                 b,
+                period_ms,
                 duration_ms,
             } => {
                 let Ok(effect) = effect.into_result() else {
@@ -234,7 +239,7 @@ where
                 };
                 let protocol_state = state.deck_widget_state();
                 tracing::debug!(
-                    "Widget {} led_temporary: effect={effect:?} rgb=({r},{g},{b}) duration_ms={duration_ms}",
+                    "Widget {} led_temporary: effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms} duration_ms={duration_ms}",
                     instance_id
                 );
                 protocol_state.add_action(
@@ -246,18 +251,25 @@ where
                             g: clamp_u8(g),
                             b: clamp_u8(b),
                         },
+                        period_ms,
                         duration_ms,
                     },
                 );
             }
-            deck_widget_surface_v1::Request::LedEndless { effect, r, g, b } => {
+            deck_widget_surface_v1::Request::LedEndless {
+                effect,
+                r,
+                g,
+                b,
+                period_ms,
+            } => {
                 let Ok(effect) = effect.into_result() else {
                     tracing::warn!("Widget {} led_endless: unknown effect", instance_id);
                     return;
                 };
                 let protocol_state = state.deck_widget_state();
                 tracing::debug!(
-                    "Widget {} led_endless: effect={effect:?} rgb=({r},{g},{b})",
+                    "Widget {} led_endless: effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms}",
                     instance_id
                 );
                 protocol_state.add_action(
@@ -269,6 +281,7 @@ where
                             g: clamp_u8(g),
                             b: clamp_u8(b),
                         },
+                        period_ms,
                     },
                 );
             }

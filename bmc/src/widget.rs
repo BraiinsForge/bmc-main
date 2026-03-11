@@ -2,6 +2,7 @@
 
 //! Widget system for discovering, spawning, and managing widget processes.
 
+pub mod action_handler;
 mod coordinator;
 mod discovery;
 mod manager;
