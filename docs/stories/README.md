@@ -44,6 +44,12 @@ Browser-based interface hosted by the device for managing scenes, widgets, and s
 config forms are manifest-driven — any installed widget (including out-of-tree) is configurable without a firmware
 rebuild.
 
+### [Widget Hardware Actions](widget-hardware-actions.md)
+
+Widgets request system-level effects (sounds, LED patterns) through the `deck_widget_v1` protocol; the compositor routes
+each request to the appropriate hardware controller. Sound playback runs in its own cancellable task so audio doesn't
+block subsequent LED or stop-sound requests.
+
 ### Audio & Alarms
 
 *Not yet documented.* Alarm scheduling with repeat patterns, snooze, and custom sound playback through the on-board
