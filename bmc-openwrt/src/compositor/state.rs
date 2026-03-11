@@ -2,6 +2,8 @@
 
 //! Compositor state management combining Smithay handlers with deck_widget_v1 protocol.
 
+use std::collections::HashMap;
+
 use super::protocol::{
     DeckWidgetHandler, DeckWidgetProtocolState, WidgetManagerUserData, WidgetSurfaceUserData,
 };
@@ -15,7 +17,7 @@ use smithay::{
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_image_capture_source,
     delegate_image_copy_capture, delegate_output, delegate_output_capture_source, delegate_seat,
     delegate_shm, delegate_xdg_shell,
-    input::{Seat, SeatHandler, SeatState, pointer::CursorImageStatus},
+    input::{Seat, SeatHandler, SeatState, pointer::CursorImageStatus, touch::TouchHandle},
     output::{Mode as OutputMode, Output, PhysicalProperties, Subpixel},
     reexports::wayland_server::{
         self as wl, Client, Display, DisplayHandle, Resource,
@@ -25,7 +27,7 @@ use smithay::{
             wl_shm, wl_surface::WlSurface,
         },
     },
-    utils::{Serial, Size},
+    utils::{Logical, Point, Serial, Size},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -106,6 +108,12 @@ pub struct CompositorState {
     /// Per-widget frame generations used to correlate frame callbacks with
     /// the content that was actually presented.
     widget_frame_clocks: std::collections::HashMap<InstanceId, WidgetFrameClockState>,
+
+    /// Touch handle for sending wl_touch events to widget surfaces.
+    pub touch_handle: TouchHandle<Self>,
+
+    /// Render surfaces indexed by widget instance_id (populated during surface commit).
+    pub render_surfaces: HashMap<InstanceId, WlSurface>,
 
     /// Buffer IDs that have been destroyed and need texture cache invalidation.
     pub invalidated_buffers: Vec<ObjectId>,
@@ -245,7 +253,8 @@ impl CompositorState {
         let mut seat_state = SeatState::new();
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
 
-        seat_state.new_wl_seat(&display_handle, "seat0");
+        let mut seat = seat_state.new_wl_seat(&display_handle, "seat0");
+        let touch_handle = seat.add_touch();
 
         let deck_widget_state = DeckWidgetProtocolState::new();
         super::protocol::create_global::<Self>(&display_handle);
@@ -294,6 +303,8 @@ impl CompositorState {
             pending_frame_callbacks: Vec::new(),
             widgets: WidgetTracker::new(),
             widget_frame_clocks: std::collections::HashMap::new(),
+            touch_handle,
+            render_surfaces: HashMap::new(),
             invalidated_buffers: Vec::new(),
             dirty_buffers: Vec::new(),
             pending_capture_frames: Vec::new(),
@@ -348,6 +359,35 @@ impl CompositorState {
                 client_pid,
                 generation,
             }));
+    }
+
+    /// Hit-test a point against visible widgets in the active scene.
+    /// Returns the render surface and its origin in logical coords if a widget is under the point.
+    #[must_use]
+    pub fn touch_focus_at(&self, x: f64, y: f64) -> Option<(WlSurface, Point<f64, Logical>)> {
+        let scene = self.widgets.active_scene();
+
+        for widget in &scene.widgets {
+            if !widget.visible {
+                continue;
+            }
+
+            let wx = f64::from(widget.position.x);
+            let wy = f64::from(widget.position.y);
+            let ww = f64::from(widget.size.width);
+            let wh = f64::from(widget.size.height);
+
+            if x >= wx
+                && x < wx + ww
+                && y >= wy
+                && y < wy + wh
+                && let Some(surface) = self.render_surfaces.get(&widget.instance_id)
+            {
+                return Some((surface.clone(), Point::from((wx, wy))));
+            }
+        }
+
+        None
     }
 
     fn surface_client_pid(&self, surface: &WlSurface) -> Option<u32> {
@@ -557,6 +597,13 @@ impl CompositorHandler for CompositorState {
                     pid
                 );
             }
+        }
+
+        // Track render surface → instance_id mapping for wl_touch event routing
+        if let Some(ref id) = instance_id {
+            self.render_surfaces
+                .entry(id.clone())
+                .or_insert_with(|| surface.clone());
         }
 
         with_states(surface, |states| {

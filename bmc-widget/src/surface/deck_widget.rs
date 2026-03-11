@@ -5,7 +5,7 @@ use std::fmt;
 use anyhow::{Context, Result};
 use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle,
-    protocol::{wl_buffer, wl_compositor, wl_registry, wl_surface},
+    protocol::{wl_buffer, wl_compositor, wl_registry, wl_seat, wl_surface, wl_touch},
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1;
 
@@ -35,6 +35,12 @@ pub enum DeckWidgetEvent {
     },
     /// Compositor requested graceful shutdown.
     Shutdown,
+    /// Touch down from standard `wl_touch`.
+    TouchDown { id: i32, x: f64, y: f64 },
+    /// Touch motion from standard `wl_touch`.
+    TouchMotion { id: i32, x: f64, y: f64 },
+    /// Touch up from standard `wl_touch`.
+    TouchUp { id: i32 },
 }
 
 /// Surface state for a `deck_widget_v1` widget with DMA-BUF support.
@@ -58,6 +64,8 @@ pub struct DeckWidgetSurfaceState {
     compositor: Option<wl_compositor::WlCompositor>,
     widget_manager: Option<DeckWidgetManagerV1>,
     linux_dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
+    seat: Option<wl_seat::WlSeat>,
+    touch: Option<wl_touch::WlTouch>,
     surface: Option<wl_surface::WlSurface>,
     widget_surface: Option<DeckWidgetSurfaceV1>,
     pending_events: Vec<DeckWidgetEvent>,
@@ -137,6 +145,8 @@ impl DeckWidgetSurfaceClient {
             compositor: None,
             widget_manager: None,
             linux_dmabuf: None,
+            seat: None,
+            touch: None,
             surface: None,
             widget_surface: None,
             pending_events: Vec::new(),
@@ -358,6 +368,13 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
                     value,
                 } => setting_from_protocol(setting_type, &value).map(WidgetEvent::Setting),
                 DeckWidgetEvent::Shutdown => Some(WidgetEvent::Shutdown),
+                DeckWidgetEvent::TouchDown { id, x, y } => {
+                    Some(WidgetEvent::TouchDown { id, x, y })
+                }
+                DeckWidgetEvent::TouchMotion { id, x, y } => {
+                    Some(WidgetEvent::TouchMotion { id, x, y })
+                }
+                DeckWidgetEvent::TouchUp { id } => Some(WidgetEvent::TouchUp { id }),
             })
             .collect()
     }
@@ -406,6 +423,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
                     );
                     tracing::debug!("Bound zwp_linux_dmabuf_v1 v{}", version.min(4));
                     state.linux_dmabuf = Some(dmabuf);
+                }
+                "wl_seat" if state.seat.is_none() => {
+                    let seat = registry.bind::<wl_seat::WlSeat, _, _>(name, version.min(9), qh, ());
+                    tracing::debug!("Bound wl_seat v{}", version.min(9));
+                    state.seat = Some(seat);
                 }
                 _ => {}
             }
@@ -467,6 +489,63 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for DeckWidgetSurfaceState {
         if let wl_buffer::Event::Release = event {
             // deck_widget surfaces only support slot-based cached wl_buffer
             // submission, so release is intentionally ignored.
+        }
+    }
+}
+
+impl Dispatch<wl_seat::WlSeat, ()> for DeckWidgetSurfaceState {
+    fn event(
+        state: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        (): &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_seat::Event::Capabilities {
+            capabilities: wayland_client::WEnum::Value(caps),
+        } = event
+            && caps.contains(wl_seat::Capability::Touch)
+            && state.touch.is_none()
+        {
+            let touch = seat.get_touch(qh, ());
+            tracing::debug!("Acquired wl_touch from seat");
+            state.touch = Some(touch);
+        }
+    }
+}
+
+impl Dispatch<wl_touch::WlTouch, ()> for DeckWidgetSurfaceState {
+    fn event(
+        state: &mut Self,
+        _: &wl_touch::WlTouch,
+        event: wl_touch::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_touch::Event::Down { id, x, y, .. } => {
+                state
+                    .pending_events
+                    .push(DeckWidgetEvent::TouchDown { id, x, y });
+                state.needs_render = true;
+            }
+            wl_touch::Event::Motion { id, x, y, .. } => {
+                state
+                    .pending_events
+                    .push(DeckWidgetEvent::TouchMotion { id, x, y });
+                state.needs_render = true;
+            }
+            wl_touch::Event::Up { id, .. } => {
+                state.pending_events.push(DeckWidgetEvent::TouchUp { id });
+                state.needs_render = true;
+            }
+            wl_touch::Event::Frame
+            | wl_touch::Event::Cancel
+            | wl_touch::Event::Shape { .. }
+            | wl_touch::Event::Orientation { .. }
+            | _ => {}
         }
     }
 }

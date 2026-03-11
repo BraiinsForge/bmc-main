@@ -77,6 +77,12 @@
       </description>
     </event>
 
+    <!-- Touch input is handled via standard wl_seat/wl_touch rather than
+         custom protocol events. The compositor performs hit-testing and
+         surface-relative coordinate transformation, and sends wl_touch
+         events to the widget's rendering surface. During compositor-level
+         gestures (e.g. scene navigation), wl_touch.cancel is sent. -->
+
     <!-- Enums -->
 
     <enum name="setting_type">

@@ -104,6 +104,9 @@ pub trait Compositor: Send + Sync {
     /// Set the active scene layout (visible widgets and positions).
     fn set_active_scene(&self, layout: SceneLayout) -> Result<(), CompositorError>;
 
+    /// Set all scene layouts for drag-based cycling between scenes.
+    fn set_scene_cycling(&self, scenes: Vec<SceneLayout>) -> Result<(), CompositorError>;
+
     /// Broadcast a setting update to all connected widgets.
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError>;
 

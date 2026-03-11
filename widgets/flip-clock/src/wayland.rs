@@ -238,7 +238,11 @@ fn run_render_loop(
                     timezone = new_tz;
                     phase = LoopPhase::RenderPending;
                 }
-                WidgetEvent::Setting(_) | WidgetEvent::Shutdown => {}
+                WidgetEvent::Setting(_)
+                | WidgetEvent::Shutdown
+                | WidgetEvent::TouchDown { .. }
+                | WidgetEvent::TouchMotion { .. }
+                | WidgetEvent::TouchUp { .. } => {}
             }
         }
 

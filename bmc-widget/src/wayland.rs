@@ -7,9 +7,9 @@
 //!
 //! # Usage
 //!
-//! Widgets that use Slint need a separate Wayland connection because Slint manages
-//! its own connection internally. Create a `WidgetProtocolClient` to handle the
-//! BMC-specific protocol alongside Slint's rendering.
+//! Widgets use a separate Wayland connection for this protocol, alongside
+//! their rendering connection which handles `wl_compositor`, `xdg_shell`,
+//! `wl_seat`/`wl_touch`, and DMA-BUF buffer management.
 
 use bmc_widget_protocol::{
     ActionPayload, SettingUpdate,

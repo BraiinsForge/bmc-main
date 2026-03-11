@@ -8,6 +8,7 @@ mod protocol;
 mod render;
 mod scene_renderer;
 mod state;
+pub mod touch_input;
 mod widget_tracker;
 
 pub use commands::{CompositorCommand, CompositorResponse};

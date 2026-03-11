@@ -103,6 +103,14 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
+    fn set_scene_cycling(&self, scenes: Vec<SceneLayout>) -> Result<(), CompositorError> {
+        tracing::info!(
+            "MockCompositor: set scene cycling with {} scenes",
+            scenes.len()
+        );
+        Ok(())
+    }
+
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError> {
         tracing::info!("MockCompositor: broadcast setting {:?}", setting);
         Ok(())

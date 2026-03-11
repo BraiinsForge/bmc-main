@@ -7,6 +7,7 @@ use super::{
     render::{DrmOutput, EglContext},
     scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState},
+    touch_input::TouchInput,
 };
 use bmc::compositor::{
     Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, Size,
@@ -43,6 +44,7 @@ use tokio::sync::mpsc;
 
 const DEFAULT_GPU_PATH: &str = "/dev/dri/renderD128";
 const DEFAULT_DISPLAY_PATH: &str = "/dev/dri/card1";
+const DEFAULT_TOUCH_PATH: &str = "/dev/input/event0";
 
 /// Physical display dimensions (panel reports 600x1280 but only 480x1280 is visible).
 const PHYSICAL_WIDTH: u32 = 480;
@@ -297,6 +299,19 @@ impl EglCompositor {
             return;
         }
 
+        // Initialize touch input (optional - don't fail if device not available)
+        let touch_input =
+            match TouchInput::open(Path::new(DEFAULT_TOUCH_PATH), logical_width, logical_height) {
+                Ok(touch) => {
+                    tracing::info!("Touch input initialized from {}", DEFAULT_TOUCH_PATH);
+                    Some(touch)
+                }
+                Err(e) => {
+                    tracing::warn!("Touch input not available ({}): {}", DEFAULT_TOUCH_PATH, e);
+                    None
+                }
+            };
+
         let mut app_state = AppState {
             display,
             compositor: compositor_state,
@@ -304,6 +319,7 @@ impl EglCompositor {
             listening_socket,
             action_tx,
             event_tx,
+            touch_input,
             should_exit: false,
             redraw_state: RedrawState::Idle,
         };
@@ -415,6 +431,16 @@ impl EglCompositor {
             tracing::error!("Failed to add frame-callback tick timer to event loop: {e}");
         }
 
+        // Add touch device fd so calloop wakes immediately on touch events
+        if let Some(ref touch) = app_state.touch_input
+            && let Ok(touch_fd) = touch.as_fd().try_clone_to_owned()
+        {
+            let _ = loop_handle.insert_source(
+                Generic::new(touch_fd, Interest::READ, Mode::Level),
+                |_, _, _state| Ok(PostAction::Continue),
+            );
+        }
+
         tracing::info!("Compositor event loop starting");
 
         #[cfg(feature = "profiling")]
@@ -456,6 +482,7 @@ impl EglCompositor {
             }
 
             process_protocol_events(&mut app_state);
+            process_touch(&mut app_state);
             app_state.refresh_redraw_state();
 
             if let Some(renderer) = &mut app_state.scene_renderer {
@@ -615,6 +642,7 @@ struct AppState {
     listening_socket: ListeningSocket,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
+    touch_input: Option<TouchInput>,
     should_exit: bool,
     redraw_state: RedrawState,
 }
@@ -676,6 +704,11 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.widgets.set_active_scene(layout);
             state.compositor.mark_full_output_damage();
         }
+        CompositorCommand::SetSceneCycling { scenes } => {
+            tracing::info!("Setting scene cycling with {} scenes", scenes.len());
+            state.compositor.widgets.set_scene_cycling(scenes);
+            state.compositor.mark_full_output_damage();
+        }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
             state
@@ -716,6 +749,116 @@ fn process_protocol_events(state: &mut AppState) {
             instance_id,
             payload,
         });
+    }
+}
+
+fn process_touch(state: &mut AppState) {
+    use super::touch_input::{RawTouchEvent, TouchGesture};
+    use smithay::input::touch::{DownEvent, MotionEvent, UpEvent};
+    use smithay::utils::{Logical, Point, SERIAL_COUNTER};
+
+    let Some(ref mut touch) = state.touch_input else {
+        return;
+    };
+
+    let gesture = touch.poll();
+    let drag_info = touch.drag_info();
+    let was_scene_dragging = state.compositor.widgets.drag_offset().is_some();
+
+    // Forward raw touch events to widgets via wl_touch (only when NOT navigating scenes)
+    let raw_events = touch.drain_raw_events();
+    let is_scene_dragging = drag_info.is_some();
+
+    if !raw_events.is_empty() {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "wrapping is acceptable for event time"
+        )]
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u32)
+            .unwrap_or(0);
+
+        let touch_handle = state.compositor.touch_handle.clone();
+
+        if is_scene_dragging && !was_scene_dragging {
+            // Scene drag just started — cancel any active widget touch
+            touch_handle.cancel(&mut state.compositor);
+        } else if !is_scene_dragging {
+            for event in &raw_events {
+                match *event {
+                    RawTouchEvent::Down { x, y, .. } => {
+                        let location = Point::<f64, Logical>::from((f64::from(x), f64::from(y)));
+                        let focus = state.compositor.touch_focus_at(f64::from(x), f64::from(y));
+                        touch_handle.down(
+                            &mut state.compositor,
+                            focus,
+                            &DownEvent {
+                                slot: Some(0_u32).into(),
+                                time,
+                                location,
+                                serial: SERIAL_COUNTER.next_serial(),
+                            },
+                        );
+                    }
+                    RawTouchEvent::Motion { x, y, .. } => {
+                        let location = Point::<f64, Logical>::from((f64::from(x), f64::from(y)));
+                        let focus = state.compositor.touch_focus_at(f64::from(x), f64::from(y));
+                        touch_handle.motion(
+                            &mut state.compositor,
+                            focus,
+                            &MotionEvent {
+                                slot: Some(0_u32).into(),
+                                time,
+                                location,
+                            },
+                        );
+                    }
+                    RawTouchEvent::Up { .. } => {
+                        touch_handle.up(
+                            &mut state.compositor,
+                            &UpEvent {
+                                slot: Some(0_u32).into(),
+                                time,
+                                serial: SERIAL_COUNTER.next_serial(),
+                            },
+                        );
+                    }
+                }
+            }
+            touch_handle.frame(&mut state.compositor);
+        }
+    }
+
+    // Update drag state for scene navigation
+    if let Some(info) = drag_info {
+        if !was_scene_dragging {
+            state.compositor.widgets.start_drag();
+        }
+        state.compositor.widgets.update_drag(info.dx);
+        state.compositor.mark_full_output_damage();
+    }
+
+    // Handle completed gestures
+    if let Some(gesture) = gesture {
+        match gesture {
+            TouchGesture::DragEnd { dx, velocity_x } => {
+                let committed = state.compositor.widgets.end_drag(dx, velocity_x);
+                state.compositor.mark_full_output_damage();
+                if committed {
+                    tracing::info!(
+                        "Scene transition committed (dx={}, vel={:.0})",
+                        dx,
+                        velocity_x
+                    );
+                } else {
+                    tracing::info!("Scene transition snapped back");
+                }
+            }
+            TouchGesture::Tap => {
+                tracing::debug!("Tap detected");
+            }
+        }
     }
 }
 
@@ -828,6 +971,12 @@ impl Compositor for EglCompositor {
     fn set_active_scene(&self, layout: SceneLayout) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::SetActiveScene { layout })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn set_scene_cycling(&self, scenes: Vec<SceneLayout>) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetSceneCycling { scenes })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

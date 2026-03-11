@@ -183,6 +183,12 @@ pub enum WidgetEvent {
     Setting(bmc_widget_protocol::SettingUpdate),
     /// The compositor requests graceful shutdown.
     Shutdown,
+    /// Touch point down (standard Wayland `wl_touch`).
+    TouchDown { id: i32, x: f64, y: f64 },
+    /// Touch point moved (standard Wayland `wl_touch`).
+    TouchMotion { id: i32, x: f64, y: f64 },
+    /// Touch point lifted (standard Wayland `wl_touch`).
+    TouchUp { id: i32 },
 }
 
 /// Common interface for widget surface clients.

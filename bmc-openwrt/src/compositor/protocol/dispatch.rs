@@ -67,7 +67,7 @@ where
             instance_id,
         } = request
         {
-            // Get client PID for matching render surfaces from Slint connection
+            // Get client PID for matching render surfaces from the rendering connection
             #[expect(clippy::cast_sign_loss, reason = "PID is always positive")]
             let pid = client
                 .get_credentials(dhandle)

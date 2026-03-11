@@ -28,6 +28,11 @@ A last-resort recovery component that runs on every boot. When the device has no
 a factory reset — it takes over the display, guides the user through WiFi setup via an open access point, downloads and
 activates the Nix store, and falls back to firmware upgrade if no matching bundle exists.
 
+### [Touch & Gestures](touch-and-gestures.md)
+
+Swipe left/right to navigate between scenes and tap/drag to interact with widgets via touch events forwarded through the
+Wayland protocol.
+
 ### Audio & Alarms
 
 *Not yet documented.* Alarm scheduling with repeat patterns, snooze, and custom sound playback through the on-board

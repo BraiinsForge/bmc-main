@@ -87,6 +87,9 @@ impl WaylandClient {
                     WidgetEvent::Shutdown => {
                         // Already handled by the client (sets running=false)
                     }
+                    WidgetEvent::TouchDown { .. }
+                    | WidgetEvent::TouchMotion { .. }
+                    | WidgetEvent::TouchUp { .. } => todo!(),
                 }
             }
 

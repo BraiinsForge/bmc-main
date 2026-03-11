@@ -15,7 +15,7 @@ pub struct WidgetData {
     pub instance_id: InstanceId,
     pub protocol_surface: Option<DeckWidgetSurfaceV1>,
     pub wl_surface: Option<WlSurface>,
-    /// PID of the widget process (used to match render surfaces from Slint connection)
+    /// PID of the widget process (used to match render surfaces from the rendering connection)
     pub pid: Option<u32>,
 }
 
