@@ -79,12 +79,15 @@
       <description summary="run an LED effect for a finite duration">
         The compositor will run the given effect for `duration_ms`
         milliseconds, then return to whatever LED state was active before
-        the request.
+        the request. `period_ms` controls per-effect animation speed and
+        is ignored for effects that have no notion of period (e.g.
+        `solid`). A `period_ms` of 0 means "use the effect's default".
       </description>
       <arg name="effect" type="uint" enum="led_effect"/>
       <arg name="r" type="uint" summary="red component, 0-255"/>
       <arg name="g" type="uint" summary="green component, 0-255"/>
       <arg name="b" type="uint" summary="blue component, 0-255"/>
+      <arg name="period_ms" type="uint" summary="animation period in milliseconds, 0 for default"/>
       <arg name="duration_ms" type="uint" summary="duration in milliseconds"/>
     </request>
 
@@ -92,11 +95,15 @@
       <description summary="run an LED effect indefinitely">
         The compositor will run the given effect until a `led_temporary`,
         another `led_endless`, or `stop_led` request supersedes it.
+        `period_ms` controls per-effect animation speed and is ignored for
+        effects that have no notion of period. A `period_ms` of 0 means
+        "use the effect's default".
       </description>
       <arg name="effect" type="uint" enum="led_effect"/>
       <arg name="r" type="uint" summary="red component, 0-255"/>
       <arg name="g" type="uint" summary="green component, 0-255"/>
       <arg name="b" type="uint" summary="blue component, 0-255"/>
+      <arg name="period_ms" type="uint" summary="animation period in milliseconds, 0 for default"/>
     </request>
 
     <request name="stop_led">

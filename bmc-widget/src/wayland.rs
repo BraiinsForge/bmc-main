@@ -243,19 +243,26 @@ impl WidgetProtocolClient {
             ActionPayload::LedTemporary {
                 effect,
                 color,
+                period_ms,
                 duration_ms,
             } => surface.led_temporary(
                 to_protocol::led_effect(*effect),
                 u32::from(color.r),
                 u32::from(color.g),
                 u32::from(color.b),
+                *period_ms,
                 *duration_ms,
             ),
-            ActionPayload::LedEndless { effect, color } => surface.led_endless(
+            ActionPayload::LedEndless {
+                effect,
+                color,
+                period_ms,
+            } => surface.led_endless(
                 to_protocol::led_effect(*effect),
                 u32::from(color.r),
                 u32::from(color.g),
                 u32::from(color.b),
+                *period_ms,
             ),
             ActionPayload::StopLed {} => surface.stop_led(),
         }
