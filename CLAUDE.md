@@ -114,8 +114,8 @@ cargo check
 # Run all tests
 cargo test
 
-# Run clippy lints
-cargo clippy
+# Run clippy lints (matches CI: workspace lints from Cargo.toml + tests, all warnings are errors)
+cargo clippy --workspace --tests -- -D warnings
 
 # Format code
 cargo fmt
@@ -202,7 +202,10 @@ Then restart rust-analyzer.
 Workspace-level lints are defined in `Cargo.toml`:
 
 - Most of `clippy::pedantic` is enabled (with specific exceptions documented in the workspace config)
-- Additional useful lints beyond pedantic are enabled
+- Additional notable lints beyond pedantic: `wildcard_enum_match_arm`, `allow_attributes` (use `#[expect(...)]` instead
+  of `#[allow(...)]`), `str_to_string`, `string_add`, `string_slice`, `get_unwrap`
+- CI runs clippy with `-D warnings` on the full workspace including tests
+- Local equivalent: `cargo clippy --workspace --tests -- -D warnings`
 - Uses `rustfmt` for formatting (config in `rustfmt.toml`)
 - Rust toolchain version specified in `rust-toolchain.toml`
 
