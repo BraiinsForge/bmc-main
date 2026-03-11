@@ -301,7 +301,7 @@ impl CompositorState {
             physical_height,
             widget_buffers: Vec::new(),
             pending_frame_callbacks: Vec::new(),
-            widgets: WidgetTracker::new(),
+            widgets: WidgetTracker::with_screen_width(width),
             widget_frame_clocks: std::collections::HashMap::new(),
             touch_handle,
             render_surfaces: HashMap::new(),

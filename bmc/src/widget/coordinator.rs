@@ -59,11 +59,19 @@ impl Coordinator {
             "spawning widgets for enabled scenes"
         );
 
-        for scene in enabled_scenes {
+        for scene in &enabled_scenes {
             self.spawn_scene_widgets(scene, localization, timezone, night_mode_active)
                 .await;
-            // Set the first enabled scene as active so compositor knows where to render widgets
-            self.set_active_scene(scene);
+        }
+
+        // Send all scene layouts to compositor for drag-based cycling
+        let layouts: Vec<_> = enabled_scenes
+            .iter()
+            .map(|s| Self::scene_to_layout(s))
+            .collect();
+        info!(count = layouts.len(), "setting scene cycling on compositor");
+        if let Err(e) = self.compositor.set_scene_cycling(layouts) {
+            warn!(error = %e, "failed to set scene cycling");
         }
 
         info!("all scene widgets spawned");

@@ -24,6 +24,11 @@ use super::state::OutputDamage;
 use super::widget_tracker::WidgetTracker;
 
 const BACKGROUND_COLOR: Color32F = Color32F::new(0.05, 0.05, 0.1, 1.0);
+/// Pixel overlap between adjacent scenes during transitions.
+/// Compensates for GL texture edge sampling artifacts under Transform::_270
+/// on the Vivante GC400. The neighbor scene renders after the active scene,
+/// painting over the seam.
+const SCENE_SEAM_OVERLAP: i32 = 4;
 
 pub struct SceneRenderer {
     egl: EglContext,
@@ -174,19 +179,26 @@ impl SceneRenderer {
         let buffer = self.buffers.back_buffer(&self.output)?;
         let fb = buffer.fb;
 
-        let scene = widgets.active_scene();
+        // Collect render items: (buffer_id, placement, x_offset)
+        let mut to_render = Vec::new();
+        let drag_offset = widgets.drag_offset().unwrap_or(0);
 
-        // Collect visible widgets as (buffer_id, placement)
-        let to_render: Vec<_> = buffers
-            .iter()
-            .filter_map(|(client_buffer, instance_id)| {
-                let placement = scene
-                    .widgets
-                    .iter()
-                    .find(|w| &w.instance_id == instance_id && w.visible)?;
-                Some((client_buffer.id(), placement.clone()))
-            })
-            .collect();
+        // Active scene at drag offset (0 when not dragging)
+        collect_scene_widgets(widgets.active_scene(), buffers, drag_offset, &mut to_render);
+
+        // Neighbor scene during drag
+        if let Some(dx) = widgets.drag_offset() {
+            #[expect(clippy::cast_possible_wrap)]
+            let logical_width = self.output.logical_size().0 as i32;
+            let (direction, neighbor_offset) = if dx < 0 {
+                (1, dx + logical_width - SCENE_SEAM_OVERLAP)
+            } else {
+                (-1, dx - logical_width + SCENE_SEAM_OVERLAP)
+            };
+            if let Some(neighbor) = widgets.neighbor_scene(direction) {
+                collect_scene_widgets(neighbor, buffers, neighbor_offset, &mut to_render);
+            }
+        }
 
         let renderer = self.egl.renderer();
         ii_stopwatch::stopwatch_start!(self.bind_w);
@@ -223,7 +235,7 @@ impl SceneRenderer {
         let _ = BACKGROUND_COLOR;
 
         ii_stopwatch::stopwatch_start!(self.compose_w);
-        for (buffer_id, placement) in &to_render {
+        for (buffer_id, placement, x_offset) in &to_render {
             let Some(texture) = self.texture_cache.get(buffer_id) else {
                 tracing::warn!("No cached texture for buffer {:?}", buffer_id);
                 continue;
@@ -236,7 +248,7 @@ impl SceneRenderer {
             );
 
             #[expect(clippy::cast_possible_wrap)]
-            let logical_x = placement.position.x as i32;
+            let logical_x = placement.position.x as i32 + x_offset;
             #[expect(clippy::cast_possible_wrap)]
             let logical_y = placement.position.y as i32;
 
@@ -257,7 +269,6 @@ impl SceneRenderer {
             let physical_y = output_height - logical_x - phys_h;
 
             let dst = Rectangle::from_loc_and_size((physical_x, physical_y), (phys_w, phys_h));
-            let texture_damage = [Rectangle::from_loc_and_size((0, 0), (phys_w, phys_h))];
 
             if let OutputDamage::Widgets(dirty_widgets) = output_damage
                 && dirty_widgets.contains(&placement.instance_id)
@@ -265,12 +276,18 @@ impl SceneRenderer {
                 damage_rects.push(dst);
             }
 
-            // Use per-widget damage region for efficient partial updates
+            // Full-output damage during drag so the GPU doesn't skip the seam overlap region
+            let full_damage = Rectangle::from_size(output_size);
+            let damage = if widgets.drag_offset().is_some() {
+                full_damage
+            } else {
+                dst
+            };
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
                 dst,
-                &texture_damage,
+                &[damage],
                 &[],
                 Transform::_270,
                 1.0,
@@ -551,5 +568,23 @@ mod tests {
             rectangle_union(&lhs, &rhs),
             Rectangle::<i32, Physical>::from_loc_and_size((10, 18), (10, 10))
         );
+    }
+}
+
+/// Collect visible widgets from a scene into the render list with an x offset.
+fn collect_scene_widgets(
+    scene: &bmc::compositor::SceneLayout,
+    buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
+    x_offset: i32,
+    out: &mut Vec<(ObjectId, bmc::compositor::WidgetPlacement, i32)>,
+) {
+    for (client_buffer, instance_id) in buffers {
+        if let Some(placement) = scene
+            .widgets
+            .iter()
+            .find(|w| &w.instance_id == instance_id && w.visible)
+        {
+            out.push((client_buffer.id(), placement.clone(), x_offset));
+        }
     }
 }
