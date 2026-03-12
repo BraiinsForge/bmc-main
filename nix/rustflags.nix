@@ -13,7 +13,7 @@ let
       xorg.libXrender
       xorg.libxcb
       vulkan-loader
-      libGL
+      mesa
     ];
 
   waylandRuntimeDeps = pkgs:
@@ -21,7 +21,7 @@ let
       wayland
       libxkbcommon
       vulkan-loader
-      libGL
+      mesa
     ];
 
   allRuntimeDeps = pkgs: ((X11RuntimeDeps pkgs) ++ (waylandRuntimeDeps pkgs));

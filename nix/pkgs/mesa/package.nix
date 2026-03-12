@@ -14,12 +14,8 @@
 , intltool
 , jdupes
 , libdrm
-, libgbm
-, libglvnd
 , libpng
 , libunwind
-, libva-minimal
-, libvdpau
 , lm_sensors
 , meson
 , ninja
@@ -128,10 +124,9 @@ stdenv.mkDerivation {
     (lib.mesonOption "vulkan-drivers" "")
     (lib.mesonOption "vulkan-layers" "")
 
-    # Enable glvnd for dynamic libGL dispatch
-    (lib.mesonEnable "glvnd" true)
+    (lib.mesonEnable "glvnd" false)
     (lib.mesonEnable "gbm" true)
-    (lib.mesonBool "libgbm-external" true)
+    (lib.mesonBool "libgbm-external" false)
 
     (lib.mesonBool "gallium-nine" false) # Direct3D9 in Wine, largely supplanted by DXVK
 
@@ -185,12 +180,8 @@ stdenv.mkDerivation {
       expat
       spirv-tools
       libdrm
-      libgbm
-      libglvnd
       libpng
       libunwind
-      libva-minimal
-      libvdpau
       libX11
       libxcb
       libXext
@@ -251,11 +242,6 @@ stdenv.mkDerivation {
   doCheck = false;
 
   postFixup = ''
-    # set full path in EGL driver manifest
-    for js in $out/share/glvnd/egl_vendor.d/*.json; do
-      substituteInPlace "$js" --replace-fail '"libEGL_' '"'"$out/lib/libEGL_"
-    done
-
     # and in Vulkan layer manifests
     for js in $out/share/vulkan/{im,ex}plicit_layer.d/*.json; do
       substituteInPlace "$js" --replace '"libVkLayer_' '"'"$out/lib/libVkLayer_"
@@ -280,7 +266,10 @@ stdenv.mkDerivation {
   '';
 
   passthru = {
-    inherit (libglvnd) driverLink;
+    # nixpkgs compat: packages like dri-pkgconfig-stub read mesa.driverLink
+    # at eval time. This is just a passthru string — not baked into any Mesa
+    # binary. Harmless to keep for compatibility.
+    driverLink = "/run/opengl-driver";
     inherit
       eglPlatforms
       galliumDrivers
