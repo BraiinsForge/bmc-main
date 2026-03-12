@@ -5,7 +5,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib?ref=fbo/BDK-318/merged";
+    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib";
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -22,11 +22,10 @@
           ];
           overlays = [
             fenix.overlays.default
-            (nixlib.mkOverlay {
-              loadRustToolchain = p: p.fenix.fromToolchainFile {
-                file = ./rust-toolchain.toml;
-                sha256 = "sha256-X/4ZBHO3iW0fOenQ3foEvscgAPJYl2abspaBThDOukI=";
-              };
+            nixlib.overlays.default
+            (nixlib.mkRustOverlayFromToolchainFile {
+              file = ./rust-toolchain.toml;
+              sha256 = "sha256-X/4ZBHO3iW0fOenQ3foEvscgAPJYl2abspaBThDOukI=";
             })
             # Overlay yarn & nodejs
             (final: prev: {

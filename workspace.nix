@@ -76,7 +76,7 @@ let
     src = ./.;
     nativeDeps = _pkgs: commonDeps.buildDeps;
     # minimal deps for static linking
-    targetDeps = _build_pkgs: [
+    targetDeps = _pkgs: [
       # openssl.dev
     ];
     env = {
@@ -89,7 +89,7 @@ let
     src = ./.;
     nativeDeps = _pkgs: commonDeps.buildDeps ++ commonDeps.guiBuildDeps;
     # packages that will be cross-compiled for target arch
-    targetDeps = build_pkgs: with build_pkgs; [
+    targetDeps = pkgs: with pkgs; [
       # Compositor dependencies (require dynamic linking)
       wayland
       libxkbcommon
