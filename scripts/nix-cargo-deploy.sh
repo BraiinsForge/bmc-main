@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Deploy a cargo-built binary to the device without overwriting Nix wrappers.
-# The binary is uploaded to a staging directory and the wrapper script's exec
-# line is patched to point to the new binary.
-# This is for fast iteration — no Nix rebuild, just scp the binary.
+# Deploy a cargo-built binary to the device for fast iteration.
+# The binary is uploaded to a staging directory and the profile entry
+# is symlinked to point to it.
 #
 # Usage: ./scripts/nix-cargo-deploy.sh <command> [args...] [device-ip]
 #
@@ -32,7 +31,7 @@ compositor)
     device="${1:-${DEVICE_IP:?Set DEVICE_IP or pass as argument}}"
     local_bin="target/armv7-unknown-linux-gnueabihf/release/bmc-openwrt"
     bin_name="bmc-openwrt"
-    wrapper_path="${profile}/bin/bmc-openwrt"
+    profile_path="${profile}/bin/bmc-openwrt"
     ;;
 widget)
     name="${1:?Usage: nix-cargo-deploy.sh widget <name> [device-ip]}"
@@ -40,7 +39,7 @@ widget)
     device="${1:-${DEVICE_IP:?Set DEVICE_IP or pass as argument}}"
     local_bin="target/armv7-unknown-linux-gnueabihf/release/bmc-widget-${name}"
     bin_name="bmc-widget-${name}"
-    wrapper_path="${profile}/lib/bmc-widgets/${name}/bin/bmc-widget-${name}"
+    profile_path="${profile}/lib/bmc-widgets/${name}/bin/bmc-widget-${name}"
     label="widget ${name}"
     ;;
 *)
@@ -60,17 +59,17 @@ deploy_path="${deploy_dir}/${bin_name}"
 
 echo "Deploying ${label} to ${device}..."
 
-# Back up the original wrapper (only on first deploy)
-# shellcheck disable=SC2029 # Intentional client-side expansion of wrapper_path
-ssh "root@${device}" "[ -f ${wrapper_path}.orig ] || cp ${wrapper_path} ${wrapper_path}.orig"
+# Back up the original binary (only on first deploy)
+# shellcheck disable=SC2029 # Intentional client-side expansion
+ssh "root@${device}" "[ -f ${profile_path}.orig ] || cp ${profile_path} ${profile_path}.orig"
 
-# Upload binary to staging directory (preserves the wrapper)
-# shellcheck disable=SC2029 # Intentional client-side expansion of deploy_dir
+# Upload binary to staging directory
+# shellcheck disable=SC2029 # Intentional client-side expansion
 ssh "root@${device}" "mkdir -p ${deploy_dir}"
 scp "$local_bin" "root@${device}:${deploy_path}"
 
-# Patch the wrapper's last exec line to point to the deployed binary
-# shellcheck disable=SC2029 # Intentional client-side expansion of deploy_path/wrapper_path
-ssh "root@${device}" "sed -i '\$s|^exec .*|exec ${deploy_path} \"\\\$@\"|' ${wrapper_path}"
+# Symlink profile entry to the deployed binary
+# shellcheck disable=SC2029 # Intentional client-side expansion
+ssh "root@${device}" "ln -sf ${deploy_path} ${profile_path}"
 
-echo "Done. Binary at ${deploy_path}, wrapper at ${wrapper_path} patched."
+echo "Done. Binary at ${deploy_path}, symlinked from ${profile_path}."
