@@ -3,7 +3,7 @@
 # Single source of truth for what packages exist. Each entry pairs
 # build logic with release metadata. Consumers (e.g. init-artifacts)
 # select the subset they need.
-{ bmc, fixedArmv7Pkgs }:
+{ bmc, armv7Pkgs }:
 let
   inherit (bmc.lib) mkCorePackage mkWidgetPackage;
   inherit (bmc) crates;
@@ -24,8 +24,8 @@ in
     install_strategy = null;
   };
   nix = {
-    pkg = fixedArmv7Pkgs.nix;
-    version = fixedArmv7Pkgs.nix.version;
+    pkg = armv7Pkgs.nix;
+    version = armv7Pkgs.nix.version;
     category = "core";
     description = "Nix package manager";
     upgrade_strategy = "reboot";

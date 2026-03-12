@@ -1,5 +1,5 @@
 # profiles: Build profile definitions for all target platforms.
-{ workspaces, pkgs, fixedArmv7Pkgs }:
+{ workspaces, pkgs, armv7Pkgs }:
 let
   # TODO: replace with patchelf per binary.
   profileOverlay = profile: (profile // {
@@ -35,7 +35,7 @@ in
     minimal_deps = true;
     rustProfile = "release";
     rustCrossTarget = "armv7-unknown-linux-gnueabihf";
-    build_pkgs = fixedArmv7Pkgs;
+    build_pkgs = armv7Pkgs;
     wrapNixGL = false;
   });
   armv7-glibc-debug = workspaces.full.mkBuildProfile {
@@ -43,7 +43,7 @@ in
     minimal_deps = false;
     rustProfile = "dev";
     rustCrossTarget = "armv7-unknown-linux-gnueabihf";
-    build_pkgs = fixedArmv7Pkgs;
+    build_pkgs = armv7Pkgs;
     wrapNixGL = false;
   };
 }

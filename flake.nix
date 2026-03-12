@@ -33,10 +33,6 @@
               nodejs = prev.nodejs_22;
               yarn = prev.yarn.override { nodejs = prev.nodejs_22; };
             })
-            # Custom mesa with minimal gallium drivers (etnaviv only)
-            (final: prev: {
-              mesa = prev.callPackage ./nix/pkgs/mesa/package.nix { };
-            })
           ];
         };
         lib = pkgs.lib;
