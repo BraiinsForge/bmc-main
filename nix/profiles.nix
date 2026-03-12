@@ -3,44 +3,35 @@
 {
   # fast profile (no cross compilation, non-portable binaries)
   fast = workspaces.full.mkBuildProfile {
-    minimal_deps = false;
+    minimalDeps = false;
     rustProfile = "fast";
     targetDeps = pkgs: with pkgs; [
       # NOTE: for native compilation, mesa does not have
       # gbm, while for armv7 libgbm is kept in mesa.
       libgbm
     ];
+    inherit pkgs;
   };
   # musl profiles for bmc-openwrt (statically linked)
   armv7-release = workspaces.minimal.mkBuildProfile {
-    suffix = "armv7";
-    minimal_deps = true;
+    minimalDeps = true;
     rustProfile = "release";
-    rustCrossTarget = "armv7-unknown-linux-musleabihf";
-    build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
+    pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
   };
   armv7-debug = workspaces.minimal.mkBuildProfile {
-    suffix = "armv7";
-    minimal_deps = false;
+    minimalDeps = false;
     rustProfile = "dev";
-    rustCrossTarget = "armv7-unknown-linux-musleabihf";
-    build_pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
+    pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
   };
   # glibc profiles for widgets/compositor (dynamically linked)
   armv7-glibc-release = workspaces.full.mkBuildProfile {
-    suffix = "armv7";
-    minimal_deps = true;
+    minimalDeps = true;
     rustProfile = "release";
-    rustCrossTarget = "armv7-unknown-linux-gnueabihf";
-    build_pkgs = armv7Pkgs;
-    wrapNixGL = false;
+    pkgs = armv7Pkgs;
   };
   armv7-glibc-debug = workspaces.full.mkBuildProfile {
-    suffix = "armv7";
-    minimal_deps = false;
+    minimalDeps = false;
     rustProfile = "dev";
-    rustCrossTarget = "armv7-unknown-linux-gnueabihf";
-    build_pkgs = armv7Pkgs;
-    wrapNixGL = false;
+    pkgs = armv7Pkgs;
   };
 }

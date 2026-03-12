@@ -7,7 +7,7 @@ let
       raw = profile.buildCrate crate { inherit features; };
       binary = autopatchelfBinaries {
         drv = raw;
-        runtimeDeps = runtimeDeps profile.build_pkgs;
+        runtimeDeps = runtimeDeps profile.pkgs;
       };
       widgetSrc = ../widgets + "/${name}";
     in
