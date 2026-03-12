@@ -36,7 +36,7 @@ in
     rustProfile = "release";
     rustCrossTarget = "armv7-unknown-linux-gnueabihf";
     build_pkgs = fixedArmv7Pkgs;
-    wrapNixGL = true;
+    wrapNixGL = false;
   });
   armv7-glibc-debug = workspaces.full.mkBuildProfile {
     suffix = "armv7";
@@ -44,6 +44,6 @@ in
     rustProfile = "dev";
     rustCrossTarget = "armv7-unknown-linux-gnueabihf";
     build_pkgs = fixedArmv7Pkgs;
-    wrapNixGL = true;
+    wrapNixGL = false;
   };
 }

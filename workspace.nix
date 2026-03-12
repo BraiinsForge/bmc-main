@@ -89,8 +89,6 @@ let
       udev
       libdrm
       mesa
-      libgbm
-      libGL
     ];
     env = commonDeps.env;
   };
