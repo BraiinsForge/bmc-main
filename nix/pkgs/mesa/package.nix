@@ -266,14 +266,10 @@ stdenv.mkDerivation {
   '';
 
   passthru = {
-    # nixpkgs compat: packages like dri-pkgconfig-stub read mesa.driverLink
-    # at eval time. This is just a passthru string — not baked into any Mesa
-    # binary. Harmless to keep for compatibility.
-    driverLink = "/run/opengl-driver";
+    driverLink = throw "mesa.driverLink is disabled — glvnd is off";
     inherit
       eglPlatforms
-      galliumDrivers
-      ;
+      galliumDrivers;
 
     # for compatibility
     drivers = lib.warn "`mesa.drivers` is deprecated, use `mesa` instead" mesa;

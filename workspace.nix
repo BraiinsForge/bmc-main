@@ -11,11 +11,15 @@ let
 
   # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
   # The man output fails to build for ARMv7 glibc targets
-  fixedArmv7Pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.extend (final: prev: {
-    linux-pam = prev.linux-pam.overrideAttrs (old: {
-      outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
+  armv7Pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.extend (final: prev:
+    # Guard: only apply to cross-compiled (ARM target) packages, not to
+    # build-host packages that share this overlay via splicing.
+    lib.optionalAttrs (prev.stdenv.hostPlatform != prev.stdenv.buildPlatform) {
+      linux-pam = prev.linux-pam.overrideAttrs (old: {
+        outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
+      });
+      mesa = prev.callPackage ./nix/pkgs/mesa/package.nix { };
     });
-  });
 
   # Shared deps used by both package builds and devShells.
   # Single source of truth to keep build derivations and dev environments in sync.
@@ -40,7 +44,7 @@ let
       runtimePackages = commonDeps.guiRuntimeDeps;
       rustCrossTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget;
     } // makeRustflagsEnv {
-      runtimePackages = waylandRuntimeDeps fixedArmv7Pkgs;
+      runtimePackages = waylandRuntimeDeps armv7Pkgs;
       rustCrossTarget = "armv7-unknown-linux-gnueabihf";
     };
 
@@ -70,7 +74,7 @@ let
     env = {
       FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
     } // makeRustflagsEnv {
-      runtimePackages = waylandRuntimeDeps fixedArmv7Pkgs;
+      runtimePackages = waylandRuntimeDeps armv7Pkgs;
       rustCrossTarget = "armv7-unknown-linux-gnueabihf";
     };
   };
@@ -94,7 +98,7 @@ let
   };
 
   bmc = {
-    armv7-pkgs = fixedArmv7Pkgs;
+    armv7-pkgs = armv7Pkgs;
     lib = import ./nix/lib.nix { inherit pkgs lib; };
     crates = import ./nix/crates.nix { inherit (pkgs.ii.rust) defineCrate; };
     workspaces = {
@@ -103,7 +107,7 @@ let
     };
     profiles = import ./nix/profiles.nix {
       inherit (bmc) workspaces;
-      inherit pkgs fixedArmv7Pkgs;
+      inherit pkgs armv7Pkgs;
     };
   };
 
@@ -191,7 +195,7 @@ let
     bmc-hook-activation-resolver = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-activation-resolver { };
   };
 
-  armv7PackageDefs = import ./nix/packages.nix { inherit bmc fixedArmv7Pkgs; };
+  armv7PackageDefs = import ./nix/packages.nix { inherit bmc armv7Pkgs; };
 
   initArtifacts = import ./nix/init-artifacts.nix {
     inherit self pkgs lib mkIndex mkTarball;
