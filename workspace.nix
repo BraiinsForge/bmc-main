@@ -60,12 +60,6 @@ let
       LD_LIBRARY_PATH = "${lib.makeLibraryPath [
         pkgs.libgcc
       ]}";
-    } // makeRustflagsEnv {
-      runtimePackages = commonDeps.guiRuntimeDeps;
-      rustCrossTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget;
-    } // makeRustflagsEnv {
-      runtimePackages = waylandRuntimeDeps armv7Pkgs;
-      rustCrossTarget = "armv7-unknown-linux-gnueabihf";
     };
 
     guiBuildDeps = with pkgs; [
@@ -93,9 +87,6 @@ let
     ];
     env = {
       FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
-    } // makeRustflagsEnv {
-      runtimePackages = waylandRuntimeDeps armv7Pkgs;
-      rustCrossTarget = "armv7-unknown-linux-gnueabihf";
     };
   };
 
@@ -119,7 +110,7 @@ let
 
   bmc = {
     armv7-pkgs = armv7Pkgs;
-    lib = import ./nix/lib.nix { inherit pkgs lib; };
+    lib = import ./nix/lib.nix { inherit pkgs lib armv7Pkgs; };
     crates = import ./nix/crates.nix { inherit (pkgs.ii.rust) defineCrate; };
     workspaces = {
       full = workspace;
@@ -131,15 +122,45 @@ let
     };
   };
 
+  # Runtime deps for dlopen'd libraries, split by widget type.
+  # Functions accepting pkgs — resolved at the point of use.
+  deps = {
+    widgetRuntimeDeps = {
+      # Slint-based widgets: winit backend dlopen's wayland + xkbcommon.
+      slint = pkgs: with pkgs; [
+        wayland
+        libxkbcommon
+      ];
+      # Native GPU widgets: smithay/EGL dlopen's the full GL stack.
+      # libgbm is part of mesa's lib/ output, no separate entry needed.
+      native = pkgs: with pkgs; [
+        wayland
+        libxkbcommon
+        libdrm
+        mesa
+        libGL
+      ];
+    };
+    # Compositor: native widget deps + compositor-specific input/seat libs.
+    compositorRuntimeDeps = pkgs:
+      (deps.widgetRuntimeDeps.native pkgs) ++ (with pkgs; [
+        libinput
+        seatd
+        udev
+      ]);
+  };
+
   # All widget definitions for building
   widgets = {
     digital-clock = {
       crate = bmc.crates.widget-digital-clock;
       features = [ "standalone" ];
+      runtimeDepsKind = "slint";
     };
     flip-clock = {
       crate = bmc.crates.widget-flip-clock;
       features = [ "standalone" ];
+      runtimeDepsKind = "native";
     };
   };
 
@@ -160,7 +181,10 @@ let
 
   cratePackages = builtins.listToAttrs (lib.forEach crateTuples ({ archProfile, crate }: {
     name = "${crate.def}-${archProfile.arch}-${archProfile.profile}";
-    value = bmc.profiles."${archProfile.arch}-${archProfile.profile}".buildCrate bmc.crates.${crate.def} { };
+    value = bmc.lib.autopatchelfBinaries {
+      drv = bmc.profiles."${archProfile.arch}-${archProfile.profile}".buildCrate bmc.crates.${crate.def} { };
+      runtimeDeps = deps.compositorRuntimeDeps armv7Pkgs;
+    };
   }));
 
   # Individual widget packages per arch/profile
@@ -173,6 +197,8 @@ let
     name = "widget-${widget.name}-${archProfile.arch}-${archProfile.profile}";
     value = bmc.lib.mkWidgetPackage {
       inherit (widget) name crate;
+      runtimeDeps = deps.widgetRuntimeDeps.${widget.runtimeDepsKind};
+
       features = widget.features or [ ];
       profile = bmc.profiles."${archProfile.arch}-${archProfile.profile}";
     };
@@ -183,6 +209,8 @@ let
     name = "widgets-${arch}-${profile}";
     value = bmc.lib.mkAllWidgets {
       inherit widgets;
+      runtimeDeps = deps.widgetRuntimeDeps.native;
+
       profile = bmc.profiles."${arch}-${profile}";
     };
   }));
@@ -215,7 +243,9 @@ let
     bmc-hook-activation-resolver = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-activation-resolver { };
   };
 
-  armv7PackageDefs = import ./nix/packages.nix { inherit bmc armv7Pkgs; };
+  armv7PackageDefs = import ./nix/packages.nix {
+    inherit bmc armv7Pkgs deps;
+  };
 
   initArtifacts = import ./nix/init-artifacts.nix {
     inherit self pkgs lib mkIndex mkTarball;
@@ -238,5 +268,20 @@ in
     # Native widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
     widgets = bmc.lib.mkAllWidgets { inherit widgets; profile = bmc.profiles.fast; };
   };
-  devShells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) bmc.profiles;
+  devShells =
+    let
+      # ARM glibc RUSTFLAGS for dev shells only — patchelf handles builds.
+      armv7GlibcShellEnv = makeRustflagsEnv {
+        runtimePackages = waylandRuntimeDeps armv7Pkgs;
+        rustCrossTarget = "armv7-unknown-linux-gnueabihf";
+      };
+      shells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) bmc.profiles;
+    in
+    shells
+    // lib.mapAttrs'
+      (name: shell: {
+        name = name;
+        value = shell.overrideAttrs (prev: { env = (prev.env or { }) // armv7GlibcShellEnv; });
+      })
+      (lib.filterAttrs (name: _: lib.hasPrefix "armv7-glibc" name) shells);
 }

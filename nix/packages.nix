@@ -3,16 +3,20 @@
 # Single source of truth for what packages exist. Each entry pairs
 # build logic with release metadata. Consumers (e.g. init-artifacts)
 # select the subset they need.
-{ bmc, armv7Pkgs }:
+{ bmc, armv7Pkgs, deps }:
 let
-  inherit (bmc.lib) mkCorePackage mkWidgetPackage;
+  inherit (bmc.lib) mkCorePackage mkWidgetPackage autopatchelfBinaries;
   inherit (bmc) crates;
+  inherit (deps) compositorRuntimeDeps widgetRuntimeDeps;
   profile = bmc.profiles.armv7-glibc-release;
 in
 {
   core = {
     pkg = mkCorePackage {
-      bmc-openwrt = profile.buildCrate crates.bmc-openwrt { };
+      bmc-openwrt = autopatchelfBinaries {
+        drv = profile.buildCrate crates.bmc-openwrt { };
+        runtimeDeps = compositorRuntimeDeps armv7Pkgs;
+      };
       bmc-hook-merge-files = profile.buildCrate crates.bmc-hook-merge-files { };
       bmc-hook-file-symlinks = profile.buildCrate crates.bmc-hook-file-symlinks { };
       bmc-hook-activation-resolver = profile.buildCrate crates.bmc-hook-activation-resolver { };
@@ -36,6 +40,8 @@ in
       name = "digital-clock";
       crate = crates.widget-digital-clock;
       inherit profile;
+      runtimeDeps = widgetRuntimeDeps.slint;
+
       features = [ "standalone" ];
     };
     version = "1.0.0";
@@ -49,6 +55,8 @@ in
       name = "flip-clock";
       crate = crates.widget-flip-clock;
       inherit profile;
+      runtimeDeps = widgetRuntimeDeps.native;
+
       features = [ "standalone" ];
     };
     version = "1.0.0";
