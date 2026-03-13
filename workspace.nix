@@ -19,6 +19,26 @@ let
         outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
       });
       mesa = prev.callPackage ./nix/pkgs/mesa/package.nix { };
+      # These libraries use mesa.driverLink for driverdir/moduledir, but our
+      # custom mesa disables glvnd so driverLink throws. Point directly at
+      # mesa output instead.
+      # NOTE: currently there are no drivers or modules compiled.
+      libva = prev.libva.overrideAttrs {
+        mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
+          "-Ddriverdir=${final.mesa}/lib/dri"
+        ];
+      };
+      libva-minimal = prev.libva-minimal.overrideAttrs {
+        mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
+          "-Ddriverdir=${final.mesa}/lib/dri"
+        ];
+      };
+      # libvdpau uses mesa.driverLink for -Dmoduledir (gallium-vdpau is off).
+      libvdpau = prev.libvdpau.overrideAttrs {
+        mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
+          "-Dmoduledir=${final.mesa}/lib/vdpau"
+        ];
+      };
     });
 
   # Shared deps used by both package builds and devShells.
