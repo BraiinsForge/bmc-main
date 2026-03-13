@@ -4,7 +4,7 @@
 let lib = pkgs.lib; in
 let
   rustflags = import ./nix/rustflags.nix { inherit lib; };
-  inherit (rustflags) X11RuntimeDeps waylandRuntimeDeps makeRustflagsEnv;
+  inherit (rustflags) makeRustflagsEnv;
 
   mkIndex = import ./nix/mkIndex.nix { inherit pkgs lib; };
   mkTarball = import ./nix/mkTarball.nix { inherit pkgs lib mkIndex; };
@@ -65,12 +65,6 @@ let
     guiBuildDeps = with pkgs; [
       fontconfig
       freetype
-    ];
-
-    # Runtime libs for GUI/display development (Slint, winit backends)
-    guiRuntimeDeps = with pkgs; (waylandRuntimeDeps pkgs) ++ (X11RuntimeDeps pkgs) ++ [
-      libxkbcommon
-      mesa
     ];
 
     # Node.js tooling for frontend builds
@@ -271,8 +265,9 @@ in
   devShells =
     let
       # ARM glibc RUSTFLAGS for dev shells only — patchelf handles builds.
+      # Use all runtime deps (compositor is superset of widget deps).
       armv7GlibcShellEnv = makeRustflagsEnv {
-        runtimePackages = waylandRuntimeDeps armv7Pkgs;
+        runtimePackages = deps.compositorRuntimeDeps armv7Pkgs;
         rustCrossTarget = "armv7-unknown-linux-gnueabihf";
       };
       shells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) bmc.profiles;
