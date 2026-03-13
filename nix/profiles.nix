@@ -13,6 +13,11 @@ in
   fast = workspaces.full.mkBuildProfile {
     minimal_deps = false;
     rustProfile = "fast";
+    targetDeps = pkgs: with pkgs; [
+      # NOTE: for native compilation, mesa does not have
+      # gbm, while for armv7 libgbm is kept in mesa.
+      libgbm
+    ];
   };
   # musl profiles for bmc-openwrt (statically linked)
   armv7-release = workspaces.minimal.mkBuildProfile {
