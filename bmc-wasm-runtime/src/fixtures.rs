@@ -226,6 +226,17 @@ pub fn fixture_events_to_timeline(
                     data: data.clone(),
                     source: source.clone(),
                 },
+                FixtureEventKind::AudioPlay {
+                    sound_id,
+                    volume,
+                    name,
+                    duration_ms,
+                } => UnifiedEvent::AudioPlay {
+                    sound_id: *sound_id,
+                    volume: *volume,
+                    name: name.clone(),
+                    duration_ms: *duration_ms,
+                },
             };
             TimelineEvent {
                 at_ms: fe.at_ms,

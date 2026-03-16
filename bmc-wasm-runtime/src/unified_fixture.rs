@@ -180,6 +180,17 @@ pub enum UnifiedEvent {
         data: String,
         source: String,
     },
+
+    // ── Audio ───────────────────────────────────────────────────
+    /// An audio playback event (informational, no-op during replay).
+    AudioPlay {
+        sound_id: u32,
+        volume: u32,
+        /// Human-readable sample name (from registration).
+        name: String,
+        /// Sample duration in milliseconds.
+        duration_ms: u32,
+    },
 }
 
 /// A single timestamped event in the unified timeline.
@@ -259,7 +270,8 @@ pub fn validate_fixture(fixture: &UnifiedFixture) -> Result<()> {
             | UnifiedEvent::SocketConnected { .. }
             | UnifiedEvent::SocketData { .. }
             | UnifiedEvent::SocketClosed { .. }
-            | UnifiedEvent::UdpResponse { .. } => {}
+            | UnifiedEvent::UdpResponse { .. }
+            | UnifiedEvent::AudioPlay { .. } => {}
         }
     }
 

@@ -109,10 +109,15 @@ skip = [
     { crate = "r-efi@5" },
     { crate = "version-compare@0.1" },
     { crate = "winapi@0.3" },
+
+    # Audio ecosystem (cpal/rodio pulls older ndk via oboe)
+    { crate = "ndk@0.8" },
+    { crate = "ndk-sys@0.5" },
 ]
 
 # Platform crate trees with massive version fragmentation — skip subtrees.
 skip-tree = [
+    { crate = "windows@0.54" },
     { crate = "windows@0.58" },
     { crate = "windows@0.61" },
     { crate = "windows-sys@0.45" },

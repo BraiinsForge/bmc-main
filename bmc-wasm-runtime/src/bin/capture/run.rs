@@ -504,7 +504,8 @@ fn run_unified_capture(
                 | UnifiedEvent::SocketConnected { .. }
                 | UnifiedEvent::SocketData { .. }
                 | UnifiedEvent::SocketClosed { .. }
-                | UnifiedEvent::UdpResponse { .. } => {}
+                | UnifiedEvent::UdpResponse { .. }
+                | UnifiedEvent::AudioPlay { .. } => {}
             }
 
             if is_tty {
@@ -768,11 +769,12 @@ fn split_unified_events(
                 });
             }
 
-            // User actions are handled in the main replay loop
+            // User actions and informational events are handled in the main replay loop
             UnifiedEvent::Capture { .. }
             | UnifiedEvent::Click { .. }
             | UnifiedEvent::Scroll { .. }
-            | UnifiedEvent::Drag { .. } => {}
+            | UnifiedEvent::Drag { .. }
+            | UnifiedEvent::AudioPlay { .. } => {}
         }
     }
 

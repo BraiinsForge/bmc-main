@@ -39,6 +39,9 @@ tungstenite.workspace = true
 ureq.workspace = true
 webpki-roots.workspace = true
 
+# Audio playback
+rodio = { workspace = true, optional = true, features = ["mp3", "vorbis", "wav"] }
+
 # Host binaries (GL windowing)
 glutin = { workspace = true, optional = true }
 glutin-winit = { workspace = true, optional = true }
@@ -68,9 +71,10 @@ toml = { workspace = true, optional = true }
 default = []
 perf-overlay = []
 profiling = ["ii-stopwatch/enabled"]
+audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "flate2", "owo-colors", "serde", "toml"]
-testbed = ["host", "perf-overlay", "notify", "fixtures"]
+testbed = ["host", "perf-overlay", "notify", "fixtures", "audio"]
 capture = ["host", "askama", "base64", "clap", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
 
 [[bin]]

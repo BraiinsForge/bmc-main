@@ -149,6 +149,7 @@ let
       (compositorUdev pkgs)
       libdrm
       mesa
+      alsa-lib
     ];
 
     # Node.js tooling for frontend builds
@@ -470,6 +471,10 @@ let
     mesh-demo = {
       wasmFile = "mesh_demo.wasm";
       manifest = ./bmc-wasm-runtime/examples/mesh-demo/manifest.json;
+    };
+    metronome = {
+      wasmFile = "metronome.wasm";
+      manifest = ./bmc-wasm-runtime/examples/metronome/manifest.json;
     };
   };
 

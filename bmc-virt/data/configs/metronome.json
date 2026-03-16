@@ -1,0 +1,19 @@
+{
+  "scenes": [
+    {
+      "id": "f8a7b212-4d3e-4f0a-9c1b-3e5a7c2b1d04",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "c4f3a1d2-7b8e-4a5d-9f0c-1e2b3d4f5a06",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440207",
+          "params": {}
+        }
+      ]
+    }
+  ]
+}

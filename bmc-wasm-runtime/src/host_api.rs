@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub use glam::{Quat, Vec3};
 use std::sync::mpsc;
@@ -192,6 +193,22 @@ pub enum FixtureEventKind {
         data: String,
         source: String,
     },
+    AudioPlay {
+        sound_id: u32,
+        volume: u32,
+        name: String,
+        duration_ms: u32,
+    },
+}
+
+/// A registered audio sample with metadata.
+pub struct AudioSample {
+    /// Raw encoded audio data (WAV/OGG/MP3).
+    pub data: Arc<[u8]>,
+    /// Human-readable name (from widget registration).
+    pub name: String,
+    /// Duration in milliseconds (computed at registration by decoding).
+    pub duration_ms: u32,
 }
 
 /// State for event fixture replay — holds sorted events and stub channel senders.
@@ -587,6 +604,23 @@ pub(crate) struct HostState {
     /// the live xorshift state, including any deterministic seed forwarded
     /// from `RuntimeConfig::rng_seed`.
     pub rng_state: Option<u64>,
+
+    /// Registered audio samples (raw encoded bytes), keyed by audio ID.
+    /// The host stores the original encoded data and decodes on each play.
+    pub audio_samples: HashMap<u16, AudioSample>,
+
+    /// Next audio ID to allocate.
+    pub next_audio_id: u16,
+
+    /// Audio output stream — must stay alive for the entire session.
+    /// `None` if audio output is unavailable (headless, no ALSA, etc.).
+    #[cfg(feature = "audio")]
+    pub audio_stream: Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
+
+    /// Active audio sinks keyed by sound ID. Allows overlapping plays of the
+    /// same sound and per-ID stop. Finished sinks are lazily pruned on play.
+    #[cfg(feature = "audio")]
+    pub audio_sinks: HashMap<u16, Vec<rodio::Sink>>,
 }
 
 impl HostState {
@@ -649,6 +683,22 @@ impl HostState {
             taffy: TaffyTree::with_capacity(64),
             resource_limits,
             rng_state: None, // None = auto-seed on first use (from monotonic_ms)
+            audio_samples: HashMap::new(),
+            next_audio_id: 1,
+            #[cfg(feature = "audio")]
+            audio_stream: {
+                match rodio::OutputStream::try_default() {
+                    Ok((stream, handle)) => Some((stream, handle)),
+                    Err(e) => {
+                        tracing::warn!(
+                            "audio output unavailable: {e} — audio_play will be a no-op"
+                        );
+                        None
+                    }
+                }
+            },
+            #[cfg(feature = "audio")]
+            audio_sinks: HashMap::new(),
         }
     }
 

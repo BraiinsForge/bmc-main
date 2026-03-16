@@ -22,6 +22,47 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{LitStr, parse_macro_input};
 
+/// Embed an audio file (WAV, OGG, MP3) as an `Audio` asset at compile time.
+///
+/// The raw file bytes are included directly; the host decodes on first registration.
+/// Cargo tracks the file for recompilation when it changes.
+///
+/// # Usage
+///
+/// ```ignore
+/// const TICK: Audio = include_audio!("assets/sounds/tick.wav");
+/// ```
+///
+/// The path is relative to the crate's `CARGO_MANIFEST_DIR`.
+#[proc_macro]
+pub fn include_audio(input: TokenStream) -> TokenStream {
+    let path_lit = parse_macro_input!(input as LitStr);
+    let rel_path = path_lit.value();
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .unwrap_or_else(|_| panic!("CARGO_MANIFEST_DIR not set"));
+    let full_path = std::path::Path::new(&manifest_dir).join(&rel_path);
+    if !full_path.exists() {
+        panic!("audio file not found: {}", full_path.display());
+    }
+
+    // Derive a human-readable name from the filename stem
+    let name = full_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let expanded = quote! {
+        bmc_wasm_sdk::Audio {
+            data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #rel_path)),
+            name: #name,
+        }
+    };
+
+    expanded.into()
+}
+
 /// Embed a PNG (or other raster image) file as a `Bitmap` at compile time.
 ///
 /// The raw file bytes are included directly; the host decodes on first registration.

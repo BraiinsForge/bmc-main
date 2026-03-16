@@ -2,6 +2,7 @@
 
 //! Guest import registration for the WASM runtime.
 
+mod audio;
 mod data;
 mod network;
 mod render;
@@ -17,5 +18,6 @@ pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<
     network::register(linker)?;
     data::register(linker)?;
     system::register(linker)?;
+    audio::register(linker)?;
     Ok(())
 }

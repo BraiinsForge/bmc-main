@@ -1556,7 +1556,9 @@ fn event_icon_id(event: &UnifiedEvent) -> u16 {
         | UnifiedEvent::UdpResponse { .. }
         | UnifiedEvent::SsdpFound { .. }
         | UnifiedEvent::MdnsFound { .. } => ICON_DEV_DOWNLOAD,
-        UnifiedEvent::WsOpen { .. } | UnifiedEvent::SocketConnected { .. } => ICON_DEV_UPLOAD,
+        UnifiedEvent::WsOpen { .. }
+        | UnifiedEvent::SocketConnected { .. }
+        | UnifiedEvent::AudioPlay { .. } => ICON_DEV_UPLOAD,
         UnifiedEvent::WsClose { .. }
         | UnifiedEvent::SocketClosed { .. }
         | UnifiedEvent::SsdpRemoved { .. }
@@ -1612,6 +1614,12 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             source,
             ..
         } => format!("udp#{broadcast_id} ← {source}"),
+        UnifiedEvent::AudioPlay {
+            name,
+            volume,
+            duration_ms,
+            ..
+        } => format!("{name} vol={volume} {duration_ms}ms"),
     }
 }
 

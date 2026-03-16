@@ -43,24 +43,25 @@ pub mod xml;
 
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::{
-    include_bitmap, include_icon, include_mesh, include_nine_patch, include_skin, json,
+    include_audio, include_bitmap, include_icon, include_mesh, include_nine_patch, include_skin,
+    json,
 };
 pub use format::{format_date, format_duration};
 pub use host::{
-    ButtonSize, ButtonStyle, SizeVariant, SystemTime, TouchHit, WidgetSize, draw_text, fill_rect,
-    parse_date, random_u32, request_frame, request_frame_after,
+    ButtonSize, ButtonStyle, SizeVariant, SystemTime, TouchHit, Volume, WidgetSize, audio_play,
+    audio_stop, draw_text, fill_rect, parse_date, random_u32, request_frame, request_frame_after,
 };
 pub use json::JsonDoc;
 pub use mesh::{Highlight, LightAngles, Mesh, MeshView};
 pub use net::{FetchRequest, FetchResponse, fetch, fetch_after};
 pub use orientation::Orientation;
 pub use tree::{
-    AnimationDef, Bitmap, ButtonSkin, Draw, Icon, Interpolation, ModalProps, NinePatch,
+    AnimationDef, Audio, Bitmap, ButtonSkin, Draw, Icon, Interpolation, ModalProps, NinePatch,
     NinePatchAsset, Node, NotificationKind, ProgressMode, PropsData, Skin, SkinAsset, SkinEntry,
     SkinPalette, SliderSkin, Span, StyleResult, TextStyle, TransitionDef, TreeRenderResult,
-    begin_tree, canvas, center, col, color_or, ensure_nine_patch_registered, make_button, modal,
-    modal_styled, notification, paragraph, progress_bar, render_ui, row, scroll, spacer, span,
-    text, touchable, with_buffer,
+    begin_tree, canvas, center, col, color_or, ensure_audio_registered,
+    ensure_nine_patch_registered, make_button, modal, modal_styled, notification, paragraph,
+    progress_bar, render_ui, row, scroll, spacer, span, text, touchable, with_buffer,
 };
 pub use ufmt;
 pub use ws::{Ws, WsEvent, ws_connect};

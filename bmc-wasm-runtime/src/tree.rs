@@ -2005,9 +2005,10 @@ fn render_progress_bar_flat(
             renderer.fill_rect(x, mid_y - half_track, fill_w, track_h, pb.fill_color);
         }
 
-        // Playhead dot
-        if fill_w > 0.0 {
-            renderer.fill_circle(x + fill_w, mid_y, dot_radius, pb.fill_color);
+        // Playhead dot — clamp center so it never clips outside the bar
+        {
+            let dot_cx = (x + fill_w).clamp(x + dot_radius, x + w - dot_radius);
+            renderer.fill_circle(dot_cx, mid_y, dot_radius, pb.fill_color);
         }
     }
 

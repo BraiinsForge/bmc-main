@@ -1,0 +1,142 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Audio sample registration and playback guest imports.
+
+use anyhow::Result;
+use wasmi::{Caller, Linker};
+
+use crate::host_api::{AudioSample, FixtureEvent, FixtureEventKind, HostState};
+
+use super::super::memory::{read_bytes, read_string};
+
+pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
+    register_register_audio_import(linker)?;
+    register_audio_play_import(linker)?;
+    register_audio_stop_import(linker)?;
+    Ok(())
+}
+
+fn register_register_audio_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_register_audio",
+        |mut caller: Caller<'_, HostState>,
+         data_ptr: u32,
+         data_len: u32,
+         name_ptr: u32,
+         name_len: u32|
+         -> u32 {
+            let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
+                return 0;
+            };
+            let name =
+                read_string(&caller, name_ptr, name_len).unwrap_or_else(|| "unknown".to_owned());
+
+            #[cfg(feature = "audio")]
+            let duration_ms = {
+                use rodio::Source as _;
+                let cursor = std::io::Cursor::new(data.clone());
+                rodio::Decoder::new(cursor)
+                    .ok()
+                    .and_then(|d| d.total_duration())
+                    .map_or(0, |d| u32::try_from(d.as_millis()).unwrap_or(u32::MAX))
+            };
+            #[cfg(not(feature = "audio"))]
+            let duration_ms = 0_u32;
+
+            let state = caller.data_mut();
+            let id = state.next_audio_id;
+            state.next_audio_id += 1;
+            state.audio_samples.insert(
+                id,
+                AudioSample {
+                    data: data.into(),
+                    name,
+                    duration_ms,
+                },
+            );
+            u32::from(id)
+        },
+    )?;
+    Ok(())
+}
+
+fn register_audio_play_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_audio_play",
+        |mut caller: Caller<'_, HostState>, sound_id: u32, volume: u32| {
+            let state = caller.data_mut();
+
+            let Ok(id) = u16::try_from(sound_id) else {
+                return;
+            };
+            let Some(sample) = state.audio_samples.get(&id) else {
+                return;
+            };
+
+            if state.record_events {
+                state.recorded_events.push(FixtureEvent {
+                    at_ms: state.monotonic_ms,
+                    kind: FixtureEventKind::AudioPlay {
+                        sound_id,
+                        volume,
+                        name: sample.name.clone(),
+                        duration_ms: sample.duration_ms,
+                    },
+                });
+            }
+
+            let data = sample.data.clone();
+
+            #[cfg(feature = "audio")]
+            {
+                let Some((_, ref handle)) = state.audio_stream else {
+                    return;
+                };
+                let cursor = std::io::Cursor::new(data);
+                if let Ok(decoder) = rodio::Decoder::new(cursor)
+                    && let Ok(sink) = rodio::Sink::try_new(handle)
+                {
+                    let volume = u8::try_from(volume.min(100))
+                        .expect("BUG: volume bounded to 100 must fit in u8");
+                    let vol = f32::from(volume) / 100.0;
+                    sink.set_volume(vol);
+                    sink.append(decoder);
+
+                    let sinks = state.audio_sinks.entry(id).or_default();
+                    sinks.retain(|s| !s.empty());
+                    sinks.push(sink);
+                }
+            }
+
+            #[cfg(not(feature = "audio"))]
+            let _ = (data, volume);
+        },
+    )?;
+    Ok(())
+}
+
+fn register_audio_stop_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_audio_stop",
+        |caller: Caller<'_, HostState>, sound_id: u32| {
+            #[cfg(feature = "audio")]
+            {
+                let mut caller = caller;
+                let state = caller.data_mut();
+                if let Ok(id) = u16::try_from(sound_id)
+                    && let Some(sinks) = state.audio_sinks.remove(&id)
+                {
+                    for sink in sinks {
+                        sink.stop();
+                    }
+                }
+            }
+            #[cfg(not(feature = "audio"))]
+            let _ = (caller, sound_id);
+        },
+    )?;
+    Ok(())
+}

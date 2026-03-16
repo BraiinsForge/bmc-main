@@ -89,6 +89,39 @@ pub fn ensure_bitmap_registered(bmp: &Bitmap) -> u16 {
     })
 }
 
+/// Embedded audio data (output of `include_audio!` proc macro).
+///
+/// The `data` field contains raw WAV/OGG/MP3 bytes embedded at compile time.
+/// On first use, this data is sent to the host via `host_register_audio()`
+/// which decodes to PCM and caches the samples for playback.
+pub struct Audio {
+    pub data: &'static [u8],
+    /// Human-readable name derived from filename (for fixture debugging).
+    pub name: &'static str,
+}
+
+// Audio registration — lazy, once per audio asset per runtime lifetime.
+thread_local! {
+    static AUDIO_IDS: RefCell<Vec<(usize, u16)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Register an audio asset with the host (if not already registered) and return its ID.
+#[must_use]
+pub fn ensure_audio_registered(audio: &Audio) -> u16 {
+    AUDIO_IDS.with(|ids| {
+        let mut ids = ids.borrow_mut();
+        let key = audio.data.as_ptr() as usize;
+        for &(k, id) in ids.iter() {
+            if k == key {
+                return id;
+            }
+        }
+        let id = host::register_audio(audio.data, audio.name);
+        ids.push((key, id));
+        id
+    })
+}
+
 // Mesh registration — lazy, once per mesh per runtime lifetime.
 thread_local! {
     static MESH_IDS: RefCell<Vec<(usize, u16)>> = const { RefCell::new(Vec::new()) };

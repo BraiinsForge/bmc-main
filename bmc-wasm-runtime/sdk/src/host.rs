@@ -62,6 +62,16 @@ unsafe extern "C" {
     // Mesh registration
     fn host_register_mesh(data_ptr: *const u8, data_len: u32) -> u32;
 
+    // Audio registration and playback
+    fn host_register_audio(
+        data_ptr: *const u8,
+        data_len: u32,
+        name_ptr: *const u8,
+        name_len: u32,
+    ) -> u32;
+    fn host_audio_play(sound_id: u32, volume: u32);
+    fn host_audio_stop(sound_id: u32);
+
     // Image decoding (returns RGBA pixels)
     fn host_decode_image(
         data_ptr: *const u8,
@@ -318,6 +328,61 @@ pub fn parse_date(s: &str) -> Option<i64> {
 #[must_use]
 pub fn register_mesh(data: &[u8]) -> u16 {
     unsafe { host_register_mesh(data.as_ptr(), data.len() as u32) as u16 }
+}
+
+/// Register audio data (WAV/OGG/MP3 bytes) with the host, returns an opaque audio ID.
+///
+/// The host detects format by magic bytes, decodes to PCM once, and caches
+/// decoded samples. Subsequent `audio_play` calls use the cached PCM.
+#[expect(clippy::cast_possible_truncation)]
+#[must_use]
+pub fn register_audio(data: &[u8], name: &str) -> u16 {
+    unsafe {
+        host_register_audio(
+            data.as_ptr(),
+            data.len() as u32,
+            name.as_ptr(),
+            name.len() as u32,
+        ) as u16
+    }
+}
+
+/// Audio playback volume, in 0–100.
+///
+/// Values are clamped at construction, so the host never sees an
+/// out-of-range byte. Use [`Volume::SILENT`] / [`Volume::FULL`] for the
+/// canonical endpoints, [`Volume::new`] for arbitrary values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Volume(u8);
+
+impl Volume {
+    pub const SILENT: Volume = Volume(0);
+    pub const FULL: Volume = Volume(100);
+
+    /// Build a volume in 0–100. Values above 100 are clamped down to 100.
+    #[must_use]
+    pub const fn new(v: u8) -> Self {
+        Self(if v > 100 { 100 } else { v })
+    }
+}
+
+impl From<Volume> for u32 {
+    fn from(v: Volume) -> Self {
+        Self::from(v.0)
+    }
+}
+
+/// Play a registered audio sample at the given [`Volume`].
+///
+/// Fire-and-forget: the host mixes and plays asynchronously.
+/// No-op if the audio ID is invalid or if audio output is unavailable.
+pub fn audio_play(sound_id: u16, volume: Volume) {
+    unsafe { host_audio_play(u32::from(sound_id), u32::from(volume)) }
+}
+
+/// Stop playback of a registered audio sample.
+pub fn audio_stop(sound_id: u16) {
+    unsafe { host_audio_stop(u32::from(sound_id)) }
 }
 
 /// Register bitmap data (PNG bytes) with the host, returns an opaque bitmap ID.

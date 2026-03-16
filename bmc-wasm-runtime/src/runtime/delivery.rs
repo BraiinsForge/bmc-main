@@ -118,6 +118,7 @@ impl WasmWidgetRuntime {
                     }
                     true
                 }
+                FixtureEventKind::AudioPlay { .. } => true,
             };
 
             if !delivered {
