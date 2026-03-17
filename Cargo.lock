@@ -1158,12 +1158,17 @@ dependencies = [
 name = "bmc-widget"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bmc-ipc",
  "bmc-widget-protocol",
+ "drm-fourcc",
  "futures",
+ "gbm 0.17.0",
+ "glow",
  "semver",
  "serde",
  "serde_json",
+ "smithay",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",

@@ -1,6 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 mod client;
+#[cfg(feature = "gpu")]
+pub mod egl;
 pub mod env;
 mod error;
 mod ipc;
