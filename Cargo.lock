@@ -1165,6 +1165,7 @@ dependencies = [
  "futures",
  "gbm 0.17.0",
  "glow",
+ "libc",
  "semver",
  "serde",
  "serde_json",
@@ -1175,6 +1176,9 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "wayland-backend",
+ "wayland-client 0.31.10",
+ "wayland-protocols 0.32.8",
 ]
 
 [[package]]

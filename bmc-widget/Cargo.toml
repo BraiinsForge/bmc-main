@@ -10,7 +10,11 @@ gpu = [
     "dep:drm-fourcc",
     "dep:gbm",
     "dep:glow",
+    "dep:libc",
     "dep:smithay",
+    "dep:wayland-backend",
+    "dep:wayland-client",
+    "dep:wayland-protocols",
 ]
 
 [dependencies]
@@ -31,7 +35,11 @@ anyhow = { workspace = true, optional = true }
 drm-fourcc = { workspace = true, optional = true }
 gbm = { workspace = true, optional = true }
 glow = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 smithay = { workspace = true, default-features = false, features = ["backend_egl", "renderer_glow"], optional = true }
+wayland-backend = { workspace = true, features = ["client_system"], optional = true }
+wayland-client = { workspace = true, optional = true }
+wayland-protocols = { workspace = true, features = ["staging"], optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

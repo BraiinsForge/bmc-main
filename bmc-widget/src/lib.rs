@@ -7,6 +7,8 @@ pub mod env;
 mod error;
 mod ipc;
 mod manifest;
+#[cfg(feature = "gpu")]
+pub mod surface;
 pub mod wayland;
 
 pub use client::{ClientError, WidgetClient};
