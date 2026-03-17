@@ -55,6 +55,8 @@ if [ ! -f "$local_bin" ]; then
     exit 1
 fi
 
+cargo build --release --target armv7-unknown-linux-gnueabihf -p "$bin_name"
+
 deploy_path="${deploy_dir}/${bin_name}"
 
 echo "Deploying ${label} to ${device}..."
