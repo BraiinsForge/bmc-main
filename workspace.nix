@@ -19,6 +19,9 @@ let
         outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
       });
       mesa = prev.callPackage ./nix/pkgs/mesa/package.nix { };
+      libinput = prev.libinput.override {
+        wacomSupport = false;
+      };
       # These libraries use mesa.driverLink for driverdir/moduledir, but our
       # custom mesa disables glvnd so driverLink throws. Point directly at
       # mesa output instead.
