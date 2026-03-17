@@ -7,28 +7,18 @@ edition = "2024"
 standalone = []
 
 [dependencies]
-# Widget integration
+# Widget integration (gpu feature provides EGL/GBM/Wayland surface infrastructure)
 bmc-shared-time = { workspace = true }
-bmc-widget = { workspace = true }
+bmc-widget = { workspace = true, features = ["gpu"] }
 bmc-widget-protocol = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
-# Wayland
-wayland-backend = { workspace = true, features = ["client_system"] }
+
+# Wayland (for wl_buffer type in cached buffer management)
 wayland-client = { workspace = true }
-wayland-protocols = { workspace = true, features = ["staging"] }
 
-# OpenGL ES - use smithay's EGL wrapper which handles platform selection properly
+# OpenGL ES (for GL calls in render loop)
 glow = { workspace = true }
-smithay = { workspace = true, default-features = false, features = ["backend_egl", "renderer_glow"] }
-
-# Buffer management
-drm-fourcc = { workspace = true }
-gbm = { workspace = true }
-
-# Event loop
-calloop = { workspace = true }
-calloop-wayland-source = { workspace = true }
 
 # Time
 chrono = { workspace = true }

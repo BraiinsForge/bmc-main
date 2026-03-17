@@ -1,88 +1,39 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 //
-//! Wayland client implementation for flip-clock widget
+//! Wayland client implementation for flip-clock widget.
 //!
-//! Handles connection to the Wayland compositor, surface creation,
-//! and frame callback management.
+//! Uses [`bmc_widget::surface::XdgSurfaceClient`] for Wayland connection,
+//! surface management, and DMA-BUF buffer submission. This module only
+//! contains the flip-clock render loop and animation logic.
 
 use crate::AnimationMode;
 use crate::digits::DigitTextures;
 use crate::digits3d::Digit3DMeshes;
-use crate::egl::{DmaBufInfo, EglState};
+use crate::egl::EglState;
 use crate::ipc::EventHandler;
 use crate::renderer::{Mat4, Renderer};
-use anyhow::{Context, Result};
+use anyhow::Result;
+use bmc_widget::surface::XdgSurfaceClient;
 use bmc_widget::wayland::WidgetProtocolClient;
 use chrono::{Timelike, Utc};
 use chrono_tz::Tz;
 use glow::HasContext;
-use std::os::fd::AsFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use wayland_client::{
-    Connection, Dispatch, EventQueue, QueueHandle,
-    protocol::{wl_buffer, wl_callback, wl_compositor, wl_registry, wl_surface},
-};
-use wayland_protocols::wp::linux_dmabuf::zv1::client::{
-    zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
-};
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_client::protocol::wl_buffer;
 
-/// Wayland client state
+/// Wayland client for the flip-clock widget.
 pub struct WaylandClient {
-    /// Wayland connection
-    #[expect(dead_code, reason = "kept alive for protocol operations")]
-    conn: Connection,
-    /// Event queue
-    queue: EventQueue<WaylandState>,
-    /// Client state
-    state: WaylandState,
-    /// Animation mode
+    surface: XdgSurfaceClient,
     animation_mode: AnimationMode,
-    /// Timezone string (shared, updated by protocol events)
     timezone: Arc<RwLock<String>>,
-    /// Shutdown flag (shared, set by protocol events)
     shutdown: Arc<AtomicBool>,
-}
-
-/// Internal state for Wayland protocol handling
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "simple state flags for protocol handling"
-)]
-struct WaylandState {
-    /// Whether we should keep running
-    running: bool,
-    /// Compositor global
-    compositor: Option<wl_compositor::WlCompositor>,
-    /// XDG shell global
-    xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
-    /// Linux DMA-BUF global
-    linux_dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
-    /// Our surface
-    surface: Option<wl_surface::WlSurface>,
-    /// XDG surface wrapper
-    xdg_surface: Option<xdg_surface::XdgSurface>,
-    /// Toplevel role
-    xdg_toplevel: Option<xdg_toplevel::XdgToplevel>,
-    /// Whether the surface is configured
-    configured: bool,
-    /// Current width
-    width: u32,
-    /// Current height
-    height: u32,
-    /// Frame count (for animation)
-    frame_count: u32,
-    /// Whether we need to render
-    needs_render: bool,
-    /// Whether size changed (needs EGL resize)
-    size_changed: bool,
-    /// Cached wl_buffer per double-buffer slot (avoids per-frame create/destroy)
+    /// Cached wl_buffer per double-buffer slot (avoids per-frame create/destroy).
     cached_buffers: [Option<wl_buffer::WlBuffer>; 2],
 }
 
 impl WaylandClient {
-    /// Connect to the Wayland display
+    /// Connect to the Wayland display.
     pub fn connect(
         animation_mode: AnimationMode,
         width: u32,
@@ -90,79 +41,18 @@ impl WaylandClient {
         timezone: Arc<RwLock<String>>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
-        let conn = Connection::connect_to_env().context("Failed to connect to Wayland display")?;
-
-        let mut queue = conn.new_event_queue();
-        let qh = queue.handle();
-
-        let display = conn.display();
-        display.get_registry(&qh, ());
-
-        let mut state = WaylandState {
-            running: true,
-            compositor: None,
-            xdg_wm_base: None,
-            linux_dmabuf: None,
-            surface: None,
-            xdg_surface: None,
-            xdg_toplevel: None,
-            configured: false,
-            width,
-            height,
-            frame_count: 0,
-            needs_render: false,
-            size_changed: false,
-            cached_buffers: [None, None],
-        };
-
-        // Roundtrip to get globals
-        queue
-            .roundtrip(&mut state)
-            .context("Failed to roundtrip for globals")?;
-
-        // Verify we have required globals
-        let compositor = state
-            .compositor
-            .as_ref()
-            .context("Compositor not available")?;
-        let xdg_wm_base = state
-            .xdg_wm_base
-            .as_ref()
-            .context("XDG shell not available")?;
-
-        // Create surface
-        let surface = compositor.create_surface(&qh, ());
-        let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &qh, ());
-        let xdg_toplevel = xdg_surface.get_toplevel(&qh, ());
-
-        xdg_toplevel.set_title("Flip Clock".to_owned());
-        xdg_toplevel.set_app_id("bmc-flip-clock".to_owned());
-
-        // Commit to trigger configure
-        surface.commit();
-
-        state.surface = Some(surface);
-        state.xdg_surface = Some(xdg_surface);
-        state.xdg_toplevel = Some(xdg_toplevel);
-
-        // Wait for configure
-        queue
-            .roundtrip(&mut state)
-            .context("Failed to roundtrip for configure")?;
-
-        tracing::info!("Surface configured: {}x{}", state.width, state.height);
+        let surface = XdgSurfaceClient::connect(width, height, "Flip Clock", "bmc-flip-clock")?;
 
         Ok(Self {
-            conn,
-            queue,
-            state,
+            surface,
             animation_mode,
             timezone,
             shutdown,
+            cached_buffers: [None, None],
         })
     }
 
-    /// Run the event loop with EGL rendering
+    /// Run the event loop with EGL rendering.
     ///
     /// If `protocol` is provided, protocol events are polled after each frame.
     #[expect(clippy::too_many_lines, reason = "rendering loop with setup code")]
@@ -170,15 +60,15 @@ impl WaylandClient {
         &mut self,
         mut protocol: Option<(WidgetProtocolClient, EventHandler)>,
     ) -> Result<()> {
-        let qh = self.queue.handle();
+        let state = self.surface.state();
 
         // Initialize GBM-based EGL
-        let mut egl = EglState::new(self.state.width, self.state.height)?;
+        let mut egl = EglState::new(state.width, state.height)?;
 
         tracing::info!("GBM-based EGL initialized, starting render loop");
 
         // Initialize renderer with shaders
-        let mut renderer = Renderer::new(egl.gl(), self.state.width, self.state.height)?;
+        let mut renderer = Renderer::new(egl.gl(), state.width, state.height)?;
 
         tracing::info!("OpenGL ES renderer initialized");
 
@@ -196,25 +86,12 @@ impl WaylandClient {
             tracing::info!("3D digit meshes created");
         }
 
-        // Verify we have linux-dmabuf
-        let linux_dmabuf = self
-            .state
-            .linux_dmabuf
-            .as_ref()
-            .context("zwp_linux_dmabuf_v1 not available")?
-            .clone();
-
         // Request first frame callback
-        if let Some(ref surface) = self.state.surface {
-            surface.frame(&qh, ());
-            surface.commit();
-        }
+        self.surface.request_frame();
 
-        while self.state.running {
+        while self.surface.state().running {
             // Dispatch Wayland events
-            self.queue
-                .blocking_dispatch(&mut self.state)
-                .context("Wayland dispatch failed")?;
+            self.surface.blocking_dispatch()?;
 
             // Poll protocol events if connected
             if let Some((ref mut client, ref mut handler)) = protocol
@@ -229,22 +106,26 @@ impl WaylandClient {
                 break;
             }
 
+            let state = self.surface.state();
+
             // Handle resize if needed
-            if self.state.size_changed {
+            if state.size_changed {
                 // Destroy cached wl_buffers — they reference the old size
-                for cached in &mut self.state.cached_buffers {
+                for cached in &mut self.cached_buffers {
                     if let Some(buf) = cached.take() {
                         buf.destroy();
                     }
                 }
-                egl.resize(self.state.width, self.state.height);
-                renderer.resize(self.state.width, self.state.height);
-                self.state.size_changed = false;
+                egl.resize(state.width, state.height);
+                renderer.resize(state.width, state.height);
+                self.surface.state_mut().size_changed = false;
             }
 
+            let state = self.surface.state();
+
             // Render if we got a frame callback
-            if self.state.needs_render {
-                self.state.needs_render = false;
+            if state.needs_render {
+                self.surface.state_mut().needs_render = false;
 
                 // Get current time in the configured timezone
                 let tz_str = self
@@ -758,302 +639,48 @@ impl WaylandClient {
                 let dmabuf_info = egl.end_frame()?;
                 let slot = egl.last_rendered_slot();
 
-                // Reuse cached wl_buffer for this slot, or create one on first use
-                let buffer = self.state.cached_buffers[slot].get_or_insert_with(|| {
-                    create_buffer_from_dmabuf(&linux_dmabuf, &dmabuf_info, &qh)
-                });
-
-                // Attach buffer to surface
-                if let Some(ref surface) = self.state.surface {
-                    surface.attach(Some(buffer), 0, 0);
-                    #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
-                    surface.damage_buffer(
-                        0,
-                        0,
-                        dmabuf_info.width as i32,
-                        dmabuf_info.height as i32,
+                // Reuse cached wl_buffer for this slot, or create one on first use.
+                // Flip-clock caches buffers because the DMA-BUF fd/stride don't
+                // change between frames for the same double-buffer slot.
+                if self.cached_buffers[slot].is_none() {
+                    let qh = self.surface.queue_handle();
+                    let linux_dmabuf = self
+                        .surface
+                        .state()
+                        .linux_dmabuf()
+                        .expect("BUG: linux_dmabuf should be bound after connect");
+                    let buf = bmc_widget::surface::create_buffer_from_dmabuf(
+                        linux_dmabuf,
+                        &dmabuf_info,
+                        &qh,
                     );
-                    surface.frame(&qh, ());
-                    surface.commit();
+                    self.cached_buffers[slot] = Some(buf);
                 }
 
-                if self.state.frame_count.is_multiple_of(60) {
-                    tracing::debug!("Frame {}", self.state.frame_count);
+                // Attach cached buffer, damage, request frame, commit
+                let wl_surface = self
+                    .surface
+                    .state()
+                    .wl_surface()
+                    .expect("BUG: surface should exist after connect");
+                let buffer = self.cached_buffers[slot]
+                    .as_ref()
+                    .expect("BUG: cached buffer should exist after creation above");
+
+                wl_surface.attach(Some(buffer), 0, 0);
+                #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
+                wl_surface.damage_buffer(0, 0, dmabuf_info.width as i32, dmabuf_info.height as i32);
+                let qh = self.surface.queue_handle();
+                wl_surface.frame(&qh, ());
+                wl_surface.commit();
+
+                let state = self.surface.state();
+                if state.frame_count.is_multiple_of(60) {
+                    tracing::debug!("Frame {}", state.frame_count);
                 }
             }
         }
 
         Ok(())
-    }
-
-    /// Get surface dimensions
-    #[expect(dead_code)]
-    pub fn dimensions(&self) -> (u32, u32) {
-        (self.state.width, self.state.height)
-    }
-}
-
-/// Create a wl_buffer from DMA-BUF info using linux-dmabuf protocol
-fn create_buffer_from_dmabuf(
-    linux_dmabuf: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
-    info: &DmaBufInfo,
-    qh: &QueueHandle<WaylandState>,
-) -> wl_buffer::WlBuffer {
-    // Create buffer params
-    let params = linux_dmabuf.create_params(qh, ());
-
-    // Add the plane (single plane for XRGB8888)
-    let modifier: u64 = info.modifier.into();
-    let modifier_hi = (modifier >> 32) as u32;
-    let modifier_lo = (modifier & 0xFFFF_FFFF) as u32;
-
-    params.add(
-        info.fd.as_fd(),
-        0, // plane index
-        0, // offset
-        info.stride,
-        modifier_hi,
-        modifier_lo,
-    );
-
-    // Create buffer immediately (synchronous). The params object is single-use
-    // and must be destroyed after create_immed per the protocol spec.
-    #[expect(clippy::cast_possible_wrap, reason = "buffer dimensions fit in i32")]
-    let buffer = params.create_immed(
-        info.width as i32,
-        info.height as i32,
-        info.format as u32,
-        zwp_linux_buffer_params_v1::Flags::empty(),
-        qh,
-        (),
-    );
-    params.destroy();
-
-    buffer
-}
-
-// === Protocol Implementations ===
-
-impl Dispatch<wl_registry::WlRegistry, ()> for WaylandState {
-    fn event(
-        state: &mut Self,
-        registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event,
-        (): &(),
-        _: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
-            match interface.as_str() {
-                "wl_compositor" => {
-                    let compositor = registry.bind::<wl_compositor::WlCompositor, _, _>(
-                        name,
-                        version.min(6),
-                        qh,
-                        (),
-                    );
-                    tracing::debug!("Bound wl_compositor v{}", version.min(6));
-                    state.compositor = Some(compositor);
-                }
-                "xdg_wm_base" => {
-                    let xdg_wm_base =
-                        registry.bind::<xdg_wm_base::XdgWmBase, _, _>(name, version.min(6), qh, ());
-                    tracing::debug!("Bound xdg_wm_base v{}", version.min(6));
-                    state.xdg_wm_base = Some(xdg_wm_base);
-                }
-                "zwp_linux_dmabuf_v1" => {
-                    let dmabuf = registry.bind::<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, _, _>(
-                        name,
-                        version.min(4),
-                        qh,
-                        (),
-                    );
-                    tracing::debug!("Bound zwp_linux_dmabuf_v1 v{}", version.min(4));
-                    state.linux_dmabuf = Some(dmabuf);
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-impl Dispatch<wl_compositor::WlCompositor, ()> for WaylandState {
-    fn event(
-        _: &mut Self,
-        _: &wl_compositor::WlCompositor,
-        _: wl_compositor::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        // No events for wl_compositor
-    }
-}
-
-impl Dispatch<wl_surface::WlSurface, ()> for WaylandState {
-    fn event(
-        _: &mut Self,
-        _: &wl_surface::WlSurface,
-        _: wl_surface::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        // Surface events (enter/leave output) - not needed for now
-    }
-}
-
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandState {
-    fn event(
-        _: &mut Self,
-        xdg_wm_base: &xdg_wm_base::XdgWmBase,
-        event: xdg_wm_base::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let xdg_wm_base::Event::Ping { serial } = event {
-            xdg_wm_base.pong(serial);
-        }
-    }
-}
-
-impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandState {
-    fn event(
-        state: &mut Self,
-        xdg_surface: &xdg_surface::XdgSurface,
-        event: xdg_surface::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let xdg_surface::Event::Configure { serial } = event {
-            xdg_surface.ack_configure(serial);
-            state.configured = true;
-            tracing::debug!("XDG surface configured");
-        }
-    }
-}
-
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandState {
-    fn event(
-        state: &mut Self,
-        _: &xdg_toplevel::XdgToplevel,
-        event: xdg_toplevel::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            xdg_toplevel::Event::Configure { width, height, .. } => {
-                if width > 0 && height > 0 {
-                    #[expect(
-                        clippy::cast_sign_loss,
-                        reason = "width/height are positive after check"
-                    )]
-                    {
-                        let new_width = width as u32;
-                        let new_height = height as u32;
-                        if new_width != state.width || new_height != state.height {
-                            state.width = new_width;
-                            state.height = new_height;
-                            state.size_changed = true;
-                        }
-                    }
-                    tracing::debug!("Toplevel configured: {}x{}", width, height);
-                }
-            }
-            xdg_toplevel::Event::Close => {
-                tracing::info!("Close requested");
-                state.running = false;
-            }
-            xdg_toplevel::Event::ConfigureBounds { .. }
-            | xdg_toplevel::Event::WmCapabilities { .. }
-            | _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_callback::WlCallback, ()> for WaylandState {
-    fn event(
-        state: &mut Self,
-        _: &wl_callback::WlCallback,
-        event: wl_callback::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let wl_callback::Event::Done { .. } = event {
-            state.frame_count = state.frame_count.wrapping_add(1);
-            state.needs_render = true;
-        }
-    }
-}
-
-impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for WaylandState {
-    fn event(
-        _: &mut Self,
-        _: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
-        event: zwp_linux_dmabuf_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            zwp_linux_dmabuf_v1::Event::Format { format } => {
-                tracing::trace!("DMA-BUF format supported: 0x{:08x}", format);
-            }
-            zwp_linux_dmabuf_v1::Event::Modifier {
-                format,
-                modifier_hi,
-                modifier_lo,
-            } => {
-                let modifier = (u64::from(modifier_hi) << 32) | u64::from(modifier_lo);
-                tracing::trace!(
-                    "DMA-BUF format 0x{:08x} with modifier 0x{:016x}",
-                    format,
-                    modifier
-                );
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for WaylandState {
-    fn event(
-        _: &mut Self,
-        _: &zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
-        event: zwp_linux_buffer_params_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let zwp_linux_buffer_params_v1::Event::Failed = event {
-            tracing::error!("DMA-BUF buffer creation failed");
-        }
-        // Other events (Created) are for async path - we use create_immed
-    }
-}
-
-impl Dispatch<wl_buffer::WlBuffer, ()> for WaylandState {
-    fn event(
-        _: &mut Self,
-        buffer: &wl_buffer::WlBuffer,
-        event: wl_buffer::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let wl_buffer::Event::Release = event {
-            // Buffer released by compositor — it will be reused on the next
-            // frame for this double-buffer slot, so do not destroy it.
-            let _ = buffer;
-        }
     }
 }

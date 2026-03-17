@@ -1210,23 +1210,16 @@ dependencies = [
  "bmc-widget",
  "bmc-widget-protocol",
  "bytemuck",
- "calloop 0.14.2",
- "calloop-wayland-source",
  "chrono",
  "chrono-tz",
  "clap",
- "drm-fourcc",
- "gbm 0.17.0",
  "glow",
  "lyon",
  "serde",
- "smithay",
  "thiserror 2.0.12",
  "tracing",
  "tracing-subscriber",
- "wayland-backend",
  "wayland-client 0.31.10",
- "wayland-protocols 0.32.8",
 ]
 
 [[package]]
