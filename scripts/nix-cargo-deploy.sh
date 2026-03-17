@@ -59,6 +59,14 @@ cargo build --release --target armv7-unknown-linux-gnueabihf -p "$bin_name"
 
 deploy_path="${deploy_dir}/${bin_name}"
 
+# Verify the target path exists on the device (requires prior nix-deploy.sh)
+# shellcheck disable=SC2029 # Intentional client-side expansion
+if ! ssh "root@${device}" "[ -e ${profile_path} ]"; then
+    echo "Error: ${profile_path} not found on ${device}."
+    echo "Deploy the full package first with nix-deploy.sh."
+    exit 1
+fi
+
 echo "Deploying ${label} to ${device}..."
 
 # Back up the original binary (only on first deploy)
