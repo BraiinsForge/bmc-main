@@ -46,12 +46,14 @@ Builds a Nix flake package and copies its entire closure to the device's
 `/nix/store` using `nix copy`. The device must already be initialized with
 `nix-init.sh`.
 
-```sh
-# Deploy the main BMC binary
-./scripts/nix-deploy.sh bmc-openwrt-armv7-release 192.168.1.2
+Currently only Nixpkgs packages should be deployed with nix-deploy.sh, the compositor
+and widgets should be deployed only with nix-cargo-deploy.sh during development.
+This is because nix-deploy.sh will deploy to user profile (~/.nix-profile), not the bmc profile.
+Compositor and widgets should be deployed to bmc profile only.
 
-# Deploy widgets
-DEVICE_IP=192.168.1.2 ./scripts/nix-deploy.sh widgets-armv7-glibc-release
+```sh
+./scripts/nix-deploy.sh armv7-pkgs.strace 192.168.1.2
+./scripts/nix-deploy.sh armv7-pkgs.patchelf 192.168.1.2
 ```
 
 The script prints the `/nix/store/...` path of the deployed package. You can
@@ -66,20 +68,14 @@ the strace package.
 The deployed packages are automatically installed to user's Nix profile.
 So the executables should be directly available when you log in through ssh.
 
-### Common packages
-
-| Package name                    | Description                    |
-|---------------------------------|--------------------------------|
-| `bmc-openwrt-armv7-release`     | Main BMC binary (release)      |
-| `bmc-openwrt-armv7-debug`       | Main BMC binary (debug)        |
-| `widgets-armv7-glibc-release`   | All widgets bundle (release)   |
-| `widgets-armv7-glibc-debug`     | All widgets bundle (debug)     |
-
 ## nix-cargo-deploy.sh — Fast impure deploy of cargo-built binaries
 
 Copies a locally cargo-built binary directly to the device, replacing the file
 in-place under `/run/current-profile/`. This skips the full Nix rebuild and is
-meant for fast development iteration.
+meant for fast development iteration. All the dependencies are copied over as well.
+
+Note that this is not suitable for deploying a new widget. It only replaces currently
+existing widgets. Deploying new widgets is currently not supported at all easily.
 
 The device must already have the packages deployed via `nix-deploy.sh` (so the
 target paths exist).
