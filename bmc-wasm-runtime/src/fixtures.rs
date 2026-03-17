@@ -237,6 +237,28 @@ pub fn fixture_events_to_timeline(
                     name: name.clone(),
                     duration_ms: *duration_ms,
                 },
+                FixtureEventKind::LedSetEffect {
+                    effect,
+                    r,
+                    g,
+                    b,
+                    period_ms,
+                    duration_ms,
+                } => UnifiedEvent::LedSetEffect {
+                    effect: *effect,
+                    r: *r,
+                    g: *g,
+                    b: *b,
+                    period_ms: *period_ms,
+                    duration_ms: *duration_ms,
+                },
+                FixtureEventKind::LedSetBrightness { brightness } => {
+                    UnifiedEvent::LedSetBrightness {
+                        brightness: *brightness,
+                    }
+                }
+                FixtureEventKind::LedEnable => UnifiedEvent::LedEnable,
+                FixtureEventKind::LedDisable => UnifiedEvent::LedDisable,
             };
             TimelineEvent {
                 at_ms: fe.at_ms,
@@ -250,7 +272,14 @@ pub fn fixture_events_to_timeline(
 
 /// Walk up from WASM file to find the widget crate root (has `Cargo.toml`).
 ///
-/// Searches up to 6 parent levels from the WASM binary location.
+/// Finds the widget source directory from its WASM binary path.
+///
+/// The WASM binary lives in a shared workspace target:
+///   `examples/target/wasm32-unknown-unknown/release/hello_widget.wasm`
+///
+/// Strategy: derive the crate name from the filename (underscores → hyphens),
+/// walk up to find the workspace root (directory containing `Cargo.toml`),
+/// then resolve `{workspace_root}/{crate_name}/`.
 #[must_use]
 pub fn find_widget_root(wasm_path: &Path) -> Option<PathBuf> {
     let mut dir = wasm_path.parent();
@@ -270,19 +299,14 @@ pub fn find_widget_root(wasm_path: &Path) -> Option<PathBuf> {
 /// Parses `KEY=VALUE` lines and writes each as a file in `kv_dir`.
 /// Does not overwrite existing KV files (config/variant overrides take precedence).
 pub fn seed_kv_from_secrets(wasm_path: &Path, kv_dir: &Path) {
-    // Walk up from wasm file to find secrets.ini
-    let mut dir = wasm_path.parent();
-    let mut secrets_path = None;
-    for _ in 0..6 {
-        let Some(d) = dir else { break };
-        let candidate = d.join("secrets.ini");
-        if candidate.exists() {
-            secrets_path = Some(candidate);
-            break;
-        }
-        dir = d.parent();
+    // Resolve the widget crate root, then look for secrets.ini there.
+    let Some(widget_root) = find_widget_root(wasm_path) else {
+        return;
+    };
+    let path = widget_root.join("secrets.ini");
+    if !path.exists() {
+        return;
     }
-    let Some(path) = secrets_path else { return };
 
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,

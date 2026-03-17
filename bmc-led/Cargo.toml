@@ -15,6 +15,7 @@ apa102_spi = [
 [dependencies]
 anyhow.workspace = true
 apa102-spi = { workspace = true, optional = true }
+bmc-shared-led-data.workspace = true
 embedded-hal = { workspace = true, optional = true }
 smart-leds-trait = { workspace = true, optional = true }
 spidev = { workspace = true, optional = true }

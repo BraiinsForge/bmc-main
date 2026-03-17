@@ -170,4 +170,18 @@ in
     upgrade_strategy = null;
     install_strategy = null;
   };
+  pomodoro = {
+    pkg = mkWasmWidget {
+      name = "pomodoro";
+      wasmDir = wasmExamples;
+      wasmFile = "pomodoro.wasm";
+      manifest = ../bmc-wasm-runtime/examples/pomodoro/manifest.json;
+      inherit host;
+    };
+    version = "0.1.0";
+    category = "widget";
+    description = "Pomodoro timer with LED phase feedback and daily session tracking";
+    upgrade_strategy = null;
+    install_strategy = null;
+  };
 }

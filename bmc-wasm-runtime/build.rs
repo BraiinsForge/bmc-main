@@ -8,8 +8,8 @@ use std::path::Path;
 
 use bmc_wasm_protocol::{
     ICON_CLOSE, ICON_DEV_CAMERA, ICON_DEV_CURSOR, ICON_DEV_DOWNLOAD, ICON_DEV_SCROLL,
-    ICON_DEV_UNLINK, ICON_DEV_UPLOAD, ICON_ERROR, ICON_INFO, ICON_METER, ICON_SUCCESS,
-    ICON_WARNING,
+    ICON_DEV_UNLINK, ICON_DEV_UPLOAD, ICON_ERROR, ICON_INFO, ICON_METER, ICON_MINUS, ICON_PLUS,
+    ICON_SUCCESS, ICON_WARN_ALT, ICON_WARN_FILLED, ICON_WARNING,
 };
 
 /// Maps SVG file stem → builtin icon ID from the protocol crate.
@@ -20,6 +20,10 @@ const BUILTIN_ICON_MAP: &[(&str, u16)] = &[
     ("checkmark--solid", ICON_SUCCESS),
     ("info--solid", ICON_INFO),
     ("meter", ICON_METER),
+    ("minus", ICON_MINUS),
+    ("plus", ICON_PLUS),
+    ("warn--alt-filled", ICON_WARN_ALT),
+    ("warn--filled", ICON_WARN_FILLED),
     // Dev / testbed icons
     ("camera", ICON_DEV_CAMERA),
     ("cursor", ICON_DEV_CURSOR),

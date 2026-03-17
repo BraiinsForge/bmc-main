@@ -65,6 +65,11 @@ impl std::fmt::Debug for FemtoVgRenderer {
 }
 
 impl FemtoVgRenderer {
+    /// Direct access to the underlying femtovg canvas (for testbed-only effects).
+    pub fn canvas_mut(&mut self) -> &mut Canvas<OpenGl> {
+        &mut self.canvas
+    }
+
     /// Create a new GPU renderer targeting a specific FBO.
     ///
     /// The `fbo_id` is the OpenGL framebuffer object that FemtoVG should render to.

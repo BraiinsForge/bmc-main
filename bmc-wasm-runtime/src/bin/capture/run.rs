@@ -505,7 +505,11 @@ fn run_unified_capture(
                 | UnifiedEvent::SocketData { .. }
                 | UnifiedEvent::SocketClosed { .. }
                 | UnifiedEvent::UdpResponse { .. }
-                | UnifiedEvent::AudioPlay { .. } => {}
+                | UnifiedEvent::AudioPlay { .. }
+                | UnifiedEvent::LedSetEffect { .. }
+                | UnifiedEvent::LedSetBrightness { .. }
+                | UnifiedEvent::LedEnable
+                | UnifiedEvent::LedDisable => {}
             }
 
             if is_tty {
@@ -774,7 +778,11 @@ fn split_unified_events(
             | UnifiedEvent::Click { .. }
             | UnifiedEvent::Scroll { .. }
             | UnifiedEvent::Drag { .. }
-            | UnifiedEvent::AudioPlay { .. } => {}
+            | UnifiedEvent::AudioPlay { .. }
+            | UnifiedEvent::LedSetEffect { .. }
+            | UnifiedEvent::LedSetBrightness { .. }
+            | UnifiedEvent::LedEnable
+            | UnifiedEvent::LedDisable => {}
         }
     }
 

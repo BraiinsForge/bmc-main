@@ -2337,8 +2337,12 @@ fn render_disconnected(size: WidgetSize) -> Node {
 
     let auth_needed = media_server::auth_required();
 
+    let auth_hint = fmt!(
+        "API key required — set {} in widget KV",
+        media_server::auth_kv_key()
+    );
     let subtitle = if auth_needed {
-        "API key required — set jellyfin_api_key in widget KV"
+        auth_hint.as_str()
     } else if was_connected {
         "Reconnecting..."
     } else {
@@ -2380,19 +2384,21 @@ fn render_media_screen(
     // Inject modal overlays into the content node's children.
     // The modal is an overlay — it doesn't affect layout when closed,
     // and the host renders it on top with a backdrop when open.
-    let modal_padding = match size.variant {
+    let modal_margin = match size.variant {
         SizeVariant::Small => 4,
         SizeVariant::Large => 12,
         SizeVariant::Medium => 24,
         SizeVariant::Full => 48,
     };
     let pal = active_palette();
-    let modal_props = ModalProps {
-        padding: modal_padding,
+    let make_props = |h: f32| ModalProps {
+        height: h,
+        margin: modal_margin,
         backdrop_alpha: 180,
         bg_color: pal.layer1,
         header_color: pal.layer2,
         title_color: pal.text_primary,
+        ..ModalProps::default()
     };
 
     // Session picker modal
@@ -2401,13 +2407,13 @@ fn render_media_screen(
     } else {
         ("Session", vec![])
     };
-    let session_modal = modal_styled(
+    let session_h = session_buttons.len() as f32 * 40.0;
+    let session_modal = modal(
         "session_picker",
         picker_open,
         &fmt!("Select {}", term),
-        session_buttons.len() as f32 * 40.0,
-        modal_props,
         session_buttons,
+        Some(make_props(session_h)),
     );
 
     // Skin picker modal
@@ -2417,14 +2423,13 @@ fn render_media_screen(
         vec![]
     };
     // Each row: 156px card (120 preview + 36 label) + 12px gap
-    let skin_content_height = skin_cards.len() as f32 * 168.0;
-    let skin_modal = modal_styled(
+    let skin_h = skin_cards.len() as f32 * 168.0;
+    let skin_modal = modal(
         "skin_picker",
         skin_picker_open,
         "Select Skin",
-        skin_content_height,
-        modal_props,
         skin_cards,
+        Some(make_props(skin_h)),
     );
 
     match &mut content {

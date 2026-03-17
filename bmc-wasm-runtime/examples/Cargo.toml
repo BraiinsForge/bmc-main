@@ -19,6 +19,7 @@ members = [
     "media-control",
     "mesh-demo",
     "metronome",
+    "pomodoro",
     "spacex-launch",
     "stress-test",
 ]

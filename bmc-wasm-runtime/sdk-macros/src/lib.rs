@@ -15,6 +15,7 @@
     reason = "proc-macro input validation and literal emission are intentionally explicit"
 )]
 
+mod fmt_capture;
 mod json;
 mod mesh;
 
@@ -629,4 +630,14 @@ fn process_skin_files(
 #[proc_macro]
 pub fn json(input: TokenStream) -> TokenStream {
     json::expand(input.into()).into()
+}
+
+/// Proc macro backing the `fmt!` macro — rewrites captured variable syntax
+/// (e.g. `{year}`, `{val:x}`) into positional placeholders for `ufmt::uwrite!`.
+///
+/// Emits a block that allocates a `String`, calls `ufmt::uwrite!` with the
+/// rewritten format string + args, and evaluates to the `String`.
+#[proc_macro]
+pub fn fmt_impl(input: TokenStream) -> TokenStream {
+    fmt_capture::expand(input.into()).into()
 }

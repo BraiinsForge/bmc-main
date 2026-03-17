@@ -713,6 +713,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pomodoro"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"

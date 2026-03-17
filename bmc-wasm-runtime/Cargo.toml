@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+bmc-shared-led-data.workspace = true
 bmc-wasm-protocol = { path = "protocol" }
 chrono.workspace = true
 chrono-tz.workspace = true

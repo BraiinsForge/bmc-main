@@ -67,6 +67,7 @@ pub struct Session {
 struct State {
     host: String,
     port: u16,
+    server_type: ServerType,
     /// Pre-built HTTP header: `Authorization: MediaBrowser Token="..."`.
     headers: String,
     /// All controllable sessions from last poll.
@@ -115,6 +116,7 @@ pub fn connect(host: &str, port: u16, server_type: ServerType, on_status: Status
         *j.borrow_mut() = Some(State {
             host: host.into(),
             port,
+            server_type,
             headers,
             sessions: Vec::new(),
             target_session: None,
@@ -148,6 +150,17 @@ pub fn auth_headers() -> Option<String> {
 /// Whether the server returned 401/403 — API key is missing or invalid.
 pub fn auth_required() -> bool {
     SERVER.with(|j| j.borrow().as_ref().is_some_and(|s| s.auth_required))
+}
+
+/// The KV key name for the API token of the active server type.
+pub fn auth_kv_key() -> String {
+    SERVER.with(|j| {
+        let label = match j.borrow().as_ref().map(|s| s.server_type) {
+            Some(ServerType::Emby) => "emby",
+            _ => "jellyfin",
+        };
+        fmt!("{}_api_key", label)
+    })
 }
 
 /// The currently targeted session ID (if any).

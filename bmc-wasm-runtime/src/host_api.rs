@@ -104,14 +104,6 @@ pub struct ModalState {
     pub is_open: bool,
     /// Animation progress: 0.0 = closed, 1.0 = fully open
     pub animation_progress: f32,
-    /// Current scroll offset in the modal body
-    pub scroll_offset: f32,
-    /// Total content height (for scroll bounds)
-    pub content_height: f32,
-    /// Viewport height (for scroll bounds)
-    pub viewport_height: f32,
-    /// Whether currently dragging to scroll
-    pub is_dragging: bool,
 }
 
 /// State for a scroll container
@@ -148,7 +140,7 @@ pub struct FixtureEvent {
 }
 
 /// Payload for a single fixture event.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum FixtureEventKind {
     SsdpFound {
         search_id: u32,
@@ -199,6 +191,19 @@ pub enum FixtureEventKind {
         name: String,
         duration_ms: u32,
     },
+    LedSetEffect {
+        effect: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+        period_ms: u32,
+        duration_ms: u32,
+    },
+    LedSetBrightness {
+        brightness: f32,
+    },
+    LedEnable,
+    LedDisable,
 }
 
 /// A registered audio sample with metadata.
@@ -605,6 +610,9 @@ pub(crate) struct HostState {
     /// from `RuntimeConfig::rng_seed`.
     pub rng_state: Option<u64>,
 
+    /// Sender for LED commands. `None` when LED control is unavailable.
+    pub led_command_sender: Option<mpsc::Sender<bmc_shared_led_data::LedCommand>>,
+
     /// Registered audio samples (raw encoded bytes), keyed by audio ID.
     /// The host stores the original encoded data and decodes on each play.
     pub audio_samples: HashMap<u16, AudioSample>,
@@ -683,6 +691,7 @@ impl HostState {
             taffy: TaffyTree::with_capacity(64),
             resource_limits,
             rng_state: None, // None = auto-seed on first use (from monotonic_ms)
+            led_command_sender: None,
             audio_samples: HashMap::new(),
             next_audio_id: 1,
             #[cfg(feature = "audio")]

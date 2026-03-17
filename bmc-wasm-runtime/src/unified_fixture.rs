@@ -191,6 +191,25 @@ pub enum UnifiedEvent {
         /// Sample duration in milliseconds.
         duration_ms: u32,
     },
+
+    // ── LED ─────────────────────────────────────────────────────
+    /// LED effect set (informational, no-op during replay).
+    LedSetEffect {
+        effect: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+        period_ms: u32,
+        duration_ms: u32,
+    },
+    /// LED brightness change.
+    LedSetBrightness {
+        brightness: f32,
+    },
+    /// LED strip enabled.
+    LedEnable,
+    /// LED strip disabled.
+    LedDisable,
 }
 
 /// A single timestamped event in the unified timeline.
@@ -271,7 +290,11 @@ pub fn validate_fixture(fixture: &UnifiedFixture) -> Result<()> {
             | UnifiedEvent::SocketData { .. }
             | UnifiedEvent::SocketClosed { .. }
             | UnifiedEvent::UdpResponse { .. }
-            | UnifiedEvent::AudioPlay { .. } => {}
+            | UnifiedEvent::AudioPlay { .. }
+            | UnifiedEvent::LedSetEffect { .. }
+            | UnifiedEvent::LedSetBrightness { .. }
+            | UnifiedEvent::LedEnable
+            | UnifiedEvent::LedDisable => {}
         }
     }
 

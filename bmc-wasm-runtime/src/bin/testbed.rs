@@ -54,12 +54,31 @@ use bmc_wasm_runtime::{FrameTimings, RenderStatus, RuntimeConfig, WasmWidgetRunt
 use chrono::Local;
 
 // Layout constants
-const PREVIEW_GAP: u32 = 8;
-const PREVIEW_MARGIN: u32 = 8;
-// Inner width = max(1280, 638+8+638) = 1284
-const PREVIEW_WIDTH: u32 = PREVIEW_MARGIN + 1284 + PREVIEW_MARGIN; // 1300
-// Inner height = 480+8+max(480, 238+8+238) = 480+8+484 = 972
-const PREVIEW_HEIGHT: u32 = PREVIEW_MARGIN + 972 + PREVIEW_MARGIN; // 988
+const PREVIEW_GAP: u32 = 16;
+const PREVIEW_MARGIN: u32 = 16;
+/// Height of the LED diffuser strip rendered below each tile.
+const LED_STRIP_H: u32 = 24;
+/// Number of simulated LEDs across the strip.
+const LED_COUNT: usize = 10;
+// Inner width = max(1280, 638+GAP+638)
+const INNER_W: u32 = if 1280 > 638 + PREVIEW_GAP + 638 {
+    1280
+} else {
+    638 + PREVIEW_GAP + 638
+};
+const PREVIEW_WIDTH: u32 = PREVIEW_MARGIN + INNER_W + PREVIEW_MARGIN;
+// Inner height: row0 (FULL+LED+gap) + row1 (max of left/right columns)
+// Left col:  480 + LED
+// Right col: 238 + LED + gap + 238 + LED
+const RIGHT_COL_H: u32 = 238 + LED_STRIP_H + PREVIEW_GAP + 238 + LED_STRIP_H;
+const LEFT_COL_H: u32 = 480 + LED_STRIP_H;
+const ROW1_H: u32 = if LEFT_COL_H > RIGHT_COL_H {
+    LEFT_COL_H
+} else {
+    RIGHT_COL_H
+};
+const PREVIEW_HEIGHT: u32 =
+    PREVIEW_MARGIN + (480 + LED_STRIP_H + PREVIEW_GAP) + ROW1_H + PREVIEW_MARGIN;
 
 /// Scale a logical pixel value by the DPI factor to get physical pixels.
 #[expect(clippy::cast_sign_loss)]
@@ -181,6 +200,12 @@ struct PreviewTile {
     logged_dead: bool,
     ever_rendered: bool,
     kv_path: std::path::PathBuf,
+    /// Receiver for LED commands from the widget (drained each frame).
+    led_rx: std::sync::mpsc::Receiver<bmc_shared_led_data::LedCommand>,
+    /// Current LED scene (from last `SetEffect` command).
+    led_scene: Option<bmc_shared_led_data::LedScene>,
+    /// Whether LEDs are enabled.
+    led_enabled: bool,
 }
 
 /// Tracks an in-progress touch gesture for recording mode.
@@ -223,6 +248,10 @@ struct PreviewState {
     stats_fbo: glow::Framebuffer,
     _stats_texture: glow::Texture,
     stats_renderer: FemtoVgRenderer,
+    /// FBO for rendering LED strip gaussian blobs (reused across tiles).
+    led_fbo: glow::Framebuffer,
+    _led_texture: glow::Texture,
+    led_renderer: FemtoVgRenderer,
     gl: glow::Context,
     gl_surface: glutin::surface::Surface<WindowSurface>,
     gl_context: glutin::context::PossiblyCurrentContext,
@@ -254,21 +283,28 @@ struct PreviewState {
     record_fetch_events: Arc<Mutex<Vec<TimelineEvent>>>,
 }
 
-// Stats panel position: empty area right of SMALL tile
-const STATS_X: u32 = M + 638 + G + 317 + G;
-const STATS_Y: u32 = M + 480 + G + 238 + G;
-const STATS_W: u32 = PREVIEW_WIDTH - M - STATS_X;
-const STATS_H: u32 = PREVIEW_HEIGHT - M - STATS_Y;
-
 /// Tile definitions: (x, y, w, h, label) — positioned with margin offset.
+/// Each tile has LED_STRIP_H pixels of space below it for the LED visualization.
 const M: u32 = PREVIEW_MARGIN;
 const G: u32 = PREVIEW_GAP;
+/// Vertical stride for a tile: tile height + LED strip + gap
+const fn row_stride(h: u32) -> u32 {
+    h + LED_STRIP_H + G
+}
+const ROW0_Y: u32 = M;
+const ROW1_Y: u32 = ROW0_Y + row_stride(480); // after FULL tile + LED + gap
 const TILE_DEFS: [(u32, u32, u32, u32, &str); 4] = [
-    (M, M, 1280, 480, "FULL"),
-    (M, M + 480 + G, 638, 480, "LARGE"),
-    (M + 638 + G, M + 480 + G, 638, 238, "MEDIUM"),
-    (M + 638 + G, M + 480 + G + 238 + G, 317, 238, "SMALL"),
+    (M, ROW0_Y, 1280, 480, "FULL"),
+    (M, ROW1_Y, 638, 480, "LARGE"),
+    (M + 638 + G, ROW1_Y, 638, 238, "MEDIUM"),
+    (M + 638 + G, ROW1_Y + row_stride(238), 317, 238, "SMALL"),
 ];
+
+// Stats panel position: empty area right of SMALL tile
+const STATS_X: u32 = M + 638 + G + 317 + G;
+const STATS_Y: u32 = ROW1_Y + row_stride(238);
+const STATS_W: u32 = PREVIEW_WIDTH - M - STATS_X;
+const STATS_H: u32 = PREVIEW_HEIGHT - M - STATS_Y;
 
 impl App {
     #[expect(clippy::too_many_lines)]
@@ -419,6 +455,9 @@ impl App {
             };
             rt_config.mesh_msaa_samples = 4;
 
+            let (led_tx, led_rx) = channel();
+            rt_config.led_command_sender = Some(led_tx);
+
             let runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, rt_config)
                 .context("Failed to create runtime")?;
             tiles.push(PreviewTile {
@@ -435,6 +474,9 @@ impl App {
                 logged_dead: false,
                 ever_rendered: false,
                 kv_path,
+                led_rx,
+                led_scene: None,
+                led_enabled: false,
             });
         }
 
@@ -451,6 +493,22 @@ impl App {
                 0,
             )
             .context("Failed to create stats renderer")?
+        };
+
+        // LED strip FBO — full FULL-tile width so it fits all tile sizes
+        let led_fbo_w = 1280;
+        let led_fbo_h = LED_STRIP_H;
+        let (led_fbo, led_texture) = create_fbo(&gl, led_fbo_w, led_fbo_h, true)?;
+        let led_renderer = unsafe {
+            let gl_display = gl_config.display();
+            FemtoVgRenderer::new(
+                |s| gl_display.get_proc_address(&CString::new(s).unwrap_or_default()),
+                led_fbo_w,
+                led_fbo_h,
+                led_fbo.0.get(),
+                0,
+            )
+            .context("Failed to create LED renderer")?
         };
 
         self.rss_after_runtime_kb = current_rss_kb();
@@ -500,6 +558,9 @@ impl App {
             stats_fbo,
             _stats_texture: stats_texture,
             stats_renderer,
+            led_fbo,
+            _led_texture: led_texture,
+            led_renderer,
             gl,
             gl_surface,
             gl_context,
@@ -828,9 +889,11 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
                 continue;
             };
             let fbo_id = fbo.0.get();
+            let (led_tx, led_rx) = channel();
             let rt_config = RuntimeConfig {
                 kv_store_path: Some(tile.kv_path.clone()),
                 mesh_msaa_samples: 4,
+                led_command_sender: Some(led_tx),
                 ..RuntimeConfig::default()
             };
             match create_runtime(
@@ -843,6 +906,9 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             ) {
                 Ok(new_runtime) => {
                     tile.runtime = new_runtime; // drops old runtime → deletes old FBO
+                    tile.led_rx = led_rx;
+                    tile.led_scene = None;
+                    tile.led_enabled = false;
                     tile.fbo = fbo;
                     tile.texture = texture;
                     // Force a fresh render for the new runtime so constants
@@ -988,6 +1054,16 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         tile.runtime.renderer().flush();
         let flush_us = flush_t0.elapsed().as_micros() as u32;
 
+        // Drain LED commands, update state for visualization
+        while let Ok(cmd) = tile.led_rx.try_recv() {
+            match cmd {
+                bmc_shared_led_data::LedCommand::Enable => tile.led_enabled = true,
+                bmc_shared_led_data::LedCommand::Disable => tile.led_enabled = false,
+                bmc_shared_led_data::LedCommand::SetEffect(scene) => tile.led_scene = Some(scene),
+                bmc_shared_led_data::LedCommand::SetBrightness(_) => {} // TODO
+            }
+        }
+
         // Use FULL tile (index 0) as the representative for timings
         if tile_idx == 0 {
             frame_timings = tile.runtime.last_timings();
@@ -1048,6 +1124,20 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             }
         }
     }
+    // Render LED strips below each tile using femtovg for gaussian blobs
+    let mono_s = state.start_instant.elapsed().as_secs_f32();
+    for tile in &state.tiles {
+        render_led_strip(
+            &state.gl,
+            &mut state.led_renderer,
+            state.led_fbo,
+            tile,
+            mono_s,
+            dpi,
+            sh,
+        );
+    }
+
     // Blit stats panel (logical FBO → physical screen position)
     blit_fbo_to_screen(
         &state.gl,
@@ -1127,7 +1217,7 @@ fn blit_fbo_to_screen(
             (dst_x + dst_w) as i32,
             dy1,
             glow::COLOR_BUFFER_BIT,
-            glow::NEAREST,
+            glow::LINEAR,
         );
     }
 }
@@ -1558,11 +1648,15 @@ fn event_icon_id(event: &UnifiedEvent) -> u16 {
         | UnifiedEvent::MdnsFound { .. } => ICON_DEV_DOWNLOAD,
         UnifiedEvent::WsOpen { .. }
         | UnifiedEvent::SocketConnected { .. }
-        | UnifiedEvent::AudioPlay { .. } => ICON_DEV_UPLOAD,
+        | UnifiedEvent::AudioPlay { .. }
+        | UnifiedEvent::LedSetEffect { .. }
+        | UnifiedEvent::LedSetBrightness { .. }
+        | UnifiedEvent::LedEnable => ICON_DEV_UPLOAD,
         UnifiedEvent::WsClose { .. }
         | UnifiedEvent::SocketClosed { .. }
         | UnifiedEvent::SsdpRemoved { .. }
-        | UnifiedEvent::MdnsRemoved { .. } => ICON_DEV_UNLINK,
+        | UnifiedEvent::MdnsRemoved { .. }
+        | UnifiedEvent::LedDisable => ICON_DEV_UNLINK,
     }
 }
 
@@ -1620,6 +1714,19 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             duration_ms,
             ..
         } => format!("{name} vol={volume} {duration_ms}ms"),
+        UnifiedEvent::LedSetEffect {
+            effect,
+            r,
+            g,
+            b,
+            period_ms,
+            duration_ms,
+        } => format!("LED effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms"),
+        UnifiedEvent::LedSetBrightness { brightness } => {
+            format!("LED brightness={brightness:.2}")
+        }
+        UnifiedEvent::LedEnable => "LED enable".to_owned(),
+        UnifiedEvent::LedDisable => "LED disable".to_owned(),
     }
 }
 
@@ -2022,6 +2129,18 @@ fn finish_recording(state: &mut PreviewState, _wasm_path: &Path) {
     } else {
         eprintln!("{} {}", "updated:".green().bold(), config_path.display());
     }
+
+    // Hint: how to set baselines from this recording
+    let widget_name = widget_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("WIDGET");
+    eprintln!();
+    eprintln!(
+        "{} run `make update-baselines EXAMPLE={}` to set baselines",
+        "hint:".cyan().bold(),
+        widget_name
+    );
 }
 
 /// Draw a semi-transparent dark overlay on a screen region (for dimming non-active tiles).
@@ -2081,6 +2200,139 @@ fn draw_highlight_border(gl: &glow::Context, x: u32, y: u32, w: u32, h: u32, scr
 
         gl.disable(glow::SCISSOR_TEST);
     }
+}
+
+/// Render LED diffuser strip below a tile using femtovg radial gradients.
+///
+/// Simulates bounced diffused light: LED centers at the top edge of the strip
+/// (bottom of viewport). Each LED is a radial gradient ellipse — bright center,
+/// gaussian falloff to transparent. Overlapping blobs blend together naturally.
+/// Compute per-LED brightness for an effect.
+fn led_brightness(effect: bmc_shared_led_data::LedEffect, phase: f32, anim_t: f32) -> f32 {
+    use bmc_shared_led_data::LedEffect;
+    match &effect {
+        LedEffect::Solid(_) => 1.0,
+        LedEffect::Breathe(_) => {
+            let pulse = f32::midpoint((anim_t * std::f32::consts::TAU).sin(), 1.0);
+            0.3 + pulse * 0.7
+        }
+        LedEffect::Chase(_) => {
+            let pos = anim_t.fract();
+            let dist = (phase - pos)
+                .abs()
+                .min((phase - pos + 1.0).abs())
+                .min((phase - pos - 1.0).abs());
+            (1.0 - dist * LED_COUNT as f32 * 0.5).max(0.02)
+        }
+        LedEffect::KnightRider(_) | LedEffect::Scan(_) => {
+            let pos = (anim_t.fract() * 2.0 - 1.0).abs();
+            let dist = (phase - pos).abs();
+            (1.0 - dist * LED_COUNT as f32 * 0.5).max(0.02)
+        }
+        LedEffect::Snake(_) => {
+            let tail = (phase - anim_t.fract() + 1.0).fract();
+            let tail_len = 0.3;
+            if tail < tail_len {
+                1.0 - tail / tail_len
+            } else {
+                0.02
+            }
+        }
+        LedEffect::None => 0.0,
+    }
+}
+
+/// Render LED diffuser strip below a tile.
+///
+/// Always renders the black strip bar. LED blobs only appear when LEDs are active.
+fn render_led_strip(
+    gl: &glow::Context,
+    led_renderer: &mut FemtoVgRenderer,
+    led_fbo: glow::Framebuffer,
+    tile: &PreviewTile,
+    time_s: f32,
+    dpi: f32,
+    screen_h: u32,
+) {
+    use femtovg::{Color, Paint, Path};
+
+    let strip_w = tile.w;
+    let strip_h = LED_STRIP_H;
+
+    // Always render the strip (black bar) — begin_frame clears to black
+    led_renderer.begin_frame(strip_w, strip_h, 1.0);
+
+    // Draw LED blobs only when active
+    if tile.led_enabled
+        && let Some(scene) = &tile.led_scene
+    {
+        let (cr, cg, cb) = match &scene.effect {
+            bmc_shared_led_data::LedEffect::None => (0.0, 0.0, 0.0),
+            bmc_shared_led_data::LedEffect::Solid(c)
+            | bmc_shared_led_data::LedEffect::Breathe(c)
+            | bmc_shared_led_data::LedEffect::Chase(c)
+            | bmc_shared_led_data::LedEffect::KnightRider(c)
+            | bmc_shared_led_data::LedEffect::Scan(c)
+            | bmc_shared_led_data::LedEffect::Snake(c) => (
+                f32::from(c.r) / 255.0,
+                f32::from(c.g) / 255.0,
+                f32::from(c.b) / 255.0,
+            ),
+        };
+
+        let period_s = scene.period.map_or(1.0, |d| d.as_secs_f32().max(0.1));
+        let anim_t = time_s / period_s;
+
+        // FULL tile: LEDs span center half. Smaller tiles: full width.
+        let is_full = tile.w >= 1280;
+        let led_region_w = if is_full {
+            strip_w as f32 * 0.5
+        } else {
+            strip_w as f32
+        };
+        let led_x_offset = (strip_w as f32 - led_region_w) / 2.0;
+        let led_spacing = led_region_w / LED_COUNT as f32;
+        let blob_rx = led_spacing * 1.2; // overlap neighbors
+        let blob_ry = strip_h as f32 * 1.0;
+
+        let canvas = led_renderer.canvas_mut();
+        for idx in 0..LED_COUNT {
+            let phase = idx as f32 / LED_COUNT as f32;
+            let brightness = led_brightness(scene.effect, phase, anim_t);
+
+            let cx = led_x_offset + (idx as f32 + 0.5) * led_spacing;
+            let cy = 0.0; // LED at top edge — glow bleeds downward
+
+            let center_color = Color::rgbaf(cr, cg, cb, brightness * 0.8);
+            let edge_color = Color::rgbaf(cr, cg, cb, 0.0);
+
+            canvas.save();
+            canvas.translate(cx, cy);
+            canvas.scale(1.0, blob_ry / blob_rx);
+
+            let paint = Paint::radial_gradient(0.0, 0.0, 0.0, blob_rx, center_color, edge_color);
+            let mut path = Path::new();
+            path.circle(0.0, 0.0, blob_rx);
+            canvas.fill_path(&path, &paint);
+
+            canvas.restore();
+        }
+    }
+
+    led_renderer.flush();
+
+    // Blit LED FBO directly below the tile
+    blit_fbo_to_screen(
+        gl,
+        led_fbo,
+        strip_w,
+        strip_h,
+        scaled(tile.x, dpi),
+        scaled(tile.y + tile.h, dpi),
+        scaled(tile.w, dpi),
+        scaled(strip_h, dpi),
+        screen_h,
+    );
 }
 
 // find_widget_root is imported from fixtures module.

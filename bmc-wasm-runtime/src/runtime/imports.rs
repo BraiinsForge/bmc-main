@@ -4,6 +4,7 @@
 
 mod audio;
 mod data;
+mod led;
 mod network;
 mod render;
 mod system;
@@ -19,5 +20,6 @@ pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<
     data::register(linker)?;
     system::register(linker)?;
     audio::register(linker)?;
+    led::register(linker)?;
     Ok(())
 }

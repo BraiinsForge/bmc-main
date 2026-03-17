@@ -27,12 +27,14 @@ pub mod host;
 pub mod http_listener;
 pub mod json;
 pub mod kv;
+pub mod led;
 pub mod log;
 #[cfg(feature = "math-3d")]
 pub mod math;
 pub mod mdns;
 pub mod mesh;
 pub mod net;
+pub mod number_input;
 pub mod orientation;
 pub mod socket;
 pub mod ssdp;
@@ -42,27 +44,16 @@ pub mod ws;
 pub mod xml;
 
 pub use bmc_wasm_protocol::*;
-pub use bmc_wasm_sdk_macros::{
-    include_audio, include_bitmap, include_icon, include_mesh, include_nine_patch, include_skin,
-    json,
-};
+pub use bmc_wasm_sdk_macros::*;
 pub use format::{format_date, format_duration};
-pub use host::{
-    ButtonSize, ButtonStyle, SizeVariant, SystemTime, TouchHit, Volume, WidgetSize, audio_play,
-    audio_stop, draw_text, fill_rect, parse_date, random_u32, request_frame, request_frame_after,
-};
+pub use host::*;
 pub use json::JsonDoc;
-pub use mesh::{Highlight, LightAngles, Mesh, MeshView};
-pub use net::{FetchRequest, FetchResponse, fetch, fetch_after};
+pub use led::LedEffect;
+pub use mesh::*;
+pub use net::*;
+pub use number_input::*;
 pub use orientation::Orientation;
-pub use tree::{
-    AnimationDef, Audio, Bitmap, ButtonSkin, Draw, Icon, Interpolation, ModalProps, NinePatch,
-    NinePatchAsset, Node, NotificationKind, ProgressMode, PropsData, Skin, SkinAsset, SkinEntry,
-    SkinPalette, SliderSkin, Span, StyleResult, TextStyle, TransitionDef, TreeRenderResult,
-    begin_tree, canvas, center, col, color_or, ensure_audio_registered,
-    ensure_nine_patch_registered, make_button, modal, modal_styled, notification, paragraph,
-    progress_bar, render_ui, row, scroll, spacer, span, text, touchable, with_buffer,
-};
+pub use tree::*;
 pub use ufmt;
 pub use ws::{Ws, WsEvent, ws_connect};
 pub use xml::XmlDoc;
@@ -299,6 +290,23 @@ macro_rules! progress_bar {
     };
 }
 
+/// Number input — key + value are required, rest via `NumberInputProps` struct.
+///
+/// # Examples
+/// ```ignore
+/// number_input!("work", 25, label: "Work", suffix: "min", min: 1, max: 60)
+/// number_input!("count", n)  // minimal, all defaults
+/// ```
+#[macro_export]
+macro_rules! number_input {
+    ($key:expr, $value:expr $(, $($field:ident: $val:expr),* $(,)?)?) => {{
+        #[allow(unused_mut)]
+        let mut p = $crate::number_input::NumberInputProps::default();
+        $($(p.$field = $val;)*)?
+        $crate::number_input::number_input($key, $value, p)
+    }};
+}
+
 /// Connect to a WebSocket with optional headers.
 ///
 /// # Examples
@@ -322,13 +330,17 @@ macro_rules! ws {
 
 /// Lightweight string interpolation without pulling in `core::fmt`.
 /// Drop-in replacement for `format!()` in widget code.
+///
+/// Supports captured variable syntax like `std::format!`:
+/// - `fmt!("{year}-{month}")` desugars to `ufmt::uwrite!(s, "{}-{}", year, month)`
+/// - `fmt!("{val:x}")` desugars to `ufmt::uwrite!(s, "{:x}", val)`
+/// - `fmt!("{}-{}", a, b)` still works (positional args pass through)
+/// - Mixed: `fmt!("{year}-{}", month)` — captured args append after positional ones
 #[macro_export]
 macro_rules! fmt {
-    ($($arg:tt)*) => {{
-        let mut s = String::new();
-        _ = $crate::ufmt::uwrite!(s, $($arg)*);
-        s
-    }};
+    ($($arg:tt)*) => {
+        $crate::fmt_impl!(@ufmt_path = $crate::ufmt; $($arg)*)
+    };
 }
 
 /// Unified style macro for text styling and layout.

@@ -64,6 +64,18 @@ pub const ICON_INFO: u16 = 0xFF13;
 /// Meter / gauge icon — fuel budget indicator.
 pub const ICON_METER: u16 = 0xFF14;
 
+/// Minus / subtract icon — NumberInput decrement stepper.
+pub const ICON_MINUS: u16 = 0xFF15;
+
+/// Plus / add icon — NumberInput increment stepper.
+pub const ICON_PLUS: u16 = 0xFF16;
+
+/// Warning icon (filled triangle) — NumberInput warning state.
+pub const ICON_WARN_ALT: u16 = 0xFF17;
+
+/// Error icon (filled circle with "!") — NumberInput error state.
+pub const ICON_WARN_FILLED: u16 = 0xFF18;
+
 // ── Dev / testbed-only icons ───────────────────────────────────────
 // Used in the recording panel event log. Range 0xFE00..=0xFEFF.
 

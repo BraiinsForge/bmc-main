@@ -1174,7 +1174,7 @@ pub enum Node {
         props: PropsData,
         children: Vec<Node>,
     },
-    /// Modal dialog overlay with title, close button, and scrollable body
+    /// Modal dialog overlay with title, close button, scrollable body, and optional footer
     Modal {
         modal_id: String,
         is_open: bool,
@@ -1188,7 +1188,16 @@ pub enum Node {
         header_color: u32,
         /// Modal title text color. `0` = default (`GRAY_10`).
         title_color: u32,
+        /// Maximum modal width. `0` = no limit.
+        max_width: u16,
         body: Vec<Node>,
+        /// Optional footer — primary key, primary label, secondary key, secondary label, danger flag.
+        /// Empty strings = no secondary / no footer.
+        footer_primary_key: String,
+        footer_primary_label: String,
+        footer_secondary_key: String,
+        footer_secondary_label: String,
+        footer_danger: bool,
     },
     /// Host-rendered progress bar — seek/volume slider.
     ///
@@ -1375,14 +1384,40 @@ pub fn progress_bar(
     }
 }
 
-/// Modal dialog configuration
-#[derive(Clone, Copy, Default)]
+/// A labeled button action for modal footers.
+#[derive(Clone)]
+pub struct ModalAction {
+    pub key: &'static str,
+    pub label: &'static str,
+}
+
+/// Modal footer descriptor — the host renders buttons at the appropriate size.
+///
+/// Layout follows CDS conventions:
+/// - Two buttons: `[secondary | primary]`, each 50% width
+/// - One button (no secondary): `[spacer | primary]`, right-aligned 50%
+/// - `danger`: primary renders as Danger style (e.g. delete confirmation)
+#[derive(Clone)]
+pub struct ModalFooter {
+    pub primary: ModalAction,
+    pub secondary: Option<ModalAction>,
+    pub danger: bool,
+}
+
+/// Modal dialog configuration.
+///
+/// All fields default to sensible values via `Default`. Only set what you need.
+#[derive(Clone, Default)]
 pub struct ModalProps {
+    /// Estimated total height of body content for scroll sizing.
+    /// Default: 0.0
+    pub height: f32,
+
     /// Margin around the modal content area in pixels.
     /// This creates space between the modal and screen edges where the
     /// semi-transparent backdrop is visible.
     /// Default: 48 pixels
-    pub padding: u16,
+    pub margin: u16,
 
     /// Backdrop opacity as 0-255 value (0 = fully transparent, 255 = fully opaque).
     /// The backdrop is the dark overlay behind the modal that dims the background content.
@@ -1398,68 +1433,104 @@ pub struct ModalProps {
 
     /// Modal title text color. `0` = use default (GRAY_10).
     pub title_color: u32,
+
+    /// Maximum modal width in pixels. `0` = no limit (fill available space).
+    pub max_width: u16,
+
+    /// Optional footer with primary (and optional secondary) action buttons.
+    pub footer: Option<ModalFooter>,
 }
 
 impl ModalProps {
     /// Default margin around modal content (48 pixels)
-    pub const DEFAULT_PADDING: u16 = 48;
+    pub const DEFAULT_MARGIN: u16 = 48;
     /// Default backdrop opacity (128 = 50%)
     pub const DEFAULT_BACKDROP_ALPHA: u8 = 128;
 }
 
-/// Modal dialog overlay with title, close button, and scrollable body.
+/// Create a modal dialog overlay.
 ///
-/// - `modal_id`: String ID for state tracking and interaction scoping (must be unique).
-///   The close button gets the interaction key `"{modal_id}::close"`.
-/// - `is_open`: Whether the modal is visible
-/// - `title`: Header title text
-/// - `content_height`: Estimated total height of body content (for scroll sizing)
-/// - `body`: Child nodes for the modal body
+/// # Arguments
+/// - `key` — unique ID for state tracking; close button gets `"{key}::close"`
+/// - `open` — whether the modal is visible
+/// - `title` — header title text
+/// - `content` — body child nodes
+/// - `props` — styling, layout, and footer configuration
+///
+/// # Examples
+/// ```ignore
+/// // Simple — no footer, default props
+/// modal("about", MODAL_OPEN.get(), "About", vec![text("Hello", s)], None)
+///
+/// // With footer + props
+/// modal("settings", SETTINGS_OPEN.get(), "Settings",
+///     vec![number_input!("work", 25, label: "Work")],
+///     Some(ModalProps {
+///         height: 200.0,
+///         footer: Some(ModalFooter {
+///             primary: ModalAction { key: "save", label: "Save" },
+///             secondary: None,
+///             danger: false,
+///         }),
+///         ..Default::default()
+///     }),
+/// )
+/// ```
 pub fn modal(
-    modal_id: impl Into<String>,
-    is_open: bool,
+    key: impl Into<String>,
+    open: bool,
     title: impl Into<String>,
-    content_height: f32,
-    body: impl IntoIterator<Item = Node>,
+    content: Vec<Node>,
+    props: Option<ModalProps>,
 ) -> Node {
-    modal_styled(
-        modal_id,
-        is_open,
-        title,
-        content_height,
-        ModalProps::default(),
-        body,
-    )
-}
-
-/// Modal dialog with custom styling props.
-pub fn modal_styled(
-    modal_id: impl Into<String>,
-    is_open: bool,
-    title: impl Into<String>,
-    content_height: f32,
-    props: ModalProps,
-    body: impl IntoIterator<Item = Node>,
-) -> Node {
+    let props = props.unwrap_or_default();
+    let (pk, pl, sk, sl, danger) = match &props.footer {
+        Some(f) => {
+            let (sk, sl) = match &f.secondary {
+                Some(s) => (s.key.to_owned(), s.label.to_owned()),
+                None => (String::new(), String::new()),
+            };
+            (
+                f.primary.key.to_owned(),
+                f.primary.label.to_owned(),
+                sk,
+                sl,
+                f.danger,
+            )
+        }
+        None => (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            false,
+        ),
+    };
     Node::Modal {
-        modal_id: modal_id.into(),
-        is_open,
+        modal_id: key.into(),
+        is_open: open,
         title: title.into(),
-        content_height,
-        padding: if props.padding == 0 {
-            ModalProps::DEFAULT_PADDING
+        content_height: props.height,
+        padding: if props.margin == 0 {
+            ModalProps::DEFAULT_MARGIN
         } else {
-            props.padding
+            props.margin
         },
         backdrop_alpha: if props.backdrop_alpha == 0 {
             ModalProps::DEFAULT_BACKDROP_ALPHA
         } else {
             props.backdrop_alpha
         },
+        max_width: props.max_width,
         bg_color: props.bg_color,
         header_color: props.header_color,
         title_color: props.title_color,
-        body: body.into_iter().collect(),
+        body: content,
+        footer_primary_key: pk,
+        footer_primary_label: pl,
+        footer_secondary_key: sk,
+        footer_secondary_label: sl,
+        footer_danger: danger,
     }
 }
 
@@ -1679,7 +1750,13 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             bg_color,
             header_color,
             title_color,
+            max_width,
             body,
+            footer_primary_key,
+            footer_primary_label,
+            footer_secondary_key,
+            footer_secondary_label,
+            footer_danger,
         } => {
             buf.write_modal(
                 modal_id,
@@ -1693,9 +1770,20 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             buf.write_u32(*bg_color);
             buf.write_u32(*header_color);
             buf.write_u32(*title_color);
+            buf.write_u16(*max_width);
             for child in body {
                 serialize_node(buf, child);
             }
+            // Footer descriptor: [pk_len][pk][pl_len][pl][sk_len][sk][sl_len][sl][danger:u8]
+            buf.write_u16(footer_primary_key.len() as u16);
+            buf.write_bytes(footer_primary_key.as_bytes());
+            buf.write_u16(footer_primary_label.len() as u16);
+            buf.write_bytes(footer_primary_label.as_bytes());
+            buf.write_u16(footer_secondary_key.len() as u16);
+            buf.write_bytes(footer_secondary_key.as_bytes());
+            buf.write_u16(footer_secondary_label.len() as u16);
+            buf.write_bytes(footer_secondary_label.as_bytes());
+            buf.write_u8(u8::from(*footer_danger));
         }
         Node::ProgressBar {
             touch_key,
@@ -1999,11 +2087,19 @@ fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
             is_open,
             modal_id,
             body,
+            footer_primary_key,
+            footer_secondary_key,
             ..
         } => {
             if *is_open {
                 for child in body {
                     collect_interaction_keys(child, keys);
+                }
+                if !footer_primary_key.is_empty() {
+                    keys.push(footer_primary_key.clone());
+                }
+                if !footer_secondary_key.is_empty() {
+                    keys.push(footer_secondary_key.clone());
                 }
                 keys.push(std::format!("{modal_id}::close"));
             }

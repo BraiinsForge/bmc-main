@@ -476,6 +476,10 @@ let
       wasmFile = "metronome.wasm";
       manifest = ./bmc-wasm-runtime/examples/metronome/manifest.json;
     };
+    pomodoro = {
+      wasmFile = "pomodoro.wasm";
+      manifest = ./bmc-wasm-runtime/examples/pomodoro/manifest.json;
+    };
   };
 
   # Build all wasm widgets against `profile`'s host binary, joined into

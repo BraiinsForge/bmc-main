@@ -1,0 +1,19 @@
+{
+  "uid": "550e8400-e29b-41d4-a716-446655440208",
+  "version": "0.1.0",
+  "name": "Pomodoro",
+  "description": "Pomodoro timer with LED phase feedback and daily session tracking",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/pomodoro",
+  "settings": [],
+  "sizes": [
+    "small",
+    "medium",
+    "large",
+    "full"
+  ],
+  "params": {}
+}

@@ -136,6 +136,7 @@ bmc-shared-esp32 = { path = "bmc-shared/esp32" }
 bmc-shared-ii-dns = { package = "ii-dns", path = "bmc-shared/ii-dns" }
 bmc-shared-ii-net = { package = "ii-net", path = "bmc-shared/ii-net" }
 bmc-shared-ii-net-drv = { package = "ii-net-drv", path = "bmc-shared/ii-net-drv" }
+bmc-shared-led-data = { path = "bmc-shared/led-data" }
 bmc-shared-slint = { path = "bmc-shared/slint" }
 bmc-shared-time = { path = "bmc-shared/time" }
 bmc-shared-utils = { path = "bmc-shared/utils" }

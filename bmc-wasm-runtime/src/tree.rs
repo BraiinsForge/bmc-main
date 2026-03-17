@@ -280,7 +280,15 @@ pub enum TreeNode {
         header_color: u32,
         /// Title text color. `0` = default.
         title_color: u32,
+        /// Maximum modal width. `0` = no limit.
+        max_width: u16,
         body: Vec<TreeNode>,
+        /// Footer button keys/labels (empty primary_key = no footer).
+        footer_primary_key: String,
+        footer_primary_label: String,
+        footer_secondary_key: String,
+        footer_secondary_label: String,
+        footer_danger: bool,
     },
     /// Host-rendered progress bar (seek/volume slider)
     ProgressBar {
@@ -530,10 +538,21 @@ impl<'a> TreeReader<'a> {
                 let bg_color = self.read_u32()?;
                 let header_color = self.read_u32()?;
                 let title_color = self.read_u32()?;
+                let max_width = self.read_u16()?;
                 let mut body = Vec::with_capacity(child_count as usize);
                 for _ in 0..child_count {
                     body.push(self.read_node()?);
                 }
+                // Footer descriptor
+                let pk_len = self.read_u16()?;
+                let footer_primary_key = self.read_string(pk_len)?;
+                let pl_len = self.read_u16()?;
+                let footer_primary_label = self.read_string(pl_len)?;
+                let sk_len = self.read_u16()?;
+                let footer_secondary_key = self.read_string(sk_len)?;
+                let sl_len = self.read_u16()?;
+                let footer_secondary_label = self.read_string(sl_len)?;
+                let footer_danger = self.read_u8()? != 0;
                 Ok(TreeNode::Modal {
                     modal_id,
                     is_open,
@@ -544,7 +563,13 @@ impl<'a> TreeReader<'a> {
                     bg_color,
                     header_color,
                     title_color,
+                    max_width,
                     body,
+                    footer_primary_key,
+                    footer_primary_label,
+                    footer_secondary_key,
+                    footer_secondary_label,
+                    footer_danger,
                 })
             }
             NODE_SCROLL => {
@@ -1052,14 +1077,20 @@ struct ModalInfo {
     padding: u16,
     backdrop_alpha: u8,
     title: String,
-    content_height: f32,
     /// Modal body background color. `0` = default.
     bg_color: u32,
     /// Header background color. `0` = default.
     header_color: u32,
     /// Title text color. `0` = default.
     title_color: u32,
+    /// Maximum modal width. `0` = no limit.
+    max_width: u16,
     body: Vec<TreeNode>,
+    footer_primary_key: String,
+    footer_primary_label: String,
+    footer_secondary_key: String,
+    footer_secondary_label: String,
+    footer_danger: bool,
 }
 
 /// Process a tree: deserialize, layout, render.
@@ -1290,6 +1321,13 @@ fn build_taffy_node(
                 } else {
                     props.flex
                 },
+                // flex > 0 acts like CSS `flex: N` (grow N, basis 0) so the item
+                // starts at zero and grows into available space.
+                flex_basis: if props.flex > 0.0 || (is_center && props.flex == 0.0) {
+                    length(0.0)
+                } else {
+                    Dimension::auto()
+                },
                 ..Default::default()
             };
 
@@ -1365,6 +1403,8 @@ fn build_taffy_node(
                     width: Dimension::auto(),
                     height: length(height),
                 },
+                // Buttons should never shrink below their content size
+                flex_shrink: 0.0,
                 align_self: Some(AlignSelf::FlexStart),
                 ..Default::default()
             };
@@ -1509,11 +1549,17 @@ fn build_taffy_node(
             padding,
             backdrop_alpha,
             title,
-            content_height,
             bg_color,
             header_color,
             title_color,
+            max_width,
             body,
+            footer_primary_key,
+            footer_primary_label,
+            footer_secondary_key,
+            footer_secondary_label,
+            footer_danger,
+            ..
         } => {
             // Store modal for overlay rendering
             modals.push(ModalInfo {
@@ -1522,11 +1568,16 @@ fn build_taffy_node(
                 padding: *padding,
                 backdrop_alpha: *backdrop_alpha,
                 title: title.clone(),
-                content_height: *content_height,
                 bg_color: *bg_color,
                 header_color: *header_color,
                 title_color: *title_color,
+                max_width: *max_width,
                 body: body.clone(),
+                footer_primary_key: footer_primary_key.clone(),
+                footer_primary_label: footer_primary_label.clone(),
+                footer_secondary_key: footer_secondary_key.clone(),
+                footer_secondary_label: footer_secondary_label.clone(),
+                footer_danger: *footer_danger,
             });
 
             // Modal doesn't participate in normal layout — hidden from flex/gap.
@@ -3021,16 +3072,16 @@ fn render_modal(
     // Detect state transitions and update animation
     let was_open = state.is_open;
     state.is_open = modal.is_open;
-    state.content_height = modal.content_height;
 
     if modal.is_open && !was_open {
         // Opening: start animation from current progress (or 0)
-        // Animation will progress towards 1.0
+        // Reset body scroll when opening
+        let body_key = format!("{}::body", modal.modal_id);
+        if let Some(ss) = scroll_states.get_mut(&body_key) {
+            ss.scroll_offset = 0.0;
+        }
     } else if !modal.is_open && was_open {
         // Closing: animation will progress towards 0.0
-        // Reset scroll when closing
-        state.scroll_offset = 0.0;
-        state.is_dragging = false;
     }
 
     // Advance animation
@@ -3060,43 +3111,60 @@ fn render_modal(
     let backdrop_color = u32::from_be_bytes([0, 0, 0, backdrop_alpha]);
     renderer.fill_rect(0.0, 0.0, width, height, backdrop_color);
 
-    // Modal content dimensions
-    let modal_width = (width - padding * 2.0).max(0.0);
+    // Modal content dimensions — adapt to viewport size
+    let available_width = (width - padding * 2.0).max(0.0);
+    let max_w = f32::from(modal.max_width);
+    let modal_width = if max_w > 0.0 {
+        available_width.min(max_w)
+    } else {
+        available_width
+    };
     let modal_height = (height - padding * 2.0).max(0.0);
-    // Body height = modal height - header - internal padding (16px top + 16px bottom)
-    let body_padding = 16.0;
-    let body_height = (modal_height - MODAL_HEADER_HEIGHT - body_padding * 2.0).max(0.0);
-    state.viewport_height = body_height;
 
-    // Animate content position (slide down from -100px)
+    // Compact layout for small viewports (half-height widgets ≤ 300px)
+    let compact = height <= 300.0;
+    let header_height = if compact { 32.0 } else { MODAL_HEADER_HEIGHT };
+    let body_padding = if compact { 8.0 } else { 16.0 };
+    // Footer height: host renders buttons directly, size adapts to viewport.
+    let has_footer = !modal.footer_primary_key.is_empty();
+    let footer_btn_size = if compact {
+        ButtonSize::Small
+    } else {
+        ButtonSize::Normal
+    };
+    let footer_height = if has_footer {
+        footer_btn_size.height()
+    } else {
+        0.0
+    };
+
+    // Body height = modal height - header - padding - footer
+    // Body fills between header and footer — Scroll node handles its own internal padding.
+    let body_height = (modal_height - header_height - footer_height).max(0.0);
+
+    // Animate content position (centered horizontally, slide down from -100px)
     let slide_offset = (1.0 - progress) * -100.0;
-    let modal_x = padding;
+    let modal_x = (width - modal_width) / 2.0;
     let modal_y = padding + slide_offset;
 
     // Content is always fully opaque - only backdrop animates opacity
     // This prevents ugly alpha blending of text over background content
 
-    // Draw modal background
+    // Draw modal background (CDS gray100 theme: body and header share GRAY_100)
     let modal_bg = if modal.bg_color != 0 {
         modal.bg_color
     } else {
-        GRAY_90
+        GRAY_100
     };
     renderer.fill_rect(modal_x, modal_y, modal_width, modal_height, modal_bg);
 
-    // Draw header background
+    // Draw header background (same as body by default per CDS)
     let header_bg = if modal.header_color != 0 {
         modal.header_color
     } else {
         GRAY_100
     };
-    renderer.fill_rect(
-        modal_x,
-        modal_y,
-        modal_width,
-        MODAL_HEADER_HEIGHT,
-        header_bg,
-    );
+    renderer.fill_rect(modal_x, modal_y, modal_width, header_height, header_bg);
 
     // Draw header title
     let title_fg = if modal.title_color != 0 {
@@ -3104,8 +3172,10 @@ fn render_modal(
     } else {
         GRAY_10
     };
+    let title_size = if compact { 14 } else { 16 };
+    let title_y_offset = if compact { 7.0 } else { 12.0 };
     let title_style = TextStyle {
-        size: 16,
+        size: title_size,
         weight: 600,
         color: title_fg,
         ..Default::default()
@@ -3122,14 +3192,14 @@ fn render_modal(
         &title_style,
         &title_spans,
         modal_x + 16.0,
-        modal_y + 12.0,
+        modal_y + title_y_offset,
         modal_width - 64.0, // Leave space for close button
     );
 
     // Draw close button (X icon in top-right)
-    let close_btn_x = modal_x + modal_width - 48.0;
+    let close_btn_x = modal_x + modal_width - header_height;
     let close_btn_y = modal_y;
-    let close_btn_size = MODAL_HEADER_HEIGHT;
+    let close_btn_size = header_height;
 
     let close_key = format!("{}::close", modal.modal_id);
 
@@ -3161,62 +3231,39 @@ fn render_modal(
         );
     }
 
-    // Body area with scrolling
-    let body_x = modal_x;
-    let body_y = modal_y + MODAL_HEADER_HEIGHT;
-
-    // Register scroll region for touch handling
-    let body_key = format!("{}::body", modal.modal_id);
-    let scroll_region = crate::interaction::Rect::new(body_x, body_y, modal_width, body_height);
-    interaction.button(&body_key, scroll_region);
-
-    // Apply scroll delta from touch drag or mouse wheel
-    let scroll_delta = if interaction.is_pressed(&body_key) {
-        // Touch drag: invert delta (drag up = scroll down)
-        -interaction.get_scroll_delta(&body_key)
-    } else {
-        // Mouse wheel: use global delta (positive = scroll down)
-        interaction.get_global_scroll_delta()
-    };
-    state.scroll_offset += scroll_delta;
-
-    // Clamp scroll offset
-    let max_scroll = (modal.content_height - body_height).max(0.0);
-    state.scroll_offset = state.scroll_offset.clamp(0.0, max_scroll);
-
-    // Render body using the full taffy layout engine (same as root content).
-    let body_content_width = modal_width - body_padding * 2.0;
-    let scroll_offset = state.scroll_offset;
-    let body_col = TreeNode::Column(
-        PropsData {
+    // Body: wrap children in a Scroll node and let the existing scroll system handle everything.
+    let body_scroll_key = format!("{}::body", modal.modal_id);
+    let body_scroll = TreeNode::Scroll {
+        scroll_key: body_scroll_key,
+        props: PropsData {
             gap: 8.0,
+            padding: body_padding,
+            width: modal_width,
+            height: body_height,
             ..PropsData::default()
         },
-        modal.body.clone(),
-    );
+        children: {
+            let mut c = modal.body.clone();
+            // Bottom padding so content doesn't butt against the footer
+            c.push(TreeNode::Row(
+                PropsData {
+                    height: 8.0,
+                    ..PropsData::default()
+                },
+                vec![],
+            ));
+            c
+        },
+    };
     let mut dummy_modals: Vec<ModalInfo> = Vec::new();
     taffy.clear();
-    if let Ok(body_root) = build_taffy_node(taffy, &body_col, result, &mut dummy_modals) {
-        if let Ok(style) = taffy.style(body_root) {
-            let mut new_style = style.clone();
-            new_style.size = Size {
-                width: length(body_content_width),
-                height: Dimension::auto(),
-            };
-            let _ = taffy.set_style(body_root, new_style);
-        }
+    if let Ok(body_root) = build_taffy_node(taffy, &body_scroll, result, &mut dummy_modals) {
         let _ = compute_taffy_layout(taffy, body_root, renderer);
-        renderer.push_scissor(
-            body_x + body_padding,
-            body_y + body_padding,
-            body_content_width,
-            body_height,
-        );
         render_taffy_node(
             taffy,
             body_root,
-            body_x + body_padding,
-            body_y + body_padding - scroll_offset,
+            modal_x,
+            modal_y + header_height,
             renderer,
             interaction,
             scroll_states,
@@ -3224,40 +3271,93 @@ fn render_modal(
             anim_ctx,
             0,
         );
-        renderer.pop_scissor();
     }
 
-    // Draw scrollbar if content exceeds viewport
-    if modal.content_height > body_height {
-        let scrollbar_width = 4.0;
-        let scrollbar_x = modal_x + modal_width - scrollbar_width - 4.0;
-        let scrollbar_track_y = body_y + 4.0;
-        let scrollbar_track_height = body_height - 8.0;
+    // Render footer buttons directly — host controls sizing.
+    // CDS: [secondary | primary] each 50%, or [spacer | primary] if no secondary.
+    if has_footer {
+        let footer_y = modal_y + modal_height - footer_height;
+        let has_secondary = !modal.footer_secondary_key.is_empty();
+        let btn_h = footer_height;
+        let half_w = modal_width / 2.0;
 
-        // Track
-        let track_color = GRAY_70;
-        renderer.fill_rect(
-            scrollbar_x,
-            scrollbar_track_y,
-            scrollbar_width,
-            scrollbar_track_height,
-            track_color,
+        let primary_style = if modal.footer_danger {
+            ButtonStyle::Danger
+        } else {
+            ButtonStyle::Primary
+        };
+
+        // Secondary button (left half) or empty space
+        if has_secondary {
+            let (clicked, click_pos) = draw_button(
+                renderer,
+                interaction,
+                &modal.footer_secondary_key,
+                &modal.footer_secondary_label,
+                modal_x,
+                footer_y,
+                half_w,
+                btn_h,
+                ButtonStyle::Secondary,
+                footer_btn_size,
+                0,
+                false,
+                None,
+            );
+            if clicked {
+                result.clicks.insert(
+                    modal.footer_secondary_key.clone(),
+                    TouchHit {
+                        x: click_pos.map_or(0.0, |p| p.0),
+                        y: click_pos.map_or(0.0, |p| p.1),
+                        width: half_w,
+                        height: btn_h,
+                    },
+                );
+            }
+        }
+
+        // Primary button (right half)
+        let primary_x = modal_x + half_w;
+        let (clicked, click_pos) = draw_button(
+            renderer,
+            interaction,
+            &modal.footer_primary_key,
+            &modal.footer_primary_label,
+            primary_x,
+            footer_y,
+            half_w,
+            btn_h,
+            primary_style,
+            footer_btn_size,
+            0,
+            false,
+            None,
         );
+        if clicked {
+            result.clicks.insert(
+                modal.footer_primary_key.clone(),
+                TouchHit {
+                    x: click_pos.map_or(0.0, |p| p.0),
+                    y: click_pos.map_or(0.0, |p| p.1),
+                    width: half_w,
+                    height: btn_h,
+                },
+            );
+        }
+    }
 
-        // Thumb
-        let thumb_ratio = body_height / modal.content_height;
-        let thumb_height = (scrollbar_track_height * thumb_ratio).max(20.0);
-        let scroll_ratio = state.scroll_offset / max_scroll.max(1.0);
-        let thumb_y = scrollbar_track_y + scroll_ratio * (scrollbar_track_height - thumb_height);
-
-        let thumb_color = GRAY_50;
-        renderer.fill_rect(
-            scrollbar_x,
-            thumb_y,
-            scrollbar_width,
-            thumb_height,
-            thumb_color,
-        );
+    // Debug layout outlines for the modal frame
+    if DEBUG_LAYOUT.load(Ordering::Relaxed) {
+        // Modal outline
+        renderer.stroke_rect(modal_x, modal_y, modal_width, modal_height, 1.0, VIOLET_50);
+        // Header outline
+        renderer.stroke_rect(modal_x, modal_y, modal_width, header_height, 1.0, BLUE_50);
+        // Footer outline
+        if has_footer {
+            let fy = modal_y + modal_height - footer_height;
+            renderer.stroke_rect(modal_x, fy, modal_width, footer_height, 1.0, GREEN_50);
+        }
     }
 }
 

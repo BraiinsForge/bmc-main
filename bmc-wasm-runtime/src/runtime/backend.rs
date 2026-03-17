@@ -132,6 +132,9 @@ pub struct RuntimeConfig {
     ///   `0` indefinitely); pick any non-zero seed for varied deterministic
     ///   output.
     pub rng_seed: Option<u64>,
+    /// Sender for LED commands. Widgets call `led::set_effect()` etc., the host
+    /// forwards commands through this channel. `None` = LED control unavailable.
+    pub led_command_sender: Option<std::sync::mpsc::Sender<bmc_shared_led_data::LedCommand>>,
     /// Frame poll cadence (ms) used to clamp `frame_delay_ms` while host-side
     /// animations are active, so a widget's `request_frame_after(longer)`
     /// (e.g. a 1Hz clock tick) does not starve cached-tree animation replays.
@@ -160,6 +163,7 @@ impl Default for RuntimeConfig {
             resource_limits: RuntimeResourceLimits::default(),
             mesh_msaa_samples: 0,
             rng_seed: None,
+            led_command_sender: None,
             animation_frame_delay_ms: Self::DEFAULT_ANIMATION_FRAME_DELAY_MS,
         }
     }
@@ -223,6 +227,7 @@ impl WasmWidgetRuntime {
             resource_limits,
             mesh_msaa_samples,
             rng_seed,
+            led_command_sender,
             animation_frame_delay_ms,
         } = config;
 
@@ -261,6 +266,7 @@ impl WasmWidgetRuntime {
         state.fetch_observer = fetch_observer;
         state.record_events = record_events;
         state.rng_state = rng_seed;
+        state.led_command_sender = led_command_sender;
         state.frame_schedule.animation_frame_delay_ms = animation_frame_delay_ms;
         if !event_fixtures.is_empty() {
             state.event_fixtures = Some(crate::host_api::FixtureEventState {

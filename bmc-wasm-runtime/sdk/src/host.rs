@@ -147,6 +147,27 @@ pub enum SizeVariant {
     Small,  //  317×238
 }
 
+impl SizeVariant {
+    /// Canonical pixel width for this variant.
+    #[must_use]
+    pub const fn width(self) -> u32 {
+        match self {
+            Self::Full => 1_280,
+            Self::Large | Self::Medium => 638,
+            Self::Small => 317,
+        }
+    }
+
+    /// Canonical pixel height for this variant.
+    #[must_use]
+    pub const fn height(self) -> u32 {
+        match self {
+            Self::Full | Self::Large => 480,
+            Self::Medium | Self::Small => 238,
+        }
+    }
+}
+
 /// Widget viewport dimensions and size variant.
 ///
 /// Created from the raw `(width, height)` the host passes to `init()`.

@@ -1,14 +1,9 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 #![allow(clippy::cast_precision_loss)]
 
-//! SDK component showcase - buttons, colors, animations, rich text, icons.
+#[allow(clippy::wildcard_imports)]
+use bmc_wasm_sdk::*;
 
-use bmc_wasm_sdk::{
-    AnimProperty, Draw, Easing, GRAY_10, GRAY_30, GRAY_40, GRAY_50, GRAY_70, GRAY_80, GRAY_90,
-    GREEN_50, ICON_CLOSE, Icon, LoopMode, Node, ORANGE_50, RED_50, SystemTime, VIOLET_50, button,
-    canvas, col, color, fmt, include_icon, modal, paragraph, props, render_ui, request_frame_after,
-    row, spacer, span, style, text, tree, ufmt,
-};
 use std::cell::{Cell, RefCell};
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -292,13 +287,59 @@ fn text_styles_demo() -> Node {
     )
 }
 
+fn led_section() -> Node {
+    col(
+        props!(flex: 1.0, gap: 4.0, background: GRAY_90, padding: 8.0,
+            cross_align: CrossAlign::Center),
+        [
+            text("LED Effects", style!(size: 14, weight: 700)),
+            row(
+                props!(gap: 4.0, background: GRAY_90, padding: 8.0, wrap: true, cross_align: CrossAlign::Center),
+                [
+                    button!("led_solid", "Solid Red", size: Small),
+                    button!("led_breathe", "Breathe Green", size: Small),
+                    button!("led_chase", "Chase Blue", size: Small),
+                    button!("led_knight", "Knight Rider", size: Small),
+                    button!("led_snake", "Snake Cyan", size: Small),
+                    button!("led_off", "LEDs Off", style: Secondary, size: Small),
+                ],
+            ),
+        ],
+    )
+}
+
+fn handle_led_clicks(result: &TreeRenderResult) {
+    if result.clicks.contains_key("led_solid") {
+        led::enable();
+        led::set_effect(LedEffect::Solid, 255, 40, 40, 0, 0);
+    }
+    if result.clicks.contains_key("led_breathe") {
+        led::enable();
+        led::set_effect(LedEffect::Breathe, 40, 255, 40, 4_000, 0);
+    }
+    if result.clicks.contains_key("led_chase") {
+        led::enable();
+        led::set_effect(LedEffect::Chase, 40, 40, 255, 1_000, 0);
+    }
+    if result.clicks.contains_key("led_knight") {
+        led::enable();
+        led::set_effect(LedEffect::KnightRider, 255, 165, 0, 2_000, 0);
+    }
+    if result.clicks.contains_key("led_snake") {
+        led::enable();
+        led::set_effect(LedEffect::Snake, 0, 255, 200, 1_500, 0);
+    }
+    if result.clicks.contains_key("led_off") {
+        led::disable();
+    }
+}
+
 fn about_modal() -> Node {
     modal(
         "about",
         MODAL_OPEN.get(),
         "About This Demo",
-        600.0,
-        [
+        vec![
             text(
                 "This is a showcase of the WASM widget SDK capabilities.",
                 style!(size: 14, line_height: 1.5),
@@ -355,45 +396,11 @@ fn about_modal() -> Node {
                 style!(size: 12, color: GRAY_50),
             ),
         ],
+        Some(ModalProps {
+            height: 600.0,
+            ..ModalProps::default()
+        }),
     )
-}
-
-// ---------------------------------------------------------------------------
-// Entry points
-// ---------------------------------------------------------------------------
-
-#[unsafe(no_mangle)]
-pub extern "C" fn render(_delta_ms: u32) {
-    let w = WIDTH.get();
-    let h = HEIGHT.get();
-    let time = SystemTime::now();
-    let counts = COUNTS.with(|c| *c.borrow());
-
-    let result = render_ui(
-        w,
-        h,
-        col(
-            props!(background: BG_COLOR, padding: 16.0, gap: 16.0),
-            [
-                row(
-                    props!(gap: 24.0),
-                    [
-                        buttons_section(counts),
-                        animations_section(&time),
-                        icons_section(),
-                        colors_section(),
-                    ],
-                ),
-                row(
-                    props!(gap: 24.0),
-                    [icon_buttons_section(), rich_text_section()],
-                ),
-                about_modal(),
-            ],
-        ),
-    );
-
-    handle_clicks(&result);
 }
 
 fn handle_clicks(result: &bmc_wasm_sdk::TreeRenderResult) {
@@ -413,5 +420,45 @@ fn handle_clicks(result: &bmc_wasm_sdk::TreeRenderResult) {
         MODAL_OPEN.set(false);
     }
 
+    handle_led_clicks(result);
+
     request_frame_after(1_000);
+}
+
+// ---------------------------------------------------------------------------
+// Entry points
+// ---------------------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+pub extern "C" fn render(_delta_ms: u32) {
+    let w = WIDTH.get();
+    let h = HEIGHT.get();
+    let time = SystemTime::now();
+    let counts = COUNTS.with(|c| *c.borrow());
+
+    let result = render_ui(
+        w,
+        h,
+        col(
+            props!(background: BG_COLOR, padding: 8.0, gap: 8.0),
+            [
+                row(
+                    props!(gap: 6.0),
+                    [
+                        buttons_section(counts),
+                        animations_section(&time),
+                        icons_section(),
+                        colors_section(),
+                    ],
+                ),
+                row(
+                    props!(gap: 6.0),
+                    [icon_buttons_section(), rich_text_section(), led_section()],
+                ),
+                about_modal(),
+            ],
+        ),
+    );
+
+    handle_clicks(&result);
 }
