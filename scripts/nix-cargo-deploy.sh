@@ -69,6 +69,13 @@ fi
 
 echo "Deploying ${label} to ${device}..."
 
+# Copy nix store paths (dynamic linker + rpath libraries) to the device
+interp=$(patchelf --print-interpreter "$local_bin")
+rpath=$(patchelf --print-rpath "$local_bin" | tr ':' '\n' | grep '^/nix/store/' | tr '\n' ' ')
+# shellcheck disable=SC2086 # Intentional word splitting on space-separated store paths
+nix copy --to "ssh://root@${device}?remote-program=/run/current-profile/bin/nix-store" \
+    "$interp" $rpath
+
 # Back up the original binary (only on first deploy)
 # shellcheck disable=SC2029 # Intentional client-side expansion
 ssh "root@${device}" "[ -f ${profile_path}.orig ] || cp ${profile_path} ${profile_path}.orig"
