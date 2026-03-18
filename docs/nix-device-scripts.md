@@ -81,6 +81,8 @@ The device must already have the packages deployed via `nix-deploy.sh` (so the
 target paths exist).
 
 ```sh
+# Execute in a dev shell such as nix develop ".#armv7-glibc-release"
+
 # Deploy the compositor (bmc-openwrt, built for armv7-unknown-linux-musleabihf)
 ./scripts/nix-cargo-deploy.sh compositor 192.168.1.2
 
@@ -88,6 +90,9 @@ target paths exist).
 ./scripts/nix-cargo-deploy.sh widget digital-clock 192.168.1.2
 DEVICE_IP=192.168.1.2 ./scripts/nix-cargo-deploy.sh widget flip-clock
 ```
+
+In case you need to add extra cargo flags, such as a --features flag,
+use CARGO_EXTRA_FLAGS environment variable.
 
 The script expects binaries at the standard cargo cross-compilation output
 paths:
@@ -97,9 +102,10 @@ paths:
 | `compositor` | `target/armv7-unknown-linux-musleabihf/release/bmc-openwrt` |
 | `widget <name>` | `target/armv7-unknown-linux-gnueabihf/release/bmc-widget-<name>` |
 
-Build in the appropriate nix develop shell first (`nix develop .#armv7-release`
-for the compositor, `nix develop .#armv7-glibc-release` for widgets — see
-`workspace.nix` for available shells).
+The script will build these binaries itself through `cargo build`.
+The script assumes you're in a dev shell, such as ".#armv7-glibc-release".
+As a one-liner, use `nix develop ".#armv7-glibc-release" -c ./scripts/nix-cargo-deploy.sh compositor 192.168.1.2`
+for example.
 
 ## Example: Running bmc-openwrt on the device
 
