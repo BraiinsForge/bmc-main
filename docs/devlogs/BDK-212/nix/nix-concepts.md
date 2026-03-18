@@ -191,7 +191,7 @@ prevent users not getting Nix initialized.
   "tarballs": [
     {
       "bos_version": "26.01",
-      "download_url": "https://cache.braiins.com/v1/miniminer-nix-26.01.tar.xz",
+      "download_url": "https://cache.braiins.com/v1/nix-26.01.tar.gz",
       "profile_path": "/nix/var/nix/gcroots/profiles/bmc"
     }
   ]
@@ -203,7 +203,7 @@ prevent users not getting Nix initialized.
 * `version` - Version of the factory index itself
 * `tarballs` - List of initial Nix store tarballs per BOS version:
   * `bos_version` - BOS version this tarball is for (YY.MM format, e.g., "26.01")
-  * `download_url` - URL of the `.tar.xz` archive containing the initial Nix store and profile
+  * `download_url` - URL of the `.tar.gz` archive containing the initial Nix store and profile
   * `profile_path` - Path of the initial profile inside the tarball
 
 ---
