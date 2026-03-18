@@ -20,7 +20,6 @@ use chrono_tz::Tz;
 use glow::HasContext;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use wayland_client::protocol::wl_buffer;
 
 /// Wayland client for the flip-clock widget.
 pub struct WaylandClient {
@@ -28,8 +27,6 @@ pub struct WaylandClient {
     animation_mode: AnimationMode,
     timezone: Arc<RwLock<String>>,
     shutdown: Arc<AtomicBool>,
-    /// Cached wl_buffer per double-buffer slot (avoids per-frame create/destroy).
-    cached_buffers: [Option<wl_buffer::WlBuffer>; 2],
 }
 
 impl WaylandClient {
@@ -48,7 +45,6 @@ impl WaylandClient {
             animation_mode,
             timezone,
             shutdown,
-            cached_buffers: [None, None],
         })
     }
 
@@ -106,18 +102,12 @@ impl WaylandClient {
                 break;
             }
 
-            let state = self.surface.state();
-
             // Handle resize if needed
-            if state.size_changed {
-                // Destroy cached wl_buffers — they reference the old size
-                for cached in &mut self.cached_buffers {
-                    if let Some(buf) = cached.take() {
-                        buf.destroy();
-                    }
-                }
-                egl.resize(state.width, state.height);
-                renderer.resize(state.width, state.height);
+            if self.surface.state().size_changed {
+                let (w, h) = (self.surface.state().width, self.surface.state().height);
+                self.surface.invalidate_cached_buffers();
+                egl.resize(w, h);
+                renderer.resize(w, h);
                 self.surface.state_mut().size_changed = false;
             }
 
@@ -635,44 +625,11 @@ impl WaylandClient {
                     gl.disable(glow::BLEND);
                 }
 
-                // End frame and get DMA-BUF
+                // End frame and submit via cached buffer path
                 let dmabuf_info = egl.end_frame()?;
                 let slot = egl.last_rendered_slot();
-
-                // Reuse cached wl_buffer for this slot, or create one on first use.
-                // Flip-clock caches buffers because the DMA-BUF fd/stride don't
-                // change between frames for the same double-buffer slot.
-                if self.cached_buffers[slot].is_none() {
-                    let qh = self.surface.queue_handle();
-                    let linux_dmabuf = self
-                        .surface
-                        .state()
-                        .linux_dmabuf()
-                        .expect("BUG: linux_dmabuf should be bound after connect");
-                    let buf = bmc_widget::surface::create_buffer_from_dmabuf(
-                        linux_dmabuf,
-                        &dmabuf_info,
-                        &qh,
-                    );
-                    self.cached_buffers[slot] = Some(buf);
-                }
-
-                // Attach cached buffer, damage, request frame, commit
-                let wl_surface = self
-                    .surface
-                    .state()
-                    .wl_surface()
-                    .expect("BUG: surface should exist after connect");
-                let buffer = self.cached_buffers[slot]
-                    .as_ref()
-                    .expect("BUG: cached buffer should exist after creation above");
-
-                wl_surface.attach(Some(buffer), 0, 0);
-                #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
-                wl_surface.damage_buffer(0, 0, dmabuf_info.width as i32, dmabuf_info.height as i32);
-                let qh = self.surface.queue_handle();
-                wl_surface.frame(&qh, ());
-                wl_surface.commit();
+                self.surface
+                    .commit_cached_buffer(&dmabuf_info, slot, true)?;
 
                 let state = self.surface.state();
                 if state.frame_count.is_multiple_of(60) {
