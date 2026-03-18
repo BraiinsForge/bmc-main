@@ -444,7 +444,98 @@ where
     buffer
 }
 
+/// Generate common Dispatch impls for a surface state type.
+///
+/// These impls are identical for both XDG and deck_widget surface clients.
+/// The state type must have `frame_count: u32` and `needs_render: bool` fields.
+macro_rules! impl_common_dispatch {
+    ($state:ty) => {
+        impl Dispatch<wl_compositor::WlCompositor, ()> for $state {
+            fn event(
+                _: &mut Self,
+                _: &wl_compositor::WlCompositor,
+                _: wl_compositor::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl Dispatch<wl_surface::WlSurface, ()> for $state {
+            fn event(
+                _: &mut Self,
+                _: &wl_surface::WlSurface,
+                _: wl_surface::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl Dispatch<wl_callback::WlCallback, ()> for $state {
+            fn event(
+                state: &mut Self,
+                _: &wl_callback::WlCallback,
+                event: wl_callback::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+                if let wl_callback::Event::Done { .. } = event {
+                    state.frame_count = state.frame_count.wrapping_add(1);
+                    state.needs_render = true;
+                }
+            }
+        }
+
+        impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for $state {
+            fn event(
+                _: &mut Self,
+                _: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
+                event: zwp_linux_dmabuf_v1::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+                match event {
+                    zwp_linux_dmabuf_v1::Event::Format { format } => {
+                        tracing::trace!("DMA-BUF format: 0x{format:08x}");
+                    }
+                    zwp_linux_dmabuf_v1::Event::Modifier {
+                        format,
+                        modifier_hi,
+                        modifier_lo,
+                    } => {
+                        let modifier = (u64::from(modifier_hi) << 32) | u64::from(modifier_lo);
+                        tracing::trace!("DMA-BUF format 0x{format:08x} modifier 0x{modifier:016x}");
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for $state {
+            fn event(
+                _: &mut Self,
+                _: &zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
+                event: zwp_linux_buffer_params_v1::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+                if let zwp_linux_buffer_params_v1::Event::Failed = event {
+                    tracing::error!("DMA-BUF buffer creation failed");
+                }
+            }
+        }
+    };
+}
+
 // ── Wayland protocol dispatch implementations ─────────────────────────
+
+impl_common_dispatch!(XdgSurfaceState);
 
 impl Dispatch<wl_registry::WlRegistry, ()> for XdgSurfaceState {
     fn event(
@@ -491,30 +582,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for XdgSurfaceState {
                 _ => {}
             }
         }
-    }
-}
-
-impl Dispatch<wl_compositor::WlCompositor, ()> for XdgSurfaceState {
-    fn event(
-        _: &mut Self,
-        _: &wl_compositor::WlCompositor,
-        _: wl_compositor::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_surface::WlSurface, ()> for XdgSurfaceState {
-    fn event(
-        _: &mut Self,
-        _: &wl_surface::WlSurface,
-        _: wl_surface::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
     }
 }
 
@@ -584,63 +651,6 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for XdgSurfaceState {
             xdg_toplevel::Event::ConfigureBounds { .. }
             | xdg_toplevel::Event::WmCapabilities { .. }
             | _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_callback::WlCallback, ()> for XdgSurfaceState {
-    fn event(
-        state: &mut Self,
-        _: &wl_callback::WlCallback,
-        event: wl_callback::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let wl_callback::Event::Done { .. } = event {
-            state.frame_count = state.frame_count.wrapping_add(1);
-            state.needs_render = true;
-        }
-    }
-}
-
-impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for XdgSurfaceState {
-    fn event(
-        _: &mut Self,
-        _: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
-        event: zwp_linux_dmabuf_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            zwp_linux_dmabuf_v1::Event::Format { format } => {
-                tracing::trace!("DMA-BUF format: 0x{format:08x}");
-            }
-            zwp_linux_dmabuf_v1::Event::Modifier {
-                format,
-                modifier_hi,
-                modifier_lo,
-            } => {
-                let modifier = (u64::from(modifier_hi) << 32) | u64::from(modifier_lo);
-                tracing::trace!("DMA-BUF format 0x{format:08x} modifier 0x{modifier:016x}");
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for XdgSurfaceState {
-    fn event(
-        _: &mut Self,
-        _: &zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
-        event: zwp_linux_buffer_params_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let zwp_linux_buffer_params_v1::Event::Failed = event {
-            tracing::error!("DMA-BUF buffer creation failed");
         }
     }
 }
@@ -988,6 +998,8 @@ impl DeckWidgetSurfaceClient {
 
 // ── Wayland protocol dispatch for DeckWidgetSurfaceState ───────────────
 
+impl_common_dispatch!(DeckWidgetSurfaceState);
+
 impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
     fn event(
         state: &mut Self,
@@ -1036,30 +1048,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
     }
 }
 
-impl Dispatch<wl_compositor::WlCompositor, ()> for DeckWidgetSurfaceState {
-    fn event(
-        _: &mut Self,
-        _: &wl_compositor::WlCompositor,
-        _: wl_compositor::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_surface::WlSurface, ()> for DeckWidgetSurfaceState {
-    fn event(
-        _: &mut Self,
-        _: &wl_surface::WlSurface,
-        _: wl_surface::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
 impl Dispatch<DeckWidgetManagerV1, ()> for DeckWidgetSurfaceState {
     fn event(
         _: &mut Self,
@@ -1098,63 +1086,6 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                 state.pending_events.push(DeckWidgetEvent::Shutdown);
             }
             _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_callback::WlCallback, ()> for DeckWidgetSurfaceState {
-    fn event(
-        state: &mut Self,
-        _: &wl_callback::WlCallback,
-        event: wl_callback::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let wl_callback::Event::Done { .. } = event {
-            state.frame_count = state.frame_count.wrapping_add(1);
-            state.needs_render = true;
-        }
-    }
-}
-
-impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for DeckWidgetSurfaceState {
-    fn event(
-        _: &mut Self,
-        _: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
-        event: zwp_linux_dmabuf_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            zwp_linux_dmabuf_v1::Event::Format { format } => {
-                tracing::trace!("DMA-BUF format: 0x{format:08x}");
-            }
-            zwp_linux_dmabuf_v1::Event::Modifier {
-                format,
-                modifier_hi,
-                modifier_lo,
-            } => {
-                let modifier = (u64::from(modifier_hi) << 32) | u64::from(modifier_lo);
-                tracing::trace!("DMA-BUF format 0x{format:08x} modifier 0x{modifier:016x}");
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for DeckWidgetSurfaceState {
-    fn event(
-        _: &mut Self,
-        _: &zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
-        event: zwp_linux_buffer_params_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let zwp_linux_buffer_params_v1::Event::Failed = event {
-            tracing::error!("DMA-BUF buffer creation failed");
         }
     }
 }
