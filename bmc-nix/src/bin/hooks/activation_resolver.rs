@@ -10,7 +10,7 @@ fn write_entrypoint(scripts: &[String]) -> String {
     writeln!(entrypoint, "set -e").expect("BUG: write to String should never fail");
     writeln!(
         entrypoint,
-        r#"ENTRYPOINT_DIR="$(cd "$(dirname "$0")" && pwd)""#
+        r#"ENTRYPOINT_DIR="$(cd "$(dirname "$0")" && pwd -P)""#
     )
     .expect("BUG: write to String should never fail");
     writeln!(
