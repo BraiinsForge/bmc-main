@@ -15,7 +15,7 @@ The build infrastructure produces three kinds of artifacts:
 3. **Tarball** (`.tar.gz`) — initial Nix store snapshot for device
    initialization, containing packages and a pre-built profile
 
-The factory index (`miniminer-factory.json`) can be built either by
+The factory index (`factory.json`) can be built either by
 Nix (`mkFactoryIndex.nix`, for local testing with placeholder URLs)
 or by CI tooling (`scripts/build-factory-index.sh`, assembling real
 download URLs from tarball `metadata.json` files).
@@ -33,7 +33,7 @@ nix/
 ├── mkWidgetPackage.nix    # Build a widget crate into a package derivation
 ├── mkIndex.nix            # Package list → index.json
 ├── mkTarball.nix          # Package list + bmc-nix CLI → .tar.gz + metadata
-├── mkFactoryIndex.nix     # Tarball entries → miniminer-factory.json
+├── mkFactoryIndex.nix     # Tarball entries → factory.json
 └── init-artifacts.nix     # Package list, index, tarball, and factory index
 ```
 
@@ -348,9 +348,9 @@ This is the most involved derivation. Steps inside the build:
 ```
 
 This metadata is consumed by external tooling to build the factory
-index (`miniminer-factory.json`) across multiple versions. The
+index (`factory.json`) across multiple versions. The
 external tooling must supply the `download_url` field (not present
-in `metadata.json`) when assembling `miniminer-factory.json`, since
+in `metadata.json`) when assembling `factory.json`, since
 it depends on where the tarball is ultimately published.
 
 ---
