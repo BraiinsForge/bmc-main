@@ -6,9 +6,6 @@ let
   rustflags = import ./nix/rustflags.nix { inherit lib; };
   inherit (rustflags) makeRustflagsEnv;
 
-  mkIndex = import ./nix/mkIndex.nix { inherit pkgs lib; };
-  mkTarball = import ./nix/mkTarball.nix { inherit pkgs lib mkIndex; };
-
   # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
   # The man output fails to build for ARMv7 glibc targets
   armv7Pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.extend (final: prev:
@@ -339,7 +336,8 @@ let
   };
 
   initArtifacts = import ./nix/init-artifacts.nix {
-    inherit self pkgs lib mkIndex mkTarball;
+    inherit self pkgs lib;
+    inherit (bmc.lib) mkIndex mkTarball mkFactoryIndex;
     packages = armv7PackageDefs;
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
     hooksOverridePath = "${nativeHooksPackage}/hooks";

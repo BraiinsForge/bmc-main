@@ -1,17 +1,21 @@
-# init-artifacts: Produces the initialization index and tarball for ARM.
+# init-artifacts: Produces the initialization index, tarball, and factory index for ARM.
 #
 # Selects init packages from the full packages attrset and produces
-# the init-index and init-tarball for device provisioning.
+# the init-index, init-tarball, and init-factory-index for device provisioning.
 { self
 , pkgs
 , lib
 , mkIndex
 , mkTarball
+, mkFactoryIndex
 , bmc-nix-cli
 , packages
 , hooksOverridePath ? null # native hooks for cross-compilation bootstrap
 }:
 let
+  bosVersion = "2026-03-27-0-a11e594b-26.02.1";
+  profilePath = "/nix/var/nix/gcroots/profiles/bmc";
+
   initPackageNames = [
     "core"
     "nix"
@@ -37,15 +41,27 @@ let
   tarball = mkTarball {
     packages = initPackages;
     inherit bmc-nix-cli hooksOverridePath;
-    bos_version = "26.02";
+    bos_version = bosVersion;
+    profile_path = profilePath;
     extraFiles = pkgs.writeTextDir "etc/nix/nix.conf" ''
       substituters = https://cache.braiins.com
       # trusted-public-keys = cache.braiins.com:placeholder
       extra-experimental-features = nix-command flakes
     '';
   };
+
+  # Factory index — placeholder URL for local testing.
+  # CI replaces this with the real URL via scripts/build-factory-index.sh.
+  factoryIndex = mkFactoryIndex {
+    tarballs = [{
+      bos_version = bosVersion;
+      download_url = "https://cache.braiins.com/v1/nix-${bosVersion}.tar.gz";
+      profile_path = profilePath;
+    }];
+  };
 in
 {
   init-index-armv7 = index;
   init-tarball-armv7 = tarball;
+  init-factory-index = factoryIndex;
 }
