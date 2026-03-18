@@ -1,0 +1,75 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+
+#![allow(dead_code)]
+
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+
+use bmc_nix::types::*;
+
+pub fn create_activation_entrypoint(store_path: &Path) {
+    let activation_dir = store_path.join("core/activation");
+    std::fs::create_dir_all(&activation_dir).expect("BUG: create activation dir");
+    let entrypoint = activation_dir.join("entrypoint");
+    std::fs::write(
+        &entrypoint,
+        r#"#!/bin/sh
+set -e
+profile_dir="$(dirname "$PROFILE_NEW_GENERATION")"
+current_link="$profile_dir/current"
+gen_dir_name="$(basename "$PROFILE_NEW_GENERATION")"
+tmp_link="$profile_dir/current.tmp"
+rm -f "$tmp_link"
+ln -s "$gen_dir_name" "$tmp_link"
+mv -Tf "$tmp_link" "$current_link"
+"#,
+    )
+    .expect("BUG: write entrypoint");
+    std::fs::set_permissions(&entrypoint, std::fs::Permissions::from_mode(0o755))
+        .expect("BUG: set permissions");
+}
+
+pub fn create_fake_store(base: &Path, files: &[&str]) {
+    for file_path in files {
+        let full_path = base.join(file_path);
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent).expect("BUG: should create parent dirs");
+        }
+        std::fs::write(&full_path, format!("content of {file_path}"))
+            .expect("BUG: should write fake file");
+    }
+}
+
+pub fn create_fake_store_path(
+    base: &Path,
+    name: &str,
+    version: &str,
+    files: &[(&str, &str)],
+) -> PathBuf {
+    let store_path = base.join(format!("nix-store-{name}-{version}"));
+    for (path, content) in files {
+        let file_path = store_path.join(path);
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent).expect("BUG: create dirs");
+        }
+        std::fs::write(&file_path, content).expect("BUG: write file");
+    }
+    store_path
+}
+
+pub fn test_resolved_package(name: &str, version: &str, store_path: &str) -> ResolvedPackage {
+    ResolvedPackage {
+        name: name.into(),
+        version: version.into(),
+        store_path: store_path.into(),
+        cache_url: None,
+        cache_name: "local".into(),
+        category: None,
+        description: None,
+        upgrade_strategy: None,
+        install_strategy: None,
+        installed_by: InstalledBy::User,
+        installed_from: "local".into(),
+        pinned: PinStrategy::None,
+    }
+}
