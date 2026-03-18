@@ -15,9 +15,10 @@ The build infrastructure produces three kinds of artifacts:
 3. **Tarball** (`.tar.gz`) — initial Nix store snapshot for device
    initialization, containing packages and a pre-built profile
 
-The factory index (`miniminer-factory.json`) is NOT built by Nix — it
-aggregates tarballs across multiple nixpkgs versions and is produced
-by external tooling (CI).
+The factory index (`miniminer-factory.json`) can be built either by
+Nix (`mkFactoryIndex.nix`, for local testing with placeholder URLs)
+or by CI tooling (`scripts/build-factory-index.sh`, assembling real
+download URLs from tarball `metadata.json` files).
 
 ---
 
@@ -30,9 +31,10 @@ function, named after the file:
 nix/
 ├── workspace.nix          # Rust crates, build profiles, devShells
 ├── mkWidgetPackage.nix    # Build a widget crate into a package derivation
-├── mkIndex.nix            # Package list → miniminer-index.json
+├── mkIndex.nix            # Package list → index.json
 ├── mkTarball.nix          # Package list + bmc-nix CLI → .tar.gz + metadata
-└── artifacts.nix          # Package list, index, and tarball definitions
+├── mkFactoryIndex.nix     # Tarball entries → miniminer-factory.json
+└── init-artifacts.nix     # Package list, index, tarball, and factory index
 ```
 
 `flake.nix` imports these files and passes shared arguments (`pkgs`,
@@ -91,8 +93,8 @@ entries. Each entry pairs a Nix derivation with its metadata:
     version = "2.1.0";
     category = "core";        # "core", "widget", etc.
     description = "Main display application";
-    upgrade_strategy = "reboot"; # "reboot" or false
-    install_strategy = false;
+    upgrade_strategy = "reboot"; # "reboot" or null
+    install_strategy = null;
     # cache = "default";    # optional — defaults to first entry in caches
   }
   {
@@ -101,8 +103,8 @@ entries. Each entry pairs a Nix derivation with its metadata:
     version = "1.0.0";
     category = "widget";
     description = "Digital clock widget";
-    upgrade_strategy = false;
-    install_strategy = false;
+    upgrade_strategy = null;
+    install_strategy = null;
   }
 ]
 ```
@@ -193,7 +195,7 @@ Builds a `miniminer-index.json` from a list of package entries.
 , indexes ? []      # [ "https://..." ] — federated index URLs
 , commit ? ""       # git commit hash for provenance field
 }:
-# Output: derivation producing $out/miniminer-index.json
+# Output: derivation producing $out/index.json
 ```
 
 **Implementation approach:**
@@ -222,7 +224,7 @@ The output follows this schema:
       "category": "...",
       "description": "...",
       "upgrade_strategy": "...",
-      "install_strategy": false
+      "install_strategy": null
     }
   ]
 }
@@ -248,7 +250,7 @@ Builds an initial Nix store tarball for device initialization.
                      # into the tarball root (e.g. /etc/nix/nix.conf)
 }:
 # Output: derivation producing:
-#   $out/miniminer-nix-<bos_version>.tar.gz
+#   $out/nix-<bos_version>.tar.gz
 #   $out/metadata.json
 ```
 
@@ -341,7 +343,7 @@ This is the most involved derivation. Steps inside the build:
 {
   "bos_version": "26.01",
   "profile_path": "/nix/var/nix/gcroots/profiles/bmc",
-  "tarball_name": "miniminer-nix-26.01.tar.gz"
+  "tarball_name": "nix-26.01.tar.gz"
 }
 ```
 
@@ -385,7 +387,7 @@ let
       category = "core";
       description = "Main display application";
       upgrade_strategy = "reboot";
-      install_strategy = false;
+      install_strategy = null;
     }
     {
       pkg = nix;
@@ -394,7 +396,7 @@ let
       category = "core";
       description = "Nix package manager";
       upgrade_strategy = "reboot";
-      install_strategy = false;
+      install_strategy = null;
     }
     {
       pkg = digital-clock;
@@ -402,8 +404,8 @@ let
       version = "1.0.0";
       category = "widget";
       description = "Digital clock widget";
-      upgrade_strategy = false;
-      install_strategy = false;
+      upgrade_strategy = null;
+      install_strategy = null;
     }
   ];
 
@@ -454,8 +456,8 @@ in
 {
   packages.x86_64-linux = workspace.packages // {
     inherit (artifacts) index tarball;
-    # nix build .#index    → result/miniminer-index.json
-    # nix build .#tarball  → result/miniminer-nix-26.01.tar.gz
+    # nix build .#index    → result/index.json
+    # nix build .#tarball  → result/nix-26.01.tar.gz
     #                        result/metadata.json
   };
 }
