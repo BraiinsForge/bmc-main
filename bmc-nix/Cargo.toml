@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+futures.workspace = true
 libc.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 semver = { workspace = true }
