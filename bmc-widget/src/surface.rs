@@ -90,12 +90,21 @@ pub struct XdgSurfaceClient {
     conn: Connection,
     queue: EventQueue<XdgSurfaceState>,
     state: XdgSurfaceState,
+    /// Per-slot cached `wl_buffer`s for double-buffered rendering.
+    /// Widgets that reuse the same DMA-BUF fd/stride across frames for a
+    /// given slot can avoid per-frame `wl_buffer` creation overhead.
+    cached_buffers: Vec<Option<wl_buffer::WlBuffer>>,
 }
 
 impl fmt::Debug for XdgSurfaceClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cached = self.cached_buffers.iter().filter(|b| b.is_some()).count();
         f.debug_struct("XdgSurfaceClient")
             .field("state", &self.state)
+            .field(
+                "cached_buffers",
+                &format_args!("{cached}/{}", self.cached_buffers.len()),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -172,7 +181,12 @@ impl XdgSurfaceClient {
 
         tracing::info!("XDG surface configured: {}x{}", state.width, state.height);
 
-        Ok(Self { conn, queue, state })
+        Ok(Self {
+            conn,
+            queue,
+            state,
+            cached_buffers: Vec::new(),
+        })
     }
 
     /// Get a reference to the surface state.
@@ -197,7 +211,6 @@ impl XdgSurfaceClient {
     /// Creates a `wl_buffer` from the DMA-BUF info, attaches it to the
     /// surface, damages the full area, optionally requests a frame callback,
     /// and commits.
-    #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
     pub fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> Result<()> {
         let qh = self.queue.handle();
         let linux_dmabuf = self
@@ -205,11 +218,62 @@ impl XdgSurfaceClient {
             .linux_dmabuf
             .as_ref()
             .context("zwp_linux_dmabuf_v1 not available")?;
-        let surface = self.state.surface.as_ref().context("surface not created")?;
 
         let buffer = create_buffer_from_dmabuf(linux_dmabuf, info, &qh);
+        self.submit_buffer(&buffer, info, request_frame)
+    }
 
-        surface.attach(Some(&buffer), 0, 0);
+    /// Commit a cached DMA-BUF frame for a double-buffer slot.
+    ///
+    /// On first call for a given `slot`, creates a `wl_buffer` from the
+    /// DMA-BUF info and caches it. Subsequent calls reuse the cached buffer,
+    /// avoiding per-frame `wl_buffer` creation overhead.
+    ///
+    /// Call [`invalidate_cached_buffers`](Self::invalidate_cached_buffers)
+    /// when the surface is resized or the underlying DMA-BUF changes.
+    pub fn commit_cached_buffer(
+        &mut self,
+        info: &DmaBufInfo,
+        slot: usize,
+        request_frame: bool,
+    ) -> Result<()> {
+        let qh = self.queue.handle();
+        let linux_dmabuf = self
+            .state
+            .linux_dmabuf
+            .as_ref()
+            .context("zwp_linux_dmabuf_v1 not available")?;
+
+        // Grow slot storage if needed
+        if slot >= self.cached_buffers.len() {
+            self.cached_buffers.resize_with(slot + 1, || None);
+        }
+
+        // Create and cache the wl_buffer on first use for this slot
+        if self.cached_buffers[slot].is_none() {
+            let buffer = create_buffer_from_dmabuf(linux_dmabuf, info, &qh);
+            self.cached_buffers[slot] = Some(buffer);
+            tracing::debug!("Cached wl_buffer for slot {slot}");
+        }
+
+        let buffer = self.cached_buffers[slot]
+            .as_ref()
+            .expect("BUG: cached buffer should exist after creation above");
+        self.submit_buffer(buffer, info, request_frame)
+    }
+
+    /// Attach buffer, damage, optionally request frame callback, and commit.
+    #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
+    fn submit_buffer(
+        &self,
+        buffer: &wl_buffer::WlBuffer,
+        info: &DmaBufInfo,
+        request_frame: bool,
+    ) -> Result<()> {
+        let qh = self.queue.handle();
+        let surface = self.state.surface.as_ref().context("surface not created")?;
+
+        surface.attach(Some(buffer), 0, 0);
         surface.damage_buffer(0, 0, info.width as i32, info.height as i32);
 
         if request_frame {
@@ -218,6 +282,23 @@ impl XdgSurfaceClient {
 
         surface.commit();
         Ok(())
+    }
+
+    /// Invalidate all cached buffer slots.
+    ///
+    /// Destroys any cached `wl_buffer`s. Call this when the surface is
+    /// resized or when the underlying DMA-BUF export buffers are recreated.
+    pub fn invalidate_cached_buffers(&mut self) {
+        let mut destroyed = 0_u32;
+        for cached in &mut self.cached_buffers {
+            if let Some(buf) = cached.take() {
+                buf.destroy();
+                destroyed += 1;
+            }
+        }
+        if destroyed > 0 {
+            tracing::debug!("Destroyed {destroyed} cached wl_buffer(s)");
+        }
     }
 
     /// Request the first frame callback (call once after setup, before the
@@ -240,8 +321,11 @@ impl XdgSurfaceClient {
 
     /// Poll for Wayland events with a timeout, then dispatch pending events.
     ///
-    /// Returns `Ok(true)` if events were dispatched, `Ok(false)` on timeout.
-    /// A timeout of `-1` blocks indefinitely; `0` is non-blocking.
+    /// Returns `Ok(true)` on all normal paths (events read, timeout, or
+    /// already-queued events dispatched). Returns `Ok(false)` only if
+    /// `poll(2)` fails with `EAGAIN`/`EWOULDBLOCK` (non-fatal, pending
+    /// events still dispatched). A timeout of `-1` blocks indefinitely;
+    /// `0` is non-blocking.
     ///
     /// This follows the `prepare_read → poll → read/cancel → dispatch_pending`
     /// pattern required by `wayland-client`.
@@ -281,10 +365,26 @@ impl XdgSurfaceClient {
                         // Error
                         let err = std::io::Error::last_os_error();
                         drop(guard);
-                        if err.kind() != std::io::ErrorKind::Interrupted {
-                            return Err(err).context("poll(2) on Wayland fd failed");
+                        #[expect(
+                            clippy::wildcard_enum_match_arm,
+                            reason = "all other io::ErrorKind variants are fatal"
+                        )]
+                        match err.kind() {
+                            std::io::ErrorKind::Interrupted => {
+                                // EINTR — not fatal, just dispatch pending
+                            }
+                            std::io::ErrorKind::WouldBlock => {
+                                // EAGAIN — non-fatal, dispatch pending and
+                                // signal caller via Ok(false)
+                                self.queue
+                                    .dispatch_pending(&mut self.state)
+                                    .context("Wayland dispatch failed")?;
+                                return Ok(false);
+                            }
+                            _ => {
+                                return Err(err).context("poll(2) on Wayland fd failed");
+                            }
                         }
-                        // EINTR — not fatal, just dispatch pending
                     }
                 }
             }
