@@ -25,7 +25,7 @@
             nixlib.overlays.default
             (nixlib.mkRustOverlayFromToolchainFile {
               file = ./rust-toolchain.toml;
-              sha256 = "sha256-X/4ZBHO3iW0fOenQ3foEvscgAPJYl2abspaBThDOukI=";
+              sha256 = "sha256-qqF33vNuAdU5vua96VKVIwuc43j4EFeEXbjQ6+l4mO4=";
             })
             # Overlay yarn & nodejs
             (final: prev: {
