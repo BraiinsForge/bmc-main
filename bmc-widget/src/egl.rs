@@ -130,7 +130,8 @@ impl EglContext {
         tracing::info!("EGL context created");
 
         // Make context current (surfaceless)
-        let _ = unsafe { egl_context.make_current() };
+        unsafe { egl_context.make_current() }
+            .context("Failed to make EGL context current (surfaceless)")?;
 
         // Load EGL/GL extensions
         let egl_create_image: EglCreateImageKhr = load_egl_proc("eglCreateImageKHR")?;
