@@ -10,6 +10,9 @@
   "binary": "bin/bmc-widget-wasm",
   "settings": [],
   "sizes": [
+    "small",
+    "medium",
+    "large",
     "full"
   ],
   "params": {
