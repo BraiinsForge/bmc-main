@@ -11,7 +11,7 @@
 
 use std::cell::RefCell;
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 // ── Constants ────────────────────────────────────────────────────

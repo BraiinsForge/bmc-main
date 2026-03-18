@@ -9,10 +9,10 @@
 use crate::host::{ButtonSize, ButtonStyle};
 use crate::props;
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use crate::tree::*;
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_protocol::*;
 
 /// Configuration for a number input.

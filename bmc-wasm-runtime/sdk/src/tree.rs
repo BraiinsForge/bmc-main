@@ -16,7 +16,7 @@ use std::vec::Vec;
 use std::cell::RefCell;
 
 use bmc_wasm_protocol::{
-    AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MESH,
+    AnimProperty, Color, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MESH,
     DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE,
     DRAW_TEXT, Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN,
     NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL,
@@ -191,7 +191,7 @@ pub enum Interpolation {
 pub struct Span {
     pub text: String,
     pub weight: Option<u16>,
-    pub color: Option<u32>,
+    pub color: Option<Color>,
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
@@ -317,6 +317,10 @@ impl TreeBuffer {
         self.data.extend_from_slice(&v.to_le_bytes());
     }
 
+    fn write_color(&mut self, c: Color) {
+        self.data.extend_from_slice(&c.to_u32().to_le_bytes());
+    }
+
     fn write_props(&mut self, props: &PropsData) {
         self.data.extend_from_slice(&props.to_bytes());
     }
@@ -362,7 +366,7 @@ impl TreeBuffer {
             self.write_u16(bytes.len() as u16);
             self.write_bytes(bytes);
             if let Some(color) = span.color {
-                self.write_u32(color);
+                self.write_color(color);
             }
         }
     }
@@ -473,9 +477,9 @@ impl TreeBuffer {
         track_h: f32,
         mode: &ProgressMode,
         active: bool,
-        fill_color: u32,
-        track_color: u32,
-        bg_color: u32,
+        fill_color: Color,
+        track_color: Color,
+        bg_color: Color,
         skin: &Option<SliderSkin>,
     ) {
         self.write_u8(NODE_PROGRESS_BAR);
@@ -494,9 +498,9 @@ impl TreeBuffer {
             }
         }
         self.write_u8(u8::from(active));
-        self.write_u32(fill_color);
-        self.write_u32(track_color);
-        self.write_u32(bg_color);
+        self.write_color(fill_color);
+        self.write_color(track_color);
+        self.write_color(bg_color);
         // Optional slider skin
         if let Some(sk) = skin {
             self.write_u8(1);
@@ -518,13 +522,13 @@ impl TreeBuffer {
     }
 
     /// Write a rect draw command (local coords)
-    pub fn write_draw_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32) {
+    pub fn write_draw_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
         self.write_u8(DRAW_RECT);
         self.write_f32(x);
         self.write_f32(y);
         self.write_f32(w);
         self.write_f32(h);
-        self.write_u32(color);
+        self.write_color(color);
     }
 }
 
@@ -579,14 +583,14 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
-        color: u32,
+        color: Color,
     },
     /// Filled circle at absolute local position (cx, cy = center)
     Circle {
         cx: f32,
         cy: f32,
         r: f32,
-        color: u32,
+        color: Color,
     },
     /// Center any draw command in canvas
     Centered { inner: Box<Draw> },
@@ -604,7 +608,7 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
-        color: u32,
+        color: Color,
         icon_id: u16,
         anti_alias: bool,
     },
@@ -627,7 +631,7 @@ pub enum Draw {
     /// with optional Catmull-Rom smoothing.
     Path {
         points: Vec<(f32, f32)>,
-        color: u32,
+        color: Color,
         stroke_width: f32,
         closed: bool,
         fill: bool,
@@ -699,13 +703,13 @@ impl Draw {
 
     /// Rectangle at local position within canvas.
     #[must_use]
-    pub fn rect(x: f32, y: f32, w: f32, h: f32, color: u32) -> Self {
+    pub fn rect(x: f32, y: f32, w: f32, h: f32, color: Color) -> Self {
         Self::Rect { x, y, w, h, color }
     }
 
     /// Filled circle at local position within canvas.
     #[must_use]
-    pub fn circle(cx: f32, cy: f32, r: f32, color: u32) -> Self {
+    pub fn circle(cx: f32, cy: f32, r: f32, color: Color) -> Self {
         Self::Circle { cx, cy, r, color }
     }
 
@@ -744,7 +748,7 @@ impl Draw {
     /// Use `TRANSPARENT` (0) as color to render with original SVG colors,
     /// or pass a color to tint the entire icon.
     #[must_use]
-    pub fn icon(x: f32, y: f32, w: f32, h: f32, icon_data: &Icon, color: u32) -> Self {
+    pub fn icon(x: f32, y: f32, w: f32, h: f32, icon_data: &Icon, color: Color) -> Self {
         let icon_id = ensure_registered(icon_data);
         Self::Icon {
             x,
@@ -761,7 +765,7 @@ impl Draw {
     ///
     /// Use `ICON_CLOSE` or other `ICON_*` constants from the protocol crate.
     #[must_use]
-    pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: u16, color: u32) -> Self {
+    pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: u16, color: Color) -> Self {
         Self::Icon {
             x,
             y,
@@ -985,7 +989,7 @@ impl Draw {
     pub fn path(
         points: Vec<(f32, f32)>,
         stroke_width: f32,
-        color: u32,
+        color: Color,
         closed: bool,
         fill: bool,
         interpolation: Interpolation,
@@ -1066,16 +1070,16 @@ impl Draw {
     #[must_use]
     pub fn animate_color(
         self,
-        from_color: u32,
-        to_color: u32,
+        from_color: Color,
+        to_color: Color,
         duration_ms: u32,
         easing: Easing,
         loop_mode: LoopMode,
     ) -> Self {
         self.animate(
             AnimProperty::Color,
-            f32::from_bits(from_color),
-            f32::from_bits(to_color),
+            f32::from_bits(from_color.to_u32()),
+            f32::from_bits(to_color.to_u32()),
             duration_ms,
             easing,
             loop_mode,
@@ -1183,11 +1187,11 @@ pub enum Node {
         padding: u16,
         backdrop_alpha: u8,
         /// Modal body background color. `0` = default (`GRAY_90`).
-        bg_color: u32,
+        bg_color: Color,
         /// Modal header background color. `0` = default (`GRAY_100`).
-        header_color: u32,
+        header_color: Color,
         /// Modal title text color. `0` = default (`GRAY_10`).
-        title_color: u32,
+        title_color: Color,
         /// Maximum modal width. `0` = no limit.
         max_width: u16,
         body: Vec<Node>,
@@ -1208,9 +1212,9 @@ pub enum Node {
         track_h: f32,
         mode: ProgressMode,
         active: bool,
-        fill_color: u32,
-        track_color: u32,
-        bg_color: u32,
+        fill_color: Color,
+        track_color: Color,
+        bg_color: Color,
         skin: Option<SliderSkin>,
     },
 }
@@ -1367,9 +1371,9 @@ pub fn progress_bar(
     track_h: f32,
     mode: ProgressMode,
     active: bool,
-    fill_color: u32,
-    track_color: u32,
-    bg_color: u32,
+    fill_color: Color,
+    track_color: Color,
+    bg_color: Color,
     skin: Option<SliderSkin>,
 ) -> Node {
     Node::ProgressBar {
@@ -1425,14 +1429,14 @@ pub struct ModalProps {
     /// Default: 128 (50% opacity)
     pub backdrop_alpha: u8,
 
-    /// Modal body background color. `0` = use default (GRAY_90).
-    pub bg_color: u32,
+    /// Modal body background color. Default = use default (GRAY_90).
+    pub bg_color: Color,
 
-    /// Modal header background color. `0` = use default (GRAY_100).
-    pub header_color: u32,
+    /// Modal header background color. Default = use default (GRAY_100).
+    pub header_color: Color,
 
-    /// Modal title text color. `0` = use default (GRAY_10).
-    pub title_color: u32,
+    /// Modal title text color. Default = use default (GRAY_10).
+    pub title_color: Color,
 
     /// Maximum modal width in pixels. `0` = no limit (fill available space).
     pub max_width: u16,
@@ -1703,8 +1707,8 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
                 } else {
                     buf.write_u8(0);
                 }
-                buf.write_u32(s.text_color);
-                buf.write_u32(s.pressed_text_color);
+                buf.write_color(s.text_color);
+                buf.write_color(s.pressed_text_color);
                 buf.write_u8(u8::from(s.opaque));
             } else {
                 buf.write_u8(0); // no skin
@@ -1767,9 +1771,9 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
                 *content_height,
                 body.len() as u16,
             );
-            buf.write_u32(*bg_color);
-            buf.write_u32(*header_color);
-            buf.write_u32(*title_color);
+            buf.write_color(*bg_color);
+            buf.write_color(*header_color);
+            buf.write_color(*title_color);
             buf.write_u16(*max_width);
             for child in body {
                 serialize_node(buf, child);
@@ -1824,7 +1828,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*cx);
             buf.write_f32(*cy);
             buf.write_f32(*r);
-            buf.write_u32(*color);
+            buf.write_color(*color);
         }
         Draw::Icon {
             x,
@@ -1840,7 +1844,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_f32(*w);
             buf.write_f32(*h);
-            buf.write_u32(*color);
+            buf.write_color(*color);
             buf.write_u16(*icon_id);
             buf.write_u8(u8::from(*anti_alias));
         }
@@ -1939,7 +1943,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
                 buf.write_f32(x);
                 buf.write_f32(y);
             }
-            buf.write_u32(*color);
+            buf.write_color(*color);
             if !fill {
                 buf.write_f32(*stroke_width);
             }

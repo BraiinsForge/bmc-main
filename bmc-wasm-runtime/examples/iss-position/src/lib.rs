@@ -14,7 +14,7 @@
 use std::cell::{Cell, RefCell};
 use std::f64::consts::PI;
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 // ============================================================================
@@ -60,9 +60,9 @@ fn globe_zoom_to_camera(zoom: f32) -> f32 {
 const GLOBE_SMOOTH_MS: f64 = 300.0;
 const ISS_ICON: Icon = include_icon!("assets/icon-iss.svg");
 
-const MARKET_COLOR: u32 = BLUE_70;
-const ORBIT_COLOR: u32 = color!(MARKET_COLOR, alpha: 0.8);
-const MARKER_GLOW_COLOR: u32 = color!(MARKET_COLOR, alpha: 0.2);
+const MARKET_COLOR: Color = BLUE_70;
+const ORBIT_COLOR: Color = color!(MARKET_COLOR, alpha: 0.8);
+const MARKER_GLOW_COLOR: Color = color!(MARKET_COLOR, alpha: 0.2);
 const MARKER_GLOW_R: f32 = 40.0;
 const MARKER_SOLID_R: f32 = 24.0;
 const MARKER_SIZE: f32 = 56.0;
@@ -540,7 +540,7 @@ fn project_point_to_globe(
 /// Render landmark dots + labels on the globe for visual texture mapping validation.
 fn render_debug_landmarks(draws: &mut Vec<Draw>, center: &SmoothedCenter, zoom: f32) {
     /// (lat, lon, color, label) — well-known cities spread across all continents + the origin.
-    const LANDMARKS: &[(f64, f64, u32, &str)] = &[
+    const LANDMARKS: &[(f64, f64, Color, &str)] = &[
         (51.5, -0.1, RED_50, "LDN"),      // London
         (35.7, 139.7, GREEN_50, "TKY"),   // Tokyo
         (40.7, -74.0, ORANGE_50, "NYC"),  // New York

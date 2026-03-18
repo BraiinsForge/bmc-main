@@ -39,13 +39,13 @@ pub fn toggle_debug_layout() {
 }
 
 /// Hot-pink-ish colors cycling by depth for debug outlines.
-const DEBUG_COLORS: [u32; 6] = [
-    0xFF_00_FF_FF, // magenta
-    0x00_FF_FF_FF, // cyan
-    0xFF_FF_00_FF, // yellow
-    0xFF_00_00_FF, // red
-    0x00_FF_00_FF, // green
-    0xFF_80_00_FF, // orange
+const DEBUG_COLORS: [Color; 6] = [
+    Color::from_hex(0xFF_00_FF), // magenta
+    Color::from_hex(0x00_FF_FF), // cyan
+    Color::from_hex(0xFF_FF_00), // yellow
+    Color::from_hex(0xFF_00_00), // red
+    Color::from_hex(0x00_FF_00), // green
+    Color::from_hex(0xFF_80_00), // orange
 ];
 
 // Re-export for other modules
@@ -56,7 +56,7 @@ pub use bmc_wasm_protocol::{CrossAlign, PropsData, TextAlign, TextOverflow, Text
 pub struct SpanData {
     pub text: String,
     pub weight: Option<u16>,
-    pub color: Option<u32>,
+    pub color: Option<Color>,
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
@@ -104,7 +104,7 @@ pub enum DrawCommand {
         y: f32,
         w: f32,
         h: f32,
-        color: u32,
+        color: Color,
     },
     Centered {
         inner: Box<DrawCommand>,
@@ -118,14 +118,14 @@ pub enum DrawCommand {
         cx: f32,
         cy: f32,
         r: f32,
-        color: u32,
+        color: Color,
     },
     Icon {
         x: f32,
         y: f32,
         w: f32,
         h: f32,
-        color: u32,
+        color: Color,
         icon_id: u16,
         anti_alias: bool,
     },
@@ -148,7 +148,7 @@ pub enum DrawCommand {
     },
     Path {
         points: Vec<(f32, f32)>,
-        color: u32,
+        color: Color,
         stroke_width: f32,
         closed: bool,
         fill: bool,
@@ -217,8 +217,8 @@ pub struct NinePatchData {
 pub struct ButtonSkinData {
     pub normal: NinePatchData,
     pub pressed: Option<NinePatchData>,
-    pub text_color: u32,
-    pub pressed_text_color: u32,
+    pub text_color: Color,
+    pub pressed_text_color: Color,
     /// Bitmap already contains the visual content — skip rendering icon/label.
     pub opaque: bool,
 }
@@ -274,12 +274,12 @@ pub enum TreeNode {
         backdrop_alpha: u8,
         title: String,
         content_height: f32,
-        /// Modal body background color. `0` = default.
-        bg_color: u32,
-        /// Header background color. `0` = default.
-        header_color: u32,
-        /// Title text color. `0` = default.
-        title_color: u32,
+        /// Modal body background color. `Color::default()` = default.
+        bg_color: Color,
+        /// Header background color. `Color::default()` = default.
+        header_color: Color,
+        /// Title text color. `Color::default()` = default.
+        title_color: Color,
         /// Maximum modal width. `0` = no limit.
         max_width: u16,
         body: Vec<TreeNode>,
@@ -298,9 +298,9 @@ pub enum TreeNode {
         mode: u8,
         fraction: f32,
         active: bool,
-        fill_color: u32,
-        track_color: u32,
-        bg_color: u32,
+        fill_color: Color,
+        track_color: Color,
+        bg_color: Color,
         skin: Option<SliderSkinData>,
     },
 }
@@ -410,7 +410,7 @@ impl<'a> TreeReader<'a> {
         };
 
         let color = if has_color {
-            Some(self.read_u32()?)
+            Some(Color::from_raw(self.read_u32()?))
         } else {
             None
         };
@@ -479,8 +479,8 @@ impl<'a> TreeReader<'a> {
                     } else {
                         None
                     };
-                    let text_color = self.read_u32()?;
-                    let pressed_text_color = self.read_u32()?;
+                    let text_color = Color::from_raw(self.read_u32()?);
+                    let pressed_text_color = Color::from_raw(self.read_u32()?);
                     let opaque = self.read_u8()? != 0;
                     Some(ButtonSkinData {
                         normal,
@@ -535,9 +535,9 @@ impl<'a> TreeReader<'a> {
                 let title = self.read_string(title_len)?;
                 let content_height = self.read_f32()?;
                 let child_count = self.read_u16()?;
-                let bg_color = self.read_u32()?;
-                let header_color = self.read_u32()?;
-                let title_color = self.read_u32()?;
+                let bg_color = Color::from_raw(self.read_u32()?);
+                let header_color = Color::from_raw(self.read_u32()?);
+                let title_color = Color::from_raw(self.read_u32()?);
                 let max_width = self.read_u16()?;
                 let mut body = Vec::with_capacity(child_count as usize);
                 for _ in 0..child_count {
@@ -610,9 +610,9 @@ impl<'a> TreeReader<'a> {
                 let mode = self.read_u8()?;
                 let fraction = self.read_f32()?;
                 let active = self.read_u8()? != 0;
-                let fill_color = self.read_u32()?;
-                let track_color = self.read_u32()?;
-                let bg_color = self.read_u32()?;
+                let fill_color = Color::from_raw(self.read_u32()?);
+                let track_color = Color::from_raw(self.read_u32()?);
+                let bg_color = Color::from_raw(self.read_u32()?);
                 let skin = if self.read_u8()? != 0 {
                     Some(SliderSkinData {
                         track: NinePatchData {
@@ -656,14 +656,14 @@ impl<'a> TreeReader<'a> {
                 let y = self.read_f32()?;
                 let w = self.read_f32()?;
                 let h = self.read_f32()?;
-                let color = self.read_u32()?;
+                let color = Color::from_raw(self.read_u32()?);
                 Ok(DrawCommand::Rect { x, y, w, h, color })
             }
             DRAW_CIRCLE => {
                 let cx = self.read_f32()?;
                 let cy = self.read_f32()?;
                 let r = self.read_f32()?;
-                let color = self.read_u32()?;
+                let color = Color::from_raw(self.read_u32()?);
                 Ok(DrawCommand::Circle { cx, cy, r, color })
             }
             DRAW_ICON => {
@@ -671,7 +671,7 @@ impl<'a> TreeReader<'a> {
                 let y = self.read_f32()?;
                 let w = self.read_f32()?;
                 let h = self.read_f32()?;
-                let color = self.read_u32()?;
+                let color = Color::from_raw(self.read_u32()?);
                 let icon_id = self.read_u16()?;
                 let anti_alias = self.read_u8()? != 0;
                 Ok(DrawCommand::Icon {
@@ -790,7 +790,7 @@ impl<'a> TreeReader<'a> {
                     let y = self.read_f32()?;
                     points.push((x, y));
                 }
-                let color = self.read_u32()?;
+                let color = Color::from_raw(self.read_u32()?);
                 let stroke_width = if fill { 0.0 } else { self.read_f32()? };
                 Ok(DrawCommand::Path {
                     points,
@@ -945,7 +945,7 @@ use std::time::Instant;
 use taffy::prelude::*;
 use taffy::{Overflow, Point};
 
-use crate::animation::{apply_easing, compute_animation_value, interpolate_color, multiply_alpha};
+use crate::animation::{apply_easing, compute_animation_value, interpolate_color};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::host_api::{
     AnimationState, FrameTimings, ModalState, PrevDrawValues, Quat, ScrollState, TransitionState,
@@ -1048,16 +1048,16 @@ struct ProgressBarData {
     mode: u8,
     fraction: f32,
     active: bool,
-    fill_color: u32,
-    track_color: u32,
-    bg_color: u32,
+    fill_color: Color,
+    track_color: Color,
+    bg_color: Color,
     skin: Option<SliderSkinData>,
 }
 
 /// Node data attached to taffy nodes
 #[derive(Clone, Default)]
 pub(crate) struct NodeContext {
-    background: u32,
+    background: Color,
     bg_nine_patch: BgNinePatch,
     paragraph: Option<ParagraphData>,
     button: Option<ButtonContext>,
@@ -1077,12 +1077,12 @@ struct ModalInfo {
     padding: u16,
     backdrop_alpha: u8,
     title: String,
-    /// Modal body background color. `0` = default.
-    bg_color: u32,
-    /// Header background color. `0` = default.
-    header_color: u32,
-    /// Title text color. `0` = default.
-    title_color: u32,
+    /// Modal body background color. `Color::default()` = default.
+    bg_color: Color,
+    /// Header background color. `Color::default()` = default.
+    header_color: Color,
+    /// Title text color. `Color::default()` = default.
+    title_color: Color,
     /// Maximum modal width. `0` = no limit.
     max_width: u16,
     body: Vec<TreeNode>,
@@ -1332,7 +1332,7 @@ fn build_taffy_node(
             };
 
             let id = taffy.new_with_children(style, &child_ids)?;
-            if props.background != 0 || props.bg_np_id != 0 {
+            if props.background != Color::default() || props.bg_np_id != 0 {
                 taffy.set_node_context(
                     id,
                     Some(NodeContext {
@@ -1764,7 +1764,7 @@ fn render_taffy_node(
                 np.right,
                 np.bottom,
             );
-        } else if ctx.background != 0 {
+        } else if ctx.background != Color::default() {
             renderer.fill_rect(x, y, w, h, ctx.background);
         }
 
@@ -2118,7 +2118,7 @@ fn render_squiggle(
     mid_y: f32,
     width: f32,
     track_h: f32,
-    color: u32,
+    color: Color,
     anim_ctx: &AnimationContext<'_>,
 ) {
     let amplitude = track_h / 2.0;
@@ -2208,7 +2208,7 @@ fn render_draw_inner(
     scale: f32,
     alpha: f32,
     orbit_angle_offset: f32,
-    color_override: Option<u32>,
+    color_override: Option<Color>,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
     match draw {
@@ -2220,10 +2220,11 @@ fn render_draw_inner(
             let sy = *y + offset_y + (*h - eh) / 2.0;
             let rx = cx + sx;
             let ry = cy + sy;
+            let base_color = color_override.unwrap_or(*color);
             let final_color = if alpha < 1.0 {
-                multiply_alpha(color_override.unwrap_or(*color), alpha)
+                base_color.scale_alpha(alpha)
             } else {
-                color_override.unwrap_or(*color)
+                base_color
             };
             if rotation == 0.0 {
                 renderer.fill_rect(rx, ry, ew, eh, final_color);
@@ -2253,10 +2254,11 @@ fn render_draw_inner(
             let sy = *y + offset_y + (*h - eh) / 2.0;
             let rx = cx + sx;
             let ry = cy + sy;
+            let base_color = color_override.unwrap_or(*color);
             let final_color = if alpha < 1.0 {
-                multiply_alpha(color_override.unwrap_or(*color), alpha)
+                base_color.scale_alpha(alpha)
             } else {
-                color_override.unwrap_or(*color)
+                base_color
             };
             if rotation == 0.0 {
                 renderer.draw_icon(rx, ry, ew, eh, final_color, *icon_id, *anti_alias);
@@ -2351,10 +2353,11 @@ fn render_draw_inner(
             let er = *r * scale;
             let scx = *circle_cx + offset_x;
             let scy = *circle_cy + offset_y;
+            let base_color = color_override.unwrap_or(*color);
             let final_color = if alpha < 1.0 {
-                multiply_alpha(color_override.unwrap_or(*color), alpha)
+                base_color.scale_alpha(alpha)
             } else {
-                color_override.unwrap_or(*color)
+                base_color
             };
             renderer.fill_circle(cx + scx, cy + scy, er, final_color);
         }
@@ -2437,7 +2440,7 @@ fn render_draw_inner(
             let mut acc_offset_x = offset_x;
             let mut acc_offset_y = offset_y;
             let mut acc_orbit_angle = orbit_angle_offset;
-            let mut acc_color: Option<u32> = color_override;
+            let mut acc_color: Option<Color> = color_override;
             let mut sphere_override: Option<(f32, f32, f32, f32, f32)> = None;
             let mut mesh_override: Option<MeshOverride> = None;
 
@@ -2467,8 +2470,8 @@ fn render_draw_inner(
                     AnimProperty::TranslateY => acc_offset_y += value,
                     AnimProperty::OrbitAngle => acc_orbit_angle += value,
                     AnimProperty::Color => {
-                        let from_color = f32::to_bits(anim_def.from);
-                        let to_color = f32::to_bits(anim_def.to);
+                        let from_color = Color::from_raw(f32::to_bits(anim_def.from));
+                        let to_color = Color::from_raw(f32::to_bits(anim_def.to));
                         // value is the raw lerped f32, recompute t for color
                         let range = anim_def.to - anim_def.from;
                         let t = if range.abs() > f32::EPSILON {
@@ -2684,10 +2687,11 @@ fn render_draw_inner(
             if points.len() < 2 {
                 return;
             }
+            let base_color = color_override.unwrap_or(*color);
             let final_color = if alpha < 1.0 {
-                multiply_alpha(color_override.unwrap_or(*color), alpha)
+                base_color.scale_alpha(alpha)
             } else {
-                color_override.unwrap_or(*color)
+                base_color
             };
 
             // Transform points: apply canvas offset + accumulated offset + scale
@@ -2736,10 +2740,11 @@ fn render_draw_inner(
             let ry = cy + *y + offset_y;
             let mut render_style = *style;
             render_style.size = (style.size as f32 * scale) as u32;
+            let base_color = color_override.unwrap_or(style.color);
             render_style.color = if alpha < 1.0 {
-                multiply_alpha(color_override.unwrap_or(style.color), alpha)
+                base_color.scale_alpha(alpha)
             } else {
-                color_override.unwrap_or(style.color)
+                base_color
             };
             if rotation == 0.0 {
                 renderer.draw_canvas_text(text, rx, ry, &render_style);
@@ -3108,7 +3113,7 @@ fn render_modal(
     // Draw backdrop (alpha from modal props, scaled by animation progress)
     let padding = f32::from(modal.padding);
     let backdrop_alpha = ((f32::from(modal.backdrop_alpha) / 255.0) * progress * 255.0) as u8;
-    let backdrop_color = u32::from_be_bytes([0, 0, 0, backdrop_alpha]);
+    let backdrop_color = Color::from_rgba(0, 0, 0, backdrop_alpha);
     renderer.fill_rect(0.0, 0.0, width, height, backdrop_color);
 
     // Modal content dimensions — adapt to viewport size
@@ -3151,26 +3156,26 @@ fn render_modal(
     // This prevents ugly alpha blending of text over background content
 
     // Draw modal background (CDS gray100 theme: body and header share GRAY_100)
-    let modal_bg = if modal.bg_color != 0 {
-        modal.bg_color
-    } else {
+    let modal_bg = if modal.bg_color == Color::default() {
         GRAY_100
+    } else {
+        modal.bg_color
     };
     renderer.fill_rect(modal_x, modal_y, modal_width, modal_height, modal_bg);
 
     // Draw header background (same as body by default per CDS)
-    let header_bg = if modal.header_color != 0 {
-        modal.header_color
-    } else {
+    let header_bg = if modal.header_color == Color::default() {
         GRAY_100
+    } else {
+        modal.header_color
     };
     renderer.fill_rect(modal_x, modal_y, modal_width, header_height, header_bg);
 
     // Draw header title
-    let title_fg = if modal.title_color != 0 {
-        modal.title_color
-    } else {
+    let title_fg = if modal.title_color == Color::default() {
         GRAY_10
+    } else {
+        modal.title_color
     };
     let title_size = if compact { 14 } else { 16 };
     let title_y_offset = if compact { 7.0 } else { 12.0 };
@@ -3381,7 +3386,7 @@ const NOTIF_ICON_GAP: f32 = 8.0;
 const NOTIF_TEXT_LEFT: f32 = NOTIF_BORDER_W + NOTIF_PAD + NOTIF_ICON_SIZE + NOTIF_ICON_GAP;
 
 /// Returns (accent_color, icon_id) for a notification kind byte.
-fn notification_accent(kind: u8) -> (u32, u16) {
+fn notification_accent(kind: u8) -> (Color, u16) {
     match kind {
         0 => (RED_60, ICON_ERROR),
         1 => (ORANGE_40, ICON_WARNING),
@@ -3514,7 +3519,7 @@ pub fn measure_notification_banner(
 pub fn render_notification_banner(
     title: &str,
     subtitle: &str,
-    accent: u32,
+    accent: Color,
     icon_id: u16,
     x: f32,
     y: f32,

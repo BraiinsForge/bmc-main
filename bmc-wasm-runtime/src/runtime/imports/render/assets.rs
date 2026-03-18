@@ -5,6 +5,7 @@
 #![expect(clippy::cast_possible_truncation)]
 
 use anyhow::{Result, bail};
+use bmc_wasm_protocol::colors::Color;
 use wasmi::{Caller, Extern, Linker};
 
 use crate::host_api::HostState;
@@ -83,7 +84,7 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
             state
                 .renderer
                 .bitmap_sample(bitmap_id as u16, x, y, w, h)
-                .unwrap_or(0)
+                .map_or(0, Color::to_u32)
         },
     )?;
 

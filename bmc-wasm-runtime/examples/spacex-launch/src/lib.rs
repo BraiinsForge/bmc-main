@@ -8,7 +8,7 @@
 
 use std::cell::{Cell, RefCell};
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 const FALCON_9: Bitmap = include_bitmap!("assets/falcon-9.png");

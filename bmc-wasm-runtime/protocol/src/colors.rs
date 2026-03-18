@@ -16,256 +16,402 @@
 //! Use `palette` trait methods (`Mix`, `Lighten`, `ShiftHue`, etc.) instead
 //! of hand-rolling math. Don't reimplement what upstream already provides.
 
-pub const GRAY_10: u32 = 0xF4F4_F4FF;
-pub const GRAY_20: u32 = 0xE0E0_E0FF;
-pub const GRAY_30: u32 = 0xC6C6_C6FF;
-pub const GRAY_40: u32 = 0xA8A8_A8FF;
-pub const GRAY_50: u32 = 0x8D8D_8DFF;
-pub const GRAY_60: u32 = 0x6F6F_6FFF;
-pub const GRAY_70: u32 = 0x5252_52FF;
-pub const GRAY_80: u32 = 0x3939_39FF;
-pub const GRAY_90: u32 = 0x2626_26FF;
-pub const GRAY_100: u32 = 0x1616_16FF;
+// ── Color type ──────────────────────────────────────────────────────
 
-pub const LIME__10: u32 = 0xE0FC_D6FF;
-pub const LIME__20: u32 = 0xA6F3_82FF;
-pub const LIME__30: u32 = 0x89DB_5DFF;
-pub const LIME__40: u32 = 0x6DBC_39FF;
-pub const LIME__50: u32 = 0x599F_2AFF;
-pub const LIME__60: u32 = 0x457D_1FFF;
-pub const LIME__70: u32 = 0x355C_15FF;
-pub const LIME__80: u32 = 0x2640_0CFF;
-pub const LIME__90: u32 = 0x182B_05FF;
-pub const LIME_100: u32 = 0x0819_05FF;
-
-pub const GREEN_10: u32 = 0xDDFB_E9FF;
-pub const GREEN_20: u32 = 0xA3F1_B9FF;
-pub const GREEN_30: u32 = 0x5ADF_88FF;
-pub const GREEN_40: u32 = 0x34C0_6AFF;
-pub const GREEN_50: u32 = 0x13A4_54FF;
-pub const GREEN_60: u32 = 0x1680_42FF;
-pub const GREEN_70: u32 = 0x195E_33FF;
-pub const GREEN_80: u32 = 0x1242_23FF;
-pub const GREEN_90: u32 = 0x102B_19FF;
-pub const GREEN_100: u32 = 0x0619_12FF;
-
-pub const TEAL_10: u32 = 0xE0FA_FBFF;
-pub const TEAL_20: u32 = 0xA3EC_F1FF;
-pub const TEAL_30: u32 = 0x56D8_E0FF;
-pub const TEAL_40: u32 = 0x00BA_C5FF;
-pub const TEAL_50: u32 = 0x009D_A7FF;
-pub const TEAL_60: u32 = 0x007C_83FF;
-pub const TEAL_70: u32 = 0x005E_5EFF;
-pub const TEAL_80: u32 = 0x0040_42FF;
-pub const TEAL_90: u32 = 0x002A_2DFF;
-pub const TEAL_100: u32 = 0x031A_1CFF;
-
-pub const BLUE_10: u32 = 0xECF5_FFFF;
-pub const BLUE_20: u32 = 0xD0E0_FFFF;
-pub const BLUE_30: u32 = 0xA9C7_FFFF;
-pub const BLUE_40: u32 = 0x7CA8_FFFF;
-pub const BLUE_50: u32 = 0x4B8A_FFFF;
-pub const BLUE_60: u32 = 0x2460_FFFF;
-pub const BLUE_70: u32 = 0x1043_CDFF;
-pub const BLUE_80: u32 = 0x0A2E_9BFF;
-pub const BLUE_90: u32 = 0x071D_67FF;
-pub const BLUE_100: u32 = 0x0713_38FF;
-
-pub const VIOLET_10: u32 = 0xF3F2_FFFF;
-pub const VIOLET_20: u32 = 0xDFDC_FFFF;
-pub const VIOLET_30: u32 = 0xC5C0_FFFF;
-pub const VIOLET_40: u32 = 0xA69D_FFFF;
-pub const VIOLET_50: u32 = 0x8B7C_FFFF;
-pub const VIOLET_60: u32 = 0x6B50_FFFF;
-pub const VIOLET_70: u32 = 0x5432_CDFF;
-pub const VIOLET_80: u32 = 0x3923_8FFF;
-pub const VIOLET_90: u32 = 0x2816_61FF;
-pub const VIOLET_100: u32 = 0x170D_3AFF;
-
-pub const PURPLE_10: u32 = 0xFBF1_FBFF;
-pub const PURPLE_20: u32 = 0xF2D6_FDFF;
-pub const PURPLE_30: u32 = 0xE3B6_FAFF;
-pub const PURPLE_40: u32 = 0xD28D_F7FF;
-pub const PURPLE_50: u32 = 0xC063_F9FF;
-pub const PURPLE_60: u32 = 0xA72D_EAFF;
-pub const PURPLE_70: u32 = 0x7E1C_B2FF;
-pub const PURPLE_80: u32 = 0x5913_7DFF;
-pub const PURPLE_90: u32 = 0x3B11_51FF;
-pub const PURPLE_100: u32 = 0x200F_29FF;
-
-pub const MAGENTA_10: u32 = 0xFFF0_F6FF;
-pub const MAGENTA_20: u32 = 0xFFD5_E4FF;
-pub const MAGENTA_30: u32 = 0xFFB0_CAFF;
-pub const MAGENTA_40: u32 = 0xFB82_A8FF;
-pub const MAGENTA_50: u32 = 0xEE58_84FF;
-pub const MAGENTA_60: u32 = 0xD326_5DFF;
-pub const MAGENTA_70: u32 = 0xA017_43FF;
-pub const MAGENTA_80: u32 = 0x720F_2DFF;
-pub const MAGENTA_90: u32 = 0x4F07_1DFF;
-pub const MAGENTA_100: u32 = 0x290C_17FF;
-
-pub const RED_10: u32 = 0xFFF1_F2FF;
-pub const RED_20: u32 = 0xFFD6_D5FF;
-pub const RED_30: u32 = 0xFFB3_B2FF;
-pub const RED_40: u32 = 0xFF83_84FF;
-pub const RED_50: u32 = 0xF953_55FF;
-pub const RED_60: u32 = 0xD922_2CFF;
-pub const RED_70: u32 = 0xA217_1FFF;
-pub const RED_80: u32 = 0x740E_14FF;
-pub const RED_90: u32 = 0x4F09_0DFF;
-pub const RED_100: u32 = 0x2B0B_0BFF;
-
-pub const ORANGE_10: u32 = 0xFFF1_E9FF;
-pub const ORANGE_20: u32 = 0xFFD8_BFFF;
-pub const ORANGE_30: u32 = 0xFFB6_87FF;
-pub const ORANGE_40: u32 = 0xFE84_31FF;
-pub const ORANGE_50: u32 = 0xEB63_07FF;
-pub const ORANGE_60: u32 = 0xC148_12FF;
-pub const ORANGE_70: u32 = 0x9332_00FF;
-pub const ORANGE_80: u32 = 0x6426_00FF;
-pub const ORANGE_90: u32 = 0x421B_00FF;
-pub const ORANGE_100: u32 = 0x2512_00FF;
-
-pub const GOLD_10: u32 = 0xFFF2_DEFF;
-pub const GOLD_20: u32 = 0xFDDC_95FF;
-pub const GOLD_30: u32 = 0xFEBA_53FF;
-pub const GOLD_40: u32 = 0xED94_19FF;
-pub const GOLD_50: u32 = 0xCF79_0EFF;
-pub const GOLD_60: u32 = 0xA45F_09FF;
-pub const GOLD_70: u32 = 0x7B45_05FF;
-pub const GOLD_80: u32 = 0x5730_02FF;
-pub const GOLD_90: u32 = 0x3B1F_01FF;
-pub const GOLD_100: u32 = 0x2411_00FF;
-
-pub const YELLOW_10: u32 = 0xFCF4_D6FF;
-pub const YELLOW_20: u32 = 0xFEDD_6FFF;
-pub const YELLOW_30: u32 = 0xF4C0_1AFF;
-pub const YELLOW_40: u32 = 0xD3A1_03FF;
-pub const YELLOW_50: u32 = 0xB287_00FF;
-pub const YELLOW_60: u32 = 0x8E6B_00FF;
-pub const YELLOW_70: u32 = 0x694F_04FF;
-pub const YELLOW_80: u32 = 0x4936_05FF;
-pub const YELLOW_90: u32 = 0x3124_02FF;
-pub const YELLOW_100: u32 = 0x1D14_01FF;
-
-pub const BLACK: u32 = 0x0000_00FF;
-pub const WHITE: u32 = 0xFFFF_FFFF;
-pub const TRANSPARENT: u32 = 0x0000_0000;
-
-/// Mix two packed `0xRRGGBBAA` colors in OkLCH perceptual space.
+/// Zero-cost newtype wrapper around a packed `0xRRGGBBAA` color.
 ///
-/// `t` is the fraction: 0.0 = all `a`, 1.0 = all `b`.
-/// Lightness, chroma, and hue are interpolated perceptually so a 50% mix
-/// actually looks halfway. Alpha is linearly interpolated.
+/// Provides type-safe color construction, component extraction, and
+/// perceptual color manipulation via method chaining.
+///
+/// # Constructors
 ///
 /// ```ignore
-/// let mid = color_mix!(RED_50, GRAY_90, 0.3); // 30% toward GRAY_90
+/// Color::from_hex(0xF4_F4_F4)           // opaque, alpha = 0xFF
+/// Color::from_rgb(244, 244, 244)        // opaque, alpha = 0xFF
+/// Color::from_rgba(244, 244, 244, 128)  // explicit alpha
 /// ```
-#[macro_export]
-macro_rules! color_mix {
-    ($a:expr, $b:expr, $t:expr) => {
-        $crate::colors::oklch_mix($a, $b, $t)
-    };
+///
+/// # Chaining
+///
+/// ```ignore
+/// BLUE_50.lightness(0.3).chroma(0.06)   // perceptual (OkLCH)
+/// GRAY_10.brightness(0.5).with_alpha(0.8) // simple (RGB multiply + alpha)
+/// RED_50.mix(GRAY_90, 0.3)              // perceptual blend
+/// ```
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct Color(u32);
+
+impl core::fmt::Debug for Color {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Color(#{:08X})", self.0)
+    }
 }
 
-/// Color utility macro for packed `0xRRGGBBAA` colors.
-///
-/// **Simple (compile-time) operations:**
-/// - `color!(c, alpha: 0.5)` — set alpha channel (0.0–1.0)
-/// - `color!(c, brightness: 0.5)` — scale RGB channels (0.0 = black, 1.0 = unchanged)
-/// - `color!(c, alpha: 0.5, brightness: 0.8)` — both
-///
-/// **Perceptual (OkLCH) operations:**
-/// - `color!(c, lightness: 0.12)` — set perceptual lightness (0.0–1.0), preserve hue
-/// - `color!(c, lightness: 0.12, chroma: 0.04)` — set both lightness and chroma
+impl Color {
+    // ── Constructors ────────────────────────────────────────────────
+
+    /// Create from a 24-bit hex value (`0xRRGGBB`), alpha defaults to 0xFF.
+    ///
+    /// Bits above the low 24 are masked off — passing a value outside
+    /// `0x00_00_00..=0xFF_FF_FF` is silently truncated rather than panicking
+    /// on the shift overflow.
+    #[must_use]
+    pub const fn from_hex(hex: u32) -> Self {
+        Self(((hex & 0x00FF_FFFF) << 8) | 0xFF)
+    }
+
+    /// Create from RGBA components.
+    #[must_use]
+    pub const fn from_rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self((r as u32) << 24 | (g as u32) << 16 | (b as u32) << 8 | a as u32)
+    }
+
+    /// Create an opaque color from RGB components (alpha = 0xFF).
+    #[must_use]
+    pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+        Self::from_rgba(r, g, b, 0xFF)
+    }
+
+    /// Create from a raw packed `0xRRGGBBAA` value.
+    ///
+    /// Prefer [`from_hex`](Self::from_hex) or [`from_rgba`](Self::from_rgba)
+    /// for new code. This exists for deserialization and wire-format interop.
+    #[must_use]
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    // ── Getters ─────────────────────────────────────────────────────
+
+    /// Red channel (0–255).
+    #[must_use]
+    pub const fn red(self) -> u8 {
+        (self.0 >> 24) as u8
+    }
+
+    /// Green channel (0–255).
+    #[must_use]
+    #[cfg_attr(not(target_arch = "wasm32"), expect(clippy::cast_possible_truncation))]
+    pub const fn green(self) -> u8 {
+        (self.0 >> 16) as u8
+    }
+
+    /// Blue channel (0–255).
+    #[must_use]
+    #[cfg_attr(not(target_arch = "wasm32"), expect(clippy::cast_possible_truncation))]
+    pub const fn blue(self) -> u8 {
+        (self.0 >> 8) as u8
+    }
+
+    /// Alpha channel (0–255).
+    #[must_use]
+    #[cfg_attr(not(target_arch = "wasm32"), expect(clippy::cast_possible_truncation))]
+    pub const fn alpha(self) -> u8 {
+        self.0 as u8
+    }
+
+    /// Packed `0xRRGGBBAA` representation.
+    #[must_use]
+    pub const fn to_u32(self) -> u32 {
+        self.0
+    }
+
+    // ── Simple manipulation (const-capable) ─────────────────────────
+
+    /// Set the alpha channel (0.0 = transparent, 1.0 = opaque).
+    ///
+    /// Out-of-range inputs are clamped to `[0.0, 1.0]`; `NaN` is treated as
+    /// `0.0` (transparent). Debug builds assert the input is in range so
+    /// upstream bugs surface loudly instead of producing wrapped alpha.
+    #[must_use]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)
+    )]
+    pub const fn with_alpha(self, alpha: f32) -> Self {
+        debug_assert!(alpha >= 0.0 && alpha <= 1.0, "alpha must be in [0, 1]");
+        let clamped = if alpha > 1.0 {
+            1.0
+        } else if alpha >= 0.0 {
+            alpha
+        } else {
+            0.0
+        };
+        let a = (clamped * 255.0) as u32 & 0xFF;
+        Self((self.0 & 0xFFFF_FF00) | a)
+    }
+
+    /// Scale the current alpha by a factor (0.0 = fully transparent, 1.0 = unchanged).
+    ///
+    /// Unlike [`with_alpha`](Self::with_alpha) which sets alpha absolutely,
+    /// this multiplies the existing alpha: `new_alpha = current_alpha * factor`.
+    #[must_use]
+    pub const fn scale_alpha(self, factor: f32) -> Self {
+        let a = clamp_u8(self.alpha() as f32 * factor);
+        Self::from_rgba(self.red(), self.green(), self.blue(), a)
+    }
+
+    /// Scale RGB channels (0.0 = black, 1.0 = unchanged). Alpha is preserved.
+    ///
+    /// This is a raw RGB multiply — fast but NOT perceptually uniform.
+    /// For perceptual darkening, use [`lightness`](Self::lightness) instead.
+    #[must_use]
+    pub const fn brightness(self, scale: f32) -> Self {
+        let r = clamp_u8(self.red() as f32 * scale);
+        let g = clamp_u8(self.green() as f32 * scale);
+        let b = clamp_u8(self.blue() as f32 * scale);
+        Self::from_rgba(r, g, b, self.alpha())
+    }
+
+    // ── Perceptual manipulation (OkLCH, runtime only) ───────────────
+
+    /// Set perceptual lightness (0.0–1.0) in OkLCH space.
+    ///
+    /// Hue and alpha are preserved. Gray detection prevents injecting
+    /// a random hue into true achromatic colors.
+    #[must_use]
+    pub fn lightness(self, val: f32) -> Self {
+        use palette::{FromColor, IntoColor, Oklch, Srgb};
+
+        let srgb: Srgb<f32> = Srgb::new(self.red(), self.green(), self.blue()).into_format();
+        let mut oklch: Oklch = srgb.into_color();
+
+        let is_gray = oklch.chroma < 0.005;
+        oklch.l = val;
+        if is_gray {
+            oklch.chroma = 0.0;
+        }
+
+        let out: Srgb<f32> = Srgb::from_color(oklch);
+        let out = out.into_format::<u8>();
+        Self::from_rgba(out.red, out.green, out.blue, self.alpha())
+    }
+
+    /// Set chroma in OkLCH space, preserving lightness, hue, and alpha.
+    ///
+    /// For non-gray colors, ensures chroma is at least `val` (raises but
+    /// never reduces existing chroma). For achromatic (gray) sources,
+    /// chroma is forced to 0 — you cannot inject a hue into a true gray
+    /// via chroma alone.
+    #[must_use]
+    pub fn chroma(self, val: f32) -> Self {
+        use palette::{FromColor, IntoColor, Oklch, Srgb};
+
+        let srgb: Srgb<f32> = Srgb::new(self.red(), self.green(), self.blue()).into_format();
+        let mut oklch: Oklch = srgb.into_color();
+
+        let is_gray = oklch.chroma < 0.005;
+        if is_gray {
+            oklch.chroma = 0.0;
+        } else {
+            oklch.chroma = oklch.chroma.max(val);
+        }
+
+        let out: Srgb<f32> = Srgb::from_color(oklch);
+        let out = out.into_format::<u8>();
+        Self::from_rgba(out.red, out.green, out.blue, self.alpha())
+    }
+
+    /// Mix with another color in OkLCH perceptual space.
+    ///
+    /// `t` is the blend fraction: 0.0 = all `self`, 1.0 = all `other`.
+    /// Interpolation happens in OkLCH (polar Oklab) — lightness and chroma
+    /// interpolate linearly while hue follows the shortest arc. This keeps
+    /// blends between different hues vivid (e.g., gray→red stays saturated
+    /// through the middle instead of going muddy). Alpha is linearly interpolated.
+    #[must_use]
+    pub fn mix(self, other: Self, t: f32) -> Self {
+        use palette::{FromColor, IntoColor, Mix, Oklch, Srgb};
+
+        let a_lch: Oklch = Srgb::new(self.red(), self.green(), self.blue())
+            .into_format::<f32>()
+            .into_color();
+        let b_lch: Oklch = Srgb::new(other.red(), other.green(), other.blue())
+            .into_format::<f32>()
+            .into_color();
+
+        let out: Srgb<f32> = Srgb::from_color(a_lch.mix(b_lch, t));
+        let out = out.into_format::<u8>();
+        let out_a = clamp_u8(f32::from(self.alpha()) * (1.0 - t) + f32::from(other.alpha()) * t);
+        Self::from_rgba(out.red, out.green, out.blue, out_a)
+    }
+}
+
+/// Clamp a float to u8 range without `f32::min`/`f32::max` (which aren't const).
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+const fn clamp_u8(val: f32) -> u8 {
+    if val > 255.0 {
+        255
+    } else if val < 0.0 {
+        0
+    } else {
+        val as u8
+    }
+}
+
+// ── Design system palette ───────────────────────────────────────────
+
+pub const GRAY_10: Color = Color::from_hex(0xF4_F4_F4);
+pub const GRAY_20: Color = Color::from_hex(0xE0_E0_E0);
+pub const GRAY_30: Color = Color::from_hex(0xC6_C6_C6);
+pub const GRAY_40: Color = Color::from_hex(0xA8_A8_A8);
+pub const GRAY_50: Color = Color::from_hex(0x8D_8D_8D);
+pub const GRAY_60: Color = Color::from_hex(0x6F_6F_6F);
+pub const GRAY_70: Color = Color::from_hex(0x52_52_52);
+pub const GRAY_80: Color = Color::from_hex(0x39_39_39);
+pub const GRAY_90: Color = Color::from_hex(0x26_26_26);
+pub const GRAY_100: Color = Color::from_hex(0x16_1616);
+
+pub const LIME__10: Color = Color::from_hex(0xE0_FC_D6);
+pub const LIME__20: Color = Color::from_hex(0xA6_F3_82);
+pub const LIME__30: Color = Color::from_hex(0x89_DB_5D);
+pub const LIME__40: Color = Color::from_hex(0x6D_BC_39);
+pub const LIME__50: Color = Color::from_hex(0x59_9F_2A);
+pub const LIME__60: Color = Color::from_hex(0x45_7D_1F);
+pub const LIME__70: Color = Color::from_hex(0x35_5C_15);
+pub const LIME__80: Color = Color::from_hex(0x26_40_0C);
+pub const LIME__90: Color = Color::from_hex(0x18_2B_05);
+pub const LIME_100: Color = Color::from_hex(0x08_19_05);
+
+pub const GREEN_10: Color = Color::from_hex(0xDD_FB_E9);
+pub const GREEN_20: Color = Color::from_hex(0xA3_F1_B9);
+pub const GREEN_30: Color = Color::from_hex(0x5A_DF_88);
+pub const GREEN_40: Color = Color::from_hex(0x34_C0_6A);
+pub const GREEN_50: Color = Color::from_hex(0x13_A4_54);
+pub const GREEN_60: Color = Color::from_hex(0x16_80_42);
+pub const GREEN_70: Color = Color::from_hex(0x19_5E_33);
+pub const GREEN_80: Color = Color::from_hex(0x12_42_23);
+pub const GREEN_90: Color = Color::from_hex(0x10_2B_19);
+pub const GREEN_100: Color = Color::from_hex(0x06_19_12);
+
+pub const TEAL_10: Color = Color::from_hex(0xE0_FA_FB);
+pub const TEAL_20: Color = Color::from_hex(0xA3_EC_F1);
+pub const TEAL_30: Color = Color::from_hex(0x56_D8_E0);
+pub const TEAL_40: Color = Color::from_hex(0x00_BA_C5);
+pub const TEAL_50: Color = Color::from_hex(0x00_9D_A7);
+pub const TEAL_60: Color = Color::from_hex(0x00_7C_83);
+pub const TEAL_70: Color = Color::from_hex(0x00_5E_5E);
+pub const TEAL_80: Color = Color::from_hex(0x00_40_42);
+pub const TEAL_90: Color = Color::from_hex(0x00_2A_2D);
+pub const TEAL_100: Color = Color::from_hex(0x03_1A_1C);
+
+pub const BLUE_10: Color = Color::from_hex(0xEC_F5_FF);
+pub const BLUE_20: Color = Color::from_hex(0xD0_E0_FF);
+pub const BLUE_30: Color = Color::from_hex(0xA9_C7_FF);
+pub const BLUE_40: Color = Color::from_hex(0x7C_A8_FF);
+pub const BLUE_50: Color = Color::from_hex(0x4B_8A_FF);
+pub const BLUE_60: Color = Color::from_hex(0x24_60_FF);
+pub const BLUE_70: Color = Color::from_hex(0x10_43_CD);
+pub const BLUE_80: Color = Color::from_hex(0x0A_2E_9B);
+pub const BLUE_90: Color = Color::from_hex(0x07_1D_67);
+pub const BLUE_100: Color = Color::from_hex(0x07_13_38);
+
+pub const VIOLET_10: Color = Color::from_hex(0xF3_F2_FF);
+pub const VIOLET_20: Color = Color::from_hex(0xDF_DC_FF);
+pub const VIOLET_30: Color = Color::from_hex(0xC5_C0_FF);
+pub const VIOLET_40: Color = Color::from_hex(0xA6_9D_FF);
+pub const VIOLET_50: Color = Color::from_hex(0x8B_7C_FF);
+pub const VIOLET_60: Color = Color::from_hex(0x6B_50_FF);
+pub const VIOLET_70: Color = Color::from_hex(0x54_32_CD);
+pub const VIOLET_80: Color = Color::from_hex(0x39_23_8F);
+pub const VIOLET_90: Color = Color::from_hex(0x28_16_61);
+pub const VIOLET_100: Color = Color::from_hex(0x17_0D_3A);
+
+pub const PURPLE_10: Color = Color::from_hex(0xFB_F1_FB);
+pub const PURPLE_20: Color = Color::from_hex(0xF2_D6_FD);
+pub const PURPLE_30: Color = Color::from_hex(0xE3_B6_FA);
+pub const PURPLE_40: Color = Color::from_hex(0xD2_8D_F7);
+pub const PURPLE_50: Color = Color::from_hex(0xC0_63_F9);
+pub const PURPLE_60: Color = Color::from_hex(0xA7_2D_EA);
+pub const PURPLE_70: Color = Color::from_hex(0x7E_1C_B2);
+pub const PURPLE_80: Color = Color::from_hex(0x59_13_7D);
+pub const PURPLE_90: Color = Color::from_hex(0x3B_11_51);
+pub const PURPLE_100: Color = Color::from_hex(0x20_0F_29);
+
+pub const MAGENTA_10: Color = Color::from_hex(0xFF_F0_F6);
+pub const MAGENTA_20: Color = Color::from_hex(0xFF_D5_E4);
+pub const MAGENTA_30: Color = Color::from_hex(0xFF_B0_CA);
+pub const MAGENTA_40: Color = Color::from_hex(0xFB_82_A8);
+pub const MAGENTA_50: Color = Color::from_hex(0xEE_58_84);
+pub const MAGENTA_60: Color = Color::from_hex(0xD3_26_5D);
+pub const MAGENTA_70: Color = Color::from_hex(0xA0_17_43);
+pub const MAGENTA_80: Color = Color::from_hex(0x72_0F_2D);
+pub const MAGENTA_90: Color = Color::from_hex(0x4F_07_1D);
+pub const MAGENTA_100: Color = Color::from_hex(0x29_0C_17);
+
+pub const RED_10: Color = Color::from_hex(0xFF_F1_F2);
+pub const RED_20: Color = Color::from_hex(0xFF_D6_D5);
+pub const RED_30: Color = Color::from_hex(0xFF_B3_B2);
+pub const RED_40: Color = Color::from_hex(0xFF_83_84);
+pub const RED_50: Color = Color::from_hex(0xF9_53_55);
+pub const RED_60: Color = Color::from_hex(0xD9_22_2C);
+pub const RED_70: Color = Color::from_hex(0xA2_17_1F);
+pub const RED_80: Color = Color::from_hex(0x74_0E_14);
+pub const RED_90: Color = Color::from_hex(0x4F_09_0D);
+pub const RED_100: Color = Color::from_hex(0x2B_0B_0B);
+
+pub const ORANGE_10: Color = Color::from_hex(0xFF_F1_E9);
+pub const ORANGE_20: Color = Color::from_hex(0xFF_D8_BF);
+pub const ORANGE_30: Color = Color::from_hex(0xFF_B6_87);
+pub const ORANGE_40: Color = Color::from_hex(0xFE_84_31);
+pub const ORANGE_50: Color = Color::from_hex(0xEB_63_07);
+pub const ORANGE_60: Color = Color::from_hex(0xC1_48_12);
+pub const ORANGE_70: Color = Color::from_hex(0x93_32_00);
+pub const ORANGE_80: Color = Color::from_hex(0x64_26_00);
+pub const ORANGE_90: Color = Color::from_hex(0x42_1B_00);
+pub const ORANGE_100: Color = Color::from_hex(0x25_12_00);
+
+pub const GOLD_10: Color = Color::from_hex(0xFF_F2_DE);
+pub const GOLD_20: Color = Color::from_hex(0xFD_DC_95);
+pub const GOLD_30: Color = Color::from_hex(0xFE_BA_53);
+pub const GOLD_40: Color = Color::from_hex(0xED_94_19);
+pub const GOLD_50: Color = Color::from_hex(0xCF_79_0E);
+pub const GOLD_60: Color = Color::from_hex(0xA4_5F_09);
+pub const GOLD_70: Color = Color::from_hex(0x7B_45_05);
+pub const GOLD_80: Color = Color::from_hex(0x57_30_02);
+pub const GOLD_90: Color = Color::from_hex(0x3B_1F_01);
+pub const GOLD_100: Color = Color::from_hex(0x24_11_00);
+
+pub const YELLOW_10: Color = Color::from_hex(0xFC_F4_D6);
+pub const YELLOW_20: Color = Color::from_hex(0xFE_DD_6F);
+pub const YELLOW_30: Color = Color::from_hex(0xF4_C0_1A);
+pub const YELLOW_40: Color = Color::from_hex(0xD3_A1_03);
+pub const YELLOW_50: Color = Color::from_hex(0xB2_87_00);
+pub const YELLOW_60: Color = Color::from_hex(0x8E_6B_00);
+pub const YELLOW_70: Color = Color::from_hex(0x69_4F_04);
+pub const YELLOW_80: Color = Color::from_hex(0x49_36_05);
+pub const YELLOW_90: Color = Color::from_hex(0x31_24_02);
+pub const YELLOW_100: Color = Color::from_hex(0x1D_14_01);
+
+pub const BLACK: Color = Color::from_hex(0x00_00_00);
+pub const WHITE: Color = Color::from_hex(0xFF_FF_FF);
+pub const TRANSPARENT: Color = Color::from_rgba(0, 0, 0, 0);
+
+// ── Legacy macro ────────────────────────────────────────────────────
+//
+// Delegates to Color methods. Prefer calling methods directly:
+//   color!(c, alpha: 0.5)                     → c.with_alpha(0.5)
+//   color!(c, brightness: 0.8)                → c.brightness(0.8)
+//   color!(c, lightness: 0.12)                → c.lightness(0.12)
+//   color!(c, lightness: 0.12, chroma: 0.04)  → c.lightness(0.12).chroma(0.04)
+
+/// Color manipulation macro. Prefer calling Color methods directly.
 #[macro_export]
 macro_rules! color {
     ($base:expr, alpha: $a:expr) => {
-        ($base & 0xFFFF_FF00) | (($a * 255.0) as u32 & 0xFF)
+        ($base).with_alpha($a)
     };
-    ($base:expr, brightness: $l:expr) => {{
-        let r = ((($base >> 24) & 0xFF) as f32 * $l).min(255.0) as u32;
-        let g = ((($base >> 16) & 0xFF) as f32 * $l).min(255.0) as u32;
-        let b = ((($base >> 8) & 0xFF) as f32 * $l).min(255.0) as u32;
-        let a = $base & 0xFF;
-        (r << 24) | (g << 16) | (b << 8) | a
-    }};
-    ($base:expr, alpha: $a:expr, brightness: $l:expr) => {{
-        let r = ((($base >> 24) & 0xFF) as f32 * $l).min(255.0) as u32;
-        let g = ((($base >> 16) & 0xFF) as f32 * $l).min(255.0) as u32;
-        let b = ((($base >> 8) & 0xFF) as f32 * $l).min(255.0) as u32;
-        let a = ($a * 255.0) as u32 & 0xFF;
-        (r << 24) | (g << 16) | (b << 8) | a
-    }};
+    ($base:expr, brightness: $l:expr) => {
+        ($base).brightness($l)
+    };
+    ($base:expr, alpha: $a:expr, brightness: $l:expr) => {
+        ($base).brightness($l).with_alpha($a)
+    };
     ($base:expr, lightness: $l:expr) => {
-        $crate::colors::oklch_adjust($base, $l, None)
+        ($base).lightness($l)
     };
     ($base:expr, lightness: $l:expr, chroma: $c:expr) => {
-        $crate::colors::oklch_adjust($base, $l, Some($c))
+        ($base).lightness($l).chroma($c)
     };
-}
-
-/// Unpack a `0xRRGGBBAA` color into `(r, g, b, a)` as `u8`.
-#[inline]
-#[must_use]
-#[expect(clippy::cast_possible_truncation)]
-pub const fn unpack(c: u32) -> (u8, u8, u8, u8) {
-    ((c >> 24) as u8, (c >> 16) as u8, (c >> 8) as u8, c as u8)
-}
-
-/// Pack `(r, g, b, a)` as `u8` into a `0xRRGGBBAA` color.
-#[inline]
-#[must_use]
-pub const fn pack(r: u8, g: u8, b: u8, a: u8) -> u32 {
-    (r as u32) << 24 | (g as u32) << 16 | (b as u32) << 8 | a as u32
-}
-
-/// Adjust a packed color in OkLCH space: set lightness, optionally set chroma.
-///
-/// Hue and alpha are preserved. Useful for creating dark accent backgrounds
-/// from arbitrary source colors while maintaining perceptual color identity.
-#[must_use]
-#[expect(clippy::many_single_char_names)]
-pub fn oklch_adjust(rgba: u32, lightness: f32, chroma: Option<f32>) -> u32 {
-    use palette::{FromColor, IntoColor, Oklch, Srgb};
-
-    let (r, g, b, a) = unpack(rgba);
-    let srgb: Srgb<f32> = Srgb::new(r, g, b).into_format();
-    let mut oklch: Oklch = srgb.into_color();
-
-    // Detect achromatic source — avoid injecting a random hue into true grays.
-    // Only zero chroma when the caller didn't explicitly request one.
-    let is_gray = oklch.chroma < 0.005;
-
-    oklch.l = lightness;
-    match chroma {
-        Some(c) if !is_gray => oklch.chroma = oklch.chroma.max(c),
-        Some(_) => oklch.chroma = 0.0,
-        None if is_gray => oklch.chroma = 0.0,
-        None => {}
-    }
-
-    let out: Srgb<f32> = Srgb::from_color(oklch);
-    let out = out.into_format::<u8>();
-    pack(out.red, out.green, out.blue, a)
-}
-
-/// Mix two packed `0xRRGGBBAA` colors in OkLCH perceptual space.
-///
-/// Uses `palette::Mix` for shortest-arc hue interpolation. Alpha is linear.
-#[must_use]
-pub fn oklch_mix(a: u32, b: u32, t: f32) -> u32 {
-    use palette::{FromColor, IntoColor, Mix, Oklch, Srgb};
-
-    let (ar, ag, ab, aa) = unpack(a);
-    let (br, bg, bb, ba) = unpack(b);
-
-    let a_lch: Oklch = Srgb::new(ar, ag, ab).into_format::<f32>().into_color();
-    let b_lch: Oklch = Srgb::new(br, bg, bb).into_format::<f32>().into_color();
-
-    let out: Srgb<f32> = Srgb::from_color(a_lch.mix(b_lch, t));
-    let out = out.into_format::<u8>();
-    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let out_a = (f32::from(aa) * (1.0 - t) + f32::from(ba) * t) as u8;
-    pack(out.red, out.green, out.blue, out_a)
 }

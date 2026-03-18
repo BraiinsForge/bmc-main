@@ -13,7 +13,7 @@
 
 use std::cell::Cell;
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 // ── Assets ───────────────────────────────────────────────────────────
@@ -128,9 +128,15 @@ fn persist_total() {
 
 // ── LED helpers ──────────────────────────────────────────────────────
 
-fn led_set(effect: LedEffect, color: u32, period_ms: u32, duration_ms: u32) {
-    let (r, g, b, _) = unpack(color);
-    led::set_effect(effect, r, g, b, period_ms, duration_ms);
+fn led_set(effect: LedEffect, color: Color, period_ms: u32, duration_ms: u32) {
+    led::set_effect(
+        effect,
+        color.red(),
+        color.green(),
+        color.blue(),
+        period_ms,
+        duration_ms,
+    );
 }
 
 fn apply_led_for_phase(phase: Phase) {
@@ -392,7 +398,7 @@ fn phase_label(phase: Phase) -> &'static str {
     }
 }
 
-fn phase_color(phase: Phase) -> u32 {
+fn phase_color(phase: Phase) -> Color {
     match phase {
         Phase::Idle => GRAY_50,
         Phase::Working => RED_50,
@@ -552,10 +558,10 @@ fn time_progress(phase: Phase, track_h: f32) -> Node {
 }
 
 /// Value bar color: bright neutral at 100% → red at 0%.
-fn progress_color(frac: f32) -> u32 {
+fn progress_color(frac: f32) -> Color {
     // Full = GRAY_30 (bright silver), depleted = RED_50 (urgent)
     let t = 1.0 - frac; // 0.0 at full, 1.0 at empty
-    color_mix!(GRAY_30, RED_50, t)
+    GRAY_30.mix(RED_50, t)
 }
 
 /// Settings modal overlay.

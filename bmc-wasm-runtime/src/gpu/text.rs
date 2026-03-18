@@ -311,10 +311,10 @@ pub fn build_attrs(style: &TextStyle) -> Attrs<'static> {
     }
 
     attrs.color(Color::rgba(
-        ((style.color >> 24) & 0xFF) as u8,
-        ((style.color >> 16) & 0xFF) as u8,
-        ((style.color >> 8) & 0xFF) as u8,
-        (style.color & 0xFF) as u8,
+        style.color.red(),
+        style.color.green(),
+        style.color.blue(),
+        style.color.alpha(),
     ))
 }
 
@@ -375,7 +375,7 @@ fn draw_text_segment(
     style: &TextStyle,
 ) {
     let font = select_font(font_regular, font_bold, style.weight);
-    let mut paint = Paint::color(to_femtovg_color(style.color));
+    let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
     paint.set_font(&[font]);
     paint.set_font_size(style.size as f32);
     paint.set_text_baseline(femtovg::Baseline::Alphabetic);
@@ -391,7 +391,7 @@ fn segment_width(
     style: &TextStyle,
 ) -> f32 {
     let font = select_font(font_regular, font_bold, style.weight);
-    let mut paint = Paint::color(to_femtovg_color(style.color));
+    let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
     paint.set_font(&[font]);
     paint.set_font_size(style.size as f32);
     canvas
@@ -415,7 +415,7 @@ fn draw_decorations_for_segment(
         let uh = (fs * 0.07).max(1.0);
         let mut path = femtovg::Path::new();
         path.rect(x, uy, w, uh);
-        canvas.fill_path(&path, &Paint::color(to_femtovg_color(style.color)));
+        canvas.fill_path(&path, &Paint::color(to_femtovg_color(style.color.to_u32())));
     }
 
     if style.strikethrough {
@@ -423,6 +423,6 @@ fn draw_decorations_for_segment(
         let sh = (fs * 0.07).max(1.0);
         let mut path = femtovg::Path::new();
         path.rect(x, sy, w, sh);
-        canvas.fill_path(&path, &Paint::color(to_femtovg_color(style.color)));
+        canvas.fill_path(&path, &Paint::color(to_femtovg_color(style.color.to_u32())));
     }
 }

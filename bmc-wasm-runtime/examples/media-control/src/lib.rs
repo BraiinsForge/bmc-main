@@ -16,7 +16,7 @@ mod upnp;
 
 use std::cell::{Cell, RefCell};
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 use protocol::{MediaController, SubTarget, SubTargets};
@@ -178,7 +178,7 @@ fn active_art_frame() -> Option<SkinEntry> {
 /// Falls through to the original color when no skin background is set.
 fn skin_bg_props(mut props: PropsData) -> PropsData {
     if let Some(np) = active_background() {
-        props.background = 0;
+        props.background = TRANSPARENT;
         props!(@set props, bg_nine_patch: np);
     }
     props
@@ -244,7 +244,7 @@ struct MediaState {
     /// URL of the currently loaded album art (to avoid re-fetching).
     art_url: String,
     /// Accent background color extracted from album art (darkened average).
-    accent_bg: u32,
+    accent_bg: Color,
     /// Whether the current media is video, music, etc.
     is_video: bool,
     /// Consecutive fetch failures for disconnect detection.
@@ -1751,8 +1751,10 @@ fn on_album_art(response: &FetchResponse) {
                 .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
 
             // Sample full image average and darken for background tint
-            let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX)
-                .map_or(GRAY_100, |c| color!(c, lightness: 0.22, chroma: 0.06));
+            let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX).map_or(
+                GRAY_100,
+                |c| color!(Color::from_raw(c), lightness: 0.22, chroma: 0.06),
+            );
 
             STATE.with(|s| {
                 let mut state = s.borrow_mut();
@@ -2005,8 +2007,10 @@ fn on_mpd_art(data: &[u8]) {
     if bitmap_id > 0 {
         let aspect = host::image_dimensions(data)
             .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
-        let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX)
-            .map_or(GRAY_100, |c| color!(c, lightness: 0.22, chroma: 0.06));
+        let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX).map_or(
+            GRAY_100,
+            |c| color!(Color::from_raw(c), lightness: 0.22, chroma: 0.06),
+        );
 
         STATE.with(|s| {
             let mut state = s.borrow_mut();
@@ -2226,7 +2230,7 @@ fn render_discovering(size: WidgetSize) -> Node {
             // Animated squiggle loader
             progress_bar!(ProgressMode::Indeterminate,
                 track_h: BAR_TRACK_H, active: true, fill_color: GRAY_50,
-                track_color: 0, bg_color: 0,
+                track_color: TRANSPARENT, bg_color: TRANSPARENT,
             ),
         ];
         if !matches!(size.variant, SizeVariant::Small) {
@@ -2624,7 +2628,7 @@ fn render_album_art(media: &MediaState, art_size: f32) -> Node {
     let art_frame = active_art_frame();
     // When a skin provides an art frame, the 9-patch insets eat into the art_size,
     // so we shrink the inner canvas to leave room for the frame border.
-    let (inset, frame_icon_color) = art_frame.map_or((0.0, 0), |af| {
+    let (inset, frame_icon_color) = art_frame.map_or((0.0, TRANSPARENT), |af| {
         let np = af.nine_patch;
         (
             f32::from(np.left.max(np.right).max(np.top).max(np.bottom)),
@@ -2659,7 +2663,7 @@ fn render_album_art(media: &MediaState, art_size: f32) -> Node {
         };
         // When a skin art frame is active, skip the gray background — the frame
         // itself provides the visual container. Use the skin's icon color if set.
-        let icon_color = if frame_icon_color != 0 {
+        let icon_color = if frame_icon_color != TRANSPARENT {
             frame_icon_color
         } else {
             GRAY_60
@@ -2891,7 +2895,7 @@ fn render_controls(media: &MediaState) -> Node {
             mute,
             progress_bar!(ProgressMode::Fraction(cd.vol_frac),
                 touch_key: "volume", track_h: BAR_TRACK_H,
-                fill_color: GRAY_30, track_color: GRAY_70, bg_color: 0,
+                fill_color: GRAY_30, track_color: GRAY_70, bg_color: TRANSPARENT,
                 skin: active_slider_skin(),
             ),
             text(&cd.vol_str, style!(size: 12, color: GRAY_40)),
@@ -2929,7 +2933,7 @@ fn render_controls_stacked(media: &MediaState) -> Node {
                     mute,
                     progress_bar!(ProgressMode::Fraction(cd.vol_frac),
                         touch_key: "volume", track_h: BAR_TRACK_H,
-                        fill_color: GRAY_30, track_color: GRAY_70, bg_color: 0,
+                        fill_color: GRAY_30, track_color: GRAY_70, bg_color: TRANSPARENT,
                         skin: active_slider_skin(),
                     ),
                     text(&cd.vol_str, style!(size: 12, color: GRAY_40)),

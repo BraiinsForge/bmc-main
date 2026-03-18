@@ -8,7 +8,7 @@
 
 use std::cell::{Cell, RefCell};
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 // ── Configuration ─────────────────────────────────────────────────
 // Configure via KV store: ha_url, ha_token
@@ -444,7 +444,7 @@ fn entity_row(entity: &EntityState, variant: SizeVariant) -> Node {
 }
 
 /// Determine gauge range (min, max) and color from unit or domain.
-fn gauge_range(unit: &str, domain: &str) -> (f32, f32, u32) {
+fn gauge_range(unit: &str, domain: &str) -> (f32, f32, Color) {
     match unit {
         "%" => (0.0, 100.0, BLUE_50),
         "\u{b0}C" | "\u{b0}F" => {
@@ -462,7 +462,7 @@ fn gauge_range(unit: &str, domain: &str) -> (f32, f32, u32) {
 }
 
 /// Gauge bar with value text overlaid. Text gets a dark outline for readability.
-fn gauge_bar_with_label(label: &str, frac: f32, bg_color: u32, font_size: u32) -> Node {
+fn gauge_bar_with_label(label: &str, frac: f32, bg_color: Color, font_size: u32) -> Node {
     let ow = 3.0; // outline padding
     let w = VALUE_COL_W;
     let bar_h = font_size as f32;

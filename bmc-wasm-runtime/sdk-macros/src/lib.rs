@@ -355,7 +355,9 @@ pub fn include_skin(input: TokenStream) -> TokenStream {
         palette_table
             .get(key)
             .and_then(|v| v.as_str())
-            .map(|hex| bmc_wasm_skin::parse_hex_color(hex, &format!("skin.toml [palette].{key}")))
+            .map(|hex| {
+                bmc_wasm_skin::parse_hex_color(hex, &format!("skin.toml [palette].{key}")).to_u32()
+            })
             .unwrap_or(0)
     };
     let pal_background = palette_color("background");
@@ -382,7 +384,7 @@ pub fn include_skin(input: TokenStream) -> TokenStream {
                         bottom: #bottom,
                         width: #width,
                         height: #height,
-                        color: #color,
+                        color: bmc_wasm_sdk::colors::Color::from_raw(#color),
                     }
                 }
             },
@@ -416,12 +418,12 @@ pub fn include_skin(input: TokenStream) -> TokenStream {
                     name: #skin_name,
                     description: #skin_description,
                     palette: bmc_wasm_sdk::SkinPalette {
-                        background: #pal_background,
-                        layer1: #pal_layer1,
-                        layer2: #pal_layer2,
-                        text_primary: #pal_text_primary,
-                        text_secondary: #pal_text_secondary,
-                        accent: #pal_accent,
+                        background: bmc_wasm_sdk::colors::Color::from_raw(#pal_background),
+                        layer1: bmc_wasm_sdk::colors::Color::from_raw(#pal_layer1),
+                        layer2: bmc_wasm_sdk::colors::Color::from_raw(#pal_layer2),
+                        text_primary: bmc_wasm_sdk::colors::Color::from_raw(#pal_text_primary),
+                        text_secondary: bmc_wasm_sdk::colors::Color::from_raw(#pal_text_secondary),
+                        accent: bmc_wasm_sdk::colors::Color::from_raw(#pal_accent),
                     },
                     assets: &[#(#asset_tokens),*]
                 }
@@ -435,12 +437,12 @@ pub fn include_skin(input: TokenStream) -> TokenStream {
                     name: #skin_name,
                     description: #skin_description,
                     palette: bmc_wasm_sdk::SkinPalette {
-                        background: #pal_background,
-                        layer1: #pal_layer1,
-                        layer2: #pal_layer2,
-                        text_primary: #pal_text_primary,
-                        text_secondary: #pal_text_secondary,
-                        accent: #pal_accent,
+                        background: bmc_wasm_sdk::colors::Color::from_raw(#pal_background),
+                        layer1: bmc_wasm_sdk::colors::Color::from_raw(#pal_layer1),
+                        layer2: bmc_wasm_sdk::colors::Color::from_raw(#pal_layer2),
+                        text_primary: bmc_wasm_sdk::colors::Color::from_raw(#pal_text_primary),
+                        text_secondary: bmc_wasm_sdk::colors::Color::from_raw(#pal_text_secondary),
+                        accent: bmc_wasm_sdk::colors::Color::from_raw(#pal_accent),
                     },
                     assets: &[#(#asset_tokens),*]
                 }
@@ -556,8 +558,10 @@ fn process_skin_files(
             .and_then(|v| v.as_table())
             .and_then(|t| t.get("color"))
             .and_then(|v| v.as_str())
-            .map(|hex| bmc_wasm_skin::parse_hex_color(hex, &format!("skin.toml [{asset_name}]")))
-            .unwrap_or(0u32);
+            .map(|hex| {
+                bmc_wasm_skin::parse_hex_color(hex, &format!("skin.toml [{asset_name}]")).to_u32()
+            })
+            .unwrap_or(0);
 
         if is_nine_patch {
             let img = image::load_from_memory(entry_bytes)

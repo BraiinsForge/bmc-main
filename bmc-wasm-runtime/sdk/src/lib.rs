@@ -219,9 +219,9 @@ macro_rules! progress_bar {
             [touch_key: ""]
             [track_h: 2.0]
             [active: false]
-            [fill_color: 0xFFFF_FFFF]
-            [track_color: 0xFF70_7070]
-            [bg_color: 0u32]
+            [fill_color: $crate::WHITE]
+            [track_color: $crate::GRAY_60.with_alpha(0.44)]
+            [bg_color: $crate::TRANSPARENT]
             [skin: None]
             $($($rest)*)?
         )

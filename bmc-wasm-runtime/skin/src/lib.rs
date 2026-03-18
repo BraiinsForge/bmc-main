@@ -7,7 +7,7 @@
 
 use std::cell::RefCell;
 
-use bmc_wasm_protocol::colors;
+use bmc_wasm_protocol::colors::Color;
 
 // ---------------------------------------------------------------------------
 // Bitmap registrar callback
@@ -133,8 +133,8 @@ pub struct SkinAsset {
     /// Bitmap dimensions (pixels). For 9-patches, this is the inner image (border stripped).
     pub width: u16,
     pub height: u16,
-    /// Foreground/content color for this asset (RGBA `0xRRGGBBAA`). `0` = no override.
-    pub color: u32,
+    /// Foreground/content color for this asset. `TRANSPARENT` = no override.
+    pub color: Color,
 }
 
 /// A skin — a named collection of image assets loaded from a zip at compile time.
@@ -167,8 +167,8 @@ pub struct SkinEntry {
     /// Bitmap dimensions (pixels). For 9-patches, this is the inner image (border stripped).
     pub width: u16,
     pub height: u16,
-    /// Foreground/content color (RGBA `0xRRGGBBAA`). `0` = no override.
-    pub color: u32,
+    /// Foreground/content color. `TRANSPARENT` = no override.
+    pub color: Color,
 }
 
 impl Skin {
@@ -228,28 +228,28 @@ impl Skin {
 /// Color palette for a skin — semantic color slots that widgets can use for
 /// backgrounds, layers, and text to match the skin's visual language.
 ///
-/// Colors are RGBA `0xRRGGBBAA`. A value of `0` means "use default".
+/// Default (all-transparent) means "use widget defaults".
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SkinPalette {
     /// Main widget background color.
-    pub background: u32,
+    pub background: Color,
     /// Primary layer (e.g., dialog/modal background).
-    pub layer1: u32,
+    pub layer1: Color,
     /// Secondary layer (e.g., dialog header, nested panels).
-    pub layer2: u32,
+    pub layer2: Color,
     /// Primary text color.
-    pub text_primary: u32,
+    pub text_primary: Color,
     /// Secondary/subtitle text color.
-    pub text_secondary: u32,
+    pub text_secondary: Color,
     /// Accent color for highlights, active indicators, focus rings.
-    pub accent: u32,
+    pub accent: Color,
 }
 
-/// Return `color` if set (non-zero), otherwise `fallback`.
-/// Shorthand for the "0 means use default" convention used by palette colors.
+/// Return `color` if set (non-default), otherwise `fallback`.
+/// Shorthand for the "default means use fallback" convention used by palette colors.
 #[must_use]
-pub fn color_or(color: u32, fallback: u32) -> u32 {
-    if color != 0 { color } else { fallback }
+pub fn color_or(color: Color, fallback: Color) -> Color {
+    if color.to_u32() != 0 { color } else { fallback }
 }
 
 // ---------------------------------------------------------------------------
@@ -266,10 +266,10 @@ pub fn color_or(color: u32, fallback: u32) -> u32 {
 pub struct ButtonSkin {
     pub normal: NinePatch,
     pub pressed: Option<NinePatch>,
-    /// Text/icon color for normal state. `0` = use default for the button style.
-    pub text_color: u32,
-    /// Text/icon color for pressed state. `0` = use `text_color`.
-    pub pressed_text_color: u32,
+    /// Text/icon color for normal state. Default = use button style default.
+    pub text_color: Color,
+    /// Text/icon color for pressed state. Default = use `text_color`.
+    pub pressed_text_color: Color,
     /// When true, the bitmap already contains the visual content (e.g. Winamp
     /// transport icons baked into the sprite). The host skips rendering any
     /// icon or label on top.
@@ -379,13 +379,13 @@ fn scan_run(size: u32, get_pixel: impl Fn(u32) -> [u8; 4]) -> Option<(u32, u32)>
 // Color parsing (used by proc macros)
 // ---------------------------------------------------------------------------
 
-/// Parse a hex color string (`"#RRGGBB"` or `"RRGGBB"`) into an opaque RGBA `u32`.
+/// Parse a hex color string (`"#RRGGBB"` or `"RRGGBB"`) into an opaque [`Color`].
 ///
 /// # Panics
 ///
 /// Panics if the string is not exactly 6 hex digits (after optional `#` prefix).
 #[must_use]
-pub fn parse_hex_color(hex: &str, context: &str) -> u32 {
+pub fn parse_hex_color(hex: &str, context: &str) -> Color {
     let hex = hex.strip_prefix('#').unwrap_or(hex);
     assert_eq!(
         hex.len(),
@@ -394,5 +394,5 @@ pub fn parse_hex_color(hex: &str, context: &str) -> u32 {
     );
     let v = u32::from_str_radix(hex, 16)
         .unwrap_or_else(|e| panic!("{context}: invalid hex color \"{hex}\": {e}"));
-    colors::pack((v >> 16) as u8, (v >> 8) as u8, v as u8, 0xFF)
+    Color::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }

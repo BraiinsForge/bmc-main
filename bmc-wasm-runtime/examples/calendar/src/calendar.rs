@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 use crate::DAYS_AHEAD;
@@ -32,14 +32,14 @@ pub struct CalendarSource {
     pub url: String,
     pub label: String,
     /// Display color — clamped to ensure white text readability.
-    pub color: u32,
+    pub color: Color,
     pub loading: bool,
     pub error: Option<String>,
     pub raw_events: Vec<RawEvent>,
 }
 
 impl CalendarSource {
-    pub fn new(url: String, label: String, color: u32) -> Self {
+    pub fn new(url: String, label: String, color: Color) -> Self {
         Self {
             url,
             label,
@@ -53,11 +53,12 @@ impl CalendarSource {
 
 /// Clamp a color's lightness so white text is always readable on it.
 /// Uses BT.601 luminance to detect bright colors, then OkLCH to darken them.
-fn darken_for_text(color: u32) -> u32 {
-    let (r, g, b, _) = unpack(color);
-    let lum = u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114;
+fn darken_for_text(color: Color) -> Color {
+    let lum = u32::from(color.red()) * 299
+        + u32::from(color.green()) * 587
+        + u32::from(color.blue()) * 114;
     if lum > 120_000 {
-        oklch_adjust(color, 0.45, None)
+        color.lightness(0.45)
     } else {
         color
     }
@@ -241,7 +242,7 @@ impl CalendarState {
                     let color = parts
                         .get(2)
                         .and_then(|s| u32::from_str_radix(s, 16).ok())
-                        .unwrap_or(0x42_8B_CA_FF);
+                        .map_or(Color::from_hex(0x42_8B_CA), Color::from_raw);
                     self.sources.push(CalendarSource::new(url, label, color));
                 }
             }

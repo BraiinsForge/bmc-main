@@ -27,6 +27,7 @@ use serde_json::Value;
 use taffy::prelude::*;
 
 use bmc_wasm_protocol::FormatPreferences;
+use bmc_wasm_protocol::colors::Color;
 
 use crate::gpu::FemtoVgRenderer;
 use crate::interaction::InteractionState;
@@ -49,7 +50,7 @@ pub struct PrevDrawValues {
     pub y: f32,
     pub w: f32,
     pub h: f32,
-    pub color: u32,
+    pub color: Color,
     /// Orbit angle (for `Orbit` draw commands).
     pub angle: f32,
     pub radius: f32,

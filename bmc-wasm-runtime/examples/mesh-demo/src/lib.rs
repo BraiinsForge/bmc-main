@@ -8,9 +8,9 @@
 
 use std::cell::{Cell, RefCell};
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::math::*;
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 static SUZANNE: Mesh = include_mesh!("assets/suzanne.glb");
@@ -575,10 +575,11 @@ fn render_tray(w: u32, h: u32, delta_ms: u32) {
                     any_rolling_now || n == 0,
                     None,
                 ),
-                center(
+                row(
                     props!(
                         height: 32.0,
                         padding: 8.0,
+                        cross_align: CrossAlign::Center,
                         background: color!(BLACK, alpha: 0.6)
                     ),
                     [text(

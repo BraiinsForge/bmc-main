@@ -5,6 +5,8 @@
 //! All coordinates are f32. Implementations may round to integer
 //! internally if the backend requires it.
 
+use bmc_wasm_protocol::colors::Color;
+
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{SpanData, TextStyle};
 
@@ -15,15 +17,15 @@ use crate::tree::{SpanData, TextStyle};
 pub trait Renderer {
     // -- Shapes --
 
-    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32);
+    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color);
 
-    fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: u32);
+    fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: Color);
 
-    fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: u32);
+    fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: Color);
 
-    fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: u32);
+    fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color);
 
-    fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: u32);
+    fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Color);
 
     // -- Transform stack --
 
@@ -39,7 +41,7 @@ pub trait Renderer {
 
     // -- Simple text --
 
-    fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: u32);
+    fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color);
     fn measure_text(&mut self, text: &str, size: f32) -> f32;
 
     // -- Rich text paragraphs --
@@ -85,7 +87,7 @@ pub trait Renderer {
         y: f32,
         w: f32,
         h: f32,
-        color: u32,
+        color: Color,
         icon_id: u16,
         anti_alias: bool,
     );
@@ -123,9 +125,9 @@ pub trait Renderer {
 
     /// Sample the average color of a rectangular region within a registered bitmap.
     ///
-    /// Returns the average RGBA as a packed `u32` (`0xRRGGBBAA`), or `None` if the
+    /// Returns the average RGBA as a [`Color`], or `None` if the
     /// bitmap ID is invalid or the region is empty.
-    fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32>;
+    fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<Color>;
 
     // -- Meshes --
 
@@ -189,14 +191,14 @@ pub trait Renderer {
         &mut self,
         points: &[(f32, f32)],
         stroke_width: f32,
-        color: u32,
+        color: Color,
         closed: bool,
         smooth: bool,
     );
 
     /// Fill a closed path through the given points.
     /// If `smooth` is true, use Catmull-Rom spline interpolation.
-    fn fill_path_points(&mut self, points: &[(f32, f32)], color: u32, smooth: bool);
+    fn fill_path_points(&mut self, points: &[(f32, f32)], color: Color, smooth: bool);
 
     // -- Frame lifecycle --
 

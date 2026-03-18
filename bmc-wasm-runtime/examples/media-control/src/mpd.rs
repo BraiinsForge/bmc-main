@@ -13,7 +13,7 @@
 use std::cell::RefCell;
 
 use bmc_wasm_sdk::socket::{Socket, SocketEvent, tcp_connect};
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 // ── Constants ────────────────────────────────────────────────────

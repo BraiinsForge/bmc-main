@@ -2,7 +2,7 @@
 
 //! Calendar rendering — month grid (Full) and agenda list (Large/Medium/Small).
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 use crate::calendar::{CalendarEvent, CalendarState, DayGroup};
@@ -14,27 +14,27 @@ use core::sync::atomic::{AtomicU8, Ordering};
 /// Construct different instances for different themes/skins.
 struct Theme {
     /// Widget background.
-    surface: u32,
+    surface: Color,
     /// Sidebar background.
-    surface_sidebar: u32,
+    surface_sidebar: Color,
     /// Event row background (agenda full rows).
-    surface_event: u32,
+    surface_event: Color,
     /// Grid cell background (current month, weekday).
-    surface_grid_cell: u32,
+    surface_grid_cell: Color,
     /// Grid cell background (current month, weekend).
-    surface_grid_weekend: u32,
+    surface_grid_weekend: Color,
     /// Grid cell background (off-month padding days).
-    surface_grid_other: u32,
+    surface_grid_other: Color,
     /// Primary text (titles, headings).
-    text_primary: u32,
+    text_primary: Color,
     /// Secondary text (times, locations, empty states).
-    text_secondary: u32,
+    text_secondary: Color,
     /// Day header text.
-    text_day_header: u32,
+    text_day_header: Color,
     /// "Now" indicator line / today highlight.
-    now_line: u32,
+    now_line: Color,
     /// Fallback color when a calendar source has no color.
-    calendar_fallback: u32,
+    calendar_fallback: Color,
 }
 
 struct ThemeSet {
@@ -166,7 +166,7 @@ fn theme_toggle_fab(theme: &Theme) -> Node {
                 r,
                 r,
                 r,
-                color_mix!(theme.text_secondary, theme.surface_sidebar, 0.7),
+                theme.text_secondary.mix(theme.surface_sidebar, 0.7),
             ),
             // Button face — uses sidebar surface for theme-aware contrast
             Draw::circle(r, r, r - 1.0, theme.surface_sidebar),
@@ -883,7 +883,7 @@ fn event_row_compact(event: &CalendarEvent, state: &CalendarState) -> Node {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-fn event_color(event: &CalendarEvent, state: &CalendarState) -> u32 {
+fn event_color(event: &CalendarEvent, state: &CalendarState) -> Color {
     let theme = active_theme();
     state
         .sources

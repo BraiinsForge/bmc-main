@@ -9,7 +9,10 @@ use std::ffi::c_void;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
-use bmc_wasm_protocol::{FormatPreferences, SDK_VERSION, SDK_VERSION_EXPORT, version_unpack};
+use bmc_wasm_protocol::colors::Color;
+use bmc_wasm_protocol::{
+    BLACK, FormatPreferences, ICON_METER, RED_60, SDK_VERSION, SDK_VERSION_EXPORT, version_unpack,
+};
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
@@ -470,8 +473,8 @@ impl WasmWidgetRuntime {
         let bar_w = w * fraction;
         // Red bar, increasingly opaque as strikes accumulate
         #[expect(clippy::cast_sign_loss)] // fraction is always 0..=1
-        let alpha = (100.0 + 155.0 * fraction) as u32;
-        let color = 0xFF_00_00_00 | (alpha & 0xFF);
+        let alpha = (100.0 + 155.0 * fraction) as u8;
+        let color = Color::from_rgba(0xFF, 0x00, 0x00, alpha);
         state.renderer.fill_rect(0.0, 0.0, bar_w, 3.0, color);
     }
 
@@ -489,13 +492,13 @@ impl WasmWidgetRuntime {
         // Semi-transparent dark scrim
         state
             .renderer
-            .fill_rect(0.0, 0.0, canvas_w, canvas_h, 0x00_00_00_B0);
+            .fill_rect(0.0, 0.0, canvas_w, canvas_h, BLACK.with_alpha(0.69));
 
         tree::render_notification_banner(
             title,
             subtitle,
-            bmc_wasm_protocol::RED_60,
-            bmc_wasm_protocol::ICON_METER,
+            RED_60,
+            ICON_METER,
             (canvas_w - banner_w) / 2.0,
             (canvas_h - banner_h) / 2.0,
             banner_w,

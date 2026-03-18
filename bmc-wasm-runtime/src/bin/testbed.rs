@@ -36,8 +36,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowButtons};
 
 use bmc_wasm_protocol::{
-    ICON_DEV_CAMERA, ICON_DEV_CURSOR, ICON_DEV_DOWNLOAD, ICON_DEV_SCROLL, ICON_DEV_UNLINK,
-    ICON_DEV_UPLOAD,
+    GRAY_30, GRAY_40, GRAY_60, ICON_DEV_CAMERA, ICON_DEV_CURSOR, ICON_DEV_DOWNLOAD,
+    ICON_DEV_SCROLL, ICON_DEV_UNLINK, ICON_DEV_UPLOAD, WHITE,
 };
 use owo_colors::OwoColorize;
 
@@ -60,25 +60,35 @@ const PREVIEW_MARGIN: u32 = 16;
 const LED_STRIP_H: u32 = 24;
 /// Number of simulated LEDs across the strip.
 const LED_COUNT: usize = 10;
-// Inner width = max(1280, 638+GAP+638)
-const INNER_W: u32 = if 1280 > 638 + PREVIEW_GAP + 638 {
-    1280
+// Widget size presets (pixels)
+const TILE_FULL_W: u32 = 1280;
+const TILE_FULL_H: u32 = 480;
+const TILE_LARGE_W: u32 = 638;
+const TILE_LARGE_H: u32 = 480;
+const TILE_MEDIUM_W: u32 = 638;
+const TILE_MEDIUM_H: u32 = 238;
+const TILE_SMALL_W: u32 = 317;
+const TILE_SMALL_H: u32 = 238;
+
+// Inner width = max(full tile, two-column layout)
+const INNER_W: u32 = if TILE_FULL_W > TILE_LARGE_W + PREVIEW_GAP + TILE_MEDIUM_W {
+    TILE_FULL_W
 } else {
-    638 + PREVIEW_GAP + 638
+    TILE_LARGE_W + PREVIEW_GAP + TILE_MEDIUM_W
 };
 const PREVIEW_WIDTH: u32 = PREVIEW_MARGIN + INNER_W + PREVIEW_MARGIN;
 // Inner height: row0 (FULL+LED+gap) + row1 (max of left/right columns)
 // Left col:  480 + LED
 // Right col: 238 + LED + gap + 238 + LED
-const RIGHT_COL_H: u32 = 238 + LED_STRIP_H + PREVIEW_GAP + 238 + LED_STRIP_H;
-const LEFT_COL_H: u32 = 480 + LED_STRIP_H;
+const RIGHT_COL_H: u32 = TILE_MEDIUM_H + LED_STRIP_H + PREVIEW_GAP + TILE_SMALL_H + LED_STRIP_H;
+const LEFT_COL_H: u32 = TILE_LARGE_H + LED_STRIP_H;
 const ROW1_H: u32 = if LEFT_COL_H > RIGHT_COL_H {
     LEFT_COL_H
 } else {
     RIGHT_COL_H
 };
 const PREVIEW_HEIGHT: u32 =
-    PREVIEW_MARGIN + (480 + LED_STRIP_H + PREVIEW_GAP) + ROW1_H + PREVIEW_MARGIN;
+    PREVIEW_MARGIN + (TILE_FULL_H + LED_STRIP_H + PREVIEW_GAP) + ROW1_H + PREVIEW_MARGIN;
 
 /// Scale a logical pixel value by the DPI factor to get physical pixels.
 #[expect(clippy::cast_sign_loss)]
@@ -199,9 +209,9 @@ struct PreviewTile {
     texture: glow::Texture,
     logged_dead: bool,
     ever_rendered: bool,
-    kv_path: std::path::PathBuf,
+    kv_path: PathBuf,
     /// Receiver for LED commands from the widget (drained each frame).
-    led_rx: std::sync::mpsc::Receiver<bmc_shared_led_data::LedCommand>,
+    led_rx: Receiver<bmc_shared_led_data::LedCommand>,
     /// Current LED scene (from last `SetEffect` command).
     led_scene: Option<bmc_shared_led_data::LedScene>,
     /// Whether LEDs are enabled.
@@ -292,17 +302,24 @@ const fn row_stride(h: u32) -> u32 {
     h + LED_STRIP_H + G
 }
 const ROW0_Y: u32 = M;
-const ROW1_Y: u32 = ROW0_Y + row_stride(480); // after FULL tile + LED + gap
+const ROW1_Y: u32 = ROW0_Y + row_stride(TILE_FULL_H); // after FULL tile + LED + gap
+const RIGHT_COL_X: u32 = M + TILE_LARGE_W + G;
 const TILE_DEFS: [(u32, u32, u32, u32, &str); 4] = [
-    (M, ROW0_Y, 1280, 480, "FULL"),
-    (M, ROW1_Y, 638, 480, "LARGE"),
-    (M + 638 + G, ROW1_Y, 638, 238, "MEDIUM"),
-    (M + 638 + G, ROW1_Y + row_stride(238), 317, 238, "SMALL"),
+    (M, ROW0_Y, TILE_FULL_W, TILE_FULL_H, "FULL"),
+    (M, ROW1_Y, TILE_LARGE_W, TILE_LARGE_H, "LARGE"),
+    (RIGHT_COL_X, ROW1_Y, TILE_MEDIUM_W, TILE_MEDIUM_H, "MEDIUM"),
+    (
+        RIGHT_COL_X,
+        ROW1_Y + row_stride(TILE_MEDIUM_H),
+        TILE_SMALL_W,
+        TILE_SMALL_H,
+        "SMALL",
+    ),
 ];
 
 // Stats panel position: empty area right of SMALL tile
-const STATS_X: u32 = M + 638 + G + 317 + G;
-const STATS_Y: u32 = ROW1_Y + row_stride(238);
+const STATS_X: u32 = RIGHT_COL_X + TILE_SMALL_W + G;
+const STATS_Y: u32 = ROW1_Y + row_stride(TILE_MEDIUM_H);
 const STATS_W: u32 = PREVIEW_WIDTH - M - STATS_X;
 const STATS_H: u32 = PREVIEW_HEIGHT - M - STATS_Y;
 
@@ -406,7 +423,7 @@ impl App {
         let kv_base = self
             .wasm_path
             .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
+            .unwrap_or_else(|| Path::new("."))
             .join("widget_data")
             .join(&widget_name);
 
@@ -1797,7 +1814,7 @@ fn draw_recording_panel(
     // ── Header ──
     let elapsed = rec.recording_start.elapsed().as_secs();
     let header = format!("Recording: {} ({}s)", rec.size_name.to_uppercase(), elapsed);
-    renderer.draw_text(&header, pad, pad, 14.0, 0xFFFF_FFFF);
+    renderer.draw_text(&header, pad, pad, 14.0, WHITE);
 
     // ── Event log (scrollable) ──
     let log_y = pad + 22.0;
@@ -1829,8 +1846,8 @@ fn draw_recording_panel(
         };
 
         let secs = at_ms as f64 / 1_000.0;
-        let color = if is_user { 0xFFFF_FFFF } else { 0x9999_99FF };
-        let time_color = if is_user { 0xBBBB_BBFF } else { 0x7777_77FF };
+        let color = if is_user { WHITE } else { GRAY_40 };
+        let time_color = if is_user { GRAY_30 } else { GRAY_60 };
 
         // Timestamp
         let time_str = format!("{secs:.1}s");

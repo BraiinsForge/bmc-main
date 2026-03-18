@@ -1,7 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 #![allow(clippy::cast_precision_loss)]
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 use std::cell::{Cell, RefCell};
@@ -24,7 +24,7 @@ thread_local! {
     static MODAL_OPEN: Cell<bool> = const { Cell::new(false) };
 }
 
-const BG_COLOR: u32 = 0x66_23_47_FF;
+const BG_COLOR: Color = Color::from_hex(0x66_23_47);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init(width: u32, height: u32) {

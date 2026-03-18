@@ -2,7 +2,7 @@
 
 //! Text styling types shared between SDK and host.
 
-use crate::GRAY_10;
+use crate::colors::{Color, GRAY_10, TRANSPARENT};
 
 /// Text alignment
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -101,7 +101,7 @@ pub enum TextOverflow {
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
     pub size: u32,      // default: 16
-    pub color: u32,     // default: GRAY_10
+    pub color: Color,   // default: GRAY_10
     pub max_width: u32, // default: 0 (use container width)
     pub weight: u16,    // default: 400, 700 = bold
     pub italic: bool,
@@ -110,7 +110,7 @@ pub struct TextStyle {
     pub line_height: f32, // default: 1.4 (multiplier)
     pub align: TextAlign,
     pub text_overflow: TextOverflow, // default: Wrap
-    pub outline_color: u32,          // default: 0 (no outline)
+    pub outline_color: Color,        // default: TRANSPARENT (no outline)
     pub outline_width: f32,          // default: 0.0 (no outline)
 }
 
@@ -127,7 +127,7 @@ impl Default for TextStyle {
             line_height: 1.4,
             align: TextAlign::Left,
             text_overflow: TextOverflow::Wrap,
-            outline_color: 0,
+            outline_color: TRANSPARENT,
             outline_width: 0.0,
         }
     }
@@ -150,7 +150,7 @@ impl TextStyle {
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0_u8; Self::SIZE];
         buf[0..4].copy_from_slice(&self.size.to_le_bytes());
-        buf[4..8].copy_from_slice(&self.color.to_le_bytes());
+        buf[4..8].copy_from_slice(&self.color.to_u32().to_le_bytes());
         buf[8..12].copy_from_slice(&self.max_width.to_le_bytes());
 
         let weight_bits = u32::from(self.weight) & 0xFFF;
@@ -173,7 +173,7 @@ impl TextStyle {
             | align_bits
             | overflow_bits;
         buf[12..16].copy_from_slice(&flags.to_le_bytes());
-        buf[16..20].copy_from_slice(&self.outline_color.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.outline_color.to_u32().to_le_bytes());
         buf[20..24].copy_from_slice(&self.outline_width.to_le_bytes());
         buf
     }
@@ -182,10 +182,11 @@ impl TextStyle {
     #[must_use]
     pub fn from_bytes(data: &[u8]) -> Self {
         let size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-        let color = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+        let color = Color::from_raw(u32::from_le_bytes([data[4], data[5], data[6], data[7]]));
         let max_width = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
         let flags = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
-        let outline_color = u32::from_le_bytes([data[16], data[17], data[18], data[19]]);
+        let outline_color =
+            Color::from_raw(u32::from_le_bytes([data[16], data[17], data[18], data[19]]));
         let outline_width = f32::from_le_bytes([data[20], data[21], data[22], data[23]]);
 
         let weight = (flags & 0xFFF) as u16;
@@ -231,7 +232,7 @@ pub struct PropsData {
     pub padding: f32,
     pub margin: f32,
     pub gap: f32,
-    pub background: u32,
+    pub background: Color,
     pub width: f32,
     pub height: f32,
     pub flex: f32,
@@ -261,7 +262,7 @@ impl Default for PropsData {
             padding: 0.0,
             margin: 0.0,
             gap: 0.0,
-            background: 0,
+            background: TRANSPARENT,
             width: 0.0,
             height: 0.0,
             flex: 0.0,
@@ -300,7 +301,7 @@ impl PropsData {
         buf[0..4].copy_from_slice(&self.padding.to_le_bytes());
         buf[4..8].copy_from_slice(&self.margin.to_le_bytes());
         buf[8..12].copy_from_slice(&self.gap.to_le_bytes());
-        buf[12..16].copy_from_slice(&self.background.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.background.to_u32().to_le_bytes());
         buf[16..20].copy_from_slice(&self.width.to_le_bytes());
         buf[20..24].copy_from_slice(&self.height.to_le_bytes());
         buf[24..28].copy_from_slice(&self.flex.to_le_bytes());
@@ -326,7 +327,9 @@ impl PropsData {
             padding: f32::from_le_bytes([data[0], data[1], data[2], data[3]]),
             margin: f32::from_le_bytes([data[4], data[5], data[6], data[7]]),
             gap: f32::from_le_bytes([data[8], data[9], data[10], data[11]]),
-            background: u32::from_le_bytes([data[12], data[13], data[14], data[15]]),
+            background: Color::from_raw(u32::from_le_bytes([
+                data[12], data[13], data[14], data[15],
+            ])),
             width: f32::from_le_bytes([data[16], data[17], data[18], data[19]]),
             height: f32::from_le_bytes([data[20], data[21], data[22], data[23]]),
             flex: f32::from_le_bytes([data[24], data[25], data[26], data[27]]),

@@ -11,7 +11,7 @@ mod render;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 /// Install a panic hook that logs the panic message before aborting.
@@ -35,7 +35,7 @@ const DAYS_AHEAD: u32 = 45;
 struct ICalSource {
     url: &'static str,
     label: &'static str,
-    color: u32,
+    color: Color,
 }
 
 /// Default calendar sources for testing.

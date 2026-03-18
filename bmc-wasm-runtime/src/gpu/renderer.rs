@@ -11,9 +11,10 @@ use std::ffi::c_void;
 use std::num::NonZeroU32;
 
 use anyhow::Result;
+use bmc_wasm_protocol::colors::Color;
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
-use femtovg::{Canvas, Color, FontId, Paint, Path, RenderTarget};
+use femtovg::{Canvas, FontId, Paint, Path, RenderTarget};
 use glow::HasContext;
 
 use super::bitmap::BitmapRegistry;
@@ -175,40 +176,40 @@ impl Drop for FemtoVgRenderer {
 impl Renderer for FemtoVgRenderer {
     // -- Shapes --
 
-    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32) {
+    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
         let mut path = Path::new();
         path.rect(x, y, w, h);
         self.canvas
-            .fill_path(&path, &Paint::color(to_femtovg_color(color)));
+            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
     }
 
-    fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: u32) {
+    fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: Color) {
         let mut path = Path::new();
         path.rounded_rect(x, y, w, h, radius);
         self.canvas
-            .fill_path(&path, &Paint::color(to_femtovg_color(color)));
+            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
     }
 
-    fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: u32) {
+    fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: Color) {
         let mut path = Path::new();
         path.circle(cx, cy, r);
         self.canvas
-            .fill_path(&path, &Paint::color(to_femtovg_color(color)));
+            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
     }
 
-    fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: u32) {
+    fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color) {
         let mut path = Path::new();
         path.rect(x, y, w, h);
-        let mut paint = Paint::color(to_femtovg_color(color));
+        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
         paint.set_line_width(border_width);
         self.canvas.stroke_path(&path, &paint);
     }
 
-    fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: u32) {
+    fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Color) {
         let mut path = Path::new();
         path.move_to(x1, y1);
         path.line_to(x2, y2);
-        let mut paint = Paint::color(to_femtovg_color(color));
+        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
         paint.set_line_width(width);
         self.canvas.stroke_path(&path, &paint);
     }
@@ -219,7 +220,7 @@ impl Renderer for FemtoVgRenderer {
         &mut self,
         points: &[(f32, f32)],
         stroke_width: f32,
-        color: u32,
+        color: Color,
         closed: bool,
         smooth: bool,
     ) {
@@ -227,20 +228,20 @@ impl Renderer for FemtoVgRenderer {
             return;
         }
         let path = build_femtovg_path(points, closed, smooth);
-        let mut paint = Paint::color(to_femtovg_color(color));
+        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
         paint.set_line_width(stroke_width);
         paint.set_line_cap(femtovg::LineCap::Round);
         paint.set_line_join(femtovg::LineJoin::Round);
         self.canvas.stroke_path(&path, &paint);
     }
 
-    fn fill_path_points(&mut self, points: &[(f32, f32)], color: u32, smooth: bool) {
+    fn fill_path_points(&mut self, points: &[(f32, f32)], color: Color, smooth: bool) {
         if points.len() < 3 {
             return;
         }
         let path = build_femtovg_path(points, true, smooth);
         self.canvas
-            .fill_path(&path, &Paint::color(to_femtovg_color(color)));
+            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
     }
 
     // -- Transform stack --
@@ -276,8 +277,8 @@ impl Renderer for FemtoVgRenderer {
 
     // -- Simple text --
 
-    fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: u32) {
-        let mut paint = Paint::color(to_femtovg_color(color));
+    fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
+        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
         paint.set_font(&[self.font_regular]);
         paint.set_font_size(size);
         paint.set_text_baseline(femtovg::Baseline::Top);
@@ -285,7 +286,7 @@ impl Renderer for FemtoVgRenderer {
     }
 
     fn measure_text(&mut self, text: &str, size: f32) -> f32 {
-        let mut paint = Paint::color(Color::white());
+        let mut paint = Paint::color(femtovg::Color::white());
         paint.set_font(&[self.font_regular]);
         paint.set_font_size(size);
         self.canvas
@@ -302,7 +303,7 @@ impl Renderer for FemtoVgRenderer {
             self.font_regular
         };
         let size = style.size as f32;
-        let mut paint = Paint::color(to_femtovg_color(style.color));
+        let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
         paint.set_font(&[font]);
         paint.set_font_size(size);
         paint.set_text_baseline(femtovg::Baseline::Top);
@@ -328,8 +329,8 @@ impl Renderer for FemtoVgRenderer {
 
         // Text outline via 8-direction fill_text at each 1px ring up to outline_width.
         // 8 textured-quad draws per ring — cheap on GPU even on embedded.
-        if style.outline_color != 0 && style.outline_width > 0.0 {
-            let mut outline_paint = Paint::color(to_femtovg_color(style.outline_color));
+        if style.outline_color != crate::colors::TRANSPARENT && style.outline_width > 0.0 {
+            let mut outline_paint = Paint::color(to_femtovg_color(style.outline_color.to_u32()));
             outline_paint.set_font(&[font]);
             outline_paint.set_font_size(size);
             outline_paint.set_text_baseline(femtovg::Baseline::Top);
@@ -435,7 +436,7 @@ impl Renderer for FemtoVgRenderer {
         y: f32,
         w: f32,
         h: f32,
-        color: u32,
+        color: Color,
         icon_id: u16,
         anti_alias: bool,
     ) {
@@ -462,8 +463,10 @@ impl Renderer for FemtoVgRenderer {
         }
     }
 
-    fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
-        self.bitmap_registry.sample(bitmap_id, x, y, w, h)
+    fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<Color> {
+        self.bitmap_registry
+            .sample(bitmap_id, x, y, w, h)
+            .map(Color::from_raw)
     }
 
     fn draw_nine_patch(
@@ -617,7 +620,7 @@ impl Renderer for FemtoVgRenderer {
             (height as f32 * dpi_scale) as u32,
         );
         self.canvas
-            .clear_rect(0, 0, pw, ph, Color::rgbf(0.0, 0.0, 0.0));
+            .clear_rect(0, 0, pw, ph, femtovg::Color::rgbf(0.0, 0.0, 0.0));
         self.paragraph_cache.begin_frame(self.frame_counter);
     }
 

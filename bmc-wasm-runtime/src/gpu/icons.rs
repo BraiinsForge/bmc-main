@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
     ICON_FLAG_EVENODD, ICON_FLAG_HAS_FILL, ICON_FLAG_HAS_STROKE, ICON_OP_CLOSE, ICON_OP_CUBIC_TO,
     ICON_OP_LINE_TO, ICON_OP_MOVE_TO, ICON_OP_QUAD_TO,
@@ -102,8 +103,8 @@ impl IconRegistry {
 
 /// Render a registered icon onto the canvas.
 ///
-/// `color == 0` (TRANSPARENT) → use original SVG colors.
-/// `color != 0` → tint all fills/strokes with the given color.
+/// `color == TRANSPARENT` → use original SVG colors.
+/// `color != TRANSPARENT` → tint all fills/strokes with the given color.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_icon(
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
@@ -112,7 +113,7 @@ pub fn draw_icon(
     y: f32,
     w: f32,
     h: f32,
-    color: u32,
+    color: Color,
     anti_alias: bool,
 ) {
     if icon.viewbox_w <= 0.0 || icon.viewbox_h <= 0.0 {
@@ -126,10 +127,10 @@ pub fn draw_icon(
     canvas.translate(x, y);
     canvas.scale(scale_x, scale_y);
 
-    let tint = if color != 0 {
-        Some(to_femtovg_color(color))
-    } else {
+    let tint = if color == bmc_wasm_protocol::colors::TRANSPARENT {
         None
+    } else {
+        Some(to_femtovg_color(color.to_u32()))
     };
 
     for icon_path in &icon.paths {

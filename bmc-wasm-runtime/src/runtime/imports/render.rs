@@ -7,6 +7,7 @@
 mod assets;
 
 use anyhow::Result;
+use bmc_wasm_protocol::colors::Color;
 use wasmi::{Caller, Linker};
 
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
@@ -44,9 +45,13 @@ fn register_primitives(linker: &mut Linker<HostState>) -> Result<()> {
         "host_fill_rect",
         |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: u32, h: u32, color: u32| {
             let state = caller.data_mut();
-            state
-                .renderer
-                .fill_rect(x as f32, y as f32, w as f32, h as f32, color);
+            state.renderer.fill_rect(
+                x as f32,
+                y as f32,
+                w as f32,
+                h as f32,
+                Color::from_raw(color),
+            );
         },
     )?;
 
@@ -67,7 +72,7 @@ fn register_primitives(linker: &mut Linker<HostState>) -> Result<()> {
                 w as f32,
                 h as f32,
                 radius as f32,
-                color,
+                Color::from_raw(color),
             );
         },
     )?;
@@ -86,9 +91,13 @@ fn register_primitives(linker: &mut Linker<HostState>) -> Result<()> {
                 return;
             };
             let state = caller.data_mut();
-            state
-                .renderer
-                .draw_text(&text, x as f32, y as f32, size as f32, color);
+            state.renderer.draw_text(
+                &text,
+                x as f32,
+                y as f32,
+                size as f32,
+                Color::from_raw(color),
+            );
         },
     )?;
 

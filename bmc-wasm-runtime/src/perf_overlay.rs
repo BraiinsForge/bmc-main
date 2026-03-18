@@ -19,12 +19,14 @@ use crate::FrameTimings;
 use crate::colors::*;
 use crate::renderer::Renderer;
 
+use bmc_wasm_protocol::colors::Color;
+
 // Component colors for timing breakdown
-const COL_WASM: u32 = 0x6A_9F_D8_FF; // blue — wasmi interpreter
-const COL_TREE: u32 = 0xE0_9A_50_FF; // orange — tree deserialization/parsing
-const COL_LAYOUT: u32 = 0xCC_CC_50_FF; // yellow — Taffy layout
-const COL_RENDER: u32 = 0x50_CC_50_FF; // green — tree render
-const COL_FLUSH: u32 = 0xCC_50_CC_FF; // purple — GPU flush
+const COL_WASM: Color = Color::from_hex(0x6A_9F_D8); // blue — wasmi interpreter
+const COL_TREE: Color = Color::from_hex(0xE0_9A_50); // orange — tree deserialization/parsing
+const COL_LAYOUT: Color = Color::from_hex(0xCC_CC_50); // yellow — Taffy layout
+const COL_RENDER: Color = Color::from_hex(0x50_CC_50); // green — tree render
+const COL_FLUSH: Color = Color::from_hex(0xCC_50_CC); // purple — GPU flush
 
 const HISTORY_LEN: usize = 120;
 
@@ -180,7 +182,7 @@ impl PerfOverlay {
                 continue;
             }
             let t = &sample.timings;
-            let segments: [(u32, u32); 5] = [
+            let segments: [(u32, Color); 5] = [
                 (t.flush_us, COL_FLUSH),
                 (t.render_us, COL_RENDER),
                 (t.layout_us, COL_LAYOUT),

@@ -9,24 +9,26 @@ use crate::interaction::{InteractionState, Rect};
 use crate::renderer::Renderer;
 use crate::tree::ButtonSkinData;
 
+use bmc_wasm_protocol::colors::Color;
+
 // Button semantic colors (normal, active/pressed)
-const BTN_PRIMARY_BG: u32 = VIOLET_60;
-const BTN_PRIMARY_BG_ACTIVE: u32 = VIOLET_70;
+const BTN_PRIMARY_BG: Color = VIOLET_60;
+const BTN_PRIMARY_BG_ACTIVE: Color = VIOLET_70;
 
-const BTN_SECONDARY_BG: u32 = GRAY_70;
-const BTN_SECONDARY_BG_ACTIVE: u32 = GRAY_80;
+const BTN_SECONDARY_BG: Color = GRAY_70;
+const BTN_SECONDARY_BG_ACTIVE: Color = GRAY_80;
 
-const BTN_DANGER_BG: u32 = RED_60;
-const BTN_DANGER_BG_ACTIVE: u32 = RED_70;
+const BTN_DANGER_BG: Color = RED_60;
+const BTN_DANGER_BG_ACTIVE: Color = RED_70;
 
-const BTN_TERTIARY_BG: u32 = TRANSPARENT;
-const BTN_TERTIARY_BG_ACTIVE: u32 = GRAY_50;
-const BTN_TERTIARY_BORDER: u32 = GRAY_50;
+const BTN_TERTIARY_BG: Color = TRANSPARENT;
+const BTN_TERTIARY_BG_ACTIVE: Color = GRAY_50;
+const BTN_TERTIARY_BORDER: Color = GRAY_50;
 
-const BTN_GHOST_BG_ACTIVE: u32 = GRAY_80;
+const BTN_GHOST_BG_ACTIVE: Color = GRAY_80;
 
-const BTN_FG: u32 = GRAY_10;
-const BTN_TERTIARY_FG_ACTIVE: u32 = GRAY_100;
+const BTN_FG: Color = GRAY_10;
+const BTN_TERTIARY_FG_ACTIVE: Color = GRAY_100;
 
 /// Button style variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +56,7 @@ impl From<u32> for ButtonStyle {
 
 /// Colors for button styles (normal, active/pressed).
 impl ButtonStyle {
-    fn colors(self) -> (u32, u32) {
+    fn colors(self) -> (Color, Color) {
         match self {
             ButtonStyle::Primary => (BTN_PRIMARY_BG, BTN_PRIMARY_BG_ACTIVE),
             ButtonStyle::Secondary => (BTN_SECONDARY_BG, BTN_SECONDARY_BG_ACTIVE),
@@ -72,13 +74,13 @@ impl ButtonStyle {
         matches!(self, ButtonStyle::Ghost)
     }
 
-    fn border_color(self) -> u32 {
+    fn border_color(self) -> Color {
         match self {
             ButtonStyle::Tertiary => BTN_TERTIARY_BORDER,
             ButtonStyle::Primary
             | ButtonStyle::Secondary
             | ButtonStyle::Danger
-            | ButtonStyle::Ghost => 0,
+            | ButtonStyle::Ghost => Color::default(),
         }
     }
 }
@@ -152,9 +154,9 @@ impl ButtonSize {
 
 // ── Disabled state colors (Carbon Design System, g100 dark theme) ────
 
-const BTN_DISABLED_BG: u32 = crate::color!(GRAY_50, alpha: 0.3);
-const BTN_DISABLED_FG_ON_COLOR: u32 = crate::color!(WHITE, alpha: 0.25);
-const BTN_DISABLED_FG: u32 = crate::color!(GRAY_10, alpha: 0.25);
+const BTN_DISABLED_BG: Color = crate::color!(GRAY_50, alpha: 0.3);
+const BTN_DISABLED_FG_ON_COLOR: Color = crate::color!(WHITE, alpha: 0.25);
+const BTN_DISABLED_FG: Color = crate::color!(GRAY_10, alpha: 0.25);
 
 /// Draw a button with optional icon and label, and check if it was clicked.
 ///
@@ -218,7 +220,7 @@ pub fn draw_button(
         );
         // Darken overlay when pressed and no dedicated pressed asset
         if is_pressed && skin.pressed.is_none() {
-            renderer.fill_rect(x, y, w, h, 0x00_00_00_40);
+            renderer.fill_rect(x, y, w, h, BLACK.with_alpha(0.25));
         }
     } else if style.is_ghost() {
         // Ghost: no chrome normally, subtle rectangular fill on press
@@ -244,12 +246,12 @@ pub fn draw_button(
     }
 
     let fg_color = if let Some(skin) = skin {
-        let base = if skin.text_color != 0 {
-            skin.text_color
-        } else {
+        let base = if skin.text_color == TRANSPARENT {
             BTN_FG
+        } else {
+            skin.text_color
         };
-        if is_pressed && skin.pressed_text_color != 0 {
+        if is_pressed && skin.pressed_text_color != TRANSPARENT {
             skin.pressed_text_color
         } else {
             base
@@ -300,11 +302,11 @@ fn draw_button_disabled(
             np.right,
             np.bottom,
         );
-        renderer.fill_rect(x, y, w, h, 0x00_00_00_80); // darken overlay for disabled
-        if skin.text_color != 0 {
-            crate::color!(skin.text_color, alpha: 0.25)
-        } else {
+        renderer.fill_rect(x, y, w, h, BLACK.with_alpha(0.50)); // darken overlay for disabled
+        if skin.text_color == TRANSPARENT {
             BTN_DISABLED_FG_ON_COLOR
+        } else {
+            skin.text_color.with_alpha(0.25)
         }
     } else if style.is_ghost() || style.is_outline() {
         BTN_DISABLED_FG
@@ -329,7 +331,7 @@ fn draw_button_content(
     h: f32,
     size: ButtonSize,
     icon_id: u16,
-    fg_color: u32,
+    fg_color: Color,
 ) {
     let font_size = size.font_size();
     let icon_sz = size.icon_size();
@@ -376,7 +378,7 @@ fn draw_text_ellipsis(
     y: f32,
     font_size: f32,
     max_w: f32,
-    color: u32,
+    color: Color,
 ) {
     if max_w <= 0.0 {
         return;
