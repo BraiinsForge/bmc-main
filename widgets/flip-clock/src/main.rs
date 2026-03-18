@@ -14,8 +14,6 @@ mod wayland;
 
 use std::fs::OpenOptions;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
@@ -47,9 +45,6 @@ struct Args {
 const WIDGET_LOG_PATH: &str = "/var/log/bmc/flip-clock-widget.log";
 
 fn main() -> Result<()> {
-    // Initialize logging to a dedicated file.
-    // Widget stdout/stderr are inherited from BMC but may not be visible,
-    // so we write directly to a log file for reliable debugging.
     let log_file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -59,7 +54,6 @@ fn main() -> Result<()> {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::default().add_directive(LevelFilter::INFO.into()));
 
-    // Initialize logging
     tracing_subscriber::registry()
         .with(
             fmt::layer()
@@ -82,16 +76,7 @@ fn main() -> Result<()> {
 
 fn run_standalone(mode: AnimationMode) -> Result<()> {
     tracing::info!("Starting flip-clock widget in standalone mode (mode: {mode:?})");
-
-    let timezone = Arc::new(RwLock::new(String::from("UTC")));
-    let shutdown = Arc::new(AtomicBool::new(false));
-
-    let mut client = wayland::WaylandClient::connect(mode, 640, 480, timezone, shutdown)?;
-    tracing::info!("Connected to Wayland display");
-
-    client.run(None)?;
-
-    Ok(())
+    wayland::connect_standalone(mode, 640, 480, String::from("UTC"))
 }
 
 fn run_with_protocol() -> Result<()> {
@@ -105,22 +90,11 @@ fn run_with_protocol() -> Result<()> {
         config.timezone
     );
 
-    let timezone = Arc::new(RwLock::new(config.timezone));
-    let shutdown = Arc::new(AtomicBool::new(false));
-
-    let (protocol_client, handler) =
-        ipc::setup_protocol(&instance_id, Arc::clone(&timezone), Arc::clone(&shutdown))?;
-
-    let mut client = wayland::WaylandClient::connect(
+    wayland::connect_production(
+        &instance_id,
         config.mode,
         config.width,
         config.height,
-        timezone,
-        shutdown,
-    )?;
-    tracing::info!("Connected to Wayland display");
-
-    client.run(Some((protocol_client, handler)))?;
-
-    Ok(())
+        config.timezone,
+    )
 }

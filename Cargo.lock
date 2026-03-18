@@ -1206,9 +1206,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
- "bmc-shared-time",
  "bmc-widget",
- "bmc-widget-protocol",
  "bytemuck",
  "chrono",
  "chrono-tz",
@@ -1219,7 +1217,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tracing",
  "tracing-subscriber",
- "wayland-client 0.31.10",
 ]
 
 [[package]]

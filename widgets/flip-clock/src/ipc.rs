@@ -2,15 +2,9 @@
 
 //! IPC module for flip-clock widget.
 //!
-//! Reads initial configuration from DECK_* environment variables and provides
-//! a protocol client for receiving runtime setting updates from the compositor.
+//! Reads initial configuration from DECK_* environment variables.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
-
-use bmc_widget::wayland::{WidgetEventHandler, WidgetProtocolClient};
 use bmc_widget::{EnvError, env};
-use bmc_widget_protocol::SettingUpdate;
 
 use crate::AnimationMode;
 
@@ -18,9 +12,6 @@ use crate::AnimationMode;
 pub enum IpcError {
     #[error("environment variable error: {0}")]
     Env(#[from] EnvError),
-
-    #[error("wayland error: {0}")]
-    Wayland(#[from] bmc_widget::WaylandError),
 }
 
 /// Widget-specific parameters from `DECK_PARAMS`.
@@ -83,7 +74,6 @@ pub fn read_config() -> Result<(String, Config), IpcError> {
         ..Config::default()
     };
 
-    // Prefer params timezone over settings timezone
     if let Some(tz) = params.timezone {
         config.timezone = tz;
     } else if let Some(ref tz) = settings.timezone {
@@ -91,49 +81,4 @@ pub fn read_config() -> Result<(String, Config), IpcError> {
     }
 
     Ok((instance_id, config))
-}
-
-/// Event handler that updates shared state from protocol events.
-#[derive(Debug)]
-pub struct EventHandler {
-    pub timezone: Arc<RwLock<String>>,
-    pub shutdown_requested: Arc<AtomicBool>,
-}
-
-impl WidgetEventHandler for EventHandler {
-    fn on_setting(&mut self, update: SettingUpdate) {
-        match update {
-            SettingUpdate::Timezone(tz_str) => {
-                *self.timezone.write().expect("BUG: timezone lock poisoned") = tz_str;
-            }
-            SettingUpdate::NightMode(_) | SettingUpdate::Localization(_) => {
-                // Flip-clock doesn't use night mode or localization
-            }
-        }
-    }
-
-    fn on_shutdown(&mut self) {
-        self.shutdown_requested.store(true, Ordering::Relaxed);
-    }
-}
-
-/// Set up the protocol client and create a widget surface.
-///
-/// Returns the protocol client and event handler for integration into the
-/// caller's event loop. The caller must poll the protocol client regularly.
-pub fn setup_protocol(
-    instance_id: &str,
-    timezone: Arc<RwLock<String>>,
-    shutdown_requested: Arc<AtomicBool>,
-) -> Result<(WidgetProtocolClient, EventHandler), IpcError> {
-    let mut protocol_client = WidgetProtocolClient::connect()?;
-    protocol_client.create_widget_surface(instance_id);
-    protocol_client.flush()?;
-
-    let handler = EventHandler {
-        timezone,
-        shutdown_requested,
-    };
-
-    Ok((protocol_client, handler))
 }
