@@ -182,7 +182,7 @@ impl WaylandClient {
         let mut runtime = unsafe {
             WasmWidgetRuntime::new(
                 &wasm_bytes,
-                |symbol| smithay::backend::egl::get_proc_address(symbol),
+                |symbol| EglState::get_proc_address(symbol),
                 self.state.width,
                 self.state.height,
                 fbo_id,
