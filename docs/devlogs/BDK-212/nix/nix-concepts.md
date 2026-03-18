@@ -69,7 +69,7 @@ https://cache.braiins.com/
 ├── nix-cache-info                   # Cache metadata
 ├── v1/
 │   └── miniminer-index.json         # Root index (package list)
-│   └── miniminer-factory.json       # Tarballs for initialization
+│   └── factory.json       # Tarballs for initialization
 ├── <hash>.narinfo                   # Package metadata files
 └── nar/
     ├── <hash>.nar.xz                # Compressed NAR archives
@@ -183,7 +183,7 @@ This is used for initialization of Nix on a given device. Braiins
 should ensure there is always a tarball for the latest firmware to
 prevent users not getting Nix initialized.
 
-**Location:** `<https://<server>>/v1/miniminer-factory.json`
+**Location:** `<https://<server>>/v1/factory.json`
 
 ```json
 {
@@ -229,7 +229,7 @@ Additional metadata about servers (priority, enabled state).
 {
   "factory": {
       "id": "braiins_server",
-      "index_url": "https://cache.braiins.com/v1/miniminer-factory.json",
+      "index_url": "https://cache.braiins.com/v1/factory.json",
       "known_public_key": "cache.braiins.com:AAAAB3NzaC1...",
       "priority": 1,
       "enabled": true
@@ -259,7 +259,7 @@ Additional metadata about servers (priority, enabled state).
 
 * `factory` - Server entry for the factory index (used for initialization/reset):
   * `id` - Unique server identifier
-  * `index_url` - URL of the factory index (`miniminer-factory.json`)
+  * `index_url` - URL of the factory index (`factory.json`)
   * `public_key` - Public key for signature verification
   * `priority` - Resolution priority (lower = higher priority)
   * `enabled` - Whether this server is active

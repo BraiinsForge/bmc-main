@@ -133,7 +133,7 @@ pub struct ResolvedPackage {
     pub pinned: PinStrategy,
 }
 
-/// Factory initialization index (miniminer-factory.json)
+/// Factory initialization index (factory.json)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FactoryIndex {
     pub version: u32,
