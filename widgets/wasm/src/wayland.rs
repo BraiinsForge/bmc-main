@@ -1,13 +1,11 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 //
-//! Wayland client implementation for WASM widget
+//! Wayland client for the WASM widget.
 //!
-//! Handles connection to the Wayland compositor, surface creation,
-//! and frame callback management. Uses the custom deck_widget_v1 protocol
-//! to register with the BMC compositor.
-//!
-//! This is a simplified version of the settings widget, with the
-//! FemtoVG renderer replaced by bmc-wasm-runtime's WasmWidgetRuntime.
+//! Uses `poll(2)` instead of `blocking_dispatch` so the runtime's delayed
+//! frames fire correctly without blocking Wayland event processing.
+//! GPU resources are initialized lazily on first visibility to avoid
+//! exhausting the GC400's 4-context limit on inactive scenes.
 
 use crate::egl::{DmaBufInfo, EglState};
 use anyhow::{Context, Result};
@@ -19,6 +17,8 @@ use bmc_widget_protocol::client::{
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
 use std::os::fd::AsFd;
+use std::path::PathBuf;
+use std::time::Instant;
 use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle,
     protocol::{wl_buffer, wl_callback, wl_compositor, wl_registry, wl_surface},
@@ -27,49 +27,49 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
 };
 
-/// Wayland client state
+/// Rendering state — created lazily on first visibility, kept alive forever.
+///
+/// EGL context and WASM runtime persist across visibility changes. On hide we
+/// just stop rendering (poll blocks on -1). On show we resume immediately with
+/// the last widget state — no re-init, no flicker, no GPU resource churn.
+struct RenderState {
+    egl: EglState,
+    runtime: WasmWidgetRuntime,
+    last_frame: Instant,
+    frame_count: u64,
+}
+
+/// WASM widget parameters from `DECK_PARAMS` JSON.
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct WasmParams {
+    /// Path to the `.wasm` file to execute.
+    wasm_path: Option<String>,
+}
+
+/// Wayland client state.
 pub struct WaylandClient {
-    /// Wayland connection
-    #[expect(dead_code, reason = "kept alive for protocol operations")]
     conn: Connection,
-    /// Event queue
     queue: EventQueue<WaylandState>,
-    /// Client state
     state: WaylandState,
 }
 
-/// Internal state for Wayland protocol handling
+/// Internal state for Wayland protocol handling.
 struct WaylandState {
-    /// Whether we should keep running
     running: bool,
-    /// Compositor global
     compositor: Option<wl_compositor::WlCompositor>,
-    /// Widget manager global (deck_widget_v1 protocol)
     widget_manager: Option<DeckWidgetManagerV1>,
-    /// Linux DMA-BUF global
     linux_dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
-    /// Our surface
     surface: Option<wl_surface::WlSurface>,
-    /// Widget surface role (deck_widget_surface_v1)
     widget_surface: Option<DeckWidgetSurfaceV1>,
-    /// Current width
     width: u32,
-    /// Current height
     height: u32,
-    /// Frame count (for logging)
-    frame_count: u32,
-    /// Whether we need to render
     needs_render: bool,
-    /// Whether size changed (needs EGL resize)
-    size_changed: bool,
-    /// Number of buffers currently held by compositor (not yet released)
     pending_buffers: u32,
-    /// Path to WASM file (from DECK_PARAMS)
-    wasm_path: String,
 }
 
 impl WaylandClient {
-    /// Connect to the Wayland display
+    /// Connect to the Wayland display.
     pub fn connect() -> Result<Self> {
         let conn = Connection::connect_to_env().context("Failed to connect to Wayland display")?;
 
@@ -79,28 +79,12 @@ impl WaylandClient {
         let display = conn.display();
         display.get_registry(&qh, ());
 
-        // Get widget dimensions and instance ID from environment (set by coordinator)
-        let width = std::env::var("DECK_WIDTH")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1280);
-        let height = std::env::var("DECK_HEIGHT")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(480);
-        let instance_id = std::env::var("DECK_INSTANCE_ID")
-            .context("DECK_INSTANCE_ID environment variable not set")?;
+        let instance_id = bmc_widget::read_instance_id().context("DECK_INSTANCE_ID not set")?;
+        let size = bmc_widget::read_size().context("DECK_SIZE not set")?;
+        let width = size.width;
+        let height = size.height;
 
-        // Get WASM path from DECK_PARAMS (JSON format)
-        let wasm_path = parse_wasm_path_from_params()?;
-
-        tracing::info!(
-            "Widget config: instance_id={}, size={}x{}, wasm={}",
-            instance_id,
-            width,
-            height,
-            wasm_path
-        );
+        tracing::info!("Widget config: instance_id={instance_id}, size={width}x{height}",);
 
         let mut state = WaylandState {
             running: true,
@@ -111,19 +95,14 @@ impl WaylandClient {
             widget_surface: None,
             width,
             height,
-            frame_count: 0,
             needs_render: false,
-            size_changed: false,
             pending_buffers: 0,
-            wasm_path,
         };
 
-        // Roundtrip to get globals
         queue
             .roundtrip(&mut state)
             .context("Failed to roundtrip for globals")?;
 
-        // Verify we have required globals
         let compositor = state
             .compositor
             .as_ref()
@@ -131,27 +110,18 @@ impl WaylandClient {
         let widget_manager = state
             .widget_manager
             .as_ref()
-            .context("deck_widget_manager_v1 not available - is this the BMC compositor?")?;
+            .context("deck_widget_manager_v1 not available — is this the BMC compositor?")?;
 
-        // Create surface
         let surface = compositor.create_surface(&qh, ());
-
-        // Register with compositor via deck_widget_v1 protocol
         let widget_surface =
             widget_manager.get_widget_surface(&surface, instance_id.clone(), &qh, ());
 
-        tracing::info!(
-            "Registered widget surface with instance_id: {}",
-            instance_id
-        );
-
-        // Commit surface
+        tracing::info!("Registered widget surface with instance_id: {instance_id}");
         surface.commit();
 
         state.surface = Some(surface);
         state.widget_surface = Some(widget_surface);
 
-        // Roundtrip to ensure registration is processed
         queue
             .roundtrip(&mut state)
             .context("Failed to roundtrip after widget registration")?;
@@ -161,45 +131,26 @@ impl WaylandClient {
         Ok(Self { conn, queue, state })
     }
 
-    /// Run the event loop with EGL rendering and WASM runtime
-    #[expect(clippy::too_many_lines, reason = "Event loop is inherently complex")]
+    /// Run the event loop with poll(2)-based frame scheduling.
+    ///
+    /// EGL context and WASM runtime are initialized lazily on first visibility.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "render loop is a single sequential flow"
+    )]
     pub fn run(&mut self) -> Result<()> {
         let qh = self.queue.handle();
 
-        // Initialize GBM-based EGL (two-FBO pipeline for FemtoVG Y-flip)
-        let mut egl = EglState::new(self.state.width, self.state.height)?;
+        // Parse WASM path from DECK_PARAMS (cheap — no GPU resources yet)
+        let params: WasmParams =
+            bmc_widget::read_params().context("Failed to parse DECK_PARAMS")?;
+        let wasm_path: PathBuf = params
+            .wasm_path
+            .context("wasmPath not set in DECK_PARAMS")?
+            .into();
 
-        tracing::info!("GBM-based EGL initialized, loading WASM runtime");
+        tracing::info!("WASM path: {}", wasm_path.display());
 
-        // Allocate first buffer and get its FBO for FemtoVG's screen target.
-        let fbo_id = egl.begin_frame()?;
-
-        // Load WASM bytes
-        let wasm_bytes = std::fs::read(&self.state.wasm_path)
-            .with_context(|| format!("Failed to read WASM file: {}", self.state.wasm_path))?;
-
-        // Create WASM runtime with GL function loader
-        let mut runtime = unsafe {
-            WasmWidgetRuntime::new(
-                &wasm_bytes,
-                |symbol| EglState::get_proc_address(symbol),
-                self.state.width,
-                self.state.height,
-                fbo_id,
-                WasmWidgetRuntime::FUEL_PER_FRAME,
-                bmc_wasm_protocol::FormatPreferences::default(),
-            )?
-        };
-
-        let (major, minor, patch) = runtime.sdk_version();
-        tracing::info!(
-            "WASM runtime initialized, SDK version {}.{}.{}",
-            major,
-            minor,
-            patch
-        );
-
-        // Verify we have linux-dmabuf
         let linux_dmabuf = self
             .state
             .linux_dmabuf
@@ -207,97 +158,102 @@ impl WaylandClient {
             .context("zwp_linux_dmabuf_v1 not available")?
             .clone();
 
-        // Render first frame immediately to give compositor something to display
-        {
-            runtime
-                .renderer()
-                .begin_frame(self.state.width, self.state.height, 1.0);
-            match runtime.render(0)? {
-                RenderStatus::Ok => {}
-                status => tracing::warn!("First frame render status: {status:?}"),
-            }
-            runtime.renderer().flush();
+        // Render state is None until first initialized.
+        let mut render: Option<RenderState> = None;
 
-            // Blit staging -> export FBO with Y-flip
-            egl.blit_to_export()?;
-
-            // End frame — finish GL, export DMA-BUF
-            let dmabuf_info = egl.end_frame()?;
-            let buffer = create_buffer_from_dmabuf(&linux_dmabuf, &dmabuf_info, &qh);
-
-            if let Some(ref surface) = self.state.surface {
-                surface.attach(Some(&buffer), 0, 0);
-                #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
-                surface.damage_buffer(0, 0, dmabuf_info.width as i32, dmabuf_info.height as i32);
-                surface.frame(&qh, ());
-                surface.commit();
-                self.state.pending_buffers += 1;
-            }
-            tracing::info!("First frame rendered and committed");
-        }
-
-        let mut last_frame = std::time::Instant::now();
+        let wayland_raw_fd = std::os::fd::AsRawFd::as_raw_fd(&self.conn.as_fd());
 
         while self.state.running {
-            // Dispatch Wayland events
-            self.queue
-                .blocking_dispatch(&mut self.state)
-                .context("Wayland dispatch failed")?;
+            // Compute poll timeout from WASM runtime's frame scheduling
+            let timeout_ms = self.compute_poll_timeout(render.as_ref());
 
-            // Handle resize if needed
-            if self.state.size_changed {
-                egl.resize(self.state.width, self.state.height);
-                self.state.size_changed = false;
+            let mut pollfd = libc::pollfd {
+                fd: wayland_raw_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            // Flush outgoing Wayland requests before polling
+            self.conn.flush()?;
+
+            // Prepare read guard before polling (required by wayland-client).
+            // None means events are already queued — skip poll, just dispatch.
+            if let Some(read_guard) = self.queue.prepare_read() {
+                let poll_ret = unsafe { libc::poll(&raw mut pollfd, 1, timeout_ms) };
+
+                match poll_ret.cmp(&0) {
+                    std::cmp::Ordering::Greater => {
+                        let _ = read_guard.read();
+                    }
+                    std::cmp::Ordering::Equal => {
+                        drop(read_guard);
+                        self.state.needs_render = true;
+                    }
+                    std::cmp::Ordering::Less => {
+                        // poll error
+                        let err = std::io::Error::last_os_error();
+                        drop(read_guard);
+                        if err.kind() != std::io::ErrorKind::Interrupted {
+                            return Err(err).context("poll(2) on Wayland fd failed");
+                        }
+                    }
+                }
             }
 
-            // Render if we got a frame callback and not too many buffers pending
-            // Limit to 3 pending buffers to avoid GPU memory exhaustion
-            if self.state.needs_render && self.state.pending_buffers < 3 {
-                self.state.needs_render = false;
+            // Dispatch any pending events
+            self.queue
+                .dispatch_pending(&mut self.state)
+                .context("Wayland dispatch failed")?;
 
-                let now = std::time::Instant::now();
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "Frame delta is always small (< 1000ms typically), safe to truncate"
-                )]
-                let delta_ms = now.duration_since(last_frame).as_millis() as u32;
-                last_frame = now;
+            // --- Lazy init: create EGL + WASM runtime on first visibility ---
+            if render.is_none() {
+                tracing::info!("Initializing GPU resources");
 
-                // Begin frame — bind staging FBO, clear
-                let _fbo_id = egl.begin_frame()?;
+                let wasm_bytes = std::fs::read(&wasm_path).with_context(|| {
+                    format!("Failed to read WASM file: {}", wasm_path.display())
+                })?;
+                tracing::info!("WASM loaded: {} bytes", wasm_bytes.len());
 
-                // Deliver any completed HTTP fetch responses before rendering
-                runtime.deliver_fetch_responses();
+                let mut egl = EglState::new(self.state.width, self.state.height)?;
+                tracing::info!("GBM-based EGL initialized");
 
-                // Render to the staging FBO via WASM runtime
+                let fbo_id = egl.begin_frame()?;
+                let mut runtime = unsafe {
+                    WasmWidgetRuntime::new(
+                        &wasm_bytes,
+                        EglState::get_proc_address,
+                        self.state.width,
+                        self.state.height,
+                        fbo_id,
+                        WasmWidgetRuntime::FUEL_PER_FRAME,
+                        bmc_wasm_protocol::FormatPreferences::default(),
+                    )
+                }?;
+                let (major, minor, patch) = runtime.sdk_version();
+                tracing::info!(
+                    "WASM runtime initialized, SDK version {}.{}.{}",
+                    major,
+                    minor,
+                    patch
+                );
+
+                // Render + commit first frame immediately
                 runtime
                     .renderer()
                     .begin_frame(self.state.width, self.state.height, 1.0);
-                match runtime.render(delta_ms) {
-                    Ok(RenderStatus::Ok) => {}
-                    Ok(RenderStatus::FuelExhausted) => {
-                        tracing::warn!("Widget exceeded fuel budget");
-                    }
-                    Ok(RenderStatus::Dead) => {
-                        tracing::error!("Widget killed (repeated fuel overages), exiting");
-                        self.state.running = false;
-                    }
-                    Err(e) => {
-                        tracing::error!("WASM render error: {e}");
+                runtime.deliver_fetch_responses();
+                match runtime.render(0)? {
+                    RenderStatus::Ok => {}
+                    status @ (RenderStatus::FuelExhausted | RenderStatus::Dead) => {
+                        tracing::warn!("First frame render status: {status:?}");
                     }
                 }
                 runtime.renderer().flush();
 
-                // Blit staging -> export FBO with Y-flip
                 egl.blit_to_export()?;
-
-                // End frame — finish GL, export DMA-BUF
                 let dmabuf_info = egl.end_frame()?;
-
-                // Create wl_buffer from DMA-BUF
                 let buffer = create_buffer_from_dmabuf(&linux_dmabuf, &dmabuf_info, &qh);
 
-                // Attach buffer to surface
                 if let Some(ref surface) = self.state.surface {
                     surface.attach(Some(&buffer), 0, 0);
                     #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
@@ -311,60 +267,134 @@ impl WaylandClient {
                     surface.commit();
                     self.state.pending_buffers += 1;
                 }
+                tracing::info!("First frame rendered and committed");
 
-                self.state.frame_count += 1;
-                if self.state.frame_count % 60 == 0 {
-                    tracing::debug!(
-                        "Frame {} (pending: {})",
-                        self.state.frame_count,
-                        self.state.pending_buffers
-                    );
+                render = Some(RenderState {
+                    egl,
+                    runtime,
+                    last_frame: Instant::now(),
+                    frame_count: 1,
+                });
+
+                self.state.needs_render = false;
+                continue;
+            }
+
+            // Not yet initialized — wait for first visibility
+            let Some(rs) = render.as_mut() else {
+                continue;
+            };
+
+            let should_render = self.state.needs_render;
+
+            if should_render && self.state.pending_buffers < 3 {
+                self.state.needs_render = false;
+                rs.frame_count += 1;
+
+                // Compute delta time
+                let now = Instant::now();
+                #[expect(clippy::cast_possible_truncation, reason = "delta_ms fits in u32")]
+                let delta_ms = now.duration_since(rs.last_frame).as_millis() as u32;
+                rs.last_frame = now;
+
+                tracing::debug!(
+                    frame = rs.frame_count,
+                    delta_ms,
+                    pending_bufs = self.state.pending_buffers,
+                    wants_frame = rs.runtime.wants_next_frame(),
+                    delay = ?rs.runtime.next_frame_delay(),
+                    pending_fetches = rs.runtime.has_pending_fetches(),
+                    "rendering frame"
+                );
+
+                // Begin frame
+                let _fbo_id = rs.egl.begin_frame()?;
+                rs.runtime
+                    .renderer()
+                    .begin_frame(self.state.width, self.state.height, 1.0);
+
+                // Deliver pending fetch responses
+                rs.runtime.deliver_fetch_responses();
+
+                // Render WASM frame
+                let status = rs.runtime.render(delta_ms)?;
+                rs.runtime.renderer().flush();
+
+                match status {
+                    RenderStatus::Ok => {}
+                    RenderStatus::FuelExhausted => {
+                        tracing::warn!(frame = rs.frame_count, "widget exceeded fuel budget");
+                    }
+                    RenderStatus::Dead => {
+                        tracing::error!("widget killed (repeated fuel overages), shutting down");
+                        self.state.running = false;
+                    }
                 }
 
-                // Check if WASM wants another frame (animation) or has pending
-                // delayed fetches that need polling
-                if runtime.wants_next_frame() || runtime.has_pending_fetches() {
-                    if let Some(delay_ms) = runtime.next_frame_delay() {
-                        // Cap sleep to 100ms so Wayland events (shutdown, buffer
-                        // release, resize) are still processed promptly
-                        let capped = delay_ms.min(100);
-                        std::thread::sleep(std::time::Duration::from_millis(u64::from(capped)));
+                // Blit staging → export with Y-flip
+                rs.egl.blit_to_export()?;
+                let dmabuf_info = rs.egl.end_frame()?;
+                let buffer = create_buffer_from_dmabuf(&linux_dmabuf, &dmabuf_info, &qh);
+
+                if let Some(ref surface) = self.state.surface {
+                    surface.attach(Some(&buffer), 0, 0);
+                    #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
+                    surface.damage_buffer(
+                        0,
+                        0,
+                        dmabuf_info.width as i32,
+                        dmabuf_info.height as i32,
+                    );
+
+                    // Only request a frame callback for immediate animation.
+                    // Delayed frames and fetch polling are driven by poll(2)
+                    // timeout — requesting a callback for those would fire at
+                    // vsync (~16ms), defeating the delay.
+                    let wants_immediate_frame =
+                        rs.runtime.wants_next_frame() && rs.runtime.next_frame_delay().is_none();
+                    if wants_immediate_frame {
+                        surface.frame(&qh, ());
                     }
-                    self.state.needs_render = true;
+
+                    surface.commit();
+                    self.state.pending_buffers += 1;
                 }
             }
         }
 
+        tracing::info!("WASM widget shutting down");
         Ok(())
+    }
+
+    /// Compute the `poll(2)` timeout in milliseconds.
+    fn compute_poll_timeout(&self, render: Option<&RenderState>) -> i32 {
+        if self.state.needs_render {
+            0
+        } else if let Some(rs) = render {
+            if rs.runtime.wants_next_frame() {
+                match rs.runtime.next_frame_delay() {
+                    Some(delay_ms) => i32::try_from(delay_ms).unwrap_or(i32::MAX),
+                    None => 0,
+                }
+            } else if rs.runtime.has_pending_fetches() {
+                100
+            } else {
+                -1
+            }
+        } else {
+            0 // not yet initialized — init immediately
+        }
     }
 }
 
-/// Parse WASM path from DECK_PARAMS environment variable (JSON format)
-fn parse_wasm_path_from_params() -> Result<String> {
-    let params_json =
-        std::env::var("DECK_PARAMS").context("DECK_PARAMS environment variable not set")?;
-
-    // Parse JSON to extract wasmPath
-    let params: serde_json::Value =
-        serde_json::from_str(&params_json).context("Failed to parse DECK_PARAMS as JSON")?;
-
-    params
-        .get("wasmPath")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .context("wasmPath not found in DECK_PARAMS")
-}
-
-/// Create a wl_buffer from DMA-BUF info using linux-dmabuf protocol
+/// Create a `wl_buffer` from DMA-BUF info using `linux-dmabuf` protocol.
 fn create_buffer_from_dmabuf(
     linux_dmabuf: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     info: &DmaBufInfo,
     qh: &QueueHandle<WaylandState>,
 ) -> wl_buffer::WlBuffer {
-    // Create buffer params
     let params = linux_dmabuf.create_params(qh, ());
 
-    // Add the plane (single plane for XRGB8888)
     let modifier: u64 = info.modifier.into();
     let modifier_hi = (modifier >> 32) as u32;
     let modifier_lo = (modifier & 0xFFFF_FFFF) as u32;
@@ -392,7 +422,7 @@ fn create_buffer_from_dmabuf(
     buffer
 }
 
-// ── Wayland protocol implementations ──────────────────────────────────
+// ── Wayland protocol dispatch implementations ─────────────────────────
 
 impl Dispatch<wl_registry::WlRegistry, ()> for WaylandState {
     fn event(
@@ -411,29 +441,30 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandState {
         {
             match interface.as_str() {
                 "wl_compositor" => {
-                    state.compositor = Some(registry.bind::<wl_compositor::WlCompositor, _, _>(
+                    let compositor = registry.bind::<wl_compositor::WlCompositor, _, _>(
                         name,
-                        version,
+                        version.min(6),
                         qh,
                         (),
-                    ));
-                    tracing::debug!("Bound wl_compositor v{}", version);
+                    );
+                    tracing::debug!("Bound wl_compositor v{}", version.min(6));
+                    state.compositor = Some(compositor);
                 }
                 "deck_widget_manager_v1" => {
-                    state.widget_manager =
-                        Some(registry.bind::<DeckWidgetManagerV1, _, _>(name, version, qh, ()));
-                    tracing::debug!("Bound deck_widget_manager_v1 v{}", version);
+                    let widget_manager =
+                        registry.bind::<DeckWidgetManagerV1, _, _>(name, version.min(1), qh, ());
+                    tracing::debug!("Bound deck_widget_manager_v1 v{}", version.min(1));
+                    state.widget_manager = Some(widget_manager);
                 }
                 "zwp_linux_dmabuf_v1" => {
-                    state.linux_dmabuf = Some(
-                        registry.bind::<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, _, _>(
-                            name,
-                            version,
-                            qh,
-                            (),
-                        ),
+                    let dmabuf = registry.bind::<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, _, _>(
+                        name,
+                        version.min(4),
+                        qh,
+                        (),
                     );
-                    tracing::debug!("Bound zwp_linux_dmabuf_v1 v{}", version);
+                    tracing::debug!("Bound zwp_linux_dmabuf_v1 v{}", version.min(4));
+                    state.linux_dmabuf = Some(dmabuf);
                 }
                 _ => {}
             }
@@ -450,7 +481,6 @@ impl Dispatch<wl_compositor::WlCompositor, ()> for WaylandState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        // wl_compositor has no events
     }
 }
 
@@ -463,7 +493,43 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        // wl_surface has no events we need to handle
+    }
+}
+
+impl Dispatch<DeckWidgetManagerV1, ()> for WaylandState {
+    fn event(
+        _: &mut Self,
+        _: &DeckWidgetManagerV1,
+        _: bmc_widget_protocol::client::deck_widget_manager_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<DeckWidgetSurfaceV1, ()> for WaylandState {
+    fn event(
+        state: &mut Self,
+        _: &DeckWidgetSurfaceV1,
+        event: deck_widget_surface_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            deck_widget_surface_v1::Event::Setting {
+                setting_type,
+                value,
+            } => {
+                tracing::debug!("Received setting update: type={setting_type:?}, value={value}",);
+            }
+            deck_widget_surface_v1::Event::Shutdown => {
+                tracing::info!("Shutdown requested by compositor");
+                state.running = false;
+            }
+            _ => {}
+        }
     }
 }
 
@@ -482,6 +548,47 @@ impl Dispatch<wl_callback::WlCallback, ()> for WaylandState {
     }
 }
 
+impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for WaylandState {
+    fn event(
+        _: &mut Self,
+        _: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
+        event: zwp_linux_dmabuf_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwp_linux_dmabuf_v1::Event::Format { format } => {
+                tracing::trace!("DMA-BUF format: 0x{format:08x}");
+            }
+            zwp_linux_dmabuf_v1::Event::Modifier {
+                format,
+                modifier_hi,
+                modifier_lo,
+            } => {
+                let modifier = (u64::from(modifier_hi) << 32) | u64::from(modifier_lo);
+                tracing::trace!("DMA-BUF format 0x{format:08x} modifier 0x{modifier:016x}");
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for WaylandState {
+    fn event(
+        _: &mut Self,
+        _: &zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
+        event: zwp_linux_buffer_params_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zwp_linux_buffer_params_v1::Event::Failed = event {
+            tracing::error!("DMA-BUF buffer creation failed");
+        }
+    }
+}
+
 impl Dispatch<wl_buffer::WlBuffer, ()> for WaylandState {
     fn event(
         state: &mut Self,
@@ -495,70 +602,5 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for WaylandState {
             buffer.destroy();
             state.pending_buffers = state.pending_buffers.saturating_sub(1);
         }
-    }
-}
-
-impl Dispatch<DeckWidgetManagerV1, ()> for WaylandState {
-    fn event(
-        _: &mut Self,
-        _: &DeckWidgetManagerV1,
-        _: bmc_widget_protocol::client::deck_widget_manager_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        // deck_widget_manager_v1 has no events we need
-    }
-}
-
-impl Dispatch<DeckWidgetSurfaceV1, ()> for WaylandState {
-    fn event(
-        state: &mut Self,
-        _: &DeckWidgetSurfaceV1,
-        event: deck_widget_surface_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            deck_widget_surface_v1::Event::Shutdown => {
-                tracing::info!("Received shutdown event");
-                state.running = false;
-            }
-            deck_widget_surface_v1::Event::Setting {
-                setting_type,
-                value,
-            } => {
-                tracing::debug!("Setting: {:?} = {}", setting_type, value);
-                // Could pass settings to WASM if needed
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for WaylandState {
-    fn event(
-        _: &mut Self,
-        _: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
-        _: zwp_linux_dmabuf_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        // We use create_immed, so we don't need to handle format events
-    }
-}
-
-impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for WaylandState {
-    fn event(
-        _: &mut Self,
-        _: &zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
-        _: zwp_linux_buffer_params_v1::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        // We use create_immed, so we don't need to handle created/failed events
     }
 }

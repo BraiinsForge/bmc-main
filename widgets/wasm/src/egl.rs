@@ -68,8 +68,7 @@ impl EglState {
     pub fn begin_frame(&mut self) -> Result<u32> {
         let idx = self.current_buffer;
         if self.buffers[idx].is_none() {
-            self.buffers[idx] =
-                Some(self.ctx.allocate_export_buffer(self.width, self.height)?);
+            self.buffers[idx] = Some(self.ctx.allocate_export_buffer(self.width, self.height)?);
         }
 
         if self.staging.is_none() {
@@ -101,7 +100,10 @@ impl EglState {
     /// Call after FemtoVG `flush()` and before `end_frame()`.
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
     pub fn blit_to_export(&self) -> Result<()> {
-        let staging = self.staging.as_ref().context("BUG: staging not allocated")?;
+        let staging = self
+            .staging
+            .as_ref()
+            .context("BUG: staging not allocated")?;
         let blit = self
             .blit_program
             .as_ref()
@@ -154,6 +156,7 @@ impl EglState {
     }
 
     /// Resize — deallocate buffers so they're reallocated at the new size.
+    #[expect(dead_code)]
     pub fn resize(&mut self, width: u32, height: u32) {
         if self.width == width && self.height == height {
             return;
@@ -173,7 +176,7 @@ impl EglState {
             }
         }
 
-        if let Some(staging) = self.staging.take() {
+        if let Some(ref staging) = self.staging.take() {
             Self::destroy_staging(self.ctx.gl(), staging);
         }
 
@@ -182,7 +185,10 @@ impl EglState {
     }
 
     /// Get the glow GL context (for test mode FemtoVG renderer and GL loaders).
-    #[expect(dead_code, reason = "used by test mode which is re-added in a later commit")]
+    #[expect(
+        dead_code,
+        reason = "used by test mode which is re-added in a later commit"
+    )]
     pub fn gl(&self) -> &glow::Context {
         self.ctx.gl()
     }
@@ -214,10 +220,26 @@ impl EglState {
                 glow::UNSIGNED_BYTE,
                 glow::PixelUnpackData::Slice(None),
             );
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
             tex
         };
 
@@ -365,7 +387,7 @@ void main() {
         })
     }
 
-    fn destroy_staging(gl: &glow::Context, staging: StagingBuffer) {
+    fn destroy_staging(gl: &glow::Context, staging: &StagingBuffer) {
         unsafe {
             gl.delete_framebuffer(staging.fbo);
             gl.delete_renderbuffer(staging.stencil_rbo);
@@ -373,7 +395,7 @@ void main() {
         }
     }
 
-    fn destroy_blit(gl: &glow::Context, blit: BlitResources) {
+    fn destroy_blit(gl: &glow::Context, blit: &BlitResources) {
         unsafe {
             gl.delete_program(blit.program);
             gl.delete_buffer(blit.vbo);
@@ -389,10 +411,10 @@ impl Drop for EglState {
                 self.ctx.destroy_export_buffer(buf);
             }
         }
-        if let Some(staging) = self.staging.take() {
+        if let Some(ref staging) = self.staging.take() {
             Self::destroy_staging(gl, staging);
         }
-        if let Some(blit) = self.blit_program.take() {
+        if let Some(ref blit) = self.blit_program.take() {
             Self::destroy_blit(gl, blit);
         }
     }
