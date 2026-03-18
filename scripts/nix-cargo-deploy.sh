@@ -15,8 +15,11 @@
 #   DEVICE_IP=192.168.1.2 ./scripts/nix-cargo-deploy.sh widget flip-clock
 #
 # Prerequisites:
-#   - Binary already built with cargo (in the appropriate nix develop shell)
+#   - Executed in a devshell, such as .#armv7-glibc-release
 #   - Device initialized with nix-init.sh and packages deployed with nix-deploy.sh
+# Extra cargo flags:
+#   If you need to add extra flags, such as `--features profiling` for the compositor,
+#   use the environment variable CARGO_EXTRA_FLAGS.
 set -euo pipefail
 
 profile="/run/current-profile"
@@ -49,13 +52,11 @@ widget)
     ;;
 esac
 
-if [ ! -f "$local_bin" ]; then
-    echo "Error: ${local_bin} not found."
-    echo "Build it first (in the appropriate nix develop shell)."
-    exit 1
-fi
-
-cargo build --release --target armv7-unknown-linux-gnueabihf -p "$bin_name"
+echo "Building..."
+set -x
+# shellcheck disable=SC2086 # Intentional word splitting on CARGO_EXTRA_FLAGS
+cargo build --release --target armv7-unknown-linux-gnueabihf -p "$bin_name" ${CARGO_EXTRA_FLAGS:-}
+set +x
 
 deploy_path="${deploy_dir}/${bin_name}"
 
