@@ -20,6 +20,11 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
+use bmc_widget_protocol::client::{
+    deck_widget_manager_v1::DeckWidgetManagerV1,
+    deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
+};
+
 use crate::egl::DmaBufInfo;
 
 /// Wayland surface state for an XDG toplevel with DMA-BUF support.
@@ -401,11 +406,16 @@ impl XdgSurfaceClient {
 /// Create a `wl_buffer` from DMA-BUF info using the `linux-dmabuf` protocol.
 #[must_use]
 #[expect(clippy::cast_possible_wrap, reason = "buffer dimensions fit in i32")]
-pub fn create_buffer_from_dmabuf(
+pub fn create_buffer_from_dmabuf<S>(
     linux_dmabuf: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     info: &DmaBufInfo,
-    qh: &QueueHandle<XdgSurfaceState>,
-) -> wl_buffer::WlBuffer {
+    qh: &QueueHandle<S>,
+) -> wl_buffer::WlBuffer
+where
+    S: Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()>
+        + Dispatch<wl_buffer::WlBuffer, ()>
+        + 'static,
+{
     let params = linux_dmabuf.create_params(qh, ());
 
     let modifier: u64 = info.modifier.into();
@@ -650,6 +660,517 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for XdgSurfaceState {
             // intentionally ignored here. If XDG gains per-frame buffer
             // submission in the future, its wl_buffer lifecycle must be
             // tracked in XdgSurfaceClient.
+        }
+    }
+}
+
+// ── deck_widget_v1 surface client ──────────────────────────────────────
+
+/// Events from the compositor to a `deck_widget_v1` widget.
+#[derive(Debug, Clone)]
+pub enum DeckWidgetEvent {
+    /// A system setting changed at runtime.
+    Setting {
+        /// Setting type enum value from the protocol.
+        setting_type: u32,
+        /// JSON-encoded setting value.
+        value: String,
+    },
+    /// Compositor requested graceful shutdown.
+    Shutdown,
+}
+
+/// Surface state for a `deck_widget_v1` widget with DMA-BUF support.
+///
+/// Tracks compositor globals, surface lifecycle, frame scheduling, and
+/// pending protocol events. Mirrors [`XdgSurfaceState`] but uses the
+/// `deck_widget_v1` protocol instead of XDG shell.
+pub struct DeckWidgetSurfaceState {
+    /// Whether the event loop should keep running.
+    pub running: bool,
+    /// Current surface width in pixels.
+    pub width: u32,
+    /// Current surface height in pixels.
+    pub height: u32,
+    /// A frame callback fired — widget should render.
+    pub needs_render: bool,
+    /// Number of `wl_buffer`s currently held by the compositor.
+    pub pending_buffers: u32,
+    /// Number of frames rendered (wrapping counter).
+    pub frame_count: u32,
+
+    // -- Wayland objects (internal) --
+    compositor: Option<wl_compositor::WlCompositor>,
+    widget_manager: Option<DeckWidgetManagerV1>,
+    linux_dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
+    surface: Option<wl_surface::WlSurface>,
+    widget_surface: Option<DeckWidgetSurfaceV1>,
+    pending_events: Vec<DeckWidgetEvent>,
+}
+
+impl DeckWidgetSurfaceState {
+    /// Drain all pending protocol events.
+    pub fn drain_events(&mut self) -> std::vec::Drain<'_, DeckWidgetEvent> {
+        self.pending_events.drain(..)
+    }
+
+    /// Get a reference to the `zwp_linux_dmabuf_v1` global, if bound.
+    #[must_use]
+    pub fn linux_dmabuf(&self) -> Option<&zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1> {
+        self.linux_dmabuf.as_ref()
+    }
+
+    /// Get a reference to the `wl_surface`, if created.
+    #[must_use]
+    pub fn wl_surface(&self) -> Option<&wl_surface::WlSurface> {
+        self.surface.as_ref()
+    }
+}
+
+impl fmt::Debug for DeckWidgetSurfaceState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DeckWidgetSurfaceState")
+            .field("running", &self.running)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("needs_render", &self.needs_render)
+            .field("pending_buffers", &self.pending_buffers)
+            .field("frame_count", &self.frame_count)
+            .field("pending_events", &self.pending_events.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Single-connection Wayland client for `deck_widget_v1` widgets with DMA-BUF.
+///
+/// Handles connection, global binding, surface creation, frame callbacks, and
+/// buffer submission using the `deck_widget_v1` protocol. Widgets own the
+/// render loop and call [`commit_buffer`](Self::commit_buffer) after each
+/// frame. Unlike [`XdgSurfaceClient`], buffers are created per-frame and
+/// destroyed on release.
+pub struct DeckWidgetSurfaceClient {
+    conn: Connection,
+    queue: EventQueue<DeckWidgetSurfaceState>,
+    state: DeckWidgetSurfaceState,
+}
+
+impl fmt::Debug for DeckWidgetSurfaceClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DeckWidgetSurfaceClient")
+            .field("state", &self.state)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DeckWidgetSurfaceClient {
+    /// Connect to the Wayland display and create a `deck_widget_v1` surface.
+    ///
+    /// Binds `wl_compositor`, `deck_widget_manager_v1`, and
+    /// `zwp_linux_dmabuf_v1`, then creates a surface and registers it with
+    /// the given `instance_id`.
+    pub fn connect(instance_id: &str, width: u32, height: u32) -> Result<Self> {
+        anyhow::ensure!(
+            width > 0 && height > 0,
+            "surface dimensions must be non-zero"
+        );
+
+        let conn = Connection::connect_to_env().context("Failed to connect to Wayland display")?;
+        let mut queue = conn.new_event_queue();
+        let qh = queue.handle();
+
+        let display = conn.display();
+        display.get_registry(&qh, ());
+
+        let mut state = DeckWidgetSurfaceState {
+            running: true,
+            width,
+            height,
+            needs_render: false,
+            pending_buffers: 0,
+            frame_count: 0,
+            compositor: None,
+            widget_manager: None,
+            linux_dmabuf: None,
+            surface: None,
+            widget_surface: None,
+            pending_events: Vec::new(),
+        };
+
+        // Roundtrip to discover globals
+        queue
+            .roundtrip(&mut state)
+            .context("Failed to roundtrip for globals")?;
+
+        // Verify required globals
+        let compositor = state
+            .compositor
+            .as_ref()
+            .context("wl_compositor not available")?;
+        let widget_manager = state
+            .widget_manager
+            .as_ref()
+            .context("deck_widget_manager_v1 not available")?;
+        anyhow::ensure!(
+            state.linux_dmabuf.is_some(),
+            "zwp_linux_dmabuf_v1 not available"
+        );
+
+        // Create surface + widget surface
+        let surface = compositor.create_surface(&qh, ());
+        let widget_surface =
+            widget_manager.get_widget_surface(&surface, instance_id.to_owned(), &qh, ());
+
+        // Commit to register with the compositor
+        surface.commit();
+
+        state.surface = Some(surface);
+        state.widget_surface = Some(widget_surface);
+
+        // Wait for initial events
+        queue
+            .roundtrip(&mut state)
+            .context("Failed to roundtrip after widget registration")?;
+
+        tracing::info!(
+            "Deck widget surface ready: {}x{} instance_id={}",
+            state.width,
+            state.height,
+            instance_id,
+        );
+
+        Ok(Self { conn, queue, state })
+    }
+
+    /// Get a reference to the surface state.
+    #[must_use]
+    pub fn state(&self) -> &DeckWidgetSurfaceState {
+        &self.state
+    }
+
+    /// Get a mutable reference to the surface state.
+    pub fn state_mut(&mut self) -> &mut DeckWidgetSurfaceState {
+        &mut self.state
+    }
+
+    /// Get a handle to the event queue for creating Wayland protocol objects.
+    #[must_use]
+    pub fn queue_handle(&self) -> QueueHandle<DeckWidgetSurfaceState> {
+        self.queue.handle()
+    }
+
+    /// Commit a rendered DMA-BUF frame to the compositor.
+    ///
+    /// Creates a per-frame `wl_buffer` from the DMA-BUF info, attaches it to
+    /// the surface, damages the full area, optionally requests a frame
+    /// callback, and commits. The buffer is destroyed on release by the
+    /// compositor (see `wl_buffer` dispatch).
+    #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
+    pub fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> Result<()> {
+        let qh = self.queue.handle();
+        let linux_dmabuf = self
+            .state
+            .linux_dmabuf
+            .as_ref()
+            .context("zwp_linux_dmabuf_v1 not available")?;
+        let surface = self.state.surface.as_ref().context("surface not created")?;
+
+        let buffer = create_buffer_from_dmabuf(linux_dmabuf, info, &qh);
+
+        surface.attach(Some(&buffer), 0, 0);
+        surface.damage_buffer(0, 0, info.width as i32, info.height as i32);
+
+        if request_frame {
+            surface.frame(&qh, ());
+        }
+
+        surface.commit();
+        self.state.pending_buffers += 1;
+
+        Ok(())
+    }
+
+    /// Request the first frame callback (call once after setup, before the
+    /// event loop).
+    pub fn request_frame(&self) {
+        let qh = self.queue.handle();
+        if let Some(ref surface) = self.state.surface {
+            surface.frame(&qh, ());
+            surface.commit();
+        }
+    }
+
+    /// Block until a Wayland event arrives, then dispatch all pending events.
+    pub fn blocking_dispatch(&mut self) -> Result<()> {
+        self.queue
+            .blocking_dispatch(&mut self.state)
+            .context("Wayland dispatch failed")?;
+        Ok(())
+    }
+
+    /// Poll for Wayland events with a timeout, then dispatch pending events.
+    ///
+    /// Returns `Ok(true)` on all normal paths (events read, timeout, or
+    /// already-queued events dispatched). Returns `Ok(false)` only if
+    /// `poll(2)` fails with `EAGAIN`/`EWOULDBLOCK` (non-fatal, pending
+    /// events still dispatched). A timeout of `-1` blocks indefinitely;
+    /// `0` is non-blocking.
+    ///
+    /// This follows the `prepare_read -> poll -> read/cancel -> dispatch_pending`
+    /// pattern required by `wayland-client`.
+    pub fn poll_dispatch(&mut self, timeout_ms: i32) -> Result<bool> {
+        self.conn.flush()?;
+
+        let read_guard = self.queue.prepare_read();
+
+        match read_guard {
+            None => {
+                // Events already queued — just dispatch them
+                self.queue
+                    .dispatch_pending(&mut self.state)
+                    .context("Wayland dispatch failed")?;
+                return Ok(true);
+            }
+            Some(guard) => {
+                let fd = self.conn.as_fd();
+                let mut pollfd = libc::pollfd {
+                    fd: std::os::fd::AsRawFd::as_raw_fd(&fd),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+
+                let poll_ret = unsafe { libc::poll(&raw mut pollfd, 1, timeout_ms) };
+
+                match poll_ret.cmp(&0) {
+                    std::cmp::Ordering::Greater => {
+                        // Data available — read events
+                        let _ = guard.read();
+                    }
+                    std::cmp::Ordering::Equal => {
+                        // Timeout — cancel read
+                        drop(guard);
+                    }
+                    std::cmp::Ordering::Less => {
+                        // Error
+                        let err = std::io::Error::last_os_error();
+                        drop(guard);
+                        #[expect(
+                            clippy::wildcard_enum_match_arm,
+                            reason = "all other io::ErrorKind variants are fatal"
+                        )]
+                        match err.kind() {
+                            std::io::ErrorKind::Interrupted => {
+                                // EINTR — not fatal, just dispatch pending
+                            }
+                            std::io::ErrorKind::WouldBlock => {
+                                // EAGAIN — non-fatal, dispatch pending and
+                                // signal caller via Ok(false)
+                                self.queue
+                                    .dispatch_pending(&mut self.state)
+                                    .context("Wayland dispatch failed")?;
+                                return Ok(false);
+                            }
+                            _ => {
+                                return Err(err).context("poll(2) on Wayland fd failed");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.queue
+            .dispatch_pending(&mut self.state)
+            .context("Wayland dispatch failed")?;
+
+        Ok(true)
+    }
+}
+
+// ── Wayland protocol dispatch for DeckWidgetSurfaceState ───────────────
+
+impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        (): &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
+            match interface.as_str() {
+                "wl_compositor" => {
+                    let compositor = registry.bind::<wl_compositor::WlCompositor, _, _>(
+                        name,
+                        version.min(6),
+                        qh,
+                        (),
+                    );
+                    tracing::debug!("Bound wl_compositor v{}", version.min(6));
+                    state.compositor = Some(compositor);
+                }
+                "deck_widget_manager_v1" => {
+                    let widget_manager =
+                        registry.bind::<DeckWidgetManagerV1, _, _>(name, version.min(1), qh, ());
+                    tracing::debug!("Bound deck_widget_manager_v1 v{}", version.min(1));
+                    state.widget_manager = Some(widget_manager);
+                }
+                "zwp_linux_dmabuf_v1" => {
+                    let dmabuf = registry.bind::<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, _, _>(
+                        name,
+                        version.min(4),
+                        qh,
+                        (),
+                    );
+                    tracing::debug!("Bound zwp_linux_dmabuf_v1 v{}", version.min(4));
+                    state.linux_dmabuf = Some(dmabuf);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_compositor::WlCompositor, ()> for DeckWidgetSurfaceState {
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_surface::WlSurface, ()> for DeckWidgetSurfaceState {
+    fn event(
+        _: &mut Self,
+        _: &wl_surface::WlSurface,
+        _: wl_surface::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<DeckWidgetManagerV1, ()> for DeckWidgetSurfaceState {
+    fn event(
+        _: &mut Self,
+        _: &DeckWidgetManagerV1,
+        _: <DeckWidgetManagerV1 as wayland_client::Proxy>::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
+    fn event(
+        state: &mut Self,
+        _: &DeckWidgetSurfaceV1,
+        event: deck_widget_surface_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            deck_widget_surface_v1::Event::Setting {
+                setting_type,
+                value,
+            } => {
+                tracing::debug!("Setting update: type={setting_type:?}, value={value}");
+                state.pending_events.push(DeckWidgetEvent::Setting {
+                    setting_type: setting_type.into(),
+                    value,
+                });
+            }
+            deck_widget_surface_v1::Event::Shutdown => {
+                tracing::info!("Shutdown requested by compositor");
+                state.running = false;
+                state.pending_events.push(DeckWidgetEvent::Shutdown);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, ()> for DeckWidgetSurfaceState {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        event: wl_callback::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            state.frame_count = state.frame_count.wrapping_add(1);
+            state.needs_render = true;
+        }
+    }
+}
+
+impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for DeckWidgetSurfaceState {
+    fn event(
+        _: &mut Self,
+        _: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
+        event: zwp_linux_dmabuf_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwp_linux_dmabuf_v1::Event::Format { format } => {
+                tracing::trace!("DMA-BUF format: 0x{format:08x}");
+            }
+            zwp_linux_dmabuf_v1::Event::Modifier {
+                format,
+                modifier_hi,
+                modifier_lo,
+            } => {
+                let modifier = (u64::from(modifier_hi) << 32) | u64::from(modifier_lo);
+                tracing::trace!("DMA-BUF format 0x{format:08x} modifier 0x{modifier:016x}");
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for DeckWidgetSurfaceState {
+    fn event(
+        _: &mut Self,
+        _: &zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
+        event: zwp_linux_buffer_params_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zwp_linux_buffer_params_v1::Event::Failed = event {
+            tracing::error!("DMA-BUF buffer creation failed");
+        }
+    }
+}
+
+impl Dispatch<wl_buffer::WlBuffer, ()> for DeckWidgetSurfaceState {
+    fn event(
+        state: &mut Self,
+        buffer: &wl_buffer::WlBuffer,
+        event: wl_buffer::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_buffer::Event::Release = event {
+            buffer.destroy();
+            state.pending_buffers = state.pending_buffers.saturating_sub(1);
         }
     }
 }
