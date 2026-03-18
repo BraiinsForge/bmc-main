@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "provenance": {
+    "commit": "abc123def456"
+  },
+  "indexes": [],
+  "caches": [
+    {
+      "name": "default",
+      "cache_url": "https://cache.braiins.com",
+      "cache_key": "cache.braiins.com:placeholder"
+    }
+  ],
+  "packages": [
+    {
+      "name": "core",
+      "version": "0.1.0",
+      "cache": "default",
+      "store_path": "/nix/store/abc123-bmc-core",
+      "category": "core",
+      "description": "Core system package (bmc-openwrt + activation/hooks)",
+      "upgrade_strategy": "reboot",
+      "install_strategy": null
+    },
+    {
+      "name": "digital-clock",
+      "version": "1.0.0",
+      "cache": "default",
+      "store_path": "/nix/store/xyz789-bmc-widget-digital-clock",
+      "category": "widget",
+      "description": "Digital clock widget",
+      "upgrade_strategy": null,
+      "install_strategy": null
+    }
+  ]
+}
