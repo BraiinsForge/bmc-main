@@ -986,6 +986,8 @@ dependencies = [
  "anyhow",
  "clap",
  "libc",
+ "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
