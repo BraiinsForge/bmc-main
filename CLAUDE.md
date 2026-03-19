@@ -59,10 +59,10 @@ nix build -L .#frontend
 nix build .#bmc-mock
 
 # Build OpenWRT binary (ARMv7 release)
-nix build .#bmc-openwrt-armv7-release
+nix build .#bmc-openwrt-armv7-glibc-release
 
 # Build OpenWRT binary (ARMv7 debug)
-nix build .#bmc-openwrt-armv7-debug
+nix build .#bmc-openwrt-armv7-glibc-debug
 ```
 
 ### Development with Nix
@@ -72,10 +72,10 @@ nix build .#bmc-openwrt-armv7-debug
 nix develop
 
 # Enter ARMv7 release cross-compilation shell
-nix develop .#armv7-release
+nix develop .#armv7-glibc-release
 
 # Enter ARMv7 debug cross-compilation shell
-nix develop .#armv7-debug
+nix develop .#armv7-glibc-debug
 ```
 
 ### Running the Mock Server
@@ -96,7 +96,7 @@ To deploy and run on the actual OpenWRT control board:
 
 ```bash
 cd bmc-openwrt/
-nix develop .#armv7-release
+nix develop .#armv7-glibc-release
 
 export MINER_IP=192.168.1.2
 cargo run  # or 'cargo run -- <ARGS>'
@@ -305,7 +305,7 @@ scripts).
 ## Cross-Compilation Notes
 
 - The main target platform is ARMv7 (`armv7-unknown-linux-musleabihf`)
-- Nix handles cross-compilation setup automatically via the `armv7-release` and `armv7-debug` profiles
+- Nix handles cross-compilation setup automatically via the `armv7-glibc-release` and `armv7-glibc-debug` profiles
 - Build profiles are defined in `workspace.nix`
 - `bmc-openwrt` is always cross-compiled for ARM
 - `bmc-mock` is compiled for the native platform (x86_64-linux or aarch64-darwin)
