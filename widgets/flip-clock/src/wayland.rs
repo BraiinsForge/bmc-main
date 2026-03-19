@@ -12,145 +12,10 @@ use crate::digits3d::Digit3DMeshes;
 use crate::egl::EglState;
 use crate::renderer::{Mat4, Renderer};
 use anyhow::Result;
-use bmc_widget::surface::{DeckWidgetEvent, DeckWidgetSurfaceClient, XdgSurfaceClient};
+use bmc_widget::surface::{
+    DeckWidgetSurfaceClient, SettingUpdate, WidgetEvent, WidgetSurface, XdgSurfaceClient,
+};
 use glow::HasContext;
-
-/// Trait for abstracting over the two surface client types.
-///
-/// Both [`XdgSurfaceClient`] and [`DeckWidgetSurfaceClient`] implement this,
-/// letting the render loop work with either backend.
-trait SurfaceClient {
-    fn running(&self) -> bool;
-    fn width(&self) -> u32;
-    fn height(&self) -> u32;
-    fn needs_render(&self) -> bool;
-    fn set_needs_render(&mut self, v: bool);
-    fn size_changed(&self) -> bool;
-    fn set_size_changed(&mut self, v: bool);
-    fn frame_count(&self) -> u32;
-    fn blocking_dispatch(&mut self) -> Result<()>;
-    fn request_frame(&self);
-    fn invalidate_cached_buffers(&mut self);
-    fn commit_cached_buffer(
-        &mut self,
-        info: &bmc_widget::egl::DmaBufInfo,
-        slot: usize,
-        request_frame: bool,
-    ) -> Result<()>;
-    /// Process protocol events (settings, shutdown). Returns updated timezone if changed.
-    fn process_events(&mut self) -> Option<String>;
-}
-
-impl SurfaceClient for XdgSurfaceClient {
-    fn running(&self) -> bool {
-        self.state().running
-    }
-    fn width(&self) -> u32 {
-        self.state().width
-    }
-    fn height(&self) -> u32 {
-        self.state().height
-    }
-    fn needs_render(&self) -> bool {
-        self.state().needs_render
-    }
-    fn set_needs_render(&mut self, v: bool) {
-        self.state_mut().needs_render = v;
-    }
-    fn size_changed(&self) -> bool {
-        self.state().size_changed
-    }
-    fn set_size_changed(&mut self, v: bool) {
-        self.state_mut().size_changed = v;
-    }
-    fn frame_count(&self) -> u32 {
-        self.state().frame_count
-    }
-    fn blocking_dispatch(&mut self) -> Result<()> {
-        XdgSurfaceClient::blocking_dispatch(self)
-    }
-    fn request_frame(&self) {
-        XdgSurfaceClient::request_frame(self);
-    }
-    fn invalidate_cached_buffers(&mut self) {
-        XdgSurfaceClient::invalidate_cached_buffers(self);
-    }
-    fn commit_cached_buffer(
-        &mut self,
-        info: &bmc_widget::egl::DmaBufInfo,
-        slot: usize,
-        request_frame: bool,
-    ) -> Result<()> {
-        XdgSurfaceClient::commit_cached_buffer(self, info, slot, request_frame)
-    }
-    fn process_events(&mut self) -> Option<String> {
-        // XDG client has no protocol events
-        None
-    }
-}
-
-impl SurfaceClient for DeckWidgetSurfaceClient {
-    fn running(&self) -> bool {
-        self.state().running
-    }
-    fn width(&self) -> u32 {
-        self.state().width
-    }
-    fn height(&self) -> u32 {
-        self.state().height
-    }
-    fn needs_render(&self) -> bool {
-        self.state().needs_render
-    }
-    fn set_needs_render(&mut self, v: bool) {
-        self.state_mut().needs_render = v;
-    }
-    fn size_changed(&self) -> bool {
-        false // deck_widget_v1 has no resize events
-    }
-    fn set_size_changed(&mut self, _v: bool) {}
-    fn frame_count(&self) -> u32 {
-        self.state().frame_count
-    }
-    fn blocking_dispatch(&mut self) -> Result<()> {
-        DeckWidgetSurfaceClient::blocking_dispatch(self)
-    }
-    fn request_frame(&self) {
-        DeckWidgetSurfaceClient::request_frame(self);
-    }
-    fn invalidate_cached_buffers(&mut self) {
-        // DeckWidgetSurfaceClient uses per-frame buffers, nothing to invalidate
-    }
-    fn commit_cached_buffer(
-        &mut self,
-        info: &bmc_widget::egl::DmaBufInfo,
-        _slot: usize,
-        request_frame: bool,
-    ) -> Result<()> {
-        // Use per-frame buffer (no caching on deck widget client)
-        self.commit_buffer(info, request_frame)
-    }
-    fn process_events(&mut self) -> Option<String> {
-        let mut new_tz = None;
-        for event in self.state_mut().drain_events() {
-            match event {
-                DeckWidgetEvent::Setting {
-                    setting_type,
-                    value,
-                } => {
-                    // setting_type 0 = timezone (from deck_widget_surface_v1 protocol)
-                    if setting_type == 0 {
-                        new_tz = Some(value);
-                    }
-                }
-                DeckWidgetEvent::Shutdown => {
-                    // Already handled by the client (sets running=false)
-                }
-            }
-        }
-        new_tz
-    }
-}
 
 /// Connect in standalone mode (XDG toplevel, no compositor protocol).
 pub fn connect_standalone(
@@ -177,10 +42,9 @@ pub fn connect_production(
     run_render_loop(&mut surface, animation_mode, timezone)
 }
 
-/// Shared render loop that works with any [`SurfaceClient`] backend.
-#[expect(clippy::too_many_lines, reason = "rendering loop with setup code")]
+/// Shared render loop that works with any [`WidgetSurface`] backend.
 fn run_render_loop(
-    surface: &mut dyn SurfaceClient,
+    surface: &mut dyn WidgetSurface,
     animation_mode: AnimationMode,
     initial_timezone: String,
 ) -> Result<()> {
@@ -214,23 +78,25 @@ fn run_render_loop(
         surface.blocking_dispatch()?;
 
         // Process protocol events (timezone updates, shutdown)
-        if let Some(new_tz) = surface.process_events() {
-            tracing::info!("Timezone updated: {new_tz}");
-            timezone = new_tz;
+        for event in surface.drain_events() {
+            match event {
+                WidgetEvent::Setting(SettingUpdate::Timezone(new_tz)) => {
+                    tracing::info!("Timezone updated: {new_tz}");
+                    timezone = new_tz;
+                }
+                WidgetEvent::Setting(_) | WidgetEvent::Shutdown => {}
+            }
         }
 
         // Handle resize
-        if surface.size_changed() {
+        if surface.take_size_changed() {
             let (w, h) = (surface.width(), surface.height());
             surface.invalidate_cached_buffers();
             egl.resize(w, h);
             renderer.resize(w, h);
-            surface.set_size_changed(false);
         }
 
-        if surface.needs_render() {
-            surface.set_needs_render(false);
-
+        if surface.take_render_requested() {
             use chrono::Timelike;
 
             // Get current time in the configured timezone
@@ -270,7 +136,7 @@ fn run_render_loop(
             let slot = egl.last_rendered_slot();
             surface.commit_cached_buffer(&dmabuf_info, slot, true)?;
 
-            if surface.frame_count() % 60 == 0 {
+            if surface.frame_count().is_multiple_of(60) {
                 tracing::debug!("Frame {}", surface.frame_count());
             }
         }
@@ -281,6 +147,10 @@ fn run_render_loop(
 
 /// Render the HH:MM:SS clock face.
 #[expect(clippy::too_many_arguments, reason = "render state passed through")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "rendering logic with animation branches"
+)]
 fn render_clock<Tz: chrono::TimeZone>(
     renderer: &Renderer,
     digit_textures: &DigitTextures,
@@ -485,6 +355,10 @@ fn render_3d_digit(
 }
 
 #[expect(clippy::too_many_arguments, reason = "render parameters")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "2D split-flap rendering with animation"
+)]
 fn render_2d_digit(
     renderer: &Renderer,
     digit_textures: &DigitTextures,
