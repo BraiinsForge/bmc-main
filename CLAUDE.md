@@ -208,6 +208,7 @@ Workspace-level lints are defined in `Cargo.toml`:
 - Local equivalent: `cargo clippy --workspace --tests -- -D warnings`
 - Uses `rustfmt` for formatting (config in `rustfmt.toml`)
 - Rust toolchain version specified in `rust-toolchain.toml`
+- Prefer `usize` for counts and indices — avoid `u32`/`u16`/etc. unless required by an external API or wire format
 
 **Module System**: This project uses Rust 2018 module style. Instead of `folder/mod.rs`, use a file named after the
 folder at the same level:
