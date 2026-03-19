@@ -1,0 +1,58 @@
+import { ProgressIndicator } from "std-widgets.slint";
+import { Palette } from "style/palette.slint";
+import { Theme } from "style/theme.slint";
+
+export component InitWindow inherits Window {
+    width: 1280px;
+    height: 480px;
+    background: Palette.black;
+
+    in property <string> status-text: "Initializing...";
+    in property <string> detail-text: "";
+    in property <float> progress: 0.0;
+    in property <bool> show-progress: false;
+
+    VerticalLayout {
+        padding-left: 120px;
+        padding-right: 120px;
+        spacing: 15px;
+        alignment: center;
+
+        HorizontalLayout {
+            padding-top: 40px;
+            padding-bottom: 15px;
+            alignment: center;
+            Rectangle {
+                width: 80px;
+                height: 80px;
+                Image {
+                    source: @image-url("assets/images/tools.svg");
+                }
+            }
+        }
+
+        Text {
+            text: root.status-text;
+            color: Palette.white;
+            font-size: 24px;
+            font-weight: Theme.font.weight.bold;
+            horizontal-alignment: center;
+        }
+
+        ProgressIndicator {
+            height: root.show-progress ? 7px : 0px;
+            progress: root.progress * 100%;
+            visible: root.show-progress;
+        }
+
+        if root.detail-text != "": Text {
+            text: root.detail-text;
+            color: Palette.gray-50;
+            font-size: 18px;
+            font-weight: Theme.font.weight.regular;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+            overflow: elide;
+        }
+    }
+}
