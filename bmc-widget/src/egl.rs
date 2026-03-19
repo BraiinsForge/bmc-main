@@ -457,6 +457,15 @@ impl DoubleBufferState {
         self.buffers[self.current_buffer].as_ref()
     }
 
+    #[must_use]
+    fn next_slot(current_buffer: usize) -> usize {
+        debug_assert!(
+            current_buffer < 2,
+            "BUG: double-buffer slot index out of range"
+        );
+        1 - current_buffer
+    }
+
     /// Export the current buffer as DMA-BUF and swap to the next buffer.
     ///
     /// Returns the DMA-BUF info and the slot index of the exported buffer
@@ -467,7 +476,7 @@ impl DoubleBufferState {
             .as_mut()
             .expect("BUG: buffer should exist after ensure_current");
         let info = EglContext::export_dmabuf(buf)?;
-        self.current_buffer = 1 - self.current_buffer;
+        self.current_buffer = Self::next_slot(slot);
         Ok((info, slot))
     }
 
@@ -521,4 +530,26 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
     // for the given extension name; the caller ensures T matches the signature,
     // and the const assertion above enforces pointer-sized T.
     Ok(unsafe { std::mem::transmute_copy(&proc) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DoubleBufferState;
+
+    #[test]
+    fn double_buffer_state_starts_empty_on_slot_zero() {
+        let state = DoubleBufferState::new(640, 480);
+
+        assert_eq!(state.width(), 640);
+        assert_eq!(state.height(), 480);
+        assert_eq!(state.current_buffer, 0);
+        assert!(state.buffers.iter().all(Option::is_none));
+        assert!(state.current_ref().is_none());
+    }
+
+    #[test]
+    fn next_slot_ping_pongs_between_two_slots() {
+        assert_eq!(DoubleBufferState::next_slot(0), 1);
+        assert_eq!(DoubleBufferState::next_slot(1), 0);
+    }
 }
