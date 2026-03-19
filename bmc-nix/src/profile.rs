@@ -54,11 +54,19 @@ pub enum BuildProfileError {
 
 /// RAII guard that holds an exclusive `flock` on a profile directory.
 ///
-/// The lock is released when the guard is dropped (the file descriptor is
-/// closed).
+/// The lock is explicitly released via `LOCK_UN` on drop, then the file
+/// descriptor is closed. This avoids a race where `close()` alone may
+/// not release the lock atomically with respect to concurrent openers.
 #[derive(Debug)]
 pub struct ProfileLock {
-    _file: std::fs::File,
+    file: std::fs::File,
+}
+
+impl Drop for ProfileLock {
+    fn drop(&mut self) {
+        // Explicitly unlock before close — ignore errors since we're in Drop
+        let _ = flock(&self.file, libc::LOCK_UN);
+    }
 }
 
 /// Open and prepare the lock file, returning the file handle.
@@ -105,7 +113,7 @@ pub async fn lock_profile(profile_dir: &Path) -> Result<ProfileLock, BuildProfil
 
     tokio::task::spawn_blocking(move || {
         flock(&file, libc::LOCK_EX).map_err(|source| BuildProfileError::Lock { source })?;
-        Ok(ProfileLock { _file: file })
+        Ok(ProfileLock { file })
     })
     .await
     .expect("BUG: lock task should not panic")
@@ -118,7 +126,7 @@ pub fn try_lock_profile(profile_dir: &Path) -> Result<Option<ProfileLock>, Build
     let file = open_lock_file(profile_dir)?;
 
     match flock(&file, libc::LOCK_EX | libc::LOCK_NB) {
-        Ok(()) => Ok(Some(ProfileLock { _file: file })),
+        Ok(()) => Ok(Some(ProfileLock { file })),
         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
         Err(source) => Err(BuildProfileError::Lock { source }),
     }
@@ -147,7 +155,7 @@ pub async fn lock_profile_with_timeout(
 
     let handle = tokio::task::spawn_blocking(move || {
         flock(&file, libc::LOCK_EX).map_err(|source| BuildProfileError::Lock { source })?;
-        Ok::<ProfileLock, BuildProfileError>(ProfileLock { _file: file })
+        Ok::<ProfileLock, BuildProfileError>(ProfileLock { file })
     });
 
     match tokio::time::timeout(timeout, handle).await {
