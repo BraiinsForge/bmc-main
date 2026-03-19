@@ -64,7 +64,12 @@ fn open_lock_file(profile_dir: &Path) -> Result<std::fs::File, BuildProfileError
     })?;
 
     let lock_path = profile_dir.join(".lock");
-    std::fs::File::create(&lock_path).map_err(|source| BuildProfileError::Lock { source })
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|source| BuildProfileError::Lock { source })
 }
 
 /// Call `flock(2)` with the given flags.
