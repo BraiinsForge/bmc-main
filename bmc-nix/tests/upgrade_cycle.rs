@@ -132,7 +132,7 @@ async fn full_upgrade_cycle() {
             name: "core".into(),
             version: "1.0.0".into(),
             store_path: core_store_v1.to_str().expect("BUG: valid UTF-8").into(),
-            cache_url: "https://cache.example.com".into(),
+            cache_url: Some("https://cache.example.com".into()),
             cache_name: "default".into(),
             category: Some("core".into()),
             description: None,
@@ -146,7 +146,7 @@ async fn full_upgrade_cycle() {
             name: "widget".into(),
             version: "1.0.0".into(),
             store_path: widget_store_v1.to_str().expect("BUG: valid UTF-8").into(),
-            cache_url: "https://cache.example.com".into(),
+            cache_url: Some("https://cache.example.com".into()),
             cache_name: "default".into(),
             category: Some("widget".into()),
             description: None,
@@ -222,7 +222,7 @@ async fn full_upgrade_cycle() {
         name: "gadget".into(),
         version: "1.0.0".into(),
         store_path: gadget_store.to_str().expect("BUG: valid UTF-8").into(),
-        cache_url: "https://cache.example.com".into(),
+        cache_url: Some("https://cache.example.com".into()),
         cache_name: "default".into(),
         category: None,
         description: None,
@@ -333,7 +333,7 @@ async fn gc_removes_old_generations_during_upgrade() {
             name: "pkg".into(),
             version: format!("{gen_num}.0.0"),
             store_path: store.to_str().expect("BUG: valid UTF-8").into(),
-            cache_url: String::new(),
+            cache_url: None,
             cache_name: "default".into(),
             category: None,
             description: None,
@@ -405,7 +405,7 @@ async fn stale_pinned_package_kept_in_new_profile() {
         name: "widget".into(),
         version: "1.0.0".into(),
         store_path: store_v1.to_str().expect("BUG: valid UTF-8").into(),
-        cache_url: String::new(),
+        cache_url: None,
         cache_name: "default".into(),
         category: None,
         description: None,
@@ -491,7 +491,7 @@ async fn upgrade_plan_respects_pin_strategy() {
         name: "core".into(),
         version: "1.0.0".into(),
         store_path: store_v1.to_str().expect("BUG: valid UTF-8").into(),
-        cache_url: String::new(),
+        cache_url: None,
         cache_name: "default".into(),
         category: None,
         description: None,
@@ -545,7 +545,7 @@ fn strategy_summary_integration() {
             name: "core".into(),
             version: "1.0.0".into(),
             store_path: "/nix/store/core".into(),
-            cache_url: String::new(),
+            cache_url: None,
             cache_name: "default".into(),
             category: None,
             description: None,
@@ -559,7 +559,7 @@ fn strategy_summary_integration() {
             name: "widget".into(),
             version: "1.0.0".into(),
             store_path: "/nix/store/widget".into(),
-            cache_url: String::new(),
+            cache_url: None,
             cache_name: "default".into(),
             category: None,
             description: None,
@@ -602,8 +602,8 @@ fn merge_installed_preserves_manifest_fields() {
     assert_eq!(pkg.name, "pkg-a");
     assert_eq!(pkg.version, "1.0.0");
     assert!(
-        pkg.cache_url.is_empty(),
-        "cache_url should be empty for manifest-derived packages"
+        pkg.cache_url.is_none(),
+        "cache_url should be None for manifest-derived packages"
     );
     assert_eq!(pkg.cache_name, "my-cache");
     assert_eq!(pkg.category, Some("core".into()));

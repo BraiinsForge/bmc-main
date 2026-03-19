@@ -82,15 +82,14 @@ pub fn read_manifest(profile_path: &Path) -> Result<Manifest, ReadManifestError>
 /// Convert a manifest package back to a resolved package.
 ///
 /// This is lossy — `ManifestPackage` does not store `cache_url`, only
-/// `cache` (name). The `cache_url` is set to empty string. Only use
-/// the result for profile building (which needs store paths), NOT for
-/// `copy_store_paths` (which needs cache URLs).
+/// `cache` (name). The `cache_url` is set to `None`. The store path
+/// is expected to already be present locally.
 fn manifest_package_to_resolved(name: &str, mp: &ManifestPackage) -> ResolvedPackage {
     ResolvedPackage {
         name: name.to_owned(),
         version: mp.version.clone(),
         store_path: mp.store_path.clone(),
-        cache_url: String::new(),
+        cache_url: None,
         cache_name: mp.cache.clone(),
         category: mp.category.clone(),
         description: mp.description.clone(),
@@ -236,7 +235,7 @@ mod tests {
             name: name.into(),
             version: "1.0.0".into(),
             store_path: store_path.into(),
-            cache_url: "https://cache.example.com".into(),
+            cache_url: Some("https://cache.example.com".into()),
             cache_name: "local".into(),
             category: None,
             description: None,
