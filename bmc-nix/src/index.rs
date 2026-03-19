@@ -64,6 +64,7 @@ pub fn resolve_all_from_index(
                 version: entry.version.clone(),
                 store_path: entry.store_path.clone(),
                 cache_url,
+                cache_name: "local".into(),
                 category: entry.category.clone(),
                 description: entry.description.clone(),
                 upgrade_strategy: entry.upgrade_strategy.clone(),

@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use semver::Version;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -47,14 +49,14 @@ pub struct CacheEntry {
 }
 
 /// Upgrade strategy hints for UI and orchestration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UpgradeStrategy {
     Reboot,
 }
 
 /// Install strategy hints for UI and orchestration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstallStrategy {
     Reboot,
@@ -159,10 +161,29 @@ pub struct ProfileGeneration {
     pub manifest: Manifest,
 }
 
+/// Server registry (`/etc/nix-upgrade/servers.json`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServersConfig {
+    pub factory: FactoryServerEntry,
+    pub servers: Vec<ServerEntry>,
+}
+
 /// Factory server entry in the server registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FactoryServerEntry {
     pub id: String,
+    pub index_url: String,
+    pub known_public_key: String,
+    pub priority: u32,
+    pub enabled: bool,
+}
+
+/// A configured package server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerEntry {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub server_type: String,
     pub index_url: String,
     pub known_public_key: String,
     pub priority: u32,
@@ -182,6 +203,113 @@ pub struct FactoryTarball {
     pub bos_version: String,
     pub download_url: String,
     pub profile_path: String,
+}
+
+/// GC configuration (`/etc/nix-upgrade/gc.json`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GcConfig {
+    pub keep_generations: u32,
+    pub keep_days: u32,
+    pub min_free_space: String,
+    pub protected_generations: Vec<u32>,
+}
+
+/// Result of merging indexes from all servers.
+///
+/// Stores all package entries from all servers in a flat vec.
+/// `by_name` provides fast lookup by package name to indices into `packages`.
+#[derive(Debug, Clone)]
+pub struct MergedIndex {
+    pub caches: Vec<CacheEntry>,
+    /// All entries in insertion order.
+    pub packages: Vec<MergedPackageEntry>,
+    /// Lookup by package name → indices into `packages`.
+    pub by_name: BTreeMap<String, Vec<usize>>,
+}
+
+/// A package entry within a [`MergedIndex`], tagged with server metadata.
+#[derive(Debug, Clone)]
+pub struct MergedPackageEntry {
+    pub name: String,
+    pub version: Version,
+    pub store_path: String,
+    pub cache_url: String,
+    pub cache_name: String,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub upgrade_strategy: Option<UpgradeStrategy>,
+    pub install_strategy: Option<InstallStrategy>,
+    pub server_id: String,
+    pub server_priority: u32,
+}
+
+/// Output of computing an upgrade plan.
+#[derive(Debug)]
+pub struct UpgradePlan {
+    /// Resolved packages to apply (includes unchanged packages).
+    pub packages: Vec<ResolvedPackage>,
+    /// Packages missing from indexes; kept at current version.
+    pub stale: Vec<PackageVersion>,
+    /// Packages newly added in the target profile.
+    pub added: Vec<PackageVersion>,
+    /// Packages removed from the target profile.
+    pub removed: Vec<PackageVersion>,
+    /// Packages that change version.
+    pub changed: Vec<PackageChange>,
+}
+
+/// A package name+version pair used in upgrade plan summaries.
+#[derive(Debug, Clone)]
+pub struct PackageChange {
+    pub name: String,
+    pub from_version: String,
+    pub to_version: String,
+}
+
+/// A package name+version pair.
+#[derive(Debug, Clone)]
+pub struct PackageVersion {
+    pub name: String,
+    pub version: String,
+}
+
+/// Summary of strategies present in a given install/upgrade run.
+#[derive(Debug)]
+pub struct StrategySummary {
+    pub upgrade: Vec<UpgradeStrategy>,
+    pub install: Vec<InstallStrategy>,
+}
+
+impl StrategySummary {
+    /// Collect unique strategy hints from a set of resolved packages.
+    #[must_use]
+    pub fn from_packages(packages: &[ResolvedPackage]) -> Self {
+        use std::collections::HashSet;
+
+        let mut upgrade_set = HashSet::new();
+        let mut install_set = HashSet::new();
+
+        for pkg in packages {
+            if let Some(ref s) = pkg.upgrade_strategy {
+                upgrade_set.insert(s.clone());
+            }
+            if let Some(ref s) = pkg.install_strategy {
+                install_set.insert(s.clone());
+            }
+        }
+
+        Self {
+            upgrade: upgrade_set.into_iter().collect(),
+            install: install_set.into_iter().collect(),
+        }
+    }
+}
+
+/// Result of an install/upgrade run.
+#[derive(Debug)]
+pub struct InstallResult {
+    pub generation: ProfileGeneration,
+    pub strategies: StrategySummary,
 }
 
 #[cfg(test)]
@@ -350,6 +478,45 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_servers_config() {
+        let json = r#"{
+            "factory": {
+                "id": "braiins_server",
+                "index_url": "https://cache.braiins.com/v1/miniminer-factory.json",
+                "known_public_key": "cache.braiins.com:AAAA",
+                "priority": 1,
+                "enabled": true
+            },
+            "servers": [{
+                "id": "braiins_server",
+                "type": "system",
+                "index_url": "https://cache.braiins.com/v1/miniminer-index.json",
+                "known_public_key": "cache.braiins.com:AAAA",
+                "priority": 1,
+                "enabled": true
+            }]
+        }"#;
+        let config: ServersConfig =
+            serde_json::from_str(json).expect("BUG: test JSON should be valid");
+        assert_eq!(config.servers.len(), 1);
+        assert_eq!(config.factory.id, "braiins_server");
+        assert_eq!(config.servers[0].server_type, "system");
+    }
+
+    #[test]
+    fn deserialize_gc_config() {
+        let json = r#"{
+            "keep_generations": 3,
+            "keep_days": 30,
+            "min_free_space": "500M",
+            "protected_generations": [1]
+        }"#;
+        let config: GcConfig = serde_json::from_str(json).expect("BUG: test JSON should be valid");
+        assert_eq!(config.keep_generations, 3);
+        assert_eq!(config.protected_generations, vec![1]);
+    }
+
+    #[test]
     fn deserialize_factory_index() {
         let json = r#"{
             "version": 1,
@@ -364,5 +531,42 @@ mod tests {
         assert_eq!(factory.version, 1);
         assert_eq!(factory.tarballs.len(), 1);
         assert_eq!(factory.tarballs[0].bos_version, "1.0.0");
+    }
+
+    #[test]
+    fn strategy_summary_collects_unique() {
+        let packages = vec![
+            ResolvedPackage {
+                name: "a".into(),
+                version: "1.0.0".into(),
+                store_path: "/nix/store/a".into(),
+                cache_url: String::new(),
+                cache_name: String::new(),
+                category: None,
+                description: None,
+                upgrade_strategy: Some(UpgradeStrategy::Reboot),
+                install_strategy: None,
+                installed_by: InstalledBy::System,
+                installed_from: "local".into(),
+                pinned: PinStrategy::None,
+            },
+            ResolvedPackage {
+                name: "b".into(),
+                version: "1.0.0".into(),
+                store_path: "/nix/store/b".into(),
+                cache_url: String::new(),
+                cache_name: String::new(),
+                category: None,
+                description: None,
+                upgrade_strategy: Some(UpgradeStrategy::Reboot),
+                install_strategy: Some(InstallStrategy::Reboot),
+                installed_by: InstalledBy::System,
+                installed_from: "local".into(),
+                pinned: PinStrategy::None,
+            },
+        ];
+        let summary = StrategySummary::from_packages(&packages);
+        assert_eq!(summary.upgrade.len(), 1);
+        assert_eq!(summary.install.len(), 1);
     }
 }
