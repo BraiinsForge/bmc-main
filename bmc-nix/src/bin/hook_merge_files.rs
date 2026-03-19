@@ -19,11 +19,8 @@ fn main() -> anyhow::Result<()> {
     // (which becomes the target path in the generation root).
     let mut groups: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
 
-    for entry in WalkDir::new(&merge_dir)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in WalkDir::new(&merge_dir).follow_links(false) {
+        let entry = entry?;
         if entry.file_type().is_file() {
             let rel = entry
                 .path()
