@@ -996,6 +996,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-nix-init"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flume",
+ "serde",
+ "slint",
+ "slint-build",
+]
+
+[[package]]
+name = "bmc-nix-init-mock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-nix-init",
+ "flume",
+ "minifb",
+ "slint",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bmc-nix-init-openwrt"
+version = "0.1.0"
+dependencies = [
+ "bmc-nix-init",
+ "drm 0.14.1",
+ "evdev",
+ "flume",
+ "slint",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bmc-openwrt"
 version = "0.1.0"
 dependencies = [
