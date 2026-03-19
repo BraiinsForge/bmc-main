@@ -21,11 +21,7 @@ pub enum WriteManifestError {
 /// Build a [`Manifest`] from a slice of resolved packages.
 ///
 /// Each [`ResolvedPackage`] is converted into a [`ManifestPackage`] and keyed
-/// by its name. In Stage 1 the cache field is always set to `"local"`.
-///
-/// TODO(stage-3): carry the actual cache name from `ResolvedPackage` instead
-/// of hardcoding `"local"`. The concept doc's manifest uses the cache name
-/// from the index.
+/// by its name. The `cache` field is taken from `ResolvedPackage::cache_name`.
 #[must_use]
 pub fn build_manifest(packages: &[ResolvedPackage]) -> Manifest {
     let packages = packages
@@ -33,7 +29,7 @@ pub fn build_manifest(packages: &[ResolvedPackage]) -> Manifest {
         .map(|pkg| {
             let entry = ManifestPackage {
                 version: pkg.version.clone(),
-                cache: "local".into(),
+                cache: pkg.cache_name.clone(),
                 store_path: pkg.store_path.clone(),
                 category: pkg.category.clone(),
                 description: pkg.description.clone(),
@@ -76,6 +72,7 @@ mod tests {
             version: "1.0.0".into(),
             store_path: store_path.into(),
             cache_url: "https://cache.example.com".into(),
+            cache_name: "local".into(),
             category: None,
             description: None,
             upgrade_strategy: None,

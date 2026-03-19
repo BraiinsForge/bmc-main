@@ -18,6 +18,10 @@ where
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+fn default_cache_name() -> String {
+    "local".into()
+}
+
 /// Remote package index (miniminer-index.json)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageIndex {
@@ -95,6 +99,10 @@ pub struct ResolvedPackage {
     pub version: String,
     pub store_path: String,
     pub cache_url: String,
+    /// Name of the binary cache this package was resolved from.
+    /// Set to `"local"` for packages resolved from a local index.
+    #[serde(default = "default_cache_name")]
+    pub cache_name: String,
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
@@ -149,6 +157,37 @@ pub struct ProfileGeneration {
     pub number: usize,
     pub path: PathBuf,
     pub manifest: Manifest,
+}
+
+/// Server registry (`/etc/nix-upgrade/servers.json`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServersConfig {
+    pub factory: FactoryServerEntry,
+}
+
+/// Factory server entry in the server registry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactoryServerEntry {
+    pub id: String,
+    pub index_url: String,
+    pub known_public_key: String,
+    pub priority: u32,
+    pub enabled: bool,
+}
+
+/// Factory initialization index (`miniminer-factory.json`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactoryIndex {
+    pub version: u32,
+    pub tarballs: Vec<FactoryTarball>,
+}
+
+/// A single factory tarball entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactoryTarball {
+    pub bos_version: String,
+    pub download_url: String,
+    pub profile_path: String,
 }
 
 #[cfg(test)]
@@ -314,5 +353,22 @@ mod tests {
             widget.install_strategy.is_none(),
             "widget install_strategy should be None"
         );
+    }
+
+    #[test]
+    fn deserialize_factory_index() {
+        let json = r#"{
+            "version": 1,
+            "tarballs": [{
+                "bos_version": "1.0.0",
+                "download_url": "https://example.com/tarball.tar.gz",
+                "profile_path": "/nix/var/nix/gcroots/profiles/bmc"
+            }]
+        }"#;
+        let factory: FactoryIndex =
+            serde_json::from_str(json).expect("BUG: test JSON should be valid");
+        assert_eq!(factory.version, 1);
+        assert_eq!(factory.tarballs.len(), 1);
+        assert_eq!(factory.tarballs[0].bos_version, "1.0.0");
     }
 }

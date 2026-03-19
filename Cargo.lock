@@ -1084,6 +1084,8 @@ dependencies = [
  "clap",
  "file-rotate",
  "libc",
+ "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
