@@ -37,4 +37,8 @@
     path = "./widgets/flip-clock";
     packageName = "bmc-widget-flip-clock";
   };
+  widget-wasm = defineCrate {
+    path = "./widgets/wasm";
+    packageName = "bmc-widget-wasm";
+  };
 }

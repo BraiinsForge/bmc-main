@@ -165,6 +165,10 @@ let
       features = [ "standalone" ];
       runtimeDepsKind = "native";
     };
+    wasm = {
+      crate = bmc.crates.widget-wasm;
+      runtimeDepsKind = "native";
+    };
   };
 
   # Build profile sets for the cartesian product
