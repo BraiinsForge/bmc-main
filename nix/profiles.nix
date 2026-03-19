@@ -12,7 +12,7 @@
     ];
     inherit pkgs;
   };
-  # musl profiles for bmc-openwrt (statically linked)
+  # musl profiles for statically linked binaries (bmc-nix-init-openwrt)
   armv7-release = workspaces.minimal.mkBuildProfile {
     minimalDeps = true;
     rustProfile = "release";
