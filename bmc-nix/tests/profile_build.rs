@@ -160,7 +160,7 @@ async fn full_profile_build() {
     assert!(manifest.packages.contains_key("widget-clock"));
 
     // Activate (runs entrypoint which creates current symlink)
-    bmc_nix::profile::activate_profile(&profile_dir, &gen1)
+    bmc_nix::profile::activate_profile(&profile_dir, gen1.number, &gen1.path)
         .await
         .expect("BUG: activate should succeed");
     let current = profile_dir.join("current");
@@ -176,7 +176,7 @@ async fn full_profile_build() {
         .expect("BUG: build_profile gen 2 should succeed");
     assert!(gen2.path.ends_with("2-link"));
 
-    bmc_nix::profile::activate_profile(&profile_dir, &gen2)
+    bmc_nix::profile::activate_profile(&profile_dir, gen2.number, &gen2.path)
         .await
         .expect("BUG: activate gen 2 should succeed");
 

@@ -355,9 +355,10 @@ fn current_generation_path(profile_dir: &Path) -> Option<PathBuf> {
 /// `PROFILE_OLD_GENERATION` environment variables.
 pub async fn activate_profile(
     profile_dir: &Path,
-    generation: &ProfileGeneration,
+    generation_number: usize,
+    generation_path: &Path,
 ) -> Result<(), BuildProfileError> {
-    let entrypoint = generation.path.join("core/activation/entrypoint");
+    let entrypoint = generation_path.join("core/activation/entrypoint");
 
     if !entrypoint.exists() {
         return Err(crate::activation::ActivationError::EntrypointNotFound {
@@ -374,7 +375,7 @@ pub async fn activate_profile(
     );
 
     let output = tokio::process::Command::new(&entrypoint)
-        .env("PROFILE_NEW_GENERATION", &generation.path)
+        .env("PROFILE_NEW_GENERATION", generation_path)
         .env("PROFILE_OLD_GENERATION", &old_gen)
         .output()
         .await
@@ -404,8 +405,8 @@ pub async fn activate_profile(
     }
 
     info!(
-        generation = generation.number,
-        path = %generation.path.display(),
+        generation = generation_number,
+        path = %generation_path.display(),
         "activated profile generation"
     );
 
@@ -697,7 +698,7 @@ mod tests {
             .await
             .expect("BUG: build_profile should succeed");
 
-        activate_profile(&profile_dir, &generation)
+        activate_profile(&profile_dir, generation.number, &generation.path)
             .await
             .expect("BUG: activate_profile should succeed");
 
@@ -725,7 +726,7 @@ mod tests {
             .await
             .expect("BUG: build_profile should succeed");
 
-        let result = activate_profile(&profile_dir, &generation).await;
+        let result = activate_profile(&profile_dir, generation.number, &generation.path).await;
         assert!(
             result.is_err(),
             "activate_profile should fail when entrypoint is missing"

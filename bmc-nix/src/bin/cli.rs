@@ -75,7 +75,12 @@ async fn main() -> anyhow::Result<()> {
 
             // 5. Optionally activate
             if activate {
-                bmc_nix::profile::activate_profile(&profile_dir, &generation).await?;
+                bmc_nix::profile::activate_profile(
+                    &profile_dir,
+                    generation.number,
+                    &generation.path,
+                )
+                .await?;
             }
 
             println!("{}", generation.path.display());
