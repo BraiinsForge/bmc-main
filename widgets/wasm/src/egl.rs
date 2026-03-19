@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use glow::HasContext;
 
 pub use bmc_widget::egl::DmaBufInfo;
-use bmc_widget::egl::{EglContext, ExportBuffer};
+use bmc_widget::egl::{DoubleBufferedEglState, EglContext};
 
 /// Staging buffer for FemtoVG rendering (regular GL texture, not EGLImage).
 struct StagingBuffer {
@@ -31,32 +31,23 @@ struct BlitResources {
 
 /// Two-FBO EGL state for FemtoVG rendering with Y-flip correction.
 ///
-/// Double-buffers two [`ExportBuffer`]s. Each frame:
+/// Uses [`DoubleBufferedEglState`] for export buffer management. Each frame:
 /// 1. Bind staging FBO (FemtoVG renders here with stencil)
 /// 2. `blit_to_export()` copies staging → export with flipped V
 /// 3. `end_frame()` calls `gl.flush()` and exports DMA-BUF
 pub struct EglState {
-    ctx: EglContext,
-    buffers: [Option<ExportBuffer>; 2],
-    current_buffer: usize,
+    egl: DoubleBufferedEglState,
     staging: Option<StagingBuffer>,
     blit_program: Option<BlitResources>,
-    width: u32,
-    height: u32,
 }
 
 impl EglState {
     /// Create EGL context and prepare for two-FBO rendering.
     pub fn new(width: u32, height: u32) -> Result<Self> {
-        let ctx = EglContext::new()?;
         Ok(Self {
-            ctx,
-            buffers: [None, None],
-            current_buffer: 0,
+            egl: DoubleBufferedEglState::new(width, height)?,
             staging: None,
             blit_program: None,
-            width,
-            height,
         })
     }
 
@@ -66,10 +57,7 @@ impl EglState {
     /// `set_screen_target`. Call `blit_to_export()` after FemtoVG flushes.
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
     pub fn begin_frame(&mut self) -> Result<u32> {
-        let idx = self.current_buffer;
-        if self.buffers[idx].is_none() {
-            self.buffers[idx] = Some(self.ctx.allocate_export_buffer(self.width, self.height)?);
-        }
+        self.egl.ensure_current()?;
 
         if self.staging.is_none() {
             self.staging = Some(self.allocate_staging()?);
@@ -84,10 +72,12 @@ impl EglState {
             .as_ref()
             .expect("BUG: staging should exist after allocation");
 
+        let (w, h) = (self.egl.width(), self.egl.height());
+
         unsafe {
-            let gl = self.ctx.gl();
+            let gl = self.egl.gl();
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(staging.fbo));
-            gl.viewport(0, 0, self.width as i32, self.height as i32);
+            gl.viewport(0, 0, w as i32, h as i32);
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
         }
@@ -108,15 +98,18 @@ impl EglState {
             .blit_program
             .as_ref()
             .context("BUG: blit resources not allocated")?;
-        let export = self.buffers[self.current_buffer]
-            .as_ref()
+        let export = self
+            .egl
+            .current_ref()
             .context("BUG: export buffer not allocated")?;
 
+        let (w, h) = (self.egl.width(), self.egl.height());
+
         unsafe {
-            let gl = self.ctx.gl();
+            let gl = self.egl.gl();
 
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(export.fbo));
-            gl.viewport(0, 0, self.width as i32, self.height as i32);
+            gl.viewport(0, 0, w as i32, h as i32);
 
             gl.use_program(Some(blit.program));
 
@@ -144,17 +137,9 @@ impl EglState {
     /// Returns the DMA-BUF info and the slot index of the exported buffer.
     pub fn end_frame(&mut self) -> Result<(DmaBufInfo, usize)> {
         unsafe {
-            self.ctx.gl().flush();
+            self.egl.gl().flush();
         }
-
-        let idx = self.current_buffer;
-        let buf = self.buffers[idx]
-            .as_mut()
-            .expect("BUG: buffer should exist after begin_frame");
-
-        let info = EglContext::export_dmabuf(buf)?;
-        self.current_buffer = 1 - self.current_buffer;
-        Ok((info, idx))
+        self.egl.export_and_swap()
     }
 
     /// Resize — deallocate buffers so they're reallocated at the new size.
@@ -163,30 +148,23 @@ impl EglState {
         reason = "resize support for when protocol adds resize events"
     )]
     pub fn resize(&mut self, width: u32, height: u32) {
-        if self.width == width && self.height == height {
+        if self.egl.width() == width && self.egl.height() == height {
             return;
         }
 
         tracing::debug!(
             "Resizing from {}x{} to {}x{}",
-            self.width,
-            self.height,
+            self.egl.width(),
+            self.egl.height(),
             width,
             height
         );
 
-        for buffer in &mut self.buffers {
-            if let Some(buf) = buffer.take() {
-                self.ctx.destroy_export_buffer(buf);
-            }
-        }
+        self.egl.resize(width, height);
 
         if let Some(ref staging) = self.staging.take() {
-            Self::destroy_staging(self.ctx.gl(), staging);
+            Self::destroy_staging(self.egl.gl(), staging);
         }
-
-        self.width = width;
-        self.height = height;
     }
 
     /// Get the glow GL context (for test mode FemtoVG renderer and GL loaders).
@@ -195,7 +173,7 @@ impl EglState {
         reason = "used by test mode which is re-added in a later commit"
     )]
     pub fn gl(&self) -> &glow::Context {
-        self.ctx.gl()
+        self.egl.gl()
     }
 
     /// Re-export `get_proc_address` for GL loaders (e.g. `bmc-wasm-runtime`).
@@ -207,7 +185,9 @@ impl EglState {
 
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
     fn allocate_staging(&self) -> Result<StagingBuffer> {
-        let gl = self.ctx.gl();
+        let gl = self.egl.gl();
+        let width = self.egl.width();
+        let height = self.egl.height();
 
         let texture = unsafe {
             let tex = gl
@@ -218,8 +198,8 @@ impl EglState {
                 glow::TEXTURE_2D,
                 0,
                 glow::RGBA as i32,
-                self.width as i32,
-                self.height as i32,
+                width as i32,
+                height as i32,
                 0,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
@@ -256,8 +236,8 @@ impl EglState {
             gl.renderbuffer_storage(
                 glow::RENDERBUFFER,
                 glow::STENCIL_INDEX8,
-                self.width as i32,
-                self.height as i32,
+                width as i32,
+                height as i32,
             );
             rbo
         };
@@ -296,7 +276,7 @@ impl EglState {
     }
 
     fn create_blit_resources(&self) -> Result<BlitResources> {
-        let gl = self.ctx.gl();
+        let gl = self.egl.gl();
 
         let vert_src = r"#version 100
 attribute vec2 a_pos;
@@ -410,12 +390,7 @@ void main() {
 
 impl Drop for EglState {
     fn drop(&mut self) {
-        let gl = self.ctx.gl();
-        for buffer in &mut self.buffers {
-            if let Some(buf) = buffer.take() {
-                self.ctx.destroy_export_buffer(buf);
-            }
-        }
+        let gl = self.egl.gl();
         if let Some(ref staging) = self.staging.take() {
             Self::destroy_staging(gl, staging);
         }
