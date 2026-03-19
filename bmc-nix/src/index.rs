@@ -73,7 +73,7 @@ pub fn resolve_all_from_index(
                 name: entry.name.clone(),
                 version: entry.version.clone(),
                 store_path: entry.store_path.clone(),
-                cache_url: cache.url,
+                cache_url: Some(cache.url),
                 cache_name: cache.name,
                 category: entry.category.clone(),
                 description: entry.description.clone(),
