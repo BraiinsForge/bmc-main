@@ -284,7 +284,7 @@ pub fn merge_indexes(
                 upgrade_strategy: entry.upgrade_strategy.clone(),
                 install_strategy: entry.install_strategy.clone(),
                 server_id: server_id.clone(),
-                server_priority: priority,
+                server_priority: priority as usize,
             });
 
             by_name.entry(entry.name.clone()).or_default().push(idx);

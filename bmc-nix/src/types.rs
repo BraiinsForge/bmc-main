@@ -160,7 +160,7 @@ pub struct ManifestPackage {
 /// Profile generation metadata
 #[derive(Debug, Clone)]
 pub struct ProfileGeneration {
-    pub number: u32,
+    pub number: usize,
     pub path: PathBuf,
     pub manifest: Manifest,
 }
@@ -212,10 +212,10 @@ pub struct FactoryTarball {
 /// GC configuration (`/etc/nix-upgrade/gc.json`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GcConfig {
-    pub keep_generations: u32,
-    pub keep_days: u32,
+    pub keep_generations: usize,
+    pub keep_days: usize,
     pub min_free_space: String,
-    pub protected_generations: Vec<u32>,
+    pub protected_generations: Vec<usize>,
 }
 
 /// Result of merging indexes from all servers.
@@ -244,7 +244,7 @@ pub struct MergedPackageEntry {
     pub upgrade_strategy: Option<UpgradeStrategy>,
     pub install_strategy: Option<InstallStrategy>,
     pub server_id: String,
-    pub server_priority: u32,
+    pub server_priority: usize,
 }
 
 /// Output of computing an upgrade plan.
