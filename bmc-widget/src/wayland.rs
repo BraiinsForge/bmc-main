@@ -256,7 +256,7 @@ fn action_to_protocol(action: &ActionPayload) -> (ActionType, String) {
     }
 }
 
-fn setting_from_protocol(setting_type: u32, value: &str) -> Option<SettingUpdate> {
+pub(crate) fn setting_from_protocol(setting_type: u32, value: &str) -> Option<SettingUpdate> {
     use bmc_widget_protocol::client::deck_widget_surface_v1::SettingType;
 
     match SettingType::try_from(setting_type).ok()? {

@@ -26,6 +26,234 @@ use bmc_widget_protocol::client::{
 };
 
 use crate::egl::DmaBufInfo;
+use crate::wayland::setting_from_protocol;
+
+/// Re-export so widgets can match on setting variants without depending on
+/// `bmc-widget-protocol` directly.
+pub use bmc_widget_protocol::SettingUpdate;
+
+// ── Shared helpers for both surface clients ────────────────────────────
+
+/// Block until a Wayland event arrives, then dispatch all pending events.
+///
+/// Shared implementation used by both [`XdgSurfaceClient`] and
+/// [`DeckWidgetSurfaceClient`].
+fn blocking_dispatch_impl<S: 'static>(queue: &mut EventQueue<S>, state: &mut S) -> Result<()> {
+    queue
+        .blocking_dispatch(state)
+        .context("Wayland dispatch failed")?;
+    Ok(())
+}
+
+/// Poll for Wayland events with a timeout, then dispatch pending events.
+///
+/// Returns `Ok(true)` on all normal paths (events read, timeout, or
+/// already-queued events dispatched). Returns `Ok(false)` only if a
+/// non-fatal `EAGAIN`/`EWOULDBLOCK` occurs in `poll(2)` or
+/// `ReadEventsGuard::read()`; pending events are still dispatched. A
+/// timeout of `-1` blocks indefinitely; `0` is non-blocking.
+///
+/// This follows the `prepare_read -> poll -> read/cancel -> dispatch_pending`
+/// pattern required by `wayland-client`.
+fn poll_dispatch<S: 'static>(
+    conn: &Connection,
+    queue: &mut EventQueue<S>,
+    state: &mut S,
+    timeout_ms: i32,
+) -> Result<bool> {
+    conn.flush()?;
+
+    let read_guard = queue.prepare_read();
+    let mut read_would_block = false;
+
+    match read_guard {
+        None => {
+            // Events already queued — just dispatch them
+            queue
+                .dispatch_pending(state)
+                .context("Wayland dispatch failed")?;
+            return Ok(true);
+        }
+        Some(guard) => {
+            let fd = conn.as_fd();
+            let mut pollfd = libc::pollfd {
+                fd: std::os::fd::AsRawFd::as_raw_fd(&fd),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            let poll_ret = unsafe { libc::poll(&raw mut pollfd, 1, timeout_ms) };
+
+            match poll_ret.cmp(&0) {
+                std::cmp::Ordering::Greater => match guard.read() {
+                    Ok(_) => {}
+                    Err(wayland_client::backend::WaylandError::Io(err))
+                        if err.kind() == std::io::ErrorKind::WouldBlock =>
+                    {
+                        // Non-fatal race: poll reported readability but no
+                        // event was available by the time we read.
+                        read_would_block = true;
+                    }
+                    Err(err) => return Err(err).context("Wayland socket read failed"),
+                },
+                std::cmp::Ordering::Equal => {
+                    // Timeout — cancel read
+                    drop(guard);
+                }
+                std::cmp::Ordering::Less => {
+                    // Error
+                    let err = std::io::Error::last_os_error();
+                    drop(guard);
+                    #[expect(
+                        clippy::wildcard_enum_match_arm,
+                        reason = "all other io::ErrorKind variants are fatal"
+                    )]
+                    match err.kind() {
+                        std::io::ErrorKind::Interrupted => {
+                            // EINTR — not fatal, just dispatch pending
+                        }
+                        std::io::ErrorKind::WouldBlock => {
+                            // EAGAIN — non-fatal, dispatch pending and
+                            // signal caller via Ok(false)
+                            queue
+                                .dispatch_pending(state)
+                                .context("Wayland dispatch failed")?;
+                            return Ok(false);
+                        }
+                        _ => {
+                            return Err(err).context("poll(2) on Wayland fd failed");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    queue
+        .dispatch_pending(state)
+        .context("Wayland dispatch failed")?;
+
+    if read_would_block {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+/// Destroy all cached `wl_buffer`s and return the number destroyed.
+///
+/// Shared implementation for [`XdgSurfaceClient::invalidate_cached_buffers`]
+/// and [`DeckWidgetSurfaceClient::invalidate_cached_buffers`].
+fn invalidate_cached_wl_buffers(cached_buffers: &mut [Option<wl_buffer::WlBuffer>]) -> u32 {
+    let mut destroyed = 0_u32;
+    for cached in cached_buffers {
+        if let Some(buf) = cached.take() {
+            buf.destroy();
+            destroyed += 1;
+        }
+    }
+    if destroyed > 0 {
+        tracing::debug!("Destroyed {destroyed} cached wl_buffer(s)");
+    }
+    destroyed
+}
+
+/// Attach buffer, damage, optionally request frame callback, and commit.
+///
+/// Shared implementation for buffer submission on both surface client types.
+#[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
+fn submit_buffer_to_surface<S>(
+    surface: &wl_surface::WlSurface,
+    qh: &QueueHandle<S>,
+    buffer: &wl_buffer::WlBuffer,
+    info: &DmaBufInfo,
+    request_frame: bool,
+) where
+    S: Dispatch<wl_callback::WlCallback, ()> + 'static,
+{
+    surface.attach(Some(buffer), 0, 0);
+    surface.damage_buffer(0, 0, info.width as i32, info.height as i32);
+
+    if request_frame {
+        surface.frame(qh, ());
+    }
+
+    surface.commit();
+}
+
+/// Typed events from the compositor to a widget.
+#[derive(Debug, Clone)]
+pub enum WidgetEvent {
+    /// A setting was updated at runtime.
+    Setting(bmc_widget_protocol::SettingUpdate),
+    /// The compositor requests graceful shutdown.
+    Shutdown,
+}
+
+/// Common interface for widget surface clients.
+///
+/// Abstracts over XDG toplevel (standalone) and `deck_widget_v1` (production)
+/// backends so widget render loops can work with either.
+pub trait WidgetSurface {
+    /// Whether the event loop should keep running.
+    fn running(&self) -> bool;
+    /// Request shutdown (sets running to false).
+    fn request_shutdown(&mut self);
+    /// Current surface width in pixels.
+    fn width(&self) -> u32;
+    /// Current surface height in pixels.
+    fn height(&self) -> u32;
+    /// Whether a resize occurred since last acknowledged.
+    fn take_size_changed(&mut self) -> bool;
+    /// Whether a frame callback or timeout has fired — widget should render.
+    /// Unlike [`take_render_requested`](Self::take_render_requested), this
+    /// does not clear the flag.
+    fn needs_render(&self) -> bool;
+    /// Whether a frame callback or timeout has fired — widget should render.
+    /// Clears the flag so subsequent calls return `false` until the next event.
+    fn take_render_requested(&mut self) -> bool;
+    /// Signal that a render is needed (e.g. after poll timeout).
+    fn mark_needs_render(&mut self);
+    /// Number of per-frame buffers currently held by the compositor.
+    ///
+    /// This is meaningful for backends that create a fresh `wl_buffer` per
+    /// submit and destroy it on `Release`.
+    ///
+    /// Cached-buffer backends reuse the same small set of `wl_buffer`s across
+    /// frames and rely on frame callbacks for backpressure instead, so this may
+    /// remain `0` even while frames continue to be presented.
+    fn pending_buffer_count(&self) -> u32;
+    /// Whether more frames can be submitted without exceeding the limit.
+    ///
+    /// For per-frame buffer backends this typically compares
+    /// [`pending_buffer_count`](Self::pending_buffer_count) with `max_pending`.
+    ///
+    /// Cached-buffer backends may return `true` unconditionally because the
+    /// compositor backpressures them through frame callbacks rather than
+    /// per-frame in-flight buffer accumulation.
+    fn can_submit_frame(&self, max_pending: u32) -> bool;
+    /// Frame counter (wrapping).
+    fn frame_count(&self) -> u32;
+    /// Block until a Wayland event arrives, then dispatch.
+    fn blocking_dispatch(&mut self) -> anyhow::Result<()>;
+    /// Poll for events with timeout, then dispatch. -1 blocks, 0 non-blocking.
+    fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<bool>;
+    /// Request the first frame callback (call once before the event loop).
+    fn request_frame(&self);
+    /// Submit a DMA-BUF frame. Optionally request a frame callback.
+    fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> anyhow::Result<()>;
+    /// Submit a DMA-BUF frame using cached `wl_buffer` for a double-buffer slot.
+    fn commit_cached_buffer(
+        &mut self,
+        info: &DmaBufInfo,
+        slot: usize,
+        request_frame: bool,
+    ) -> anyhow::Result<()>;
+    /// Invalidate cached `wl_buffer`s (call on resize).
+    fn invalidate_cached_buffers(&mut self);
+    /// Drain pending compositor events.
+    fn drain_events(&mut self) -> Vec<WidgetEvent>;
+}
 
 /// Wayland surface state for an XDG toplevel with DMA-BUF support.
 ///
@@ -268,7 +496,6 @@ impl XdgSurfaceClient {
     }
 
     /// Attach buffer, damage, optionally request frame callback, and commit.
-    #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
     fn submit_buffer(
         &self,
         buffer: &wl_buffer::WlBuffer,
@@ -277,15 +504,7 @@ impl XdgSurfaceClient {
     ) -> Result<()> {
         let qh = self.queue.handle();
         let surface = self.state.surface.as_ref().context("surface not created")?;
-
-        surface.attach(Some(buffer), 0, 0);
-        surface.damage_buffer(0, 0, info.width as i32, info.height as i32);
-
-        if request_frame {
-            surface.frame(&qh, ());
-        }
-
-        surface.commit();
+        submit_buffer_to_surface(surface, &qh, buffer, info, request_frame);
         Ok(())
     }
 
@@ -294,16 +513,7 @@ impl XdgSurfaceClient {
     /// Destroys any cached `wl_buffer`s. Call this when the surface is
     /// resized or when the underlying DMA-BUF export buffers are recreated.
     pub fn invalidate_cached_buffers(&mut self) {
-        let mut destroyed = 0_u32;
-        for cached in &mut self.cached_buffers {
-            if let Some(buf) = cached.take() {
-                buf.destroy();
-                destroyed += 1;
-            }
-        }
-        if destroyed > 0 {
-            tracing::debug!("Destroyed {destroyed} cached wl_buffer(s)");
-        }
+        invalidate_cached_wl_buffers(&mut self.cached_buffers);
     }
 
     /// Request the first frame callback (call once after setup, before the
@@ -318,88 +528,107 @@ impl XdgSurfaceClient {
 
     /// Block until a Wayland event arrives, then dispatch all pending events.
     pub fn blocking_dispatch(&mut self) -> Result<()> {
-        self.queue
-            .blocking_dispatch(&mut self.state)
-            .context("Wayland dispatch failed")?;
-        Ok(())
+        blocking_dispatch_impl(&mut self.queue, &mut self.state)
     }
 
     /// Poll for Wayland events with a timeout, then dispatch pending events.
     ///
     /// Returns `Ok(true)` on all normal paths (events read, timeout, or
-    /// already-queued events dispatched). Returns `Ok(false)` only if
-    /// `poll(2)` fails with `EAGAIN`/`EWOULDBLOCK` (non-fatal, pending
-    /// events still dispatched). A timeout of `-1` blocks indefinitely;
-    /// `0` is non-blocking.
+    /// already-queued events dispatched). Returns `Ok(false)` only if a
+    /// non-fatal `EAGAIN`/`EWOULDBLOCK` occurs in `poll(2)` or
+    /// `ReadEventsGuard::read()`; pending events are still dispatched. A
+    /// timeout of `-1` blocks indefinitely; `0` is non-blocking.
     ///
     /// This follows the `prepare_read → poll → read/cancel → dispatch_pending`
     /// pattern required by `wayland-client`.
     pub fn poll_dispatch(&mut self, timeout_ms: i32) -> Result<bool> {
-        self.conn.flush()?;
+        poll_dispatch(&self.conn, &mut self.queue, &mut self.state, timeout_ms)
+    }
+}
 
-        let read_guard = self.queue.prepare_read();
+impl WidgetSurface for XdgSurfaceClient {
+    fn running(&self) -> bool {
+        self.state.running
+    }
 
-        match read_guard {
-            None => {
-                // Events already queued — just dispatch them
-                self.queue
-                    .dispatch_pending(&mut self.state)
-                    .context("Wayland dispatch failed")?;
-                return Ok(true);
-            }
-            Some(guard) => {
-                let fd = self.conn.as_fd();
-                let mut pollfd = libc::pollfd {
-                    fd: std::os::fd::AsRawFd::as_raw_fd(&fd),
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
+    fn request_shutdown(&mut self) {
+        self.state.running = false;
+    }
 
-                let poll_ret = unsafe { libc::poll(&raw mut pollfd, 1, timeout_ms) };
+    fn width(&self) -> u32 {
+        self.state.width
+    }
 
-                match poll_ret.cmp(&0) {
-                    std::cmp::Ordering::Greater => {
-                        // Data available — read events
-                        let _ = guard.read();
-                    }
-                    std::cmp::Ordering::Equal => {
-                        // Timeout — cancel read
-                        drop(guard);
-                    }
-                    std::cmp::Ordering::Less => {
-                        // Error
-                        let err = std::io::Error::last_os_error();
-                        drop(guard);
-                        #[expect(
-                            clippy::wildcard_enum_match_arm,
-                            reason = "all other io::ErrorKind variants are fatal"
-                        )]
-                        match err.kind() {
-                            std::io::ErrorKind::Interrupted => {
-                                // EINTR — not fatal, just dispatch pending
-                            }
-                            std::io::ErrorKind::WouldBlock => {
-                                // EAGAIN — non-fatal, dispatch pending and
-                                // signal caller via Ok(false)
-                                self.queue
-                                    .dispatch_pending(&mut self.state)
-                                    .context("Wayland dispatch failed")?;
-                                return Ok(false);
-                            }
-                            _ => {
-                                return Err(err).context("poll(2) on Wayland fd failed");
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    fn height(&self) -> u32 {
+        self.state.height
+    }
 
-        self.queue
-            .dispatch_pending(&mut self.state)
-            .context("Wayland dispatch failed")?;
+    fn take_size_changed(&mut self) -> bool {
+        let changed = self.state.size_changed;
+        self.state.size_changed = false;
+        changed
+    }
 
-        Ok(true)
+    fn needs_render(&self) -> bool {
+        self.state.needs_render
+    }
+
+    fn take_render_requested(&mut self) -> bool {
+        let requested = self.state.needs_render;
+        self.state.needs_render = false;
+        requested
+    }
+
+    fn mark_needs_render(&mut self) {
+        self.state.needs_render = true;
+    }
+
+    fn pending_buffer_count(&self) -> u32 {
+        // XDG uses cached buffers; no per-frame tracking.
+        0
+    }
+
+    fn can_submit_frame(&self, _max_pending: u32) -> bool {
+        // XDG cached buffers: compositor handles backpressure via frame callbacks.
+        true
+    }
+
+    fn frame_count(&self) -> u32 {
+        self.state.frame_count
+    }
+
+    fn blocking_dispatch(&mut self) -> anyhow::Result<()> {
+        XdgSurfaceClient::blocking_dispatch(self)
+    }
+
+    fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<bool> {
+        XdgSurfaceClient::poll_dispatch(self, timeout_ms)
+    }
+
+    fn request_frame(&self) {
+        XdgSurfaceClient::request_frame(self);
+    }
+
+    fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> anyhow::Result<()> {
+        XdgSurfaceClient::commit_buffer(self, info, request_frame)
+    }
+
+    fn commit_cached_buffer(
+        &mut self,
+        info: &DmaBufInfo,
+        slot: usize,
+        request_frame: bool,
+    ) -> anyhow::Result<()> {
+        XdgSurfaceClient::commit_cached_buffer(self, info, slot, request_frame)
+    }
+
+    fn invalidate_cached_buffers(&mut self) {
+        XdgSurfaceClient::invalidate_cached_buffers(self);
+    }
+
+    fn drain_events(&mut self) -> Vec<WidgetEvent> {
+        // XDG toplevel has no settings events. Close is reflected in running().
+        Vec::new()
     }
 }
 
@@ -708,6 +937,12 @@ pub struct DeckWidgetSurfaceState {
     pub pending_buffers: u32,
     /// Number of frames rendered (wrapping counter).
     pub frame_count: u32,
+    /// Whether buffer caching is active (set on first `commit_cached_buffer`).
+    ///
+    /// When true, the `wl_buffer::Release` handler is a no-op because cached
+    /// buffers are reused across frames. When false, per-frame buffers are
+    /// destroyed on release.
+    pub buffer_caching: bool,
 
     // -- Wayland objects (internal) --
     compositor: Option<wl_compositor::WlCompositor>,
@@ -746,6 +981,7 @@ impl fmt::Debug for DeckWidgetSurfaceState {
             .field("needs_render", &self.needs_render)
             .field("pending_buffers", &self.pending_buffers)
             .field("frame_count", &self.frame_count)
+            .field("buffer_caching", &self.buffer_caching)
             .field("pending_events", &self.pending_events.len())
             .finish_non_exhaustive()
     }
@@ -762,12 +998,20 @@ pub struct DeckWidgetSurfaceClient {
     conn: Connection,
     queue: EventQueue<DeckWidgetSurfaceState>,
     state: DeckWidgetSurfaceState,
+    /// Per-slot cached `wl_buffer`s for double-buffered rendering.
+    /// Same pattern as [`XdgSurfaceClient::cached_buffers`].
+    cached_buffers: Vec<Option<wl_buffer::WlBuffer>>,
 }
 
 impl fmt::Debug for DeckWidgetSurfaceClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cached = self.cached_buffers.iter().filter(|b| b.is_some()).count();
         f.debug_struct("DeckWidgetSurfaceClient")
             .field("state", &self.state)
+            .field(
+                "cached_buffers",
+                &format_args!("{cached}/{}", self.cached_buffers.len()),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -798,6 +1042,7 @@ impl DeckWidgetSurfaceClient {
             needs_render: false,
             pending_buffers: 0,
             frame_count: 0,
+            buffer_caching: false,
             compositor: None,
             widget_manager: None,
             linux_dmabuf: None,
@@ -848,7 +1093,12 @@ impl DeckWidgetSurfaceClient {
             instance_id,
         );
 
-        Ok(Self { conn, queue, state })
+        Ok(Self {
+            conn,
+            queue,
+            state,
+            cached_buffers: Vec::new(),
+        })
     }
 
     /// Get a reference to the surface state.
@@ -874,7 +1124,6 @@ impl DeckWidgetSurfaceClient {
     /// the surface, damages the full area, optionally requests a frame
     /// callback, and commits. The buffer is destroyed on release by the
     /// compositor (see `wl_buffer` dispatch).
-    #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
     pub fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> Result<()> {
         let qh = self.queue.handle();
         let linux_dmabuf = self
@@ -882,21 +1131,83 @@ impl DeckWidgetSurfaceClient {
             .linux_dmabuf
             .as_ref()
             .context("zwp_linux_dmabuf_v1 not available")?;
-        let surface = self.state.surface.as_ref().context("surface not created")?;
 
         let buffer = create_buffer_from_dmabuf(linux_dmabuf, info, &qh);
-
-        surface.attach(Some(&buffer), 0, 0);
-        surface.damage_buffer(0, 0, info.width as i32, info.height as i32);
-
-        if request_frame {
-            surface.frame(&qh, ());
-        }
-
-        surface.commit();
+        self.submit_buffer(&buffer, info, request_frame)?;
         self.state.pending_buffers += 1;
 
         Ok(())
+    }
+
+    /// Commit a cached DMA-BUF frame for a double-buffer slot.
+    ///
+    /// On first call for a given `slot`, creates a `wl_buffer` from the
+    /// DMA-BUF info and caches it. Subsequent calls reuse the cached buffer,
+    /// avoiding per-frame `wl_buffer` creation overhead. Enables buffer
+    /// caching mode on first call, which makes the `wl_buffer::Release`
+    /// handler a no-op.
+    ///
+    /// Call [`invalidate_cached_buffers`](Self::invalidate_cached_buffers)
+    /// when the surface is resized or the underlying DMA-BUF changes.
+    pub fn commit_cached_buffer(
+        &mut self,
+        info: &DmaBufInfo,
+        slot: usize,
+        request_frame: bool,
+    ) -> Result<()> {
+        let qh = self.queue.handle();
+        let linux_dmabuf = self
+            .state
+            .linux_dmabuf
+            .as_ref()
+            .context("zwp_linux_dmabuf_v1 not available")?;
+
+        // Enable buffer caching mode on first call
+        if !self.state.buffer_caching {
+            self.state.buffer_caching = true;
+            tracing::debug!("Buffer caching enabled for deck_widget surface");
+        }
+
+        // Grow slot storage if needed
+        if slot >= self.cached_buffers.len() {
+            self.cached_buffers.resize_with(slot + 1, || None);
+        }
+
+        // Create and cache the wl_buffer on first use for this slot
+        if self.cached_buffers[slot].is_none() {
+            let buffer = create_buffer_from_dmabuf(linux_dmabuf, info, &qh);
+            self.cached_buffers[slot] = Some(buffer);
+            tracing::debug!("Cached wl_buffer for slot {slot}");
+        }
+
+        let buffer = self.cached_buffers[slot]
+            .as_ref()
+            .expect("BUG: cached buffer should exist after creation above");
+        self.submit_buffer(buffer, info, request_frame)
+    }
+
+    /// Attach buffer, damage, optionally request frame callback, and commit.
+    fn submit_buffer(
+        &self,
+        buffer: &wl_buffer::WlBuffer,
+        info: &DmaBufInfo,
+        request_frame: bool,
+    ) -> Result<()> {
+        let qh = self.queue.handle();
+        let surface = self.state.surface.as_ref().context("surface not created")?;
+        submit_buffer_to_surface(surface, &qh, buffer, info, request_frame);
+        Ok(())
+    }
+
+    /// Invalidate all cached buffer slots.
+    ///
+    /// Destroys any cached `wl_buffer`s. Call this when the surface is
+    /// resized or when the underlying DMA-BUF export buffers are recreated.
+    pub fn invalidate_cached_buffers(&mut self) {
+        let destroyed = invalidate_cached_wl_buffers(&mut self.cached_buffers);
+        if destroyed > 0 {
+            self.state.buffer_caching = false;
+        }
     }
 
     /// Request the first frame callback (call once after setup, before the
@@ -911,88 +1222,113 @@ impl DeckWidgetSurfaceClient {
 
     /// Block until a Wayland event arrives, then dispatch all pending events.
     pub fn blocking_dispatch(&mut self) -> Result<()> {
-        self.queue
-            .blocking_dispatch(&mut self.state)
-            .context("Wayland dispatch failed")?;
-        Ok(())
+        blocking_dispatch_impl(&mut self.queue, &mut self.state)
     }
 
     /// Poll for Wayland events with a timeout, then dispatch pending events.
     ///
     /// Returns `Ok(true)` on all normal paths (events read, timeout, or
-    /// already-queued events dispatched). Returns `Ok(false)` only if
-    /// `poll(2)` fails with `EAGAIN`/`EWOULDBLOCK` (non-fatal, pending
-    /// events still dispatched). A timeout of `-1` blocks indefinitely;
-    /// `0` is non-blocking.
+    /// already-queued events dispatched). Returns `Ok(false)` only if a
+    /// non-fatal `EAGAIN`/`EWOULDBLOCK` occurs in `poll(2)` or
+    /// `ReadEventsGuard::read()`; pending events are still dispatched. A
+    /// timeout of `-1` blocks indefinitely; `0` is non-blocking.
     ///
     /// This follows the `prepare_read -> poll -> read/cancel -> dispatch_pending`
     /// pattern required by `wayland-client`.
     pub fn poll_dispatch(&mut self, timeout_ms: i32) -> Result<bool> {
-        self.conn.flush()?;
+        poll_dispatch(&self.conn, &mut self.queue, &mut self.state, timeout_ms)
+    }
+}
 
-        let read_guard = self.queue.prepare_read();
+impl WidgetSurface for DeckWidgetSurfaceClient {
+    fn running(&self) -> bool {
+        self.state.running
+    }
 
-        match read_guard {
-            None => {
-                // Events already queued — just dispatch them
-                self.queue
-                    .dispatch_pending(&mut self.state)
-                    .context("Wayland dispatch failed")?;
-                return Ok(true);
-            }
-            Some(guard) => {
-                let fd = self.conn.as_fd();
-                let mut pollfd = libc::pollfd {
-                    fd: std::os::fd::AsRawFd::as_raw_fd(&fd),
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
+    fn request_shutdown(&mut self) {
+        self.state.running = false;
+    }
 
-                let poll_ret = unsafe { libc::poll(&raw mut pollfd, 1, timeout_ms) };
+    fn width(&self) -> u32 {
+        self.state.width
+    }
 
-                match poll_ret.cmp(&0) {
-                    std::cmp::Ordering::Greater => {
-                        // Data available — read events
-                        let _ = guard.read();
-                    }
-                    std::cmp::Ordering::Equal => {
-                        // Timeout — cancel read
-                        drop(guard);
-                    }
-                    std::cmp::Ordering::Less => {
-                        // Error
-                        let err = std::io::Error::last_os_error();
-                        drop(guard);
-                        #[expect(
-                            clippy::wildcard_enum_match_arm,
-                            reason = "all other io::ErrorKind variants are fatal"
-                        )]
-                        match err.kind() {
-                            std::io::ErrorKind::Interrupted => {
-                                // EINTR — not fatal, just dispatch pending
-                            }
-                            std::io::ErrorKind::WouldBlock => {
-                                // EAGAIN — non-fatal, dispatch pending and
-                                // signal caller via Ok(false)
-                                self.queue
-                                    .dispatch_pending(&mut self.state)
-                                    .context("Wayland dispatch failed")?;
-                                return Ok(false);
-                            }
-                            _ => {
-                                return Err(err).context("poll(2) on Wayland fd failed");
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    fn height(&self) -> u32 {
+        self.state.height
+    }
 
-        self.queue
-            .dispatch_pending(&mut self.state)
-            .context("Wayland dispatch failed")?;
+    fn take_size_changed(&mut self) -> bool {
+        // deck_widget_v1 does not have resize events; size is fixed.
+        false
+    }
 
-        Ok(true)
+    fn needs_render(&self) -> bool {
+        self.state.needs_render
+    }
+
+    fn take_render_requested(&mut self) -> bool {
+        let requested = self.state.needs_render;
+        self.state.needs_render = false;
+        requested
+    }
+
+    fn mark_needs_render(&mut self) {
+        self.state.needs_render = true;
+    }
+
+    fn pending_buffer_count(&self) -> u32 {
+        self.state.pending_buffers
+    }
+
+    fn can_submit_frame(&self, max_pending: u32) -> bool {
+        self.state.pending_buffers < max_pending
+    }
+
+    fn frame_count(&self) -> u32 {
+        self.state.frame_count
+    }
+
+    fn blocking_dispatch(&mut self) -> anyhow::Result<()> {
+        DeckWidgetSurfaceClient::blocking_dispatch(self)
+    }
+
+    fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<bool> {
+        DeckWidgetSurfaceClient::poll_dispatch(self, timeout_ms)
+    }
+
+    fn request_frame(&self) {
+        DeckWidgetSurfaceClient::request_frame(self);
+    }
+
+    fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> anyhow::Result<()> {
+        DeckWidgetSurfaceClient::commit_buffer(self, info, request_frame)
+    }
+
+    fn commit_cached_buffer(
+        &mut self,
+        info: &DmaBufInfo,
+        slot: usize,
+        request_frame: bool,
+    ) -> anyhow::Result<()> {
+        DeckWidgetSurfaceClient::commit_cached_buffer(self, info, slot, request_frame)
+    }
+
+    fn invalidate_cached_buffers(&mut self) {
+        DeckWidgetSurfaceClient::invalidate_cached_buffers(self);
+    }
+
+    fn drain_events(&mut self) -> Vec<WidgetEvent> {
+        self.state
+            .pending_events
+            .drain(..)
+            .filter_map(|event| match event {
+                DeckWidgetEvent::Setting {
+                    setting_type,
+                    value,
+                } => setting_from_protocol(setting_type, &value).map(WidgetEvent::Setting),
+                DeckWidgetEvent::Shutdown => Some(WidgetEvent::Shutdown),
+            })
+            .collect()
     }
 }
 
@@ -1100,8 +1436,14 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for DeckWidgetSurfaceState {
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            buffer.destroy();
-            state.pending_buffers = state.pending_buffers.saturating_sub(1);
+            if state.buffer_caching {
+                // Buffer caching mode: cached buffers are reused across
+                // frames, so don't destroy them on release.
+            } else {
+                // Per-frame mode: destroy the buffer and decrement the counter.
+                buffer.destroy();
+                state.pending_buffers = state.pending_buffers.saturating_sub(1);
+            }
         }
     }
 }
