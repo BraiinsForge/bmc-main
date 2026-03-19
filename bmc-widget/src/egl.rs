@@ -393,6 +393,115 @@ impl ExportBuffer {
     }
 }
 
+/// Double-buffered DMA-BUF export state.
+///
+/// Manages two lazily-allocated [`ExportBuffer`]s with ping-pong swap.
+/// Widgets compose this with [`EglContext`] and their own rendering pipeline
+/// (direct FBO, staging+blit, etc.).
+pub struct DoubleBufferState {
+    buffers: [Option<ExportBuffer>; 2],
+    current_buffer: usize,
+    width: u32,
+    height: u32,
+}
+
+impl fmt::Debug for DoubleBufferState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DoubleBufferState")
+            .field("current_buffer", &self.current_buffer)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DoubleBufferState {
+    /// Create empty state at the given dimensions. Buffers are allocated lazily
+    /// on the first call to [`Self::ensure_current`].
+    #[must_use]
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            buffers: [None, None],
+            current_buffer: 0,
+            width,
+            height,
+        }
+    }
+
+    /// Buffer width in pixels.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Buffer height in pixels.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Ensure the current back buffer is allocated, return a reference to it.
+    pub fn ensure_current(&mut self, ctx: &EglContext) -> Result<&ExportBuffer> {
+        let idx = self.current_buffer;
+        if self.buffers[idx].is_none() {
+            self.buffers[idx] = Some(ctx.allocate_export_buffer(self.width, self.height)?);
+        }
+        Ok(self.buffers[idx]
+            .as_ref()
+            .expect("BUG: buffer should exist after allocation"))
+    }
+
+    /// Get a reference to the current back buffer (`None` if not yet allocated).
+    #[must_use]
+    pub fn current_ref(&self) -> Option<&ExportBuffer> {
+        self.buffers[self.current_buffer].as_ref()
+    }
+
+    /// Export the current buffer as DMA-BUF and swap to the next buffer.
+    ///
+    /// Returns the DMA-BUF info and the slot index of the exported buffer
+    /// (for use with [`crate::surface::WidgetSurface::commit_cached_buffer`]).
+    pub fn export_and_swap(&mut self) -> Result<(DmaBufInfo, usize)> {
+        let slot = self.current_buffer;
+        let buf = self.buffers[slot]
+            .as_mut()
+            .expect("BUG: buffer should exist after ensure_current");
+        let info = EglContext::export_dmabuf(buf)?;
+        self.current_buffer = 1 - self.current_buffer;
+        Ok((info, slot))
+    }
+
+    /// Resize -- deallocate all buffers so they are reallocated at the new size.
+    ///
+    /// No-op if dimensions are unchanged.
+    pub fn resize(&mut self, ctx: &EglContext, width: u32, height: u32) {
+        if self.width == width && self.height == height {
+            return;
+        }
+        tracing::debug!(
+            "DoubleBufferState: resizing from {}x{} to {}x{}",
+            self.width,
+            self.height,
+            width,
+            height,
+        );
+        self.destroy_all(ctx);
+        self.width = width;
+        self.height = height;
+    }
+
+    /// Destroy all allocated buffers, freeing GPU resources.
+    ///
+    /// Call this before dropping if the [`EglContext`] is still alive.
+    pub fn destroy_all(&mut self, ctx: &EglContext) {
+        for buffer in &mut self.buffers {
+            if let Some(buf) = buffer.take() {
+                ctx.destroy_export_buffer(buf);
+            }
+        }
+    }
+}
+
 /// Load an EGL/GL extension function pointer by name.
 fn load_egl_proc<T>(name: &str) -> Result<T> {
     // SAFETY: querying an EGL function pointer is safe; the returned pointer
