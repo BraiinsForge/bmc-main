@@ -1,0 +1,22 @@
+[package]
+name = "bmc-nix-init-openwrt"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins <braiins@braiins.com>"]
+
+# Produce binary named "bmc-nix-init" to match the OpenWrt service
+[[bin]]
+name = "bmc-nix-init"
+path = "src/main.rs"
+
+[dependencies]
+bmc-nix-init = { path = "../bmc-nix-init" }
+drm.workspace = true
+evdev.workspace = true
+flume = { workspace = true }
+slint = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
