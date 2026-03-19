@@ -132,8 +132,7 @@ fn run_render_loop(
                 &now,
             );
 
-            let dmabuf_info = egl.end_frame()?;
-            let slot = egl.last_rendered_slot();
+            let (dmabuf_info, slot) = egl.end_frame()?;
             surface.commit_cached_buffer(&dmabuf_info, slot, true)?;
 
             if surface.frame_count().is_multiple_of(60) {
