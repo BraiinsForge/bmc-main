@@ -19,8 +19,8 @@ This provides:
 For ARM cross-compilation:
 
 ```shell
-nix develop .#armv7-release  # release builds
-nix develop .#armv7-debug    # debug builds
+nix develop .#armv7-glibc-release  # release builds
+nix develop .#armv7-glibc-debug    # debug builds
 ```
 
 ## Build frontend
@@ -55,14 +55,14 @@ cargo run --bin bmc-mock -- --address=0.0.0.0:6070 --www-path=./result --widgets
 Build ARM widgets (glibc, dynamically linked):
 
 ```
-nix build .#widgets-armv7-release -o result-widgets-arm
+nix build .#widgets-armv7-glibc-release -o result-widgets-arm
 ```
 
 ## Run bmc-openwrt on control board
 
 ```shell
 cd bmc-openwrt/
-nix develop .#armv7-release
+nix develop .#armv7-glibc-release
 
 export MINER_IP=192.168.1.2
 cargo run # or 'cargo run -- <ARGS>'
@@ -95,3 +95,8 @@ Rust file (~820KB).
   ```
 - restart rust-analyzer server
 - if you have custom run configurations (e.g. manual clippy check), you need to apply it there as well
+
+## Deployment during development
+
+The deployment is documented in `docs/nix-device-scripts.md`. You can deploy arbitrary Nix packages or our compositor,
+widgets and so on.

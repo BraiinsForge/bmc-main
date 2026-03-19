@@ -1,5 +1,9 @@
 # Development Deployment
 
+NOTE: This document documents the outdated deployment from pre-Nix era.
+It is not used for the compositor or standalone widgets applications, only
+for the monolithic application.
+
 Depending on what part of the BMC you're modifying, there are
 different steps to take for deployment to the Deck. The most common
 ones are the bmc application itself and frontend.
