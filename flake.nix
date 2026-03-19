@@ -50,7 +50,7 @@
             ++ commonDeps.frontendDeps;
 
           buildInputs = with pkgs; [
-            ii.rustToolchain
+            ii.rust.toolchain
           ];
 
           inherit (commonDeps) env;
