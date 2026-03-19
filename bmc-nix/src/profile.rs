@@ -425,6 +425,7 @@ mod tests {
             version: "1.0.0".into(),
             store_path: store_path.into(),
             cache_url: "https://cache.example.com".into(),
+            cache_name: "local".into(),
             category: None,
             description: None,
             upgrade_strategy: None,
