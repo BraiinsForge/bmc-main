@@ -23,6 +23,11 @@ pub enum BuildProfileError {
         path: String,
         source: std::io::Error,
     },
+    #[error("failed to remove directory '{path}': {source}")]
+    RemoveDir {
+        path: String,
+        source: std::io::Error,
+    },
     #[error("failed to create symlink '{path}': {source}")]
     CreateSymlink {
         path: String,
@@ -246,7 +251,7 @@ pub async fn build_profile(
 
     // Clean up any leftover tmp directory from a previous failed build
     if tmp_path.exists() {
-        std::fs::remove_dir_all(&tmp_path).map_err(|source| BuildProfileError::CreateDir {
+        std::fs::remove_dir_all(&tmp_path).map_err(|source| BuildProfileError::RemoveDir {
             path: tmp_path.display().to_string(),
             source,
         })?;
@@ -520,6 +525,7 @@ mod tests {
                 assert_eq!(pkg_b, "pkg-b");
             }
             other @ (BuildProfileError::CreateDir { .. }
+            | BuildProfileError::RemoveDir { .. }
             | BuildProfileError::CreateSymlink { .. }
             | BuildProfileError::WalkStorePath { .. }
             | BuildProfileError::Hooks(_)
