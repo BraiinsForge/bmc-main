@@ -1,0 +1,17 @@
+[package]
+name = "bmc-nix-init-mock"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins <braiins@braiins.com>"]
+
+[dependencies]
+anyhow.workspace = true
+bmc-nix-init = { path = "../bmc-nix-init" }
+flume = { workspace = true }
+minifb.workspace = true
+slint = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
