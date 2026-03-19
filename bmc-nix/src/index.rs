@@ -19,27 +19,37 @@ pub enum ResolveIndexError {
 /// If no cache is specified, use the first cache entry as the default.
 /// Returns an error if the referenced cache is not found or no caches
 /// are defined.
-fn resolve_cache_url(
+/// Resolved cache information: the URL and the cache name.
+struct ResolvedCache {
+    url: String,
+    name: String,
+}
+
+fn resolve_cache(
     entry: &PackageEntry,
     caches: &[CacheEntry],
-) -> Result<String, ResolveIndexError> {
+) -> Result<ResolvedCache, ResolveIndexError> {
     match &entry.cache {
         Some(cache_name) => caches
             .iter()
             .find(|c| c.name == *cache_name)
-            .map(|c| c.cache_url.clone())
+            .map(|c| ResolvedCache {
+                url: c.cache_url.clone(),
+                name: c.name.clone(),
+            })
             .ok_or_else(|| ResolveIndexError::CacheNotFound {
                 package: entry.name.clone(),
                 cache: cache_name.clone(),
             }),
-        None => {
-            caches
-                .first()
-                .map(|c| c.cache_url.clone())
-                .ok_or_else(|| ResolveIndexError::NoCaches {
-                    package: entry.name.clone(),
-                })
-        }
+        None => caches
+            .first()
+            .map(|c| ResolvedCache {
+                url: c.cache_url.clone(),
+                name: c.name.clone(),
+            })
+            .ok_or_else(|| ResolveIndexError::NoCaches {
+                package: entry.name.clone(),
+            }),
     }
 }
 
@@ -58,12 +68,13 @@ pub fn resolve_all_from_index(
         .packages
         .iter()
         .map(|entry| {
-            let cache_url = resolve_cache_url(entry, &index.caches)?;
+            let cache = resolve_cache(entry, &index.caches)?;
             Ok(ResolvedPackage {
                 name: entry.name.clone(),
                 version: entry.version.clone(),
                 store_path: entry.store_path.clone(),
-                cache_url,
+                cache_url: cache.url,
+                cache_name: cache.name,
                 category: entry.category.clone(),
                 description: entry.description.clone(),
                 upgrade_strategy: entry.upgrade_strategy.clone(),

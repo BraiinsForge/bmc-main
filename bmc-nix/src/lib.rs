@@ -6,4 +6,5 @@ pub mod index;
 pub mod manifest;
 pub mod profile;
 pub mod service_orchestrator;
+pub mod store;
 pub mod types;
