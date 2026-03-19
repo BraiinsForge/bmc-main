@@ -34,17 +34,14 @@ pub trait UpgradeProgress: Send + Sync {
 /// Convert a manifest package back to a resolved package.
 ///
 /// This is lossy — `ManifestPackage` does not store `cache_url`,
-/// only `cache` (name). For kept packages that are not being
-/// upgraded, the `cache_url` is set to empty string. The caller
-/// should only pass this to `build_profile` (which does not need
-/// `cache_url`), NOT to `copy_store_paths` (which needs it for
-/// downloading).
+/// only `cache` (name). The `cache_url` is set to `None`; the
+/// store path is expected to already be present locally.
 fn manifest_package_to_resolved(name: &str, mp: &ManifestPackage) -> ResolvedPackage {
     ResolvedPackage {
         name: name.to_owned(),
         version: mp.version.clone(),
         store_path: mp.store_path.clone(),
-        cache_url: String::new(),
+        cache_url: None,
         cache_name: mp.cache.clone(),
         category: mp.category.clone(),
         description: mp.description.clone(),
@@ -108,13 +105,15 @@ pub async fn apply_profile_change(
         plan.packages.clone()
     };
 
-    // 3. Copy store paths — ONLY packages from the upgrade plan
-    // (which have valid cache_url). Kept packages from the manifest
-    // have empty cache_url and must NOT be passed to copy_store_paths.
+    // 3. Copy store paths from caches, then verify ALL paths exist.
+    // Only plan.packages have valid cache_url and are copied. Kept
+    // packages from the manifest are expected to already be in the
+    // store — verify_store_paths catches any that went missing.
     if let Some(p) = progress {
         p.on_phase("copying");
     }
     store::copy_store_paths(&store::TokioCommandRunner, &plan.packages, None).await?;
+    store::verify_store_paths(&store::TokioCommandRunner, &all_packages).await?;
 
     // 4. Build new profile generation
     if let Some(p) = progress {
@@ -151,7 +150,7 @@ mod tests {
             name: name.into(),
             version: "1.0.0".into(),
             store_path: store_path.into(),
-            cache_url: "https://cache.example.com".into(),
+            cache_url: Some("https://cache.example.com".into()),
             cache_name: "default".into(),
             category: None,
             description: None,
@@ -244,10 +243,10 @@ mod tests {
     }
 
     #[test]
-    fn manifest_to_resolved_sets_empty_cache_url() {
+    fn manifest_to_resolved_sets_no_cache_url() {
         let mp = test_manifest_package("1.0.0", "my-cache");
         let resolved = manifest_package_to_resolved("test", &mp);
-        assert!(resolved.cache_url.is_empty());
+        assert!(resolved.cache_url.is_none());
         assert_eq!(resolved.cache_name, "my-cache");
     }
 }

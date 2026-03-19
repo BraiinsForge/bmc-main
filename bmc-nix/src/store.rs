@@ -24,6 +24,8 @@ pub enum CopyStorePathsError {
     },
     #[error("nix path-info failed: {0}")]
     PathInfoFailed(#[source] std::io::Error),
+    #[error("store path for '{name}' not found: {store_path}")]
+    MissingStorePath { name: String, store_path: String },
 }
 
 /// Abstraction over command execution for testability.
@@ -58,7 +60,7 @@ impl CommandRunner for TokioCommandRunner {
 
 /// Progress callback for store copy operations.
 pub trait CopyProgress: Send + Sync {
-    fn on_path_copied(&self, index: u32, total: u32, store_path: &str);
+    fn on_path_copied(&self, index: usize, total: usize, store_path: &str);
 }
 
 /// Check if a store path is already registered in the local Nix store.
@@ -76,13 +78,33 @@ async fn is_path_in_store(
     Ok(output.status.success())
 }
 
+/// Verify that all store paths are registered in the local Nix store.
+///
+/// Returns an error listing the first missing path. Call this after
+/// `copy_store_paths` to catch kept packages whose store paths were
+/// garbage-collected or otherwise lost.
+pub async fn verify_store_paths(
+    runner: &impl CommandRunner,
+    packages: &[ResolvedPackage],
+) -> Result<(), CopyStorePathsError> {
+    for pkg in packages {
+        if !is_path_in_store(runner, &pkg.store_path).await? {
+            return Err(CopyStorePathsError::MissingStorePath {
+                name: pkg.name.clone(),
+                store_path: pkg.store_path.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Group packages by cache URL for batched `nix copy` invocations.
 fn group_by_cache(packages: &[ResolvedPackage]) -> BTreeMap<String, Vec<String>> {
     let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for pkg in packages {
-        if !pkg.cache_url.is_empty() {
+        if let Some(url) = &pkg.cache_url {
             groups
-                .entry(pkg.cache_url.clone())
+                .entry(url.clone())
                 .or_default()
                 .push(pkg.store_path.clone());
         }
@@ -100,11 +122,8 @@ pub async fn copy_store_paths(
     progress: Option<&dyn CopyProgress>,
 ) -> Result<(), CopyStorePathsError> {
     let groups = group_by_cache(packages);
-    let total_paths: u32 = groups
-        .values()
-        .map(|v| u32::try_from(v.len()).expect("BUG: store path count exceeds u32"))
-        .sum();
-    let mut copied: u32 = 0;
+    let total_paths: usize = groups.values().map(Vec::len).sum();
+    let mut copied: usize = 0;
 
     for (cache_url, store_paths) in &groups {
         // Filter out paths already in store
@@ -118,7 +137,7 @@ pub async fn copy_store_paths(
         }
 
         if to_copy.is_empty() {
-            copied += u32::try_from(store_paths.len()).expect("BUG: store path count exceeds u32");
+            copied += store_paths.len();
             continue;
         }
 
@@ -363,12 +382,12 @@ mod tests {
         }
     }
 
-    fn test_resolved(name: &str, store_path: &str, cache_url: &str) -> ResolvedPackage {
+    fn test_resolved(name: &str, store_path: &str, cache_url: Option<&str>) -> ResolvedPackage {
         ResolvedPackage {
             name: name.into(),
             version: "1.0.0".into(),
             store_path: store_path.into(),
-            cache_url: cache_url.into(),
+            cache_url: cache_url.map(String::from),
             cache_name: "local".into(),
             category: None,
             description: None,
@@ -383,9 +402,9 @@ mod tests {
     #[test]
     fn group_by_cache_produces_correct_batches() {
         let packages = vec![
-            test_resolved("a", "/nix/store/a", "https://cache-1.example.com"),
-            test_resolved("b", "/nix/store/b", "https://cache-1.example.com"),
-            test_resolved("c", "/nix/store/c", "https://cache-2.example.com"),
+            test_resolved("a", "/nix/store/a", Some("https://cache-1.example.com")),
+            test_resolved("b", "/nix/store/b", Some("https://cache-1.example.com")),
+            test_resolved("c", "/nix/store/c", Some("https://cache-2.example.com")),
         ];
         let groups = group_by_cache(&packages);
         assert_eq!(groups.len(), 2);
@@ -395,7 +414,7 @@ mod tests {
 
     #[test]
     fn group_by_cache_skips_empty_url() {
-        let packages = vec![test_resolved("a", "/nix/store/a", "")];
+        let packages = vec![test_resolved("a", "/nix/store/a", None)];
         let groups = group_by_cache(&packages);
         assert!(groups.is_empty());
     }
@@ -404,8 +423,8 @@ mod tests {
     async fn already_present_paths_skipped() {
         let runner = MockCommandRunner::new(vec!["/nix/store/a".into()]);
         let packages = vec![
-            test_resolved("a", "/nix/store/a", "https://cache.example.com"),
-            test_resolved("b", "/nix/store/b", "https://cache.example.com"),
+            test_resolved("a", "/nix/store/a", Some("https://cache.example.com")),
+            test_resolved("b", "/nix/store/b", Some("https://cache.example.com")),
         ];
         copy_store_paths(&runner, &packages, None)
             .await
@@ -433,8 +452,8 @@ mod tests {
     async fn nix_copy_command_assembled_correctly() {
         let runner = MockCommandRunner::new(vec![]);
         let packages = vec![
-            test_resolved("a", "/nix/store/aaa", "https://cache.example.com"),
-            test_resolved("b", "/nix/store/bbb", "https://cache.example.com"),
+            test_resolved("a", "/nix/store/aaa", Some("https://cache.example.com")),
+            test_resolved("b", "/nix/store/bbb", Some("https://cache.example.com")),
         ];
         copy_store_paths(&runner, &packages, None)
             .await
