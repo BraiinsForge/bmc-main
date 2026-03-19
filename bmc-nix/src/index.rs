@@ -433,7 +433,7 @@ fn merged_entry_to_resolved(
         name: entry.name.clone(),
         version: entry.version.to_string(),
         store_path: entry.store_path.clone(),
-        cache_url: entry.cache_url.clone(),
+        cache_url: Some(entry.cache_url.clone()),
         cache_name: entry.cache_name.clone(),
         category: entry.category.clone(),
         description: entry.description.clone(),
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(pkg.name, "hello");
         assert_eq!(pkg.version, "1.0.0");
         assert_eq!(pkg.store_path, "/nix/store/abc-hello-1.0.0");
-        assert_eq!(pkg.cache_url, "https://cache.example.com");
+        assert_eq!(pkg.cache_url.as_deref(), Some("https://cache.example.com"));
         assert_eq!(pkg.installed_from, "local");
         assert_eq!(pkg.pinned, PinStrategy::None);
         assert!(matches!(pkg.installed_by, InstalledBy::System));
@@ -537,7 +537,10 @@ mod tests {
             .expect("BUG: resolution should succeed with named cache");
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].cache_url, "https://extra-cache.example.com");
+        assert_eq!(
+            resolved[0].cache_url.as_deref(),
+            Some("https://extra-cache.example.com")
+        );
     }
 
     #[test]
@@ -599,7 +602,7 @@ mod tests {
 
         // All should share the same cache URL
         for pkg in &resolved {
-            assert_eq!(pkg.cache_url, "https://cache.example.com");
+            assert_eq!(pkg.cache_url.as_deref(), Some("https://cache.example.com"));
             assert!(matches!(pkg.installed_by, InstalledBy::System));
             assert_eq!(pkg.installed_from, "local");
         }

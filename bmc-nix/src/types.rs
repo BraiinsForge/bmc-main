@@ -100,7 +100,11 @@ pub struct ResolvedPackage {
     pub name: String,
     pub version: String,
     pub store_path: String,
-    pub cache_url: String,
+    /// URL of the binary cache to fetch this package from.
+    /// `None` when the store path is already present locally (e.g. kept
+    /// packages from the manifest or local dev builds).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_url: Option<String>,
     /// Name of the binary cache this package was resolved from.
     /// Set to `"local"` for packages resolved from a local index.
     #[serde(default = "default_cache_name")]

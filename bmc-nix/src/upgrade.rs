@@ -91,13 +91,15 @@ pub async fn apply_profile_change(
         plan.packages.clone()
     };
 
-    // 3. Copy store paths — ONLY packages from the upgrade plan
-    // (which have valid cache_url). Kept packages from the manifest
-    // have empty cache_url and must NOT be passed to copy_store_paths.
+    // 3. Copy store paths from caches, then verify ALL paths exist.
+    // Only plan.packages have valid cache_url and are copied. Kept
+    // packages from the manifest are expected to already be in the
+    // store — verify_store_paths catches any that went missing.
     if let Some(p) = progress {
         p.on_phase("copying");
     }
     store::copy_store_paths(&store::TokioCommandRunner, &plan.packages, None).await?;
+    store::verify_store_paths(&store::TokioCommandRunner, &all_packages).await?;
 
     // 4. Build new profile generation
     if let Some(p) = progress {
@@ -142,7 +144,7 @@ mod tests {
             name: name.into(),
             version: "1.0.0".into(),
             store_path: store_path.into(),
-            cache_url: "https://cache.example.com".into(),
+            cache_url: Some("https://cache.example.com".into()),
             cache_name: "default".into(),
             category: None,
             description: None,
@@ -233,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_to_resolved_sets_empty_cache_url() {
+    fn manifest_to_resolved_sets_no_cache_url() {
         let mp = test_manifest_package("1.0.0", "my-cache");
         let resolved = manifest::manifest_package_to_resolved("test", &mp);
         assert!(resolved.cache_url.is_none());
