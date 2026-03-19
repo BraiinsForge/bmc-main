@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 /// An activation script discovered from `core/activation/scripts/`.
@@ -61,6 +62,17 @@ pub fn discover_activation_scripts(
             path: scripts_dir.display().to_string(),
             source,
         })?;
+
+        let metadata = entry
+            .metadata()
+            .map_err(|source| ActivationError::ReadDir {
+                path: scripts_dir.display().to_string(),
+                source,
+            })?;
+
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            continue;
+        }
 
         let name = entry
             .file_name()
