@@ -1,0 +1,19 @@
+[package]
+name = "bmc-nix-init"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+flume = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+slint = { workspace = true, features = ["renderer-software"] }
+
+[build-dependencies]
+anyhow.workspace = true
+slint-build.workspace = true
+
+[features]
+slint-embed-files = []
+
+[lints]
+workspace = true

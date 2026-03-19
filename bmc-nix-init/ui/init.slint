@@ -1,0 +1,43 @@
+import { VerticalBox } from "std-widgets.slint";
+
+export component InitWindow inherits Window {
+    width: 480px;
+    height: 272px;
+    background: #000000;
+
+    in property <string> status-text: "Initializing...";
+    in property <string> detail-text: "";
+    in property <float> progress: 0.0;
+    in property <bool> show-progress: false;
+
+    VerticalBox {
+        alignment: center;
+
+        Text {
+            text: root.status-text;
+            color: white;
+            font-size: 24px;
+            horizontal-alignment: center;
+        }
+
+        if root.show-progress: Rectangle {
+            height: 20px;
+            background: #333333;
+            border-radius: 4px;
+
+            Rectangle {
+                width: parent.width * root.progress;
+                height: parent.height;
+                background: #4CAF50;
+                border-radius: 4px;
+            }
+        }
+
+        if root.detail-text != "": Text {
+            text: root.detail-text;
+            color: #AAAAAA;
+            font-size: 16px;
+            horizontal-alignment: center;
+        }
+    }
+}

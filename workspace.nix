@@ -255,6 +255,9 @@ in
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
     inherit bmc-video-play-armv7;
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
+    bmc-nix-init-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-init-mock { };
+    bmc-nix-init-openwrt-armv7-release =
+      bmc.profiles.armv7-release.buildCrate bmc.crates.bmc-nix-init-openwrt { };
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
     bmc-hook-merge-files = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-merge-files { };
     bmc-hook-file-symlinks = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-file-symlinks { };
