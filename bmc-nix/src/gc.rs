@@ -23,14 +23,14 @@ pub enum CollectGarbageError {
 }
 
 /// Parse a generation number from a directory name matching `N-link`.
-fn parse_generation_number(name: &str) -> Option<u32> {
+fn parse_generation_number(name: &str) -> Option<usize> {
     let stripped = name.strip_suffix("-link")?;
-    stripped.parse::<u32>().ok()
+    stripped.parse::<usize>().ok()
 }
 
 /// Read the `current` symlink in `profile_dir` and return the generation
 /// number it points to.
-fn current_generation_number(profile_dir: &Path) -> Option<u32> {
+fn current_generation_number(profile_dir: &Path) -> Option<usize> {
     let current_link = profile_dir.join("current");
     let target = std::fs::read_link(&current_link).ok()?;
     let name = target.file_name()?.to_str()?;
@@ -61,7 +61,7 @@ pub fn cleanup_generations(
     let entries = std::fs::read_dir(profile_dir).map_err(CleanupGenerationsError::Cleanup)?;
 
     // Collect all generation numbers
-    let mut generations: Vec<u32> = Vec::new();
+    let mut generations: Vec<usize> = Vec::new();
     for entry in entries {
         let entry = entry.map_err(CleanupGenerationsError::Cleanup)?;
         let name = entry.file_name();
@@ -77,7 +77,7 @@ pub fn cleanup_generations(
     generations.sort_unstable();
 
     // Build keep set
-    let mut keep: HashSet<u32> = HashSet::new();
+    let mut keep: HashSet<usize> = HashSet::new();
 
     // Keep current generation
     if let Some(current) = current_generation_number(profile_dir) {
@@ -90,7 +90,7 @@ pub fn cleanup_generations(
     }
 
     // Keep most recent N generations
-    let keep_count = gc_config.keep_generations as usize;
+    let keep_count = gc_config.keep_generations;
     for &gen_num in generations.iter().rev().take(keep_count) {
         keep.insert(gen_num);
     }
@@ -98,7 +98,7 @@ pub fn cleanup_generations(
     // Keep generations newer than keep_days
     if gc_config.keep_days > 0 {
         let cutoff = SystemTime::now()
-            - std::time::Duration::from_secs(u64::from(gc_config.keep_days) * 24 * 60 * 60);
+            - std::time::Duration::from_secs((gc_config.keep_days as u64) * 24 * 60 * 60);
 
         for &gen_num in &generations {
             let gen_dir = profile_dir.join(format!("{gen_num}-link"));
@@ -160,21 +160,21 @@ pub async fn collect_garbage() -> Result<(), CollectGarbageError> {
 mod tests {
     use super::*;
 
-    fn create_generation(profile_dir: &Path, number: u32) {
+    fn create_generation(profile_dir: &Path, number: usize) {
         let gen_dir = profile_dir.join(format!("{number}-link"));
         std::fs::create_dir_all(&gen_dir).expect("BUG: mkdir");
         std::fs::write(gen_dir.join("manifest"), r#"{"packages":{}}"#)
             .expect("BUG: write manifest");
     }
 
-    fn set_current(profile_dir: &Path, number: u32) {
+    fn set_current(profile_dir: &Path, number: usize) {
         let current_link = profile_dir.join("current");
         // Remove existing symlink if present
         let _ = std::fs::remove_file(&current_link);
         std::os::unix::fs::symlink(format!("{number}-link"), &current_link).expect("BUG: symlink");
     }
 
-    fn generation_exists(profile_dir: &Path, number: u32) -> bool {
+    fn generation_exists(profile_dir: &Path, number: usize) -> bool {
         profile_dir.join(format!("{number}-link")).exists()
     }
 
