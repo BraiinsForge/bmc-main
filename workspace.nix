@@ -111,10 +111,18 @@ let
   # Minimal workspace config for musl profiles (bmc-openwrt, statically linked)
   workspaceMinimal = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
-    nativeDeps = _pkgs: (commonDeps.guiBuildDeps _pkgs);
-    # minimal deps for static linking
-    targetDeps = _pkgs: [
-      # openssl.dev
+    nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs);
+    # Workspace-deps step compiles ALL Cargo.lock entries, including
+    # crates from glibc-only binaries (compositor, widgets). Provide
+    # the system libraries their build.rs scripts need via pkg-config.
+    # libinput is excluded — it refuses to build for static platforms
+    # and its crate uses dlopen at runtime, not link-time pkg-config.
+    targetDeps = pkgs: with pkgs; [
+      wayland
+      libxkbcommon
+      seatd
+      udev
+      libdrm
     ];
     env = {
       FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
@@ -349,6 +357,9 @@ in
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
     inherit bmc-video-play-armv7;
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
+    bmc-nix-init-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-init-mock { };
+    bmc-nix-init-armv7-release =
+      bmc.profiles.armv7-musl-release.buildCrate bmc.crates.bmc-nix-init-openwrt { };
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
     bmc-hook-merge-files = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-merge-files { };
     bmc-hook-file-symlinks = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-file-symlinks { };
