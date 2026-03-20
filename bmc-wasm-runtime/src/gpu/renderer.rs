@@ -23,11 +23,9 @@ use super::text::{ParagraphLayoutCache, to_femtovg_color};
 use crate::renderer::Renderer;
 use crate::tree::{SpanData, TextAlign, TextStyle};
 
-// Embed BraiinsSans fonts at compile time.
-const FONT_REGULAR: &[u8] =
-    include_bytes!("../../../bmc-display/ui/assets/fonts/BraiinsSans-Regular.otf");
-const FONT_BOLD: &[u8] =
-    include_bytes!("../../../bmc-display/ui/assets/fonts/BraiinsSans-Bold.otf");
+// Embed BraiinsSans fonts at compile time from the top-level assets directory.
+const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Regular.otf");
+const FONT_BOLD: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Bold.otf");
 
 /// GPU-accelerated renderer backed by FemtoVG (OpenGL ES 2.0+).
 ///
