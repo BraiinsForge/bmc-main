@@ -52,11 +52,8 @@ This project uses **Nix Flakes** as the primary build system.
 ### Building Components
 
 ```bash
-# Build frontend (outputs to ./result)
-nix build -L .#frontend
-
-# Build mock binary for x86_64 development
-nix build .#bmc-mock
+# Build frontend (prints output)
+nix build -L .#frontend --print-out-paths --no-link
 
 # Build OpenWRT binary (ARMv7 release)
 nix build .#bmc-openwrt-armv7-glibc-release
@@ -78,30 +75,14 @@ nix develop .#armv7-glibc-release
 nix develop .#armv7-glibc-debug
 ```
 
-### Running the Mock Server
+### Deploying to Device
 
-For local development without hardware:
+For deploying and running on the Braiins Deck, see [`docs/nix-device-scripts.md`](docs/nix-device-scripts.md). Key
+scripts:
 
-```bash
-# Build frontend first
-nix build -L .#frontend
-
-# Run mock server with built frontend assets
-cargo run --bin bmc-mock -- --address=0.0.0.0:6070 --www-path=./result
-```
-
-### Running on Control Board
-
-To deploy and run on the actual OpenWRT control board:
-
-```bash
-cd bmc-openwrt/
-nix develop .#armv7-glibc-release
-
-export MINER_IP=192.168.1.2
-cargo run  # or 'cargo run -- <ARGS>'
-# Terminate with Ctrl+C
-```
+- `scripts/nix-init.sh` — one-time Nix store setup
+- `scripts/nix-deploy.sh` — deploy Nix packages
+- `scripts/nix-cargo-deploy.sh` — fast iterative deploy of cargo-built binaries
 
 ### Cargo Commands
 
@@ -118,7 +99,7 @@ cargo test
 cargo clippy --workspace --tests -- -D warnings
 
 # Format code
-cargo fmt
+nix fmt
 
 # Build (use within nix develop shell for correct toolchain)
 cargo build
@@ -165,35 +146,6 @@ nix build .#checks.x86_64-linux.nextest    # Nextest runner
 nix build .#checks.x86_64-linux.frontend   # Frontend build
 nix build .#checks.x86_64-linux.lint       # Frontend lint
 ```
-
-## Slint UI Development
-
-The display UI uses Slint (version 1.10.0 pinned). By default, the project uses
-`EmbedResourcesKind::EmbedForSoftwareRenderer` which generates large Rust files (~50MB) and is slow to compile.
-
-### Speed Up Development
-
-For faster compilation during development, activate the `slint-embed-files` feature:
-
-**RustRover:**
-
-- Open `bmc-display/Cargo.toml`
-- Check the `slint-embed-files` feature checkbox
-- Apply to custom run configurations if needed
-
-**VSCode:** Create `.vscode/settings.json`:
-
-```json
-{
-  "rust-analyzer.cargo.features": [
-    "bmc-display/slint-embed-files"
-  ]
-}
-```
-
-Then restart rust-analyzer.
-
-**Note:** Remember to also enable this feature in custom run configurations (e.g., manual clippy checks).
 
 ## Code Style and Linting
 
@@ -304,7 +256,7 @@ scripts).
 
 ## Cross-Compilation Notes
 
-- The main target platform is ARMv7 (`armv7-unknown-linux-musleabihf`)
+- The main target platform is ARMv7 (`armv7-unknown-linux-gnueabihf`)
 - Nix handles cross-compilation setup automatically via the `armv7-glibc-release` and `armv7-glibc-debug` profiles
 - Build profiles are defined in `workspace.nix`
 - `bmc-openwrt` is always cross-compiled for ARM
@@ -468,10 +420,10 @@ When multiple valid approaches exist, choose based on:
 
 **NEVER**:
 
-- Use `--no-verify` to bypass commit hooks
-- Disable tests instead of fixing them
-- Commit code that doesn't compile
-- Make assumptions - verify with existing code
+- **NEVER** Use `--no-verify` to bypass commit hooks
+- **NEVER** Disable tests instead of fixing them
+- **NEVER** Commit code that doesn't compile
+- **NEVER** Make assumptions - verify with existing code
 
 **ALWAYS**:
 
