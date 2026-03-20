@@ -18,7 +18,7 @@ const EXTRUSION_DEPTH: f32 = 0.35;
 /// Embedded font - Braiins Deck Sans Regular (weight 400)
 /// Note: OpenType features (ss04, liga) are not applied via ab_glyph
 /// We normalize digit geometry to fit in a -0.5 to 0.5 range (unit cube centered at origin)
-const FONT_DATA: &[u8] = include_bytes!("../assets/fonts/BraiinsDeckSans-Regular.otf");
+const FONT_DATA: &[u8] = include_bytes!("../../../assets/fonts/BraiinsDeckSans-Regular.otf");
 
 /// Vertex with position and normal for 3D rendering
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]

@@ -2,14 +2,26 @@ frontend/.yarn/**            linguist-vendored
 frontend/.yarn/releases/*    binary
 frontend/.yarn/plugins/**/*  binary
 frontend/.pnp.*              binary linguist-generated
-
 # Generated files (typescript)
 frontend/**/*.d.ts       linguist-generated gitlab-generated
 frontend/**/*_pb.ts      linguist-generated gitlab-generated
-
 # Language overrides
 frontend/*.ejs linguist-language=html
 frontend/*.cjs linguist-language=javascript
 frontend/*.mjs linguist-language=javascript
 frontend/*.tsx linguist-language=typescript
 frontend/*.mts linguist-language=typescript
+*.otf filter=lfs diff=lfs merge=lfs -text
+assets/fonts/BraiinsSans-Bold.otf filter=lfs diff=lfs merge=lfs -text
+assets/fonts/BraiinsSans-Regular.otf filter=lfs diff=lfs merge=lfs -text
+assets/fonts/BraiinsSans-SemiBold.otf filter=lfs diff=lfs merge=lfs -text
+assets/fonts/BraiinsDeckSans-Bold.otf filter=lfs diff=lfs merge=lfs -text
+assets/fonts/BraiinsDeckSans-Regular.otf filter=lfs diff=lfs merge=lfs -text
+assets/fonts/BraiinsDeckSans-SemiBold.otf filter=lfs diff=lfs merge=lfs -text
+frontend/src/styles/fonts/braiins/BraiinsSans-Bold.otf filter=lfs diff=lfs merge=lfs -text
+frontend/src/styles/fonts/braiins/BraiinsSans-Regular.otf filter=lfs diff=lfs merge=lfs -text
+frontend/src/styles/fonts/ibmPlex/IBMPlexMono-Regular.otf filter=lfs diff=lfs merge=lfs -text
+frontend/src/styles/fonts/braiins/BraiinsSans-SemiBold.otf filter=lfs diff=lfs merge=lfs -text
+frontend/src/styles/fonts/braiins/BraiinsSans-Bold-Italic.otf filter=lfs diff=lfs merge=lfs -text
+frontend/src/styles/fonts/braiins/BraiinsSans-Regular-Italic.otf filter=lfs diff=lfs merge=lfs -text
+frontend/src/styles/fonts/braiins/BraiinsSans-SemiBold-Italic.otf filter=lfs diff=lfs merge=lfs -text

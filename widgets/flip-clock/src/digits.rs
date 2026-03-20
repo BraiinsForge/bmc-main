@@ -14,7 +14,7 @@ pub const DIGIT_WIDTH: u32 = 128;
 pub const DIGIT_HEIGHT: u32 = 256;
 
 /// Embedded font - Braiins Deck Sans Regular (weight 400)
-const FONT_DATA: &[u8] = include_bytes!("../assets/fonts/BraiinsDeckSans-Regular.otf");
+const FONT_DATA: &[u8] = include_bytes!("../../../assets/fonts/BraiinsDeckSans-Regular.otf");
 
 /// Digit textures (0-9)
 pub struct DigitTextures {
