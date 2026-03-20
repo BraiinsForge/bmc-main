@@ -38,7 +38,7 @@
         lib = pkgs.lib;
 
         workspace = import ./workspace.nix { inherit self pkgs; };
-        inherit (workspace) commonDeps;
+        inherit (workspace) commonDeps bmc;
         frontend = import ./frontend { inherit self pkgs; };
         capture = import ./bmc-wasm-runtime/capture.nix {
           inherit self pkgs commonDeps;
@@ -50,35 +50,13 @@
         };
 
         # Local dev shell with Rust + frontend + GUI deps (native only).
-        localDevShell = pkgs.mkShell {
+        localDevShell = bmc.profiles.fast.mkShell {
           name = "bmc-local-env";
-
-          nativeBuildInputs =
-            commonDeps.buildDeps
-            ++ commonDeps.guiBuildDeps
-            ++ commonDeps.frontendDeps;
-
-          buildInputs = with pkgs; [
-            ii.rust.toolchain
+          packages = (commonDeps.frontendDeps pkgs)
+            ++ (with pkgs; [
             ffmpeg-headless
             odiff
-          ];
-
-          inherit (commonDeps) env;
-        };
-
-        # Full dev shell: local + ARM cross-compilation support.
-        armv7Cc = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic.stdenv.cc;
-        fullDevShell = pkgs.mkShell {
-          name = "bmc-full-env";
-          inputsFrom = [ localDevShell ];
-          buildInputs = [ armv7Cc ];
-          env = commonDeps.env // {
-            CC_armv7_unknown_linux_musleabihf =
-              "${armv7Cc.targetPrefix}cc";
-            CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER =
-              "${armv7Cc.targetPrefix}cc";
-          };
+          ]);
         };
 
         # Pre-built ty binary — avoids compiling from source on CI builders
@@ -168,8 +146,7 @@
         # local: Just for local development, no compiler for Deck
         devShells = workspace.devShells // {
           local = localDevShell;
-          full = fullDevShell;
-          default = fullDevShell;
+          default = localDevShell;
         };
       });
 }

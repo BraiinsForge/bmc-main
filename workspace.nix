@@ -48,7 +48,11 @@ let
   # Single source of truth to keep build derivations and dev environments in sync.
   commonDeps = {
     # Rust build-time deps (protoc for protobufs, diffutils for cargo)
-    buildDeps = with pkgs; [ protobuf diffutils pkg-config ];
+    buildDeps = pkgs: with pkgs; [
+      protobuf
+      diffutils
+      pkg-config
+    ];
 
     # Env vars needed by Slint for font rendering and runtime linking
     env = {
@@ -65,19 +69,30 @@ let
       ]}";
     };
 
-    guiBuildDeps = with pkgs; [
+    guiBuildDeps = pkgs: with pkgs; [
       fontconfig
       freetype
     ];
 
+    guiTargetDeps = pkgs: with pkgs; [
+      # Compositor dependencies (require dynamic linking)
+      wayland
+      libxkbcommon
+      libinput
+      seatd
+      udev
+      libdrm
+      mesa
+    ];
+
     # Node.js tooling for frontend builds
-    frontendDeps = with pkgs; [ nodejs yarn ];
+    frontendDeps = pkgs: with pkgs; [ nodejs yarn ];
   };
 
   # Minimal workspace config for musl profiles (bmc-openwrt, statically linked)
   workspaceMinimal = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
-    nativeDeps = _pkgs: commonDeps.buildDeps;
+    nativeDeps = _pkgs: (commonDeps.guiBuildDeps _pkgs);
     # minimal deps for static linking
     targetDeps = _pkgs: [
       # openssl.dev
@@ -93,18 +108,9 @@ let
   # Full workspace config for glibc profiles (widgets, compositor)
   workspace = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
-    nativeDeps = _pkgs: commonDeps.buildDeps ++ commonDeps.guiBuildDeps;
+    nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs) ++ (commonDeps.guiBuildDeps _pkgs);
     # packages that will be cross-compiled for target arch
-    targetDeps = pkgs: with pkgs; [
-      # Compositor dependencies (require dynamic linking)
-      wayland
-      libxkbcommon
-      libinput
-      seatd
-      udev
-      libdrm
-      mesa
-    ];
+    targetDeps = commonDeps.guiTargetDeps;
     env = commonDeps.env;
     includeExtraSrc = [
       "assets"
@@ -114,7 +120,7 @@ let
   workspaceWasmExamples = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
     workspacePath = "bmc-wasm-runtime/examples";
-    nativeDeps = _pkgs: commonDeps.buildDeps;
+    nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs);
   };
 
   bmc = {
@@ -270,7 +276,7 @@ let
 
 in
 {
-  inherit commonDeps bmc;
+  inherit commonDeps bmc deps makeRustflagsEnv;
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
     inherit bmc-video-play-armv7;
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
