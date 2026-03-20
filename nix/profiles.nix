@@ -13,12 +13,12 @@
     inherit pkgs;
   };
   # musl profiles for bmc-openwrt (statically linked)
-  armv7-release = workspaces.minimal.mkBuildProfile {
+  armv7-musl-release = workspaces.minimal.mkBuildProfile {
     minimalDeps = true;
     rustProfile = "release";
     pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
   };
-  armv7-debug = workspaces.minimal.mkBuildProfile {
+  armv7-musl-debug = workspaces.minimal.mkBuildProfile {
     minimalDeps = false;
     rustProfile = "dev";
     pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;

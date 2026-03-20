@@ -134,7 +134,7 @@ for the full implementation.
 
 Responsibilities:
 - Crate definitions via `pkgs.ii.rust.defineCrate`
-- Build profiles: `fast`, `armv7-release`, `armv7-debug`,
+- Build profiles: `fast`, `armv7-musl-release`, `armv7-musl-debug`,
   `armv7-glibc-release`, `armv7-glibc-debug`
 - Development shells for each profile
 - Direct package builds (bmc-mock, bmc-openwrt, etc.)

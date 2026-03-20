@@ -21,8 +21,10 @@ dependencies:
 flake.nix devShells:
 ├── default        → just rustToolchain (broken for most builds)
 ├── fast           → workspace shell, local native builds
-├── armv7-release  → ARM cross-compile shell
-├── armv7-debug    → ARM cross-compile shell
+├── armv7-musl-release  → musl ARM cross-compile shell
+├── armv7-musl-debug    → musl ARM cross-compile shell
+├── armv7-glibc-release → glibc ARM cross-compile shell
+├── armv7-gilbc-debug   → glibc ARM cross-compile shell
 └── frontend       → mkShell with nodejs/yarn + LD_LIBRARY_PATH for libgcc
 
 bmc-mock-display/shell.nix  → standalone, impure, X11/Wayland/GL deps
