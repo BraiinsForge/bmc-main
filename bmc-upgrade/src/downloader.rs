@@ -115,10 +115,10 @@ impl DownloadWriter<BufWriter<Cursor<Vec<u8>>>> {
 
 impl<T: AsyncWrite + Unpin + Send + Sync + 'static> Drop for DownloadWriter<T> {
     fn drop(&mut self) {
-        if !self.download_finished {
-            if let Some(ref path) = self.path {
-                let _ = std::fs::remove_file(path);
-            }
+        if !self.download_finished
+            && let Some(ref path) = self.path
+        {
+            let _ = std::fs::remove_file(path);
         }
     }
 }

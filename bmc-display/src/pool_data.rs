@@ -359,6 +359,7 @@ impl UserWorkerHistory {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "field names match API response")]
 pub struct CurrentUserWorkerStats {
     active_workers: u32,
     low_workers: u32,

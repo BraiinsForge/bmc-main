@@ -210,16 +210,16 @@ impl JobScheduler {
             Schedule::OneShot(_) => schedule,
         };
         // Auto-persist to crontab if requested and it's a cron job with command
-        if config.persist_to_crontab {
-            if let Schedule::Cron(cron) = &schedule {
-                let command = match &task {
-                    Task::Command(cmd) => cmd,
-                    Task::Async(_) => CRON_DUMMY_COMMAND,
-                };
-                self.save_to_crontab(cron.clone(), command, &config)
-                    .await
-                    .map_err(|e| anyhow!("Failed to save to crontab: {e}"))?;
-            }
+        if config.persist_to_crontab
+            && let Schedule::Cron(cron) = &schedule
+        {
+            let command = match &task {
+                Task::Command(cmd) => cmd,
+                Task::Async(_) => CRON_DUMMY_COMMAND,
+            };
+            self.save_to_crontab(cron.clone(), command, &config)
+                .await
+                .map_err(|e| anyhow!("Failed to save to crontab: {e}"))?;
         }
 
         let job_id = self
@@ -462,13 +462,13 @@ impl JobScheduler {
         };
 
         // Ensure disclaimer is maintained after removal
-        if let Ok(count) = &result {
-            if count > &0 {
-                let _ = crontab_manager
-                    .ensure_scheduler_disclaimer()
-                    .await
-                    .map_err(|e| warn!("Failed to ensure disclaimer after removal: {}", e));
-            }
+        if let Ok(count) = &result
+            && count > &0
+        {
+            let _ = crontab_manager
+                .ensure_scheduler_disclaimer()
+                .await
+                .map_err(|e| warn!("Failed to ensure disclaimer after removal: {}", e));
         }
 
         result

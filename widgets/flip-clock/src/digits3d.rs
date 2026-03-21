@@ -249,8 +249,8 @@ fn create_digit_mesh(gl: &glow::Context, font: &FontRef<'_>, digit: u8) -> Resul
 
     // Calculate bounding box for centering
     let (min_x, max_x, min_y, max_y) = calculate_bounds(&geometry.vertices);
-    let center_x = (min_x + max_x) / 2.0;
-    let center_y = (min_y + max_y) / 2.0;
+    let center_x = f32::midpoint(min_x, max_x);
+    let center_y = f32::midpoint(min_y, max_y);
     let width = max_x - min_x;
     let height = max_y - min_y;
     let max_dim = width.max(height);
@@ -486,10 +486,8 @@ fn add_side_faces(
                 last_point = Some(to);
             }
             PathEvent::End { close, .. } => {
-                if close {
-                    if let (Some(from), Some(to)) = (last_point, first_point) {
-                        add_side_quad(vertices, from, to, center_x, center_y, max_dim);
-                    }
+                if close && let (Some(from), Some(to)) = (last_point, first_point) {
+                    add_side_quad(vertices, from, to, center_x, center_y, max_dim);
                 }
                 last_point = None;
                 first_point = None;

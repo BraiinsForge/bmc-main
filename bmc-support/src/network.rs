@@ -199,10 +199,7 @@ pub fn pcap(interface: &NetworkInterface, duration: Duration) -> Result<Vec<u8>,
             Err(io_error) => {
                 let msg = format!("I/O error on {}: {}", interface.name, io_error);
                 error!("{}", msg);
-                return Err(PcapError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    msg,
-                )));
+                return Err(PcapError::IoError(std::io::Error::other(msg)));
             }
         }
     }

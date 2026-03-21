@@ -297,10 +297,10 @@ pub fn next_generation_number(profile_dir: &Path) -> Result<u32, BuildProfileErr
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
-        if let Some(num) = parse_generation_number(&name_str) {
-            if num > max_gen {
-                max_gen = num;
-            }
+        if let Some(num) = parse_generation_number(&name_str)
+            && num > max_gen
+        {
+            max_gen = num;
         }
     }
 

@@ -188,10 +188,10 @@ async fn load_image(
         .error_for_status()
         .context("Server returned an error")?;
 
-    if let Some(len) = response.content_length() {
-        if len > MAX_BODY_SIZE {
-            bail!("Image too large: {len} bytes (max {MAX_BODY_SIZE})");
-        }
+    if let Some(len) = response.content_length()
+        && len > MAX_BODY_SIZE
+    {
+        bail!("Image too large: {len} bytes (max {MAX_BODY_SIZE})");
     }
 
     let mut bytes = Vec::new();

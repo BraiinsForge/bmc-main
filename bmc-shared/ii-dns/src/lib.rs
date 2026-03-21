@@ -20,13 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use std::{
-    fmt::Debug,
-    io::{Error, ErrorKind},
-    net::SocketAddr,
-    path::Path,
-    time::Duration,
-};
+use std::{fmt::Debug, io::Error, net::SocketAddr, path::Path, time::Duration};
 
 use log::{error, info, warn};
 use tokio::{
@@ -117,7 +111,7 @@ impl IiResolver {
 
         let err_msg = format!("Failed to resolve {:?}", &host);
         error!("{}", err_msg);
-        Err(Error::new(ErrorKind::Other, err_msg))
+        Err(Error::other(err_msg))
     }
 
     pub fn lookup_host_sync<T>(host: T) -> Result<impl Iterator<Item = SocketAddr> + Send, Error>
@@ -147,6 +141,6 @@ impl IiTcpStream {
             }
         }
 
-        Err(last_err.unwrap_or_else(|| Error::new(ErrorKind::Other, "This should not happen")))
+        Err(last_err.unwrap_or_else(|| Error::other("This should not happen")))
     }
 }

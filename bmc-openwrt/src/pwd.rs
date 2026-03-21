@@ -93,10 +93,9 @@ impl ShadowFile {
         self.lines
             .iter_mut()
             .find(|line| line.username == username)
-            .ok_or(Error::Io(io::Error::new(
-                io::ErrorKind::Other,
-                format!("User `{username}` does not exist"),
-            )))?
+            .ok_or(Error::Io(io::Error::other(format!(
+                "User `{username}` does not exist"
+            ))))?
             .set_password(new_password, password_hash_type)
     }
 
@@ -176,8 +175,7 @@ impl FromStr for ShadowLine {
         let splits: Vec<&str> = split_result.collect();
 
         if splits.len() < 9 {
-            return Err(Error::Io(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(Error::Io(io::Error::other(
                 "Wrong format of shadow file line",
             )));
         }

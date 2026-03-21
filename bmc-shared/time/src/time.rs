@@ -13,11 +13,14 @@ use crate::timezone_variant::TIMEZONE_VARIANTS;
 const DEFAULT_CHRONO: chrono_tz::Tz = chrono_tz::Etc::GMT;
 const DEFAULT_POSIX: &str = "GMT0";
 
-#[derive(Copy, EnumString, Display, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(
+    Copy, EnumString, Display, Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq,
+)]
 pub enum TimeSystem {
     #[strum(serialize = "%I:%M")]
     Hour12,
     #[strum(serialize = "%H:%M")]
+    #[default]
     Hour24,
 }
 
@@ -33,12 +36,6 @@ impl TimeSystem {
     #[must_use]
     pub fn is_24(&self) -> bool {
         matches!(self, Self::Hour24)
-    }
-}
-
-impl Default for TimeSystem {
-    fn default() -> Self {
-        Self::Hour24
     }
 }
 

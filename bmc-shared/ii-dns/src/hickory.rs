@@ -20,12 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use std::{
-    fmt::Debug,
-    io::{Error, ErrorKind},
-    net::SocketAddr,
-    time::Duration,
-};
+use std::{fmt::Debug, io::Error, net::SocketAddr, time::Duration};
 
 use hickory_resolver::{
     Resolver,
@@ -107,7 +102,7 @@ impl HickoryResolverBuilder {
         if let Some(resolver) = self.system_resolver.clone() {
             Ok(self.lookup_host_internal(resolver, host).await?)
         } else {
-            Err(Error::new(ErrorKind::Other, "Resolver not initialized"))
+            Err(Error::other("Resolver not initialized"))
         }
     }
 
@@ -124,7 +119,7 @@ impl HickoryResolverBuilder {
         let mut result: Vec<SocketAddr> = resolver
             .lookup_ip(host)
             .await
-            .map_err(|e| Error::new(ErrorKind::Other, e))?
+            .map_err(Error::other)?
             .into_iter()
             .map(move |addr| SocketAddr::new(addr, port))
             .collect();

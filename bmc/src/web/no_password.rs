@@ -102,10 +102,10 @@ where
         Box::pin(async move {
             let cookies = extract_cookies(req.extensions());
 
-            if session_manager.find(&cookies.list()).await.is_err() {
-                if let Ok(cookie) = session_manager.login(DEFAULT_PASSWORD).await {
-                    cookies.add(cookie);
-                }
+            if session_manager.find(&cookies.list()).await.is_err()
+                && let Ok(cookie) = session_manager.login(DEFAULT_PASSWORD).await
+            {
+                cookies.add(cookie);
             }
 
             service.call(req).await

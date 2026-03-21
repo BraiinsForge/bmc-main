@@ -153,13 +153,13 @@ impl Platform for LinuxDrmPlatform {
             .partition(|&&plane| {
                 if let Ok(props) = card.get_properties(plane) {
                     for (&id, &val) in props.iter() {
-                        if let Ok(info) = card.get_property(id) {
-                            if info.name().to_str().map(|x| x == "type").unwrap_or(false) {
-                                return val
-                                    == control::property::RawValue::from(
-                                        control::PlaneType::Primary as u32,
-                                    );
-                            }
+                        if let Ok(info) = card.get_property(id)
+                            && info.name().to_str().map(|x| x == "type").unwrap_or(false)
+                        {
+                            return val
+                                == control::property::RawValue::from(
+                                    control::PlaneType::Primary as u32,
+                                );
                         }
                     }
                 }

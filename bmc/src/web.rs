@@ -175,7 +175,7 @@ impl Default for ServerConfig {
             www_root_path: Self::WWW_ROOT_PATH.into(),
             www_assets_path: PathBuf::from(Self::WWW_ROOT_PATH).join("assets"),
             www_var_path: PathBuf::from(Self::WWW_ROOT_PATH).join("var"),
-            grpc_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 50051),
+            grpc_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 50051),
         }
     }
 }

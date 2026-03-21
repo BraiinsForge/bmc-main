@@ -219,11 +219,10 @@ impl OpenwrtWifiManager {
             // Hack: We check the size of /etc/config/wireless, which should be always "at least" 300 bytes
             // since it uses default OpenWRT configuration
             // This is necessary workaround so we don't open/load the file via UCI library before it's fully created
-            if let Ok(metadata) = tokio::fs::metadata(WIRELESS_CONFIG_FILE_PATH).await {
-                if metadata.len() >= WIRELESS_CONFIG_MIN_SIZE {
+            if let Ok(metadata) = tokio::fs::metadata(WIRELESS_CONFIG_FILE_PATH).await
+                && metadata.len() >= WIRELESS_CONFIG_MIN_SIZE {
                     return Ok(());
                 }
-            }
         }
 
         bail!("Wi-Fi config is not present")

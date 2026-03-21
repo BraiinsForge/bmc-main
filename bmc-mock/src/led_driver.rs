@@ -12,7 +12,6 @@ const COMMAND_BUFFER_SIZE: usize = 4;
 pub struct PlatformLedDriver(pub LedDriver);
 
 impl LedDriverFactory for PlatformLedDriver {
-    #[must_use]
     fn new(_device_path: &str) -> Self {
         let (command_sender, mut command_receiver) =
             tokio::sync::mpsc::channel::<LedCommand>(COMMAND_BUFFER_SIZE);

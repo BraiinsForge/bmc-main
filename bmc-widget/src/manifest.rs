@@ -152,12 +152,12 @@ impl ParamDefinition {
                         name: param_name.to_owned(),
                     });
                 }
-                if let Some(ref enum_vals) = self.enum_values {
-                    if enum_vals.is_empty() {
-                        return Err(ManifestError::ParamEnumMissing {
-                            name: param_name.to_owned(),
-                        });
-                    }
+                if let Some(ref enum_vals) = self.enum_values
+                    && enum_vals.is_empty()
+                {
+                    return Err(ManifestError::ParamEnumMissing {
+                        name: param_name.to_owned(),
+                    });
                 }
             }
             ParamType::Boolean => {

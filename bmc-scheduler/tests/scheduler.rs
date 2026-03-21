@@ -179,7 +179,10 @@ async fn test_timezone_change_and_reschedule_oneshot() -> anyhow::Result<()> {
     assert!(time_till_next_job_before_update.is_some());
     assert!(time_till_next_job.is_some());
     assert!(
-        (time_till_next_job_before_update.expect("BUG: ") - time_till_next_job.expect("BUG: "))
+        time_till_next_job_before_update
+            .expect("BUG: ")
+            .checked_sub(time_till_next_job.expect("BUG: "))
+            .unwrap()
             .as_secs()
             <= 5
     );

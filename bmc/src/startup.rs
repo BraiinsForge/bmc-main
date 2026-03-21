@@ -299,7 +299,7 @@ impl Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 80),
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 80),
             server_config: ServerConfig::default(),
             upgrade_image_path: PathBuf::from(Self::UPGRADE_IMAGE_PATH),
             config_path: Self::CONFIG_PATH.into(),

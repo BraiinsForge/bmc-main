@@ -100,18 +100,18 @@ where
         Box::pin(async move {
             let cookies = extract_cookies(req.extensions());
 
-            if let Ok(session) = session_manager.find(&cookies.list()).await {
-                if let Ok(cookie) = session_manager.extend(session).await {
-                    // NOTE: extend does not return updated session, only cookie.
-                    // Previous session would have incorrect expiration time.
-                    let session = session_manager
-                        .find(&[cookie.clone()])
-                        .await
-                        .expect("BUG: session must be available, because it was extended");
+            if let Ok(session) = session_manager.find(&cookies.list()).await
+                && let Ok(cookie) = session_manager.extend(session).await
+            {
+                // NOTE: extend does not return updated session, only cookie.
+                // Previous session would have incorrect expiration time.
+                let session = session_manager
+                    .find(std::slice::from_ref(&cookie))
+                    .await
+                    .expect("BUG: session must be available, because it was extended");
 
-                    cookies.add(cookie);
-                    req.extensions_mut().insert(session);
-                }
+                cookies.add(cookie);
+                req.extensions_mut().insert(session);
             }
 
             service.call(req).await

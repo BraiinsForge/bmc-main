@@ -148,21 +148,21 @@ impl CompositorHandler for CompositorState {
         // If not found, try to match by PID (for Slint render surfaces)
         if instance_id.is_none() {
             // Get PID from surface's client
-            if let Some(client) = surface.client() {
-                if let Ok(creds) = client.get_credentials(&self.display_handle) {
-                    #[expect(clippy::cast_sign_loss, reason = "PID is always positive")]
-                    let pid = creds.pid as u32;
-                    instance_id = self
-                        .deck_widget_state
-                        .instance_id_for_surface_by_pid(Some(pid))
-                        .cloned();
-                    if instance_id.is_some() {
-                        tracing::debug!(
-                            "Matched surface {:?} to widget by PID {}",
-                            surface.id(),
-                            pid
-                        );
-                    }
+            if let Some(client) = surface.client()
+                && let Ok(creds) = client.get_credentials(&self.display_handle)
+            {
+                #[expect(clippy::cast_sign_loss, reason = "PID is always positive")]
+                let pid = creds.pid as u32;
+                instance_id = self
+                    .deck_widget_state
+                    .instance_id_for_surface_by_pid(Some(pid))
+                    .cloned();
+                if instance_id.is_some() {
+                    tracing::debug!(
+                        "Matched surface {:?} to widget by PID {}",
+                        surface.id(),
+                        pid
+                    );
                 }
             }
         }

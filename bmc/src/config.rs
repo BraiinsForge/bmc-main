@@ -584,10 +584,9 @@ impl ConfigHandle {
             .alarms
             .as_ref()
             .and_then(|alarms| alarms.iter().position(|x| x.id == *id))
+            && let Some(alarms) = self.alarms.as_mut()
         {
-            if let Some(alarms) = self.alarms.as_mut() {
-                alarms.remove(pos);
-            }
+            alarms.remove(pos);
         }
     }
 

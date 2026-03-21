@@ -201,7 +201,6 @@ impl LedState {
 pub struct PlatformLedDriver(pub LedDriver);
 
 impl LedDriverFactory for PlatformLedDriver {
-    #[must_use]
     fn new(device_path: &str) -> Self {
         let (command_sender, command_receiver) =
             tokio::sync::mpsc::channel::<LedCommand>(COMMAND_BUFFER_SIZE);

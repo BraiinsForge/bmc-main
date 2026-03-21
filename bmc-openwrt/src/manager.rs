@@ -35,6 +35,7 @@ use tokio::{fs, process::Command};
 use tracing::{debug, error, info};
 
 #[derive(Debug)]
+#[expect(clippy::struct_field_names)]
 pub struct Manager {
     bmc_info: Arc<Option<BmcInfo>>,
     pub session_manager: OpenwrtSessionManager,
@@ -305,16 +306,13 @@ impl BmcManager for Manager {
             .map_err(|_| anyhow!("Invalid firmware image"))?;
 
         if let Some(code) = status.code() {
-            match code {
-                // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
-                1 => {
-                    error!(exit_code = code, "Upgrade failed: invalid firmware image");
-                    Err(anyhow!("Invalid firmware image"))
-                }
-                _ => {
-                    info!("System upgrade completed successfully");
-                    Ok(())
-                }
+            // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
+            if code == 1 {
+                error!(exit_code = code, "Upgrade failed: invalid firmware image");
+                Err(anyhow!("Invalid firmware image"))
+            } else {
+                info!("System upgrade completed successfully");
+                Ok(())
             }
         } else {
             error!("Upgrade process terminated without exit code");
@@ -325,14 +323,13 @@ impl BmcManager for Manager {
     async fn check_and_remove_upgrade_marker(&self) -> bool {
         let is_after_upgrade = Path::new(Self::UPGRADE_RESULT_FILE_PATH).exists();
 
-        if is_after_upgrade {
-            if let Err(err) = fs::remove_file(Self::UPGRADE_RESULT_FILE_PATH).await {
-                error!(
-                    error = %err,
-                    path = Self::UPGRADE_RESULT_FILE_PATH,
-                    "Failed to remove upgrade marker file"
-                );
-            }
+        if is_after_upgrade && let Err(err) = fs::remove_file(Self::UPGRADE_RESULT_FILE_PATH).await
+        {
+            error!(
+                error = %err,
+                path = Self::UPGRADE_RESULT_FILE_PATH,
+                "Failed to remove upgrade marker file"
+            );
         }
 
         is_after_upgrade

@@ -134,8 +134,8 @@ impl EglCompositor {
         tracing::info!("Wayland socket created: {}", socket_name);
 
         let loop_handle = event_loop.handle();
-        if let Ok(poll_fd) = display.backend().poll_fd().try_clone_to_owned() {
-            if loop_handle
+        if let Ok(poll_fd) = display.backend().poll_fd().try_clone_to_owned()
+            && loop_handle
                 .insert_source(
                     Generic::new(poll_fd, Interest::READ, Mode::Level),
                     |_, _, state| {
@@ -144,12 +144,11 @@ impl EglCompositor {
                     },
                 )
                 .is_err()
-            {
-                let err = "Failed to add display fd to event loop".to_owned();
-                tracing::error!("{}", err);
-                let _ = ready_tx.send(Err(err));
-                return;
-            }
+        {
+            let err = "Failed to add display fd to event loop".to_owned();
+            tracing::error!("{}", err);
+            let _ = ready_tx.send(Err(err));
+            return;
         }
 
         // Signal ready to main thread

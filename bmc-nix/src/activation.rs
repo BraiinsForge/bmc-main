@@ -67,9 +67,9 @@ pub fn discover_activation_scripts(
             .to_str()
             .ok_or_else(|| ActivationError::ReadDir {
                 path: format!(
-                    "non-UTF-8 filename in {}: {:?}",
+                    "non-UTF-8 filename in {}: {}",
                     scripts_dir.display(),
-                    entry.file_name()
+                    entry.file_name().display()
                 ),
                 source: std::io::Error::new(
                     std::io::ErrorKind::InvalidData,

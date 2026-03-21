@@ -317,10 +317,10 @@ impl CurrentRunningAlarm {
 
     async fn cancel(self) {
         self.cancellation_token.cancel();
-        if let Some(handle) = self.sound_join_handle {
-            if let Err(err) = handle.await {
-                warn!(alarm_id = %self.alarm.id, error = %err, "Sound task panicked during cancellation");
-            }
+        if let Some(handle) = self.sound_join_handle
+            && let Err(err) = handle.await
+        {
+            warn!(alarm_id = %self.alarm.id, error = %err, "Sound task panicked during cancellation");
         }
         if let Err(err) = self.timeout_join_handle.await {
             warn!(alarm_id = %self.alarm.id, error = %err, "Timeout task panicked during cancellation");
@@ -678,12 +678,11 @@ impl AlarmController {
             while let Ok(event) = rx.recv().await {
                 if let AlarmEvent::Stopped { id } = event {
                     // NOTE: Alarm that is not repeatable needs to be deactivated after it was triggered
-                    if let Some(alarm) = self_.alarms().await.iter().find(|alarm| alarm.id == id) {
-                        if alarm.repeat.is_empty() {
-                            if let Err(err) = self_.set_enabled(id.clone(), false).await {
-                                warn!(alarm_id = %id, error = ?err, "Failed to disable non-repeating alarm after it was triggered");
-                            }
-                        }
+                    if let Some(alarm) = self_.alarms().await.iter().find(|alarm| alarm.id == id)
+                        && alarm.repeat.is_empty()
+                        && let Err(err) = self_.set_enabled(id.clone(), false).await
+                    {
+                        warn!(alarm_id = %id, error = ?err, "Failed to disable non-repeating alarm after it was triggered");
                     }
                 }
             }

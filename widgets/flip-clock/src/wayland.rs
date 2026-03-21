@@ -214,10 +214,10 @@ impl WaylandClient {
                 .context("Wayland dispatch failed")?;
 
             // Poll protocol events if connected
-            if let Some((ref mut client, ref mut handler)) = protocol {
-                if client.poll_events().is_ok() {
-                    client.process_events(handler);
-                }
+            if let Some((ref mut client, ref mut handler)) = protocol
+                && client.poll_events().is_ok()
+            {
+                client.process_events(handler);
             }
 
             // Check shutdown flag (set by protocol handler)
@@ -765,7 +765,7 @@ impl WaylandClient {
                     surface.commit();
                 }
 
-                if self.state.frame_count % 60 == 0 {
+                if self.state.frame_count.is_multiple_of(60) {
                     tracing::debug!("Frame {}", self.state.frame_count);
                 }
             }

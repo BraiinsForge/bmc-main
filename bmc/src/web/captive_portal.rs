@@ -93,14 +93,14 @@ impl<S, T: BmcManager> CaptivePortalMiddleware<S, T> {
             _ => (),
         }
 
-        if let Some(host) = req.headers().get("Host") {
-            if let Ok(host_str) = host.to_str() {
-                return host_str.ends_with(SUFFIX_COM)
-                    || host_str.ends_with(SUFFIX_NET)
-                    || host_str.ends_with(SUFFIX_INFO)
-                    || host_str.ends_with(SUFFIX_US)
-                    || host_str.ends_with(SUFFIX_NETWORK);
-            }
+        if let Some(host) = req.headers().get("Host")
+            && let Ok(host_str) = host.to_str()
+        {
+            return host_str.ends_with(SUFFIX_COM)
+                || host_str.ends_with(SUFFIX_NET)
+                || host_str.ends_with(SUFFIX_INFO)
+                || host_str.ends_with(SUFFIX_US)
+                || host_str.ends_with(SUFFIX_NETWORK);
         }
 
         false

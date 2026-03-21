@@ -2,7 +2,6 @@
 
 use tokio::process::Command;
 
-#[expect(clippy::enum_variant_names)]
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("IO error: {0}")]

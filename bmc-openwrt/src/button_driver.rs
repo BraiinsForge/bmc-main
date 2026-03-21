@@ -109,12 +109,9 @@ impl SysfsButton {
         button_id: ButtonId,
     ) -> std::pin::Pin<
         std::boxed::Box<
-            (
-                dyn futures::Stream<
-                        Item = std::result::Result<bmc_button::ButtonEvent, anyhow::Error>,
-                    > + std::marker::Send
-                    + 'static
-            ),
+            dyn futures::Stream<Item = std::result::Result<bmc_button::ButtonEvent, anyhow::Error>>
+                + std::marker::Send
+                + 'static,
         >,
     > {
         Box::new(stream! {
@@ -273,7 +270,7 @@ mod tests {
 
     /// Test for sysfs_gpio button driver
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires hardware"]
     async fn test_sysfs_gpio() {
         loop {
             let button_number = 26;
@@ -289,7 +286,7 @@ mod tests {
 
     /// Test for gpiod
     #[test]
-    #[ignore]
+    #[ignore = "requires hardware"]
     fn test_gpiod() {
         println!("list:");
         for device in Chip::list_devices().expect("BUG: Can't list devices") {

@@ -160,16 +160,11 @@ pub enum BmcState {
     WifiReconfiguration,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub enum NetworkProtocolConfig {
+    #[default]
     Dhcp,
     Static(NetworkProtocolConfigStatic),
-}
-
-impl Default for NetworkProtocolConfig {
-    fn default() -> Self {
-        Self::Dhcp
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

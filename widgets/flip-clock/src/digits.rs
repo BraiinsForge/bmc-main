@@ -140,7 +140,7 @@ fn render_digit_to_pixels(font: &FontRef<'_>, digit: u8) -> Vec<u8> {
 
     // Center the glyph horizontally and vertically
     let x_offset = (DIGIT_WIDTH as f32 - h_advance) / 2.0;
-    let y_offset = (DIGIT_HEIGHT as f32 + ascent) / 2.0;
+    let y_offset = f32::midpoint(DIGIT_HEIGHT as f32, ascent);
 
     // Create positioned glyph
     let glyph = ab_glyph::Glyph {
