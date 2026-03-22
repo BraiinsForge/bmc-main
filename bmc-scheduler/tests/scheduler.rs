@@ -182,7 +182,7 @@ async fn test_timezone_change_and_reschedule_oneshot() -> anyhow::Result<()> {
         time_till_next_job_before_update
             .expect("BUG: ")
             .checked_sub(time_till_next_job.expect("BUG: "))
-            .unwrap()
+            .expect("BUG: checked_sub")
             .as_secs()
             <= 5
     );
@@ -255,7 +255,7 @@ async fn test_high_concurrent_stress_deadlock_detection() -> anyhow::Result<()> 
 
                 let tz_str = {
                     let mut rng = rand::rng();
-                    *timezones.choose(&mut rng).unwrap()
+                    *timezones.choose(&mut rng).expect("BUG: ")
                 };
 
                 if let Ok(tz) = Timezone::from_str(tz_str) {
@@ -513,7 +513,7 @@ async fn test_high_concurrent_stress_deadlock_detection() -> anyhow::Result<()> 
         let final_jobs = scheduler
             .jobs()
             .await
-            .expect("Scheduler should still be responsive after stress test");
+            .expect("BUG: Scheduler should still be responsive after stress test");
         let final_jobs_count = final_jobs.len();
         println!("   - Final active jobs: {final_jobs_count}");
 
