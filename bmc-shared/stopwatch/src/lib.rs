@@ -38,12 +38,13 @@ impl Every {
     }
 
     pub fn has_expired(&mut self) -> bool {
-        if let Ok(elapsed) = self.last.elapsed() {
-            if elapsed >= self.how_often {
-                self.last = SystemTime::now();
-                return true;
-            }
+        if let Ok(elapsed) = self.last.elapsed()
+            && elapsed >= self.how_often
+        {
+            self.last = SystemTime::now();
+            return true;
         }
+
         false
     }
 }
