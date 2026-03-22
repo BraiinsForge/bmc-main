@@ -175,10 +175,10 @@ http = "1.3.1"
 humantime-serde = "1.1.1"
 hyper = "1.6.0"
 iana-time-zone = "0.1.63"
-idxgen-data = { path = "tooling/idxgen/idxgen-data" }
+idxgen-data = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0be4df5d443f959a66ad8d9c15031b177c" }
 image = { version = "0.25.8", features = ["default-formats"] }
-index-bmc = { path = "tooling/crates/index-bmc" }
-index-common = { path = "tooling/crates/index-common" }
+index-bmc = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0be4df5d443f959a66ad8d9c15031b177c" }
+index-common = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0be4df5d443f959a66ad8d9c15031b177c" }
 indexmap = { version = "2.10.0", default-features = false, features = ["serde", "std"] }
 infer = "0.19.0"
 itertools = "0.14.0"
@@ -188,7 +188,7 @@ markdown = "1.0.0-alpha.23"
 maud = "0.27.0"
 memmap2 = "0.9.4"
 mime_guess = "2.0.5"
-minerctl-defs = { path = "tooling/minerctl/minerctl-defs" }
+minerctl-defs = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0be4df5d443f959a66ad8d9c15031b177c" }
 minifb = "0.28.0"
 nonzero_ext = "0.3.0"
 parking_lot = "0.12.3"
@@ -242,8 +242,8 @@ tonic-middleware = "0.3.0"
 tonic-reflection = "0.13.1"
 tonic-types = "0.13.1"
 tonic-web = "0.13.1"
-tooling-std = { path = "tooling/tooling-std" }
-tooling-std-macros = { path = "tooling/tooling-std/macros" }
+tooling-std = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0be4df5d443f959a66ad8d9c15031b177c" }
+tooling-std-macros = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0be4df5d443f959a66ad8d9c15031b177c" }
 tower = { version = "0.5.2", default-features = false }
 tower-cookies = "0.11.0"
 tower-http = "0.6.2"

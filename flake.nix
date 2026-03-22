@@ -88,11 +88,6 @@
             "docs/*"
             # Upstream crates shall be formatted upstream
             "bmc-shared/ii-net-drv/*"
-            "tooling/crates/index-bmc/*"
-            "tooling/crates/index-common/*"
-            "tooling/idxgen/idxgen-data/*"
-            "tooling/minerctl/minerctl-defs/*"
-            "tooling/tooling-std/*"
           ];
         };
 
