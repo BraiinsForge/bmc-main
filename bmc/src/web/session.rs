@@ -126,6 +126,10 @@ pub(crate) fn extract_cookies(extensions: &http::Extensions) -> &tower_cookies::
 }
 
 /// Retrieves authentication session and fails if it is not present
+#[expect(
+    clippy::result_large_err,
+    reason = "tonic::Status is 176 bytes, boxing would be non-idiomatic"
+)]
 pub fn extract_session<S: session::Manager>(
     extensions: &http::Extensions,
 ) -> Result<&S::Session, tonic::Status> {

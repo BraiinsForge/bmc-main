@@ -1,5 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// gRPC handlers inherently return `Result<_, tonic::Status>` and `Status` is 176 bytes.
+// Boxing it would be non-idiomatic — this is tonic's API, not a design choice we control.
+#![allow(clippy::result_large_err)]
+
 use crate::BmcManager;
 use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
