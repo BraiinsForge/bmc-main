@@ -16,6 +16,9 @@ chrono.workspace = true
 chrono-tz.workspace = true
 croner.workspace = true
 data-encoding.workspace = true
+index-bmc.workspace = true
+index-common.workspace = true
+minerctl-defs.workspace = true
 rand.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 ring.workspace = true
@@ -23,6 +26,7 @@ serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+url.workspace = true
 
 [lints]
 workspace = true
