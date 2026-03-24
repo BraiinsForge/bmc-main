@@ -40,6 +40,14 @@
         workspace = import ./workspace.nix { inherit self pkgs; };
         inherit (workspace) commonDeps;
         frontend = import ./frontend { inherit self pkgs; };
+        capture = import ./bmc-wasm-runtime/capture.nix {
+          inherit self pkgs commonDeps;
+          inherit (workspace.bmc) profiles;
+        };
+        checks = import ./nix/checks.nix {
+          inherit pkgs ty-bin;
+          inherit (workspace.bmc) profiles;
+        };
 
         # Local dev shell with Rust + frontend + GUI deps (native only).
         localDevShell = pkgs.mkShell {

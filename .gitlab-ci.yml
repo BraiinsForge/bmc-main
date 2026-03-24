@@ -50,7 +50,7 @@ cargo-deny:
   extends: .nix
   stage: check
   script:
-    - nix-shell -p cargo cargo-deny --run "cargo deny check bans sources"
+    - nix build -L .#checks.x86_64-linux.cargo-deny
 
 ###################################
 ########## Python Checks ##########
