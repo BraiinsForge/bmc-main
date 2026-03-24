@@ -10,6 +10,7 @@ pub const NODE_PARAGRAPH: u8 = 3;
 pub const NODE_BUTTON: u8 = 4;
 pub const NODE_SPACER: u8 = 5;
 pub const NODE_CANVAS: u8 = 6;
+pub const NODE_MODAL: u8 = 7;
 
 // Draw commands
 pub const DRAW_RECT: u8 = 16;

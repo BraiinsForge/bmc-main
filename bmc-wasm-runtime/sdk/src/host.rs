@@ -8,9 +8,8 @@
 pub enum ButtonStyle {
     Primary = 0,
     Secondary = 1,
-    Ghost = 2,
-    Danger = 3,
-    Tertiary = 4,
+    Danger = 2,
+    Tertiary = 3,
 }
 
 // Host function imports

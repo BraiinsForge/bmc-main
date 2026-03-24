@@ -42,6 +42,7 @@ render_ui(width, height,
 - `center(props, children)` - Centered container
 - `spacer(flex)` - Flexible spacer
 - `button(style, label)` - Interactive button
+- `modal(id, is_open, title, content_height, body)` - Modal dialog overlay
 - `canvas(props, draws)` - Custom drawing area
 
 ### Text
@@ -88,6 +89,29 @@ canvas(props!(width: 100.0, height: 100.0), [
     rotated(rotation, rect(0.0, 0.0, 16.0, 16.0, GRAY_10)),
 ])
 ```
+
+### Modal Dialogs
+
+```rust
+modal(1, is_open, "Settings", content_height, [
+    text("Modal body content", style!(size: 14)),
+    button(ButtonStyle::Primary, "Save"),
+])
+```
+
+Host manages backdrop animation (fade), scroll state (drag + wheel), and renders a close button in the header. The close
+button is the first button inside the modal — handle it via `TreeRenderResult::clicks`.
+
+```rust
+let result = render_ui(width, height, root);
+
+// Button 0 in the modal is the close button
+if result.clicks.get(0) == Some(&true) {
+    is_open = false;
+}
+```
+
+Use `modal_styled` with `ModalProps` for custom padding or backdrop alpha.
 
 ### Animations
 

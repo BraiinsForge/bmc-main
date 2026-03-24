@@ -14,10 +14,9 @@
 use cosmic_text::{FontSystem, SwashCache};
 use tiny_skia::Pixmap;
 
-use crate::color;
 use crate::colors::*;
 use crate::drawing::shapes::{fill_rect, stroke_rect};
-use crate::drawing::text::{draw_text, measure_text};
+use crate::drawing::text::{ShapedTextCache, draw_text, measure_text};
 use crate::interaction::{InteractionState, Rect};
 
 // Button semantic colors (normal, active/pressed)
@@ -26,9 +25,6 @@ const BTN_PRIMARY_BG_ACTIVE: u32 = VIOLET_70;
 
 const BTN_SECONDARY_BG: u32 = GRAY_70;
 const BTN_SECONDARY_BG_ACTIVE: u32 = GRAY_80;
-
-const BTN_GHOST_BG: u32 = TRANSPARENT;
-const BTN_GHOST_BG_ACTIVE: u32 = color!(GRAY_70, alpha: 0.38);
 
 const BTN_DANGER_BG: u32 = RED_60;
 const BTN_DANGER_BG_ACTIVE: u32 = RED_70;
@@ -46,18 +42,16 @@ const BTN_TERTIARY_FG_ACTIVE: u32 = GRAY_100;
 pub enum ButtonStyle {
     Primary = 0,
     Secondary = 1,
-    Ghost = 2,
-    Danger = 3,
-    Tertiary = 4,
+    Danger = 2,
+    Tertiary = 3,
 }
 
 impl From<u32> for ButtonStyle {
     fn from(value: u32) -> Self {
         match value {
             1 => ButtonStyle::Secondary,
-            2 => ButtonStyle::Ghost,
-            3 => ButtonStyle::Danger,
-            4 => ButtonStyle::Tertiary,
+            2 => ButtonStyle::Danger,
+            3 => ButtonStyle::Tertiary,
             _ => ButtonStyle::Primary,
         }
     }
@@ -69,7 +63,6 @@ impl ButtonStyle {
         match self {
             ButtonStyle::Primary => (BTN_PRIMARY_BG, BTN_PRIMARY_BG_ACTIVE),
             ButtonStyle::Secondary => (BTN_SECONDARY_BG, BTN_SECONDARY_BG_ACTIVE),
-            ButtonStyle::Ghost => (BTN_GHOST_BG, BTN_GHOST_BG_ACTIVE),
             ButtonStyle::Danger => (BTN_DANGER_BG, BTN_DANGER_BG_ACTIVE),
             ButtonStyle::Tertiary => (BTN_TERTIARY_BG, BTN_TERTIARY_BG_ACTIVE),
         }
@@ -82,10 +75,7 @@ impl ButtonStyle {
     fn border_color(self) -> u32 {
         match self {
             ButtonStyle::Tertiary => BTN_TERTIARY_BORDER,
-            ButtonStyle::Primary
-            | ButtonStyle::Secondary
-            | ButtonStyle::Ghost
-            | ButtonStyle::Danger => 0,
+            ButtonStyle::Primary | ButtonStyle::Secondary | ButtonStyle::Danger => 0,
         }
     }
 }
@@ -101,6 +91,7 @@ pub fn draw_button(
     pixmap: &mut Pixmap,
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
+    text_cache: &mut ShapedTextCache,
     interaction: &mut InteractionState,
     key: &str,
     label: &str,
@@ -148,6 +139,7 @@ pub fn draw_button(
         pixmap,
         font_system,
         swash_cache,
+        text_cache,
         label,
         text_x,
         text_y,

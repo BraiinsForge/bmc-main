@@ -10,13 +10,21 @@ use std::f32::consts::PI;
 thread_local! {
     static WIDTH: Cell<u32> = const { Cell::new(1_280) };
     static HEIGHT: Cell<u32> = const { Cell::new(480) };
-    static COUNTS: RefCell<[u32; 5]> = const { RefCell::new([0; 5]) };
+    static COUNTS: RefCell<[u32; 4]> = const { RefCell::new([0; 4]) };
     static PULSE_DIR: Cell<bool> = const { Cell::new(true) };
+    static MODAL_OPEN: Cell<bool> = const { Cell::new(false) };
+    /// Track modal state changes for animation timing
+    static MODAL_PREV: Cell<bool> = const { Cell::new(false) };
+    /// Frames since modal state changed (for animation duration)
+    static MODAL_ANIM_FRAMES: Cell<u32> = const { Cell::new(0) };
 }
 
 animated!(FADE: f32);
 animated!(ROTATION: f32);
 animated!(PULSE: f32);
+
+// Background color (burgundy/magenta)
+const BG_COLOR: u32 = 0x66_23_47_FF;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init(width: u32, height: u32) {
@@ -32,28 +40,33 @@ pub extern "C" fn init(width: u32, height: u32) {
 pub extern "C" fn render(delta_ms: u32) {
     let w = WIDTH.get();
     let h = HEIGHT.get();
+    let modal_open = MODAL_OPEN.get();
 
-    // Tick animations
+    // Tick fade animation (always, for initial load)
     FADE::tick(delta_ms);
-    ROTATION::tick(delta_ms);
-    PULSE::tick(delta_ms);
 
-    // Loop rotation
-    if ROTATION::is_finished() {
-        ROTATION::reset();
-    }
+    // Only tick background animations when modal is closed
+    if !modal_open {
+        ROTATION::tick(delta_ms);
+        PULSE::tick(delta_ms);
 
-    // Ping-pong pulse
-    if PULSE::is_finished() {
-        let growing = PULSE_DIR.get();
-        PULSE_DIR.set(!growing);
-        PULSE::with(|p| {
-            p.set_tween(if growing {
-                DynTween::new(1.0, 0.5, 1_000, easing::ease_in_out)
-            } else {
-                DynTween::new(0.5, 1.0, 1_000, easing::ease_in_out)
+        // Loop rotation
+        if ROTATION::is_finished() {
+            ROTATION::reset();
+        }
+
+        // Ping-pong pulse
+        if PULSE::is_finished() {
+            let growing = PULSE_DIR.get();
+            PULSE_DIR.set(!growing);
+            PULSE::with(|p| {
+                p.set_tween(if growing {
+                    DynTween::new(1.0, 0.5, 1_000, easing::ease_in_out)
+                } else {
+                    DynTween::new(0.5, 1.0, 1_000, easing::ease_in_out)
+                });
             });
-        });
+        }
     }
 
     let fade = FADE::get();
@@ -66,11 +79,14 @@ pub extern "C" fn render(delta_ms: u32) {
     let clock_hour_mark_width = 8.0;
     let clock_hour_mark_height = 1.5;
 
+    let _wf = w as f32;
+    let _hf = h as f32;
+
     let result = render_ui(
         w,
         h,
         col(
-            props!(padding: 24.0, gap: 24.0),
+            props!(background: BG_COLOR, padding: 24.0, gap: 24.0),
             [
                 // Top row: Buttons, Animations, Colors
                 row(
@@ -101,13 +117,14 @@ pub extern "C" fn render(delta_ms: u32) {
                                             ButtonStyle::Tertiary,
                                             format!("Tertiary {}", counts[2]),
                                         ),
-                                        button(ButtonStyle::Ghost, format!("Ghost {}", counts[3])),
                                         button(
                                             ButtonStyle::Danger,
-                                            format!("Danger {}", counts[4]),
+                                            format!("Danger {}", counts[3]),
                                         ),
                                     ],
                                 ),
+                                spacer(1.0),
+                                button(ButtonStyle::Primary, "Open Modal"),
                             ],
                         ),
                         // Middle column: Animations
@@ -213,7 +230,7 @@ pub extern "C" fn render(delta_ms: u32) {
                 ),
                 // Bottom section: Rich text demos
                 col(
-                    props!(gap: 12.0, background: GRAY_90, padding: 16.0),
+                    props!(gap: 12.0, background: color!(GRAY_90, alpha: 0.9), padding: 16.0),
                     [
                         text("Rich Text", style!(size: 20, color: header_color)),
                         row(
@@ -275,19 +292,104 @@ pub extern "C" fn render(delta_ms: u32) {
                         ),
                     ],
                 ),
+                // Modal overlay (rendered on top when open)
+                modal(
+                    1, // modal_id
+                    MODAL_OPEN.get(),
+                    "About This Demo",
+                    600.0, // content_height estimate
+                    [
+                        text(
+                            "This is a showcase of the WASM widget SDK capabilities.",
+                            style!(size: 14, line_height: 1.5),
+                        ),
+                        text("Features demonstrated:", style!(size: 14, weight: 700)),
+                        text(
+                            "• Button styles (Primary, Secondary, Tertiary, Danger)",
+                            style!(size: 14),
+                        ),
+                        text("• Animations (rotation, pulse, fade)", style!(size: 14)),
+                        text("• Color palette (brand colors, grays)", style!(size: 14)),
+                        text(
+                            "• Rich text (bold, italic, underline, colors)",
+                            style!(size: 14),
+                        ),
+                        text("• Modal dialogs with scroll support", style!(size: 14)),
+                        spacer(1.0),
+                        text(
+                            "Scroll Test Content",
+                            style!(size: 16, weight: 700, color: VIOLET_50),
+                        ),
+                        text(
+                            "The following paragraphs test scrolling.",
+                            style!(size: 14, line_height: 1.4),
+                        ),
+                        text(
+                            "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+                            style!(size: 14, line_height: 1.4),
+                        ),
+                        text(
+                            "Ut enim ad minim veniam, quis nostrud exercitation.",
+                            style!(size: 14, line_height: 1.4),
+                        ),
+                        text(
+                            "Duis aute irure dolor in reprehenderit in voluptate.",
+                            style!(size: 14, line_height: 1.4),
+                        ),
+                        spacer(1.0),
+                        text("— End of content —", style!(size: 12, color: GRAY_50)),
+                    ],
+                ),
             ],
         ),
     );
 
     // Handle button clicks
+    // Buttons 0-3: counter buttons (Primary, Secondary, Tertiary, Danger)
+    // Button 4: "Open Modal"
+    // Button 5: Modal close (only when modal is open)
     for (i, &clicked) in result.clicks.iter().enumerate() {
         if clicked {
-            COUNTS.with(|c| {
-                let mut counts = c.borrow_mut();
-                counts[i] = counts[i].saturating_add(1);
-            });
+            match i {
+                0..=3 => {
+                    COUNTS.with(|c| {
+                        let mut counts = c.borrow_mut();
+                        counts[i] = counts[i].saturating_add(1);
+                    });
+                }
+                4 => {
+                    // Open modal
+                    MODAL_OPEN.set(true);
+                }
+                5 => {
+                    // Close modal
+                    MODAL_OPEN.set(false);
+                }
+                _ => {}
+            }
         }
     }
 
-    request_frame();
+    // Re-read modal state after processing clicks
+    let modal_open = MODAL_OPEN.get();
+
+    // Track modal state changes for animation
+    let modal_prev = MODAL_PREV.get();
+    if modal_open != modal_prev {
+        MODAL_PREV.set(modal_open);
+        MODAL_ANIM_FRAMES.set(0);
+    }
+    let modal_anim_frames = MODAL_ANIM_FRAMES.get();
+    MODAL_ANIM_FRAMES.set(modal_anim_frames.saturating_add(1));
+
+    // Request next frame only when needed:
+    // - Initial fade animation running
+    // - Modal closed (background animations running)
+    // - Modal animating (first ~20 frames after state change, ~300ms at 60fps)
+    let fade_running = !FADE::is_finished();
+    let modal_animating = modal_anim_frames < 20;
+
+    if fade_running || !modal_open || modal_animating {
+        request_frame();
+    }
 }

@@ -14,7 +14,7 @@ use std::vec::Vec;
 
 use bmc_wasm_protocol::{
     DRAW_CENTERED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, GRAY_10, NODE_BUTTON, NODE_CANVAS,
-    NODE_CENTER, NODE_COLUMN, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for macro paths
@@ -211,6 +211,30 @@ impl TreeBuffer {
         self.write_u16(draw_count);
     }
 
+    /// Write a modal node
+    /// Format: [NODE_MODAL][modal_id:u16][is_open:u8][padding:u16][backdrop_alpha:u8][title_len:u16][title_bytes...][content_height:f32][child_count:u16][children...]
+    pub fn write_modal(
+        &mut self,
+        modal_id: u16,
+        is_open: bool,
+        padding: u16,
+        backdrop_alpha: u8,
+        title: &str,
+        content_height: f32,
+        child_count: u16,
+    ) {
+        self.write_u8(NODE_MODAL);
+        self.write_u16(modal_id);
+        self.write_u8(if is_open { 1 } else { 0 });
+        self.write_u16(padding);
+        self.write_u8(backdrop_alpha);
+        let title_bytes = title.as_bytes();
+        self.write_u16(title_bytes.len() as u16);
+        self.write_bytes(title_bytes);
+        self.write_f32(content_height);
+        self.write_u16(child_count);
+    }
+
     /// Write a rect draw command (local coords)
     pub fn write_draw_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32) {
         self.write_u8(DRAW_RECT);
@@ -298,6 +322,16 @@ pub enum Node {
         flex: f32,
     },
     Canvas(PropsData, Vec<Draw>),
+    /// Modal dialog overlay with title, close button, and scrollable body
+    Modal {
+        modal_id: u16,
+        is_open: bool,
+        title: String,
+        content_height: f32,
+        padding: u16,
+        backdrop_alpha: u8,
+        body: Vec<Node>,
+    },
 }
 
 /// Result from tree rendering
@@ -373,6 +407,84 @@ pub fn canvas(props: PropsData, draws: impl IntoIterator<Item = Draw>) -> Node {
     Node::Canvas(props, draws.into_iter().collect())
 }
 
+/// Modal dialog configuration
+#[derive(Clone, Default)]
+pub struct ModalProps {
+    /// Margin around the modal content area in pixels.
+    /// This creates space between the modal and screen edges where the
+    /// semi-transparent backdrop is visible.
+    /// Default: 48 pixels
+    pub padding: u16,
+
+    /// Backdrop opacity as 0-255 value (0 = fully transparent, 255 = fully opaque).
+    /// The backdrop is the dark overlay behind the modal that dims the background content.
+    /// Lower values make more of the background visible through the overlay.
+    /// Default: 128 (50% opacity)
+    pub backdrop_alpha: u8,
+}
+
+impl ModalProps {
+    /// Default margin around modal content (48 pixels)
+    pub const DEFAULT_PADDING: u16 = 48;
+    /// Default backdrop opacity (128 = 50%)
+    pub const DEFAULT_BACKDROP_ALPHA: u8 = 128;
+}
+
+/// Modal dialog overlay with title, close button, and scrollable body.
+///
+/// - `modal_id`: Unique ID for state tracking (must be unique per modal instance)
+/// - `is_open`: Whether the modal is visible
+/// - `title`: Header title text
+/// - `content_height`: Estimated total height of body content (for scroll sizing)
+/// - `body`: Child nodes for the modal body
+///
+/// The close button is automatically included in the header. It uses the next
+/// available button index after any buttons in the body.
+pub fn modal(
+    modal_id: u16,
+    is_open: bool,
+    title: impl Into<String>,
+    content_height: f32,
+    body: impl IntoIterator<Item = Node>,
+) -> Node {
+    modal_styled(
+        modal_id,
+        is_open,
+        title,
+        content_height,
+        ModalProps::default(),
+        body,
+    )
+}
+
+/// Modal dialog with custom styling props.
+pub fn modal_styled(
+    modal_id: u16,
+    is_open: bool,
+    title: impl Into<String>,
+    content_height: f32,
+    props: ModalProps,
+    body: impl IntoIterator<Item = Node>,
+) -> Node {
+    Node::Modal {
+        modal_id,
+        is_open,
+        title: title.into(),
+        content_height,
+        padding: if props.padding == 0 {
+            ModalProps::DEFAULT_PADDING
+        } else {
+            props.padding
+        },
+        backdrop_alpha: if props.backdrop_alpha == 0 {
+            ModalProps::DEFAULT_BACKDROP_ALPHA
+        } else {
+            props.backdrop_alpha
+        },
+        body: body.into_iter().collect(),
+    }
+}
+
 /// Rectangle at local position within canvas
 pub fn rect(x: f32, y: f32, w: f32, h: f32, color: u32) -> Draw {
     Draw::Rect { x, y, w, h, color }
@@ -442,6 +554,28 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
                 serialize_draw(buf, draw);
             }
         }
+        Node::Modal {
+            modal_id,
+            is_open,
+            title,
+            content_height,
+            padding,
+            backdrop_alpha,
+            body,
+        } => {
+            buf.write_modal(
+                *modal_id,
+                *is_open,
+                *padding,
+                *backdrop_alpha,
+                title,
+                *content_height,
+                body.len() as u16,
+            );
+            for child in body {
+                serialize_node(buf, child);
+            }
+        }
     }
 }
 
@@ -480,6 +614,15 @@ fn count_buttons(node: &Node) -> u32 {
             children.iter().map(count_buttons).sum()
         }
         Node::Button { .. } => 1,
+        // Modal has an implicit close button when open
+        Node::Modal { is_open, body, .. } => {
+            let body_buttons: u32 = body.iter().map(count_buttons).sum();
+            if *is_open {
+                body_buttons + 1 // +1 for close button
+            } else {
+                0 // closed modal contributes no buttons
+            }
+        }
         _ => 0,
     }
 }

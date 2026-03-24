@@ -1,15 +1,22 @@
 # Future Improvements
 
-## Binary Compatibility
+## Performance
 
-- Add SDK version detection to host runtime
-- Check for binary format compatibility at widget load time
-- Show when SDK version mismatch requires recompile
+- Declarative host-side animations to replace keyframe dependency (see [design doc](declarative-animations.md))
+- GPU rendering with shaders (wgpu?) to replace tiny-skia software rasterizer
 
 ## API Enhancements
 
-- More draw primitives (circles, lines, etc.)
+- More draw primitives (circles, lines, arcs)
+- Scroll momentum / inertial scrolling for modals
+- Theming support
+
+## Binary Compatibility
+
+- SDK version detection in host runtime
+- Binary format compatibility check at widget load time
+- Mismatch warning when recompile is needed
 
 ## QA
 
-- Does it make sense to setup [cargo-deny](https://github.com/EmbarkStudios/cargo-deny)?
+- [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) for dependency auditing

@@ -117,6 +117,7 @@ impl WasmWidgetRuntime {
                         &mut state.pixmap,
                         &mut state.font_system,
                         &mut state.swash_cache,
+                        &mut state.text_cache,
                         &text,
                         x,
                         y,
@@ -199,6 +200,7 @@ impl WasmWidgetRuntime {
                         &mut state.pixmap,
                         &mut state.font_system,
                         &mut state.swash_cache,
+                        &mut state.text_cache,
                         &mut state.interaction,
                         &key,
                         &label,
@@ -237,6 +239,7 @@ impl WasmWidgetRuntime {
 
                 if let Some(data) = tree_data {
                     let state = caller.data_mut();
+                    let delta_ms = state.delta_ms;
                     match tree::process_tree(
                         &data,
                         width,
@@ -244,7 +247,10 @@ impl WasmWidgetRuntime {
                         &mut state.pixmap,
                         &mut state.font_system,
                         &mut state.swash_cache,
+                        &mut state.text_cache,
                         &mut state.interaction,
+                        &mut state.modal_states,
+                        delta_ms,
                     ) {
                         Ok(result) => {
                             state.tree_clicks = result.clicks;
@@ -285,6 +291,9 @@ impl WasmWidgetRuntime {
 
         // Clear overlay
         self.store.data_mut().clear_overlay();
+
+        // Store delta_ms for animations (used by host_submit_tree)
+        self.store.data_mut().delta_ms = delta_ms;
 
         // Reset fuel budget
         self.store.set_fuel(Self::FUEL_PER_FRAME)?;

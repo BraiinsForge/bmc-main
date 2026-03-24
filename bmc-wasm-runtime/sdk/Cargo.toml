@@ -23,3 +23,7 @@ module_name_repetitions = "allow"
 
 # Keep this crate out of the main workspace
 [workspace]
+
+[workspace.dependencies]
+keyframe = "1.1"
+libm = "0.2"

@@ -5,9 +5,24 @@
 /// Touch event from the host.
 #[derive(Debug, Clone, Copy)]
 pub enum TouchEvent {
-    Down { x: i32, y: i32 },
-    Up { x: i32, y: i32 },
-    Move { x: i32, y: i32 },
+    Down {
+        x: i32,
+        y: i32,
+    },
+    Up {
+        x: i32,
+        y: i32,
+    },
+    Move {
+        x: i32,
+        y: i32,
+    },
+    /// Mouse wheel scroll event. delta_y is positive for scroll down, negative for scroll up.
+    Scroll {
+        x: i32,
+        y: i32,
+        delta_y: i32,
+    },
 }
 
 /// Rectangle for hit testing.

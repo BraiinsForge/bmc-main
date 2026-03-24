@@ -11,8 +11,9 @@
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::{
-    DRAW_CENTERED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, NODE_BUTTON, NODE_CANVAS, NODE_CENTER,
-    NODE_COLUMN, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    DRAW_CENTERED, DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, GRAY_10, GRAY_50, GRAY_70, GRAY_90,
+    GRAY_100, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH,
+    NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for other modules
@@ -69,7 +70,7 @@ pub enum DrawCommand {
 }
 
 /// Deserialized tree node
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TreeNode {
     Column(PropsData, Vec<TreeNode>),
     Row(PropsData, Vec<TreeNode>),
@@ -87,6 +88,16 @@ pub enum TreeNode {
         flex: f32,
     },
     Canvas(PropsData, Vec<DrawCommand>),
+    /// Modal dialog overlay
+    Modal {
+        modal_id: u16,
+        is_open: bool,
+        padding: u16,
+        backdrop_alpha: u8,
+        title: String,
+        content_height: f32,
+        body: Vec<TreeNode>,
+    },
 }
 
 /// Reader for deserializing tree from bytes
@@ -254,6 +265,29 @@ impl<'a> TreeReader<'a> {
                 }
                 Ok(TreeNode::Canvas(props, draws))
             }
+            NODE_MODAL => {
+                let modal_id = self.read_u16()?;
+                let is_open = self.read_u8()? != 0;
+                let padding = self.read_u16()?;
+                let backdrop_alpha = self.read_u8()?;
+                let title_len = self.read_u16()?;
+                let title = self.read_string(title_len)?;
+                let content_height = self.read_f32()?;
+                let child_count = self.read_u16()?;
+                let mut body = Vec::with_capacity(child_count as usize);
+                for _ in 0..child_count {
+                    body.push(self.read_node()?);
+                }
+                Ok(TreeNode::Modal {
+                    modal_id,
+                    is_open,
+                    padding,
+                    backdrop_alpha,
+                    title,
+                    content_height,
+                    body,
+                })
+            }
             _ => bail!("unknown node type: {}", node_type),
         }
     }
@@ -315,13 +349,18 @@ pub fn deserialize_tree(data: &[u8]) -> Result<TreeNode> {
 // Layout Engine
 // ============================================================================
 
+use std::collections::HashMap;
+
 use cosmic_text::{FontSystem, SwashCache};
 use taffy::prelude::*;
 use tiny_skia::Pixmap;
 
 use crate::components::{ButtonStyle, draw_button};
 use crate::drawing::shapes::{fill_rect, fill_rotated_rect};
-use crate::drawing::text::{measure_paragraph, render_paragraph};
+use crate::drawing::text::{
+    ShapedTextCache, measure_paragraph, render_paragraph, render_paragraph_clipped,
+};
+use crate::host_api::ModalState;
 use crate::interaction::InteractionState;
 
 /// Result from processing a tree
@@ -347,7 +386,21 @@ struct NodeContext {
     draws: Vec<DrawCommand>,           // canvas draw commands
 }
 
+/// Collected modal info for overlay rendering
+struct ModalInfo {
+    modal_id: u16,
+    is_open: bool,
+    padding: u16,
+    backdrop_alpha: u8,
+    title: String,
+    content_height: f32,
+    body: Vec<TreeNode>,
+    /// Starting button index for this modal's buttons
+    button_index_start: u32,
+}
+
 /// Process a tree: deserialize, layout, render
+#[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
 pub fn process_tree(
     data: &[u8],
     width: u32,
@@ -355,15 +408,25 @@ pub fn process_tree(
     pixmap: &mut Pixmap,
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
+    text_cache: &mut ShapedTextCache,
     interaction: &mut InteractionState,
+    modal_states: &mut HashMap<u16, ModalState>,
+    delta_ms: u32,
 ) -> Result<TreeResult> {
     let tree_node = deserialize_tree(data)?;
     let mut result = TreeResult::default();
     let mut button_id: u32 = 0;
+    let mut modals: Vec<ModalInfo> = Vec::new();
 
-    // Build taffy tree
+    // Build taffy tree (collects modals separately)
     let mut taffy: TaffyTree<NodeContext> = TaffyTree::new();
-    let root_id = build_taffy_node(&mut taffy, &tree_node, &mut result, &mut button_id)?;
+    let root_id = build_taffy_node(
+        &mut taffy,
+        &tree_node,
+        &mut result,
+        &mut button_id,
+        &mut modals,
+    )?;
 
     // Set root size
     if let Ok(style) = taffy.style(root_id) {
@@ -421,7 +484,7 @@ pub fn process_tree(
         },
     )?;
 
-    // Render
+    // Render main tree
     render_taffy_node(
         &taffy,
         root_id,
@@ -430,9 +493,27 @@ pub fn process_tree(
         pixmap,
         font_system,
         swash_cache,
+        text_cache,
         interaction,
         &mut result,
     );
+
+    // Render modal overlays
+    for modal in &modals {
+        render_modal(
+            modal,
+            width,
+            height,
+            pixmap,
+            font_system,
+            swash_cache,
+            text_cache,
+            interaction,
+            modal_states,
+            delta_ms,
+            &mut result,
+        );
+    }
 
     Ok(result)
 }
@@ -443,6 +524,7 @@ fn build_taffy_node(
     node: &TreeNode,
     result: &mut TreeResult,
     button_id: &mut u32,
+    modals: &mut Vec<ModalInfo>,
 ) -> Result<taffy::NodeId> {
     match node {
         TreeNode::Column(props, children)
@@ -450,7 +532,7 @@ fn build_taffy_node(
         | TreeNode::Center(props, children) => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_taffy_node(taffy, c, result, button_id))
+                .map(|c| build_taffy_node(taffy, c, result, button_id, modals))
                 .collect::<Result<_>>()?;
 
             let is_center = matches!(node, TreeNode::Center(_, _));
@@ -585,6 +667,51 @@ fn build_taffy_node(
             )?;
             Ok(id)
         }
+
+        TreeNode::Modal {
+            modal_id,
+            is_open,
+            padding,
+            backdrop_alpha,
+            title,
+            content_height,
+            body,
+        } => {
+            // Record button index start for this modal
+            let button_index_start = *button_id;
+
+            // Count buttons in modal body and allocate slots
+            if *is_open {
+                for child in body {
+                    count_tree_buttons(child, button_id, result);
+                }
+                // Close button gets the next index
+                result.clicks.push(false);
+                *button_id += 1;
+            }
+
+            // Store modal for overlay rendering
+            modals.push(ModalInfo {
+                modal_id: *modal_id,
+                is_open: *is_open,
+                padding: *padding,
+                backdrop_alpha: *backdrop_alpha,
+                title: title.clone(),
+                content_height: *content_height,
+                body: body.clone(),
+                button_index_start,
+            });
+
+            // Modal doesn't participate in normal layout - zero-size placeholder
+            let style = Style {
+                size: Size {
+                    width: length(0.0),
+                    height: length(0.0),
+                },
+                ..Default::default()
+            };
+            Ok(taffy.new_leaf(style)?)
+        }
     }
 }
 
@@ -597,6 +724,7 @@ fn render_taffy_node(
     pixmap: &mut Pixmap,
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
+    text_cache: &mut ShapedTextCache,
     interaction: &mut InteractionState,
     result: &mut TreeResult,
 ) {
@@ -631,6 +759,7 @@ fn render_taffy_node(
                 pixmap,
                 font_system,
                 swash_cache,
+                text_cache,
                 interaction,
                 key,
                 label,
@@ -660,6 +789,7 @@ fn render_taffy_node(
             pixmap,
             font_system,
             swash_cache,
+            text_cache,
             interaction,
             result,
         );
@@ -767,6 +897,492 @@ fn render_draw_inner(
             );
         }
     }
+}
+
+/// Count buttons in a tree node (for modal body button allocation)
+fn count_tree_buttons(node: &TreeNode, button_id: &mut u32, result: &mut TreeResult) {
+    match node {
+        TreeNode::Column(_, children)
+        | TreeNode::Row(_, children)
+        | TreeNode::Center(_, children) => {
+            for child in children {
+                count_tree_buttons(child, button_id, result);
+            }
+        }
+        TreeNode::Button { .. } => {
+            result.clicks.push(false);
+            *button_id += 1;
+        }
+        TreeNode::Modal { is_open, body, .. } => {
+            if *is_open {
+                for child in body {
+                    count_tree_buttons(child, button_id, result);
+                }
+                // Close button
+                result.clicks.push(false);
+                *button_id += 1;
+            }
+        }
+        TreeNode::Paragraph { .. } | TreeNode::Spacer { .. } | TreeNode::Canvas(..) => {}
+    }
+}
+
+// Modal rendering constants
+const MODAL_HEADER_HEIGHT: u32 = 48;
+const MODAL_ANIMATION_OPEN_MS: f32 = 250.0;
+const MODAL_ANIMATION_CLOSE_MS: f32 = 180.0;
+
+/// Render a modal overlay
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::cast_possible_wrap
+)]
+fn render_modal(
+    modal: &ModalInfo,
+    width: u32,
+    height: u32,
+    pixmap: &mut Pixmap,
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    text_cache: &mut ShapedTextCache,
+    interaction: &mut InteractionState,
+    modal_states: &mut HashMap<u16, ModalState>,
+    delta_ms: u32,
+    result: &mut TreeResult,
+) {
+    // Get or create modal state
+    let state = modal_states.entry(modal.modal_id).or_default();
+
+    // Detect state transitions and update animation
+    let was_open = state.is_open;
+    state.is_open = modal.is_open;
+    state.content_height = modal.content_height;
+
+    if modal.is_open && !was_open {
+        // Opening: start animation from current progress (or 0)
+        // Animation will progress towards 1.0
+    } else if !modal.is_open && was_open {
+        // Closing: animation will progress towards 0.0
+        // Reset scroll when closing
+        state.scroll_offset = 0.0;
+        state.is_dragging = false;
+    }
+
+    // Advance animation
+    if modal.is_open {
+        let delta = delta_ms as f32 / MODAL_ANIMATION_OPEN_MS;
+        state.animation_progress = (state.animation_progress + delta).min(1.0);
+    } else {
+        let delta = delta_ms as f32 / MODAL_ANIMATION_CLOSE_MS;
+        state.animation_progress = (state.animation_progress - delta).max(0.0);
+    }
+
+    // Skip rendering if fully closed
+    if state.animation_progress <= 0.0 {
+        return;
+    }
+
+    // Easing functions (ease-out for open, ease-in for close)
+    let progress = if modal.is_open {
+        ease_out(state.animation_progress)
+    } else {
+        ease_in(state.animation_progress)
+    };
+
+    // Draw backdrop (alpha from modal props, scaled by animation progress)
+    let padding = u32::from(modal.padding);
+    let backdrop_alpha = ((f32::from(modal.backdrop_alpha) / 255.0) * progress * 255.0) as u8;
+    let backdrop_color = u32::from_be_bytes([0, 0, 0, backdrop_alpha]);
+    fill_rect(pixmap, 0, 0, width, height, backdrop_color);
+
+    // Modal content dimensions
+    let modal_width = width.saturating_sub(padding * 2);
+    let modal_height = height.saturating_sub(padding * 2);
+    // Body height = modal height - header - internal padding (16px top + 16px bottom)
+    let body_padding = 16_u32;
+    let body_height = modal_height.saturating_sub(MODAL_HEADER_HEIGHT + body_padding * 2);
+    state.viewport_height = body_height as f32;
+
+    // Animate content position (slide down from -100px)
+    let slide_offset = ((1.0 - progress) * -100.0) as i32;
+    let modal_x = padding as i32;
+    let modal_y = padding as i32 + slide_offset;
+
+    // Content is always fully opaque - only backdrop animates opacity
+    // This prevents ugly alpha blending of text over background content
+
+    // Draw modal background
+    let modal_bg = GRAY_90;
+    fill_rect(
+        pixmap,
+        modal_x,
+        modal_y,
+        modal_width,
+        modal_height,
+        modal_bg,
+    );
+
+    // Draw header background
+    let header_bg = GRAY_100;
+    fill_rect(
+        pixmap,
+        modal_x,
+        modal_y,
+        modal_width,
+        MODAL_HEADER_HEIGHT,
+        header_bg,
+    );
+
+    // Draw header title
+    let title_style = TextStyle {
+        size: 16,
+        weight: 600,
+        color: GRAY_10,
+        ..Default::default()
+    };
+    let title_spans = vec![SpanData {
+        text: modal.title.clone(),
+        weight: None,
+        color: None,
+        italic: false,
+        underline: false,
+        strikethrough: false,
+    }];
+    render_paragraph(
+        pixmap,
+        font_system,
+        swash_cache,
+        &title_style,
+        &title_spans,
+        modal_x + 16,
+        modal_y + 12,
+        modal_width - 64, // Leave space for close button
+    );
+
+    // Draw close button (X icon in top-right)
+    let close_btn_x = modal_x + modal_width as i32 - 48;
+    let close_btn_y = modal_y;
+    let close_btn_size = MODAL_HEADER_HEIGHT;
+
+    // Close button uses the last button index for this modal
+    let close_btn_id = modal.button_index_start + count_modal_body_buttons(&modal.body);
+    let mut key_buf = [0_u8; 16];
+    let close_key = format_btn_key(close_btn_id, &mut key_buf);
+
+    let close_clicked = draw_button(
+        pixmap,
+        font_system,
+        swash_cache,
+        text_cache,
+        interaction,
+        close_key,
+        "✕",
+        close_btn_x,
+        close_btn_y,
+        close_btn_size,
+        close_btn_size,
+        ButtonStyle::Secondary,
+    );
+
+    if close_clicked && (close_btn_id as usize) < result.clicks.len() {
+        result.clicks[close_btn_id as usize] = true;
+    }
+
+    // Body area with scrolling
+    let body_x = modal_x;
+    let body_y = modal_y + MODAL_HEADER_HEIGHT as i32;
+
+    // Register scroll region for touch handling
+    let body_key = format!("modal_{}_body", modal.modal_id);
+    let scroll_region = crate::interaction::Rect::new(body_x, body_y, modal_width, body_height);
+    interaction.button(&body_key, scroll_region);
+
+    // Apply scroll delta from touch drag or mouse wheel
+    let scroll_delta = if interaction.is_pressed(&body_key) {
+        // Touch drag: invert delta (drag up = scroll down)
+        -interaction.get_scroll_delta(&body_key)
+    } else {
+        // Mouse wheel: use global delta (positive = scroll down)
+        interaction.get_global_scroll_delta()
+    };
+    state.scroll_offset += scroll_delta as f32;
+
+    // Clamp scroll offset
+    let max_scroll = (modal.content_height - body_height as f32).max(0.0);
+    state.scroll_offset = state.scroll_offset.clamp(0.0, max_scroll);
+
+    // Render body content with scroll offset
+    // For now, render body children in a column layout within the body area
+    let content_y = body_y + body_padding as i32 - state.scroll_offset as i32;
+    let clip_top = body_y + body_padding as i32;
+    let clip_bottom = body_y + body_padding as i32 + body_height as i32;
+    render_modal_body(
+        &modal.body,
+        body_x + body_padding as i32,
+        content_y,
+        modal_width - body_padding * 2,
+        body_height,
+        pixmap,
+        font_system,
+        swash_cache,
+        text_cache,
+        interaction,
+        result,
+        modal.button_index_start,
+        clip_top,
+        clip_bottom,
+    );
+
+    // Draw scrollbar if content exceeds viewport
+    if modal.content_height > body_height as f32 {
+        let scrollbar_width = 4_u32;
+        let scrollbar_x = modal_x + modal_width as i32 - scrollbar_width as i32 - 4;
+        let scrollbar_track_y = body_y + 4;
+        let scrollbar_track_height = body_height - 8;
+
+        // Track
+        let track_color = GRAY_70;
+        fill_rect(
+            pixmap,
+            scrollbar_x,
+            scrollbar_track_y,
+            scrollbar_width,
+            scrollbar_track_height,
+            track_color,
+        );
+
+        // Thumb
+        let thumb_ratio = body_height as f32 / modal.content_height;
+        let thumb_height = (scrollbar_track_height as f32 * thumb_ratio).max(20.0) as u32;
+        let scroll_ratio = state.scroll_offset / max_scroll.max(1.0);
+        let thumb_y = scrollbar_track_y
+            + (scroll_ratio * (scrollbar_track_height - thumb_height) as f32) as i32;
+
+        let thumb_color = GRAY_50;
+        fill_rect(
+            pixmap,
+            scrollbar_x,
+            thumb_y,
+            scrollbar_width,
+            thumb_height,
+            thumb_color,
+        );
+    }
+}
+
+/// Count buttons in modal body (excluding close button)
+fn count_modal_body_buttons(body: &[TreeNode]) -> u32 {
+    let mut count = 0;
+    for node in body {
+        count += count_node_buttons(node);
+    }
+    count
+}
+
+fn count_node_buttons(node: &TreeNode) -> u32 {
+    match node {
+        TreeNode::Column(_, children)
+        | TreeNode::Row(_, children)
+        | TreeNode::Center(_, children) => children.iter().map(count_node_buttons).sum(),
+        TreeNode::Button { .. } => 1,
+        TreeNode::Modal { is_open, body, .. } => {
+            if *is_open {
+                count_modal_body_buttons(body) + 1
+            } else {
+                0
+            }
+        }
+        TreeNode::Paragraph { .. } | TreeNode::Spacer { .. } | TreeNode::Canvas(..) => 0,
+    }
+}
+
+/// Render modal body children with clipping
+#[expect(clippy::too_many_arguments, clippy::cast_possible_wrap)]
+fn render_modal_body(
+    body: &[TreeNode],
+    x: i32,
+    mut y: i32,
+    width: u32,
+    _available_height: u32,
+    pixmap: &mut Pixmap,
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    text_cache: &mut ShapedTextCache,
+    interaction: &mut InteractionState,
+    result: &mut TreeResult,
+    button_index_start: u32,
+    clip_top: i32,
+    clip_bottom: i32,
+) {
+    let mut button_idx = button_index_start;
+
+    for node in body {
+        let node_height = render_modal_body_node(
+            node,
+            x,
+            y,
+            width,
+            pixmap,
+            font_system,
+            swash_cache,
+            text_cache,
+            interaction,
+            result,
+            &mut button_idx,
+            clip_top,
+            clip_bottom,
+        );
+        y += node_height as i32 + 8; // 8px gap between items
+    }
+}
+
+/// Render a single modal body node, returning its height
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::cast_possible_wrap,
+    clippy::integer_division
+)]
+fn render_modal_body_node(
+    node: &TreeNode,
+    x: i32,
+    y: i32,
+    width: u32,
+    pixmap: &mut Pixmap,
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    text_cache: &mut ShapedTextCache,
+    interaction: &mut InteractionState,
+    result: &mut TreeResult,
+    button_idx: &mut u32,
+    clip_top: i32,
+    clip_bottom: i32,
+) -> u32 {
+    // Skip if completely outside clip region
+    // (would need height first, but we'll render and let pixel-level clipping handle it)
+
+    match node {
+        TreeNode::Paragraph {
+            base_style, spans, ..
+        } => {
+            // Measure first to get actual height
+            let (_, h) = measure_paragraph(font_system, base_style, spans, Some(width as f32));
+            let h_i32 = h as i32;
+
+            // Only render if at least partially visible
+            if y < clip_bottom && y + h_i32 > clip_top {
+                render_paragraph_clipped(
+                    pixmap,
+                    font_system,
+                    swash_cache,
+                    base_style,
+                    spans,
+                    x,
+                    y,
+                    width,
+                    clip_top,
+                    clip_bottom,
+                );
+            }
+            h as u32
+        }
+        TreeNode::Button { label, style } => {
+            let btn_id = *button_idx;
+            *button_idx += 1;
+
+            let btn_width = (label.len() as u32 * 10).max(120) + 32;
+            let btn_height = 48_u32;
+
+            if y < clip_bottom && y + btn_height as i32 > clip_top {
+                let mut key_buf = [0_u8; 16];
+                let key = format_btn_key(btn_id, &mut key_buf);
+                let clicked = draw_button(
+                    pixmap,
+                    font_system,
+                    swash_cache,
+                    text_cache,
+                    interaction,
+                    key,
+                    label,
+                    x,
+                    y,
+                    btn_width,
+                    btn_height,
+                    ButtonStyle::from(*style as u32),
+                );
+                if clicked && (btn_id as usize) < result.clicks.len() {
+                    result.clicks[btn_id as usize] = true;
+                }
+            }
+
+            btn_height
+        }
+        TreeNode::Column(_, children) => {
+            let mut total_height = 0_u32;
+            let mut child_y = y;
+            for child in children {
+                let h = render_modal_body_node(
+                    child,
+                    x,
+                    child_y,
+                    width,
+                    pixmap,
+                    font_system,
+                    swash_cache,
+                    text_cache,
+                    interaction,
+                    result,
+                    button_idx,
+                    clip_top,
+                    clip_bottom,
+                );
+                child_y += h as i32 + 8;
+                total_height += h + 8;
+            }
+            total_height.saturating_sub(8) // Remove last gap
+        }
+        TreeNode::Row(_, children) => {
+            let child_count = children.len().max(1);
+            let child_width = width / child_count as u32;
+            let mut max_height = 0_u32;
+            let mut child_x = x;
+            for child in children {
+                let h = render_modal_body_node(
+                    child,
+                    child_x,
+                    y,
+                    child_width.saturating_sub(8),
+                    pixmap,
+                    font_system,
+                    swash_cache,
+                    text_cache,
+                    interaction,
+                    result,
+                    button_idx,
+                    clip_top,
+                    clip_bottom,
+                );
+                child_x += child_width as i32;
+                max_height = max_height.max(h);
+            }
+            max_height
+        }
+        TreeNode::Center(..)
+        | TreeNode::Spacer { .. }
+        | TreeNode::Canvas(..)
+        | TreeNode::Modal { .. } => 0,
+    }
+}
+
+/// Ease-out: fast start, slow end
+fn ease_out(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
+}
+
+/// Ease-in: slow start, fast end
+fn ease_in(t: f32) -> f32 {
+    t.powi(3)
 }
 
 fn padding_uniform(v: f32) -> taffy::Rect<LengthPercentage> {

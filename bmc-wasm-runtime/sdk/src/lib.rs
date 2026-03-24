@@ -12,9 +12,9 @@ pub mod tree;
 pub use bmc_wasm_protocol::*;
 pub use host::{ButtonStyle, draw_text, fill_rect, request_frame, request_frame_after};
 pub use tree::{
-    Draw, Node, PropsData, Span, StyleResult, TextStyle, TreeRenderResult, begin_tree, button,
-    canvas, center, centered, col, finish_tree, orbit, paragraph, rect, render_ui, rotated, row,
-    spacer, span, text, with_buffer,
+    Draw, ModalProps, Node, PropsData, Span, StyleResult, TextStyle, TreeRenderResult, begin_tree,
+    button, canvas, center, centered, col, finish_tree, modal, modal_styled, orbit, paragraph,
+    rect, render_ui, rotated, row, spacer, span, text, with_buffer,
 };
 
 /// Shorthand for PropsData: `props!()` or `props!(gap: 16.0, background: 0xFF)`
