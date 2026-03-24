@@ -818,6 +818,21 @@ a tarball, otherwise this would break.
 The service needs to communicate to the user what's happening through
 multiple states and progress bars so that the user knows it's not stuck.
 
+#### Tarball integrity and TLS
+
+On first boot, NTP has not synced yet (the system clock is at epoch
+until WiFi connects and NTP runs). This means TLS certificate
+validation will fail because server certificates appear to be from the
+future. The initializer therefore disables TLS certificate validation
+for its HTTP client.
+
+To compensate, factory tarballs must be cryptographically signed. After
+downloading the tarball and before extraction, the initializer verifies
+the signature against the `known_public_key` from `servers.json`. If
+verification fails, the tarball is rejected. This makes tarball signing
+the primary integrity guarantee — TLS serves only as transport
+encryption.
+
 ## Factory Reset
 
 During a factory reset, a file is created to completely remove the

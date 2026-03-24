@@ -65,9 +65,14 @@ States driven from Rust via Slint property bindings — same pattern as
    - After reboot, the initializer runs again from step 1 with the new BOS version
    - In case there is no new version and no matching tarball, show error message to user to report. It should include the bos version and the available versions for factory.
 10. Download tarball — show progress bar (downloaded MB / total MB)
-11. Extract tarball to `/nix/store` — show "Installing packages..."
-12. Activate initial profile from tarball's `profile_path`
-13. Exit 0, `bmc` starts normally
+11. Verify tarball signature against `known_public_key` from `servers.json`.
+    If verification fails, delete the tarball and show a non-retryable error.
+    **Note:** TLS certificate validation is disabled (`danger_accept_invalid_certs`)
+    because NTP is not available on first boot (clock is at epoch). Tarball
+    signature verification is the real integrity guarantee, not TLS.
+12. Extract tarball to `/nix/store` — show "Installing packages..."
+13. Activate initial profile from tarball's `profile_path`
+14. Exit 0, `bmc` starts normally
 
 ---
 
