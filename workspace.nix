@@ -85,6 +85,9 @@ let
     env = {
       FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
     };
+    includeExtraSrc = [
+      "assets"
+    ];
   };
 
   # Full workspace config for glibc profiles (widgets, compositor)
@@ -103,6 +106,9 @@ let
       mesa
     ];
     env = commonDeps.env;
+    includeExtraSrc = [
+      "assets"
+    ];
   };
 
   bmc = {
