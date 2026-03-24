@@ -70,6 +70,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-wasm-examples"
+version = "0.0.0"
+
+[[package]]
 name = "bmc-wasm-protocol"
 version = "0.1.0"
 dependencies = [

@@ -12,7 +12,7 @@ stages:
 ##################################
 variables:
   CI_TOOLS_REV: c75e453c0e3fd5fe167a9437b86e48b54c2aa81c # This is not accessible inside "include"
-  WORKSPACE_LINTS_IGNORE_PATHS: "./bmc-shared/ii-net ./bmc-shared/ii-net-drv ./bmc-shared/ii-dns"
+  WORKSPACE_LINTS_IGNORE_PATHS: "./bmc-shared/ii-net ./bmc-shared/ii-net-drv ./bmc-shared/ii-dns ./bmc-wasm-runtime/examples"
 
 include:
   - project: "nix/ci-tools"
@@ -36,20 +36,25 @@ verify-shared-crates:
 frontend-lint:
   extends: .nix
   stage: check
+  needs: []
   script:
     - nix build .#checks.x86_64-linux.lint
 
 frontend-test:
   extends: .nix
   stage: check
+  needs: []
   script:
     - nix build .#checks.x86_64-linux.test
+
+###################################
 ########## Cargo Checks ###########
 ###################################
 
 cargo-deny:
   extends: .nix
   stage: check
+  needs: []
   script:
     - nix build -L .#checks.x86_64-linux.cargo-deny
 

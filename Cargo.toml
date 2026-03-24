@@ -85,12 +85,16 @@ lossy_float_literal = "warn"
 modulo_arithmetic = "warn"
 rc_buffer = "warn"
 rc_mutex = "warn"
-str_to_string = "warn"
 string_add = "warn"
 string_slice = "warn"
 unneeded_field_pattern = "warn"
 unseparated_literal_suffix = "warn"
 wildcard_enum_match_arm = "warn"
+# tonic::Status is 176 bytes — inherent to gRPC API, not worth boxing
+result_large_err = "allow"
+# vendored crates trigger these lints but can't be modified (verify-shared-crates)
+io_other_error = "allow"
+large_enum_variant = "allow"
 
 [workspace.dependencies]
 ab_glyph = "0.2"
@@ -292,9 +296,9 @@ uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
 ux = { version = "0.1.6" }
 walkdir = "2.5.0"
 wasmi = "1.0"
-wayland-backend = "0.3"
+wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "server"] }
+wayland-protocols = { version = "0.32", features = ["client", "server", "staging"] }
 wayland-scanner = "0.31"
 wayland-server = "0.31"
 winit = "0.30"
