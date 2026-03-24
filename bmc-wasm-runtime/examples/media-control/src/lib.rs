@@ -85,8 +85,12 @@ impl ActiveSkin {
         }
         self.resolved = true;
         if let Some(skin) = self.source {
-            let normal = skin.get("button_normal");
-            let pressed = skin.get("button_pressed");
+            let normal = skin
+                .get_nine_patch("button_normal")
+                .expect("BUG: skin missing button_normal asset");
+            let pressed = skin
+                .get_nine_patch("button_pressed")
+                .expect("BUG: skin missing button_pressed asset");
             self.button = Some(ButtonSkin {
                 normal: normal.nine_patch,
                 pressed: Some(pressed.nine_patch),
@@ -94,14 +98,14 @@ impl ActiveSkin {
                 pressed_text_color: pressed.color,
                 opaque: false,
             });
-            if let Some(bg) = skin.try_get("main") {
+            if let Some(bg) = skin.get_nine_patch("main") {
                 self.background = Some(bg.nine_patch);
             }
-            self.art_frame = skin.try_get("art_frame");
+            self.art_frame = skin.get_nine_patch("art_frame");
             // Slider skin: track (9-patch) + thumb bitmaps
-            if let Some(track) = skin.try_get("slider_track") {
-                let thumb = skin.try_get("slider_thumb");
-                let thumb_pressed = skin.try_get("slider_thumb_pressed");
+            if let Some(track) = skin.get_nine_patch("slider_track") {
+                let thumb = skin.get_nine_patch("slider_thumb");
+                let thumb_pressed = skin.get_nine_patch("slider_thumb_pressed");
                 self.slider = Some(SliderSkin {
                     track: track.nine_patch,
                     track_h: track.height,
@@ -158,12 +162,35 @@ fn active_background() -> Option<NinePatch> {
     })
 }
 
-/// Get the active skin's color palette. Returns default (all zeros) if no skin.
-fn active_palette() -> SkinPalette {
-    ACTIVE_SKIN.with(|s| {
-        let s = s.borrow();
-        s.source.map_or(SkinPalette::default(), |skin| skin.palette)
-    })
+/// Media control widget's palette — populated from the active skin.
+#[derive(Clone, Copy, Debug, Default)]
+struct Palette {
+    background: Color,
+    layer1: Color,
+    layer2: Color,
+    text_primary: Color,
+    text_secondary: Color,
+    accent: Color,
+}
+
+/// Return `color` if set (non-zero), otherwise `fallback`.
+fn color_or(color: Color, fallback: Color) -> Color {
+    color.or(fallback)
+}
+
+/// Build palette from the active skin. Returns all-zero (transparent) if no skin.
+fn active_palette() -> Palette {
+    let Some(skin) = ACTIVE_SKIN.with(|s| s.borrow().source) else {
+        return Palette::default();
+    };
+    Palette {
+        background: skin.color_or("background", Color::default()),
+        layer1: skin.color_or("layer1", Color::default()),
+        layer2: skin.color_or("layer2", Color::default()),
+        text_primary: skin.color_or("text_primary", Color::default()),
+        text_secondary: skin.color_or("text_secondary", Color::default()),
+        accent: skin.color_or("accent", Color::default()),
+    }
 }
 
 fn active_art_frame() -> Option<SkinEntry> {

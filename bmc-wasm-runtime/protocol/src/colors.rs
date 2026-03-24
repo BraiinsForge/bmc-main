@@ -138,6 +138,12 @@ impl Color {
         self.0
     }
 
+    /// Return `self` if set (non-zero), otherwise `fallback`.
+    #[must_use]
+    pub const fn or(self, fallback: Self) -> Self {
+        if self.0 != 0 { self } else { fallback }
+    }
+
     // ── Simple manipulation (const-capable) ─────────────────────────
 
     /// Set the alpha channel (0.0 = transparent, 1.0 = opaque).

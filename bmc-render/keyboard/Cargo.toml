@@ -1,0 +1,18 @@
+[package]
+name = "bmc-keyboard"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bmc-render = { path = ".." }
+bmc-render-macros = { path = "../macros" }
+bmc-render-skin = { path = "../skin" }
+bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+tracing.workspace = true
+
+[build-dependencies]
+roxmltree.workspace = true
+
+[lints]
+workspace = true

@@ -29,8 +29,8 @@ use crate::mesh::{Mesh, MeshView};
 pub use bmc_wasm_protocol::{PropsData, TextStyle};
 
 pub use bmc_render_skin::{
-    ButtonSkin, NinePatch, NinePatchAsset, Skin, SkinAsset, SkinEntry, SkinPalette, SliderSkin,
-    color_or, ensure_nine_patch_registered,
+    ButtonSkin, NinePatch, NinePatchAsset, Skin, SkinAsset, SkinEntry, SliderSkin,
+    ensure_nine_patch_registered,
 };
 
 use crate::host::{ButtonSize, ButtonStyle};

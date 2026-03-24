@@ -1,0 +1,61 @@
+name = "Hyperfuse"
+description = "GMK Hyperfuse-inspired: teal alphas, purple mods, colorful accents"
+
+[palette]
+background = "#2a2a35"
+
+# Character keys — light gray (like GMK L9 beige-gray)
+key_group_alpha_bg = "#c8c4bc"
+key_group_alpha_bg_pressed = "#9a968e"
+key_group_alpha_fg = "#2a2a35"
+key_group_alpha_fg_pressed = "#1a1a25"
+key_group_alpha_hint = "#8a8898"
+
+# Function keys — purple (GMK Hyperfuse modifiers)
+key_group_fn_bg = "#7b5ea7"
+key_group_fn_bg_pressed = "#5a3d86"
+key_group_fn_fg = "#f0eef4"
+key_group_fn_fg_pressed = "#d0cee4"
+
+# Text bar
+input_bg = "#1e1e28"
+input_fg = "#e0dfe6"
+input_placeholder = "#6a6878"
+input_cursor = "#00b8a9"
+
+# Popup
+popup_bg = "#363642"
+popup_fg = "#e0dfe6"
+popup_selected_bg = "#00b8a9"
+popup_selected_fg = "#1a1a25"
+
+# Shift states
+shift_active_bg = "#00b8a9"
+shift_lock_bg = "#e84855"
+
+# Cancel = muted red, Confirm = teal accent
+cancel_bg = "#8d4455"
+cancel_bg_pressed = "#6d2435"
+cancel_fg = "#f0eef4"
+confirm_bg = "#00b8a9"
+confirm_bg_pressed = "#009889"
+confirm_fg = "#1a1a25"
+
+# ── Per-key overrides (WASD gaming cluster — teal accent) ──
+key_value_w_bg = "#00b8a9"
+key_value_a_bg = "#00b8a9"
+key_value_s_bg = "#00b8a9"
+key_value_d_bg = "#00b8a9"
+key_value_w_fg = "#1a1a25"
+key_value_a_fg = "#1a1a25"
+key_value_s_fg = "#1a1a25"
+key_value_d_fg = "#1a1a25"
+key_value_w_hint = "#0a6b62"
+key_value_a_hint = "#0a6b62"
+key_value_s_hint = "#0a6b62"
+key_value_d_hint = "#0a6b62"
+
+# ESC-row accent — red on the Q key
+key_value_q_bg = "#e84855"
+key_value_q_fg = "#f0eef4"
+key_value_q_hint = "#ffc0c2"

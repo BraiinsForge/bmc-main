@@ -16,9 +16,11 @@ fn progress_bar_variants(ctx: &mut StoryCtx) -> Node {
     let skin_fraction = ctx.slider("SkinnedProgress", 0.4, 0.0, 1.0);
     ctx.bind_drag(&skin_drag_key, skin_fraction);
 
-    let track = STORYBOOK_SLIDER_SKIN.get("slider_track");
-    let thumb = STORYBOOK_SLIDER_SKIN.try_get("slider_thumb");
-    let thumb_pressed = STORYBOOK_SLIDER_SKIN.try_get("slider_thumb_pressed");
+    let track = STORYBOOK_SLIDER_SKIN
+        .get_nine_patch("slider_track")
+        .expect("BUG: storybook slider skin missing slider_track asset");
+    let thumb = STORYBOOK_SLIDER_SKIN.get_nine_patch("slider_thumb");
+    let thumb_pressed = STORYBOOK_SLIDER_SKIN.get_nine_patch("slider_thumb_pressed");
     let skinned = SliderSkin {
         track: track.nine_patch,
         track_h: track.height,

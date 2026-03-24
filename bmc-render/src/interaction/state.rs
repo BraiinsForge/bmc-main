@@ -168,6 +168,18 @@ impl InteractionState {
         self.touch_down_key.as_deref() == Some(key)
     }
 
+    /// Check if any touch is currently down (processed state).
+    #[must_use]
+    pub fn any_touch_down(&self) -> bool {
+        self.touch_down_key.is_some()
+    }
+
+    /// Get the last known touch position in absolute coordinates.
+    #[must_use]
+    pub fn last_touch_pos(&self) -> Option<(f32, f32)> {
+        self.last_touch_pos
+    }
+
     /// Get the current drag position for an element (local to `bounds`).
     ///
     /// Returns `Some((local_x, local_y))` if the user is actively touching

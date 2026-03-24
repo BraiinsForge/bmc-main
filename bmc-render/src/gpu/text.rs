@@ -303,7 +303,7 @@ fn shape_paragraph(
 #[must_use]
 pub fn build_attrs(style: &TextStyle) -> Attrs<'static> {
     let mut attrs = Attrs::new()
-        .family(Family::SansSerif)
+        .family(Family::Name("Braiins Sans"))
         .weight(Weight(style.weight));
 
     if style.italic {

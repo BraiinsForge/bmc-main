@@ -1,0 +1,62 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Keyboard icon assets compiled from Carbon Design System SVGs (Apache 2.0).
+//!
+//! Icons are compiled at build time via `include_icon!` and registered with
+//! the renderer on each call. Registration is idempotent host-side, so
+//! re-registering returns the cached ID without re-parsing.
+//!
+//! ## Fail-soft on registration failure
+//!
+//! If [`Renderer::register_icon`] returns `None` (renderer-side parse failure
+//! or ID-space exhaustion — see BDK-458 for ID-lifecycle), the function key's
+//! icon spot renders blank: function keys (Shift / Backspace / Enter) carry
+//! an empty `key.label`, so the renderer's text path draws nothing. The
+//! keyboard remains operable — only the visual cue is missing. The first
+//! failure per tag is logged via `tracing`; subsequent failures are
+//! suppressed to avoid per-frame spam.
+
+use std::cell::RefCell;
+use std::collections::HashSet;
+
+use bmc_render::renderer::Renderer;
+use bmc_render_macros::include_icon;
+use bmc_wasm_protocol::IconId;
+use bmc_wasm_sdk::assets::Icon;
+
+// Carbon Design System icons (Apache 2.0).
+// TODO(kubijo): manually clean up SVGs — remove padding, scale to 24, union paths.
+const ICON_SHIFT: Icon = include_icon!("bmc-render/keyboard/assets/icons/shift.svg");
+const ICON_BACKSPACE: Icon = include_icon!("bmc-render/keyboard/assets/icons/backspace.svg");
+const ICON_ENTER: Icon = include_icon!("bmc-render/keyboard/assets/icons/enter.svg");
+
+thread_local! {
+    static WARNED: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
+}
+
+fn id_for(renderer: &mut dyn Renderer, icon: &Icon) -> Option<IconId> {
+    let id = renderer.register_icon(icon.name, icon.data);
+    if id.is_none() {
+        WARNED.with_borrow_mut(|w| {
+            if w.insert(icon.name) {
+                tracing::error!(
+                    icon = icon.name,
+                    "keyboard icon failed to register; the function key will render blank"
+                );
+            }
+        });
+    }
+    id
+}
+
+pub fn shift_id(renderer: &mut dyn Renderer) -> Option<IconId> {
+    id_for(renderer, &ICON_SHIFT)
+}
+
+pub fn backspace_id(renderer: &mut dyn Renderer) -> Option<IconId> {
+    id_for(renderer, &ICON_BACKSPACE)
+}
+
+pub fn enter_id(renderer: &mut dyn Renderer) -> Option<IconId> {
+    id_for(renderer, &ICON_ENTER)
+}

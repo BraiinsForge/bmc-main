@@ -1,0 +1,5 @@
+# Default build target for WASM widgets.
+# This makes `cargo build` (and rust-analyzer) use wasm32 for this workspace,
+# so cfg(target_arch = "wasm32") modules are resolved correctly in the IDE.
+[build]
+target = "wasm32-unknown-unknown"

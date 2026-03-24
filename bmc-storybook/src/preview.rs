@@ -183,11 +183,14 @@ impl DocumentRenderer {
         }
     }
 
-    /// Render all Frame blocks into per-frame offscreen images.
+    /// Render all Frame/CustomRender blocks into per-frame offscreen images.
+    ///
+    /// Walks the block tree recursively (into `Grid` blocks) to find all
+    /// renderable frames. Each frame gets its own FBO and `InteractionState`.
     #[expect(unsafe_code)]
     pub fn render_doc_blocks(
         &mut self,
-        blocks: &[DocBlock],
+        blocks: &mut [DocBlock],
         gl: &eframe::glow::Context,
         egui_frame: &mut eframe::Frame,
         delta_ms: u32,
@@ -196,23 +199,14 @@ impl DocumentRenderer {
 
         self.rendered_frames.clear();
 
-        let frame_specs: Vec<(usize, FrameSize)> = blocks
-            .iter()
-            .enumerate()
-            .filter_map(|(i, block)| match block {
-                DocBlock::Frame { size, .. } => Some((i, *size)),
-                DocBlock::Header { .. }
-                | DocBlock::Code { .. }
-                | DocBlock::Prose { .. }
-                | DocBlock::Divider => None,
-            })
-            .collect();
+        // Collect frame sizes for FBO allocation (no mutable access needed).
+        let frame_sizes: Vec<FrameSize> = collect_frame_sizes(blocks);
 
         // Match/allocate per-frame offscreen images.
         let mut used = vec![false; self.targets.len()];
-        let mut assignments: Vec<(usize, usize)> = Vec::new();
+        let mut target_assignments: Vec<usize> = Vec::with_capacity(frame_sizes.len());
 
-        for (block_idx, size) in &frame_specs {
+        for size in &frame_sizes {
             let w = size.width();
             let h = size.fbo_height();
             let target_idx = self
@@ -242,57 +236,32 @@ impl DocumentRenderer {
                 used.push(true);
                 idx
             };
-            assignments.push((*block_idx, target_idx));
+            target_assignments.push(target_idx);
         }
 
         let srgb_was_enabled = unsafe { gl.is_enabled(eframe::glow::FRAMEBUFFER_SRGB) };
         unsafe { gl.disable(eframe::glow::FRAMEBUFFER_SRGB) };
 
-        for (block_idx, target_idx) in &assignments {
-            let DocBlock::Frame { node, .. } = &blocks[*block_idx] else {
-                unreachable!("BUG: assignments only contain Frame blocks")
-            };
-            let target = &mut self.targets[*target_idx];
-            let size = target.frame_size;
-
-            let bytes = bmc_wasm_sdk::tree::serialize_node_to_bytes(node);
-
-            self.renderer
-                .begin_frame_to_image(target.image_id, target.width, target.height, 1.0);
-            target.state.interaction.begin_frame();
-
-            let layout_w = size.layout_width();
-            let layout_h = size.layout_height();
-
-            let mut ctx = bmc_render::ProcessContext {
-                interaction: &mut target.state.interaction,
-                modal_states: &mut target.state.modal_states,
-                scroll_states: &mut target.state.scroll_states,
-                animation_states: &mut target.state.animation_states,
-                transition_states: &mut target.state.transition_states,
-                taffy: &mut target.state.taffy,
-                frame_counter: target.state.frame_counter,
-                delta_ms,
-            };
-            match bmc_render::process_tree(&bytes, layout_w, layout_h, &mut self.renderer, &mut ctx)
-            {
-                Ok((_tree, result, _has_active, _timings)) => {
-                    target.state.content_size = result.content_size;
-                    target.state.drags = result.drags;
-                }
-                Err(e) => tracing::error!("process_tree failed: {e}"),
-            }
-
-            self.renderer.flush();
-            if delta_ms > 0 {
-                target.state.frame_counter += 1;
-            }
-
-            self.rendered_frames.push(RenderedFrame {
-                target_idx: *target_idx,
-                content_size: target.state.content_size,
-            });
-        }
+        // Render each frame. We walk the block tree again in the same order
+        // as collect_frame_sizes so frame_idx stays in sync.
+        let mut frame_idx = 0;
+        render_frames_recursive(
+            blocks,
+            &target_assignments,
+            &mut frame_idx,
+            &mut self.renderer,
+            &mut self.targets,
+            &mut self.rendered_frames,
+            delta_ms,
+        );
+        // Catch tree-mutation drift between the immutable `collect_frame_sizes`
+        // walk and the `&mut` render walk: every assignment must have been
+        // consumed exactly once.
+        debug_assert_eq!(
+            frame_idx,
+            target_assignments.len(),
+            "frame_idx desynced from target_assignments — block tree mutated mid-render?"
+        );
 
         // Switch to screen and flush — the flush resolves the offscreen
         // image's render target to its GL texture (needed for egui display).
@@ -303,6 +272,131 @@ impl DocumentRenderer {
             if srgb_was_enabled {
                 gl.enable(eframe::glow::FRAMEBUFFER_SRGB);
             }
+        }
+    }
+}
+
+/// Collect frame sizes in tree order (recursive into Grid blocks).
+fn collect_frame_sizes(blocks: &[DocBlock]) -> Vec<FrameSize> {
+    let mut out = Vec::new();
+    collect_frame_sizes_rec(blocks, &mut out);
+    out
+}
+
+fn collect_frame_sizes_rec(blocks: &[DocBlock], out: &mut Vec<FrameSize>) {
+    for block in blocks {
+        match block {
+            DocBlock::Frame { size, .. } | DocBlock::CustomRender { size, .. } => {
+                out.push(*size);
+            }
+            DocBlock::Grid { cells, .. } => {
+                for cell in cells {
+                    collect_frame_sizes_rec(cell, out);
+                }
+            }
+            DocBlock::Header { .. }
+            | DocBlock::Code { .. }
+            | DocBlock::Prose { .. }
+            | DocBlock::Divider => {}
+        }
+    }
+}
+
+/// Render frames in tree order, matching the order of `collect_frame_sizes`.
+fn render_frames_recursive(
+    blocks: &mut [DocBlock],
+    target_assignments: &[usize],
+    frame_idx: &mut usize,
+    renderer: &mut FemtoVgRenderer,
+    targets: &mut [FrameRenderTarget],
+    rendered_frames: &mut Vec<RenderedFrame>,
+    delta_ms: u32,
+) {
+    for block in blocks {
+        match block {
+            DocBlock::Frame { node, .. } => {
+                let target_idx = target_assignments[*frame_idx];
+                let target = &mut targets[target_idx];
+                let size = target.frame_size;
+
+                renderer.begin_frame_to_image(target.image_id, target.width, target.height, 1.0);
+                target.state.interaction.begin_frame();
+
+                let bytes = bmc_wasm_sdk::tree::serialize_node_to_bytes(node);
+                let mut ctx = bmc_render::ProcessContext {
+                    interaction: &mut target.state.interaction,
+                    modal_states: &mut target.state.modal_states,
+                    scroll_states: &mut target.state.scroll_states,
+                    animation_states: &mut target.state.animation_states,
+                    transition_states: &mut target.state.transition_states,
+                    taffy: &mut target.state.taffy,
+                    frame_counter: target.state.frame_counter,
+                    delta_ms,
+                };
+                match bmc_render::process_tree(
+                    &bytes,
+                    size.layout_width(),
+                    size.layout_height(),
+                    renderer,
+                    &mut ctx,
+                ) {
+                    Ok((_tree, result, _has_active, _timings)) => {
+                        target.state.content_size = result.content_size;
+                        target.state.drags = result.drags;
+                    }
+                    Err(e) => tracing::error!("process_tree failed: {e}"),
+                }
+
+                renderer.flush();
+                if delta_ms > 0 {
+                    target.state.frame_counter += 1;
+                }
+                rendered_frames.push(RenderedFrame {
+                    target_idx,
+                    content_size: target.state.content_size,
+                });
+                *frame_idx += 1;
+            }
+            DocBlock::CustomRender { render_fn, .. } => {
+                let target_idx = target_assignments[*frame_idx];
+                let target = &mut targets[target_idx];
+                let size = target.frame_size;
+
+                renderer.begin_frame_to_image(target.image_id, target.width, target.height, 1.0);
+                target.state.interaction.begin_frame();
+
+                #[expect(clippy::cast_precision_loss)]
+                let (w, h) = (size.width() as f32, size.layout_height());
+                render_fn(renderer, &mut target.state.interaction, w, h, delta_ms);
+                target.state.content_size = (w, h);
+
+                renderer.flush();
+                if delta_ms > 0 {
+                    target.state.frame_counter += 1;
+                }
+                rendered_frames.push(RenderedFrame {
+                    target_idx,
+                    content_size: target.state.content_size,
+                });
+                *frame_idx += 1;
+            }
+            DocBlock::Grid { cells, .. } => {
+                for cell in cells {
+                    render_frames_recursive(
+                        cell,
+                        target_assignments,
+                        frame_idx,
+                        renderer,
+                        targets,
+                        rendered_frames,
+                        delta_ms,
+                    );
+                }
+            }
+            DocBlock::Header { .. }
+            | DocBlock::Code { .. }
+            | DocBlock::Prose { .. }
+            | DocBlock::Divider => {}
         }
     }
 }

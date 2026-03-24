@@ -473,37 +473,70 @@ impl StorybookApp {
                 Frame::NONE
                     .inner_margin(Margin::symmetric(16, 12))
                     .show(ui, |ui| {
-                        for block in blocks {
-                            match block {
-                                DocBlock::Frame { size, .. } => {
-                                    Self::render_doc_frame(ui, dr, &mut frame_idx, *size);
-                                }
-                                DocBlock::Header { title, subtitle } => {
-                                    Self::render_doc_header(ui, title, subtitle.as_deref());
-                                }
-                                DocBlock::Code { language, source } => {
-                                    Self::render_doc_code(ui, source, language);
-                                }
-                                DocBlock::Prose { text } => {
-                                    ui.label(
-                                        egui::RichText::new(text)
-                                            .size(14.0)
-                                            .color(c(colors::GRAY_20)),
-                                    );
-                                    ui.add_space(8.0);
-                                }
-                                DocBlock::Divider => {
-                                    ui.add_space(4.0);
-                                    ui.separator();
-                                    ui.add_space(4.0);
-                                }
-                            }
-                        }
+                        Self::render_blocks(ui, blocks, dr, &mut frame_idx);
                     });
             });
     }
 
+    /// Render a list of doc blocks, recursing into Row blocks.
+    fn render_blocks(
+        ui: &mut Ui,
+        blocks: &[DocBlock],
+        dr: &mut DocumentRenderer,
+        frame_idx: &mut usize,
+    ) {
+        for block in blocks {
+            match block {
+                DocBlock::Frame { size, .. } | DocBlock::CustomRender { size, .. } => {
+                    Self::render_doc_frame(ui, dr, frame_idx, *size);
+                }
+                DocBlock::Header { title, subtitle } => {
+                    Self::render_doc_header(ui, title, subtitle.as_deref());
+                }
+                DocBlock::Code { language, source } => {
+                    Self::render_doc_code(ui, source, language);
+                }
+                DocBlock::Prose { text } => {
+                    ui.label(
+                        egui::RichText::new(text)
+                            .size(14.0)
+                            .color(c(colors::GRAY_20)),
+                    );
+                    ui.add_space(8.0);
+                }
+                DocBlock::Divider => {
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                }
+                DocBlock::Grid { cols, gap, cells } => {
+                    egui::Grid::new(ui.next_auto_id())
+                        .num_columns(*cols as usize)
+                        .spacing([*gap, *gap])
+                        .show(ui, |ui| {
+                            for (i, cell) in cells.iter().enumerate() {
+                                ui.vertical(|ui| {
+                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                                    Self::render_blocks(ui, cell, dr, frame_idx);
+                                });
+                                #[expect(
+                                    clippy::cast_possible_truncation,
+                                    reason = "grid cell count is small"
+                                )]
+                                if ((i + 1) as u32).is_multiple_of(*cols) {
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                }
+            }
+        }
+    }
+
     /// Render a rendered component frame: size label, checkerboard bg, GL texture.
+    ///
+    /// Wrapped in `ui.vertical()` so the size label and frame image stay
+    /// stacked vertically even when the parent uses horizontal layout.
     fn render_doc_frame(
         ui: &mut Ui,
         dr: &mut DocumentRenderer,
@@ -525,64 +558,70 @@ impl StorybookApp {
             bmc_storybook_api::DivHeight::Px(h) => px_f(h),
         };
 
-        ui.label(
-            egui::RichText::new(format!("{}×{}", px_u(display_w), px_u(display_h)))
-                .size(10.0)
-                .color(SHORTCUT_COLOR),
-        );
-        ui.add_space(2.0);
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new(format!("{}×{}", px_u(display_w), px_u(display_h)))
+                    .size(10.0)
+                    .color(SHORTCUT_COLOR),
+            );
+            ui.add_space(2.0);
 
-        // Always claim drag sense on the story frame so the enclosing
-        // ScrollArea doesn't pan when the user drags an inner element
-        // (e.g. a slider). Conditioning the sense on `drags.is_empty()`
-        // is one frame late: when the drag *starts*, `drags` is still
-        // empty (it's populated by `process_tree` after the press event
-        // is recognised), so the first-frame drag would leak through to
-        // the ScrollArea before the slider could claim it.
-        let (rect, _) = ui.allocate_exact_size(
-            Vec2::new(display_w, display_h),
-            egui::Sense::click_and_drag(),
-        );
+            // Always claim drag sense on the story frame so the enclosing
+            // ScrollArea doesn't pan when the user drags an inner element
+            // (e.g. a slider). Conditioning the sense on `drags.is_empty()`
+            // is one frame late: when the drag *starts*, `drags` is still
+            // empty (it's populated by `process_tree` after the press event
+            // is recognised), so the first-frame drag would leak through to
+            // the ScrollArea before the slider could claim it.
+            let (rect, _) = ui.allocate_exact_size(
+                Vec2::new(display_w, display_h),
+                egui::Sense::click_and_drag(),
+            );
 
-        // Forward pointer events to this frame's InteractionState.
-        // `rect` is the full allocated frame; `visible` is its clipped
-        // intersection with the surrounding ScrollArea. Containment uses
-        // `visible` (a click outside the visible portion shouldn't register),
-        // but FBO coord mapping uses `rect.min` — using `visible.min` would
-        // shift coordinates by the clip amount whenever part of the frame
-        // is scrolled off-screen.
-        let visible = rect.intersect(ui.clip_rect());
-        for event in
-            Self::collect_pointer_events(ui, &rect, &visible, &mut target.state.pointer_captured)
-        {
-            target.state.interaction.push_event(event);
-        }
+            // Forward pointer events to this frame's InteractionState.
+            // `rect` is the full allocated frame; `visible` is its clipped
+            // intersection with the surrounding ScrollArea. Containment uses
+            // `visible` (a click outside the visible portion shouldn't register),
+            // but FBO coord mapping uses `rect.min` — using `visible.min` would
+            // shift coordinates by the clip amount whenever part of the frame
+            // is scrolled off-screen.
+            let visible = rect.intersect(ui.clip_rect());
+            for event in Self::collect_pointer_events(
+                ui,
+                &rect,
+                &visible,
+                &mut target.state.pointer_captured,
+            ) {
+                target.state.interaction.push_event(event);
+            }
 
-        // Consume mouse-wheel scroll when the pointer is over the story
-        // frame so it goes to the inner story's scroll node rather than
-        // also panning the enclosing storybook viewport. Without this,
-        // a wheel event over a modal's scroll body would scroll both
-        // the modal *and* the storybook page (double-scroll).
-        let pointer_over_frame = ui
-            .input(|i| i.pointer.latest_pos())
-            .is_some_and(|p| visible.contains(p));
-        if pointer_over_frame {
-            ui.input_mut(|i| {
-                i.smooth_scroll_delta = egui::Vec2::ZERO;
-            });
-        }
+            // Consume mouse-wheel scroll when the pointer is over the story
+            // frame so it goes to the inner story's scroll node rather than
+            // also panning the enclosing storybook viewport. Without this,
+            // a wheel event over a modal's scroll body would scroll both
+            // the modal *and* the storybook page (double-scroll).
+            let pointer_over_frame = ui
+                .input(|i| i.pointer.latest_pos())
+                .is_some_and(|p| visible.contains(p));
+            if pointer_over_frame {
+                ui.input_mut(|i| {
+                    i.smooth_scroll_delta = egui::Vec2::ZERO;
+                });
+            }
 
-        Self::paint_checkerboard(ui, rect);
+            Self::paint_checkerboard(ui, rect);
 
-        // Frame texture (V-flipped for GL origin).
-        if let Some(tex_id) = target.egui_texture_id {
-            let u_right = display_w / px_f(target.width);
-            let v_bottom = 1.0 - display_h / px_f(target.height);
-            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(u_right, v_bottom));
-            ui.painter().image(tex_id, rect, uv, Color32::WHITE);
-        }
+            // Frame texture (V-flipped for GL origin).
+            if let Some(tex_id) = target.egui_texture_id {
+                let u_right = display_w / px_f(target.width);
+                let v_bottom = 1.0 - display_h / px_f(target.height);
+                let uv =
+                    egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(u_right, v_bottom));
+                ui.painter().image(tex_id, rect, uv, Color32::WHITE);
+            }
 
-        ui.add_space(12.0);
+            ui.add_space(12.0);
+        });
     }
 
     /// Paint a checkerboard pattern inside `rect`.
@@ -644,6 +683,7 @@ impl StorybookApp {
     ///
     /// Uses raw `Event::PointerButton` / `Event::PointerMoved` instead of the
     /// `Response` high-level API to avoid issues with egui's click-vs-drag routing.
+    ///
     /// The display shows the FBO at 1:1 pixel scale (clipped, not scaled), so the
     /// coordinate mapping is a direct offset: `fbo_pos = screen_pos - frame.min`.
     ///
@@ -1293,7 +1333,7 @@ impl StorybookApp {
                     } else {
                         16
                     };
-                    dr.render_doc_blocks(&self.doc_blocks, &self.gl, frame, delta_ms);
+                    dr.render_doc_blocks(&mut self.doc_blocks, &self.gl, frame, delta_ms);
 
                     // Aggregate interactions from all frame targets.
                     let matched: Vec<_> = {

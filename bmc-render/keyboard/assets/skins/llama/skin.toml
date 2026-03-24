@@ -1,0 +1,38 @@
+name = "Llama"
+description = "Classic media player aesthetic"
+
+[palette]
+background = "#151520"
+input_bg = "#1c1c2e"
+input_fg = "#e0e0ee"
+input_placeholder = "#808098"
+input_cursor = "#8080aa"
+key_group_alpha_hint = "#505068"
+popup_bg = "#22222e"
+popup_fg = "#e0e0ee"
+popup_selected_bg = "#4a8a4a"
+popup_selected_fg = "#e0e0ee"
+
+[assets.key]
+color = "#181828"
+
+[assets.key_pressed]
+color = "#080810"
+
+[assets.key_fn]
+color = "#383850"
+
+[assets.key_fn_pressed]
+color = "#181828"
+
+[assets.btn_cancel]
+color = "#882222"
+
+[assets.btn_cancel_pressed]
+color = "#661111"
+
+[assets.btn_confirm]
+color = "#226622"
+
+[assets.btn_confirm_pressed]
+color = "#114411"

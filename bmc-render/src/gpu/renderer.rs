@@ -29,6 +29,8 @@ use crate::tree::{SpanData, TextAlign, TextStyle};
 // Embed BraiinsSans fonts at compile time from the top-level assets directory.
 const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Regular.otf");
 const FONT_BOLD: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Bold.otf");
+/// Fallback font for glyphs not covered by BraiinsSans (Greek, symbols, etc.).
+const FONT_FALLBACK: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf");
 
 /// GPU-accelerated renderer backed by FemtoVG (OpenGL ES 2.0+).
 ///
@@ -44,6 +46,7 @@ pub struct FemtoVgRenderer {
     screen_fbo: Option<glow::NativeFramebuffer>,
     font_regular: FontId,
     font_bold: FontId,
+    font_fallback: FontId,
     font_system: cosmic_text::FontSystem,
     paragraph_cache: ParagraphLayoutCache,
     icon_registry: IconRegistry,
@@ -185,12 +188,16 @@ impl FemtoVgRenderer {
         // Load fonts into FemtoVG for GPU rendering
         let font_regular = canvas.add_font_mem(FONT_REGULAR)?;
         let font_bold = canvas.add_font_mem(FONT_BOLD)?;
+        let font_fallback = canvas.add_font_mem(FONT_FALLBACK)?;
 
-        // Build cosmic-text FontSystem with only our embedded fonts.
-        // Loading the same two files keeps glyph advances in sync with FemtoVG.
+        // Build cosmic-text FontSystem with all embedded fonts.
+        // Paragraphs request "Braiins Sans" by family name (see text.rs build_attrs),
+        // so cosmic-text always prefers it. Noto Sans is only used as fallback for
+        // glyphs BraiinsSans doesn't cover (Greek, Cyrillic, etc.).
         let mut db = fontdb::Database::new();
         db.load_font_data(FONT_REGULAR.to_vec());
         db.load_font_data(FONT_BOLD.to_vec());
+        db.load_font_data(FONT_FALLBACK.to_vec());
         let font_system = cosmic_text::FontSystem::new_with_locale_and_db("en-US".into(), db);
 
         let mut icon_registry = IconRegistry::new();
@@ -202,6 +209,7 @@ impl FemtoVgRenderer {
             screen_fbo,
             font_regular,
             font_bold,
+            font_fallback,
             font_system,
             paragraph_cache: ParagraphLayoutCache::new(),
             icon_registry,
@@ -358,7 +366,7 @@ impl Renderer for FemtoVgRenderer {
 
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
         let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
-        paint.set_font(&[self.font_regular]);
+        paint.set_font(&[self.font_regular, self.font_fallback]);
         paint.set_font_size(size);
         paint.set_text_baseline(femtovg::Baseline::Top);
         let _ = self.canvas.fill_text(x, y, text, &paint);
@@ -366,7 +374,7 @@ impl Renderer for FemtoVgRenderer {
 
     fn measure_text(&mut self, text: &str, size: f32) -> f32 {
         let mut paint = Paint::color(femtovg::Color::white());
-        paint.set_font(&[self.font_regular]);
+        paint.set_font(&[self.font_regular, self.font_fallback]);
         paint.set_font_size(size);
         self.canvas
             .measure_text(0.0, 0.0, text, &paint)
@@ -383,7 +391,7 @@ impl Renderer for FemtoVgRenderer {
         };
         let size = style.size as f32;
         let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
-        paint.set_font(&[font]);
+        paint.set_font(&[font, self.font_fallback]);
         paint.set_font_size(size);
         paint.set_text_baseline(femtovg::Baseline::Top);
 
@@ -410,7 +418,7 @@ impl Renderer for FemtoVgRenderer {
         // 8 textured-quad draws per ring — cheap on GPU even on embedded.
         if style.outline_color != crate::colors::TRANSPARENT && style.outline_width > 0.0 {
             let mut outline_paint = Paint::color(to_femtovg_color(style.outline_color.to_u32()));
-            outline_paint.set_font(&[font]);
+            outline_paint.set_font(&[font, self.font_fallback]);
             outline_paint.set_font_size(size);
             outline_paint.set_text_baseline(femtovg::Baseline::Top);
             #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

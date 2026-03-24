@@ -6,11 +6,19 @@
 //! and the hot-swapped stories cdylib (`bmc-storybook-stories`). It intentionally
 //! has no egui dependency — egui types must never cross the dlopen boundary.
 
+pub mod audio;
 pub mod knobs;
 pub mod prelude;
 
+use bmc_render::interaction::InteractionState;
+use bmc_render::renderer::Renderer;
 use bmc_wasm_sdk::tree::Node;
 use knobs::StoryCtx;
+
+/// Callback for custom-rendered frames that bypass the tree pipeline.
+///
+/// Arguments: `(renderer, interaction, width, height, delta_ms)`.
+pub type CustomRenderFn = Box<dyn FnMut(&mut dyn Renderer, &mut InteractionState, f32, f32, u32)>;
 
 // ── Document model types ────────────────────────────────────────────
 
@@ -141,6 +149,14 @@ impl From<(u32, DivHeight)> for FrameSize {
 pub enum DocBlock {
     /// A rendered component frame.
     Frame { size: FrameSize, node: Node },
+    /// A frame rendered by a custom callback (bypasses tree pipeline).
+    ///
+    /// Use for components that call [`Renderer`] methods directly instead
+    /// of building tree nodes.
+    CustomRender {
+        size: FrameSize,
+        render_fn: CustomRenderFn,
+    },
     /// Section header with optional subtitle.
     Header {
         title: String,
@@ -152,12 +168,23 @@ pub enum DocBlock {
     Prose { text: String },
     /// Horizontal divider.
     Divider,
+    /// Grid of cells with fixed column count.
+    ///
+    /// Each cell is a `Vec<DocBlock>` rendered as a vertical group.
+    Grid {
+        cols: u32,
+        gap: f32,
+        cells: Vec<Vec<DocBlock>>,
+    },
 }
 
 impl std::fmt::Debug for DocBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Frame { size, .. } => f.debug_struct("Frame").field("size", size).finish(),
+            Self::CustomRender { size, .. } => {
+                f.debug_struct("CustomRender").field("size", size).finish()
+            }
             Self::Header { title, subtitle } => f
                 .debug_struct("Header")
                 .field("title", title)
@@ -170,6 +197,11 @@ impl std::fmt::Debug for DocBlock {
                 .finish(),
             Self::Prose { text } => f.debug_struct("Prose").field("text", text).finish(),
             Self::Divider => write!(f, "Divider"),
+            Self::Grid { cols, cells, .. } => f
+                .debug_struct("Grid")
+                .field("cols", cols)
+                .field("cells", &cells.len())
+                .finish(),
         }
     }
 }
@@ -194,6 +226,30 @@ impl StoryUi {
         self.blocks.push(DocBlock::Frame {
             size: size.into(),
             node,
+        });
+    }
+
+    /// Add a custom-rendered frame that bypasses the tree pipeline.
+    ///
+    /// The callback receives `(renderer, interaction, width, height, delta_ms)`.
+    pub fn div_custom(&mut self, size: impl Into<FrameSize>, render_fn: CustomRenderFn) {
+        self.blocks.push(DocBlock::CustomRender {
+            size: size.into(),
+            render_fn,
+        });
+    }
+
+    /// Add a grid of cells with fixed column count.
+    ///
+    /// The closure receives a [`GridBuilder`] — call `cell(|ui| { ... })` on it
+    /// to add cells. Each cell is a vertical group of blocks.
+    pub fn grid(&mut self, cols: u32, gap: f32, build: impl FnOnce(&mut GridBuilder)) {
+        let mut gb = GridBuilder { cells: Vec::new() };
+        build(&mut gb);
+        self.blocks.push(DocBlock::Grid {
+            cols,
+            gap,
+            cells: gb.cells,
         });
     }
 
@@ -243,6 +299,23 @@ impl StoryUi {
 impl Default for StoryUi {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Builder for grid cells.
+///
+/// Each `cell()` call adds a vertical group of blocks as one grid cell.
+#[derive(Debug)]
+pub struct GridBuilder {
+    cells: Vec<Vec<DocBlock>>,
+}
+
+impl GridBuilder {
+    /// Add a grid cell. Blocks pushed inside the closure form a vertical group.
+    pub fn cell(&mut self, build: impl FnOnce(&mut StoryUi)) {
+        let mut inner = StoryUi::new();
+        build(&mut inner);
+        self.cells.push(inner.take_blocks());
     }
 }
 

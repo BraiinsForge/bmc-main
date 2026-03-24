@@ -2,7 +2,46 @@
 
 #![expect(clippy::cast_possible_truncation)]
 
-//! Skin system for WASM widgets — types, registration, and 9-patch parsing.
+//! Skin system — types, registration, and 9-patch parsing.
+//!
+//! # Architecture
+//!
+//! A skin is a **generic** collection of named colors and image assets loaded
+//! from a zip file (or directory) at compile time via `include_skin!()`.
+//!
+//! ## skin.toml format
+//!
+//! ```toml
+//! name = "My Skin"
+//! description = "A cool skin"
+//!
+//! # Freeform color palette — any key names the consumer expects.
+//! [palette]
+//! background = "#151520"
+//! popup_fg = "#e0e0ee"
+//! accent = "#4a8a4a"
+//!
+//! # Image assets under [assets.<name>].
+//! # Each matches a <name>.9.png or <name>.png file in the skin directory/zip.
+//! # Optional `color` field sets a text/icon color associated with the asset.
+//! [assets.button]
+//! color = "#181828"
+//!
+//! [assets.button_pressed]
+//! color = "#080810"
+//! ```
+//!
+//! ## Widget-agnostic design
+//!
+//! The skin format makes no assumptions about what the key names mean. Each
+//! consumer defines its own vocabulary:
+//!
+//! - **Media control** reads `button_normal`, `slider_track`, `art_frame`, etc.
+//! - **Keyboard** reads `key`, `key_pressed`, `popup_bg`, `input_fg`, etc.
+//!
+//! Widgets read palette colors via [`Skin::color_or`] and image assets via
+//! [`Skin::get_nine_patch`]. Missing entries return `None` / the provided
+//! fallback — the consumer falls back to its built-in defaults.
 //!
 //! This crate is WASM-safe with no heavy dependencies. Image decoding happens
 //! in proc macros (build-time only), never at runtime.
@@ -144,22 +183,39 @@ pub struct SkinAsset {
     pub color: Color,
 }
 
-/// A skin — a named collection of image assets loaded from a zip at compile time.
+/// A skin — a named collection of colors and image assets loaded at compile time.
 ///
-/// Created by the `include_skin!` proc macro. Each asset is a `NinePatchAsset`-equivalent
-/// with a name key. Plain `.png` assets get zero insets; `.9.png` assets have insets
-/// parsed from the Android-style 1px black-pixel border.
+/// Created by the `include_skin!` proc macro from a directory or zip file containing
+/// a `skin.toml` and optional image files.
 ///
-/// The widget maps asset names to UI elements — the skin format itself is generic.
-/// The `skin.toml` must include top-level `name` and `description` fields.
-/// A `preview.png` file provides the thumbnail shown in skin pickers.
+/// The skin format is **consumer-agnostic** — the consumer defines which palette keys
+/// and asset names it looks for. See the [crate-level docs](crate) for details.
+///
+/// ## skin.toml format
+///
+/// ```toml
+/// name = "My Skin"
+/// description = "A cool skin"
+///
+/// [palette]
+/// background = "#151520"     # any key names the consumer expects
+/// popup_fg = "#e0e0ee"
+///
+/// [assets.button]            # matches button.9.png or button.png
+/// color = "#181828"          # optional text/icon color for this asset
+///
+/// [assets.button_pressed]
+/// color = "#080810"
+/// ```
 pub struct Skin {
     /// Human-readable skin name (from `skin.toml`).
     pub name: &'static str,
     /// Short description of the skin (from `skin.toml`).
     pub description: &'static str,
-    /// Color palette for semantic color slots.
-    pub palette: SkinPalette,
+    /// Generic color palette — freeform string→Color map.
+    /// Widgets read keys they care about via [`get_color`](Self::get_color).
+    pub palette: &'static [(&'static str, Color)],
+    /// Image assets (9-patch or plain bitmaps).
     pub assets: &'static [SkinAsset],
 }
 
@@ -179,26 +235,29 @@ pub struct SkinEntry {
 }
 
 impl Skin {
-    /// Look up an asset by name and register it with the host if needed.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the asset name doesn't exist in this skin.
+    // -- Palette (colors) --
+
+    /// Look up a palette color by name.
     #[must_use]
-    pub fn get(&self, name: &str) -> SkinEntry {
-        self.try_get(name)
-            .unwrap_or_else(|| panic!("BUG: skin asset not found: {name}"))
+    pub fn get_color(&self, name: &str) -> Option<Color> {
+        self.palette
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, c)| *c)
+            .filter(|c| c.to_u32() != 0)
     }
 
-    /// Get the preview thumbnail asset, if this skin includes a `preview.png`.
+    /// Look up a palette color by name, returning `fallback` if missing.
     #[must_use]
-    pub fn preview(&self) -> Option<SkinEntry> {
-        self.try_get("preview")
+    pub fn color_or(&self, name: &str, fallback: Color) -> Color {
+        self.get_color(name).unwrap_or(fallback)
     }
 
-    /// Look up an asset by name, returning `None` if it doesn't exist.
+    // -- Assets (9-patches / bitmaps) --
+
+    /// Look up a 9-patch asset by name and register it with the host if needed.
     #[must_use]
-    pub fn try_get(&self, name: &str) -> Option<SkinEntry> {
+    pub fn get_nine_patch(&self, name: &str) -> Option<SkinEntry> {
         let asset = self.assets.iter().find(|a| a.name == name)?;
         let nine_patch = SKIN_ASSET_IDS.with(|ids| {
             let mut ids = ids.borrow_mut();
@@ -226,37 +285,12 @@ impl Skin {
             color: asset.color,
         })
     }
-}
 
-// ---------------------------------------------------------------------------
-// SkinPalette
-// ---------------------------------------------------------------------------
-
-/// Color palette for a skin — semantic color slots that widgets can use for
-/// backgrounds, layers, and text to match the skin's visual language.
-///
-/// Default (all-transparent) means "use widget defaults".
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SkinPalette {
-    /// Main widget background color.
-    pub background: Color,
-    /// Primary layer (e.g., dialog/modal background).
-    pub layer1: Color,
-    /// Secondary layer (e.g., dialog header, nested panels).
-    pub layer2: Color,
-    /// Primary text color.
-    pub text_primary: Color,
-    /// Secondary/subtitle text color.
-    pub text_secondary: Color,
-    /// Accent color for highlights, active indicators, focus rings.
-    pub accent: Color,
-}
-
-/// Return `color` if set (non-default), otherwise `fallback`.
-/// Shorthand for the "default means use fallback" convention used by palette colors.
-#[must_use]
-pub fn color_or(color: Color, fallback: Color) -> Color {
-    if color.to_u32() != 0 { color } else { fallback }
+    /// Get the preview thumbnail asset, if this skin includes a `preview.png`.
+    #[must_use]
+    pub fn preview(&self) -> Option<SkinEntry> {
+        self.get_nine_patch("preview")
+    }
 }
 
 // ---------------------------------------------------------------------------

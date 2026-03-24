@@ -387,27 +387,34 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
         })?
         .to_string();
 
-    // Parse [palette] section — all fields optional, default to 0
-    let palette_table = meta
+    // Parse [palette] section — freeform string→color map.
+    let palette_entries: Vec<(String, u32)> = meta
         .get("palette")
         .and_then(|v| v.as_table())
-        .cloned()
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(key, value)| {
+                    let hex = value.as_str()?;
+                    let color = bmc_render_skin::parse_hex_color(
+                        hex,
+                        &format!("skin.toml [palette].{key}"),
+                    )
+                    .to_u32();
+                    Some((key.clone(), color))
+                })
+                .collect()
+        })
         .unwrap_or_default();
-    let palette_color = |key: &str| -> u32 {
-        palette_table
-            .get(key)
-            .and_then(|v| v.as_str())
-            .map_or(0, |hex| {
-                bmc_render_skin::parse_hex_color(hex, &format!("skin.toml [palette].{key}"))
-                    .to_u32()
-            })
-    };
-    let pal_background = palette_color("background");
-    let pal_layer1 = palette_color("layer1");
-    let pal_layer2 = palette_color("layer2");
-    let pal_text_primary = palette_color("text_primary");
-    let pal_text_secondary = palette_color("text_secondary");
-    let pal_accent = palette_color("accent");
+
+    let palette_tokens: Vec<_> = palette_entries
+        .iter()
+        .map(|(key, color)| {
+            quote! {
+                (#key, bmc_wasm_sdk::colors::Color::from_raw(#color))
+            }
+        })
+        .collect();
 
     let assets = process_skin_files(&files, &meta, span)?;
 
@@ -458,14 +465,7 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
                 bmc_wasm_sdk::Skin {
                     name: #skin_name,
                     description: #skin_description,
-                    palette: bmc_wasm_sdk::SkinPalette {
-                        background: bmc_wasm_sdk::colors::Color::from_raw(#pal_background),
-                        layer1: bmc_wasm_sdk::colors::Color::from_raw(#pal_layer1),
-                        layer2: bmc_wasm_sdk::colors::Color::from_raw(#pal_layer2),
-                        text_primary: bmc_wasm_sdk::colors::Color::from_raw(#pal_text_primary),
-                        text_secondary: bmc_wasm_sdk::colors::Color::from_raw(#pal_text_secondary),
-                        accent: bmc_wasm_sdk::colors::Color::from_raw(#pal_accent),
-                    },
+                    palette: &[#(#palette_tokens),*],
                     assets: &[#(#asset_tokens),*]
                 }
             }
@@ -477,14 +477,7 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
                 bmc_wasm_sdk::Skin {
                     name: #skin_name,
                     description: #skin_description,
-                    palette: bmc_wasm_sdk::SkinPalette {
-                        background: bmc_wasm_sdk::colors::Color::from_raw(#pal_background),
-                        layer1: bmc_wasm_sdk::colors::Color::from_raw(#pal_layer1),
-                        layer2: bmc_wasm_sdk::colors::Color::from_raw(#pal_layer2),
-                        text_primary: bmc_wasm_sdk::colors::Color::from_raw(#pal_text_primary),
-                        text_secondary: bmc_wasm_sdk::colors::Color::from_raw(#pal_text_secondary),
-                        accent: bmc_wasm_sdk::colors::Color::from_raw(#pal_accent),
-                    },
+                    palette: &[#(#palette_tokens),*],
                     assets: &[#(#asset_tokens),*]
                 }
             }
@@ -601,9 +594,10 @@ fn process_skin_files(
                 .expect("BUG: suffix mismatch")
         };
 
-        // Look up per-asset metadata from skin.toml
-        let color = meta
-            .get(asset_name)
+        // Look up per-asset metadata from skin.toml [assets.<name>]
+        let assets_table = meta.get("assets").and_then(|v| v.as_table());
+        let color = assets_table
+            .and_then(|t| t.get(asset_name))
             .and_then(|v| v.as_table())
             .and_then(|t| t.get("color"))
             .and_then(|v| v.as_str())

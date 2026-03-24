@@ -20,6 +20,7 @@ members = [
     "bmc-openwrt",
     "bmc-platform",
     "bmc-render",
+    "bmc-render/keyboard",
     "bmc-render/macros",
     "bmc-render/skin",
     "bmc-scheduler",

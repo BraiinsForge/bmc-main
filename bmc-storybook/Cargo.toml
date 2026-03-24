@@ -7,6 +7,7 @@ edition = "2024"
 toml.workspace = true
 
 [dependencies]
+bmc-keyboard = { path = "../bmc-render/keyboard" }
 bmc-render = { path = "../bmc-render" }
 bmc-render-skin = { path = "../bmc-render/skin" }
 bmc-storybook-api = { path = "api" }

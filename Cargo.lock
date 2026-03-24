@@ -1077,6 +1077,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-keyboard"
+version = "0.1.0"
+dependencies = [
+ "bmc-render",
+ "bmc-render-macros",
+ "bmc-render-skin",
+ "bmc-wasm-protocol",
+ "bmc-wasm-sdk",
+ "roxmltree 0.20.0",
+ "tracing",
+]
+
+[[package]]
 name = "bmc-kobject"
 version = "0.1.0"
 dependencies = [
@@ -1393,6 +1406,7 @@ name = "bmc-storybook"
 version = "0.1.0"
 dependencies = [
  "anstyle-parse",
+ "bmc-keyboard",
  "bmc-render",
  "bmc-render-skin",
  "bmc-storybook-api",
@@ -1419,10 +1433,13 @@ dependencies = [
 name = "bmc-storybook-api"
 version = "0.1.0"
 dependencies = [
+ "bmc-keyboard",
  "bmc-render",
  "bmc-storybook-macros",
  "bmc-wasm-sdk",
  "inventory",
+ "rodio",
+ "tracing",
 ]
 
 [[package]]
@@ -1440,6 +1457,7 @@ dependencies = [
 name = "bmc-storybook-stories"
 version = "0.1.0"
 dependencies = [
+ "bmc-keyboard",
  "bmc-render-skin",
  "bmc-storybook-api",
  "bmc-wasm-sdk",

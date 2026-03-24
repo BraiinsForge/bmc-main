@@ -9,11 +9,11 @@ text_primary = "#c8c8dd"
 text_secondary = "#6a6a88"
 accent = "#4a7a4a"
 
-[button_normal]
+[assets.button_normal]
 color = "#2a2a4e"
 
-[button_pressed]
+[assets.button_pressed]
 color = "#080810"
 
-[art_frame]
+[assets.art_frame]
 color = "#4a5a6b"
