@@ -73,15 +73,19 @@
       in
       {
         formatter = nixlib.braiinsfmt.${localSystem} {
+          # Code
           nix = true;
           rust = true;
           python = true;
-          shell = true;
           protobuf = true;
+          # Scripts
+          shell = true;
+          # Configs
           toml = true;
           yaml = true;
+          # Documents
+          markdown = true;
           copyright = true;
-          markdown = false;
 
           config.exclude = [
             # Frontend specifies it's own formatting rules
