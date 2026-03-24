@@ -283,7 +283,8 @@ fn shape_paragraph(
         .layout_runs()
         .map(|run| run.line_w)
         .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .unwrap_or(0.0);
+        .unwrap_or(0.0)
+        .ceil();
     let line_count = buffer.layout_runs().count().max(1);
     let height = line_count as f32 * line_height;
 

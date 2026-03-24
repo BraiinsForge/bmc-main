@@ -9,10 +9,10 @@ use std::collections::HashMap;
 use std::fmt;
 
 use bmc_wasm_protocol::{
-    ICON_FLAG_HAS_FILL, ICON_FLAG_HAS_STROKE, ICON_OP_CLOSE, ICON_OP_CUBIC_TO, ICON_OP_LINE_TO,
-    ICON_OP_MOVE_TO, ICON_OP_QUAD_TO,
+    ICON_FLAG_EVENODD, ICON_FLAG_HAS_FILL, ICON_FLAG_HAS_STROKE, ICON_OP_CLOSE, ICON_OP_CUBIC_TO,
+    ICON_OP_LINE_TO, ICON_OP_MOVE_TO, ICON_OP_QUAD_TO,
 };
-use femtovg::{Paint, Path};
+use femtovg::{FillRule, Paint, Path};
 
 use super::text::to_femtovg_color;
 
@@ -24,6 +24,7 @@ pub struct IconPath {
     pub fill_color: Option<u32>,
     pub stroke_color: Option<u32>,
     pub stroke_width: f32,
+    pub is_evenodd: bool,
 }
 
 /// A fully parsed icon ready for rendering.
@@ -132,7 +133,14 @@ pub fn draw_icon(
     for icon_path in &icon.paths {
         if let Some(fill_color) = icon_path.fill_color {
             let paint_color = tint.unwrap_or_else(|| to_femtovg_color(fill_color));
-            canvas.fill_path(&icon_path.path, &Paint::color(paint_color));
+            let mut paint = Paint::color(paint_color);
+            if icon_path.is_evenodd {
+                paint.set_fill_rule(FillRule::EvenOdd);
+                // Disable AA fringe — it bleeds into narrow cutouts,
+                // filling them in. FemtoVG's own text renderer does the same.
+                paint.set_anti_alias(false);
+            }
+            canvas.fill_path(&icon_path.path, &paint);
         }
         if let Some(stroke_color) = icon_path.stroke_color {
             let paint_color = tint.unwrap_or_else(|| to_femtovg_color(stroke_color));
@@ -170,6 +178,7 @@ fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<IconPath> {
     let flags = r.read_u8()?;
     let has_fill = flags & ICON_FLAG_HAS_FILL != 0;
     let has_stroke = flags & ICON_FLAG_HAS_STROKE != 0;
+    let is_evenodd = flags & ICON_FLAG_EVENODD != 0;
 
     let fill_color = if has_fill { Some(r.read_u32()?) } else { None };
 
@@ -227,6 +236,7 @@ fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<IconPath> {
         fill_color,
         stroke_color,
         stroke_width,
+        is_evenodd,
     })
 }
 

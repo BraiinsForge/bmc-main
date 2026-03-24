@@ -15,9 +15,9 @@ use std::vec::Vec;
 use std::cell::RefCell;
 
 use bmc_wasm_protocol::{
-    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED, DRAW_ORBIT,
-    DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER,
-    NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
+    AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
+    DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS,
+    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_ROW, NODE_SPACER,
 };
 
 // Re-export for macro paths
@@ -36,12 +36,13 @@ pub struct Icon {
 
 // Icon registration — lazy, once per icon per runtime lifetime.
 thread_local! {
-    static ICON_IDS: RefCell<Vec<(usize, u16)>> = RefCell::new(Vec::new());
+    static ICON_IDS: RefCell<Vec<(usize, u16)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Register an icon with the host (if not already registered) and return its ID.
 ///
 /// Useful when you need a raw icon ID for `button_with_icon` or `icon_button`.
+#[must_use]
 pub fn ensure_registered(icon: &Icon) -> u16 {
     ICON_IDS.with(|ids| {
         let mut ids = ids.borrow_mut();
@@ -51,7 +52,38 @@ pub fn ensure_registered(icon: &Icon) -> u16 {
                 return id;
             }
         }
-        let id = crate::host::register_icon(icon.data);
+        let id = host::register_icon(icon.data);
+        ids.push((key, id));
+        id
+    })
+}
+
+/// Embedded raster image data (output of `include_bitmap!` proc macro).
+///
+/// The `data` field contains raw PNG (or other image format) bytes embedded
+/// at compile time. On first use, this data is sent to the host via
+/// `host_register_bitmap()` which decodes it and uploads the texture to VRAM.
+pub struct Bitmap {
+    pub data: &'static [u8],
+}
+
+// Bitmap registration — lazy, once per bitmap per runtime lifetime.
+thread_local! {
+    static BITMAP_IDS: RefCell<Vec<(usize, u16)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Register a bitmap with the host (if not already registered) and return its ID.
+#[must_use]
+pub fn ensure_bitmap_registered(bmp: &Bitmap) -> u16 {
+    BITMAP_IDS.with(|ids| {
+        let mut ids = ids.borrow_mut();
+        let key = bmp.data.as_ptr() as usize;
+        for &(k, id) in ids.iter() {
+            if k == key {
+                return id;
+            }
+        }
+        let id = host::register_bitmap(bmp.data);
         ids.push((key, id));
         id
     })
@@ -96,6 +128,7 @@ impl Span {
     ///   14:    italic
     ///   15:    underline
     /// Note: strikethrough is in the extra byte if needed
+    #[must_use]
     pub fn flags(&self) -> u16 {
         let weight_bits = self.weight.unwrap_or(0) & 0xFFF;
         let has_weight = if self.weight.is_some() { 1 << 12 } else { 0 };
@@ -106,9 +139,20 @@ impl Span {
     }
 
     /// Extra flags byte for strikethrough (separate to fit in u16)
+    #[must_use]
     pub fn extra_flags(&self) -> u8 {
-        if self.strikethrough { 1 } else { 0 }
+        u8::from(self.strikethrough)
     }
+}
+
+/// Inline notification severity kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NotificationKind {
+    Error = 0,
+    Warning = 1,
+    Success = 2,
+    Info = 3,
 }
 
 /// Trait for optional style argument in span()
@@ -162,6 +206,7 @@ pub struct TreeBuffer {
 }
 
 impl TreeBuffer {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             data: Vec::with_capacity(4096),
@@ -172,9 +217,10 @@ impl TreeBuffer {
         self.data.clear();
     }
 
-    /// Get pointer and length for passing to host
-    pub fn as_ptr_len(&self) -> (u32, u32) {
-        (self.data.as_ptr() as u32, self.data.len() as u32)
+    /// Borrow the serialized bytes.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data
     }
 
     fn write_u8(&mut self, v: u8) {
@@ -266,8 +312,22 @@ impl TreeBuffer {
         self.write_u16(draw_count);
     }
 
+    /// Write a notification node
+    /// Format: [NODE_NOTIFICATION][kind:u8][title_len:u16][title_bytes...][subtitle_len:u16][subtitle_bytes...]
+    pub fn write_notification(&mut self, kind: NotificationKind, title: &str, subtitle: &str) {
+        self.write_u8(NODE_NOTIFICATION);
+        self.write_u8(kind as u8);
+        let title_bytes = title.as_bytes();
+        self.write_u16(title_bytes.len() as u16);
+        self.write_bytes(title_bytes);
+        let subtitle_bytes = subtitle.as_bytes();
+        self.write_u16(subtitle_bytes.len() as u16);
+        self.write_bytes(subtitle_bytes);
+    }
+
     /// Write a modal node
     /// Format: [NODE_MODAL][modal_id:u16][is_open:u8][padding:u16][backdrop_alpha:u8][title_len:u16][title_bytes...][content_height:f32][child_count:u16][children...]
+    #[expect(clippy::too_many_arguments)]
     pub fn write_modal(
         &mut self,
         modal_id: u16,
@@ -280,7 +340,7 @@ impl TreeBuffer {
     ) {
         self.write_u8(NODE_MODAL);
         self.write_u16(modal_id);
-        self.write_u8(if is_open { 1 } else { 0 });
+        self.write_u8(u8::from(is_open));
         self.write_u16(padding);
         self.write_u8(backdrop_alpha);
         let title_bytes = title.as_bytes();
@@ -309,7 +369,7 @@ impl Default for TreeBuffer {
 
 // Global tree buffer for the current frame
 std::thread_local! {
-    static TREE_BUFFER: std::cell::RefCell<TreeBuffer> = std::cell::RefCell::new(TreeBuffer::new());
+    static TREE_BUFFER: RefCell<TreeBuffer> = RefCell::new(TreeBuffer::new());
 }
 
 /// Begin building a tree (clears buffer)
@@ -317,9 +377,12 @@ pub fn begin_tree() {
     TREE_BUFFER.with(|buf| buf.borrow_mut().clear());
 }
 
-/// Get the serialized tree pointer and length
-pub fn finish_tree() -> (u32, u32) {
-    TREE_BUFFER.with(|buf| buf.borrow().as_ptr_len())
+/// Submit the serialized tree to the host and clear the buffer.
+pub fn submit_and_clear(width: u32, height: u32) {
+    TREE_BUFFER.with(|buf| {
+        let b = buf.borrow();
+        host::submit_tree(b.as_slice(), width, height);
+    });
 }
 
 /// Access the tree buffer for writing
@@ -373,6 +436,14 @@ pub enum Draw {
         color: u32,
         icon_id: u16,
     },
+    /// Bitmap (raster image) at absolute local position
+    Bitmap {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+    },
     /// Draw with host-computed animations and/or transitions
     Modified {
         animations: Vec<AnimationDef>,
@@ -399,6 +470,7 @@ impl Draw {
 
     /// Add a repeating animation with a start delay.
     #[must_use]
+    #[expect(clippy::too_many_arguments)]
     pub fn animate_delayed(
         self,
         property: AnimProperty,
@@ -489,10 +561,10 @@ impl Draw {
             } => Draw::Modified {
                 animations,
                 transition,
-                color_space: if color_space != ColorSpace::default() {
-                    color_space
-                } else {
+                color_space: if color_space == ColorSpace::default() {
                     cs
+                } else {
+                    color_space
                 },
                 inner,
             },
@@ -525,6 +597,12 @@ pub enum Node {
         flex: f32,
     },
     Canvas(PropsData, Vec<Draw>),
+    /// Inline notification (error/warning/success/info banner)
+    Notification {
+        kind: NotificationKind,
+        title: String,
+        subtitle: String,
+    },
     /// Modal dialog overlay with title, close button, and scrollable body
     Modal {
         modal_id: u16,
@@ -560,6 +638,7 @@ pub fn center(props: PropsData, children: impl IntoIterator<Item = Node>) -> Nod
 }
 
 /// Combined text style and layout props for the style!() macro
+#[derive(Clone, Copy)]
 pub struct StyleResult(pub TextStyle, pub PropsData);
 
 impl From<StyleResult> for TextStyle {
@@ -588,7 +667,7 @@ pub fn paragraph(style: StyleResult, spans: impl IntoIterator<Item = Span>) -> N
     Node::Paragraph {
         props: style.1,
         base_style: style.0,
-        spans: spans.into_iter().map(Into::into).collect(),
+        spans: spans.into_iter().collect(),
     }
 }
 
@@ -607,7 +686,21 @@ pub fn button(style: ButtonStyle, icon: impl Into<Option<u16>>, label: impl Into
     }
 }
 
+/// Inline notification banner
+pub fn notification(
+    kind: NotificationKind,
+    title: impl Into<String>,
+    subtitle: impl Into<String>,
+) -> Node {
+    Node::Notification {
+        kind,
+        title: title.into(),
+        subtitle: subtitle.into(),
+    }
+}
+
 /// Flexible spacer
+#[must_use]
 pub fn spacer(flex: f32) -> Node {
     Node::Spacer { flex }
 }
@@ -618,7 +711,7 @@ pub fn canvas(props: PropsData, draws: impl IntoIterator<Item = Draw>) -> Node {
 }
 
 /// Modal dialog configuration
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct ModalProps {
     /// Margin around the modal content area in pixels.
     /// This creates space between the modal and screen edges where the
@@ -696,16 +789,19 @@ pub fn modal_styled(
 }
 
 /// Rectangle at local position within canvas
+#[must_use]
 pub fn rect(x: f32, y: f32, w: f32, h: f32, color: u32) -> Draw {
     Draw::Rect { x, y, w, h, color }
 }
 
 /// Filled circle at local position within canvas
+#[must_use]
 pub fn circle(cx: f32, cy: f32, r: f32, color: u32) -> Draw {
     Draw::Circle { cx, cy, r, color }
 }
 
 /// Center any draw command in canvas
+#[must_use]
 pub fn centered(inner: Draw) -> Draw {
     Draw::Centered {
         inner: Box::new(inner),
@@ -713,6 +809,7 @@ pub fn centered(inner: Draw) -> Draw {
 }
 
 /// Position any draw command at orbit around canvas center
+#[must_use]
 pub fn orbit(radius: f32, angle: f32, inner: Draw) -> Draw {
     Draw::Orbit {
         radius,
@@ -722,6 +819,7 @@ pub fn orbit(radius: f32, angle: f32, inner: Draw) -> Draw {
 }
 
 /// Rotate any draw command around its center
+#[must_use]
 pub fn rotated(angle: f32, inner: Draw) -> Draw {
     Draw::Rotated {
         angle,
@@ -736,6 +834,7 @@ pub fn rotated(angle: f32, inner: Draw) -> Draw {
 ///
 /// Use `TRANSPARENT` (0) as color to render with original SVG colors,
 /// or pass a color to tint the entire icon.
+#[must_use]
 pub fn icon(x: f32, y: f32, w: f32, h: f32, icon_data: &Icon, color: u32) -> Draw {
     let icon_id = ensure_registered(icon_data);
     Draw::Icon {
@@ -751,6 +850,7 @@ pub fn icon(x: f32, y: f32, w: f32, h: f32, icon_data: &Icon, color: u32) -> Dra
 /// Draw a built-in icon in canvas (no registration needed).
 ///
 /// Use `ICON_CLOSE` or other `ICON_*` constants from the protocol crate.
+#[must_use]
 pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: u16, color: u32) -> Draw {
     Draw::Icon {
         x,
@@ -759,6 +859,23 @@ pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: u16, color: u32) ->
         h,
         color,
         icon_id,
+    }
+}
+
+/// Bitmap (raster image) at local position within canvas.
+///
+/// On first call for a given bitmap, registers its PNG data with the host
+/// which decodes and uploads the texture to VRAM. Subsequent calls reuse
+/// the cached texture — zero per-frame overhead.
+#[must_use]
+pub fn bitmap(x: f32, y: f32, w: f32, h: f32, bmp: &Bitmap) -> Draw {
+    let bitmap_id = ensure_bitmap_registered(bmp);
+    Draw::Bitmap {
+        x,
+        y,
+        w,
+        h,
+        bitmap_id,
     }
 }
 
@@ -805,6 +922,13 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             for draw in draws {
                 serialize_draw(buf, draw);
             }
+        }
+        Node::Notification {
+            kind,
+            title,
+            subtitle,
+        } => {
+            buf.write_notification(*kind, title, subtitle);
         }
         Node::Modal {
             modal_id,
@@ -859,6 +983,20 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*h);
             buf.write_u32(*color);
             buf.write_u16(*icon_id);
+        }
+        Draw::Bitmap {
+            x,
+            y,
+            w,
+            h,
+            bitmap_id,
+        } => {
+            buf.write_u8(DRAW_BITMAP);
+            buf.write_f32(*x);
+            buf.write_f32(*y);
+            buf.write_f32(*w);
+            buf.write_f32(*h);
+            buf.write_u16(*bitmap_id);
         }
         Draw::Centered { inner } => {
             buf.write_u8(DRAW_CENTERED);
@@ -941,20 +1079,15 @@ fn count_buttons(node: &Node) -> u32 {
 
 /// Render UI tree using host-side layout.
 /// Returns button clicks.
+#[must_use]
+#[expect(clippy::needless_pass_by_value)] // Node is consumed by serialization
 pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     let button_count = count_buttons(&root);
 
-    // Serialize tree to buffer
+    // Serialize tree to buffer and submit to host for layout and rendering
     begin_tree();
     with_buffer(|buf| serialize_node(buf, &root));
-    let (ptr, len) = finish_tree();
-
-    // Submit to host for layout and rendering
-    host::submit_tree(
-        unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) },
-        width,
-        height,
-    );
+    submit_and_clear(width, height);
 
     // Collect button click results
     let mut result = TreeRenderResult::default();

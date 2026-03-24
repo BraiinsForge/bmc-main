@@ -6,12 +6,23 @@ use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
+use bmc_wasm_protocol::{ICON_CLOSE, ICON_ERROR, ICON_INFO, ICON_SUCCESS, ICON_WARNING};
+
+/// Maps SVG file stem → builtin icon ID from the protocol crate.
+const BUILTIN_ICON_MAP: &[(&str, u16)] = &[
+    ("close", ICON_CLOSE),
+    ("error--solid", ICON_ERROR),
+    ("warning--solid", ICON_WARNING),
+    ("checkmark--solid", ICON_SUCCESS),
+    ("info--solid", ICON_INFO),
+];
+
 fn main() {
     let icons_dir = Path::new("icons");
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir);
 
-    // Collect (name, id, binary) for each icon
+    // Collect (name, id) for each icon
     let mut entries = Vec::new();
 
     for entry in fs::read_dir(icons_dir).expect("failed to read icons/ directory") {
@@ -28,11 +39,14 @@ fn main() {
             let bin_name = format!("icon_{stem}.bin");
             fs::write(out_path.join(&bin_name), &compiled).unwrap();
 
-            // Map name to builtin constant
-            let const_id = match stem.as_str() {
-                "close" => 0xFF01_u16,
-                other => panic!("unknown built-in icon: {other} — add its ID to build.rs"),
-            };
+            // Look up ID from the protocol-defined mapping
+            let const_id = BUILTIN_ICON_MAP
+                .iter()
+                .find(|(name, _)| *name == stem)
+                .unwrap_or_else(|| {
+                    panic!("unknown built-in icon: {stem} — add its ID to protocol/src/icon.rs and build.rs BUILTIN_ICON_MAP")
+                })
+                .1;
 
             entries.push((stem, const_id));
 

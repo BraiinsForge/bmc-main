@@ -16,15 +16,14 @@ dev:
 	@cargo build --features testbed --bin testbed
 	@cd $(EXAMPLE_DIR) && cargo build --target $(WASM_TARGET)
 	RUST_LOG=bmc_wasm_runtime=debug mprocs \
-		--names "validate,watch,testbed" \
-		"$(MAKE) -C .. validate" \
+		--names "watch,testbed" \
 		"cd $(EXAMPLE_DIR) && cargo watch -x 'build --target $(WASM_TARGET)'" \
-		"cargo run --features testbed --bin testbed -- $(WASM_FILE)"
+		"cargo run --features testbed --bin testbed -- $(WASM_FILE) $(ARGS)"
 
 .PHONY: run
 run:
 	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
-	cargo run --features testbed --bin testbed -- $(subst /debug/,/release/,$(WASM_FILE))
+	cargo run --features testbed --bin testbed -- $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
 
 # Profiling with samply (install: cargo install samply)
 .PHONY: profile
@@ -35,7 +34,7 @@ profile:
 
 	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
 	cargo build --profile profiling --features testbed --bin testbed
-	samply record ../target/profiling/testbed $(subst /debug/,/release/,$(WASM_FILE))
+	samply record ../target/profiling/testbed $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
 
 # Measure WASM binary size (install: brew install binaryen)
 WASM_RELEASE := $(EXAMPLE_DIR)/target/$(WASM_TARGET)/release/$(subst -,_,$(EXAMPLE)).wasm
@@ -56,6 +55,11 @@ size:
 	@echo ""
 	@echo "Sections:"
 	@wasm-objdump -h $(WASM_OPT) 2>/dev/null || true
+
+# SDK API docs (opens in browser)
+.PHONY: docs
+docs:
+	cd sdk && cargo doc --target $(WASM_TARGET) --no-deps --open
 
 # Maximum allowed optimized WASM size in bytes (40KB)
 WASM_SIZE_LIMIT := 40960

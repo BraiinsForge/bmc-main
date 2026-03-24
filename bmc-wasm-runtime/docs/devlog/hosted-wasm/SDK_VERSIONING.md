@@ -45,19 +45,19 @@ The check runs after instantiation (since it calls the export) but before any wi
 ### Error cases
 
 | Case                              | Behavior                                               |
-|-----------------------------------|--------------------------------------------------------|
+| --------------------------------- | ------------------------------------------------------ |
 | Missing export                    | Reject — error guides the author to export the version |
 | Major version mismatch            | Reject — error shows both versions                     |
 | Minor/patch differ, major matches | Accept — log the version for diagnostics               |
 
 ### Key files
 
-| File                      | Role                                                                           |
-|---------------------------|--------------------------------------------------------------------------------|
-| `protocol/src/version.rs` | `SDK_VERSION` constant, export name, pack/unpack helpers                       |
-| `sdk/src/lib.rs`          | `#[no_mangle] __bmc_sdk_version()` — auto-exported from every widget           |
+| File                      | Role                                                                             |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| `protocol/src/version.rs` | `SDK_VERSION` constant, export name, pack/unpack helpers                         |
+| `sdk/src/lib.rs`          | `#[no_mangle] __bmc_sdk_version()` — auto-exported from every widget             |
 | `src/runtime.rs`          | `check_sdk_version()` — calls export after instantiation; `sdk_version()` getter |
-| `src/bin/testbed.rs`      | Prints version to CLI, shows in window title (including on hot-reload)         |
+| `src/bin/testbed.rs`      | Prints version to CLI, shows in window title (including on hot-reload)           |
 
 ## Phase 2: multi-version hosting (future)
 

@@ -7,7 +7,7 @@
 //! ```text
 //! [viewbox_w: f32][viewbox_h: f32][path_count: u16]
 //!   for each path:
-//!     [flags: u8]              // bit 0: has_fill, bit 1: has_stroke
+//!     [flags: u8]              // bit 0: has_fill, bit 1: has_stroke, bit 2: even-odd fill
 //!     [fill_color: u32]        // RGBA, present if has_fill
 //!     [stroke_color: u32]      // RGBA, present if has_stroke
 //!     [stroke_width: f32]      // present if has_stroke
@@ -36,6 +36,9 @@ pub const ICON_FLAG_HAS_FILL: u8 = 0x01;
 /// Flag bit: path has a stroke
 pub const ICON_FLAG_HAS_STROKE: u8 = 0x02;
 
+/// Flag bit: path uses even-odd fill rule (instead of default non-zero)
+pub const ICON_FLAG_EVENODD: u8 = 0x04;
+
 // ── Built-in icon IDs ───────────────────────────────────────────────
 // Reserved range 0xFF00..=0xFFFF for host-bundled icons.
 // User-registered icons use IDs 1.. (no collision).
@@ -45,3 +48,15 @@ pub const ICON_BUILTIN_BASE: u16 = 0xFF00;
 
 /// Close (X) icon — used by modal close button.
 pub const ICON_CLOSE: u16 = 0xFF01;
+
+/// Error icon (filled circle with diagonal line) — notification error state.
+pub const ICON_ERROR: u16 = 0xFF10;
+
+/// Warning icon (filled triangle with exclamation) — notification warning state.
+pub const ICON_WARNING: u16 = 0xFF11;
+
+/// Success icon (filled circle with checkmark) — notification success state.
+pub const ICON_SUCCESS: u16 = 0xFF12;
+
+/// Info icon (filled circle with "i") — notification info state.
+pub const ICON_INFO: u16 = 0xFF13;

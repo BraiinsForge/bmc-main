@@ -79,6 +79,14 @@ pub trait Renderer {
     /// Draw a registered icon at the given position and size.
     fn draw_icon(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32, icon_id: u16);
 
+    // -- Bitmaps --
+
+    /// Register bitmap data (PNG/JPEG bytes), decode and upload to GPU. Returns opaque ID.
+    fn register_bitmap(&mut self, data: &[u8]) -> u16;
+
+    /// Draw a registered bitmap at the given position and size.
+    fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16);
+
     // -- Frame lifecycle --
 
     fn begin_frame(&mut self, width: u32, height: u32);

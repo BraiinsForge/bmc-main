@@ -9,15 +9,16 @@
 )]
 
 use std::ffi::c_void;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::{SDK_VERSION, SDK_VERSION_EXPORT, version_unpack};
-use chrono::{Datelike, Local, Timelike};
+use chrono::{DateTime, Datelike, Local, Timelike, Utc};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::components::{ButtonStyle, draw_button};
 use crate::gpu::FemtoVgRenderer;
-use crate::host_api::HostState;
+use crate::host_api::{CompletedFetch, DelayedFetch, HostState};
 use crate::renderer::Renderer;
 use crate::tree;
 
@@ -312,6 +313,36 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // Bitmap registration
+        linker.func_wrap(
+            "env",
+            "host_register_bitmap",
+            |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
+                let bitmap_data = {
+                    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                    if let Some(memory) = memory {
+                        let data = memory.data(&caller);
+                        let start = data_ptr as usize;
+                        let end = start + data_len as usize;
+                        if end <= data.len() {
+                            Some(data[start..end].to_vec())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(data) = bitmap_data {
+                    let state = caller.data_mut();
+                    u32::from(state.renderer.register_bitmap(&data))
+                } else {
+                    0
+                }
+            },
+        )?;
+
         // New tree-based API
         linker.func_wrap(
             "env",
@@ -418,6 +449,221 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // ── Fetch ──────────────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_fetch",
+            |mut caller: Caller<'_, HostState>,
+             url_ptr: u32,
+             url_len: u32,
+             headers_ptr: u32,
+             headers_len: u32|
+             -> u32 {
+                let url = read_string(&caller, url_ptr, url_len);
+                let Some(url) = url else { return 0 };
+                let headers = parse_headers(&caller, headers_ptr, headers_len);
+
+                let state = caller.data_mut();
+                let request_id = state.next_request_id;
+                state.next_request_id += 1;
+
+                let tx = state.fetch_tx.clone();
+                std::thread::spawn(move || {
+                    let (status, body) = do_fetch(&url, &headers);
+                    let _ = tx.send(CompletedFetch {
+                        request_id,
+                        status,
+                        body,
+                    });
+                });
+
+                request_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_fetch_after",
+            |mut caller: Caller<'_, HostState>,
+             delay_ms: u32,
+             url_ptr: u32,
+             url_len: u32,
+             headers_ptr: u32,
+             headers_len: u32|
+             -> u32 {
+                let url = read_string(&caller, url_ptr, url_len);
+                let Some(url) = url else { return 0 };
+                let headers = parse_headers(&caller, headers_ptr, headers_len);
+
+                let state = caller.data_mut();
+                let request_id = state.next_request_id;
+                state.next_request_id += 1;
+
+                let fire_at = Instant::now() + Duration::from_millis(u64::from(delay_ms));
+                state.delayed_fetches.push(DelayedFetch {
+                    fire_at,
+                    url,
+                    headers,
+                    request_id,
+                });
+
+                request_id
+            },
+        )?;
+
+        // ── JSON ───────────────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_json_parse",
+            |mut caller: Caller<'_, HostState>, body_ptr: u32, body_len: u32| -> u32 {
+                let bytes = read_bytes(&caller, body_ptr, body_len);
+                let Some(bytes) = bytes else { return 0 };
+
+                let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                    return 0;
+                };
+
+                let state = caller.data_mut();
+                let doc_id = state.next_json_id;
+                state.next_json_id += 1;
+                state.json_docs.insert(doc_id, value);
+                doc_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_json_get_str",
+            |mut caller: Caller<'_, HostState>,
+             doc_id: u32,
+             path_ptr: u32,
+             path_len: u32,
+             out_ptr: u32,
+             out_len: u32|
+             -> i32 {
+                let path = read_string(&caller, path_ptr, path_len);
+                let Some(path) = path else { return -1 };
+
+                // Copy string out to break the borrow on caller
+                let str_bytes = {
+                    let state = caller.data();
+                    let Some(doc) = state.json_docs.get(&doc_id) else {
+                        return -1;
+                    };
+                    let Some(val) = doc.pointer(&path) else {
+                        return -1;
+                    };
+                    let Some(s) = val.as_str() else {
+                        return -2;
+                    };
+                    s.as_bytes().to_vec()
+                };
+
+                let actual_len = str_bytes.len();
+                let copy_len = actual_len.min(out_len as usize);
+
+                // Write into WASM memory
+                if copy_len > 0 {
+                    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                    if let Some(memory) = memory {
+                        let data = memory.data_mut(&mut caller);
+                        let start = out_ptr as usize;
+                        if start + copy_len <= data.len() {
+                            data[start..start + copy_len].copy_from_slice(&str_bytes[..copy_len]);
+                        }
+                    }
+                }
+
+                #[expect(clippy::cast_possible_wrap)]
+                {
+                    actual_len as i32
+                }
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_json_get_i64",
+            |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> i64 {
+                let path = read_string(&caller, path_ptr, path_len);
+                let Some(path) = path else {
+                    return i64::MIN;
+                };
+                let state = caller.data();
+                let Some(doc) = state.json_docs.get(&doc_id) else {
+                    return i64::MIN;
+                };
+                let Some(val) = doc.pointer(&path) else {
+                    return i64::MIN;
+                };
+                val.as_i64().unwrap_or(i64::MIN)
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_json_get_f64",
+            |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> f64 {
+                let path = read_string(&caller, path_ptr, path_len);
+                let Some(path) = path else {
+                    return f64::NAN;
+                };
+                let state = caller.data();
+                let Some(doc) = state.json_docs.get(&doc_id) else {
+                    return f64::NAN;
+                };
+                let Some(val) = doc.pointer(&path) else {
+                    return f64::NAN;
+                };
+                val.as_f64().unwrap_or(f64::NAN)
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_json_get_bool",
+            |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> i32 {
+                let path = read_string(&caller, path_ptr, path_len);
+                let Some(path) = path else { return -1 };
+                let state = caller.data();
+                let Some(doc) = state.json_docs.get(&doc_id) else {
+                    return -1;
+                };
+                let Some(val) = doc.pointer(&path) else {
+                    return -1;
+                };
+                match val.as_bool() {
+                    Some(true) => 1,
+                    Some(false) => 0,
+                    None => -1,
+                }
+            },
+        )?;
+
+        // Parse an ISO 8601 date string → unix timestamp.
+        // Returns i64::MIN on parse failure.
+        linker.func_wrap(
+            "env",
+            "host_parse_date",
+            |caller: Caller<'_, HostState>, str_ptr: u32, str_len: u32| -> i64 {
+                let s = read_string(&caller, str_ptr, str_len);
+                let Some(s) = s else { return i64::MIN };
+                s.parse::<DateTime<Utc>>()
+                    .map(|dt| dt.timestamp())
+                    .unwrap_or(i64::MIN)
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_json_free",
+            |mut caller: Caller<'_, HostState>, doc_id: u32| {
+                caller.data_mut().json_docs.remove(&doc_id);
+            },
+        )?;
+
         Ok(())
     }
 
@@ -512,5 +758,166 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn instance(&self) -> &wasmi::Instance {
         &self.instance
+    }
+
+    /// Check for completed fetch responses and delayed fetches, then deliver
+    /// them to WASM by calling `__on_fetch_response`.
+    ///
+    /// Call this before `render()` each frame.
+    pub fn deliver_fetch_responses(&mut self) {
+        // Fire any delayed fetches whose time has come
+        let now = Instant::now();
+        let state = self.store.data_mut();
+        let mut ready = Vec::new();
+        state.delayed_fetches.retain(|df| {
+            if now >= df.fire_at {
+                ready.push((df.url.clone(), df.headers.clone(), df.request_id));
+                false
+            } else {
+                true
+            }
+        });
+        for (url, headers, request_id) in ready {
+            let tx = state.fetch_tx.clone();
+            std::thread::spawn(move || {
+                let (status, body) = do_fetch(&url, &headers);
+                let _ = tx.send(CompletedFetch {
+                    request_id,
+                    status,
+                    body,
+                });
+            });
+        }
+
+        // Collect all completed responses
+        let mut responses = Vec::new();
+        let state = self.store.data_mut();
+        while let Ok(resp) = state.fetch_rx.try_recv() {
+            responses.push(resp);
+        }
+
+        if responses.is_empty() {
+            return;
+        }
+
+        // Get the __on_fetch_response and __alloc exports
+        let on_response = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_fetch_response");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_response), Ok(alloc_func)) = (on_response, alloc_func) else {
+            tracing::warn!("widget missing __on_fetch_response or __alloc export");
+            return;
+        };
+
+        for resp in responses {
+            let body_len = resp.body.len() as u32;
+
+            // Allocate WASM memory for the body
+            let body_ptr = if body_len > 0 {
+                self.store.set_fuel(Self::FUEL_PER_FRAME).expect("set fuel");
+                match alloc_func.call(&mut self.store, body_len) {
+                    Ok(ptr) => {
+                        // Write body into WASM memory
+                        let memory = self
+                            .instance
+                            .get_export(&self.store, "memory")
+                            .and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let data = memory.data_mut(&mut self.store);
+                            let start = ptr as usize;
+                            let end = start + body_len as usize;
+                            if end <= data.len() {
+                                data[start..end].copy_from_slice(&resp.body);
+                            }
+                        }
+                        ptr
+                    }
+                    Err(e) => {
+                        tracing::error!("__alloc failed: {e}");
+                        continue;
+                    }
+                }
+            } else {
+                0
+            };
+
+            // Call __on_fetch_response(request_id, status, body_ptr, body_len)
+            self.store.set_fuel(Self::FUEL_PER_FRAME).expect("set fuel");
+            if let Err(e) = on_response.call(
+                &mut self.store,
+                (resp.request_id, resp.status, body_ptr, body_len),
+            ) {
+                tracing::error!("__on_fetch_response failed: {e}");
+            }
+        }
+    }
+
+    /// Whether there are pending delayed fetches that need polling.
+    #[must_use]
+    pub fn has_pending_fetches(&self) -> bool {
+        !self.store.data().delayed_fetches.is_empty()
+    }
+}
+
+/// Read a UTF-8 string from WASM memory.
+fn read_string(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<String> {
+    let memory = caller.get_export("memory").and_then(Extern::into_memory)?;
+    let data = memory.data(caller);
+    let start = ptr as usize;
+    let end = start + len as usize;
+    if end > data.len() {
+        return None;
+    }
+    String::from_utf8(data[start..end].to_vec()).ok()
+}
+
+/// Read raw bytes from WASM memory.
+fn read_bytes(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<Vec<u8>> {
+    let memory = caller.get_export("memory").and_then(Extern::into_memory)?;
+    let data = memory.data(caller);
+    let start = ptr as usize;
+    let end = start + len as usize;
+    if end > data.len() {
+        return None;
+    }
+    Some(data[start..end].to_vec())
+}
+
+/// Parse newline-separated "Key: Value" headers from WASM memory.
+fn parse_headers(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Vec<(String, String)> {
+    if len == 0 {
+        return Vec::new();
+    }
+    let Some(raw) = read_string(caller, ptr, len) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .filter_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            Some((k.trim().to_owned(), v.trim().to_owned()))
+        })
+        .collect()
+}
+
+/// Perform an HTTP GET request, returning (status_code, body).
+/// Returns (0, error_message) on network errors.
+fn do_fetch(url: &str, headers: &[(String, String)]) -> (u32, Vec<u8>) {
+    let mut req = ureq::get(url);
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    match req.call() {
+        Ok(response) => {
+            let status = u32::from(response.status().as_u16());
+            match response.into_body().read_to_vec() {
+                Ok(body) => (status, body),
+                Err(e) => (0, format!("body read error: {e}").into_bytes()),
+            }
+        }
+        Err(e) => (0, format!("fetch error: {e}").into_bytes()),
     }
 }

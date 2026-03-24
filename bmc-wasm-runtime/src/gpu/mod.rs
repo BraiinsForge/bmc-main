@@ -2,6 +2,7 @@
 
 //! GPU-accelerated rendering backend (FemtoVG + cosmic-text).
 
+pub mod bitmap;
 pub mod icons;
 mod renderer;
 pub mod text;

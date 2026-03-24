@@ -3,6 +3,10 @@
 //! Host state and function bindings for WASM.
 
 use std::collections::HashMap;
+use std::sync::mpsc;
+use std::time::Instant;
+
+use serde_json::Value;
 
 use crate::gpu::FemtoVgRenderer;
 use crate::interaction::InteractionState;
@@ -64,6 +68,21 @@ pub struct ModalState {
     pub drag_start_offset: f32,
 }
 
+/// A completed HTTP fetch response ready for delivery to WASM.
+pub struct CompletedFetch {
+    pub request_id: u32,
+    pub status: u32,
+    pub body: Vec<u8>,
+}
+
+/// A delayed fetch waiting for its fire time.
+pub struct DelayedFetch {
+    pub fire_at: Instant,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub request_id: u32,
+}
+
 /// Host-side state accessible to WASM via host functions.
 #[expect(dead_code)]
 pub struct HostState {
@@ -108,11 +127,30 @@ pub struct HostState {
 
     /// Whether the next frame only needs animation updates (no WASM execution).
     pub animation_only_frame: bool,
+
+    /// Next request ID for fetch.
+    pub next_request_id: u32,
+
+    /// Receiver for completed fetch responses from background threads.
+    pub fetch_rx: mpsc::Receiver<CompletedFetch>,
+
+    /// Sender cloned into each background fetch thread.
+    pub fetch_tx: mpsc::Sender<CompletedFetch>,
+
+    /// Pending delayed fetches.
+    pub delayed_fetches: Vec<DelayedFetch>,
+
+    /// Parsed JSON documents, keyed by doc_id.
+    pub json_docs: HashMap<u32, Value>,
+
+    /// Next JSON document ID.
+    pub next_json_id: u32,
 }
 
 impl HostState {
     /// Create new host state with the given renderer.
     pub fn new(renderer: FemtoVgRenderer) -> Self {
+        let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
             renderer,
             interaction: InteractionState::new(),
@@ -128,6 +166,12 @@ impl HostState {
             frame_counter: 0,
             cached_tree_data: None,
             animation_only_frame: false,
+            next_request_id: 1,
+            fetch_rx,
+            fetch_tx,
+            delayed_fetches: Vec::new(),
+            json_docs: HashMap::new(),
+            next_json_id: 1,
         }
     }
 

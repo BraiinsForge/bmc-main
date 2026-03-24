@@ -16,9 +16,16 @@ wasmi.workspace = true
 cosmic-text.workspace = true
 femtovg.workspace = true
 glow.workspace = true
+image.workspace = true
+imgref = "1.10"
+rgb = "0.8"
 
 # Layout
 taffy.workspace = true
+
+# Network + JSON (for host-side fetch and parsing)
+serde_json.workspace = true
+ureq = "3"
 
 # Testbed
 glutin = { workspace = true, optional = true }
@@ -38,6 +45,7 @@ required-features = ["testbed"]
 
 [build-dependencies]
 bmc-icon-compiler = { path = "icon-compiler" }
+bmc-wasm-protocol = { path = "protocol" }
 
 [lints]
 workspace = true

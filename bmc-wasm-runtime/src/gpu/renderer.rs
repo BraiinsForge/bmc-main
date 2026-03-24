@@ -14,6 +14,7 @@ use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, Color, FontId, Paint, Path};
 
+use super::bitmap::BitmapRegistry;
 use super::icons::IconRegistry;
 use super::text::{ParagraphLayoutCache, to_femtovg_color};
 use crate::renderer::Renderer;
@@ -36,6 +37,7 @@ pub struct FemtoVgRenderer {
     font_system: cosmic_text::FontSystem,
     paragraph_cache: ParagraphLayoutCache,
     icon_registry: IconRegistry,
+    bitmap_registry: BitmapRegistry,
     width: f32,
     height: f32,
     frame_counter: u64,
@@ -90,6 +92,7 @@ impl FemtoVgRenderer {
             font_system,
             paragraph_cache: ParagraphLayoutCache::new(),
             icon_registry,
+            bitmap_registry: BitmapRegistry::new(),
             width: width as f32,
             height: height as f32,
             frame_counter: 0,
@@ -245,6 +248,18 @@ impl Renderer for FemtoVgRenderer {
     fn draw_icon(&mut self, x: f32, y: f32, w: f32, h: f32, color: u32, icon_id: u16) {
         if let Some(icon) = self.icon_registry.get(icon_id) {
             super::icons::draw_icon(&mut self.canvas, icon, x, y, w, h, color);
+        }
+    }
+
+    // -- Bitmaps --
+
+    fn register_bitmap(&mut self, data: &[u8]) -> u16 {
+        self.bitmap_registry.register(data, &mut self.canvas)
+    }
+
+    fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16) {
+        if let Some(image_id) = self.bitmap_registry.get(bitmap_id) {
+            super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
         }
     }
 

@@ -3,6 +3,7 @@
 //! Widget development testbed with hot-reloading.
 //!
 //! Uses winit for windowing, glutin for OpenGL context, and FemtoVG for GPU rendering.
+//! Renders all 4 widget sizes simultaneously.
 
 #![expect(
     clippy::cast_possible_truncation,
@@ -18,6 +19,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
+use glow::HasContext;
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::ContextAttributesBuilder;
 use glutin::display::GetGlDisplay;
@@ -31,37 +33,37 @@ use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::Window;
+use winit::window::{Window, WindowButtons};
 
 use bmc_wasm_runtime::WasmWidgetRuntime;
 use bmc_wasm_runtime::interaction::TouchEvent;
 use bmc_wasm_runtime::renderer::Renderer;
 
-const DEFAULT_WIDTH: u32 = 1280;
-const DEFAULT_HEIGHT: u32 = 480;
+// Layout constants
+const PREVIEW_GAP: u32 = 8;
+const PREVIEW_MARGIN: u32 = 8;
+// Inner width = max(1280, 638+8+638) = 1284
+const PREVIEW_WIDTH: u32 = PREVIEW_MARGIN + 1284 + PREVIEW_MARGIN; // 1300
+// Inner height = 480+8+max(480, 238+8+238) = 480+8+484 = 972
+const PREVIEW_HEIGHT: u32 = PREVIEW_MARGIN + 972 + PREVIEW_MARGIN; // 988
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
         eprintln!("WASM Widget Testbed");
-        eprintln!("Usage: testbed <wasm_file> [--size WxH]");
-        eprintln!();
-        eprintln!("Example: testbed widget.wasm --size {DEFAULT_WIDTH}x{DEFAULT_HEIGHT}");
+        eprintln!("Usage: testbed <wasm_file>");
         std::process::exit(1);
     }
 
     let wasm_path = PathBuf::from(&args[1]);
-    let (width, height) = parse_size(&args).unwrap_or((DEFAULT_WIDTH, DEFAULT_HEIGHT));
 
     println!("Loading widget from: {}", wasm_path.display());
-    println!("Display size: {width}x{height}");
+    println!("Display size: {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} (4 sizes)");
 
     let event_loop = EventLoop::new()?;
     let mut app = App {
         wasm_path,
-        width,
-        height,
         state: None,
         rss_after_gl_kb: None,
         rss_after_runtime_kb: None,
@@ -104,20 +106,36 @@ fn print_memory_stats(rss_after_gl_kb: Option<u64>, rss_after_runtime_kb: Option
 
 struct App {
     wasm_path: PathBuf,
-    width: u32,
-    height: u32,
-    state: Option<AppState>,
+    state: Option<PreviewState>,
     rss_after_gl_kb: Option<u64>,
     rss_after_runtime_kb: Option<u64>,
 }
 
-struct AppState {
-    // runtime must drop before GL context (FemtoVG Canvas calls GL on drop)
+// ── Preview mode ───────────────────────────────────────────────────
+
+struct PreviewTile {
     runtime: WasmWidgetRuntime,
-    window: Window,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    label: &'static str,
+    fbo: glow::Framebuffer,
+    _texture: glow::Texture,
+}
+
+struct PreviewState {
+    // Drop order: tiles (FemtoVG Canvases) → GL resources → window
+    tiles: Vec<PreviewTile>,
+    checker_fbo: glow::Framebuffer,
+    _checker_texture: glow::Texture,
+    stats_fbo: glow::Framebuffer,
+    _stats_texture: glow::Texture,
+    gl: glow::Context,
     gl_surface: glutin::surface::Surface<WindowSurface>,
     gl_context: glutin::context::PossiblyCurrentContext,
     gl_config: glutin::config::Config,
+    window: Window,
     _watcher: RecommendedWatcher,
     watcher_rx: Receiver<()>,
     last_frame: Instant,
@@ -128,15 +146,37 @@ struct AppState {
     fps: FpsTracker,
 }
 
+// Stats panel position: empty area right of SMALL tile
+const STATS_X: u32 = M + 638 + G + 317 + G;
+const STATS_Y: u32 = M + 480 + G + 238 + G;
+const STATS_W: u32 = PREVIEW_WIDTH - M - STATS_X;
+const STATS_H: u32 = PREVIEW_HEIGHT - M - STATS_Y;
+
+/// Tile definitions: (x, y, w, h, label) — positioned with margin offset.
+const M: u32 = PREVIEW_MARGIN;
+const G: u32 = PREVIEW_GAP;
+const TILE_DEFS: [(u32, u32, u32, u32, &str); 4] = [
+    (M, M, 1280, 480, "FULL"),
+    (M, M + 480 + G, 638, 480, "LARGE"),
+    (M + 638 + G, M + 480 + G, 638, 238, "MEDIUM"),
+    (M + 638 + G, M + 480 + G + 238 + G, 317, 238, "SMALL"),
+];
+
 impl ApplicationHandler for App {
+    #[expect(clippy::too_many_lines)]
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
             return;
         }
 
+        let win_size = PhysicalSize::new(PREVIEW_WIDTH, PREVIEW_HEIGHT);
         let window_attrs = Window::default_attributes()
             .with_title("WASM Widget Testbed")
-            .with_inner_size(PhysicalSize::new(self.width, self.height));
+            .with_inner_size(win_size)
+            .with_min_inner_size(win_size)
+            .with_max_inner_size(win_size)
+            .with_resizable(false)
+            .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE);
 
         let template = ConfigTemplateBuilder::new().with_alpha_size(8);
         let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attrs));
@@ -182,18 +222,46 @@ impl ApplicationHandler for App {
             .make_current(&gl_surface)
             .expect("Failed to make GL context current");
 
-        // No vsync — testbed measures uncapped GPU throughput.
-        // Event-driven loop sleeps when idle, so no wasted CPU.
-        let _ = gl_surface.set_swap_interval(&gl_context, SwapInterval::DontWait);
+        if let Err(e) = gl_surface.set_swap_interval(&gl_context, SwapInterval::DontWait) {
+            eprintln!("Warning: failed to disable vsync: {e}");
+        }
 
         self.rss_after_gl_kb = current_rss_kb();
 
-        let runtime = create_runtime(&self.wasm_path, &gl_config, self.width, self.height)
-            .expect("Failed to create runtime");
+        let (watcher, watcher_rx) =
+            setup_watcher(&self.wasm_path).expect("Failed to set up file watcher");
+
+        let gl = unsafe {
+            glow::Context::from_loader_function(|s| {
+                let c = CString::new(s).unwrap();
+                gl_display.get_proc_address(&c).cast()
+            })
+        };
+
+        let mut tiles = Vec::with_capacity(4);
+        for &(x, y, w, h, label) in &TILE_DEFS {
+            let runtime = create_runtime(&self.wasm_path, &gl_config, w, h)
+                .expect("Failed to create runtime");
+            let (fbo, texture) = create_fbo(&gl, w, h);
+            tiles.push(PreviewTile {
+                runtime,
+                x,
+                y,
+                w,
+                h,
+                label,
+                fbo,
+                _texture: texture,
+            });
+        }
+
+        let (checker_fbo, checker_texture) = create_fbo(&gl, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+        render_checkerboard_to_fbo(&gl, checker_fbo, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+        let (stats_fbo, stats_texture) = create_fbo(&gl, STATS_W, STATS_H);
 
         self.rss_after_runtime_kb = current_rss_kb();
 
-        let (major, minor, patch) = runtime.sdk_version();
+        let (major, minor, patch) = tiles[0].runtime.sdk_version();
         println!("Widget SDK version: {major}.{minor}.{patch}");
         let widget_name = self
             .wasm_path
@@ -201,15 +269,17 @@ impl ApplicationHandler for App {
             .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
         window.set_title(&format!("{widget_name} — SDK {major}.{minor}.{patch}"));
 
-        let (watcher, watcher_rx) =
-            setup_watcher(&self.wasm_path).expect("Failed to set up file watcher");
-
-        self.state = Some(AppState {
-            window,
+        self.state = Some(PreviewState {
+            tiles,
+            checker_fbo,
+            _checker_texture: checker_texture,
+            stats_fbo,
+            _stats_texture: stats_texture,
+            gl,
             gl_surface,
             gl_context,
             gl_config,
-            runtime,
+            window,
             _watcher: watcher,
             watcher_rx,
             last_frame: Instant::now(),
@@ -221,167 +291,403 @@ impl ApplicationHandler for App {
         });
     }
 
-    #[expect(clippy::too_many_lines)]
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let Some(state) = &mut self.state else { return };
-
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed
-                    && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
-                {
-                    event_loop.exit();
-                }
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                state.mouse_pos = (position.x as i32, position.y as i32);
-                if state.mouse_down {
-                    let (x, y) = state.mouse_pos;
-                    state.runtime.push_touch_event(TouchEvent::Move { x, y });
-                    state.needs_render = true;
-                }
-            }
-
-            WindowEvent::MouseInput {
-                state: btn_state,
-                button: MouseButton::Left,
-                ..
-            } => {
-                let (x, y) = state.mouse_pos;
-                match btn_state {
-                    ElementState::Pressed => {
-                        state.mouse_down = true;
-                        state.runtime.push_touch_event(TouchEvent::Down { x, y });
-                        state.needs_render = true;
-                    }
-                    ElementState::Released => {
-                        state.mouse_down = false;
-                        state.runtime.push_touch_event(TouchEvent::Up { x, y });
-                        state.needs_render = true;
-                    }
-                }
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let delta_y = match delta {
-                    // winit: positive y = content should move down = scroll up
-                    // interaction: positive delta = scroll down
-                    // Negate to match, and scale up for usable speed
-                    MouseScrollDelta::LineDelta(_, y) => (-y * 30.0) as i32,
-                    MouseScrollDelta::PixelDelta(pos) => -pos.y as i32,
-                };
-                if delta_y != 0 {
-                    let (x, y) = state.mouse_pos;
-                    state
-                        .runtime
-                        .push_touch_event(TouchEvent::Scroll { x, y, delta_y });
-                    state.needs_render = true;
-                }
-            }
-
-            WindowEvent::Resized(size) => {
-                if size.width > 0 && size.height > 0 {
-                    state.gl_surface.resize(
-                        &state.gl_context,
-                        NonZeroU32::new(size.width).unwrap(),
-                        NonZeroU32::new(size.height).unwrap(),
-                    );
-                    state.needs_render = true;
-                }
-            }
-
-            WindowEvent::RedrawRequested => {
-                // Hot-reload
-                if state.pending_reload {
-                    state.pending_reload = false;
-                    match create_runtime(&self.wasm_path, &state.gl_config, self.width, self.height)
-                    {
-                        Ok(new_runtime) => {
-                            let (major, minor, patch) = new_runtime.sdk_version();
-                            println!(
-                                "Reloaded: {} (SDK {major}.{minor}.{patch})",
-                                self.wasm_path.display()
-                            );
-                            let widget_name = self
-                                .wasm_path
-                                .file_stem()
-                                .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
-                            state
-                                .window
-                                .set_title(&format!("{widget_name} — SDK {major}.{minor}.{patch}"));
-                            state.runtime = new_runtime;
-                        }
-                        Err(e) => eprintln!("Reload failed: {e}"),
-                    }
-                }
-
-                let now = Instant::now();
-                let delta_ms = now.duration_since(state.last_frame).as_millis() as u32;
-                state.last_frame = now;
-
-                let size = state.window.inner_size();
-                let (w, h) = (size.width, size.height);
-                if w == 0 || h == 0 {
-                    return;
-                }
-
-                // Render
-                let t0 = Instant::now();
-
-                state.runtime.renderer().begin_frame(w, h);
-                // Dark wine background
-                state
-                    .runtime
-                    .renderer()
-                    .fill_rect(0.0, 0.0, w as f32, h as f32, 0x50_18_38_FF);
-
-                if let Err(e) = state.runtime.render(delta_ms) {
-                    eprintln!("Render error: {e}");
-                }
-
-                let render_us = t0.elapsed().as_micros() as u32;
-                state.fps.tick(render_us, state.needs_render);
-                draw_stats(state.runtime.renderer(), w as f32, &state.fps);
-
-                state.runtime.renderer().flush();
-                state
-                    .gl_surface
-                    .swap_buffers(&state.gl_context)
-                    .expect("Failed to swap buffers");
-
-                state.needs_render = state.runtime.wants_next_frame();
-            }
-
-            _ => {}
+        if let Some(state) = &mut self.state {
+            handle_preview_event(&self.wasm_path, state, event_loop, event);
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(state) = &mut self.state else { return };
+        let Some(s) = &mut self.state else { return };
 
-        // Check for hot-reload
-        if state.watcher_rx.try_recv().is_ok() {
-            while state.watcher_rx.try_recv().is_ok() {} // drain
-            state.pending_reload = true;
+        if s.watcher_rx.try_recv().is_ok() {
+            while s.watcher_rx.try_recv().is_ok() {}
+            s.pending_reload = true;
         }
 
-        if state.needs_render || state.pending_reload {
+        let (needs_render, pending_reload, window) = (s.needs_render, s.pending_reload, &s.window);
+
+        if needs_render || pending_reload {
             event_loop.set_control_flow(ControlFlow::Poll);
-            state.window.request_redraw();
+            window.request_redraw();
         } else {
-            // Poll periodically for hot-reload events
+            // Still redraw periodically for overlay updates and hot-reload checks
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(100),
             ));
+            window.request_redraw();
         }
+    }
+}
+
+// ── Event handling ─────────────────────────────────────────────────
+
+fn handle_preview_event(
+    wasm_path: &Path,
+    state: &mut PreviewState,
+    event_loop: &ActiveEventLoop,
+    event: WindowEvent,
+) {
+    match event {
+        WindowEvent::CloseRequested => event_loop.exit(),
+
+        WindowEvent::KeyboardInput { event, .. } => {
+            if event.state == ElementState::Pressed
+                && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
+            {
+                event_loop.exit();
+            }
+        }
+
+        WindowEvent::CursorMoved { position, .. } => {
+            state.mouse_pos = (position.x as i32, position.y as i32);
+            if state.mouse_down
+                && let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos)
+            {
+                state.tiles[idx]
+                    .runtime
+                    .push_touch_event(TouchEvent::Move { x: lx, y: ly });
+                state.needs_render = true;
+            }
+        }
+
+        WindowEvent::MouseInput {
+            state: btn_state,
+            button: MouseButton::Left,
+            ..
+        } => {
+            if let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos) {
+                match btn_state {
+                    ElementState::Pressed => {
+                        state.mouse_down = true;
+                        state.tiles[idx]
+                            .runtime
+                            .push_touch_event(TouchEvent::Down { x: lx, y: ly });
+                        state.needs_render = true;
+                    }
+                    ElementState::Released => {
+                        state.mouse_down = false;
+                        state.tiles[idx]
+                            .runtime
+                            .push_touch_event(TouchEvent::Up { x: lx, y: ly });
+                        state.needs_render = true;
+                    }
+                }
+            } else if btn_state == ElementState::Released {
+                state.mouse_down = false;
+            }
+        }
+
+        WindowEvent::MouseWheel { delta, .. } => {
+            let delta_y = match delta {
+                MouseScrollDelta::LineDelta(_, y) => (-y * 30.0) as i32,
+                MouseScrollDelta::PixelDelta(pos) => -pos.y as i32,
+            };
+            if delta_y != 0
+                && let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos)
+            {
+                state.tiles[idx]
+                    .runtime
+                    .push_touch_event(TouchEvent::Scroll {
+                        x: lx,
+                        y: ly,
+                        delta_y,
+                    });
+                state.needs_render = true;
+            }
+        }
+
+        WindowEvent::Resized(size) => {
+            // Undo WM-triggered maximize/resize (enabled_buttons not supported on X11/Wayland,
+            // is_maximized unreliable — just force size back unconditionally)
+            if size.width != PREVIEW_WIDTH || size.height != PREVIEW_HEIGHT {
+                state.window.set_maximized(false);
+                let _ = state
+                    .window
+                    .request_inner_size(PhysicalSize::new(PREVIEW_WIDTH, PREVIEW_HEIGHT));
+            }
+        }
+
+        WindowEvent::RedrawRequested => {
+            render_preview(wasm_path, state);
+        }
+
+        _ => {}
+    }
+}
+
+#[expect(clippy::too_many_lines, clippy::cast_possible_wrap)]
+fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
+    // Hot-reload: recreate all 4 runtimes
+    if state.pending_reload {
+        state.pending_reload = false;
+        let mut any_ok = false;
+        for tile in &mut state.tiles {
+            match create_runtime(wasm_path, &state.gl_config, tile.w, tile.h) {
+                Ok(new_runtime) => {
+                    tile.runtime = new_runtime;
+                    any_ok = true;
+                }
+                Err(e) => eprintln!("Reload failed ({}): {e}", tile.label),
+            }
+        }
+        if any_ok {
+            let (major, minor, patch) = state.tiles[0].runtime.sdk_version();
+            println!(
+                "Reloaded: {} (SDK {major}.{minor}.{patch})",
+                wasm_path.display()
+            );
+            let widget_name = wasm_path
+                .file_stem()
+                .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
+            state
+                .window
+                .set_title(&format!("{widget_name} — SDK {major}.{minor}.{patch}"));
+        }
+    }
+
+    let now = Instant::now();
+    let delta_ms = now.duration_since(state.last_frame).as_millis() as u32;
+    state.last_frame = now;
+
+    let t0 = Instant::now();
+
+    // Render each tile to its FBO via the default framebuffer
+    for tile in &mut state.tiles {
+        let (tw, th) = (tile.w, tile.h);
+
+        // FemtoVG renders to the default framebuffer at (0, 0, tw, th)
+        tile.runtime.renderer().begin_frame(tw, th);
+
+        tile.runtime.deliver_fetch_responses();
+        if let Err(e) = tile.runtime.render(delta_ms) {
+            eprintln!("Render error ({}): {e}", tile.label);
+        }
+
+        tile.runtime.renderer().flush();
+
+        // Copy rendered content from default FB to tile's FBO
+        let fbo = tile.fbo;
+        unsafe {
+            state.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+            state.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(fbo));
+            state.gl.blit_framebuffer(
+                0,
+                0,
+                tw as i32,
+                th as i32,
+                0,
+                0,
+                tw as i32,
+                th as i32,
+                glow::COLOR_BUFFER_BIT,
+                glow::NEAREST,
+            );
+        }
+    }
+
+    // Render stats panel into its FBO (reuse FULL tile's renderer)
+    {
+        let renderer = state.tiles[0].runtime.renderer();
+        let w = STATS_W as f32;
+        let h = STATS_H as f32;
+        renderer.begin_frame(STATS_W, STATS_H);
+
+        // Subtle dark background — begin_frame already clears to black,
+        // fill with slightly lighter to distinguish from widget backgrounds
+        renderer.fill_rect(0.0, 0.0, w, h, 0x12_12_12_FF);
+        // Inset rounded panel
+        let pad = 12.0;
+        renderer.fill_rounded_rect(pad, pad, w - pad * 2.0, h - pad * 2.0, 6.0, 0x1E_1E_1E_FF);
+
+        draw_preview_stats(renderer, w, h, &state.fps);
+        renderer.flush();
+        unsafe {
+            state.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+            state
+                .gl
+                .bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(state.stats_fbo));
+            state.gl.blit_framebuffer(
+                0,
+                0,
+                STATS_W as i32,
+                STATS_H as i32,
+                0,
+                0,
+                STATS_W as i32,
+                STATS_H as i32,
+                glow::COLOR_BUFFER_BIT,
+                glow::NEAREST,
+            );
+        }
+    }
+
+    // Blit cached checkerboard background
+    blit_fbo_to_screen(
+        &state.gl,
+        state.checker_fbo,
+        0,
+        0,
+        PREVIEW_WIDTH,
+        PREVIEW_HEIGHT,
+    );
+
+    // Blit each tile FBO to its correct position on screen
+    for tile in &state.tiles {
+        blit_fbo_to_screen(&state.gl, tile.fbo, tile.x, tile.y, tile.w, tile.h);
+    }
+    // Blit stats panel
+    blit_fbo_to_screen(
+        &state.gl,
+        state.stats_fbo,
+        STATS_X,
+        STATS_Y,
+        STATS_W,
+        STATS_H,
+    );
+
+    unsafe {
+        state.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
+
+    let render_us = t0.elapsed().as_micros() as u32;
+    // Always mark as rendered — we draw all 4 tiles every frame
+    state.fps.tick(render_us, true);
+
+    state
+        .gl_surface
+        .swap_buffers(&state.gl_context)
+        .expect("Failed to swap buffers");
+
+    state.needs_render = state
+        .tiles
+        .iter()
+        .any(|t| t.runtime.wants_next_frame() || t.runtime.has_pending_fetches());
+}
+
+/// Blit an FBO to a position on the default framebuffer (screen).
+#[expect(clippy::cast_possible_wrap)]
+fn blit_fbo_to_screen(gl: &glow::Context, fbo: glow::Framebuffer, x: u32, y: u32, w: u32, h: u32) {
+    unsafe {
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(fbo));
+        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+        // OpenGL Y is bottom-up, window Y is top-down
+        let dst_y0 = PREVIEW_HEIGHT as i32 - y as i32 - h as i32;
+        let dst_y1 = PREVIEW_HEIGHT as i32 - y as i32;
+        gl.blit_framebuffer(
+            0,
+            0,
+            w as i32,
+            h as i32,
+            x as i32,
+            dst_y0,
+            (x + w) as i32,
+            dst_y1,
+            glow::COLOR_BUFFER_BIT,
+            glow::NEAREST,
+        );
+    }
+}
+
+/// Render a checkerboard pattern once into an FBO for later blitting.
+#[expect(clippy::cast_possible_wrap)]
+fn render_checkerboard_to_fbo(gl: &glow::Context, fbo: glow::Framebuffer, w: u32, h: u32) {
+    const CELL: i32 = 16;
+    unsafe {
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.viewport(0, 0, w as i32, h as i32);
+
+        // Fill with dark gray base
+        gl.clear_color(0.10, 0.10, 0.10, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+
+        // Draw lighter cells in checkerboard pattern
+        gl.enable(glow::SCISSOR_TEST);
+        gl.clear_color(0.16, 0.16, 0.16, 1.0);
+        let cols = (w as i32 + CELL - 1) / CELL;
+        let rows = (h as i32 + CELL - 1) / CELL;
+        for row in 0..rows {
+            for col in 0..cols {
+                if (row + col) % 2 == 0 {
+                    gl.scissor(col * CELL, row * CELL, CELL, CELL);
+                    gl.clear(glow::COLOR_BUFFER_BIT);
+                }
+            }
+        }
+        gl.disable(glow::SCISSOR_TEST);
+
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
+}
+
+/// Find which tile contains the given window coordinates, returning (index, local_x, local_y).
+#[expect(clippy::cast_possible_wrap)]
+fn hit_test_tile(tiles: &[PreviewTile], pos: (i32, i32)) -> Option<(usize, i32, i32)> {
+    let (mx, my) = pos;
+    for (i, tile) in tiles.iter().enumerate() {
+        let tx = tile.x as i32;
+        let ty = tile.y as i32;
+        if mx >= tx && mx < tx + tile.w as i32 && my >= ty && my < ty + tile.h as i32 {
+            return Some((i, mx - tx, my - ty));
+        }
+    }
+    None
+}
+
+/// Create an FBO with a color texture attachment.
+#[expect(clippy::cast_possible_wrap)]
+fn create_fbo(gl: &glow::Context, width: u32, height: u32) -> (glow::Framebuffer, glow::Texture) {
+    unsafe {
+        let texture = gl.create_texture().unwrap();
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            width as i32,
+            height as i32,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(None),
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::LINEAR as i32,
+        );
+
+        let fbo = gl.create_framebuffer().unwrap();
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(texture),
+            0,
+        );
+
+        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+        assert_eq!(
+            status,
+            glow::FRAMEBUFFER_COMPLETE,
+            "FBO incomplete: {status:#x}"
+        );
+
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+
+        (fbo, texture)
     }
 }
 
@@ -407,22 +713,6 @@ fn create_runtime(
         )
     }
     .context("Failed to create runtime")
-}
-
-fn parse_size(args: &[String]) -> Option<(u32, u32)> {
-    for (i, arg) in args.iter().enumerate() {
-        if arg == "--size" {
-            if let Some(size_str) = args.get(i + 1) {
-                let parts: Vec<&str> = size_str.split('x').collect();
-                if parts.len() == 2 {
-                    let w: u32 = parts[0].parse().ok()?;
-                    let h: u32 = parts[1].parse().ok()?;
-                    return Some((w, h));
-                }
-            }
-        }
-    }
-    None
 }
 
 fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
@@ -465,51 +755,56 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
 
 // ── Stats overlay ──────────────────────────────────────────────────
 
-fn draw_stats(renderer: &mut impl Renderer, w: f32, fps: &FpsTracker) {
-    const CHART_H: f32 = 40.0;
-    const BAR_W: f32 = 1.0;
-    // Chart scale: 50ms full height (in microseconds)
-    const SCALE_US: f32 = 50_000.0;
-    let chart_w = fps.history.len() as f32 * BAR_W;
-    let x0 = w - chart_w - 4.0;
-    let y0 = 4.0_f32;
+/// Draw a stats panel for the empty area right of the SMALL tile.
+/// Content is inset to fit inside the rounded panel (outer=12, inner=8 → 20px from edge).
+fn draw_preview_stats(renderer: &mut impl Renderer, w: f32, h: f32, fps: &FpsTracker) {
+    // Content area inside the inset rounded panel (12px outer + 8px inner padding)
+    let inset = 20.0;
+    let cw = w - inset * 2.0;
+    let ch = h - inset * 2.0;
 
-    // Background
-    renderer.fill_rect(x0 - 2.0, y0, chart_w + 6.0, CHART_H + 4.0, 0x30_10_20_C0);
+    // Header
+    renderer.draw_text("Performance", inset, inset, 14.0, 0x88_88_88_FF);
 
-    // 16ms reference line (60fps target)
-    let ref_y = y0 + CHART_H - (16_000.0 * CHART_H / SCALE_US);
-    renderer.fill_rect(x0, ref_y, chart_w, 1.0, 0x50_30_40_FF);
+    // Chart fills available width, leaves room for header and text
+    let bar_w = 2.0;
+    let chart_w = (fps.history.len() as f32 * bar_w).min(cw);
+    let chart_top = inset + 24.0;
+    let chart_h = ch - 24.0 - 36.0; // header + bottom text
+    let scale_us = 50_000.0_f32;
+    let x0 = inset + (cw - chart_w) / 2.0;
+
+    // 16ms reference line
+    let ref_y = chart_top + chart_h - (16_000.0 * chart_h / scale_us);
+    renderer.fill_rect(x0, ref_y, chart_w, 1.0, 0x44_44_44_FF);
+    renderer.draw_text("16ms", x0 + chart_w + 4.0, ref_y - 6.0, 10.0, 0x66_66_66_FF);
 
     // Bars
     for (i, sample) in fps.samples().enumerate() {
-        let bx = x0 + i as f32 * BAR_W;
-        let bh = (sample.us as f32 * CHART_H / SCALE_US).min(CHART_H);
+        let bx = x0 + i as f32 * bar_w;
+        let bh = (sample.us as f32 * chart_h / scale_us).min(chart_h);
         let color = if sample.rendered {
             0x50_AA_50_FF
         } else {
-            0x60_60_60_FF
+            0x44_44_44_FF
         };
-        renderer.fill_rect(bx, y0 + CHART_H - bh, BAR_W, bh, color);
+        renderer.fill_rect(bx, chart_top + chart_h - bh, bar_w - 0.5, bh, color);
     }
 
-    // Text labels
+    // Stats text below chart
+    let text_y = chart_top + chart_h + 12.0;
     let avg_us = fps.avg_render_us();
     let avg_ms = avg_us as f32 / 1_000.0;
-    let color = if avg_us > 16_000 {
+    let ms_color = if avg_us > 16_000 {
         0xFF_60_60_FF
     } else {
-        0xCC_CC_CC_FF
+        0xAA_CC_AA_FF
     };
-    renderer.draw_text(&format!("{avg_ms:.1}ms"), x0 + 4.0, y0 + 2.0, 16.0, color);
+    renderer.draw_text(&format!("{avg_ms:.1}ms avg"), inset, text_y, 18.0, ms_color);
     if fps.display_render > 0 {
-        renderer.draw_text(
-            &format!("{}fps", fps.display_render),
-            x0 + 4.0,
-            y0 + 20.0,
-            16.0,
-            0xAA_AA_AA_FF,
-        );
+        let fps_text = format!("{}fps", fps.display_render);
+        let fps_w = renderer.measure_text(&fps_text, 18.0);
+        renderer.draw_text(&fps_text, w - inset - fps_w, text_y, 18.0, 0xAA_AA_AA_FF);
     }
 }
 

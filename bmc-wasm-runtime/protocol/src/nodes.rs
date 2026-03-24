@@ -11,11 +11,13 @@ pub const NODE_BUTTON: u8 = 0x04;
 pub const NODE_SPACER: u8 = 0x05;
 pub const NODE_CANVAS: u8 = 0x06;
 pub const NODE_MODAL: u8 = 0x07;
+pub const NODE_NOTIFICATION: u8 = 0x08;
 
 // Draw commands — shapes (0x40–0x5F)
 pub const DRAW_RECT: u8 = 0x40;
 pub const DRAW_CIRCLE: u8 = 0x41;
 pub const DRAW_ICON: u8 = 0x42;
+pub const DRAW_BITMAP: u8 = 0x43;
 
 // Draw commands — transforms (0x60–0x7F)
 pub const DRAW_CENTERED: u8 = 0x60;

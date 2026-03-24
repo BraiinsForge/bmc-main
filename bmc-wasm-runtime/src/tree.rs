@@ -11,10 +11,11 @@
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::{
-    AnimProperty, ColorSpace, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED, DRAW_ORBIT,
-    DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90, GRAY_100, ICON_CLOSE,
-    LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_PARAGRAPH,
-    NODE_ROW, NODE_SPACER,
+    AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
+    DRAW_ORBIT, DRAW_RECT, DRAW_ROTATED, Easing, GRAY_10, GRAY_50, GRAY_70, GRAY_90, GRAY_100,
+    GREEN_40, ICON_CLOSE, ICON_ERROR, ICON_INFO, ICON_SUCCESS, ICON_WARNING, LoopMode, NODE_BUTTON,
+    NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_ROW,
+    NODE_SPACER, ORANGE_40, RED_60, VIOLET_50,
 };
 
 // Re-export for other modules
@@ -97,6 +98,13 @@ pub enum DrawCommand {
         color: u32,
         icon_id: u16,
     },
+    Bitmap {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+    },
     Rotated {
         angle: f32,
         inner: Box<DrawCommand>,
@@ -129,6 +137,12 @@ pub enum TreeNode {
         flex: f32,
     },
     Canvas(PropsData, Vec<DrawCommand>),
+    /// Inline notification banner
+    Notification {
+        kind: u8,
+        title: String,
+        subtitle: String,
+    },
     /// Modal dialog overlay
     Modal {
         modal_id: u16,
@@ -334,6 +348,18 @@ impl<'a> TreeReader<'a> {
                     body,
                 })
             }
+            NODE_NOTIFICATION => {
+                let kind = self.read_u8()?;
+                let title_len = self.read_u16()?;
+                let title = self.read_string(title_len)?;
+                let subtitle_len = self.read_u16()?;
+                let subtitle = self.read_string(subtitle_len)?;
+                Ok(TreeNode::Notification {
+                    kind,
+                    title,
+                    subtitle,
+                })
+            }
             _ => bail!("unknown node type: {}", node_type),
         }
     }
@@ -371,6 +397,20 @@ impl<'a> TreeReader<'a> {
                     h,
                     color,
                     icon_id,
+                })
+            }
+            DRAW_BITMAP => {
+                let x = self.read_f32()?;
+                let y = self.read_f32()?;
+                let w = self.read_f32()?;
+                let h = self.read_f32()?;
+                let bitmap_id = self.read_u16()?;
+                Ok(DrawCommand::Bitmap {
+                    x,
+                    y,
+                    w,
+                    h,
+                    bitmap_id,
                 })
             }
             DRAW_CENTERED => {
@@ -512,6 +552,14 @@ struct ParagraphData {
     spans: Vec<SpanData>,
 }
 
+/// Notification data for measurement and rendering
+#[derive(Clone)]
+struct NotificationData {
+    kind: u8,
+    title: String,
+    subtitle: String,
+}
+
 /// Node data attached to taffy nodes
 #[derive(Clone, Default)]
 struct NodeContext {
@@ -519,6 +567,7 @@ struct NodeContext {
     paragraph: Option<ParagraphData>,
     button: Option<(u32, String, u8, u16)>, // id, label, style, icon_id
     draws: Vec<DrawCommand>,                // canvas draw commands
+    notification: Option<NotificationData>,
 }
 
 /// Collected modal info for overlay rendering
@@ -588,15 +637,16 @@ pub fn process_tree(
                 };
             }
 
-            // Measure paragraphs based on available width
+            // Measure paragraphs and notifications based on available width
             if let Some(ctx) = node_context
                 && let Some(ref para) = ctx.paragraph
             {
-                let available_width = match available_space.width {
+                // Use known width from Taffy if available, else fall back to available_space
+                let available_width = known_dimensions.width.or(match available_space.width {
                     AvailableSpace::Definite(w) => Some(w),
                     AvailableSpace::MinContent => Some(0.0),
                     AvailableSpace::MaxContent => None,
-                };
+                });
 
                 // Use explicit max_width if set, otherwise use available width
                 let max_width = if para.base_style.max_width > 0 {
@@ -609,8 +659,8 @@ pub fn process_tree(
 
                 let (w, h) = renderer.measure_paragraph(&para.base_style, &para.spans, max_width);
                 return Size {
-                    width: w,
-                    height: h,
+                    width: known_dimensions.width.unwrap_or(w),
+                    height: known_dimensions.height.unwrap_or(h),
                 };
             }
 
@@ -835,6 +885,27 @@ fn build_taffy_node(
             Ok(id)
         }
 
+        TreeNode::Notification {
+            kind,
+            title,
+            subtitle,
+        } => {
+            let style = Style::default();
+            let id = taffy.new_leaf(style)?;
+            taffy.set_node_context(
+                id,
+                Some(NodeContext {
+                    notification: Some(NotificationData {
+                        kind: *kind,
+                        title: title.clone(),
+                        subtitle: subtitle.clone(),
+                    }),
+                    ..Default::default()
+                }),
+            )?;
+            Ok(id)
+        }
+
         TreeNode::Modal {
             modal_id,
             is_open,
@@ -937,6 +1008,10 @@ fn render_taffy_node(
             }
             anim_ctx.canvas_index += 1;
         }
+
+        if let Some(ref notif) = ctx.notification {
+            render_notification(notif, x, y, w, h, renderer);
+        }
     }
 
     for child_id in taffy.children(node_id).unwrap() {
@@ -971,7 +1046,9 @@ fn render_draw_command(
 /// Get the bounds (width, height) of a draw command
 fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
     match draw {
-        DrawCommand::Rect { w, h, .. } | DrawCommand::Icon { w, h, .. } => (*w, *h),
+        DrawCommand::Rect { w, h, .. }
+        | DrawCommand::Icon { w, h, .. }
+        | DrawCommand::Bitmap { w, h, .. } => (*w, *h),
         DrawCommand::Circle { r, .. } => (*r * 2.0, *r * 2.0),
         DrawCommand::Centered { inner }
         | DrawCommand::Rotated { inner, .. }
@@ -1053,6 +1130,31 @@ fn render_draw_inner(
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
                 renderer.draw_icon(rx - pivot_x, ry - pivot_y, ew, eh, final_color, *icon_id);
+                renderer.restore();
+            }
+        }
+        DrawCommand::Bitmap {
+            x,
+            y,
+            w,
+            h,
+            bitmap_id,
+        } => {
+            let ew = *w * scale;
+            let eh = *h * scale;
+            let sx = *x + offset_x + (*w - ew) / 2.0;
+            let sy = *y + offset_y + (*h - eh) / 2.0;
+            let rx = cx + sx;
+            let ry = cy + sy;
+            if rotation == 0.0 {
+                renderer.draw_bitmap(rx, ry, ew, eh, *bitmap_id);
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.draw_bitmap(rx - pivot_x, ry - pivot_y, ew, eh, *bitmap_id);
                 renderer.restore();
             }
         }
@@ -1293,6 +1395,13 @@ fn animation_key(def: &HostAnimationDef, draw_counter: u32) -> u64 {
 /// Extract the static values from a draw command's innermost content for transition tracking.
 fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
     match draw {
+        DrawCommand::Bitmap { x, y, w, h, .. } => PrevDrawValues {
+            x: *x,
+            y: *y,
+            w: *w,
+            h: *h,
+            ..Default::default()
+        },
         DrawCommand::Rect { x, y, w, h, color }
         | DrawCommand::Icon {
             x, y, w, h, color, ..
@@ -1393,7 +1502,10 @@ fn count_tree_buttons(node: &TreeNode, button_id: &mut u32, result: &mut TreeRes
                 *button_id += 1;
             }
         }
-        TreeNode::Paragraph { .. } | TreeNode::Spacer { .. } | TreeNode::Canvas(..) => {}
+        TreeNode::Paragraph { .. }
+        | TreeNode::Spacer { .. }
+        | TreeNode::Canvas(..)
+        | TreeNode::Notification { .. } => {}
     }
 }
 
@@ -1642,7 +1754,10 @@ fn count_node_buttons(node: &TreeNode) -> u32 {
                 0
             }
         }
-        TreeNode::Paragraph { .. } | TreeNode::Spacer { .. } | TreeNode::Canvas(..) => 0,
+        TreeNode::Paragraph { .. }
+        | TreeNode::Spacer { .. }
+        | TreeNode::Canvas(..)
+        | TreeNode::Notification { .. } => 0,
     }
 }
 
@@ -1804,7 +1919,8 @@ fn render_modal_body_node(
         TreeNode::Center(..)
         | TreeNode::Spacer { .. }
         | TreeNode::Canvas(..)
-        | TreeNode::Modal { .. } => 0.0,
+        | TreeNode::Modal { .. }
+        | TreeNode::Notification { .. } => 0.0,
     }
 }
 
@@ -1816,6 +1932,139 @@ fn ease_out(t: f32) -> f32 {
 /// Ease-in: slow start, fast end
 fn ease_in(t: f32) -> f32 {
     t.powi(3)
+}
+
+// ── Notification helpers ─────────────────────────────────────────────
+
+const NOTIF_BORDER_W: f32 = 3.0;
+const NOTIF_PAD: f32 = 12.0;
+const NOTIF_ICON_SIZE: f32 = 16.0;
+const NOTIF_ICON_GAP: f32 = 8.0;
+/// Left offset from notification edge to text start
+const NOTIF_TEXT_LEFT: f32 = NOTIF_BORDER_W + NOTIF_PAD + NOTIF_ICON_SIZE + NOTIF_ICON_GAP;
+
+/// Returns (accent_color, icon_id) for a notification kind byte.
+fn notification_accent(kind: u8) -> (u32, u16) {
+    match kind {
+        0 => (RED_60, ICON_ERROR),
+        1 => (ORANGE_40, ICON_WARNING),
+        2 => (GREEN_40, ICON_SUCCESS),
+        _ => (VIOLET_50, ICON_INFO),
+    }
+}
+
+fn notification_title_style() -> TextStyle {
+    TextStyle {
+        size: 14,
+        weight: 600,
+        color: GRAY_10,
+        ..Default::default()
+    }
+}
+
+fn notification_subtitle_style() -> TextStyle {
+    TextStyle {
+        size: 14,
+        weight: 400,
+        color: GRAY_50,
+        ..Default::default()
+    }
+}
+
+fn plain_spans(text: &str) -> [SpanData; 1] {
+    [SpanData {
+        text: text.to_owned(),
+        weight: None,
+        color: None,
+        italic: false,
+        underline: false,
+        strikethrough: false,
+    }]
+}
+
+#[expect(dead_code)]
+fn measure_notification(
+    notif: &NotificationData,
+    known_dimensions: Size<Option<f32>>,
+    available_space: Size<AvailableSpace>,
+    renderer: &mut dyn Renderer,
+) -> Size<f32> {
+    let avail_w = known_dimensions.width.or(match available_space.width {
+        AvailableSpace::Definite(w) => Some(w),
+        AvailableSpace::MinContent => Some(0.0),
+        AvailableSpace::MaxContent => None,
+    });
+    let text_w = avail_w.map(|w| (w - NOTIF_TEXT_LEFT - NOTIF_PAD).max(0.0));
+
+    let mut text_h = 0.0;
+    if !notif.title.is_empty() {
+        let spans = plain_spans(&notif.title);
+        let (_, h) = renderer.measure_paragraph(&notification_title_style(), &spans, text_w);
+        text_h += h;
+    }
+    if !notif.subtitle.is_empty() {
+        if text_h > 0.0 {
+            text_h += 2.0;
+        }
+        let spans = plain_spans(&notif.subtitle);
+        let (_, h) = renderer.measure_paragraph(&notification_subtitle_style(), &spans, text_w);
+        text_h += h;
+    }
+
+    let content_h = text_h.max(NOTIF_ICON_SIZE);
+    Size {
+        width: known_dimensions.width.unwrap_or(avail_w.unwrap_or(300.0)),
+        height: known_dimensions
+            .height
+            .unwrap_or(NOTIF_PAD * 2.0 + content_h),
+    }
+}
+
+fn render_notification(
+    notif: &NotificationData,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    renderer: &mut dyn Renderer,
+) {
+    let (accent, icon_id) = notification_accent(notif.kind);
+
+    // Background
+    renderer.fill_rect(x, y, w, h, GRAY_90);
+
+    // Left accent border
+    renderer.fill_rect(x, y, NOTIF_BORDER_W, h, accent);
+
+    // Icon (top-aligned with text)
+    let icon_x = x + NOTIF_BORDER_W + NOTIF_PAD;
+    let icon_y = y + NOTIF_PAD;
+    renderer.draw_icon(
+        icon_x,
+        icon_y,
+        NOTIF_ICON_SIZE,
+        NOTIF_ICON_SIZE,
+        accent,
+        icon_id,
+    );
+
+    // Text
+    let text_x = x + NOTIF_TEXT_LEFT;
+    let text_w = (w - NOTIF_TEXT_LEFT - NOTIF_PAD).max(0.0);
+    let mut text_y = y + NOTIF_PAD;
+
+    if !notif.title.is_empty() {
+        let style = notification_title_style();
+        let spans = plain_spans(&notif.title);
+        let (_, th) = renderer.measure_paragraph(&style, &spans, Some(text_w));
+        renderer.draw_paragraph(&style, &spans, text_x, text_y, text_w);
+        text_y += th + 2.0;
+    }
+    if !notif.subtitle.is_empty() {
+        let style = notification_subtitle_style();
+        let spans = plain_spans(&notif.subtitle);
+        renderer.draw_paragraph(&style, &spans, text_x, text_y, text_w);
+    }
 }
 
 fn padding_uniform(v: f32) -> taffy::Rect<LengthPercentage> {

@@ -28,6 +28,7 @@ const OP_CLOSE: u8 = 0x04;
 
 const FLAG_HAS_FILL: u8 = 0x01;
 const FLAG_HAS_STROKE: u8 = 0x02;
+const FLAG_EVENODD: u8 = 0x04;
 
 /// Compile an SVG string into compact binary path data.
 ///
@@ -58,6 +59,7 @@ struct PathInfo {
     fill_color: Option<u32>,
     stroke_color: Option<u32>,
     stroke_width: f32,
+    is_evenodd: bool,
     ops: Vec<PathOp>,
 }
 
@@ -74,9 +76,8 @@ fn collect_paths(group: &usvg::Group, out: &mut Vec<PathInfo>) {
         match node {
             usvg::Node::Group(g) => collect_paths(g, out),
             usvg::Node::Path(path) => {
-                let fill_color = path
-                    .fill()
-                    .and_then(|f| paint_to_rgba(f.paint(), f.opacity().get()));
+                let fill = path.fill();
+                let fill_color = fill.and_then(|f| paint_to_rgba(f.paint(), f.opacity().get()));
                 let stroke_color = path
                     .stroke()
                     .and_then(|s| paint_to_rgba(s.paint(), s.opacity().get()));
@@ -86,6 +87,8 @@ fn collect_paths(group: &usvg::Group, out: &mut Vec<PathInfo>) {
                 if fill_color.is_none() && stroke_color.is_none() {
                     return;
                 }
+
+                let is_evenodd = fill.is_some_and(|f| f.rule() == usvg::FillRule::EvenOdd);
 
                 // Transform path data to root coordinates
                 let abs_ts = path.abs_transform();
@@ -115,6 +118,7 @@ fn collect_paths(group: &usvg::Group, out: &mut Vec<PathInfo>) {
                     fill_color,
                     stroke_color,
                     stroke_width,
+                    is_evenodd,
                     ops,
                 });
             }
@@ -149,6 +153,9 @@ fn write_path(buf: &mut Vec<u8>, info: &PathInfo) {
     }
     if info.stroke_color.is_some() {
         flags |= FLAG_HAS_STROKE;
+    }
+    if info.is_evenodd {
+        flags |= FLAG_EVENODD;
     }
     buf.push(flags);
 

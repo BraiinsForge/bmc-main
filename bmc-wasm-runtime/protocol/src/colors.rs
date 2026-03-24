@@ -62,13 +62,35 @@ pub const ORANGE_80: u32 = 0x6426_00FF;
 pub const ORANGE_90: u32 = 0x421B_00FF;
 pub const ORANGE_100: u32 = 0x2512_00FF;
 
+// Absolute
+pub const BLACK: u32 = 0x0000_00FF;
+pub const WHITE: u32 = 0xFFFF_FFFF;
+
 // Special
 pub const TRANSPARENT: u32 = 0x0000_0000;
 
-/// Color utility macro: `color!(GRAY_80, alpha: 0.5)`
+/// Color utility macro.
+///
+/// - `color!(GRAY_80, alpha: 0.5)` — adjust alpha (0.0–1.0)
+/// - `color!(GRAY_80, lightness: 0.5)` — scale RGB brightness (0.0 = black, 1.0 = unchanged)
+/// - `color!(GRAY_80, alpha: 0.5, lightness: 0.8)` — both
 #[macro_export]
 macro_rules! color {
     ($base:expr, alpha: $a:expr) => {
         ($base & 0xFFFF_FF00) | (($a * 255.0) as u32 & 0xFF)
     };
+    ($base:expr, lightness: $l:expr) => {{
+        let r = ((($base >> 24) & 0xFF) as f32 * $l).min(255.0) as u32;
+        let g = ((($base >> 16) & 0xFF) as f32 * $l).min(255.0) as u32;
+        let b = ((($base >> 8) & 0xFF) as f32 * $l).min(255.0) as u32;
+        let a = $base & 0xFF;
+        (r << 24) | (g << 16) | (b << 8) | a
+    }};
+    ($base:expr, alpha: $a:expr, lightness: $l:expr) => {{
+        let r = ((($base >> 24) & 0xFF) as f32 * $l).min(255.0) as u32;
+        let g = ((($base >> 16) & 0xFF) as f32 * $l).min(255.0) as u32;
+        let b = ((($base >> 8) & 0xFF) as f32 * $l).min(255.0) as u32;
+        let a = ($a * 255.0) as u32 & 0xFF;
+        (r << 24) | (g << 16) | (b << 8) | a
+    }};
 }

@@ -5,24 +5,41 @@
 //! Provides host bindings and UI primitives for building widgets.
 //! Layout is computed on the host side for minimal WASM binary size.
 
+// wasm32: usize == u32, so these truncation warnings are false positives.
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless
+)]
+
 // Embed protocol version as a WASM export.
 // The host calls this after instantiation to verify compatibility.
 #[unsafe(no_mangle)]
 pub extern "C" fn __bmc_sdk_version() -> u64 {
-    bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    version_pack(SDK_VERSION)
 }
 
+pub mod alloc;
+pub mod format;
 pub mod host;
+pub mod json;
+pub mod net;
 pub mod tree;
 
 pub use bmc_wasm_protocol::*;
-pub use bmc_wasm_sdk_macros::include_icon;
-pub use host::{ButtonStyle, SystemTime, draw_text, fill_rect, request_frame, request_frame_after};
+pub use bmc_wasm_sdk_macros::{include_bitmap, include_icon};
+pub use format::format_duration;
+pub use host::{
+    ButtonStyle, SizeVariant, SystemTime, WidgetSize, draw_text, fill_rect, parse_date,
+    request_frame, request_frame_after,
+};
+pub use json::JsonDoc;
+pub use net::{FetchResponse, fetch, fetch_after};
 pub use tree::{
-    AnimationDef, Draw, Icon, ModalProps, Node, PropsData, Span, StyleResult, TextStyle,
-    TransitionDef, TreeRenderResult, begin_tree, button, canvas, center, centered, circle, col,
-    finish_tree, icon, icon_builtin, modal, modal_styled, orbit, paragraph, rect, render_ui,
-    rotated, row, spacer, span, text, with_buffer,
+    AnimationDef, Bitmap, Draw, Icon, ModalProps, Node, NotificationKind, PropsData, Span,
+    StyleResult, TextStyle, TransitionDef, TreeRenderResult, begin_tree, bitmap, button, canvas,
+    center, centered, circle, col, icon, icon_builtin, modal, modal_styled, notification, orbit,
+    paragraph, rect, render_ui, rotated, row, spacer, span, text, with_buffer,
 };
 pub use ufmt;
 

@@ -1,14 +1,21 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
+#![allow(clippy::cast_precision_loss)]
 
 //! SDK component showcase - buttons, colors, animations, rich text, icons.
 
-use bmc_wasm_sdk::*;
+use bmc_wasm_sdk::{
+    AnimProperty, ButtonStyle, Draw, Easing, GRAY_10, GRAY_30, GRAY_40, GRAY_50, GRAY_70, GRAY_80,
+    GRAY_90, GREEN_50, ICON_CLOSE, Icon, LoopMode, Node, ORANGE_50, RED_50, SystemTime, VIOLET_50,
+    button, canvas, centered, circle, col, color, fmt, icon, icon_builtin, include_icon, modal,
+    orbit, paragraph, props, rect, render_ui, request_frame_after, rotated, row, spacer, span,
+    style, text, tree, ufmt,
+};
 use std::cell::{Cell, RefCell};
 use std::f32::consts::{FRAC_PI_2, TAU};
 
-use AnimProperty::*;
-use Easing::*;
-use LoopMode::*;
+use AnimProperty::{Rotate, Scale};
+use Easing::{EaseInOut, EaseOut, Linear};
+use LoopMode::{Forever, PingPong};
 
 const STAR: Icon = include_icon!("assets/star.svg");
 const SETTINGS: Icon = include_icon!("assets/settings.svg");
