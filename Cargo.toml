@@ -218,8 +218,8 @@ pw_hash = "0.1.1"
 qrcode-generator = { version = "5.0.0", default-features = false }
 quote = "1.0.39"
 rand = "0.9.0"
-rayon = "1"
 raw-window-handle = "0.6"
+rayon = "1"
 regex = "1.11.1"
 reqwest = { version = "0.11", default-features = false }
 resvg = "0.45.1"

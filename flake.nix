@@ -60,6 +60,8 @@
 
           buildInputs = with pkgs; [
             ii.rust.toolchain
+            ffmpeg-headless
+            odiff
           ];
 
           inherit (commonDeps) env;
@@ -104,7 +106,7 @@
             find bmc-wasm-runtime -name '*.svg' \
               -not -path '*/target/*' \
               -not -path '*/.venv/*' \
-              -print0 | xargs -0 -P "$(nproc)" -I {} svgo --pretty --indent=2 --multipass -i {} -o {}
+              -print0 | xargs -0 -P "$(nproc)" -I {} svgo --config bmc-wasm-runtime/svgo.config.js -i {} -o {}
           '';
         };
       in
@@ -121,6 +123,7 @@
           toml = true;
           yaml = true;
           # Documents
+          html = false;
           markdown = true;
           copyright = true;
 
@@ -142,6 +145,7 @@
 
         checks = self.packages.${localSystem} // frontend.checks // checks;
         packages = workspace.packages // {
+          wasm-capture = capture.package;
           frontend = frontend.build;
           yarnFiles = frontend.yarnFiles;
           shellcheck = pkgs.writeShellScriptBin "shellcheck" ''
@@ -152,6 +156,11 @@
         apps.fmt-svg = {
           type = "app";
           program = pkgs.lib.getExe fmt-svg;
+        };
+
+        apps.wasm-capture = {
+          type = "app";
+          program = pkgs.lib.getExe capture.package;
         };
 
         # default: full local dev (Rust + frontend + GUI, both local and for Deck)

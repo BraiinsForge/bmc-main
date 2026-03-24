@@ -4,6 +4,7 @@ stages:
   - essentials
   - dependencies
   - check
+  - regression
   - apps
 
 ##################################
@@ -63,11 +64,27 @@ python-lint:
   script:
     - nix build -L .#checks.x86_64-linux.python-lint
 
+######################################
+######## Regression Stage ############
+######################################
+
+wasm-regression:
+  extends: .nix
+  stage: regression
+  needs: []
+  script:
+    - nix run .#wasm-capture -- verify --output-dir=captures
+  artifacts:
+    when: on_failure
+    paths:
+      - captures/**/*
+    expire_in: 7 days
+
 ############################
 ######## Apps Stage ########
 ############################
 
-.app: &app
+.app:
   extends: [.nix, .artifacts]
   stage: apps
   needs: []

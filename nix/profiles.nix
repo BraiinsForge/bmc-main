@@ -34,4 +34,16 @@
     rustProfile = "dev";
     pkgs = armv7Pkgs;
   };
+  wasm-release = workspaces.wasmExamples.mkBuildProfile {
+    minimalDeps = true;
+    rustProfile = "release";
+    rustCrossTargetOverride = "wasm32-unknown-unknown";
+    inherit pkgs;
+  };
+  wasm-debug = workspaces.wasmExamples.mkBuildProfile {
+    minimalDeps = true;
+    rustProfile = "dev";
+    rustCrossTargetOverride = "wasm32-unknown-unknown";
+    inherit pkgs;
+  };
 }

@@ -111,6 +111,12 @@ let
     ];
   };
 
+  workspaceWasmExamples = pkgs.ii.rust.mkWorkspaceConfig {
+    src = ./.;
+    workspacePath = "bmc-wasm-runtime/examples";
+    nativeDeps = _pkgs: commonDeps.buildDeps;
+  };
+
   bmc = {
     armv7-pkgs = armv7Pkgs;
     lib = import ./nix/lib.nix { inherit pkgs lib armv7Pkgs; };
@@ -118,6 +124,7 @@ let
     workspaces = {
       full = workspace;
       minimal = workspaceMinimal;
+      wasmExamples = workspaceWasmExamples;
     };
     profiles = import ./nix/profiles.nix {
       inherit (bmc) workspaces;

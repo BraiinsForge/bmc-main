@@ -31,7 +31,14 @@
 , wayland-protocols
 , wayland-scanner
 , xcbutilkeysyms
-, xorg
+, libx11
+, libxcb
+, libxext
+, libxfixes
+, libxrandr
+, libxshmfence
+, libxxf86vm
+, xorgproto
 , zstd
 , galliumDrivers ? [
     "etnaviv"
@@ -173,7 +180,6 @@ stdenv.mkDerivation {
   strictDeps = true;
 
   buildInputs =
-    with xorg;
     [
       directx-headers
       elfutils
@@ -182,13 +188,13 @@ stdenv.mkDerivation {
       libdrm
       libpng
       libunwind
-      libX11
+      libx11
       libxcb
-      libXext
-      libXfixes
-      libXrandr
+      libxext
+      libxfixes
+      libxrandr
       libxshmfence
-      libXxf86vm
+      libxxf86vm
       lm_sensors
       python3Packages.python # for shebang
       udev
