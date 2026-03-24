@@ -70,6 +70,17 @@
               "${armv7Cc.targetPrefix}cc";
           };
         };
+
+        fmt-svg = pkgs.writeShellApplication {
+          name = "fmt-svg";
+          runtimeInputs = with pkgs; [ findutils svgo coreutils ];
+          text = ''
+            find bmc-wasm-runtime -name '*.svg' \
+              -not -path '*/target/*' \
+              -not -path '*/.venv/*' \
+              -print0 | xargs -0 -P "$(nproc)" -I {} svgo --pretty --indent=2 --multipass -i {} -o {}
+          '';
+        };
       in
       {
         formatter = nixlib.braiinsfmt.${localSystem} {
@@ -110,6 +121,11 @@
           shellcheck = pkgs.writeShellScriptBin "shellcheck" ''
             exec nix run "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git?rev=6071d67e0c5ec498fc88017d36a54bb1b837ad83#shellcheck" "$@" 2>&1
           '';
+        };
+
+        apps.fmt-svg = {
+          type = "app";
+          program = pkgs.lib.getExe fmt-svg;
         };
 
         # default: full local dev (Rust + frontend + GUI, both local and for Deck)
