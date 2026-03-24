@@ -40,19 +40,22 @@ skip = [
     { crate = "rand_chacha@0.3" },
     { crate = "rand_core@0.6" },
 
-    # Font/text ecosystem (cosmic-text, rustybuzz, swash version splits)
-    { crate = "font-types@0.9" },
-    { crate = "read-fonts@0.34" },
-    { crate = "rustybuzz@0.14" },
-    { crate = "skrifa@0.36" },
+    # Font/text ecosystem (cosmic-text pulls swash+harfrust with different versions)
+    { crate = "font-types@0.10" },
+    { crate = "read-fonts@0.35" },
+    { crate = "skrifa@0.37" },
+    { crate = "roxmltree@0.20" },
     { crate = "ttf-parser@0.21" },
-    { crate = "unicode-bidi-mirroring@0.2" },
-    { crate = "unicode-ccc@0.2" },
 
-    # Slint (i-slint-renderer-skia uses glow 0.16, femtovg uses 0.13)
-    { crate = "glow@0.16" },
+    # prost ecosystem (tooling-std uses 0.12, tonic/bmc-grpc uses 0.13)
+    { crate = "prost@0.12" },
+    { crate = "prost-derive@0.12" },
+    { crate = "prost-types@0.12" },
 
     # Wayland/Smithay ecosystem splits
+    { crate = "calloop@0.13" },
+    { crate = "gbm@0.17" },
+    { crate = "gbm-sys@0.3" },
     { crate = "wayland-client@0.31" },
     { crate = "wayland-cursor@0.31" },
     { crate = "wayland-protocols@0.29" },
@@ -93,6 +96,8 @@ skip = [
     { crate = "thiserror-impl@1" },
     { crate = "toml_datetime@0.6" },
     { crate = "toml_edit@0.22" },
+    { crate = "hermit-abi@0.3" },
+    { crate = "r-efi@5" },
     { crate = "version-compare@0.1" },
     { crate = "winapi@0.3" },
 ]
@@ -120,4 +125,6 @@ allow-registry = [
     "https://github.com/rust-lang/crates.io-index",
     "sparse+http://registry.ii.zone/api/v1/crates/",
 ]
-allow-git = []
+allow-git = [
+    "ssh://git@gitlab.ii.zone/tooling/tooling.git",
+]
