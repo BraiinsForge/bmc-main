@@ -81,6 +81,7 @@
           toml = true;
           yaml = true;
           copyright = true;
+          markdown = false;
 
           config.exclude = [
             # Frontend specifies it's own formatting rules
