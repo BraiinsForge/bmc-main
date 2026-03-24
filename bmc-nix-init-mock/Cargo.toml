@@ -6,10 +6,15 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
-bmc-nix-init = { path = "../bmc-nix-init" }
+bmc-led.workspace = true
+bmc-nix-init.workspace = true
+bmc-platform.workspace = true
+clap = { workspace = true, features = ["derive"] }
 flume = { workspace = true }
 minifb.workspace = true
 slint = { workspace = true }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

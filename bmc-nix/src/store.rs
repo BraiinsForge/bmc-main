@@ -88,6 +88,11 @@ pub async fn init_store(
             url: factory_server.index_url.clone(),
             source,
         })?
+        .error_for_status()
+        .map_err(|source| InitStoreError::FactoryIndexFetch {
+            url: factory_server.index_url.clone(),
+            source,
+        })?
         .json()
         .await
         .map_err(|source| InitStoreError::FactoryIndexParse { source })?;
@@ -104,6 +109,8 @@ pub async fn init_store(
         .get(&tarball.download_url)
         .send()
         .await
+        .map_err(|source| InitStoreError::DownloadFailed { source })?
+        .error_for_status()
         .map_err(|source| InitStoreError::DownloadFailed { source })?;
 
     let total_size = response
@@ -138,18 +145,25 @@ pub async fn init_store(
     }
 
     let output = tokio::process::Command::new("tar")
-        .args([
-            "xzf",
-            tarball_path.to_str().expect("BUG: path should be UTF-8"),
-            "-C",
-            "/",
-        ])
+        .arg("xzf")
+        .arg(&tarball_path)
+        .arg("-C")
+        .arg("/")
         .stderr(std::process::Stdio::piped())
         .output()
         .await
         .map_err(InitStoreError::ExtractionFailed)?;
 
     if !output.status.success() {
+        // Wipe partially-extracted store to avoid inconsistent state on retry.
+        // Best-effort — if this fails, the next attempt with wipe_store=true
+        // will handle it.
+        tracing::warn!("tar extraction failed, wiping partial store");
+        let _ = tokio::process::Command::new("rm")
+            .args(["-rf", "/nix/store", "/nix/var"])
+            .status()
+            .await;
+
         // Truncate stderr — tar can produce megabytes of output when
         // many files fail, which causes display rendering issues.
         let full_stderr = String::from_utf8_lossy(&output.stderr);
