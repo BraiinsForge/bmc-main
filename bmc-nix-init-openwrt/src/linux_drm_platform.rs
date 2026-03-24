@@ -151,13 +151,13 @@ impl Platform for LinuxDrmPlatform {
             .partition(|&&plane| {
                 if let Ok(props) = card.get_properties(plane) {
                     for (&id, &val) in props.iter() {
-                        if let Ok(info) = card.get_property(id) {
-                            if info.name().to_str().map(|x| x == "type").unwrap_or(false) {
-                                return val
-                                    == control::property::RawValue::from(
-                                        control::PlaneType::Primary as u32,
-                                    );
-                            }
+                        if let Ok(info) = card.get_property(id)
+                            && info.name().to_str().map(|x| x == "type").unwrap_or(false)
+                        {
+                            return val
+                                == control::property::RawValue::from(
+                                    control::PlaneType::Primary as u32,
+                                );
                         }
                     }
                 }
@@ -263,11 +263,11 @@ impl Platform for LinuxDrmPlatform {
         // Touch input is optional — the init screen is non-interactive,
         // but we keep support for potential future use.
         let mut touch = evdev::Device::open("/dev/input/event0").ok();
-        if let Some(ref t) = touch {
-            if let Err(e) = t.set_nonblocking(true) {
-                warn!("Failed to set touch device nonblocking: {e}");
-                touch = None;
-            }
+        if let Some(ref t) = touch
+            && let Err(e) = t.set_nonblocking(true)
+        {
+            warn!("Failed to set touch device nonblocking: {e}");
+            touch = None;
         }
 
         // Event loop is inspired by official `linuxkms` implementation.
@@ -299,51 +299,47 @@ impl Platform for LinuxDrmPlatform {
                 }
             }
 
-            if let Some(ref mut touch) = touch {
-                if let Ok(events) = touch.fetch_events() {
-                    for ev in events {
-                        #[expect(clippy::wildcard_enum_match_arm)]
-                        match ev.destructure() {
-                            EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_X, value) => {
-                                #[expect(clippy::cast_precision_loss)]
-                                let value = value as f32;
-                                pos.0 = value;
-                            }
-                            EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_Y, value) => {
-                                #[expect(clippy::cast_precision_loss)]
-                                let value = value as f32;
-                                pos.1 = value;
-                            }
-                            EventSummary::Key(_, KeyCode::BTN_TOUCH, value) => {
-                                pressed = value == 1;
-                            }
-                            EventSummary::Synchronization(
-                                _,
-                                SynchronizationCode::SYN_REPORT,
-                                _,
-                            ) => {
-                                let logical_pos = LogicalPosition::new(pos.0, pos.1);
-
-                                self.window.dispatch_event(WindowEvent::PointerMoved {
-                                    position: logical_pos,
-                                });
-
-                                if pressed && !was_pressed {
-                                    self.window.dispatch_event(WindowEvent::PointerPressed {
-                                        position: logical_pos,
-                                        button: PointerEventButton::Left,
-                                    });
-                                } else if !pressed && was_pressed {
-                                    self.window.dispatch_event(WindowEvent::PointerReleased {
-                                        position: logical_pos,
-                                        button: PointerEventButton::Left,
-                                    });
-                                }
-
-                                was_pressed = pressed;
-                            }
-                            _ => {}
+            if let Some(ref mut touch) = touch
+                && let Ok(events) = touch.fetch_events()
+            {
+                for ev in events {
+                    #[expect(clippy::wildcard_enum_match_arm)]
+                    match ev.destructure() {
+                        EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_X, value) => {
+                            #[expect(clippy::cast_precision_loss)]
+                            let value = value as f32;
+                            pos.0 = value;
                         }
+                        EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_Y, value) => {
+                            #[expect(clippy::cast_precision_loss)]
+                            let value = value as f32;
+                            pos.1 = value;
+                        }
+                        EventSummary::Key(_, KeyCode::BTN_TOUCH, value) => {
+                            pressed = value == 1;
+                        }
+                        EventSummary::Synchronization(_, SynchronizationCode::SYN_REPORT, _) => {
+                            let logical_pos = LogicalPosition::new(pos.0, pos.1);
+
+                            self.window.dispatch_event(WindowEvent::PointerMoved {
+                                position: logical_pos,
+                            });
+
+                            if pressed && !was_pressed {
+                                self.window.dispatch_event(WindowEvent::PointerPressed {
+                                    position: logical_pos,
+                                    button: PointerEventButton::Left,
+                                });
+                            } else if !pressed && was_pressed {
+                                self.window.dispatch_event(WindowEvent::PointerReleased {
+                                    position: logical_pos,
+                                    button: PointerEventButton::Left,
+                                });
+                            }
+
+                            was_pressed = pressed;
+                        }
+                        _ => {}
                     }
                 }
             }

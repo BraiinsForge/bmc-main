@@ -1,0 +1,9 @@
+{
+  "factory": {
+    "id": "braiins",
+    "index_url": "https://cache.braiins.com/v1/factory.json",
+    "known_public_key": "cache.braiins.com:placeholder",
+    "priority": 1,
+    "enabled": true
+  }
+}

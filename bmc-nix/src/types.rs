@@ -356,6 +356,15 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_production_servers_config() {
+        let json = include_str!("../../bmc-nix-init/servers.json");
+        let config: ServersConfig =
+            serde_json::from_str(json).expect("BUG: production servers.json should be valid");
+        assert_eq!(config.factory.id, "braiins");
+        assert!(config.factory.enabled);
+    }
+
+    #[test]
     fn deserialize_factory_index() {
         let json = r#"{
             "version": 1,
