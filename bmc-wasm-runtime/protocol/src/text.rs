@@ -14,6 +14,36 @@ pub enum TextAlign {
     Right = 2,
 }
 
+/// Cross-axis alignment for row/column containers.
+///
+/// Controls how children are aligned perpendicular to the main flex direction:
+/// - Row: controls vertical alignment of children
+/// - Column: controls horizontal alignment of children
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CrossAlign {
+    /// Children stretch to fill the container's cross-axis (default).
+    #[default]
+    Stretch = 0,
+    /// Children are centered along the cross-axis.
+    Center = 1,
+    /// Children are packed to the start of the cross-axis.
+    Start = 2,
+    /// Children are packed to the end of the cross-axis.
+    End = 3,
+}
+
+impl From<u32> for CrossAlign {
+    fn from(v: u32) -> Self {
+        match v {
+            1 => Self::Center,
+            2 => Self::Start,
+            3 => Self::End,
+            _ => Self::Stretch,
+        }
+    }
+}
+
 /// Text overflow behavior for single-line text
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -167,10 +197,11 @@ pub struct PropsData {
     pub flex: f32,
     pub max_width: f32,
     pub max_height: f32,
+    pub cross_align: CrossAlign,
 }
 
 impl PropsData {
-    pub const SIZE: usize = 36;
+    pub const SIZE: usize = 40;
 
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
@@ -184,6 +215,7 @@ impl PropsData {
         buf[24..28].copy_from_slice(&self.flex.to_le_bytes());
         buf[28..32].copy_from_slice(&self.max_width.to_le_bytes());
         buf[32..36].copy_from_slice(&self.max_height.to_le_bytes());
+        buf[36..40].copy_from_slice(&(self.cross_align as u32).to_le_bytes());
         buf
     }
 
@@ -199,6 +231,9 @@ impl PropsData {
             flex: f32::from_le_bytes([data[24], data[25], data[26], data[27]]),
             max_width: f32::from_le_bytes([data[28], data[29], data[30], data[31]]),
             max_height: f32::from_le_bytes([data[32], data[33], data[34], data[35]]),
+            cross_align: CrossAlign::from(u32::from_le_bytes([
+                data[36], data[37], data[38], data[39],
+            ])),
         }
     }
 }

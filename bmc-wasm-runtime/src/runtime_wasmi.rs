@@ -8,6 +8,7 @@
     clippy::cast_precision_loss
 )]
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
@@ -23,10 +24,27 @@ use wasmi::{Caller, Extern, Linker};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::gpu::FemtoVgRenderer;
 use crate::host_api::{
-    ActiveWebSocket, CompletedFetch, DelayedFetch, FrameTimings, HostState, WsEvent, WsOutbound,
+    ActiveHttpListener, ActiveMdnsBrowse, ActiveMdnsRegistration, ActiveSocket, ActiveWebSocket,
+    CompletedFetch, DelayedFetch, FrameTimings, HostState, HttpInboundRequest,
+    HttpListenerResponse, MdnsEvent, SocketEvent, SocketOutbound, WsEvent, WsOutbound,
 };
 use crate::renderer::Renderer;
-use crate::tree;
+use crate::tree::{self, TouchHit};
+
+/// Write a `TouchHit` (4×f32 LE = 16 bytes) to WASM memory at `out_ptr`.
+fn write_touch_hit(caller: &mut Caller<'_, HostState>, out_ptr: u32, hit: &TouchHit) {
+    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+    if let Some(memory) = memory {
+        let data = memory.data_mut(caller);
+        let start = out_ptr as usize;
+        if start + 16 <= data.len() {
+            data[start..start + 4].copy_from_slice(&hit.x.to_le_bytes());
+            data[start + 4..start + 8].copy_from_slice(&hit.y.to_le_bytes());
+            data[start + 8..start + 12].copy_from_slice(&hit.width.to_le_bytes());
+            data[start + 12..start + 16].copy_from_slice(&hit.height.to_le_bytes());
+        }
+    }
+}
 
 /// Call the widget's `__bmc_sdk_version` export and validate against the host.
 ///
@@ -268,6 +286,8 @@ impl WasmWidgetRuntime {
                 state.frame_requested = true;
                 state.frame_delay_ms = Some(delay_ms);
                 state.animation_only_frame = false;
+                state.deferred_wasm_render_at =
+                    Some(Instant::now() + Duration::from_millis(u64::from(delay_ms)));
             },
         )?;
 
@@ -333,7 +353,7 @@ impl WasmWidgetRuntime {
                         ButtonSize::Normal,
                         0,
                     );
-                    return i32::from(clicked);
+                    return i32::from(clicked.0);
                 }
                 0
             },
@@ -399,6 +419,64 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // Decode image to RGBA pixels (for color extraction in WASM)
+        linker.func_wrap(
+            "env",
+            "host_decode_image",
+            |mut caller: Caller<'_, HostState>,
+             data_ptr: u32,
+             data_len: u32,
+             rgba_out_ptr: u32,
+             rgba_out_cap: u32|
+             -> i64 {
+                let image_data = read_bytes(&caller, data_ptr, data_len);
+                let Some(image_data) = image_data else {
+                    return -1;
+                };
+
+                let reader = match image::ImageReader::new(std::io::Cursor::new(&image_data))
+                    .with_guessed_format()
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::error!("host_decode_image format: {e}");
+                        return -1;
+                    }
+                };
+                let img = match reader.decode() {
+                    Ok(img) => img,
+                    Err(e) => {
+                        tracing::error!("host_decode_image decode: {e}");
+                        return -1;
+                    }
+                };
+
+                let rgba = img.to_rgba8();
+                let (w, h) = (rgba.width(), rgba.height());
+                let pixels = rgba.as_raw();
+                let needed = pixels.len() as u32;
+
+                // Write RGBA pixels to WASM memory if buffer is large enough
+                if needed <= rgba_out_cap && rgba_out_ptr != 0 {
+                    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                    if let Some(memory) = memory {
+                        let data = memory.data_mut(&mut caller);
+                        let start = rgba_out_ptr as usize;
+                        let end = start + needed as usize;
+                        if end <= data.len() {
+                            data[start..end].copy_from_slice(pixels);
+                        }
+                    }
+                }
+
+                // Return packed width/height (or just needed size if buffer too small)
+                #[expect(clippy::cast_lossless)]
+                {
+                    ((w as i64) << 32) | (h as i64)
+                }
+            },
+        )?;
+
         // New tree-based API
         linker.func_wrap(
             "env",
@@ -442,13 +520,17 @@ impl WasmWidgetRuntime {
                         &mut state.taffy,
                     ) {
                         Ok((tree_node, result, has_active, timings)) => {
-                            let had_clicks = result.clicks.iter().any(|&c| c);
+                            let had_interaction = result.clicks.iter().any(|&c| c)
+                                || !result.touch_clicks.is_empty()
+                                || !result.touch_drags.is_empty();
                             state.tree_clicks = result.clicks;
+                            state.tree_touch_clicks = result.touch_clicks;
+                            state.tree_touch_drags = result.touch_drags;
                             state.last_timings = timings;
-                            if has_active {
+                            if has_active || had_interaction {
                                 state.frame_requested = true;
-                                // Only skip WASM next frame if no clicks need processing
-                                state.animation_only_frame = !had_clicks;
+                                // Only skip WASM next frame if no interactions need processing
+                                state.animation_only_frame = !had_interaction;
                             }
                             state.cached_tree = Some((tree_node, w, h));
                         }
@@ -475,6 +557,60 @@ impl WasmWidgetRuntime {
                     .tree_clicks
                     .get(index as usize)
                     .map_or(0, |&c| i32::from(c))
+            },
+        )?;
+
+        // Touch click: writes TouchHit (16 bytes: x,y,w,h as f32 LE) to out_ptr.
+        // Returns 1 if clicked, 0 otherwise.
+        linker.func_wrap(
+            "env",
+            "host_get_touch_click",
+            |mut caller: Caller<'_, HostState>, key_ptr: u32, key_len: u32, out_ptr: u32| -> i32 {
+                let key = {
+                    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                    memory.and_then(|m| {
+                        let data = m.data(&caller);
+                        let start = key_ptr as usize;
+                        let end = start + key_len as usize;
+                        if end <= data.len() {
+                            String::from_utf8(data[start..end].to_vec()).ok()
+                        } else {
+                            None
+                        }
+                    })
+                };
+                let Some(key) = key else { return 0 };
+                let hit = caller.data().tree_touch_clicks.get(&key).copied();
+                let Some(hit) = hit else { return 0 };
+                write_touch_hit(&mut caller, out_ptr, &hit);
+                1
+            },
+        )?;
+
+        // Touch drag: writes TouchHit (16 bytes) to out_ptr while finger is down.
+        // Returns 1 if dragging, 0 otherwise.
+        linker.func_wrap(
+            "env",
+            "host_get_touch_drag",
+            |mut caller: Caller<'_, HostState>, key_ptr: u32, key_len: u32, out_ptr: u32| -> i32 {
+                let key = {
+                    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                    memory.and_then(|m| {
+                        let data = m.data(&caller);
+                        let start = key_ptr as usize;
+                        let end = start + key_len as usize;
+                        if end <= data.len() {
+                            String::from_utf8(data[start..end].to_vec()).ok()
+                        } else {
+                            None
+                        }
+                    })
+                };
+                let Some(key) = key else { return 0 };
+                let hit = caller.data().tree_touch_drags.get(&key).copied();
+                let Some(hit) = hit else { return 0 };
+                write_touch_hit(&mut caller, out_ptr, &hit);
+                1
             },
         )?;
 
@@ -514,26 +650,34 @@ impl WasmWidgetRuntime {
             "env",
             "host_fetch",
             |mut caller: Caller<'_, HostState>,
+             method_ptr: u32,
+             method_len: u32,
              url_ptr: u32,
              url_len: u32,
              headers_ptr: u32,
-             headers_len: u32|
+             headers_len: u32,
+             body_ptr: u32,
+             body_len: u32|
              -> u32 {
+                let method = read_string(&caller, method_ptr, method_len);
+                let Some(method) = method else { return 0 };
                 let url = read_string(&caller, url_ptr, url_len);
                 let Some(url) = url else { return 0 };
                 let headers = parse_headers(&caller, headers_ptr, headers_len);
+                let body = read_optional_bytes(&caller, body_ptr, body_len);
 
                 let state = caller.data_mut();
                 let request_id = state.next_request_id;
                 state.next_request_id += 1;
 
                 let tx = state.fetch_tx.clone();
+                state.in_flight_fetches += 1;
                 std::thread::spawn(move || {
-                    let (status, body) = do_fetch(&url, &headers);
+                    let (status, resp_body) = do_fetch(&method, &url, &headers, body.as_deref());
                     let _ = tx.send(CompletedFetch {
                         request_id,
                         status,
-                        body,
+                        body: resp_body,
                     });
                 });
 
@@ -546,14 +690,21 @@ impl WasmWidgetRuntime {
             "host_fetch_after",
             |mut caller: Caller<'_, HostState>,
              delay_ms: u32,
+             method_ptr: u32,
+             method_len: u32,
              url_ptr: u32,
              url_len: u32,
              headers_ptr: u32,
-             headers_len: u32|
+             headers_len: u32,
+             body_ptr: u32,
+             body_len: u32|
              -> u32 {
+                let method = read_string(&caller, method_ptr, method_len);
+                let Some(method) = method else { return 0 };
                 let url = read_string(&caller, url_ptr, url_len);
                 let Some(url) = url else { return 0 };
                 let headers = parse_headers(&caller, headers_ptr, headers_len);
+                let body = read_optional_bytes(&caller, body_ptr, body_len);
 
                 let state = caller.data_mut();
                 let request_id = state.next_request_id;
@@ -562,8 +713,10 @@ impl WasmWidgetRuntime {
                 let fire_at = Instant::now() + Duration::from_millis(u64::from(delay_ms));
                 state.delayed_fetches.push(DelayedFetch {
                     fire_at,
+                    method,
                     url,
                     headers,
+                    body,
                     request_id,
                 });
 
@@ -629,6 +782,409 @@ impl WasmWidgetRuntime {
                 if let Some(ws) = state.websockets.remove(&ws_id) {
                     let _ = ws.msg_tx.send(WsOutbound::Close);
                 }
+            },
+        )?;
+
+        // ── TLS Sockets ─────────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_tls_connect",
+            |mut caller: Caller<'_, HostState>, host_ptr: u32, host_len: u32, port: u32| -> u32 {
+                let host = read_string(&caller, host_ptr, host_len);
+                let Some(host) = host else { return 0 };
+
+                let state = caller.data_mut();
+                let socket_id = state.next_socket_id;
+                state.next_socket_id += 1;
+
+                let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
+                let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
+
+                state
+                    .sockets
+                    .insert(socket_id, ActiveSocket { write_tx, event_rx });
+
+                let port = port as u16;
+                std::thread::spawn(move || {
+                    tls_background_thread(socket_id, &host, port, event_tx, write_rx);
+                });
+
+                socket_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_socket_write",
+            |mut caller: Caller<'_, HostState>,
+             socket_id: u32,
+             data_ptr: u32,
+             data_len: u32|
+             -> u32 {
+                let bytes = read_bytes(&caller, data_ptr, data_len);
+                let Some(bytes) = bytes else { return 1 };
+
+                let state = caller.data_mut();
+                let ok = state
+                    .sockets
+                    .get(&socket_id)
+                    .is_some_and(|s| s.write_tx.send(SocketOutbound::Data(bytes)).is_ok());
+                u32::from(!ok)
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_socket_close",
+            |mut caller: Caller<'_, HostState>, socket_id: u32| {
+                let state = caller.data_mut();
+                if let Some(sock) = state.sockets.remove(&socket_id) {
+                    let _ = sock.write_tx.send(SocketOutbound::Close);
+                }
+            },
+        )?;
+
+        // ── mDNS ──────────────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_mdns_browse",
+            |mut caller: Caller<'_, HostState>, svc_types_ptr: u32, svc_types_len: u32| -> u32 {
+                let raw = read_string(&caller, svc_types_ptr, svc_types_len);
+                let Some(raw) = raw else { return 0 };
+                let service_types: Vec<String> = raw
+                    .lines()
+                    .map(|l| {
+                        let l = l.trim();
+                        // mdns-sd requires ".local." suffix
+                        if l.ends_with(".local.") {
+                            l.to_owned()
+                        } else {
+                            format!("{l}.local.")
+                        }
+                    })
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if service_types.is_empty() {
+                    return 0;
+                }
+
+                let state = caller.data_mut();
+                let browse_id = state.next_mdns_browse_id;
+                state.next_mdns_browse_id += 1;
+
+                let (event_tx, event_rx) = std::sync::mpsc::channel::<MdnsEvent>();
+                let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+
+                state
+                    .mdns_browses
+                    .insert(browse_id, ActiveMdnsBrowse { event_rx, stop_tx });
+
+                std::thread::spawn(move || {
+                    mdns_browse_thread(service_types, event_tx, stop_rx);
+                });
+
+                browse_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_mdns_stop",
+            |mut caller: Caller<'_, HostState>, browse_id: u32| {
+                let state = caller.data_mut();
+                if let Some(browse) = state.mdns_browses.remove(&browse_id) {
+                    let _ = browse.stop_tx.send(());
+                }
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_mdns_register",
+            |mut caller: Caller<'_, HostState>,
+             svc_ptr: u32,
+             svc_len: u32,
+             name_ptr: u32,
+             name_len: u32,
+             port: u32,
+             txt_ptr: u32,
+             txt_len: u32|
+             -> u32 {
+                let svc_type = read_string(&caller, svc_ptr, svc_len);
+                let name = read_string(&caller, name_ptr, name_len);
+                let txt_raw = if txt_len > 0 {
+                    read_string(&caller, txt_ptr, txt_len)
+                } else {
+                    Some(String::new())
+                };
+                let (Some(svc_type), Some(name), Some(txt_raw)) = (svc_type, name, txt_raw) else {
+                    return 0;
+                };
+
+                // mdns-sd requires ".local." suffix
+                let svc_type = if svc_type.ends_with(".local.") {
+                    svc_type
+                } else {
+                    format!("{svc_type}.local.")
+                };
+
+                let port = port as u16;
+
+                // Parse TXT records: newline-delimited "key=value"
+                let mut properties: Vec<(String, String)> = Vec::new();
+                for line in txt_raw.lines() {
+                    if let Some((k, v)) = line.split_once('=') {
+                        properties.push((k.trim().to_owned(), v.trim().to_owned()));
+                    }
+                }
+
+                let daemon = match mdns_sd::ServiceDaemon::new() {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::error!("mDNS daemon creation failed: {e}");
+                        return 0;
+                    }
+                };
+
+                let hostname = format!("{}.local.", name.replace(' ', "-"));
+                let txt: HashMap<String, String> = properties.into_iter().collect();
+                let info =
+                    match mdns_sd::ServiceInfo::new(&svc_type, &name, &hostname, "", port, txt) {
+                        Ok(info) => info,
+                        Err(e) => {
+                            tracing::error!("mDNS ServiceInfo creation failed: {e}");
+                            return 0;
+                        }
+                    };
+                let fullname = info.get_fullname().to_owned();
+
+                if let Err(e) = daemon.register(info) {
+                    tracing::error!("mDNS register failed: {e}");
+                    return 0;
+                }
+
+                let state = caller.data_mut();
+                let reg_id = state.next_mdns_reg_id;
+                state.next_mdns_reg_id += 1;
+                state
+                    .mdns_registrations
+                    .insert(reg_id, ActiveMdnsRegistration { daemon, fullname });
+
+                reg_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_mdns_unregister",
+            |mut caller: Caller<'_, HostState>, reg_id: u32| {
+                let state = caller.data_mut();
+                if let Some(reg) = state.mdns_registrations.remove(&reg_id) {
+                    let _ = reg.daemon.unregister(&reg.fullname);
+                    let _ = reg.daemon.shutdown();
+                }
+            },
+        )?;
+
+        // ── Key-Value persistence ─────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_kv_set",
+            |mut caller: Caller<'_, HostState>,
+             key_ptr: u32,
+             key_len: u32,
+             val_ptr: u32,
+             val_len: u32| {
+                let key = read_string(&caller, key_ptr, key_len);
+                let val = read_bytes(&caller, val_ptr, val_len);
+                let (Some(key), Some(val)) = (key, val) else {
+                    return;
+                };
+
+                let state = caller.data_mut();
+                state.kv_cache.insert(key.clone(), val.clone());
+
+                // Persist to disk if path is configured
+                if let Some(ref base) = state.kv_store_path {
+                    let dir = base.clone();
+                    if let Err(e) = std::fs::create_dir_all(&dir) {
+                        tracing::warn!("kv_set: failed to create dir: {e}");
+                        return;
+                    }
+                    let path = dir.join(&key);
+                    if let Err(e) = std::fs::write(&path, &val) {
+                        tracing::warn!("kv_set: failed to write {}: {e}", path.display());
+                    }
+                }
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_kv_get",
+            |mut caller: Caller<'_, HostState>,
+             key_ptr: u32,
+             key_len: u32,
+             out_ptr: u32,
+             out_cap: u32|
+             -> i32 {
+                let key = read_string(&caller, key_ptr, key_len);
+                let Some(key) = key else { return -1 };
+
+                let state = caller.data_mut();
+
+                // Check cache first
+                if let Some(val) = state.kv_cache.get(&key) {
+                    let val_len = i32::try_from(val.len()).unwrap_or(i32::MAX);
+                    if out_cap > 0 && out_cap as usize >= val.len() {
+                        let val = val.clone();
+                        // Write to WASM memory
+                        let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let mem = memory.data_mut(&mut caller);
+                            let start = out_ptr as usize;
+                            let end = start + val.len();
+                            if end <= mem.len() {
+                                mem[start..end].copy_from_slice(&val);
+                            }
+                        }
+                    }
+                    return val_len;
+                }
+
+                // Try loading from disk
+                if let Some(ref base) = state.kv_store_path.clone() {
+                    let path = base.join(&key);
+                    if let Ok(val) = std::fs::read(&path) {
+                        let val_len = i32::try_from(val.len()).unwrap_or(i32::MAX);
+                        state.kv_cache.insert(key, val.clone());
+                        if out_cap > 0 && out_cap as usize >= val.len() {
+                            let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                            if let Some(memory) = memory {
+                                let mem = memory.data_mut(&mut caller);
+                                let start = out_ptr as usize;
+                                let end = start + val.len();
+                                if end <= mem.len() {
+                                    mem[start..end].copy_from_slice(&val);
+                                }
+                            }
+                        }
+                        return val_len;
+                    }
+                }
+
+                -1
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_kv_delete",
+            |mut caller: Caller<'_, HostState>, key_ptr: u32, key_len: u32| {
+                let key = read_string(&caller, key_ptr, key_len);
+                let Some(key) = key else { return };
+
+                let state = caller.data_mut();
+                state.kv_cache.remove(&key);
+
+                if let Some(ref base) = state.kv_store_path {
+                    let path = base.join(&key);
+                    let _ = std::fs::remove_file(&path);
+                }
+            },
+        )?;
+
+        // ── HTTP Listener ─────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_http_listen",
+            |mut caller: Caller<'_, HostState>, port: u32| -> u32 {
+                let port = port as u16;
+
+                let state = caller.data_mut();
+                let listener_id = state.next_http_listener_id;
+                state.next_http_listener_id += 1;
+
+                let (request_tx, request_rx) = std::sync::mpsc::channel::<HttpInboundRequest>();
+                let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+                let (port_tx, port_rx) = std::sync::mpsc::channel::<u16>();
+
+                std::thread::spawn(move || {
+                    http_listener_thread(port, request_tx, stop_rx, port_tx);
+                });
+
+                // Wait briefly for the actual bound port
+                let actual_port = port_rx.recv_timeout(Duration::from_secs(2)).unwrap_or(port);
+
+                state.http_listeners.insert(
+                    listener_id,
+                    ActiveHttpListener {
+                        request_rx,
+                        stop_tx,
+                        port: actual_port,
+                    },
+                );
+
+                listener_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_http_respond",
+            |mut caller: Caller<'_, HostState>,
+             request_id: u32,
+             status: u32,
+             headers_ptr: u32,
+             headers_len: u32,
+             body_ptr: u32,
+             body_len: u32| {
+                let headers = if headers_len > 0 {
+                    read_string(&caller, headers_ptr, headers_len).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                let body = if body_len > 0 {
+                    read_bytes(&caller, body_ptr, body_len).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+
+                let state = caller.data_mut();
+                if let Some(tx) = state.http_response_txs.remove(&request_id) {
+                    let _ = tx.send(HttpListenerResponse {
+                        status: status as u16,
+                        headers,
+                        body,
+                    });
+                }
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_http_close_listener",
+            |mut caller: Caller<'_, HostState>, listener_id: u32| {
+                let state = caller.data_mut();
+                if let Some(listener) = state.http_listeners.remove(&listener_id) {
+                    let _ = listener.stop_tx.send(());
+                }
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_http_get_port",
+            |caller: Caller<'_, HostState>, listener_id: u32| -> u32 {
+                let state = caller.data();
+                state
+                    .http_listeners
+                    .get(&listener_id)
+                    .map_or(0, |l| u32::from(l.port))
             },
         )?;
 
@@ -823,6 +1379,88 @@ impl WasmWidgetRuntime {
             },
         )?;
 
+        // ── XML ─────────────────────────────────────────────────────
+
+        linker.func_wrap(
+            "env",
+            "host_xml_parse",
+            |mut caller: Caller<'_, HostState>, body_ptr: u32, body_len: u32| -> u32 {
+                let bytes = read_bytes(&caller, body_ptr, body_len);
+                let Some(bytes) = bytes else { return 0 };
+
+                let Ok(xml_str) = String::from_utf8(bytes) else {
+                    return 0;
+                };
+
+                // Validate that it parses as XML
+                if roxmltree::Document::parse(&xml_str).is_err() {
+                    return 0;
+                }
+
+                let state = caller.data_mut();
+                let doc_id = state.next_xml_id;
+                state.next_xml_id += 1;
+                state.xml_docs.insert(doc_id, xml_str);
+                doc_id
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_xml_get_str",
+            |mut caller: Caller<'_, HostState>,
+             doc_id: u32,
+             path_ptr: u32,
+             path_len: u32,
+             out_ptr: u32,
+             out_len: u32|
+             -> i32 {
+                let path = read_string(&caller, path_ptr, path_len);
+                let Some(path) = path else { return -1 };
+
+                let result = {
+                    let state = caller.data();
+                    let Some(xml_str) = state.xml_docs.get(&doc_id) else {
+                        return -1;
+                    };
+                    let Ok(doc) = roxmltree::Document::parse(xml_str) else {
+                        return -1;
+                    };
+                    xml_query_text(&doc, &path)
+                };
+
+                let Some(text) = result else { return -1 };
+                write_to_wasm(&mut caller, &text, out_ptr, out_len)
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_xml_get_f64",
+            |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> f64 {
+                let path = read_string(&caller, path_ptr, path_len);
+                let Some(path) = path else { return f64::NAN };
+                let state = caller.data();
+                let Some(xml_str) = state.xml_docs.get(&doc_id) else {
+                    return f64::NAN;
+                };
+                let Ok(doc) = roxmltree::Document::parse(xml_str) else {
+                    return f64::NAN;
+                };
+                xml_query_text(&doc, &path)
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(f64::NAN)
+            },
+        )?;
+
+        linker.func_wrap(
+            "env",
+            "host_xml_free",
+            |mut caller: Caller<'_, HostState>, doc_id: u32| {
+                caller.data_mut().xml_docs.remove(&doc_id);
+            },
+        )?;
+
         // ── Formatting ────────────────────────────────────────────────
 
         linker.func_wrap(
@@ -906,9 +1544,19 @@ impl WasmWidgetRuntime {
         }
 
         // Decide frame type BEFORE begin_frame consumes events
-        let animation_only = state.animation_only_frame
+        let mut animation_only = state.animation_only_frame
             && !state.interaction.has_pending_events()
             && state.cached_tree.is_some();
+
+        // Check wall-clock deadline for deferred WASM render (request_frame_after).
+        // Uses Instant instead of delta_ms countdown because sub-millisecond
+        // frames truncate delta_ms to 0 and stall countdown-based timers.
+        if let Some(deadline) = state.deferred_wasm_render_at
+            && Instant::now() >= deadline
+        {
+            state.deferred_wasm_render_at = None;
+            animation_only = false;
+        }
 
         state.interaction.begin_frame();
         state.begin_render_frame();
@@ -919,10 +1567,16 @@ impl WasmWidgetRuntime {
             return Ok(RenderStatus::Ok);
         }
 
+        // Full WASM frame: compute real elapsed time since last WASM render
+        // (not just the animation frame's ~0-16ms delta).
+        let now = Instant::now();
+        let wasm_delta = now.duration_since(state.last_wasm_render_at).as_millis() as u32;
+        state.last_wasm_render_at = now;
+
         // Full frame: run WASM with per-frame fuel budget.
         self.store.set_fuel(self.fuel_per_frame)?;
         let wasm_t0 = Instant::now();
-        match self.render_func.call(&mut self.store, delta_ms) {
+        match self.render_func.call(&mut self.store, wasm_delta) {
             Ok(()) => {
                 self.store.data_mut().last_timings.wasm_us = wasm_t0.elapsed().as_micros() as u32;
                 self.fuel_strikes = 0;
@@ -983,11 +1637,14 @@ impl WasmWidgetRuntime {
         ) {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
+                let had_interaction = !result.touch_drags.is_empty();
                 // No WASM execution, no deserialization on cached frames
                 state.tree_clicks = result.clicks;
-                if has_active {
+                state.tree_touch_clicks = result.touch_clicks;
+                state.tree_touch_drags = result.touch_drags;
+                if has_active || had_interaction {
                     state.frame_requested = true;
-                    state.animation_only_frame = true;
+                    state.animation_only_frame = !had_interaction;
                 }
             }
             Err(e) => {
@@ -1115,22 +1772,29 @@ impl WasmWidgetRuntime {
         let mut ready = Vec::new();
         state.delayed_fetches.retain(|df| {
             if now >= df.fire_at {
-                ready.push((df.url.clone(), df.headers.clone(), df.request_id));
+                ready.push((
+                    df.method.clone(),
+                    df.url.clone(),
+                    df.headers.clone(),
+                    df.body.clone(),
+                    df.request_id,
+                ));
                 false
             } else {
                 true
             }
         });
-        for (url, headers, request_id) in ready {
-            tracing::info!(request_id, %url, "firing HTTP fetch");
+        for (method, url, headers, body, request_id) in ready {
+            tracing::info!(request_id, %method, %url, "firing HTTP fetch");
             let tx = state.fetch_tx.clone();
+            state.in_flight_fetches += 1;
             std::thread::spawn(move || {
-                let (status, body) = do_fetch(&url, &headers);
-                tracing::info!(request_id, status, body_len = body.len(), %url, "fetch completed");
+                let (status, resp_body) = do_fetch(&method, &url, &headers, body.as_deref());
+                tracing::info!(request_id, status, body_len = resp_body.len(), %url, "fetch completed");
                 let _ = tx.send(CompletedFetch {
                     request_id,
                     status,
-                    body,
+                    body: resp_body,
                 });
             });
         }
@@ -1139,6 +1803,7 @@ impl WasmWidgetRuntime {
         let mut responses = Vec::new();
         let state = self.store.data_mut();
         while let Ok(resp) = state.fetch_rx.try_recv() {
+            state.in_flight_fetches = state.in_flight_fetches.saturating_sub(1);
             responses.push(resp);
         }
 
@@ -1216,10 +1881,11 @@ impl WasmWidgetRuntime {
         }
     }
 
-    /// Whether there are pending delayed fetches that need polling.
+    /// Whether there are pending or in-flight fetches that need polling.
     #[must_use]
     pub fn has_pending_fetches(&self) -> bool {
-        !self.store.data().delayed_fetches.is_empty()
+        let state = self.store.data();
+        !state.delayed_fetches.is_empty() || state.in_flight_fetches > 0
     }
 
     /// Drain WebSocket events from all active connections and deliver them
@@ -1323,6 +1989,308 @@ impl WasmWidgetRuntime {
     pub fn has_active_websockets(&self) -> bool {
         !self.store.data().websockets.is_empty()
     }
+
+    /// Drain TLS socket events from all active connections and deliver them
+    /// to WASM by calling `__on_socket_event(socket_id, event_type, data_ptr, data_len)`.
+    ///
+    /// Event types: 0 = Connected, 1 = Data, 2 = Closed (data carries u32 LE reason code).
+    ///
+    /// Call this before `render()` each frame.
+    pub fn deliver_socket_events(&mut self) -> bool {
+        let mut events: Vec<(u32, SocketEvent)> = Vec::new();
+        let mut closed_ids: Vec<u32> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&socket_id, sock) in &state.sockets {
+            while let Ok(event) = sock.event_rx.try_recv() {
+                let is_close = matches!(event, SocketEvent::Closed(_));
+                events.push((socket_id, event));
+                if is_close {
+                    closed_ids.push(socket_id);
+                }
+            }
+        }
+        for id in &closed_ids {
+            state.sockets.remove(id);
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        let on_socket_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_socket_event");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_socket_event), Ok(alloc_func)) = (on_socket_event, alloc_func) else {
+            tracing::warn!("widget missing __on_socket_event or __alloc export");
+            return false;
+        };
+
+        for (socket_id, event) in events {
+            let (event_type, data): (u32, &[u8]) = match &event {
+                SocketEvent::Connected => (0, &[]),
+                SocketEvent::Data(bytes) => (1, bytes),
+                SocketEvent::Closed(code) => (2, &code.to_le_bytes()),
+            };
+
+            let data_len = data.len() as u32;
+
+            let data_ptr = if data_len > 0 {
+                if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                    tracing::error!("set_fuel failed: {e}");
+                    continue;
+                }
+                match alloc_func.call(&mut self.store, data_len) {
+                    Ok(ptr) => {
+                        let memory = self
+                            .instance
+                            .get_export(&self.store, "memory")
+                            .and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let mem_data = memory.data_mut(&mut self.store);
+                            let start = ptr as usize;
+                            let end = start + data_len as usize;
+                            if end <= mem_data.len() {
+                                mem_data[start..end].copy_from_slice(data);
+                            }
+                        }
+                        ptr
+                    }
+                    Err(e) => {
+                        tracing::error!("__alloc failed for socket event: {e}");
+                        continue;
+                    }
+                }
+            } else {
+                0
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) =
+                on_socket_event.call(&mut self.store, (socket_id, event_type, data_ptr, data_len))
+            {
+                tracing::error!("__on_socket_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active TLS socket connections.
+    #[must_use]
+    pub fn has_active_sockets(&self) -> bool {
+        !self.store.data().sockets.is_empty()
+    }
+
+    /// Drain mDNS events from all active browse sessions and deliver them
+    /// to WASM by calling `__on_mdns_event(browse_id, event_type, data_ptr, data_len)`.
+    ///
+    /// Event types: 0 = Found (data = JSON), 1 = Removed (data = name).
+    ///
+    /// Call this before `render()` each frame.
+    pub fn deliver_mdns_events(&mut self) -> bool {
+        let mut events: Vec<(u32, MdnsEvent)> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&browse_id, browse) in &state.mdns_browses {
+            while let Ok(event) = browse.event_rx.try_recv() {
+                events.push((browse_id, event));
+            }
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        let on_mdns_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_mdns_event");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_mdns_event), Ok(alloc_func)) = (on_mdns_event, alloc_func) else {
+            tracing::warn!("widget missing __on_mdns_event or __alloc export");
+            return false;
+        };
+
+        for (browse_id, event) in events {
+            let (event_type, data): (u32, &[u8]) = match &event {
+                MdnsEvent::Found(json) => (0, json.as_bytes()),
+                MdnsEvent::Removed(name) => (1, name.as_bytes()),
+            };
+
+            let data_len = data.len() as u32;
+            let data_ptr = if data_len > 0 {
+                if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                    tracing::error!("set_fuel failed: {e}");
+                    continue;
+                }
+                match alloc_func.call(&mut self.store, data_len) {
+                    Ok(ptr) => {
+                        let memory = self
+                            .instance
+                            .get_export(&self.store, "memory")
+                            .and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let mem_data = memory.data_mut(&mut self.store);
+                            let start = ptr as usize;
+                            let end = start + data_len as usize;
+                            if end <= mem_data.len() {
+                                mem_data[start..end].copy_from_slice(data);
+                            }
+                        }
+                        ptr
+                    }
+                    Err(e) => {
+                        tracing::error!("__alloc failed for mdns event: {e}");
+                        continue;
+                    }
+                }
+            } else {
+                0
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) =
+                on_mdns_event.call(&mut self.store, (browse_id, event_type, data_ptr, data_len))
+            {
+                tracing::error!("__on_mdns_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active mDNS browse sessions.
+    #[must_use]
+    pub fn has_active_mdns_browses(&self) -> bool {
+        !self.store.data().mdns_browses.is_empty()
+    }
+
+    /// Drain inbound HTTP requests from all active listeners and deliver them
+    /// to WASM by calling `__on_http_request(listener_id, request_id, method_ptr,
+    /// method_len, path_ptr, path_len, headers_ptr, headers_len, body_ptr, body_len)`.
+    ///
+    /// Call this before `render()` each frame.
+    pub fn deliver_http_requests(&mut self) -> bool {
+        let mut requests: Vec<(u32, HttpInboundRequest)> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&listener_id, listener) in &state.http_listeners {
+            while let Ok(req) = listener.request_rx.try_recv() {
+                requests.push((listener_id, req));
+            }
+        }
+
+        if requests.is_empty() {
+            return false;
+        }
+
+        let on_http_request = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32, u32, u32, u32, u32, u32, u32), ()>(
+                &self.store,
+                "__on_http_request",
+            );
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_http_request), Ok(alloc_func)) = (on_http_request, alloc_func) else {
+            tracing::warn!("widget missing __on_http_request or __alloc export");
+            return false;
+        };
+
+        for (listener_id, req) in requests {
+            // Store the response sender so host_http_respond can find it
+            self.store
+                .data_mut()
+                .http_response_txs
+                .insert(req.request_id, req.response_tx);
+
+            // Helper: allocate + copy bytes into WASM memory
+            let mut alloc_and_copy = |data: &[u8]| -> (u32, u32) {
+                let len = data.len() as u32;
+                if len == 0 {
+                    return (0, 0);
+                }
+                if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                    tracing::error!("set_fuel failed: {e}");
+                    return (0, 0);
+                }
+                match alloc_func.call(&mut self.store, len) {
+                    Ok(ptr) => {
+                        let memory = self
+                            .instance
+                            .get_export(&self.store, "memory")
+                            .and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let mem_data = memory.data_mut(&mut self.store);
+                            let start = ptr as usize;
+                            let end = start + len as usize;
+                            if end <= mem_data.len() {
+                                mem_data[start..end].copy_from_slice(data);
+                            }
+                        }
+                        (ptr, len)
+                    }
+                    Err(e) => {
+                        tracing::error!("__alloc failed for http request: {e}");
+                        (0, 0)
+                    }
+                }
+            };
+
+            let (method_ptr, method_len) = alloc_and_copy(req.method.as_bytes());
+            let (path_ptr, path_len) = alloc_and_copy(req.path.as_bytes());
+            let (headers_ptr, headers_len) = alloc_and_copy(req.headers.as_bytes());
+            let (body_ptr, body_len) = alloc_and_copy(&req.body);
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            let request_id = req.request_id;
+            if let Err(e) = on_http_request.call(
+                &mut self.store,
+                (
+                    listener_id,
+                    request_id,
+                    method_ptr,
+                    method_len,
+                    path_ptr,
+                    path_len,
+                    headers_ptr,
+                    headers_len,
+                    body_ptr,
+                    body_len,
+                ),
+            ) {
+                tracing::error!("__on_http_request failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active HTTP listeners.
+    #[must_use]
+    pub fn has_active_http_listeners(&self) -> bool {
+        !self.store.data().http_listeners.is_empty()
+    }
+
+    /// Set the key-value storage path for this widget.
+    pub fn set_kv_store_path(&mut self, path: std::path::PathBuf) {
+        self.store.data_mut().kv_store_path = Some(path);
+    }
 }
 
 /// Read a UTF-8 string from WASM memory.
@@ -1347,6 +2315,14 @@ fn read_bytes(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<Vec<
         return None;
     }
     Some(data[start..end].to_vec())
+}
+
+/// Read optional bytes from WASM memory (returns `None` if ptr is null / len is 0).
+fn read_optional_bytes(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<Vec<u8>> {
+    if ptr == 0 || len == 0 {
+        return None;
+    }
+    read_bytes(caller, ptr, len)
 }
 
 /// Parse newline-separated "Key: Value" headers from WASM memory.
@@ -1407,6 +2383,45 @@ fn write_to_wasm(caller: &mut Caller<'_, HostState>, s: &str, out_ptr: u32, out_
     }
 
     actual_len as i32
+}
+
+/// Query an XML document for a text value using a simplified path syntax.
+///
+/// Supported patterns:
+/// - `//local_name` — text content of the first element with that local name
+///   (namespace-agnostic, e.g. `//title` matches `<dc:title>`)
+/// - `//local_name/@attr` — attribute value on the first matching element
+///   (e.g. `//res/@duration`)
+fn xml_query_text(doc: &roxmltree::Document<'_>, path: &str) -> Option<String> {
+    let path = path.strip_prefix("//")?;
+
+    // Check for attribute query: "element/@attr"
+    if let Some((elem_part, attr_name)) = path.split_once("/@") {
+        let local = elem_part.rsplit_once(':').map_or(elem_part, |(_, l)| l);
+        for node in doc.descendants() {
+            if node.is_element() && node.tag_name().name() == local {
+                return node.attribute(attr_name).map(String::from);
+            }
+        }
+        return None;
+    }
+
+    // Text content query
+    let local = path.rsplit_once(':').map_or(path, |(_, l)| l);
+    for node in doc.descendants() {
+        if node.is_element() && node.tag_name().name() == local {
+            // Collect all text children
+            let text: String = node
+                .children()
+                .filter(roxmltree::Node::is_text)
+                .filter_map(|n| n.text())
+                .collect();
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+    }
+    None
 }
 
 /// Background thread for a single WebSocket connection.
@@ -1546,14 +2561,467 @@ fn ws_background_thread(
     tracing::info!(ws_id, "WS background thread exiting");
 }
 
-/// Perform an HTTP GET request, returning (status_code, body).
-/// Returns (0, error_message) on network errors.
-fn do_fetch(url: &str, headers: &[(String, String)]) -> (u32, Vec<u8>) {
-    let mut req = ureq::get(url);
-    for (k, v) in headers {
-        req = req.header(k, v);
+/// Background thread for a single TLS socket connection.
+///
+/// Connects to `host:port` with TLS (skipping certificate verification for
+/// self-signed certs like Chromecast), then loops: drain outbound writes from
+/// `write_rx`, read inbound data with a 50 ms timeout.
+#[expect(clippy::needless_pass_by_value)] // ownership needed: moved into spawned thread
+fn tls_background_thread(
+    socket_id: u32,
+    host: &str,
+    port: u16,
+    event_tx: std::sync::mpsc::Sender<SocketEvent>,
+    write_rx: std::sync::mpsc::Receiver<SocketOutbound>,
+) {
+    use std::io::{Read as _, Write as _};
+    use std::sync::Arc;
+
+    // Build a rustls ClientConfig that skips certificate verification
+    // (needed for Chromecast self-signed certs)
+    let crypto_provider = rustls::crypto::ring::default_provider();
+    let config = match rustls::ClientConfig::builder_with_provider(Arc::new(crypto_provider))
+        .with_safe_default_protocol_versions()
+    {
+        Ok(builder) => builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+            .with_no_client_auth(),
+        Err(e) => {
+            tracing::error!(socket_id, "TLS config error: {e}");
+            let _ = event_tx.send(SocketEvent::Closed(1));
+            return;
+        }
+    };
+
+    // TCP connect
+    let addr = format!("{host}:{port}");
+    let tcp = match std::net::TcpStream::connect(&addr) {
+        Ok(tcp) => tcp,
+        Err(e) => {
+            tracing::error!(socket_id, %addr, "TCP connect failed: {e}");
+            let _ = event_tx.send(SocketEvent::Closed(1));
+            return;
+        }
+    };
+
+    let server_name = match rustls::pki_types::ServerName::try_from(host.to_owned()) {
+        Ok(name) => name,
+        Err(e) => {
+            tracing::error!(socket_id, "invalid server name '{host}': {e}");
+            let _ = event_tx.send(SocketEvent::Closed(1));
+            return;
+        }
+    };
+
+    // TLS handshake
+    let conn = match rustls::ClientConnection::new(Arc::new(config), server_name) {
+        Ok(conn) => conn,
+        Err(e) => {
+            tracing::error!(socket_id, "TLS handshake setup failed: {e}");
+            let _ = event_tx.send(SocketEvent::Closed(1));
+            return;
+        }
+    };
+
+    let mut tls = rustls::StreamOwned::new(conn, tcp);
+
+    // Set a short read timeout for the underlying TCP stream so we can
+    // periodically check for outbound writes.
+    if let Err(e) = tls.sock.set_read_timeout(Some(Duration::from_millis(50))) {
+        tracing::warn!(socket_id, "failed to set read timeout: {e}");
     }
-    match req.call() {
+
+    let _ = event_tx.send(SocketEvent::Connected);
+    tracing::info!(socket_id, %addr, "TLS connected");
+
+    let mut read_buf = vec![0_u8; 16_384];
+
+    loop {
+        // Drain outbound writes
+        loop {
+            match write_rx.try_recv() {
+                Ok(SocketOutbound::Data(data)) => {
+                    if let Err(e) = tls.write_all(&data) {
+                        tracing::warn!(socket_id, "TLS write error: {e}");
+                        let _ = event_tx.send(SocketEvent::Closed(1));
+                        return;
+                    }
+                    if let Err(e) = tls.flush() {
+                        tracing::warn!(socket_id, "TLS flush error: {e}");
+                        let _ = event_tx.send(SocketEvent::Closed(1));
+                        return;
+                    }
+                }
+                Ok(SocketOutbound::Close) => {
+                    let _ = event_tx.send(SocketEvent::Closed(0));
+                    tracing::info!(socket_id, "TLS socket closed by widget");
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    let _ = event_tx.send(SocketEvent::Closed(1));
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            }
+        }
+
+        // Read inbound data (blocks up to 50 ms due to read timeout)
+        match tls.read(&mut read_buf) {
+            Ok(0) => {
+                // EOF — remote closed
+                let _ = event_tx.send(SocketEvent::Closed(0));
+                tracing::info!(socket_id, "TLS EOF");
+                return;
+            }
+            Ok(n) => {
+                if event_tx
+                    .send(SocketEvent::Data(read_buf[..n].to_vec()))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e) => {
+                tracing::warn!(socket_id, "TLS read error: {e}");
+                let _ = event_tx.send(SocketEvent::Closed(1));
+                return;
+            }
+        }
+    }
+}
+
+/// Certificate verifier that accepts all certificates (for self-signed
+/// Chromecast devices and similar LAN services).
+#[derive(Debug)]
+struct NoCertVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Background thread for mDNS browse sessions.
+///
+/// Polls all registered service type receivers and forwards resolved
+/// service events as JSON to the host state.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "thread entry point — values are moved in"
+)]
+fn mdns_browse_thread(
+    service_types: Vec<String>,
+    event_tx: std::sync::mpsc::Sender<MdnsEvent>,
+    stop_rx: std::sync::mpsc::Receiver<()>,
+) {
+    use mdns_sd::{ServiceDaemon, ServiceEvent};
+
+    let daemon = match ServiceDaemon::new() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("mDNS daemon creation failed: {e}");
+            return;
+        }
+    };
+
+    let receivers: Vec<_> = service_types
+        .iter()
+        .filter_map(|st| match daemon.browse(st) {
+            Ok(rx) => Some((st.clone(), rx)),
+            Err(e) => {
+                tracing::error!("mDNS browse({st}) failed: {e}");
+                None
+            }
+        })
+        .collect();
+
+    if receivers.is_empty() {
+        let _ = daemon.shutdown();
+        return;
+    }
+
+    loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+        for (_, rx) in &receivers {
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    ServiceEvent::ServiceResolved(info) => {
+                        // Build JSON with service details
+                        let svc_type = info.ty_domain.clone();
+                        let name = info.get_fullname().to_owned();
+                        let port = info.get_port();
+                        // Get first address (prefer IPv4)
+                        let host = info
+                            .get_addresses_v4()
+                            .iter()
+                            .next()
+                            .map(ToString::to_string)
+                            .unwrap_or_default();
+
+                        // Build TXT as JSON object
+                        let txt_pairs: Vec<String> = info
+                            .get_properties()
+                            .iter()
+                            .map(|p| {
+                                let k = p.key();
+                                let v = p.val_str();
+                                format!("\"{}\":\"{}\"", escape_json(k), escape_json(v))
+                            })
+                            .collect();
+                        let txt_json = format!("{{{}}}", txt_pairs.join(","));
+
+                        let json = format!(
+                            "{{\"service_type\":\"{}\",\"name\":\"{}\",\"host\":\"{}\",\"port\":{},\"txt\":{}}}",
+                            escape_json(&svc_type),
+                            escape_json(&name),
+                            escape_json(&host),
+                            port,
+                            txt_json,
+                        );
+                        if event_tx.send(MdnsEvent::Found(json)).is_err() {
+                            break;
+                        }
+                    }
+                    ServiceEvent::ServiceRemoved(_, fullname) => {
+                        if event_tx.send(MdnsEvent::Removed(fullname)).is_err() {
+                            break;
+                        }
+                    }
+                    ServiceEvent::SearchStarted(_)
+                    | ServiceEvent::ServiceFound(_, _)
+                    | ServiceEvent::SearchStopped(_)
+                    | _ => {}
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = daemon.shutdown();
+}
+
+/// Escape a string for JSON output (quotes and backslashes).
+fn escape_json(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+/// Background thread for an HTTP listener.
+///
+/// Accepts connections, parses simple HTTP/1.1 requests, and sends them
+/// to the WASM runtime for processing. Responses come back via a per-request
+/// channel stored in `HostState::http_response_txs`.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "thread entry point — values are moved in"
+)]
+fn http_listener_thread(
+    port: u16,
+    request_tx: std::sync::mpsc::Sender<HttpInboundRequest>,
+    stop_rx: std::sync::mpsc::Receiver<()>,
+    port_report_tx: std::sync::mpsc::Sender<u16>,
+) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+
+    let listener = match TcpListener::bind(("0.0.0.0", port)) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("HTTP listener bind failed on port {port}: {e}");
+            let _ = port_report_tx.send(0);
+            return;
+        }
+    };
+    listener
+        .set_nonblocking(true)
+        .expect("BUG: set_nonblocking failed");
+
+    let actual_port = listener.local_addr().map_or(port, |a| a.port());
+    let _ = port_report_tx.send(actual_port);
+    tracing::info!("HTTP listener started on port {actual_port}");
+
+    let mut next_req_id: u32 = 1;
+
+    loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+        match listener.accept() {
+            Ok((mut stream, addr)) => {
+                tracing::debug!("HTTP connection from {addr}");
+                stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+
+                // Parse HTTP/1.1 request (simple line-based)
+                let mut reader = BufReader::new(&stream);
+
+                // Request line: METHOD PATH HTTP/1.1
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    continue;
+                }
+                let parts: Vec<&str> = request_line.trim().splitn(3, ' ').collect();
+                if parts.len() < 2 {
+                    continue;
+                }
+                let method = parts[0].to_owned();
+                let path = parts[1].to_owned();
+
+                // Headers
+                let mut headers = String::new();
+                let mut content_length: usize = 0;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(val) = line
+                        .to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|v| v.trim().to_owned())
+                    {
+                        content_length = val.parse().unwrap_or(0);
+                    }
+                    headers.push_str(&line);
+                }
+
+                // Body
+                let mut body = vec![0_u8; content_length];
+                if content_length > 0 {
+                    let _ = reader.read_exact(&mut body);
+                }
+
+                let request_id = next_req_id;
+                next_req_id += 1;
+
+                // Create a response channel for this request. The sender goes
+                // with the request to the WASM runtime; the receiver stays here
+                // so we can block until WASM responds.
+                let (resp_tx, resp_rx) = std::sync::mpsc::channel::<HttpListenerResponse>();
+
+                let req = HttpInboundRequest {
+                    request_id,
+                    method,
+                    path,
+                    headers,
+                    body,
+                    response_tx: resp_tx,
+                };
+
+                if request_tx.send(req).is_err() {
+                    break; // Listener was shut down
+                }
+
+                // Wait for WASM to send a response (with timeout)
+                if let Ok(resp) = resp_rx.recv_timeout(Duration::from_secs(10)) {
+                    let status_text = match resp.status {
+                        204 => "No Content",
+                        400 => "Bad Request",
+                        404 => "Not Found",
+                        500 => "Internal Server Error",
+                        _ => "OK",
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Length: {}\r\n{}\r\n",
+                        resp.status,
+                        status_text,
+                        resp.body.len(),
+                        resp.headers,
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(&resp.body);
+                    let _ = stream.flush();
+                } else {
+                    let response = "HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 0\r\n\r\n";
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                tracing::error!("HTTP listener accept error: {e}");
+                break;
+            }
+        }
+    }
+    tracing::info!("HTTP listener stopped on port {actual_port}");
+}
+
+/// Perform an HTTP request, returning (status_code, body).
+/// Returns (0, error_message) on network errors.
+fn do_fetch(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: Option<&[u8]>,
+) -> (u32, Vec<u8>) {
+    // Methods that accept a body (POST, PUT, PATCH) vs. bodyless (GET, DELETE, HEAD)
+    let result = match method {
+        "POST" | "PUT" | "PATCH" => {
+            let mut req = match method {
+                "POST" => ureq::post(url),
+                "PUT" => ureq::put(url),
+                _ => ureq::patch(url),
+            };
+            for (k, v) in headers {
+                req = req.header(k, v);
+            }
+            match body {
+                Some(bytes) => req.send(bytes),
+                None => req.send_empty(),
+            }
+        }
+        _ => {
+            let mut req = match method {
+                "DELETE" => ureq::delete(url),
+                "HEAD" => ureq::head(url),
+                _ => ureq::get(url),
+            };
+            for (k, v) in headers {
+                req = req.header(k, v);
+            }
+            req.call()
+        }
+    };
+    match result {
         Ok(response) => {
             let status = u32::from(response.status().as_u16());
             match response.into_body().read_to_vec() {

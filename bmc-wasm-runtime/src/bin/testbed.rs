@@ -29,7 +29,7 @@ use glutin_winit::DisplayBuilder;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use raw_window_handle::HasWindowHandle;
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -37,6 +37,7 @@ use winit::window::{Window, WindowButtons};
 
 use bmc_wasm_protocol::FormatPreferences;
 use bmc_wasm_runtime::components::{ButtonSize, ButtonStyle, draw_button};
+use bmc_wasm_runtime::gpu::FemtoVgRenderer;
 use bmc_wasm_runtime::interaction::{InteractionState, TouchEvent};
 use bmc_wasm_runtime::perf_overlay::PerfOverlay;
 use bmc_wasm_runtime::renderer::Renderer;
@@ -149,7 +150,6 @@ struct PreviewTile {
     y: u32,
     w: u32,
     h: u32,
-    /// Physical pixel dimensions (logical × dpi_scale) for the FBO.
     pw: u32,
     ph: u32,
     label: &'static str,
@@ -166,6 +166,7 @@ struct PreviewState {
     _checker_texture: glow::Texture,
     stats_fbo: glow::Framebuffer,
     _stats_texture: glow::Texture,
+    stats_renderer: FemtoVgRenderer,
     gl: glow::Context,
     gl_surface: glutin::surface::Surface<WindowSurface>,
     gl_context: glutin::context::PossiblyCurrentContext,
@@ -180,9 +181,9 @@ struct PreviewState {
     mouse_down: bool,
     perf_overlay: PerfOverlay,
     stats_interaction: InteractionState,
-    /// Display DPI scale factor for sharper text rendering.
+    /// Display DPI scale (for screen coordinate mapping only, not FemtoVG rendering).
     dpi_scale: f32,
-    /// Physical pixel dimensions of the screen surface (logical × dpi_scale).
+    /// Physical pixel dimensions of the screen surface.
     phys_w: u32,
     phys_h: u32,
     /// Total frames rendered (for perf-report exit condition).
@@ -221,7 +222,9 @@ impl App {
             .with_resizable(false)
             .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE);
 
-        let template = ConfigTemplateBuilder::new().with_alpha_size(8);
+        let template = ConfigTemplateBuilder::new()
+            .with_alpha_size(8)
+            .with_stencil_size(8);
         let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attrs));
 
         let (window, gl_config) = display_builder
@@ -291,13 +294,27 @@ impl App {
             })
         };
 
+        // KV storage directory: ./widget_data/<widget_name>/ next to the WASM file
+        let widget_name = self
+            .wasm_path
+            .file_stem()
+            .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
+        let kv_base = self
+            .wasm_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("widget_data")
+            .join(&widget_name);
+
         let mut tiles = Vec::with_capacity(4);
         for &(x, y, w, h, label) in &TILE_DEFS {
-            let pw = scaled(w, dpi_scale);
-            let ph = scaled(h, dpi_scale);
-            let runtime = create_runtime(&self.wasm_path, &gl_config, w, h)
+            // FBOs at logical resolution — the blit to screen handles upscaling
+            let (pw, ph) = (w, h);
+            let (fbo, texture) = create_fbo(&gl, pw, ph, true)?;
+            let fbo_id = fbo.0.get();
+            let mut runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id)
                 .context("Failed to create runtime")?;
-            let (fbo, texture) = create_fbo(&gl, pw, ph)?;
+            runtime.set_kv_store_path(kv_base.clone());
             tiles.push(PreviewTile {
                 runtime,
                 x,
@@ -314,11 +331,19 @@ impl App {
             });
         }
 
-        let (checker_fbo, checker_texture) = create_fbo(&gl, phys_w, phys_h)?;
+        let (checker_fbo, checker_texture) = create_fbo(&gl, phys_w, phys_h, false)?;
         render_checkerboard_to_fbo(&gl, checker_fbo, phys_w, phys_h);
-        let stats_pw = scaled(STATS_W, dpi_scale);
-        let stats_ph = scaled(STATS_H, dpi_scale);
-        let (stats_fbo, stats_texture) = create_fbo(&gl, stats_pw, stats_ph)?;
+        let (stats_fbo, stats_texture) = create_fbo(&gl, STATS_W, STATS_H, true)?;
+        let stats_renderer = unsafe {
+            let gl_display = gl_config.display();
+            FemtoVgRenderer::new(
+                |s| gl_display.get_proc_address(&CString::new(s).unwrap_or_default()),
+                STATS_W,
+                STATS_H,
+                stats_fbo.0.get(),
+            )
+            .context("Failed to create stats renderer")?
+        };
 
         self.rss_after_runtime_kb = current_rss_kb();
 
@@ -336,6 +361,7 @@ impl App {
             _checker_texture: checker_texture,
             stats_fbo,
             _stats_texture: stats_texture,
+            stats_renderer,
             gl,
             gl_surface,
             gl_context,
@@ -404,12 +430,17 @@ impl ApplicationHandler for App {
             s.pending_reload = true;
         }
 
-        let has_async_io = s
-            .tiles
-            .iter()
-            .any(|t| t.runtime.has_pending_fetches() || t.runtime.has_active_websockets());
+        let has_async_io = s.tiles.iter().any(|t| {
+            t.runtime.has_pending_fetches()
+                || t.runtime.has_active_websockets()
+                || t.runtime.has_active_sockets()
+                || t.runtime.has_active_mdns_browses()
+                || t.runtime.has_active_http_listeners()
+        });
 
-        if s.needs_render || s.pending_reload {
+        let wants_frame = s.tiles.iter().any(|t| t.runtime.wants_next_frame());
+
+        if s.needs_render || s.pending_reload || wants_frame {
             event_loop.set_control_flow(ControlFlow::Poll);
             s.window.request_redraw();
         } else if let Some(delay_ms) = s
@@ -540,12 +571,13 @@ fn handle_preview_event(
 
         WindowEvent::Resized(size) => {
             // Undo WM-triggered maximize/resize (enabled_buttons not supported on X11/Wayland,
-            // is_maximized unreliable — just force size back unconditionally)
-            if size.width != PREVIEW_WIDTH || size.height != PREVIEW_HEIGHT {
+            // is_maximized unreliable — just force size back unconditionally).
+            // Compare against physical dimensions since Resized gives PhysicalSize.
+            if size.width != state.phys_w || size.height != state.phys_h {
                 state.window.set_maximized(false);
                 let _ = state
                     .window
-                    .request_inner_size(PhysicalSize::new(PREVIEW_WIDTH, PREVIEW_HEIGHT));
+                    .request_inner_size(LogicalSize::new(PREVIEW_WIDTH, PREVIEW_HEIGHT));
             }
         }
 
@@ -564,16 +596,33 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         state.pending_reload = false;
         let mut any_ok = false;
         for tile in &mut state.tiles {
-            match create_runtime(wasm_path, &state.gl_config, tile.w, tile.h) {
+            // FemtoVG's Framebuffer::Drop deletes the FBO passed to set_screen_target,
+            // even though we created it externally. Recreate the FBO before the old
+            // runtime is dropped so the new runtime gets a valid FBO.
+            let Ok((fbo, texture)) = create_fbo(&state.gl, tile.pw, tile.ph, true) else {
+                eprintln!("Reload failed ({}): could not create FBO", tile.label);
+                continue;
+            };
+            let fbo_id = fbo.0.get();
+            match create_runtime(wasm_path, &state.gl_config, tile.w, tile.h, fbo_id) {
                 Ok(new_runtime) => {
-                    tile.runtime = new_runtime;
+                    tile.runtime = new_runtime; // drops old runtime → deletes old FBO
+                    tile.fbo = fbo;
+                    tile._texture = texture;
                     // Force a fresh render for the new runtime so constants
                     // or initial state changes show up immediately.
                     tile.ever_rendered = false;
                     tile.logged_dead = false;
                     any_ok = true;
                 }
-                Err(e) => eprintln!("Reload failed ({}): {e}", tile.label),
+                Err(e) => {
+                    // Clean up the FBO we just created since we won't use it
+                    unsafe {
+                        state.gl.delete_framebuffer(fbo);
+                        state.gl.delete_texture(texture);
+                    }
+                    eprintln!("Reload failed ({}): {e}", tile.label);
+                }
             }
         }
         if any_ok {
@@ -601,9 +650,31 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
     for tile in &mut state.tiles {
         tile.runtime.deliver_fetch_responses();
         tile.runtime.deliver_ws_messages();
+        tile.runtime.deliver_socket_events();
+        tile.runtime.deliver_mdns_events();
+        tile.runtime.deliver_http_requests();
     }
 
-    // Render each tile to its FBO — skip tiles with no pending work
+    // Render stats panel into its dedicated FBO via its own FemtoVG renderer.
+    let reload_clicked;
+    {
+        let renderer = &mut state.stats_renderer;
+        let w = STATS_W as f32;
+        let h = STATS_H as f32;
+        renderer.begin_frame(STATS_W, STATS_H, 1.0);
+
+        state.stats_interaction.begin_frame();
+        reload_clicked = draw_stats_panel(
+            renderer,
+            &mut state.stats_interaction,
+            w,
+            h,
+            &state.perf_overlay,
+        );
+        renderer.flush();
+    }
+
+    // Render each tile directly to its FBO (FemtoVG targets them via fbo_id)
     let interaction_pending = state.needs_render;
     let mut frame_timings = FrameTimings::default();
     let mut any_rendered = false;
@@ -620,7 +691,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         any_rendered = true;
         let (tw, th) = (tile.w, tile.h);
 
-        tile.runtime.renderer().begin_frame(tw, th, state.dpi_scale);
+        tile.runtime.renderer().begin_frame(tw, th, 1.0);
         match tile.runtime.render(delta_ms) {
             Ok(RenderStatus::Ok) => {
                 tile.logged_dead = false;
@@ -648,95 +719,43 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             frame_timings = tile.runtime.last_timings();
             frame_timings.flush_us = flush_us;
         }
-
-        // Copy rendered content from default FB to tile's FBO (physical pixel dimensions)
-        let fbo = tile.fbo;
-        unsafe {
-            state.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
-            state.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(fbo));
-            state.gl.blit_framebuffer(
-                0,
-                0,
-                tile.pw as i32,
-                tile.ph as i32,
-                0,
-                0,
-                tile.pw as i32,
-                tile.ph as i32,
-                glow::COLOR_BUFFER_BIT,
-                glow::NEAREST,
-            );
-        }
     }
 
-    // Render stats panel into its FBO (reuse FULL tile's renderer)
-    let reload_clicked;
-    {
-        let renderer = state.tiles[0].runtime.renderer();
-        let w = STATS_W as f32;
-        let h = STATS_H as f32;
-        renderer.begin_frame(STATS_W, STATS_H, state.dpi_scale);
-
-        state.stats_interaction.begin_frame();
-        reload_clicked = draw_stats_panel(
-            renderer,
-            &mut state.stats_interaction,
-            w,
-            h,
-            &state.perf_overlay,
-        );
-        renderer.flush();
-        unsafe {
-            state.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
-            state
-                .gl
-                .bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(state.stats_fbo));
-            let spw = scaled(STATS_W, state.dpi_scale) as i32;
-            let sph = scaled(STATS_H, state.dpi_scale) as i32;
-            state.gl.blit_framebuffer(
-                0,
-                0,
-                spw,
-                sph,
-                0,
-                0,
-                spw,
-                sph,
-                glow::COLOR_BUFFER_BIT,
-                glow::NEAREST,
-            );
-        }
-    }
-
-    // Blit cached checkerboard background
+    // Blit cached checkerboard background (already at physical resolution)
+    let sh = state.phys_h;
     blit_fbo_to_screen(
         &state.gl,
         state.checker_fbo,
+        state.phys_w,
+        state.phys_h,
         0,
         0,
         state.phys_w,
         state.phys_h,
-        state.phys_h,
+        sh,
     );
 
-    // Blit each tile FBO to its correct position on screen (physical coordinates)
+    // Blit each tile FBO to screen — FBOs are logical, screen is physical
     let dpi = state.dpi_scale;
-    let sh = state.phys_h;
     for tile in &state.tiles {
         blit_fbo_to_screen(
             &state.gl,
             tile.fbo,
-            scaled(tile.x, dpi),
-            scaled(tile.y, dpi),
             tile.pw,
             tile.ph,
+            scaled(tile.x, dpi),
+            scaled(tile.y, dpi),
+            scaled(tile.w, dpi),
+            scaled(tile.h, dpi),
             sh,
         );
     }
-    // Blit stats panel
+    // Blit stats panel (logical FBO → physical screen position)
     blit_fbo_to_screen(
         &state.gl,
         state.stats_fbo,
+        STATS_W,
+        STATS_H,
         scaled(STATS_X, dpi),
         scaled(STATS_Y, dpi),
         scaled(STATS_W, dpi),
@@ -770,33 +789,39 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
 
 /// Blit an FBO to a position on the default framebuffer (screen).
 ///
-/// All coordinates are in physical pixels. `screen_h` is the physical height
-/// of the screen surface (needed for the OpenGL Y-flip).
+/// Blit an FBO to a position on the default framebuffer (screen).
+///
+/// `src_w/src_h` = FBO dimensions (logical pixels).
+/// `dst_x/dst_y/dst_w/dst_h` = destination on screen (physical pixels).
+/// `screen_h` = physical height of the screen surface (for OpenGL Y-flip).
+/// When src and dst sizes differ, `GL_LINEAR` provides upscale filtering.
 #[expect(clippy::cast_possible_wrap)]
 fn blit_fbo_to_screen(
     gl: &glow::Context,
     fbo: glow::Framebuffer,
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
+    src_w: u32,
+    src_h: u32,
+    dst_x: u32,
+    dst_y: u32,
+    dst_w: u32,
+    dst_h: u32,
     screen_h: u32,
 ) {
     unsafe {
         gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(fbo));
         gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
         // OpenGL Y is bottom-up, window Y is top-down
-        let dst_y0 = screen_h as i32 - y as i32 - h as i32;
-        let dst_y1 = screen_h as i32 - y as i32;
+        let dy0 = screen_h as i32 - dst_y as i32 - dst_h as i32;
+        let dy1 = screen_h as i32 - dst_y as i32;
         gl.blit_framebuffer(
             0,
             0,
-            w as i32,
-            h as i32,
-            x as i32,
-            dst_y0,
-            (x + w) as i32,
-            dst_y1,
+            src_w as i32,
+            src_h as i32,
+            dst_x as i32,
+            dy0,
+            (dst_x + dst_w) as i32,
+            dy1,
             glow::COLOR_BUFFER_BIT,
             glow::LINEAR,
         );
@@ -861,12 +886,17 @@ fn hit_test_tile(tiles: &[PreviewTile], pos: (i32, i32)) -> Option<(usize, i32, 
     None
 }
 
-/// Create an FBO with a color texture attachment.
+/// Create an FBO with a color texture attachment and optional depth-stencil renderbuffer.
+///
+/// FemtoVG requires a stencil buffer for clipping and path rendering.  Tile FBOs
+/// that serve as direct render targets must pass `stencil = true`.  Blit-only FBOs
+/// (checkerboard, stats) can pass `false`.
 #[expect(clippy::cast_possible_wrap)]
 fn create_fbo(
     gl: &glow::Context,
     width: u32,
     height: u32,
+    stencil: bool,
 ) -> Result<(glow::Framebuffer, glow::Texture)> {
     unsafe {
         let texture = gl
@@ -907,6 +937,26 @@ fn create_fbo(
             0,
         );
 
+        if stencil {
+            let rbo = gl
+                .create_renderbuffer()
+                .map_err(|e| anyhow::anyhow!("Failed to create renderbuffer: {e}"))?;
+            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+            gl.renderbuffer_storage(
+                glow::RENDERBUFFER,
+                glow::DEPTH24_STENCIL8,
+                width as i32,
+                height as i32,
+            );
+            gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::DEPTH_STENCIL_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(rbo),
+            );
+            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+        }
+
         let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
         assert_eq!(
             status,
@@ -928,6 +978,7 @@ fn create_runtime(
     gl_config: &glutin::config::Config,
     width: u32,
     height: u32,
+    fbo_id: u32,
 ) -> Result<WasmWidgetRuntime> {
     let wasm_bytes = std::fs::read(wasm_path).context("Failed to read WASM file")?;
     let gl_display = gl_config.display();
@@ -937,7 +988,7 @@ fn create_runtime(
             |s| gl_display.get_proc_address(&CString::new(s).unwrap_or_default()),
             width,
             height,
-            0,
+            fbo_id,
             WasmWidgetRuntime::FUEL_PER_FRAME,
             FormatPreferences::default(),
         )
@@ -1018,7 +1069,7 @@ fn draw_stats_panel(
     // ── Perf overlay (reusable) ──
     overlay.draw(renderer, w, h, y_offset);
 
-    reload_clicked
+    reload_clicked.0
 }
 
 // ── Perf report ───────────────────────────────────────────────────

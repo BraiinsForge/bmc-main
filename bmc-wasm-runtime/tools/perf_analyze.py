@@ -9,6 +9,8 @@ perf_symbolicate.py or ``make profile``). Without it, raw hex addresses
 are shown.
 """
 
+from __future__ import annotations
+
 import sys
 from collections import Counter
 from pathlib import Path

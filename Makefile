@@ -21,8 +21,17 @@ test:
 validate: format lint cargo-deny test
 	$(MAKE) -C frontend validate
 
+.PHONY: fmt-svg
+fmt-svg:
+	nix run .#fmt-svg
+
 .PHONY: validate-wasm
 validate-wasm:
 	nix fmt -- bmc-wasm-runtime
+	$(MAKE) fmt-svg
 	cargo clippy -p bmc-wasm-runtime --all-targets
 	cargo nextest run -p bmc-wasm-runtime
+	@for dir in bmc-wasm-runtime/examples/*/; do \
+		echo "── Building $${dir} ──"; \
+		(cd "$$dir" && cargo build --target wasm32-unknown-unknown) || exit 1; \
+	done

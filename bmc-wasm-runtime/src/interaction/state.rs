@@ -21,6 +21,9 @@ pub struct InteractionState {
     /// Pending click to be consumed by matching button().
     pending_click: Option<String>,
 
+    /// Click position (absolute) for the pending click.
+    pending_click_pos: Option<(i32, i32)>,
+
     /// Last touch position for drag tracking.
     last_touch_pos: Option<(i32, i32)>,
 
@@ -36,6 +39,7 @@ impl InteractionState {
             event_queue: VecDeque::new(),
             touch_down_key: None,
             pending_click: None,
+            pending_click_pos: None,
             last_touch_pos: None,
             drag_delta_y: 0,
         }
@@ -60,6 +64,7 @@ impl InteractionState {
                     {
                         // Touch up on same element = click
                         self.pending_click = Some(down_key.clone());
+                        self.pending_click_pos = Some((x, y));
                     }
 
                     self.touch_down_key = None;
@@ -99,22 +104,48 @@ impl InteractionState {
     /// Register a hit region and check if it was clicked.
     /// Returns true if this element was clicked (consumes the click).
     pub fn button(&mut self, key: &str, bounds: Rect) -> bool {
+        self.button_with_pos(key, bounds).0
+    }
+
+    /// Register a hit region and check if it was clicked, returning the
+    /// click position relative to `bounds` as `(local_x, local_y)`.
+    #[expect(clippy::cast_precision_loss)]
+    pub fn button_with_pos(&mut self, key: &str, bounds: Rect) -> (bool, Option<(f32, f32)>) {
         // Register hit region for future hit testing
         self.hit_regions.insert(key.to_owned(), bounds);
 
         // Check and consume pending click
         if self.pending_click.as_deref() == Some(key) {
             self.pending_click = None;
-            return true;
+            let pos = self
+                .pending_click_pos
+                .take()
+                .map(|(cx, cy)| ((cx - bounds.x) as f32, (cy - bounds.y) as f32));
+            return (true, pos);
         }
 
-        false
+        (false, None)
     }
 
     /// Check if a button is currently pressed (touch down on it).
     #[must_use]
     pub fn is_pressed(&self, key: &str) -> bool {
         self.touch_down_key.as_deref() == Some(key)
+    }
+
+    /// Get the current drag position for an element (local to `bounds`).
+    ///
+    /// Returns `Some((local_x, local_y))` if the user is actively touching
+    /// (finger down + moved) on the element identified by `key`.
+    #[must_use]
+    #[expect(clippy::cast_precision_loss)]
+    pub fn get_drag_pos(&self, key: &str, bounds: Rect) -> Option<(f32, f32)> {
+        if self.touch_down_key.as_deref() == Some(key) {
+            self.last_touch_pos
+                .map(|(x, y)| ((x - bounds.x) as f32, (y - bounds.y) as f32))
+        } else {
+            None
+        }
     }
 
     /// Get the accumulated scroll delta (y-axis) for this frame.

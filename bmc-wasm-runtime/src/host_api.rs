@@ -3,6 +3,7 @@
 //! Host state and function bindings for WASM.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -93,8 +94,10 @@ pub struct CompletedFetch {
 /// A delayed fetch waiting for its fire time.
 pub struct DelayedFetch {
     pub fire_at: Instant,
+    pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
+    pub body: Option<Vec<u8>>,
     pub request_id: u32,
 }
 
@@ -122,6 +125,84 @@ pub enum WsOutbound {
     Text(String),
     /// Close the connection.
     Close,
+}
+
+/// A TLS socket event queued for delivery to WASM.
+pub enum SocketEvent {
+    /// Connection successfully established.
+    Connected,
+    /// Data received from the remote end.
+    Data(Vec<u8>),
+    /// Connection closed (0 = normal, non-zero = error).
+    Closed(u32),
+}
+
+/// An active TLS socket connection managed by a background thread.
+pub struct ActiveSocket {
+    /// Channel to send outbound data to the background write loop.
+    pub write_tx: mpsc::Sender<SocketOutbound>,
+    /// Channel to receive inbound events from the background read loop.
+    pub event_rx: mpsc::Receiver<SocketEvent>,
+}
+
+/// Outbound data or control signal for a socket background thread.
+pub enum SocketOutbound {
+    /// Write data bytes.
+    Data(Vec<u8>),
+    /// Close the connection.
+    Close,
+}
+
+/// An mDNS event queued for delivery to WASM.
+pub enum MdnsEvent {
+    /// Service found/resolved — carries JSON with service details.
+    Found(String),
+    /// Service removed — carries the service full name.
+    Removed(String),
+}
+
+/// An active mDNS browse session managed by a background thread.
+pub struct ActiveMdnsBrowse {
+    /// Channel to receive mDNS events from the background thread.
+    pub event_rx: mpsc::Receiver<MdnsEvent>,
+    /// Signal the background thread to stop.
+    pub stop_tx: mpsc::Sender<()>,
+}
+
+/// An active mDNS service registration.
+pub struct ActiveMdnsRegistration {
+    /// The daemon owning this registration.
+    pub daemon: mdns_sd::ServiceDaemon,
+    /// Full service name (for unregistration).
+    pub fullname: String,
+}
+
+/// An inbound HTTP request queued for delivery to WASM.
+pub struct HttpInboundRequest {
+    pub request_id: u32,
+    pub method: String,
+    pub path: String,
+    pub headers: String,
+    pub body: Vec<u8>,
+    /// Channel for the background thread to receive the WASM response.
+    pub response_tx: mpsc::Sender<HttpListenerResponse>,
+}
+
+/// Response data sent from WASM back to the HTTP listener background thread.
+pub struct HttpListenerResponse {
+    pub status: u16,
+    pub headers: String,
+    pub body: Vec<u8>,
+}
+
+/// An active HTTP listener managed by a background thread.
+pub struct ActiveHttpListener {
+    /// Receiver for inbound requests from the background thread.
+    pub request_rx: mpsc::Receiver<HttpInboundRequest>,
+    /// Signal to stop the listener.
+    pub stop_tx: mpsc::Sender<()>,
+    /// Actual bound port (useful when port=0 for ephemeral).
+    pub port: u16,
 }
 
 /// Per-frame timing breakdown (microseconds).
@@ -164,6 +245,12 @@ pub struct HostState {
     /// Button clicks from last tree render (for new tree API)
     pub tree_clicks: Vec<bool>,
 
+    /// One-shot touch clicks on interactive canvases (on finger-up)
+    pub tree_touch_clicks: HashMap<String, crate::tree::TouchHit>,
+
+    /// Active drag positions on interactive canvases (while finger is down)
+    pub tree_touch_drags: HashMap<String, crate::tree::TouchHit>,
+
     /// Modal dialog states (keyed by modal_id)
     pub modal_states: HashMap<u16, ModalState>,
 
@@ -188,6 +275,16 @@ pub struct HostState {
     /// Whether the next frame only needs animation updates (no WASM execution).
     pub animation_only_frame: bool,
 
+    /// Wall-clock deadline for the next forced WASM render (from
+    /// `request_frame_after`). Uses `Instant` instead of counting down by
+    /// `delta_ms` because sub-millisecond frames truncate to 0 and stall
+    /// countdown timers.
+    pub deferred_wasm_render_at: Option<Instant>,
+
+    /// Wall-clock time of the last full WASM render. Used to compute the
+    /// real elapsed delta for WASM (not just the animation frame's ~16ms).
+    pub last_wasm_render_at: Instant,
+
     /// Next request ID for fetch.
     pub next_request_id: u32,
 
@@ -200,17 +297,59 @@ pub struct HostState {
     /// Pending delayed fetches.
     pub delayed_fetches: Vec<DelayedFetch>,
 
+    /// Number of HTTP fetches currently in flight (spawned but not yet completed).
+    pub in_flight_fetches: u32,
+
     /// Parsed JSON documents, keyed by doc_id.
     pub json_docs: HashMap<u32, Value>,
 
     /// Next JSON document ID.
     pub next_json_id: u32,
 
+    /// Parsed XML documents (stored as raw strings for roxmltree re-parsing).
+    pub xml_docs: HashMap<u32, String>,
+
+    /// Next XML document ID.
+    pub next_xml_id: u32,
+
     /// Active WebSocket connections, keyed by ws_id.
     pub websockets: HashMap<u32, ActiveWebSocket>,
 
     /// Next WebSocket connection ID.
     pub next_ws_id: u32,
+
+    /// Active TLS socket connections, keyed by socket_id.
+    pub sockets: HashMap<u32, ActiveSocket>,
+
+    /// Next TLS socket connection ID.
+    pub next_socket_id: u32,
+
+    /// Active mDNS browse sessions, keyed by browse_id.
+    pub mdns_browses: HashMap<u32, ActiveMdnsBrowse>,
+
+    /// Next mDNS browse ID.
+    pub next_mdns_browse_id: u32,
+
+    /// Active mDNS service registrations, keyed by reg_id.
+    pub mdns_registrations: HashMap<u32, ActiveMdnsRegistration>,
+
+    /// Next mDNS registration ID.
+    pub next_mdns_reg_id: u32,
+
+    /// Per-widget key-value storage directory (None = persistence disabled).
+    pub kv_store_path: Option<PathBuf>,
+
+    /// In-memory cache of KV data (lazy-loaded from disk on first access).
+    pub kv_cache: HashMap<String, Vec<u8>>,
+
+    /// Active HTTP listeners, keyed by listener_id.
+    pub http_listeners: HashMap<u32, ActiveHttpListener>,
+
+    /// Next HTTP listener ID.
+    pub next_http_listener_id: u32,
+
+    /// Per-request response senders: request_id → sender for the response.
+    pub http_response_txs: HashMap<u32, mpsc::Sender<HttpListenerResponse>>,
 
     /// User formatting preferences (number format, unit system, temperature unit).
     pub prefs: FormatPreferences,
@@ -234,6 +373,8 @@ impl HostState {
             frame_delay_ms: None,
             refresh_requested: false,
             tree_clicks: Vec::new(),
+            tree_touch_clicks: HashMap::new(),
+            tree_touch_drags: HashMap::new(),
             modal_states: HashMap::new(),
             scroll_states: HashMap::new(),
             delta_ms: 0,
@@ -242,14 +383,30 @@ impl HostState {
             frame_counter: 0,
             cached_tree: None,
             animation_only_frame: false,
+            deferred_wasm_render_at: None,
+            last_wasm_render_at: Instant::now(),
             next_request_id: 1,
             fetch_rx,
             fetch_tx,
             delayed_fetches: Vec::new(),
+            in_flight_fetches: 0,
             json_docs: HashMap::new(),
             next_json_id: 1,
+            xml_docs: HashMap::new(),
+            next_xml_id: 1,
             websockets: HashMap::new(),
             next_ws_id: 1,
+            sockets: HashMap::new(),
+            next_socket_id: 1,
+            mdns_browses: HashMap::new(),
+            next_mdns_browse_id: 1,
+            mdns_registrations: HashMap::new(),
+            next_mdns_reg_id: 1,
+            kv_store_path: None,
+            kv_cache: HashMap::new(),
+            http_listeners: HashMap::new(),
+            next_http_listener_id: 1,
+            http_response_txs: HashMap::new(),
             prefs,
             last_timings: FrameTimings::default(),
             taffy: TaffyTree::with_capacity(64),

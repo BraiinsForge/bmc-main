@@ -9,6 +9,7 @@
 //! Spacer: [type][flex:f32]
 //! Canvas: [type][props:32B]
 
+use std::collections::HashMap;
 use std::string::String;
 use std::vec::Vec;
 
@@ -325,9 +326,17 @@ impl TreeBuffer {
     }
 
     /// Write a canvas node with draw children
-    pub fn write_canvas(&mut self, props: &PropsData, draw_count: u16) {
+    ///
+    /// Wire format: `[NODE_CANVAS][props:40B][key_len:u16][key_bytes...][draw_count:u16][draws...]`
+    pub fn write_canvas(&mut self, props: &PropsData, touch_key: Option<&str>, draw_count: u16) {
         self.write_u8(NODE_CANVAS);
         self.write_props(props);
+        if let Some(key) = touch_key {
+            self.write_u16(key.len() as u16);
+            self.data.extend_from_slice(key.as_bytes());
+        } else {
+            self.write_u16(0);
+        }
         self.write_u16(draw_count);
     }
 
@@ -606,6 +615,21 @@ impl Draw {
         }
     }
 
+    /// Bitmap from a pre-registered ID (for dynamically fetched images).
+    ///
+    /// Use `host::register_bitmap()` to register image data and get an ID,
+    /// then pass it here to render. Useful for album art and other runtime images.
+    #[must_use]
+    pub fn bitmap_id(x: f32, y: f32, w: f32, h: f32, bitmap_id: u16) -> Self {
+        Self::Bitmap {
+            x,
+            y,
+            w,
+            h,
+            bitmap_id,
+        }
+    }
+
     /// 3D sphere at local position within canvas.
     ///
     /// Renders an equirectangular texture mapped onto a sphere with perspective
@@ -852,7 +876,11 @@ pub enum Node {
     Spacer {
         flex: f32,
     },
-    Canvas(PropsData, Vec<Draw>),
+    Canvas {
+        props: PropsData,
+        touch_key: Option<String>,
+        draws: Vec<Draw>,
+    },
     /// Inline notification (error/warning/success/info banner)
     Notification {
         kind: NotificationKind,
@@ -882,6 +910,10 @@ pub enum Node {
 pub struct TreeRenderResult {
     /// Click state for each button (in order of appearance)
     pub clicks: Vec<bool>,
+    /// One-shot touch clicks on interactive canvases (on finger-up)
+    pub touch: HashMap<String, host::TouchHit>,
+    /// Active drag positions on interactive canvases (while finger is down)
+    pub drag: HashMap<String, host::TouchHit>,
 }
 
 /// Column layout
@@ -977,7 +1009,23 @@ pub fn scroll(scroll_id: u16, props: PropsData, children: impl IntoIterator<Item
 
 /// Canvas for custom drawing with draw commands as children
 pub fn canvas(props: PropsData, draws: impl IntoIterator<Item = Draw>) -> Node {
-    Node::Canvas(props, draws.into_iter().collect())
+    Node::Canvas {
+        props,
+        touch_key: None,
+        draws: draws.into_iter().collect(),
+    }
+}
+
+/// Interactive canvas with click detection and position reporting.
+///
+/// Works like `canvas()` but registers a touch region. When tapped, the click
+/// position (local to the canvas bounds) is available via `TreeRenderResult::touch`.
+pub fn touchable(key: &str, props: PropsData, draws: impl IntoIterator<Item = Draw>) -> Node {
+    Node::Canvas {
+        props,
+        touch_key: Some(String::from(key)),
+        draws: draws.into_iter().collect(),
+    }
 }
 
 /// Modal dialog configuration
@@ -1204,8 +1252,12 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
         Node::Spacer { flex } => {
             buf.write_spacer(*flex);
         }
-        Node::Canvas(props, draws) => {
-            buf.write_canvas(props, draws.len() as u16);
+        Node::Canvas {
+            props,
+            touch_key,
+            draws,
+        } => {
+            buf.write_canvas(props, touch_key.as_deref(), draws.len() as u16);
             for draw in draws {
                 serialize_draw(buf, draw);
             }
@@ -1441,12 +1493,42 @@ fn count_buttons(node: &Node) -> u32 {
     }
 }
 
+/// Collect touch keys from the tree (for querying after render).
+fn collect_touch_keys(node: &Node, keys: &mut Vec<String>) {
+    match node {
+        Node::Canvas {
+            touch_key: Some(key),
+            ..
+        } => keys.push(key.clone()),
+        Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+            for child in children {
+                collect_touch_keys(child, keys);
+            }
+        }
+        Node::Scroll { children, .. } => {
+            for child in children {
+                collect_touch_keys(child, keys);
+            }
+        }
+        Node::Modal { is_open, body, .. } => {
+            if *is_open {
+                for child in body {
+                    collect_touch_keys(child, keys);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Render UI tree using host-side layout.
-/// Returns button clicks.
+/// Returns button clicks and touch positions.
 #[must_use]
 #[expect(clippy::needless_pass_by_value)] // Node is consumed by serialization
 pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     let button_count = count_buttons(&root);
+    let mut touch_keys = Vec::new();
+    collect_touch_keys(&root, &mut touch_keys);
 
     // Serialize tree to buffer and submit to host for layout and rendering
     begin_tree();
@@ -1457,6 +1539,16 @@ pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     let mut result = TreeRenderResult::default();
     for i in 0..button_count {
         result.clicks.push(host::get_click(i));
+    }
+
+    // Collect touch interactions (clicks and active drags)
+    for key in &touch_keys {
+        if let Some(hit) = host::get_touch_click(key) {
+            result.touch.insert(key.clone(), hit);
+        }
+        if let Some(hit) = host::get_touch_drag(key) {
+            result.drag.insert(key.clone(), hit);
+        }
     }
 
     result

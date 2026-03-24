@@ -8,7 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 bmc-wasm-sdk = { path = "../../sdk" }
-sgp4 = { version = "2.3", default-features = false, features = ["std"] }
+sgp4.workspace = true
 
 [lints.rust]
 unused_must_use = "deny"

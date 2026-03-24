@@ -69,17 +69,25 @@ impl FetchResponse {
 // Host function imports
 unsafe extern "C" {
     fn host_fetch(
+        method_ptr: *const u8,
+        method_len: u32,
         url_ptr: *const u8,
         url_len: u32,
         headers_ptr: *const u8,
         headers_len: u32,
+        body_ptr: *const u8,
+        body_len: u32,
     ) -> u32;
     fn host_fetch_after(
         delay_ms: u32,
+        method_ptr: *const u8,
+        method_len: u32,
         url_ptr: *const u8,
         url_len: u32,
         headers_ptr: *const u8,
         headers_len: u32,
+        body_ptr: *const u8,
+        body_len: u32,
     ) -> u32;
 }
 
@@ -108,32 +116,152 @@ fn register_callback(cb: Callback) -> usize {
     })
 }
 
-/// Fetch a URL. The host performs the request in the background.
+/// Fetch a URL with GET method. The host performs the request in the background.
 /// When the response arrives, `callback` is called with the response data.
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs.
 pub fn fetch(url: &str, headers: Option<&str>, callback: Callback) {
-    let cb_idx = register_callback(callback);
-    let (h_ptr, h_len) = headers_raw(headers);
-    let request_id = unsafe { host_fetch(url.as_ptr(), url.len() as u32, h_ptr, h_len) };
-    PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
+    FetchRequest::get(url).headers_opt(headers).send(callback);
 }
 
-/// Fetch a URL after a delay (in milliseconds).
+/// Fetch a URL with GET after a delay (in milliseconds).
 /// Useful for periodic re-fetching (e.g., `fetch_after(300_000, url, None, cb)` for 5-minute refresh).
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs.
 pub fn fetch_after(delay_ms: u32, url: &str, headers: Option<&str>, callback: Callback) {
-    let cb_idx = register_callback(callback);
-    let (h_ptr, h_len) = headers_raw(headers);
-    let request_id =
-        unsafe { host_fetch_after(delay_ms, url.as_ptr(), url.len() as u32, h_ptr, h_len) };
-    PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
+    FetchRequest::get(url)
+        .headers_opt(headers)
+        .send_after(delay_ms, callback);
 }
 
-fn headers_raw(headers: Option<&str>) -> (*const u8, u32) {
-    match headers {
-        Some(h) => (h.as_ptr(), h.len() as u32),
+/// Builder for HTTP fetch requests with method, headers, and optional body.
+pub struct FetchRequest<'a> {
+    method: &'a str,
+    url: &'a str,
+    headers: Option<&'a str>,
+    body: Option<&'a [u8]>,
+}
+
+impl<'a> FetchRequest<'a> {
+    /// Create a GET request.
+    #[must_use]
+    pub fn get(url: &'a str) -> Self {
+        Self {
+            method: "GET",
+            url,
+            headers: None,
+            body: None,
+        }
+    }
+
+    /// Create a POST request.
+    #[must_use]
+    pub fn post(url: &'a str) -> Self {
+        Self {
+            method: "POST",
+            url,
+            headers: None,
+            body: None,
+        }
+    }
+
+    /// Create a PUT request.
+    #[must_use]
+    pub fn put(url: &'a str) -> Self {
+        Self {
+            method: "PUT",
+            url,
+            headers: None,
+            body: None,
+        }
+    }
+
+    /// Create a DELETE request.
+    #[must_use]
+    pub fn delete(url: &'a str) -> Self {
+        Self {
+            method: "DELETE",
+            url,
+            headers: None,
+            body: None,
+        }
+    }
+
+    /// Set headers (newline-separated `Key: Value` pairs).
+    #[must_use]
+    pub fn headers(mut self, headers: &'a str) -> Self {
+        self.headers = Some(headers);
+        self
+    }
+
+    /// Set headers from an `Option`.
+    #[must_use]
+    pub fn headers_opt(mut self, headers: Option<&'a str>) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    /// Set request body bytes.
+    #[must_use]
+    pub fn body(mut self, body: &'a [u8]) -> Self {
+        self.body = Some(body);
+        self
+    }
+
+    /// Send the request immediately.
+    pub fn send(self, callback: Callback) {
+        let cb_idx = register_callback(callback);
+        let (m_ptr, m_len) = (self.method.as_ptr(), self.method.len() as u32);
+        let (h_ptr, h_len) = optional_raw(self.headers);
+        let (b_ptr, b_len) = optional_bytes_raw(self.body);
+        let request_id = unsafe {
+            host_fetch(
+                m_ptr,
+                m_len,
+                self.url.as_ptr(),
+                self.url.len() as u32,
+                h_ptr,
+                h_len,
+                b_ptr,
+                b_len,
+            )
+        };
+        PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
+    }
+
+    /// Send the request after a delay (in milliseconds).
+    pub fn send_after(self, delay_ms: u32, callback: Callback) {
+        let cb_idx = register_callback(callback);
+        let (m_ptr, m_len) = (self.method.as_ptr(), self.method.len() as u32);
+        let (h_ptr, h_len) = optional_raw(self.headers);
+        let (b_ptr, b_len) = optional_bytes_raw(self.body);
+        let request_id = unsafe {
+            host_fetch_after(
+                delay_ms,
+                m_ptr,
+                m_len,
+                self.url.as_ptr(),
+                self.url.len() as u32,
+                h_ptr,
+                h_len,
+                b_ptr,
+                b_len,
+            )
+        };
+        PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
+    }
+}
+
+fn optional_raw(s: Option<&str>) -> (*const u8, u32) {
+    match s {
+        Some(s) => (s.as_ptr(), s.len() as u32),
+        None => (core::ptr::null(), 0),
+    }
+}
+
+fn optional_bytes_raw(b: Option<&[u8]>) -> (*const u8, u32) {
+    match b {
+        Some(b) => (b.as_ptr(), b.len() as u32),
         None => (core::ptr::null(), 0),
     }
 }

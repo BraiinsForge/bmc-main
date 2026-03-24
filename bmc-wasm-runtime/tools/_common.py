@@ -1,5 +1,7 @@
 """Shared utilities for WASM runtime development tools."""
 
+from __future__ import annotations
+
 import gzip
 import json
 import re
@@ -27,6 +29,15 @@ def build_example_wasm(example: str) -> Path:
     """Build a widget example in release mode and return the .wasm path."""
     example_dir = Path(f'examples/{example}')
     wasm_name = example.replace('-', '_')
+
+    if not example_dir.is_dir():
+        available = sorted(p.name for p in Path('examples').iterdir() if p.is_dir())
+        print(
+            f"Error: example '{example}' not found (no directory {example_dir}).\n"
+            f'Available examples: {", ".join(available)}',
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     subprocess.run(
         ['cargo', 'build', '--release', '--target', WASM_TARGET],

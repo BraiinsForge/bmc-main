@@ -27,6 +27,8 @@ const BTN_TERTIARY_BG: u32 = TRANSPARENT;
 const BTN_TERTIARY_BG_ACTIVE: u32 = GRAY_50;
 const BTN_TERTIARY_BORDER: u32 = GRAY_50;
 
+const BTN_GHOST_BG_ACTIVE: u32 = GRAY_80;
+
 const BTN_FG: u32 = GRAY_10;
 const BTN_TERTIARY_FG_ACTIVE: u32 = GRAY_100;
 
@@ -38,6 +40,8 @@ pub enum ButtonStyle {
     Secondary = 1,
     Danger = 2,
     Tertiary = 3,
+    /// Transparent background, no border. Pressed state shows a subtle rectangular fill.
+    Ghost = 4,
 }
 
 impl From<u32> for ButtonStyle {
@@ -46,6 +50,7 @@ impl From<u32> for ButtonStyle {
             1 => ButtonStyle::Secondary,
             2 => ButtonStyle::Danger,
             3 => ButtonStyle::Tertiary,
+            4 => ButtonStyle::Ghost,
             _ => ButtonStyle::Primary,
         }
     }
@@ -59,6 +64,7 @@ impl ButtonStyle {
             ButtonStyle::Secondary => (BTN_SECONDARY_BG, BTN_SECONDARY_BG_ACTIVE),
             ButtonStyle::Danger => (BTN_DANGER_BG, BTN_DANGER_BG_ACTIVE),
             ButtonStyle::Tertiary => (BTN_TERTIARY_BG, BTN_TERTIARY_BG_ACTIVE),
+            ButtonStyle::Ghost => (TRANSPARENT, BTN_GHOST_BG_ACTIVE),
         }
     }
 
@@ -66,10 +72,17 @@ impl ButtonStyle {
         matches!(self, ButtonStyle::Tertiary)
     }
 
+    fn is_ghost(self) -> bool {
+        matches!(self, ButtonStyle::Ghost)
+    }
+
     fn border_color(self) -> u32 {
         match self {
             ButtonStyle::Tertiary => BTN_TERTIARY_BORDER,
-            ButtonStyle::Primary | ButtonStyle::Secondary | ButtonStyle::Danger => 0,
+            ButtonStyle::Primary
+            | ButtonStyle::Secondary
+            | ButtonStyle::Danger
+            | ButtonStyle::Ghost => 0,
         }
     }
 }
@@ -163,7 +176,7 @@ impl ButtonSize {
 /// - `icon_id != 0, label empty`: icon-only button (icon centered)
 /// - `icon_id != 0, label present`: icon + text button
 ///
-/// Returns `true` the frame the button was clicked (immediate-mode pattern).
+/// Returns `(clicked, click_position)` where click position is local to the button bounds.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_button(
     renderer: &mut dyn Renderer,
@@ -177,7 +190,7 @@ pub fn draw_button(
     style: ButtonStyle,
     size: ButtonSize,
     icon_id: u16,
-) -> bool {
+) -> (bool, Option<(f32, f32)>) {
     let bounds = Rect::new(x as i32, y as i32, w as u32, h as u32);
     let is_pressed = interaction.is_pressed(key);
 
@@ -189,7 +202,12 @@ pub fn draw_button(
     };
 
     // Draw button background or border
-    if style.is_outline() {
+    if style.is_ghost() {
+        // Ghost: no chrome normally, subtle rectangular fill on press
+        if is_pressed {
+            renderer.fill_rect(x, y, w, h, bg_color);
+        }
+    } else if style.is_outline() {
         if is_pressed {
             renderer.fill_rect(x, y, w, h, bg_color);
         } else {
@@ -236,5 +254,5 @@ pub fn draw_button(
         renderer.draw_text(label, text_x, text_y, font_size, fg_color);
     }
 
-    interaction.button(key, bounds)
+    interaction.button_with_pos(key, bounds)
 }

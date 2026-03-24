@@ -14,6 +14,7 @@ use anyhow::Result;
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, Color, FontId, Paint, Path, RenderTarget};
+use glow::HasContext;
 
 use super::bitmap::BitmapRegistry;
 use super::icons::IconRegistry;
@@ -35,6 +36,11 @@ const FONT_BOLD: &[u8] =
 pub struct FemtoVgRenderer {
     gl: glow::Context,
     canvas: Canvas<OpenGl>,
+    /// The FBO that FemtoVG should render to (stored separately because FemtoVG's
+    /// `Canvas::set_render_target(Screen)` skips the `SetRenderTarget` command when
+    /// `current_render_target` is already `Screen` — which is always true since it's
+    /// the default. We must explicitly bind the FBO before each flush.)
+    screen_fbo: Option<glow::NativeFramebuffer>,
     font_regular: FontId,
     font_bold: FontId,
     font_system: cosmic_text::FontSystem,
@@ -79,10 +85,11 @@ impl FemtoVgRenderer {
         // Create FemtoVG OpenGL renderer (shares the same GL context)
         let mut gl_renderer = unsafe { OpenGl::new_from_function(&mut load_fn) }?;
 
-        // Set the FBO as screen target BEFORE creating the Canvas.
-        // This is critical for rendering to DMA-BUF exports.
-        if let Some(fbo) = NonZeroU32::new(fbo_id) {
-            gl_renderer.set_screen_target(Some(glow::NativeFramebuffer(fbo)));
+        // Store FBO for explicit binding in begin_frame (FemtoVG's
+        // set_render_target(Screen) skips the GL bind when already targeting Screen).
+        let screen_fbo = NonZeroU32::new(fbo_id).map(glow::NativeFramebuffer);
+        if let Some(fbo) = screen_fbo {
+            gl_renderer.set_screen_target(Some(fbo));
             tracing::info!("FemtoVG screen target set to FBO {fbo_id}");
         } else {
             tracing::info!("FBO id is 0, using default screen target");
@@ -108,6 +115,7 @@ impl FemtoVgRenderer {
         Ok(Self {
             gl,
             canvas,
+            screen_fbo,
             font_regular,
             font_bold,
             font_system,
@@ -460,7 +468,13 @@ impl Renderer for FemtoVgRenderer {
         self.width = width as f32;
         self.height = height as f32;
         self.frame_counter += 1;
-        // Ensure we render to the configured screen target (the staging FBO)
+        // FemtoVG's `set_render_target(Screen)` skips the SetRenderTarget command
+        // when the Canvas already thinks it's targeting Screen (the default).
+        // This means flush() never calls glBindFramebuffer. We must bind the
+        // target FBO explicitly so clear_rect and draw commands hit the right FBO.
+        unsafe {
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, self.screen_fbo);
+        }
         self.canvas.set_render_target(RenderTarget::Screen);
         self.canvas.set_size(width, height, dpi_scale);
         // clear_rect uses physical pixels when dpi_scale > 1.0

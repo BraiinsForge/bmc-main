@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="16" height="16" viewBox="0 0 16 16">
+  <title>pause</title>
+  <path d="M6 4v8H4V4zm0-1H4c-.6 0-1 .4-1 1v8c0 .6.4 1 1 1h2c.6 0 1-.4 1-1V4c0-.6-.4-1-1-1m6 1v8h-2V4zm0-1h-2c-.6 0-1 .4-1 1v8c0 .6.4 1 1 1h2c.6 0 1-.4 1-1V4c0-.6-.4-1-1-1"/>
+  <path d="M0 0h16v16H0z" style="fill:none"/>
+</svg>

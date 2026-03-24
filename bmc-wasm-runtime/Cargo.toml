@@ -24,7 +24,10 @@ rgb.workspace = true
 # Layout
 taffy.workspace = true
 
-# Network + JSON (for host-side fetch and parsing)
+# Network + JSON/XML (for host-side fetch and parsing)
+mdns-sd.workspace = true
+roxmltree.workspace = true
+rustls.workspace = true
 serde_json.workspace = true
 tungstenite.workspace = true
 ureq.workspace = true

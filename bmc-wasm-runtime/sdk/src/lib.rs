@@ -22,29 +22,35 @@ pub extern "C" fn __bmc_sdk_version() -> u64 {
 pub mod alloc;
 pub mod format;
 pub mod host;
+pub mod http_listener;
 pub mod json;
+pub mod kv;
 pub mod log;
+pub mod mdns;
 pub mod net;
+pub mod socket;
 pub mod tree;
 pub mod ws;
+pub mod xml;
 
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::{include_bitmap, include_icon};
 pub use format::{format_date, format_duration};
 pub use host::{
-    ButtonSize, ButtonStyle, SizeVariant, SystemTime, WidgetSize, draw_text, fill_rect, parse_date,
-    request_frame, request_frame_after,
+    ButtonSize, ButtonStyle, SizeVariant, SystemTime, TouchHit, WidgetSize, draw_text, fill_rect,
+    parse_date, request_frame, request_frame_after,
 };
 pub use json::JsonDoc;
-pub use net::{FetchResponse, fetch, fetch_after};
+pub use net::{FetchRequest, FetchResponse, fetch, fetch_after};
 pub use tree::{
     AnimationDef, Bitmap, Draw, Icon, Interpolation, ModalProps, Node, NotificationKind, PropsData,
     Span, StyleResult, TextStyle, TransitionDef, TreeRenderResult, begin_tree, canvas, center, col,
     make_button, modal, modal_styled, notification, paragraph, render_ui, row, scroll, spacer,
-    span, text, with_buffer,
+    span, text, touchable, with_buffer,
 };
 pub use ufmt;
 pub use ws::{Ws, WsEvent, ws_connect};
+pub use xml::XmlDoc;
 
 /// Helper for `button!` macro — converts label to String.
 #[doc(hidden)]

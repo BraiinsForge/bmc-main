@@ -1,0 +1,173 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! mDNS service discovery and registration for WASM widgets.
+//!
+//! Provides `mdns_browse()` for discovering LAN services and `mdns_register()`
+//! for advertising services. The host manages the mDNS daemon in background
+//! threads and delivers events by calling the `__on_mdns_event` export.
+//!
+//! # Example
+//!
+//! ```ignore
+//! use bmc_wasm_sdk::mdns::*;
+//!
+//! fn init(width: u32, height: u32) {
+//!     mdns_browse(&["_googlecast._tcp", "_touch-able._tcp"], on_mdns_event);
+//! }
+//!
+//! fn on_mdns_event(browse: MdnsBrowse, event: &MdnsEvent<'_>) {
+//!     match event {
+//!         MdnsEvent::Found(json) => log_info!("found: {json}"),
+//!         MdnsEvent::Removed(name) => log_info!("removed: {name}"),
+//!     }
+//! }
+//! ```
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+// Host function imports
+unsafe extern "C" {
+    fn host_mdns_browse(svc_types_ptr: *const u8, svc_types_len: u32) -> u32;
+    fn host_mdns_stop(browse_id: u32);
+    fn host_mdns_register(
+        svc_ptr: *const u8,
+        svc_len: u32,
+        name_ptr: *const u8,
+        name_len: u32,
+        port: u32,
+        txt_ptr: *const u8,
+        txt_len: u32,
+    ) -> u32;
+    fn host_mdns_unregister(reg_id: u32);
+}
+
+/// Callback type: `fn(browse, event)`.
+pub type BrowseCallback = fn(MdnsBrowse, &MdnsEvent<'_>);
+
+/// Handle to an active mDNS browse session.
+#[derive(Clone, Copy)]
+pub struct MdnsBrowse(pub u32);
+
+impl MdnsBrowse {
+    /// Stop this browse session.
+    pub fn stop(&self) {
+        unsafe { host_mdns_stop(self.0) }
+    }
+}
+
+/// Handle to an active mDNS service registration.
+#[derive(Clone, Copy)]
+pub struct MdnsRegistration(pub u32);
+
+impl MdnsRegistration {
+    /// Unregister this service.
+    pub fn unregister(&self) {
+        unsafe { host_mdns_unregister(self.0) }
+    }
+}
+
+/// Event delivered from the host for an mDNS browse session.
+pub enum MdnsEvent<'a> {
+    /// Service found/resolved. Data is JSON with service details:
+    /// `{"service_type":"...","name":"...","host":"...","port":N,"txt":{...}}`
+    Found(&'a str),
+    /// Service removed. Data is the service full name.
+    Removed(&'a str),
+}
+
+thread_local! {
+    static CALLBACKS: RefCell<Vec<BrowseCallback>> = const { RefCell::new(Vec::new()) };
+    static BROWSES: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
+}
+
+fn register_callback(cb: BrowseCallback) -> usize {
+    CALLBACKS.with(|cbs| {
+        let mut cbs = cbs.borrow_mut();
+        for (i, existing) in cbs.iter().enumerate() {
+            if *existing as usize == cb as usize {
+                return i;
+            }
+        }
+        let idx = cbs.len();
+        cbs.push(cb);
+        idx
+    })
+}
+
+/// Browse for mDNS services of the given types. Events are delivered to
+/// `callback` when services are found or removed.
+///
+/// Service types should be like `"_googlecast._tcp"` (the host appends `.local.`).
+pub fn mdns_browse(service_types: &[&str], callback: BrowseCallback) -> MdnsBrowse {
+    let cb_idx = register_callback(callback);
+    let joined = service_types.join("\n");
+    let browse_id = unsafe { host_mdns_browse(joined.as_ptr(), joined.len() as u32) };
+    BROWSES.with(|b| b.borrow_mut().insert(browse_id, cb_idx));
+    MdnsBrowse(browse_id)
+}
+
+/// Register an mDNS service for advertisement on the local network.
+///
+/// TXT records are key-value pairs used for service metadata.
+#[must_use]
+pub fn mdns_register(
+    service_type: &str,
+    name: &str,
+    port: u16,
+    txt: &[(&str, &str)],
+) -> MdnsRegistration {
+    let txt_str: String = txt
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let reg_id = unsafe {
+        host_mdns_register(
+            service_type.as_ptr(),
+            service_type.len() as u32,
+            name.as_ptr(),
+            name.len() as u32,
+            u32::from(port),
+            txt_str.as_ptr(),
+            txt_str.len() as u32,
+        )
+    };
+    MdnsRegistration(reg_id)
+}
+
+/// Called by the host when an mDNS event is ready.
+#[unsafe(no_mangle)]
+pub extern "C" fn __on_mdns_event(browse_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
+    let data = if data_len > 0 && data_ptr != 0 {
+        unsafe {
+            let slice = core::slice::from_raw_parts(data_ptr as *const u8, data_len as usize);
+            core::str::from_utf8(slice).unwrap_or("")
+        }
+    } else {
+        ""
+    };
+
+    // Take ownership of the allocated buffer so it gets freed
+    let _owned = if data_len > 0 && data_ptr != 0 {
+        unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
+    } else {
+        Vec::new()
+    };
+
+    let event = match event_type {
+        0 => MdnsEvent::Found(data),
+        1 => MdnsEvent::Removed(data),
+        _ => return,
+    };
+
+    let browse = MdnsBrowse(browse_id);
+
+    let cb = BROWSES
+        .with(|b| b.borrow().get(&browse_id).copied())
+        .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+
+    if let Some(cb) = cb {
+        cb(browse, &event);
+    }
+}

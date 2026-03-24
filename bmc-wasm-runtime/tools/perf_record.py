@@ -109,8 +109,10 @@ def print_summary(report_dir: Path) -> None:
         print(f'  {f.name:30s} {size_kb:8.1f} KB')
 
     print(f'\nView:    samply load {report_dir}/profile.json.gz')
-    print(f'Analyze: python3 tools/perf_analyze.py {report_dir}/profile.json.gz')
-    print('Compare: python3 tools/perf_compare.py reports/*/')
+    print(
+        f'Analyze: uv run --python 3.12 tools/perf_analyze.py {report_dir}/profile.json.gz'
+    )
+    print('Compare: uv run --python 3.12 tools/perf_compare.py reports/*/')
 
 
 def main() -> None:

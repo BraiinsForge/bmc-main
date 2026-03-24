@@ -14,6 +14,8 @@ Usage:
     ./perf_compare.py reports/*/
 """
 
+from __future__ import annotations
+
 import gzip
 import json
 import sys

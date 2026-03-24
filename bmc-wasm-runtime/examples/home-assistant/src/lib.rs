@@ -81,8 +81,7 @@ fn next_msg_id() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn init(width: u32, height: u32) {
     SIZE.set(WidgetSize::from_dimensions(width, height));
-    let url = kv::get_string("ha_url")
-        .unwrap_or_else(|| DEFAULT_HA_URL.into());
+    let url = kv::get_string("ha_url").unwrap_or_else(|| DEFAULT_HA_URL.into());
     ws!(&url, on_ha_event);
 }
 
@@ -141,8 +140,7 @@ fn handle_message(ws: Ws, text: &str) {
         "auth_required" => {
             log_info!("HA requires auth, sending token");
             let id = next_msg_id();
-            let token = kv::get_string("ha_token")
-                .unwrap_or_default();
+            let token = kv::get_string("ha_token").unwrap_or_default();
             let auth_msg = fmt!(r#"{{"type":"auth","access_token":"{}"}}"#, token);
             // HA auth messages don't use the id field, but we burn one to keep
             // the counter monotonic for later subscribe calls.

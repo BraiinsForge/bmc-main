@@ -19,8 +19,7 @@ const UNKNOWN_ROCKET: Bitmap = include_bitmap!("assets/unknown.png");
 const API_URL: &str = "https://ll.thespacedevs.com/2.3.0/launches/upcoming/?search=spacex&limit=1&status__ids=1&mode=detailed";
 
 fn api_auth() -> Option<String> {
-    kv::get_string("ll2_api_token")
-        .map(|token| fmt!("Authorization: Token {}", token))
+    kv::get_string("ll2_api_token").map(|token| fmt!("Authorization: Token {}", token))
 }
 
 /// Refresh interval: 5 minutes.

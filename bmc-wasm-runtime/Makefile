@@ -11,6 +11,7 @@ WASM_TARGET := wasm32-unknown-unknown
 WASM_FILE := $(EXAMPLE_DIR)/target/$(WASM_TARGET)/debug/$(subst -,_,$(EXAMPLE)).wasm
 
 CARGO_FEATURES := --features testbed
+PYTHON := uv run --python 3.12
 
 .PHONY: clean
 clean:
@@ -34,16 +35,16 @@ run:
 # Profiling: make profile [-e hello-widget] [-r 05-my-change] [-n 1200]
 .PHONY: profile
 profile:
-	python3 tools/perf_record.py -e $(EXAMPLE) $(ARGS)
+	$(PYTHON) tools/perf_record.py -e $(EXAMPLE) $(ARGS)
 
 # WASM binary size: make size [-e hello-widget] [--check] [--limit 65536]
 .PHONY: size
 size:
-	python3 tools/wasm_size.py -e $(EXAMPLE)
+	$(PYTHON) tools/wasm_size.py -e $(EXAMPLE)
 
 .PHONY: size-check
 size-check:
-	python3 tools/wasm_size.py -e $(EXAMPLE) --check
+	$(PYTHON) tools/wasm_size.py -e $(EXAMPLE) --check
 
 # SDK API docs (opens in browser)
 .PHONY: docs

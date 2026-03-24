@@ -14,7 +14,7 @@ use anyhow::{Result, bail};
 use bmc_wasm_protocol::*;
 
 // Re-export for other modules
-pub use bmc_wasm_protocol::{PropsData, TextAlign, TextOverflow, TextStyle};
+pub use bmc_wasm_protocol::{CrossAlign, PropsData, TextAlign, TextOverflow, TextStyle};
 
 /// A text span with style overrides
 #[derive(Clone, Debug)]
@@ -159,7 +159,14 @@ pub enum TreeNode {
     Spacer {
         flex: f32,
     },
-    Canvas(PropsData, Vec<DrawCommand>),
+    /// Canvas with optional touch interaction key.
+    /// When `touch_key` is `Some`, the canvas registers a hit region and reports
+    /// click position via `TreeResult::touch_clicks`.
+    Canvas {
+        props: PropsData,
+        touch_key: Option<String>,
+        draws: Vec<DrawCommand>,
+    },
     /// Scrollable container
     Scroll {
         scroll_id: u16,
@@ -350,12 +357,22 @@ impl<'a> TreeReader<'a> {
             }
             NODE_CANVAS => {
                 let props = self.read_props()?;
+                let key_len = self.read_u16()?;
+                let touch_key = if key_len > 0 {
+                    Some(self.read_string(key_len)?)
+                } else {
+                    None
+                };
                 let draw_count = self.read_u16()?;
                 let mut draws = Vec::with_capacity(draw_count as usize);
                 for _ in 0..draw_count {
                     draws.push(self.read_draw()?);
                 }
-                Ok(TreeNode::Canvas(props, draws))
+                Ok(TreeNode::Canvas {
+                    props,
+                    touch_key,
+                    draws,
+                })
             }
             NODE_MODAL => {
                 let modal_id = self.read_u16()?;
@@ -646,11 +663,28 @@ struct AnimationContext<'a> {
     has_active: bool,
 }
 
+/// Touch interaction info (position relative to element, plus element dimensions).
+#[derive(Debug, Clone, Copy)]
+pub struct TouchHit {
+    /// Local x position (relative to element left edge)
+    pub x: f32,
+    /// Local y position (relative to element top edge)
+    pub y: f32,
+    /// Element layout width
+    pub width: f32,
+    /// Element layout height
+    pub height: f32,
+}
+
 /// Result from processing a tree
 #[derive(Debug, Default)]
 pub struct TreeResult {
     /// Click state for each button (in order of appearance)
     pub clicks: Vec<bool>,
+    /// One-shot touch clicks on interactive canvases (on finger-up)
+    pub touch_clicks: HashMap<String, TouchHit>,
+    /// Active drag positions on interactive canvases (while finger is down)
+    pub touch_drags: HashMap<String, TouchHit>,
 }
 
 /// Paragraph data for measurement and rendering
@@ -675,6 +709,8 @@ pub(crate) struct NodeContext {
     paragraph: Option<ParagraphData>,
     button: Option<(u32, String, u8, u8, u16)>, // id, label, style, size, icon_id
     draws: Vec<DrawCommand>,                    // canvas draw commands
+    /// Touch interaction key for interactive canvases (None = decorative)
+    touch_key: Option<String>,
     notification: Option<NotificationData>,
     scroll_id: Option<u16>,
 }
@@ -917,10 +953,17 @@ fn build_taffy_node(
                 } else {
                     None
                 },
-                align_items: if is_center {
-                    Some(AlignItems::Center)
-                } else {
-                    None
+                align_items: match props.cross_align {
+                    CrossAlign::Center => Some(AlignItems::Center),
+                    CrossAlign::Start => Some(AlignItems::Start),
+                    CrossAlign::End => Some(AlignItems::End),
+                    CrossAlign::Stretch => {
+                        if is_center {
+                            Some(AlignItems::Center)
+                        } else {
+                            None
+                        }
+                    }
                 },
                 gap: Size {
                     width: length(props.gap),
@@ -1021,7 +1064,11 @@ fn build_taffy_node(
             Ok(taffy.new_leaf(style)?)
         }
 
-        TreeNode::Canvas(props, draws) => {
+        TreeNode::Canvas {
+            props,
+            touch_key,
+            draws,
+        } => {
             let style = Style {
                 size: size_from_props(props),
                 max_size: max_size_from_props(props),
@@ -1036,6 +1083,7 @@ fn build_taffy_node(
                 Some(NodeContext {
                     background: props.background,
                     draws: draws.clone(),
+                    touch_key: touch_key.clone(),
                     ..Default::default()
                 }),
             )?;
@@ -1175,10 +1223,13 @@ fn render_taffy_node(
     let w = layout.size.width;
     let h = layout.size.height;
 
-    // Extract scroll_id before immutable context borrow
+    // Extract IDs before immutable context borrow
     let scroll_id = taffy
         .get_node_context(node_id)
         .and_then(|ctx| ctx.scroll_id);
+    let touch_key = taffy
+        .get_node_context(node_id)
+        .and_then(|ctx| ctx.touch_key.clone());
 
     if let Some(ctx) = taffy.get_node_context(node_id) {
         if ctx.background != 0 {
@@ -1192,7 +1243,7 @@ fn render_taffy_node(
         if let Some((btn_id, ref label, style, size, icon_id)) = ctx.button {
             let mut key_buf = [0_u8; 16];
             let key = format_btn_key(btn_id, &mut key_buf);
-            let clicked = draw_button(
+            let (clicked, _) = draw_button(
                 renderer,
                 interaction,
                 key,
@@ -1205,8 +1256,8 @@ fn render_taffy_node(
                 ButtonSize::from(size),
                 icon_id,
             );
-            if (btn_id as usize) < result.clicks.len() {
-                result.clicks[btn_id as usize] = clicked;
+            if let Some(slot) = result.clicks.get_mut(btn_id as usize) {
+                *slot = clicked;
             }
         }
 
@@ -1221,10 +1272,41 @@ fn render_taffy_node(
             anim_ctx.canvas_index += 1;
             renderer.pop_scissor();
         }
+    }
 
-        if let Some(ref notif) = ctx.notification {
-            render_notification(notif, x, y, w, h, renderer);
+    // Canvas touch hit-testing (needs mutable interaction, outside the immutable ctx borrow)
+    if let Some(ref tk) = touch_key {
+        let bounds = crate::interaction::Rect::new(x as i32, y as i32, w as u32, h as u32);
+        let (clicked, click_pos) = interaction.button_with_pos(tk, bounds);
+        if clicked && let Some((lx, ly)) = click_pos {
+            result.touch_clicks.insert(
+                tk.clone(),
+                TouchHit {
+                    x: lx,
+                    y: ly,
+                    width: w,
+                    height: h,
+                },
+            );
         }
+        // Active drag: finger is down on this element
+        if let Some((lx, ly)) = interaction.get_drag_pos(tk, bounds) {
+            result.touch_drags.insert(
+                tk.clone(),
+                TouchHit {
+                    x: lx,
+                    y: ly,
+                    width: w,
+                    height: h,
+                },
+            );
+        }
+    }
+
+    if let Some(ctx) = taffy.get_node_context(node_id)
+        && let Some(ref notif) = ctx.notification
+    {
+        render_notification(notif, x, y, w, h, renderer);
     }
 
     let Ok(children) = taffy.children(node_id) else {
@@ -2079,7 +2161,7 @@ fn count_tree_buttons(node: &TreeNode, button_id: &mut u32, result: &mut TreeRes
         }
         TreeNode::Paragraph { .. }
         | TreeNode::Spacer { .. }
-        | TreeNode::Canvas(..)
+        | TreeNode::Canvas { .. }
         | TreeNode::Notification { .. } => {}
     }
 }
@@ -2218,12 +2300,13 @@ fn render_modal(
         close_btn_y,
         close_btn_size,
         close_btn_size,
-        ButtonStyle::Secondary,
+        ButtonStyle::Ghost,
         ButtonSize::Normal,
         ICON_CLOSE,
     );
 
-    if close_clicked && (close_btn_id as usize) < result.clicks.len() {
+    let (close_was_clicked, _) = close_clicked;
+    if close_was_clicked && (close_btn_id as usize) < result.clicks.len() {
         result.clicks[close_btn_id as usize] = true;
     }
 
@@ -2333,7 +2416,7 @@ fn count_node_buttons(node: &TreeNode) -> u32 {
         }
         TreeNode::Paragraph { .. }
         | TreeNode::Spacer { .. }
-        | TreeNode::Canvas(..)
+        | TreeNode::Canvas { .. }
         | TreeNode::Notification { .. } => 0,
     }
 }
@@ -2437,7 +2520,8 @@ fn render_modal_body_node(
                     sz,
                     *icon_id,
                 );
-                if clicked && (btn_id as usize) < result.clicks.len() {
+                let (was_clicked, _) = clicked;
+                if was_clicked && (btn_id as usize) < result.clicks.len() {
                     result.clicks[btn_id as usize] = true;
                 }
             }
@@ -2491,7 +2575,7 @@ fn render_modal_body_node(
         TreeNode::Center(..)
         | TreeNode::Scroll { .. }
         | TreeNode::Spacer { .. }
-        | TreeNode::Canvas(..)
+        | TreeNode::Canvas { .. }
         | TreeNode::Modal { .. }
         | TreeNode::Notification { .. } => 0.0,
     }

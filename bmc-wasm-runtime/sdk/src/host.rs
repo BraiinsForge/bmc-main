@@ -10,6 +10,8 @@ pub enum ButtonStyle {
     Secondary = 1,
     Danger = 2,
     Tertiary = 3,
+    /// Transparent background, no border. Pressed state shows a subtle rectangular fill.
+    Ghost = 4,
 }
 
 /// Button size variants.
@@ -49,12 +51,22 @@ unsafe extern "C" {
     fn host_submit_tree(ptr: *const u8, len: u32, width: u32, height: u32);
     fn host_get_button_count() -> u32;
     fn host_get_click(index: u32) -> i32;
+    fn host_get_touch_click(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8) -> i32;
+    fn host_get_touch_drag(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8) -> i32;
 
     // Icon registration
     fn host_register_icon(data_ptr: *const u8, data_len: u32) -> u32;
 
     // Bitmap registration
     fn host_register_bitmap(data_ptr: *const u8, data_len: u32) -> u32;
+
+    // Image decoding (returns RGBA pixels)
+    fn host_decode_image(
+        data_ptr: *const u8,
+        data_len: u32,
+        rgba_out_ptr: *mut u8,
+        rgba_out_cap: u32,
+    ) -> i64;
 }
 
 /// Fill a rectangle with a solid color.
@@ -225,6 +237,68 @@ pub fn get_click(index: u32) -> bool {
     unsafe { host_get_click(index) != 0 }
 }
 
+/// Touch interaction result (click or drag position + element dimensions).
+#[derive(Debug, Clone, Copy)]
+pub struct TouchHit {
+    /// Local x position (relative to element left edge)
+    pub x: f32,
+    /// Local y position (relative to element top edge)
+    pub y: f32,
+    /// Element layout width
+    pub width: f32,
+    /// Element layout height
+    pub height: f32,
+}
+
+impl TouchHit {
+    fn from_buf(buf: &[u8; 16]) -> Self {
+        Self {
+            x: f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+            y: f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
+            width: f32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
+            height: f32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]),
+        }
+    }
+
+    /// Horizontal fraction (0.0 = left edge, 1.0 = right edge), clamped.
+    #[must_use]
+    pub fn frac_x(&self) -> f32 {
+        if self.width > 0.0 {
+            (self.x / self.width).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Get the click position for an interactive canvas (one-shot, on finger-up).
+///
+/// Returns `None` if the canvas was not clicked this frame.
+#[must_use]
+pub fn get_touch_click(key: &str) -> Option<TouchHit> {
+    let mut buf = [0u8; 16];
+    let clicked = unsafe { host_get_touch_click(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
+    if clicked != 0 {
+        Some(TouchHit::from_buf(&buf))
+    } else {
+        None
+    }
+}
+
+/// Get the drag position for an interactive canvas (continuous, while finger is down).
+///
+/// Returns `None` if the canvas is not being dragged this frame.
+#[must_use]
+pub fn get_touch_drag(key: &str) -> Option<TouchHit> {
+    let mut buf = [0u8; 16];
+    let dragging = unsafe { host_get_touch_drag(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
+    if dragging != 0 {
+        Some(TouchHit::from_buf(&buf))
+    } else {
+        None
+    }
+}
+
 /// Register icon data with the host, returns an opaque icon ID.
 #[expect(clippy::cast_possible_truncation)]
 #[must_use]
@@ -249,4 +323,35 @@ pub fn parse_date(s: &str) -> Option<i64> {
 #[must_use]
 pub fn register_bitmap(data: &[u8]) -> u16 {
     unsafe { host_register_bitmap(data.as_ptr(), data.len() as u32) as u16 }
+}
+
+/// Decode image data (PNG, JPEG, etc.) to RGBA pixels on the host.
+///
+/// Returns `Some((rgba_bytes, width, height))` on success, `None` on decode error.
+/// The RGBA buffer is allocated in WASM memory and contains `width * height * 4` bytes.
+///
+/// Useful for color extraction (e.g., palette from album art) without pulling
+/// an image decoder into the WASM binary.
+pub fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    // First call with empty buffer to get dimensions
+    let packed =
+        unsafe { host_decode_image(data.as_ptr(), data.len() as u32, core::ptr::null_mut(), 0) };
+    if packed < 0 {
+        return None;
+    }
+    let w = (packed >> 32) as u32;
+    let h = (packed & 0xFFFF_FFFF) as u32;
+    let needed = w * h * 4;
+    if needed == 0 {
+        return None;
+    }
+
+    // Allocate buffer and decode into it
+    let mut buf = vec![0u8; needed as usize];
+    let packed2 =
+        unsafe { host_decode_image(data.as_ptr(), data.len() as u32, buf.as_mut_ptr(), needed) };
+    if packed2 < 0 {
+        return None;
+    }
+    Some((buf, w, h))
 }
