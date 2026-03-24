@@ -883,12 +883,9 @@ dependencies = [
  "hyper 1.6.0",
  "ii-net",
  "image",
- "index-bmc",
- "index-common",
  "indexmap",
  "itertools 0.12.1",
  "mime_guess",
- "minerctl-defs",
  "prost-types 0.13.5",
  "reqwest",
  "semver",
@@ -1249,6 +1246,9 @@ dependencies = [
  "chrono-tz",
  "croner",
  "data-encoding",
+ "index-bmc",
+ "index-common",
+ "minerctl-defs",
  "rand 0.9.1",
  "reqwest",
  "ring",
@@ -1256,6 +1256,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
