@@ -71,6 +71,24 @@
           };
         };
 
+        # Pre-built ty binary — avoids compiling from source on CI builders
+        # that lack the nixos binary cache substituter.
+        ty-bin = pkgs.stdenv.mkDerivation {
+          pname = "ty";
+          version = "0.0.23";
+          src = pkgs.fetchurl {
+            url = "https://github.com/astral-sh/ty/releases/download/0.0.23/ty-x86_64-unknown-linux-gnu.tar.gz";
+            hash = "sha256-4ctmL00e9mcc9K0lQVOaTbGlYwhIA054ON3V4ymjeXU=";
+          };
+          nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+          buildInputs = [ pkgs.stdenv.cc.cc.lib ];
+          sourceRoot = ".";
+          unpackPhase = "tar xzf $src";
+          installPhase = ''
+            install -Dm755 ty-x86_64-unknown-linux-gnu/ty $out/bin/ty
+          '';
+        };
+
         fmt-svg = pkgs.writeShellApplication {
           name = "fmt-svg";
           runtimeInputs = with pkgs; [ findutils svgo coreutils ];
@@ -114,7 +132,7 @@
           inherit (workspace.bmc) armv7-pkgs;
         };
 
-        checks = self.packages.${localSystem} // frontend.checks;
+        checks = self.packages.${localSystem} // frontend.checks // checks;
         packages = workspace.packages // {
           frontend = frontend.build;
           yarnFiles = frontend.yarnFiles;

@@ -59,8 +59,9 @@ cargo-deny:
 python-lint:
   extends: .nix
   stage: check
+  needs: []
   script:
-    - nix-shell -p ruff uv --run "ruff check && uvx ty check"
+    - nix build -L .#checks.x86_64-linux.python-lint
 
 ############################
 ######## Apps Stage ########
