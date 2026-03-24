@@ -5,72 +5,86 @@
 # put real logic here — if a target needs more than a trivial command,
 # write a Python script in tools/ and call it from here.
 
-EXAMPLE ?= hello-widget
-EXAMPLE_DIR := examples/$(EXAMPLE)
 WASM_TARGET := wasm32-unknown-unknown
-WASM_FILE := $(EXAMPLE_DIR)/target/$(WASM_TARGET)/debug/$(subst -,_,$(EXAMPLE)).wasm
+WASM_FILE_DEBUG := examples/target/$(WASM_TARGET)/debug/$(subst -,_,$(EXAMPLE)).wasm
+WASM_FILE := examples/target/$(WASM_TARGET)/release/$(subst -,_,$(EXAMPLE)).wasm
 
 CARGO_FEATURES := --features testbed
-PYTHON := uv run --python 3.12
 
 .PHONY: clean
 clean:
 	cargo clean
-	cd $(EXAMPLE_DIR) && cargo clean
+	cd examples && cargo clean
 
 .PHONY: dev
 dev:
 	@cargo build $(CARGO_FEATURES) --bin testbed
-	@cd $(EXAMPLE_DIR) && cargo build --target $(WASM_TARGET)
+	@cd examples && cargo build -p $(EXAMPLE) --target $(WASM_TARGET)
 	RUST_LOG=bmc_wasm_runtime=debug mprocs \
 		--names "watch,testbed" \
-		"cd $(EXAMPLE_DIR) && cargo watch -x 'build --target $(WASM_TARGET)'" \
-		"cargo run $(CARGO_FEATURES) --bin testbed -- $(WASM_FILE) $(ARGS)"
+		"cd examples && cargo watch -x 'build -p $(EXAMPLE) --target $(WASM_TARGET)'" \
+		"cargo run $(CARGO_FEATURES) --bin testbed -- $(WASM_FILE_DEBUG) $(ARGS)"
 
 .PHONY: run
 run:
-	cd $(EXAMPLE_DIR) && cargo build --release --target $(WASM_TARGET)
-	cargo run $(CARGO_FEATURES) --bin testbed -- $(subst /debug/,/release/,$(WASM_FILE)) $(ARGS)
+	@cd examples && cargo build -p $(EXAMPLE) --release --target $(WASM_TARGET)
+	@cargo run $(CARGO_FEATURES) --bin testbed -- $(WASM_FILE) $(ARGS)
 
 # Profiling: make profile [-e hello-widget] [-r 05-my-change] [-n 1200]
 .PHONY: profile
 profile:
-	$(PYTHON) tools/perf_record.py -e $(EXAMPLE) $(ARGS)
+	@tools/perf_record.py -e $(EXAMPLE) $(ARGS)
 
 # WASM binary size: make size [-e hello-widget] [--check] [--limit 65536]
 .PHONY: size
 size:
-	$(PYTHON) tools/wasm_size.py -e $(EXAMPLE)
+	@tools/wasm_size.py -e $(EXAMPLE)
 
 .PHONY: size-check
 size-check:
-	$(PYTHON) tools/wasm_size.py -e $(EXAMPLE) --check
+	@tools/wasm_size.py -e $(EXAMPLE) --check
 
 # SDK API docs (opens in browser)
 .PHONY: docs
 docs:
-	cd sdk && cargo doc --target $(WASM_TARGET) --no-deps --open
+	@cd sdk && cargo doc --target $(WASM_TARGET) --no-deps --open
+
+# ── Interactive Recording ────────────────────────────────────────────
+
+SIZE ?= full
+.PHONY: record
+record:
+	@cd examples && cargo build -p $(EXAMPLE) --release --target $(WASM_TARGET)
+	@cargo run $(CARGO_FEATURES) --bin testbed -- $(WASM_FILE) --record=$(SIZE)
 
 # ── Capture & Visual Regression ──────────────────────────────────────
 
-CAPTURE_DIR := captures/$(EXAMPLE)
+WIDGETS_DIR := examples
+WASM_DIR    := examples/target/$(WASM_TARGET)/release
+OUTPUT_DIR  := captures
+
+CAPTURE_BIN := cargo run --features capture --bin capture --
 
 .PHONY: capture
 capture:
-	tools/capture_run.py -e $(EXAMPLE) $(ARGS)
+	@$(CAPTURE_BIN) run-all -e $(EXAMPLE) --widgets-dir $(WIDGETS_DIR) --output-dir $(OUTPUT_DIR) $(ARGS)
 
 .PHONY: capture-all
 capture-all:
-	tools/capture_run.py $(ARGS)
+	@$(CAPTURE_BIN) run-all --widgets-dir $(WIDGETS_DIR) --output-dir $(OUTPUT_DIR) $(ARGS)
 
 .PHONY: update-baselines
 update-baselines: capture
-	rm -rf $(CAPTURE_DIR)/baselines
-	cp -r $(CAPTURE_DIR)/current $(CAPTURE_DIR)/baselines
+	@$(CAPTURE_BIN) set-baseline --capture-dir=$(WIDGETS_DIR)/$(EXAMPLE)/capture --output=$(OUTPUT_DIR)/$(EXAMPLE)
 
 .PHONY: regression-test
-regression-test: capture
-	tools/capture_diff.py \
-		--baseline=$(CAPTURE_DIR)/baselines \
-		--current=$(CAPTURE_DIR)/current \
-		--diff=$(CAPTURE_DIR)/diff
+regression-test:
+	@$(CAPTURE_BIN) verify -e $(EXAMPLE) --widgets-dir $(WIDGETS_DIR) --output-dir $(OUTPUT_DIR)
+
+.PHONY: regression-test-all
+regression-test-all:
+	@$(CAPTURE_BIN) verify --parallel --widgets-dir $(WIDGETS_DIR) --output-dir $(OUTPUT_DIR)
+
+.PHONY: preview
+preview:
+	@$(CAPTURE_BIN) preview --output=$(OUTPUT_DIR)/$(EXAMPLE) $(if $(filter command line,$(origin SIZE)),-s $(SIZE)) $(ARGS)

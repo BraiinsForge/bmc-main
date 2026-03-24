@@ -238,7 +238,7 @@ pub enum TreeNode {
     },
     /// Scrollable container
     Scroll {
-        scroll_id: u16,
+        scroll_key: String,
         props: PropsData,
         children: Vec<TreeNode>,
     },
@@ -530,7 +530,8 @@ impl<'a> TreeReader<'a> {
                 })
             }
             NODE_SCROLL => {
-                let scroll_id = self.read_u16()?;
+                let key_len = self.read_u16()?;
+                let scroll_key = self.read_string(key_len)?;
                 let props = self.read_props()?;
                 let child_count = self.read_u16()?;
                 let mut children = Vec::with_capacity(child_count as usize);
@@ -538,7 +539,7 @@ impl<'a> TreeReader<'a> {
                     children.push(self.read_node()?);
                 }
                 Ok(TreeNode::Scroll {
-                    scroll_id,
+                    scroll_key,
                     props,
                     children,
                 })
@@ -959,7 +960,8 @@ pub(crate) struct NodeContext {
     /// Touch interaction key for interactive canvases (None = decorative)
     touch_key: Option<String>,
     notification: Option<NotificationData>,
-    scroll_id: Option<u16>,
+    /// String key for scroll container state tracking and interaction targeting.
+    scroll_key: Option<String>,
     progress_bar: Option<ProgressBarData>,
 }
 
@@ -992,7 +994,7 @@ pub(crate) fn process_tree(
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<String, ModalState>,
-    scroll_states: &mut HashMap<u16, ScrollState>,
+    scroll_states: &mut HashMap<String, ScrollState>,
     animation_states: &mut HashMap<u64, AnimationState>,
     transition_states: &mut HashMap<(u16, u16), TransitionState>,
     frame_counter: u64,
@@ -1036,7 +1038,7 @@ pub(crate) fn layout_and_render(
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<String, ModalState>,
-    scroll_states: &mut HashMap<u16, ScrollState>,
+    scroll_states: &mut HashMap<String, ScrollState>,
     animation_states: &mut HashMap<u64, AnimationState>,
     transition_states: &mut HashMap<(u16, u16), TransitionState>,
     frame_counter: u64,
@@ -1344,7 +1346,7 @@ fn build_taffy_node(
         }
 
         TreeNode::Scroll {
-            scroll_id,
+            scroll_key,
             props,
             children,
         } => {
@@ -1382,7 +1384,7 @@ fn build_taffy_node(
                 Some(NodeContext {
                     background: props.background,
                     bg_nine_patch: bg_np_from_props(props),
-                    scroll_id: Some(*scroll_id),
+                    scroll_key: Some(scroll_key.clone()),
                     ..Default::default()
                 }),
             )?;
@@ -1585,7 +1587,7 @@ fn render_taffy_node(
     parent_y: f32,
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
-    scroll_states: &mut HashMap<u16, ScrollState>,
+    scroll_states: &mut HashMap<String, ScrollState>,
     result: &mut TreeResult,
     anim_ctx: &mut AnimationContext<'_>,
     depth: usize,
@@ -1599,9 +1601,9 @@ fn render_taffy_node(
     let h = layout.size.height;
 
     // Extract IDs before immutable context borrow
-    let scroll_id = taffy
+    let scroll_key = taffy
         .get_node_context(node_id)
-        .and_then(|ctx| ctx.scroll_id);
+        .and_then(|ctx| ctx.scroll_key.clone());
     let touch_key = taffy
         .get_node_context(node_id)
         .and_then(|ctx| ctx.touch_key.clone());
@@ -1720,7 +1722,7 @@ fn render_taffy_node(
     };
 
     // Scroll container: scissor-clip + offset children by scroll amount
-    if let Some(sid) = scroll_id {
+    if let Some(ref sk) = scroll_key {
         // Compute content height from children's layouts
         let content_height = children
             .iter()
@@ -1737,7 +1739,7 @@ fn render_taffy_node(
         let sbar_margin = 2.0_f32;
         // Hit region is generous (active width) so it's easy to grab
         let sbar_hit_w = sbar_width_active + sbar_margin;
-        let sbar_key = format!("sbar_{sid}");
+        let sbar_key = format!("{sk}::sbar");
         let sbar_pressed = if has_scrollbar {
             let sbar_hit_rect = crate::interaction::Rect::new(
                 (x + w - sbar_hit_w) as i32,
@@ -1752,21 +1754,20 @@ fn render_taffy_node(
         };
 
         // Register content hit region for drag/wheel scrolling
-        let scroll_key = format!("scroll_{sid}");
         let scroll_region = crate::interaction::Rect::new(x as i32, y as i32, w as u32, h as u32);
-        interaction.button(&scroll_key, scroll_region);
+        interaction.button(sk, scroll_region);
 
         // Read scroll delta — scrollbar drag scales by content/viewport ratio
         let scroll_delta = if sbar_pressed {
             let ratio = if h > 0.0 { content_height / h } else { 1.0 };
             (interaction.get_scroll_delta(&sbar_key) as f32 * ratio) as i32
-        } else if interaction.is_pressed(&scroll_key) {
-            -interaction.get_scroll_delta(&scroll_key)
+        } else if interaction.is_pressed(sk) {
+            -interaction.get_scroll_delta(sk)
         } else {
             interaction.get_global_scroll_delta()
         };
 
-        let state = scroll_states.entry(sid).or_default();
+        let state = scroll_states.entry(sk.clone()).or_default();
         state.scroll_offset += scroll_delta as f32;
         state.scroll_offset = state.scroll_offset.clamp(0.0, max_scroll);
 
@@ -1985,9 +1986,10 @@ fn render_squiggle(
     let amplitude = track_h / 2.0;
     let step = PB_WAVE_LENGTH / PB_WAVE_POINTS_PER_CYCLE as f32;
 
-    // Time-based scroll offset: one full wavelength per 800ms cycle
-    let cycle_ms = 800.0;
-    let phase_frac = (anim_ctx.frame_counter as f32 * anim_ctx.delta_ms as f32 / cycle_ms).fract();
+    // Frame-based scroll offset: one full wavelength per ~50 frames (800ms at 60fps).
+    // Use frame_counter alone (not delta_ms) to avoid jitter from variable frame timing.
+    let frames_per_cycle = 50.0_f32;
+    let phase_frac = (anim_ctx.frame_counter as f32 / frames_per_cycle).fract();
     let offset = -phase_frac * PB_WAVE_LENGTH;
 
     let start_x = -PB_WAVE_LENGTH + offset;
@@ -2775,7 +2777,7 @@ fn render_modal(
     renderer: &mut dyn Renderer,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<String, ModalState>,
-    scroll_states: &mut HashMap<u16, ScrollState>,
+    scroll_states: &mut HashMap<String, ScrollState>,
     delta_ms: u32,
     result: &mut TreeResult,
     anim_ctx: &mut AnimationContext<'_>,

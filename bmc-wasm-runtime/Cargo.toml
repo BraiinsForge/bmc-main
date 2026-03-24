@@ -63,8 +63,9 @@ toml = { workspace = true, optional = true }
 default = []
 perf-overlay = []
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
-testbed = ["host", "perf-overlay", "notify"]
-capture = ["host", "base64", "libc", "toml"]
+fixtures = ["host", "base64", "flate2", "owo-colors", "serde", "toml"]
+testbed = ["host", "perf-overlay", "notify", "fixtures"]
+capture = ["host", "askama", "base64", "clap", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
 
 [[bin]]
 name = "testbed"
@@ -73,7 +74,7 @@ required-features = ["testbed"]
 
 [[bin]]
 name = "capture"
-path = "src/bin/capture.rs"
+path = "src/bin/capture/main.rs"
 required-features = ["capture"]
 
 [build-dependencies]

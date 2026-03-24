@@ -353,8 +353,8 @@ pub(crate) struct HostState {
     /// Modal dialog states (keyed by modal_id string)
     pub modal_states: HashMap<String, ModalState>,
 
-    /// Scroll container states (keyed by scroll_id)
-    pub scroll_states: HashMap<u16, ScrollState>,
+    /// Scroll container states (keyed by scroll_key string)
+    pub scroll_states: HashMap<String, ScrollState>,
 
     /// Delta time since last frame (for animations)
     pub delta_ms: u32,
@@ -386,7 +386,7 @@ pub(crate) struct HostState {
 
     /// Current wall-clock time, set by the host before each render().
     /// Used by `host_get_system_time()` — the runtime never calls `Local::now()`.
-    pub system_time: chrono::DateTime<chrono::Local>,
+    pub system_time: chrono::DateTime<chrono::FixedOffset>,
 
     /// Monotonic clock in ms, set by the host before each render().
     /// Used for deferred timer checks and wasm_delta computation.
@@ -523,7 +523,7 @@ impl HostState {
             animation_only_frame: false,
             deferred_wasm_render_at_ms: None,
             last_wasm_render_at_ms: 0,
-            system_time: chrono::Local::now(),
+            system_time: chrono::Local::now().fixed_offset(),
             monotonic_ms: 0,
             next_request_id: 1,
             fetch_rx,

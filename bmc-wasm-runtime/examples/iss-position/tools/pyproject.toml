@@ -9,3 +9,8 @@ dependencies = [
 
 [tool.uv]
 # Scripts run via: uv run texture_render.py
+
+[tool.ty.rules]
+# cartopy GeoAxes methods (set_global, add_feature, spines) are not visible
+# to ty because add_axes returns generic Axes, not GeoAxes.
+unresolved-attribute = "ignore"

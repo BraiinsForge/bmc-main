@@ -83,6 +83,59 @@ make docs
 `make dev` and `make run` include `--preview` by default, which renders all 4 widget size variants (Full, Large, Medium,
 Small) simultaneously in a masonry layout with a performance overlay. Pass extra flags via `ARGS=...`.
 
+## Visual Regression Testing
+
+Pixel-level visual regression testing using headless EGL capture and [odiff](https://github.com/dmtrKovalenko/odiff)
+comparison. See docs/devlog/hosted-wasm/visual-regression-testing.md for architecture details.
+
+```bash
+make regression-test EXAMPLE=hello-widget   # capture + diff one widget
+make regression-test-all                     # capture + diff all widgets
+```
+
+### Adding a new widget
+
+```bash
+# 1. Generate a capture config
+capture init examples/my-widget
+#    → edit examples/my-widget/capture/config.toml
+
+# 2. Record fixtures (if the widget fetches data or uses events)
+make record EXAMPLE=my-widget SIZE=full
+#    → uncomment [fixtures] section in config.toml
+
+# 3. Capture, review, and set the baseline
+make capture EXAMPLE=my-widget
+make preview EXAMPLE=my-widget              # review captures/my-widget/preview_full.mp4
+make update-baselines EXAMPLE=my-widget     # compress into baselines.7z
+
+# 4. Verify the baseline passes
+make regression-test EXAMPLE=my-widget
+```
+
+### Accepting visual changes
+
+When a widget intentionally changes its rendering:
+
+```bash
+# 1. Run regression test — review diffs in captures/report.html
+make regression-test EXAMPLE=my-widget
+
+# 2. If the changes look correct, update the baseline
+make update-baselines EXAMPLE=my-widget
+
+# 3. Verify and commit
+make regression-test EXAMPLE=my-widget
+git add examples/my-widget/capture/baselines.7z
+```
+
+If the widget's network calls changed, re-record fixtures first:
+
+```bash
+make record EXAMPLE=my-widget SIZE=full
+make update-baselines EXAMPLE=my-widget
+```
+
 ## Crate Structure
 
 - `bmc-wasm-runtime` — Host runtime: WASM execution (wasmi), flex layout (taffy), GPU rendering (FemtoVG), text shaping

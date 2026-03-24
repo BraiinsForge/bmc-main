@@ -9,7 +9,7 @@
 use crate::egl::EglState;
 use anyhow::{Context, Result};
 use bmc_wasm_runtime::renderer::Renderer;
-use bmc_wasm_runtime::{RenderStatus, WasmWidgetRuntime};
+use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -113,8 +113,7 @@ impl WaylandClient {
                         w,
                         h,
                         fbo_id,
-                        WasmWidgetRuntime::FUEL_PER_FRAME,
-                        bmc_wasm_protocol::FormatPreferences::default(),
+                        RuntimeConfig::default(),
                     )
                 }?;
                 let (major, minor, patch) = runtime.sdk_version();

@@ -105,5 +105,12 @@ pub mod tree;
 pub mod components;
 pub mod interaction;
 
+#[cfg(feature = "fixtures")]
+pub mod capture_config;
+#[cfg(feature = "fixtures")]
+pub mod fixtures;
+#[cfg(feature = "fixtures")]
+pub mod unified_fixture;
+
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState, FrameTimings};
 pub use runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};

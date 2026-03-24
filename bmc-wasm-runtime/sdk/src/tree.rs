@@ -354,10 +354,11 @@ impl TreeBuffer {
     }
 
     /// Write a scroll container
-    /// Format: [NODE_SCROLL][scroll_id:u16][props:32B][child_count:u16][children...]
-    pub fn write_scroll(&mut self, scroll_id: u16, props: &PropsData, child_count: u16) {
+    /// Format: [NODE_SCROLL][key_len:u16][key_bytes...][props:32B][child_count:u16][children...]
+    pub fn write_scroll(&mut self, scroll_key: &str, props: &PropsData, child_count: u16) {
         self.write_u8(NODE_SCROLL);
-        self.write_u16(scroll_id);
+        self.write_u16(scroll_key.len() as u16);
+        self.data.extend_from_slice(scroll_key.as_bytes());
         self.write_props(props);
         self.write_u16(child_count);
     }
@@ -1025,7 +1026,7 @@ pub enum Node {
     },
     /// Scrollable container — clips children and allows vertical scrolling.
     Scroll {
-        scroll_id: u16,
+        scroll_key: String,
         props: PropsData,
         children: Vec<Node>,
     },
@@ -1161,12 +1162,12 @@ pub fn spacer(flex: f32) -> Node {
 
 /// Scrollable container — clips children and allows vertical scrolling.
 ///
-/// - `scroll_id`: Unique ID for state tracking (must be unique per scroll instance)
+/// - `key`: Unique string ID for state tracking and interaction targeting
 /// - `props`: Layout props — **must set `height`** for the viewport
 /// - `children`: Child nodes (laid out as a column)
-pub fn scroll(scroll_id: u16, props: PropsData, children: impl IntoIterator<Item = Node>) -> Node {
+pub fn scroll(key: &str, props: PropsData, children: impl IntoIterator<Item = Node>) -> Node {
     Node::Scroll {
-        scroll_id,
+        scroll_key: String::from(key),
         props,
         children: children.into_iter().collect(),
     }
@@ -1502,11 +1503,11 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             }
         }
         Node::Scroll {
-            scroll_id,
+            scroll_key,
             props,
             children,
         } => {
-            buf.write_scroll(*scroll_id, props, children.len() as u16);
+            buf.write_scroll(scroll_key, props, children.len() as u16);
             for child in children {
                 serialize_node(buf, child);
             }
@@ -1774,7 +1775,12 @@ fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
                 collect_interaction_keys(child, keys);
             }
         }
-        Node::Scroll { children, .. } => {
+        Node::Scroll {
+            scroll_key,
+            children,
+            ..
+        } => {
+            keys.push(scroll_key.clone());
             for child in children {
                 collect_interaction_keys(child, keys);
             }

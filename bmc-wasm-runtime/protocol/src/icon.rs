@@ -63,3 +63,24 @@ pub const ICON_INFO: u16 = 0xFF13;
 
 /// Meter / gauge icon — fuel budget indicator.
 pub const ICON_METER: u16 = 0xFF14;
+
+// ── Dev / testbed-only icons ───────────────────────────────────────
+// Used in the recording panel event log. Range 0xFE00..=0xFEFF.
+
+/// Camera icon — capture event.
+pub const ICON_DEV_CAMERA: u16 = 0xFE01;
+
+/// Cursor / pointer icon — click and drag events.
+pub const ICON_DEV_CURSOR: u16 = 0xFE02;
+
+/// Scroll icon — scroll events.
+pub const ICON_DEV_SCROLL: u16 = 0xFE03;
+
+/// Download arrow icon — inbound network data (fetch, ws message, socket data, etc.).
+pub const ICON_DEV_DOWNLOAD: u16 = 0xFE04;
+
+/// Upload arrow icon — outbound / connection open (ws open, socket connected).
+pub const ICON_DEV_UPLOAD: u16 = 0xFE05;
+
+/// Broken link icon — disconnect / close (ws close, socket closed, ssdp/mdns removed).
+pub const ICON_DEV_UNLINK: u16 = 0xFE06;

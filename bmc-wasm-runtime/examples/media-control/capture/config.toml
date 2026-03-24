@@ -1,0 +1,6 @@
+record_timeout = 30
+settle_delay = 10
+
+[fixtures]
+full = "fixtures/full.jsonl.gz"
+large = "fixtures/large.jsonl.gz"

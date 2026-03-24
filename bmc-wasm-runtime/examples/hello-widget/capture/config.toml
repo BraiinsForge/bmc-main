@@ -1,0 +1,2 @@
+[fixtures]
+full = "fixtures/full.jsonl.gz"

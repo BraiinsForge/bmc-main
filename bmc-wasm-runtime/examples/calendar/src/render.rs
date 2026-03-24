@@ -495,7 +495,7 @@ fn render_large(state: &CalendarState, size: WidgetSize) -> Node {
     let theme = active_theme();
     with_fab_overlay(
         scroll(
-            1,
+            "agenda",
             props!(
                 background: theme.surface,
                 width: size.width as f32,
@@ -512,7 +512,7 @@ fn render_medium(state: &CalendarState, size: WidgetSize) -> Node {
     let theme = active_theme();
     with_fab_overlay(
         scroll(
-            1,
+            "agenda",
             props!(
                 background: theme.surface,
                 width: size.width as f32,
@@ -550,7 +550,7 @@ fn render_small(state: &CalendarState, size: WidgetSize) -> Node {
 
     with_fab_overlay(
         scroll(
-            1,
+            "agenda",
             props!(
                 background: theme.surface,
                 width: size.width as f32,

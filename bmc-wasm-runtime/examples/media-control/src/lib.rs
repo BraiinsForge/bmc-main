@@ -2241,7 +2241,7 @@ fn render_discovering(size: WidgetSize) -> Node {
                     "Select a device",
                     style!(size: title_sz, color: GRAY_20, weight: 600),
                 ),
-                scroll(1, props!(flex: 1.0, gap: 2.0), buttons),
+                scroll("session_list", props!(flex: 1.0, gap: 2.0), buttons),
             ],
         );
 

@@ -368,7 +368,7 @@ fn render_entities(size: WidgetSize, entities: &[EntityState]) -> Node {
         [
             header(is_small),
             scroll(
-                0,
+                "entities",
                 props!(height: scroll_height, gap: 4.0, max_width: 650.0),
                 entity_rows,
             ),

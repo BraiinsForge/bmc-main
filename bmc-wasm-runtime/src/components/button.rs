@@ -383,7 +383,9 @@ fn draw_text_ellipsis(
         return;
     }
     let text_w = renderer.measure_text(label, font_size);
-    if text_w <= max_w {
+    // 1px tolerance — measure_text can return slightly different values between calls
+    // due to FemtoVG font shaping, which causes false truncation on exact-fit buttons.
+    if text_w <= max_w + 1.0 {
         renderer.draw_text(label, x, y, font_size, color);
         return;
     }

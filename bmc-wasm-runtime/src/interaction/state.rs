@@ -169,12 +169,31 @@ impl InteractionState {
         self.drag_delta_y
     }
 
+    /// Look up the bounds of a registered element by its string ID.
+    ///
+    /// Returns `None` if no element with that ID was registered this frame.
+    /// Note: hit regions are cleared at the start of each frame, so this must
+    /// be called after a render pass.
+    #[must_use]
+    pub fn element_bounds(&self, id: &str) -> Option<Rect> {
+        self.hit_regions.get(id).copied()
+    }
+
+    /// Return all registered hit region element IDs (sorted).
+    #[must_use]
+    pub fn element_ids(&self) -> Vec<&str> {
+        let mut ids: Vec<&str> = self.hit_regions.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// Hit test against registered regions.
     ///
     /// Returns the smallest (most specific) region containing the point.
     /// This ensures buttons inside scroll containers win over the scroll
     /// container's own hit region.
-    fn hit_test(&self, x: i32, y: i32) -> Option<String> {
+    #[must_use]
+    pub fn hit_test(&self, x: i32, y: i32) -> Option<String> {
         let mut best: Option<(&str, u64)> = None;
         for (key, rect) in &self.hit_regions {
             if rect.contains(x, y) {

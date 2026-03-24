@@ -28,9 +28,16 @@ SHELL := bash
 fmt-svg:
 	nix run .#fmt-svg
 
-.PHONY: validate-wasm fmt-svg
-validate-wasm:
+.PHONY: validate-wasm
+validate-wasm: fmt-svg
 	nix fmt -- bmc-wasm-runtime
+	nix-shell -p ruff uv --run "ruff check bmc-wasm-runtime && uvx ty check bmc-wasm-runtime --exclude 'bmc-wasm-runtime/examples/*/tools/'"
+	@for dir in bmc-wasm-runtime/examples/*/; do \
+		if [ -f "$$dir/Makefile" ] && grep -qE '^lint:' "$$dir/Makefile"; then \
+			echo "── Python lint in $${dir} ──"; \
+			$(MAKE) -C "$$dir" lint || exit 1; \
+		fi; \
+	done
 	cargo clippy -p bmc-wasm-runtime --all-targets --features testbed
 	cargo clippy -p bmc-wasm-runtime --bin capture --features capture
 	cargo nextest run -p bmc-wasm-runtime

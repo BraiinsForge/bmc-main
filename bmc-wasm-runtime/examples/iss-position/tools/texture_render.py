@@ -90,7 +90,7 @@ def render_texture(theme: Theme, width: int, height: int, output: Path) -> None:
 
     projection = ccrs.PlateCarree()
     fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=theme['ocean'])
-    ax = fig.add_axes([0, 0, 1, 1], projection=projection, facecolor=theme['ocean'])
+    ax = fig.add_axes((0, 0, 1, 1), projection=projection, facecolor=theme['ocean'])
     ax.set_global()
     ax.spines['geo'].set_visible(False)
 
@@ -137,7 +137,7 @@ def render_texture(theme: Theme, width: int, height: int, output: Path) -> None:
 
 
 def _add_country_labels(
-    ax: plt.Axes, img_width: int, theme: Theme, halo: list[pe.AbstractPathEffect]
+    ax: plt.Axes, img_width: int, theme: Theme, halo: list[pe.withStroke]
 ) -> None:
     """Add country name labels centered on each country."""
     scale = img_width / 1024

@@ -13,6 +13,48 @@ from pathlib import Path
 
 WASM_TARGET = 'wasm32-unknown-unknown'
 
+# ── ANSI helpers ─────────────────────────────────────────────────────
+
+IS_TTY = sys.stderr.isatty()
+
+DIM = '\033[2m' if IS_TTY else ''
+BOLD = '\033[1m' if IS_TTY else ''
+RESET = '\033[0m' if IS_TTY else ''
+GREEN = '\033[32m' if IS_TTY else ''
+RED = '\033[31m' if IS_TTY else ''
+
+COL_WIDTH = 50  # alignment column for right-side timings
+
+
+def section(title: str) -> None:
+    """Print a section header with a ruled line."""
+    pad = max(0, COL_WIDTH - len(title) - 1)
+    print(f'{BOLD}{title}{RESET} {DIM}{"─" * pad}{RESET}', file=sys.stderr)
+
+
+def progress(msg: str) -> None:
+    """Print a transient status line (overwritten by the next call)."""
+    if IS_TTY:
+        print(f'\r\033[K{DIM}{msg}{RESET}', end='', file=sys.stderr, flush=True)
+    else:
+        print(msg, file=sys.stderr)
+
+
+def clear_progress() -> None:
+    """Clear the transient status line."""
+    if IS_TTY:
+        print('\r\033[K', end='', file=sys.stderr, flush=True)
+
+
+def format_time(seconds: float) -> str:
+    """Format seconds into a human-readable string."""
+    if seconds < 60:
+        return f'{seconds:.1f}s'
+    minutes = int(seconds // 60)
+    secs = seconds % 60
+    return f'{minutes}m {secs:.0f}s'
+
+
 # Standard widget capture sizes: (name, WxH)
 CAPTURE_SIZES = [
     ('full', '1280x480'),
@@ -51,6 +93,7 @@ def build_example_wasm(example: str) -> Path:
         ['cargo', 'build', '--release', '--target', WASM_TARGET],
         cwd=example_dir,
         check=True,
+        capture_output=True,
     )
 
     return example_dir / 'target' / WASM_TARGET / 'release' / f'{wasm_name}.wasm'

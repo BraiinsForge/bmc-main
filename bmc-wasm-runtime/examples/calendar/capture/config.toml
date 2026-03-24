@@ -1,0 +1,6 @@
+# Capture configuration for visual regression testing.
+
+settle_delay = 10
+
+[fixtures]
+full = "fixtures/full.jsonl.gz"

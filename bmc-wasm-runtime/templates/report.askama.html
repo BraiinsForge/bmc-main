@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Visual Regression Report</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 24px; }
+h1 { margin-bottom: 8px; }
+.summary { font-size: 1.1em; margin-bottom: 24px; color: #aaa; }
+.summary .fail { color: #f66; font-weight: bold; }
+.summary .pass { color: #6f6; }
+.widget { margin-bottom: 32px; }
+.widget h2 { margin-bottom: 12px; border-bottom: 1px solid #333; padding-bottom: 6px; }
+.widget h2 .counts { font-size: 0.7em; font-weight: normal; color: #888; margin-left: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-bottom: 12px;
+       padding: 12px; background: #1a1a1a; border-radius: 8px; border-left: 4px solid #333; }
+.row.diff { border-left-color: #f66; }
+.row.missing { border-left-color: #fa0; }
+.row.new { border-left-color: #08f; }
+.row.no-baseline { border-left-color: #fa0; }
+.row.pass { border-left-color: #6f6; }
+.row-header { width: 100%; display: flex; align-items: center; gap: 8px; }
+.images { display: flex; gap: 8px; width: 100%; margin-top: 8px; }
+.col { display: flex; flex-direction: column; align-items: center; }
+.col img { max-width: 400px; max-height: 300px; border: 1px solid #333; border-radius: 4px; cursor: zoom-in; }
+.lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 100;
+            justify-content: center; align-items: center; cursor: zoom-out; }
+.lightbox.open { display: flex; }
+.lightbox img { max-width: 95vw; max-height: 95vh; border: 1px solid #444; border-radius: 4px;
+                image-rendering: pixelated; }
+.col .label { font-size: 0.75em; color: #888; margin-top: 4px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75em;
+       font-weight: bold; text-transform: uppercase; }
+.tag.diff { background: #622; color: #faa; }
+.tag.missing { background: #542; color: #fa8; }
+.tag.new { background: #135; color: #8cf; }
+.tag.no-baseline { background: #542; color: #fa8; }
+.tag.pass { background: #242; color: #afa; }
+.path { font-family: monospace; font-size: 0.85em; color: #ccc; }
+.hint { font-size: 0.8em; color: #888; font-family: monospace; }
+.filter { margin-bottom: 16px; }
+.filter button { padding: 6px 14px; margin-right: 6px; border: 1px solid #444; background: #222;
+                 color: #ccc; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
+.filter button.active { background: #444; color: #fff; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<h1>Visual Regression Report</h1>
+<div class="summary">
+  <span class="pass">Pass: {{ total_pass }}</span> &nbsp;
+  <span{% if total_fail > 0 %} class="fail"{% endif %}>Fail: {{ total_fail }}</span> &nbsp;
+  Missing: {{ total_missing }} &nbsp; New: {{ total_new }}
+  {% if no_baseline_count > 0 %}&nbsp; No baseline: {{ no_baseline_count }}{% endif %}
+  {% if !has_failures %}&nbsp; &#x2714; All clear{% endif %}
+</div>
+
+<div class="filter">
+  <button class="active" onclick="filterRows('all')">All</button>
+  <button onclick="filterRows('diff')">Diff ({{ total_fail }})</button>
+  <button onclick="filterRows('missing')">Missing ({{ total_missing }})</button>
+  <button onclick="filterRows('new')">New ({{ total_new }})</button>
+  {% if no_baseline_count > 0 %}<button onclick="filterRows('no-baseline')">No baseline ({{ no_baseline_count }})</button>{% endif %}
+  <button onclick="filterRows('pass')">Pass ({{ total_pass }})</button>
+</div>
+
+{% for report in reports %}
+<div class="widget">
+<h2>{{ report.widget }}<span class="counts">
+  {%- if report.no_baseline -%}NO BASELINE
+  {%- else -%}{{ report.passed }} pass, {{ report.failed }} fail, {{ report.missing }} missing, {{ report.new_count }} new
+  {%- endif -%}
+</span></h2>
+
+{% if report.no_baseline %}
+<div class="row no-baseline" data-status="no-baseline">
+  <div class="row-header">
+    <span class="tag no-baseline">no baseline</span>
+    <span class="hint">capture set-baseline -e {{ report.widget }}</span>
+  </div>
+</div>
+{% else %}
+{% for result in report.results %}
+<div class="row {{ result.status }}" data-status="{{ result.status }}">
+  <div class="row-header">
+    <span class="tag {{ result.status }}">{{ result.status }}</span>
+    <span class="path">{{ result.rel }}</span>
+    {% if result.diff_percentage > 0.0 %}<span class="hint">{{ result.diff_percentage|fmt("{:.2}") }}%</span>{% endif %}
+  </div>
+  {% if result.status != "pass" %}
+  <div class="images">
+    {% if let Some(uri) = result.baseline_uri %}<div class="col"><img src="{{ uri }}"><div class="label">baseline</div></div>{% endif %}
+    {% if let Some(uri) = result.current_uri %}<div class="col"><img src="{{ uri }}"><div class="label">current</div></div>{% endif %}
+    {% if let Some(uri) = result.diff_uri %}<div class="col"><img src="{{ uri }}"><div class="label">diff</div></div>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+</div>
+{% endfor %}
+
+<div class="lightbox" id="lightbox" onclick="this.classList.remove('open')"><img id="lightbox-img"></div>
+
+<script>
+function filterRows(status) {
+  document.querySelectorAll('.filter button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.querySelectorAll('.row').forEach(row => {
+    row.classList.toggle('hidden', status !== 'all' && row.dataset.status !== status);
+  });
+}
+document.querySelectorAll('.col img').forEach(img => {
+  img.addEventListener('click', () => {
+    document.getElementById('lightbox-img').src = img.src;
+    document.getElementById('lightbox').classList.add('open');
+  });
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('lightbox').classList.remove('open');
+});
+</script>
+</body>
+</html>

@@ -16,6 +16,7 @@ use std::ffi::CString;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
@@ -32,14 +33,23 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowButtons};
 
+use bmc_wasm_protocol::{
+    ICON_DEV_CAMERA, ICON_DEV_CURSOR, ICON_DEV_DOWNLOAD, ICON_DEV_SCROLL, ICON_DEV_UNLINK,
+    ICON_DEV_UPLOAD,
+};
+use owo_colors::OwoColorize;
+
 use bmc_wasm_runtime::components::{ButtonSize, ButtonStyle, draw_button};
+use bmc_wasm_runtime::fixtures::{self, find_widget_root, seed_kv_from_secrets, snapshot_kv_dir};
 use bmc_wasm_runtime::gpu::FemtoVgRenderer;
 use bmc_wasm_runtime::interaction::{InteractionState, TouchEvent};
 use bmc_wasm_runtime::perf_overlay::PerfOverlay;
 use bmc_wasm_runtime::renderer::Renderer;
+use bmc_wasm_runtime::unified_fixture::{
+    FixtureHeader, TimelineEvent, UnifiedEvent, UnifiedFixture,
+};
 use bmc_wasm_runtime::{FrameTimings, RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use chrono::Local;
 
@@ -65,7 +75,9 @@ fn main() -> Result<()> {
 
     if args.len() < 2 {
         eprintln!("WASM Widget Testbed");
-        eprintln!("Usage: testbed <wasm_file> [--perf-report=<path>] [--perf-frames=<N>]");
+        eprintln!(
+            "Usage: testbed <wasm_file> [--perf-report=<path>] [--perf-frames=<N>] [--record=<size>]"
+        );
         std::process::exit(1);
     }
 
@@ -74,11 +86,14 @@ fn main() -> Result<()> {
     // Parse optional flags from remaining args
     let mut perf_report_path: Option<PathBuf> = None;
     let mut perf_frames: u32 = 600;
+    let mut record_size: Option<String> = None;
     for arg in &args[2..] {
         if let Some(path) = arg.strip_prefix("--perf-report=") {
             perf_report_path = Some(PathBuf::from(path));
         } else if let Some(n) = arg.strip_prefix("--perf-frames=") {
             perf_frames = n.parse().unwrap_or(600);
+        } else if let Some(s) = arg.strip_prefix("--record=") {
+            record_size = Some(s.to_owned());
         }
     }
 
@@ -89,6 +104,10 @@ fn main() -> Result<()> {
     }
 
     let event_loop = EventLoop::new()?;
+    if let Some(ref size) = record_size {
+        println!("Recording mode: size={size}");
+    }
+
     let mut app = App {
         wasm_path,
         state: None,
@@ -96,6 +115,7 @@ fn main() -> Result<()> {
         rss_after_runtime_kb: None,
         perf_report_path,
         perf_frames,
+        record_size,
     };
     event_loop.run_app(&mut app)?;
     print_memory_stats(app.rss_after_gl_kb, app.rss_after_runtime_kb);
@@ -141,6 +161,8 @@ struct App {
     /// If set, write a JSON perf report to this path after `perf_frames` frames.
     perf_report_path: Option<PathBuf>,
     perf_frames: u32,
+    /// If set, enter recording mode for this size name.
+    record_size: Option<String>,
 }
 
 // ── Preview mode ───────────────────────────────────────────────────
@@ -159,6 +181,38 @@ struct PreviewTile {
     logged_dead: bool,
     ever_rendered: bool,
     kv_path: std::path::PathBuf,
+}
+
+/// Tracks an in-progress touch gesture for recording mode.
+struct GestureTracker {
+    start_pos: (f32, f32),
+    current_pos: (f32, f32),
+    start_element: Option<String>,
+}
+
+/// Delay (ms) between a user action and its auto-inserted capture event.
+const AUTO_CAPTURE_DELAY_MS: u64 = 500;
+
+/// Recording mode state — produces a unified fixture on completion.
+struct RecordingState {
+    active_tile: usize,
+    size_name: String,
+    /// Unified timeline events (user actions + fetch recordings).
+    events: Vec<TimelineEvent>,
+    interaction: InteractionState,
+    gesture: Option<GestureTracker>,
+    /// Widget root directory (for output paths).
+    widget_root: Option<PathBuf>,
+    /// Wall-clock reference for `at_ms` calculation.
+    recording_start: Instant,
+    /// Scroll offset for the event log (in pixels).
+    scroll_offset: f32,
+    /// Snapshot of KV dir state at recording start.
+    kv_snapshot: std::collections::HashMap<String, String>,
+    /// Start time (ISO 8601) captured at recording start.
+    start_time_iso: String,
+    /// When true, a Capture event is auto-inserted after each user action.
+    auto_capture: bool,
 }
 
 struct PreviewState {
@@ -194,6 +248,10 @@ struct PreviewState {
     perf_samples: Vec<FrameTimings>,
     /// Monotonic reference point for host-provided time.
     start_instant: Instant,
+    /// Recording mode state (None = normal testbed mode).
+    recording: Option<RecordingState>,
+    /// Shared buffer for fetch events recorded during recording mode.
+    record_fetch_events: Arc<Mutex<Vec<TimelineEvent>>>,
 }
 
 // Stats panel position: empty area right of SMALL tile
@@ -310,16 +368,51 @@ impl App {
             .join("widget_data")
             .join(&widget_name);
 
+        // Determine active recording tile index (if any)
+        let record_active_idx = self.record_size.as_deref().map(|s| match s {
+            "large" => 1,
+            "medium" => 2,
+            "small" => 3,
+            // "full" and unknown sizes default to tile 0
+            _ => 0,
+        });
+        let record_widget_root = self
+            .record_size
+            .as_ref()
+            .and_then(|_| find_widget_root(&self.wasm_path));
+        // Shared buffer for fetch events recorded by the runtime's fetch observer
+        let record_fetch_events: Arc<Mutex<Vec<TimelineEvent>>> = Arc::new(Mutex::new(Vec::new()));
+
         let mut tiles = Vec::with_capacity(4);
-        for &(x, y, w, h, label) in &TILE_DEFS {
+        for (tile_idx, &(x, y, w, h, label)) in TILE_DEFS.iter().enumerate() {
             // FBOs at logical resolution — the blit to screen handles upscaling
             let (pw, ph) = (w, h);
             let (fbo, texture) = create_fbo(&gl, pw, ph, true)?;
             let fbo_id = fbo.0.get();
             let kv_path = kv_base.join(label.to_ascii_lowercase());
+            // Recording tile: wipe KV to start fresh (matches capture behavior)
+            if record_active_idx == Some(tile_idx) {
+                let _ = std::fs::remove_dir_all(&kv_path);
+                let _ = std::fs::create_dir_all(&kv_path);
+            }
             // Pre-populate KV from secrets.ini (if present)
             seed_kv_from_secrets(&self.wasm_path, &kv_path);
-            let runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, &kv_path)
+
+            // Active recording tile gets fixture-recording RuntimeConfig with unified observer
+            let rt_config = if record_active_idx == Some(tile_idx) {
+                fixtures::build_unified_recording_config(
+                    kv_path.clone(),
+                    record_fetch_events.clone(),
+                    Instant::now(),
+                )
+            } else {
+                RuntimeConfig {
+                    kv_store_path: Some(kv_path.clone()),
+                    ..RuntimeConfig::default()
+                }
+            };
+
+            let runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, rt_config)
                 .context("Failed to create runtime")?;
             tiles.push(PreviewTile {
                 runtime,
@@ -362,6 +455,36 @@ impl App {
             .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
         window.set_title(&format!("{widget_name} — SDK {major}.{minor}.{patch}"));
 
+        // Set up recording mode if requested
+        let now_instant = Instant::now();
+        let recording =
+            record_active_idx
+                .zip(self.record_size.as_ref())
+                .map(|(active_tile, size_name)| {
+                    // Snapshot KV state at recording start
+                    let kv_snapshot = snapshot_kv_dir(&tiles[active_tile].kv_path);
+                    // Drain any fetch events that accumulated during init
+                    record_fetch_events
+                        .lock()
+                        .expect("BUG: fetch events poisoned")
+                        .clear();
+                    RecordingState {
+                        active_tile,
+                        size_name: size_name.clone(),
+                        events: Vec::new(),
+                        interaction: InteractionState::new(),
+                        gesture: None,
+                        widget_root: record_widget_root,
+                        recording_start: now_instant,
+                        scroll_offset: 0.0,
+                        kv_snapshot,
+                        start_time_iso: chrono::Utc::now()
+                            .format("%Y-%m-%dT%H:%M:%S%:z")
+                            .to_string(),
+                        auto_capture: true,
+                    }
+                });
+
         self.state = Some(PreviewState {
             tiles,
             checker_fbo,
@@ -389,6 +512,8 @@ impl App {
             frame_count: 0,
             perf_samples: Vec::new(),
             start_instant: Instant::now(),
+            recording,
+            record_fetch_events,
         });
         Ok(())
     }
@@ -485,6 +610,7 @@ impl ApplicationHandler for App {
 
 // ── Event handling ─────────────────────────────────────────────────
 
+#[expect(clippy::too_many_lines, clippy::needless_pass_by_value)]
 fn handle_preview_event(
     wasm_path: &Path,
     state: &mut PreviewState,
@@ -492,14 +618,13 @@ fn handle_preview_event(
     event: WindowEvent,
 ) {
     match event {
-        WindowEvent::CloseRequested => event_loop.exit(),
-
-        WindowEvent::KeyboardInput { event, .. } => {
-            if event.state == ElementState::Pressed
-                && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
-            {
-                event_loop.exit();
+        WindowEvent::CloseRequested => {
+            if state.recording.is_some() {
+                // Abort recording — discard events, no file written
+                state.recording = None;
+                eprintln!("Recording aborted (window closed)");
             }
+            event_loop.exit();
         }
 
         WindowEvent::CursorMoved { position, .. } => {
@@ -509,6 +634,13 @@ fn handle_preview_event(
             if state.mouse_down
                 && let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos)
             {
+                // In recording mode, update gesture tracker for active tile
+                if let Some(ref mut rec) = state.recording
+                    && idx == rec.active_tile
+                    && let Some(ref mut g) = rec.gesture
+                {
+                    g.current_pos = (lx as f32, ly as f32);
+                }
                 state.tiles[idx]
                     .runtime
                     .push_touch_event(TouchEvent::Move { x: lx, y: ly });
@@ -522,36 +654,77 @@ fn handle_preview_event(
             ..
         } => {
             if let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos) {
-                match btn_state {
-                    ElementState::Pressed => {
-                        state.mouse_down = true;
-                        state.tiles[idx]
-                            .runtime
-                            .push_touch_event(TouchEvent::Down { x: lx, y: ly });
-                        state.needs_render = true;
+                // In recording mode, only allow interaction with active tile
+                if let Some(ref mut rec) = state.recording {
+                    if idx == rec.active_tile {
+                        match btn_state {
+                            ElementState::Pressed => {
+                                state.mouse_down = true;
+                                // Start gesture tracking
+                                let element = state.tiles[idx].runtime.hit_test(lx, ly);
+                                rec.gesture = Some(GestureTracker {
+                                    start_pos: (lx as f32, ly as f32),
+                                    current_pos: (lx as f32, ly as f32),
+                                    start_element: element,
+                                });
+                                state.tiles[idx]
+                                    .runtime
+                                    .push_touch_event(TouchEvent::Down { x: lx, y: ly });
+                                state.needs_render = true;
+                            }
+                            ElementState::Released => {
+                                state.mouse_down = false;
+                                // Classify and record the gesture
+                                if let Some(gesture) = rec.gesture.take() {
+                                    classify_and_record_gesture(rec, &gesture);
+                                }
+                                state.tiles[idx]
+                                    .runtime
+                                    .push_touch_event(TouchEvent::Up { x: lx, y: ly });
+                                state.needs_render = true;
+                            }
+                        }
+                    } else {
+                        // Ignore clicks on non-active tiles
+                        if btn_state == ElementState::Released {
+                            state.mouse_down = false;
+                        }
                     }
-                    ElementState::Released => {
-                        state.mouse_down = false;
-                        state.tiles[idx]
-                            .runtime
-                            .push_touch_event(TouchEvent::Up { x: lx, y: ly });
-                        state.needs_render = true;
+                } else {
+                    // Normal mode
+                    match btn_state {
+                        ElementState::Pressed => {
+                            state.mouse_down = true;
+                            state.tiles[idx]
+                                .runtime
+                                .push_touch_event(TouchEvent::Down { x: lx, y: ly });
+                            state.needs_render = true;
+                        }
+                        ElementState::Released => {
+                            state.mouse_down = false;
+                            state.tiles[idx]
+                                .runtime
+                                .push_touch_event(TouchEvent::Up { x: lx, y: ly });
+                            state.needs_render = true;
+                        }
                     }
                 }
             } else if let Some((lx, ly)) = hit_test_stats(state.mouse_pos) {
+                // Stats/recording panel interaction
+                let interaction = if let Some(ref mut rec) = state.recording {
+                    &mut rec.interaction
+                } else {
+                    &mut state.stats_interaction
+                };
                 match btn_state {
                     ElementState::Pressed => {
                         state.mouse_down = true;
-                        state
-                            .stats_interaction
-                            .push_event(TouchEvent::Down { x: lx, y: ly });
+                        interaction.push_event(TouchEvent::Down { x: lx, y: ly });
                         state.needs_render = true;
                     }
                     ElementState::Released => {
                         state.mouse_down = false;
-                        state
-                            .stats_interaction
-                            .push_event(TouchEvent::Up { x: lx, y: ly });
+                        interaction.push_event(TouchEvent::Up { x: lx, y: ly });
                         state.needs_render = true;
                     }
                 }
@@ -565,17 +738,46 @@ fn handle_preview_event(
                 MouseScrollDelta::LineDelta(_, y) => (-y * 30.0) as i32,
                 MouseScrollDelta::PixelDelta(pos) => -pos.y as i32,
             };
-            if delta_y != 0
-                && let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos)
-            {
-                state.tiles[idx]
-                    .runtime
-                    .push_touch_event(TouchEvent::Scroll {
-                        x: lx,
-                        y: ly,
-                        delta_y,
-                    });
-                state.needs_render = true;
+            if delta_y != 0 {
+                if let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos) {
+                    // In recording mode, only forward scroll to active tile
+                    if state
+                        .recording
+                        .as_ref()
+                        .is_none_or(|r| idx == r.active_tile)
+                    {
+                        state.tiles[idx]
+                            .runtime
+                            .push_touch_event(TouchEvent::Scroll {
+                                x: lx,
+                                y: ly,
+                                delta_y,
+                            });
+                        // Record scroll wheel as a scroll event
+                        if let Some(ref mut rec) = state.recording
+                            && idx == rec.active_tile
+                            && let Some(element) = state.tiles[idx].runtime.hit_test(lx, ly)
+                        {
+                            let at_ms = rec.recording_start.elapsed().as_millis() as u64;
+                            eprintln!("Recording: scroll(#{element}, {delta_y})");
+                            rec.events.push(TimelineEvent {
+                                at_ms,
+                                event: UnifiedEvent::Scroll {
+                                    element,
+                                    delta: delta_y,
+                                },
+                            });
+                            auto_scroll_log(rec);
+                        }
+                        state.needs_render = true;
+                    }
+                } else if let Some((_lx, _ly)) = hit_test_stats(state.mouse_pos) {
+                    // Scroll on the recording panel — scroll the step log
+                    if let Some(ref mut rec) = state.recording {
+                        rec.scroll_offset = (rec.scroll_offset + delta_y as f32).max(0.0);
+                        state.needs_render = true;
+                    }
+                }
             }
         }
 
@@ -614,13 +816,17 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
                 continue;
             };
             let fbo_id = fbo.0.get();
+            let rt_config = RuntimeConfig {
+                kv_store_path: Some(tile.kv_path.clone()),
+                ..RuntimeConfig::default()
+            };
             match create_runtime(
                 wasm_path,
                 &state.gl_config,
                 tile.w,
                 tile.h,
                 fbo_id,
-                &tile.kv_path,
+                rt_config,
             ) {
                 Ok(new_runtime) => {
                     tile.runtime = new_runtime; // drops old runtime → deletes old FBO
@@ -665,7 +871,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
 
     // Set host-provided time on all tiles
     let mono_ms = state.start_instant.elapsed().as_millis() as u64;
-    let wall_time = Local::now();
+    let wall_time = Local::now().fixed_offset();
     for tile in &mut state.tiles {
         tile.runtime.set_time(wall_time, mono_ms);
     }
@@ -681,22 +887,51 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         tile.runtime.deliver_http_requests();
     }
 
-    // Render stats panel into its dedicated FBO via its own FemtoVG renderer.
+    // Drain live network events into the recording log so they appear in the panel.
+    if let Some(ref mut rec) = state.recording {
+        // Fetch events from the shared observer buffer
+        let mut fetch_buf = state
+            .record_fetch_events
+            .lock()
+            .expect("BUG: fetch events poisoned");
+        rec.events.append(&mut *fetch_buf);
+        drop(fetch_buf);
+
+        // Runtime-recorded events (WS, mDNS, SSDP, UDP, socket)
+        let runtime_events = state.tiles[rec.active_tile].runtime.take_recorded_events();
+        if !runtime_events.is_empty() {
+            let timeline = fixtures::fixture_events_to_timeline(&runtime_events);
+            rec.events.extend(timeline);
+        }
+
+        // Keep sorted by timestamp
+        rec.events.sort_by_key(|e| e.at_ms);
+    }
+
+    // Render stats/recording panel into its dedicated FBO via its own FemtoVG renderer.
     let reload_clicked;
+    let mut recording_done = false;
     {
         let renderer = &mut state.stats_renderer;
         let w = STATS_W as f32;
         let h = STATS_H as f32;
         renderer.begin_frame(STATS_W, STATS_H, 1.0);
 
-        state.stats_interaction.begin_frame();
-        reload_clicked = draw_stats_panel(
-            renderer,
-            &mut state.stats_interaction,
-            w,
-            h,
-            &state.perf_overlay,
-        );
+        if let Some(ref mut rec) = state.recording {
+            rec.interaction.begin_frame();
+            let result = draw_recording_panel(renderer, rec, w, h);
+            reload_clicked = false;
+            recording_done = result.done;
+        } else {
+            state.stats_interaction.begin_frame();
+            reload_clicked = draw_stats_panel(
+                renderer,
+                &mut state.stats_interaction,
+                w,
+                h,
+                &state.perf_overlay,
+            );
+        }
         renderer.flush();
     }
 
@@ -763,7 +998,8 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
 
     // Blit each tile FBO to screen — FBOs are logical, screen is physical
     let dpi = state.dpi_scale;
-    for tile in &state.tiles {
+    let active_tile_idx = state.recording.as_ref().map(|r| r.active_tile);
+    for (i, tile) in state.tiles.iter().enumerate() {
         blit_fbo_to_screen(
             &state.gl,
             tile.fbo,
@@ -775,6 +1011,29 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             scaled(tile.h, dpi),
             sh,
         );
+        // In recording mode, dim non-active tiles with a dark overlay
+        if let Some(active) = active_tile_idx {
+            if i == active {
+                // Draw highlight border around active tile
+                draw_highlight_border(
+                    &state.gl,
+                    scaled(tile.x, dpi),
+                    scaled(tile.y, dpi),
+                    scaled(tile.w, dpi),
+                    scaled(tile.h, dpi),
+                    sh,
+                );
+            } else {
+                draw_dim_overlay(
+                    &state.gl,
+                    scaled(tile.x, dpi),
+                    scaled(tile.y, dpi),
+                    scaled(tile.w, dpi),
+                    scaled(tile.h, dpi),
+                    sh,
+                );
+            }
+        }
     }
     // Blit stats panel (logical FBO → physical screen position)
     blit_fbo_to_screen(
@@ -792,6 +1051,12 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
     // Reset = full WASM reload (same as hot-reload)
     if reload_clicked {
         state.pending_reload = true;
+    }
+
+    // Recording: [Done] was clicked — save fixture and exit
+    if recording_done {
+        finish_recording(state, wasm_path);
+        std::process::exit(0);
     }
 
     unsafe {
@@ -1005,7 +1270,7 @@ fn create_runtime(
     width: u32,
     height: u32,
     fbo_id: u32,
-    kv_path: &Path,
+    rt_config: RuntimeConfig,
 ) -> Result<WasmWidgetRuntime> {
     let wasm_bytes = std::fs::read(wasm_path).context("Failed to read WASM file")?;
     let gl_display = gl_config.display();
@@ -1016,10 +1281,7 @@ fn create_runtime(
             width,
             height,
             fbo_id,
-            RuntimeConfig {
-                kv_store_path: Some(kv_path.to_owned()),
-                ..RuntimeConfig::default()
-            },
+            rt_config,
         )
     }
     .context("Failed to create runtime")
@@ -1222,66 +1484,548 @@ fn write_perf_report(path: &Path, samples: &[FrameTimings]) {
     }
 }
 
-/// Load `secrets.ini` from the example directory and write each key-value
-/// pair into the tile's KV directory. The file uses a trivial format:
-///
-/// ```text
-/// # comment
-/// jellyfin_api_key = 3bc104ec9d5247679171d17211ddbe81
-/// kodi_password = kodi
-/// ```
-///
-/// The file is searched relative to the WASM file: walk up from the WASM
-/// binary until we find `secrets.ini` (stops at the `examples/` level).
-fn seed_kv_from_secrets(wasm_path: &Path, kv_dir: &Path) {
-    // Walk up from wasm file to find secrets.ini
-    let mut dir = wasm_path.parent();
-    let mut secrets_path = None;
-    for _ in 0..6 {
-        let Some(d) = dir else { break };
-        let candidate = d.join("secrets.ini");
-        if candidate.exists() {
-            secrets_path = Some(candidate);
-            break;
-        }
-        dir = d.parent();
+// seed_kv_from_secrets and find_widget_root are imported from fixtures module.
+
+// ── Recording mode ─────────────────────────────────────────────────
+
+/// Minimum displacement (in px) to distinguish a click from a scroll/drag.
+const GESTURE_THRESHOLD: f32 = 5.0;
+
+/// Result of drawing the recording panel.
+struct RecordingPanelResult {
+    done: bool,
+}
+
+/// Format a timeline event for the recording panel log.
+/// Map a unified event to its dev icon ID.
+fn event_icon_id(event: &UnifiedEvent) -> u16 {
+    match event {
+        UnifiedEvent::Capture { .. } => ICON_DEV_CAMERA,
+        UnifiedEvent::Click { .. } | UnifiedEvent::Drag { .. } => ICON_DEV_CURSOR,
+        UnifiedEvent::Scroll { .. } => ICON_DEV_SCROLL,
+        UnifiedEvent::Fetch { .. }
+        | UnifiedEvent::WsMessage { .. }
+        | UnifiedEvent::SocketData { .. }
+        | UnifiedEvent::UdpResponse { .. }
+        | UnifiedEvent::SsdpFound { .. }
+        | UnifiedEvent::MdnsFound { .. } => ICON_DEV_DOWNLOAD,
+        UnifiedEvent::WsOpen { .. } | UnifiedEvent::SocketConnected { .. } => ICON_DEV_UPLOAD,
+        UnifiedEvent::WsClose { .. }
+        | UnifiedEvent::SocketClosed { .. }
+        | UnifiedEvent::SsdpRemoved { .. }
+        | UnifiedEvent::MdnsRemoved { .. } => ICON_DEV_UNLINK,
     }
-    let Some(path) = secrets_path else { return };
+}
 
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("failed to read {}: {e}", path.display());
-            return;
-        }
-    };
+/// Is this a user-initiated action (vs network/system)?
+fn is_user_event(event: &UnifiedEvent) -> bool {
+    matches!(
+        event,
+        UnifiedEvent::Capture { .. }
+            | UnifiedEvent::Click { .. }
+            | UnifiedEvent::Scroll { .. }
+            | UnifiedEvent::Drag { .. }
+    )
+}
 
-    let _ = std::fs::create_dir_all(kv_dir);
-    let mut count = 0_u32;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
+/// Short label for the event log (icon carries the type info).
+fn format_event_label(event: &UnifiedEvent) -> String {
+    match event {
+        UnifiedEvent::Capture { duration_ms, fps } => match (duration_ms, fps) {
+            (Some(d), Some(f)) => format!("capture({d}ms, {f}fps)"),
+            (Some(d), None) => format!("capture({d}ms)"),
+            _ => "capture".to_owned(),
+        },
+        UnifiedEvent::Click { element } => format!("#{element}"),
+        UnifiedEvent::Scroll { element, delta } => format!("#{element}  Δ{delta}"),
+        UnifiedEvent::Drag { element, from, to } => {
+            format!("#{element}  {from:.0}→{to:.0}")
         }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = value.trim();
-        if key.is_empty() {
-            continue;
+        UnifiedEvent::Fetch {
+            method,
+            url,
+            status,
+            ..
+        } => format!("{method} {status} {url}"),
+        UnifiedEvent::WsOpen { ws_id } | UnifiedEvent::WsMessage { ws_id, .. } => {
+            format!("ws#{ws_id}")
         }
-        let kv_file = kv_dir.join(key);
-        // Only seed if the key doesn't already exist (don't overwrite runtime changes)
-        if !kv_file.exists() {
-            if let Err(e) = std::fs::write(&kv_file, value.as_bytes()) {
-                tracing::warn!("failed to write KV {key}: {e}");
+        UnifiedEvent::WsClose { ws_id, code } => format!("ws#{ws_id} code={code}"),
+        UnifiedEvent::SocketConnected { socket_id }
+        | UnifiedEvent::SocketData { socket_id, .. } => format!("tcp#{socket_id}"),
+        UnifiedEvent::SocketClosed { socket_id, code } => format!("tcp#{socket_id} code={code}"),
+        UnifiedEvent::SsdpFound { search_id, .. } | UnifiedEvent::SsdpRemoved { search_id, .. } => {
+            format!("ssdp#{search_id}")
+        }
+        UnifiedEvent::MdnsFound { browse_id, .. } | UnifiedEvent::MdnsRemoved { browse_id, .. } => {
+            format!("mdns#{browse_id}")
+        }
+        UnifiedEvent::UdpResponse {
+            broadcast_id,
+            source,
+            ..
+        } => format!("udp#{broadcast_id} ← {source}"),
+    }
+}
+
+/// A display row in the recording panel — either a single event or a grouped network summary.
+enum LogRow<'a> {
+    /// A single event (user action or standalone network event).
+    Single(&'a TimelineEvent),
+    /// A group of consecutive network events collapsed into one row.
+    Group {
+        at_ms: u64,
+        count: usize,
+        icon_id: u16,
+    },
+}
+
+/// Build display rows from the event list, grouping consecutive network events.
+fn build_log_rows(events: &[TimelineEvent]) -> Vec<LogRow<'_>> {
+    let mut rows = Vec::new();
+    let mut i = 0;
+    while i < events.len() {
+        let ev = &events[i];
+        if is_user_event(&ev.event) {
+            rows.push(LogRow::Single(ev));
+            i += 1;
+        } else {
+            // Count consecutive network events with the same icon
+            let icon = event_icon_id(&ev.event);
+            let start = i;
+            i += 1;
+            while i < events.len()
+                && !is_user_event(&events[i].event)
+                && event_icon_id(&events[i].event) == icon
+            {
+                i += 1;
+            }
+            let count = i - start;
+            if count == 1 {
+                rows.push(LogRow::Single(ev));
             } else {
-                count += 1;
+                rows.push(LogRow::Group {
+                    at_ms: ev.at_ms,
+                    count,
+                    icon_id: icon,
+                });
             }
         }
     }
-    if count > 0 {
-        tracing::info!("seeded {count} KV key(s) from {}", path.display());
+    rows
+}
+
+/// Draw the recording panel (replaces stats panel when recording).
+fn draw_recording_panel(
+    renderer: &mut dyn Renderer,
+    rec: &mut RecordingState,
+    w: f32,
+    h: f32,
+) -> RecordingPanelResult {
+    let pad = 8.0;
+    let btn_sz = ButtonSize::Small;
+    let btn_h = btn_sz.height();
+    let gap = 4.0;
+    let row_height = 18.0;
+    let icon_sz = 12.0;
+    let icon_gap = 4.0;
+    let font_sz = 11.0;
+    let time_w = 42.0;
+
+    // ── Header ──
+    let elapsed = rec.recording_start.elapsed().as_secs();
+    let header = format!("Recording: {} ({}s)", rec.size_name.to_uppercase(), elapsed);
+    renderer.draw_text(&header, pad, pad, 14.0, 0xFFFF_FFFF);
+
+    // ── Event log (scrollable) ──
+    let log_y = pad + 22.0;
+    let log_h = h - log_y - btn_h - gap - pad;
+
+    let rows = build_log_rows(&rec.events);
+    let total_content = rows.len() as f32 * row_height;
+    let max_scroll = (total_content - log_h).max(0.0);
+    rec.scroll_offset = rec.scroll_offset.min(max_scroll);
+
+    for (i, row) in rows.iter().enumerate() {
+        let y = log_y + i as f32 * row_height - rec.scroll_offset;
+        if y + row_height < log_y || y > log_y + log_h {
+            continue;
+        }
+
+        let (at_ms, icon_id, label, is_user) = match row {
+            LogRow::Single(ev) => (
+                ev.at_ms,
+                event_icon_id(&ev.event),
+                format_event_label(&ev.event),
+                is_user_event(&ev.event),
+            ),
+            LogRow::Group {
+                at_ms,
+                count,
+                icon_id,
+            } => (*at_ms, *icon_id, format!("×{count}"), false),
+        };
+
+        let secs = at_ms as f64 / 1_000.0;
+        let color = if is_user { 0xFFFF_FFFF } else { 0x9999_99FF };
+        let time_color = if is_user { 0xBBBB_BBFF } else { 0x7777_77FF };
+
+        // Timestamp
+        let time_str = format!("{secs:.1}s");
+        renderer.draw_text(&time_str, pad, y + 2.0, font_sz, time_color);
+
+        // Icon
+        let icon_x = pad + time_w;
+        let icon_y = y + (row_height - icon_sz) / 2.0;
+        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, color, icon_id, true);
+
+        // Label
+        let label_x = icon_x + icon_sz + icon_gap;
+        renderer.draw_text(&label, label_x, y + 2.0, font_sz, color);
+    }
+
+    // ── Bottom button row ──
+    draw_recording_buttons(renderer, rec, w, h, pad, btn_h, btn_sz)
+}
+
+/// Draw [Auto] [Capture] [Done] buttons at the bottom of the recording panel.
+fn draw_recording_buttons(
+    renderer: &mut dyn Renderer,
+    rec: &mut RecordingState,
+    w: f32,
+    h: f32,
+    pad: f32,
+    btn_h: f32,
+    btn_sz: ButtonSize,
+) -> RecordingPanelResult {
+    let btn_y = h - pad - btn_h;
+
+    // [Auto] toggle — auto-insert capture after each user action
+    let auto_label = if rec.auto_capture { "Auto ✓" } else { "Auto" };
+    let auto_w = renderer.measure_text(auto_label, btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
+    let auto_clicked = draw_button(
+        renderer,
+        &mut rec.interaction,
+        "rec_auto",
+        auto_label,
+        pad,
+        btn_y,
+        auto_w,
+        btn_h,
+        if rec.auto_capture {
+            ButtonStyle::Primary
+        } else {
+            ButtonStyle::Secondary
+        },
+        btn_sz,
+        0,
+        false,
+        None,
+    );
+    if auto_clicked.0 {
+        rec.auto_capture = !rec.auto_capture;
+        eprintln!(
+            "Recording: auto-capture {}",
+            if rec.auto_capture { "ON" } else { "OFF" }
+        );
+    }
+
+    // [Capture] button (manual)
+    let capture_label = "Capture";
+    let capture_w =
+        renderer.measure_text(capture_label, btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
+    let capture_clicked = draw_button(
+        renderer,
+        &mut rec.interaction,
+        "rec_capture",
+        capture_label,
+        pad + auto_w + 4.0,
+        btn_y,
+        capture_w,
+        btn_h,
+        ButtonStyle::Secondary,
+        btn_sz,
+        0,
+        false,
+        None,
+    );
+    if capture_clicked.0 {
+        let at_ms = rec.recording_start.elapsed().as_millis() as u64;
+        rec.events.push(TimelineEvent {
+            at_ms,
+            event: UnifiedEvent::Capture {
+                duration_ms: Some(2_000),
+                fps: Some(4),
+            },
+        });
+        eprintln!("Recording: capture(2000ms, 4fps)");
+        auto_scroll_log(rec);
+    }
+
+    // [Done] button (right-aligned)
+    let done_label = "Done";
+    let done_w = renderer.measure_text(done_label, btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
+    let done_clicked = draw_button(
+        renderer,
+        &mut rec.interaction,
+        "rec_done",
+        done_label,
+        w - pad - done_w,
+        btn_y,
+        done_w,
+        btn_h,
+        ButtonStyle::Danger,
+        btn_sz,
+        0,
+        false,
+        None,
+    );
+
+    RecordingPanelResult {
+        done: done_clicked.0,
     }
 }
+
+/// Classify a completed gesture and append a `TimelineEvent` to the recording.
+fn classify_and_record_gesture(rec: &mut RecordingState, gesture: &GestureTracker) {
+    let dx = gesture.current_pos.0 - gesture.start_pos.0;
+    let dy = gesture.current_pos.1 - gesture.start_pos.1;
+    let adx = dx.abs();
+    let ady = dy.abs();
+    let at_ms = rec.recording_start.elapsed().as_millis() as u64;
+
+    let Some(ref id) = gesture.start_element else {
+        if adx < GESTURE_THRESHOLD && ady < GESTURE_THRESHOLD {
+            eprintln!("Recording: click on empty area (no element ID)");
+        }
+        return;
+    };
+
+    let event = if adx < GESTURE_THRESHOLD && ady < GESTURE_THRESHOLD {
+        // Click
+        eprintln!("Recording: click(#{id})");
+        UnifiedEvent::Click {
+            element: id.clone(),
+        }
+    } else if ady >= GESTURE_THRESHOLD && ady > adx {
+        // Scroll (vertical drag)
+        let delta = dy.round() as i32;
+        eprintln!("Recording: scroll(#{id}, {delta})");
+        UnifiedEvent::Scroll {
+            element: id.clone(),
+            delta,
+        }
+    } else if adx >= GESTURE_THRESHOLD && adx > ady {
+        // Horizontal drag — record as fractional positions
+        // (would need element bounds to compute fractions; for now use pixel delta)
+        eprintln!(
+            "Recording: drag(#{id}, {:.2}, {:.2})",
+            gesture.start_pos.0, gesture.current_pos.0
+        );
+        UnifiedEvent::Drag {
+            element: id.clone(),
+            from: f64::from(gesture.start_pos.0),
+            to: f64::from(gesture.current_pos.0),
+        }
+    } else {
+        return;
+    };
+
+    rec.events.push(TimelineEvent { at_ms, event });
+
+    // Auto-insert a capture event after each user action
+    if rec.auto_capture {
+        let capture_at = at_ms + AUTO_CAPTURE_DELAY_MS;
+        rec.events.push(TimelineEvent {
+            at_ms: capture_at,
+            event: UnifiedEvent::Capture {
+                duration_ms: Some(2_000),
+                fps: Some(4),
+            },
+        });
+        eprintln!("Recording: auto-capture at {capture_at}ms");
+    }
+
+    auto_scroll_log(rec);
+}
+
+/// Auto-scroll the recording log to the bottom.
+fn auto_scroll_log(rec: &mut RecordingState) {
+    let row_height = 18.0_f32;
+    let log_h = STATS_H as f32 - 8.0 - 22.0 - ButtonSize::Small.height() - 4.0 - 8.0;
+    let row_count = build_log_rows(&rec.events).len() as f32;
+    rec.scroll_offset = (row_count * row_height - log_h).max(0.0);
+}
+
+/// Build unified fixture and write it to disk.
+fn finish_recording(state: &mut PreviewState, _wasm_path: &Path) {
+    // Take recording state to avoid borrow conflicts with tiles
+    let Some(rec) = state.recording.take() else {
+        return;
+    };
+
+    // Collect network events from the runtime
+    let tile = &mut state.tiles[rec.active_tile];
+    let runtime_events = tile.runtime.take_recorded_events();
+    let network_timeline = fixtures::fixture_events_to_timeline(&runtime_events);
+
+    // Collect fetch events from the shared buffer
+    let fetch_timeline: Vec<TimelineEvent> = std::mem::take(
+        &mut *state
+            .record_fetch_events
+            .lock()
+            .expect("BUG: fetch events poisoned"),
+    );
+
+    // Merge all event sources: user actions + network + fetch
+    let mut all_events = rec.events;
+    all_events.extend(network_timeline);
+    all_events.extend(fetch_timeline);
+
+    // Sort by at_ms (stable sort preserves insertion order for equal timestamps)
+    all_events.sort_by_key(|e| e.at_ms);
+
+    // Merge consecutive scroll events on the same element into one
+    let mut merged = Vec::with_capacity(all_events.len());
+    for event in all_events {
+        let should_merge = if let UnifiedEvent::Scroll { ref element, .. } = event.event {
+            merged.last().is_some_and(|prev: &TimelineEvent| {
+                matches!(&prev.event, UnifiedEvent::Scroll { element: prev_el, .. } if prev_el == element)
+            })
+        } else {
+            false
+        };
+        if should_merge {
+            if let UnifiedEvent::Scroll { delta, .. } = event.event
+                && let Some(prev) = merged.last_mut()
+                && let UnifiedEvent::Scroll {
+                    delta: ref mut prev_delta,
+                    ..
+                } = prev.event
+            {
+                *prev_delta += delta;
+            }
+        } else {
+            merged.push(event);
+        }
+    }
+    let all_events = merged;
+
+    // Build the unified fixture
+    let fixture = UnifiedFixture {
+        header: FixtureHeader {
+            time: rec.start_time_iso,
+            kv: rec.kv_snapshot,
+        },
+        events: all_events,
+    };
+
+    // Determine output path
+    let Some(widget_root) = rec.widget_root else {
+        eprintln!(
+            "{} could not find widget root — fixture not saved",
+            "error:".red().bold()
+        );
+        eprintln!("Fixture would contain {} event(s)", fixture.events.len());
+        return;
+    };
+
+    let fixture_dir = widget_root.join("capture").join("fixtures");
+    let fixture_path = fixture_dir.join(format!("{}.jsonl.gz", rec.size_name));
+
+    // Validate before writing
+    if let Err(e) = bmc_wasm_runtime::unified_fixture::validate_fixture(&fixture) {
+        eprintln!(
+            "{} fixture validation failed: {e:#}",
+            "warning:".yellow().bold()
+        );
+        eprintln!("         writing anyway (you can fix the fixture manually)");
+    }
+
+    // Write fixture file
+    if let Err(e) = fixtures::write_jsonl_fixture(&fixture_path, &fixture) {
+        eprintln!("{} failed to write fixture: {e:#}", "error:".red().bold());
+        return;
+    }
+    eprintln!(
+        "{} {} event(s) → {}",
+        "wrote:".green().bold(),
+        fixture.events.len(),
+        fixture_path.display()
+    );
+
+    // Update config.toml with fixture path
+    let config_path = widget_root.join("capture").join("config.toml");
+    let fixture_rel = format!("fixtures/{}.jsonl.gz", rec.size_name);
+    if let Err(e) =
+        fixtures::update_config_toml_fixtures(&config_path, &rec.size_name, &fixture_rel)
+    {
+        eprintln!(
+            "{} failed to update config.toml: {e:#}",
+            "warning:".yellow().bold()
+        );
+    } else {
+        eprintln!("{} {}", "updated:".green().bold(), config_path.display());
+    }
+}
+
+/// Draw a semi-transparent dark overlay on a screen region (for dimming non-active tiles).
+#[expect(clippy::cast_possible_wrap)]
+fn draw_dim_overlay(gl: &glow::Context, x: u32, y: u32, w: u32, h: u32, screen_h: u32) {
+    unsafe {
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        gl.enable(glow::SCISSOR_TEST);
+        // OpenGL Y is bottom-up
+        let gl_y = screen_h as i32 - y as i32 - h as i32;
+        gl.scissor(x as i32, gl_y, w as i32, h as i32);
+        gl.enable(glow::BLEND);
+        gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+        gl.clear_color(0.0, 0.0, 0.0, 0.7);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+        gl.disable(glow::BLEND);
+        gl.disable(glow::SCISSOR_TEST);
+    }
+}
+
+/// Draw a 2px highlight border around a screen region (for the active recording tile).
+#[expect(clippy::cast_possible_wrap)]
+fn draw_highlight_border(gl: &glow::Context, x: u32, y: u32, w: u32, h: u32, screen_h: u32) {
+    let border = 2_u32;
+    let color = [0.2, 0.6, 1.0, 1.0]; // blue highlight
+
+    unsafe {
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        gl.enable(glow::SCISSOR_TEST);
+        gl.clear_color(color[0], color[1], color[2], color[3]);
+
+        // OpenGL Y is bottom-up
+        let gl_y = screen_h as i32 - y as i32 - h as i32;
+
+        // Top edge
+        gl.scissor(
+            x as i32,
+            gl_y + h as i32 - border as i32,
+            w as i32,
+            border as i32,
+        );
+        gl.clear(glow::COLOR_BUFFER_BIT);
+        // Bottom edge
+        gl.scissor(x as i32, gl_y, w as i32, border as i32);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+        // Left edge
+        gl.scissor(x as i32, gl_y, border as i32, h as i32);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+        // Right edge
+        gl.scissor(
+            x as i32 + w as i32 - border as i32,
+            gl_y,
+            border as i32,
+            h as i32,
+        );
+        gl.clear(glow::COLOR_BUFFER_BIT);
+
+        gl.disable(glow::SCISSOR_TEST);
+    }
+}
+
+// find_widget_root is imported from fixtures module.

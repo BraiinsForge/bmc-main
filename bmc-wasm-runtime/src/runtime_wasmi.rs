@@ -17,7 +17,7 @@ use bmc_wasm_protocol::{
     FormatPreferences, NumberFormat, SDK_VERSION, SDK_VERSION_EXPORT, TemperatureUnit, UnitSystem,
     version_unpack,
 };
-use chrono::{DateTime, Datelike, Local, Timelike, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, Local, Timelike, Utc};
 use formato::{FormatOptions, Formato};
 use wasmi::{Caller, Extern, Linker};
 
@@ -847,18 +847,13 @@ impl WasmWidgetRuntime {
 
                 let (event_tx, event_rx) = std::sync::mpsc::channel::<WsEvent>();
 
-                if state.event_fixtures.is_some() {
+                if let Some(fixtures) = &mut state.event_fixtures {
                     // Stub mode: no background thread, fixture replay injects events
                     let (msg_tx, _msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
                     state
                         .websockets
                         .insert(ws_id, ActiveWebSocket { msg_tx, event_rx });
-                    state
-                        .event_fixtures
-                        .as_mut()
-                        .expect("BUG: checked above")
-                        .ws_event_txs
-                        .insert(ws_id, event_tx);
+                    fixtures.ws_event_txs.insert(ws_id, event_tx);
                 } else {
                     let (msg_tx, msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
                     state
@@ -915,18 +910,13 @@ impl WasmWidgetRuntime {
 
                 let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
 
-                if state.event_fixtures.is_some() {
+                if let Some(fixtures) = &mut state.event_fixtures {
                     // Stub mode: no background thread, fixture replay injects events
                     let (write_tx, _write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
                     state
                         .sockets
                         .insert(socket_id, ActiveSocket { write_tx, event_rx });
-                    state
-                        .event_fixtures
-                        .as_mut()
-                        .expect("BUG: checked above")
-                        .socket_event_txs
-                        .insert(socket_id, event_tx);
+                    fixtures.socket_event_txs.insert(socket_id, event_tx);
                 } else {
                     let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
                     state
@@ -957,18 +947,13 @@ impl WasmWidgetRuntime {
 
                 let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
 
-                if state.event_fixtures.is_some() {
+                if let Some(fixtures) = &mut state.event_fixtures {
                     // Stub mode: no background thread, fixture replay injects events
                     let (write_tx, _write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
                     state
                         .sockets
                         .insert(socket_id, ActiveSocket { write_tx, event_rx });
-                    state
-                        .event_fixtures
-                        .as_mut()
-                        .expect("BUG: checked above")
-                        .socket_event_txs
-                        .insert(socket_id, event_tx);
+                    fixtures.socket_event_txs.insert(socket_id, event_tx);
                 } else {
                     let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
                     state
@@ -2066,10 +2051,13 @@ impl WasmWidgetRuntime {
     ///
     /// Must be called before each `render()`. The testbed sets these from real
     /// clocks; the capture binary increments by fixed 16ms steps.
-    pub fn set_time(&mut self, system_time: DateTime<Local>, monotonic_ms: u64) {
+    pub fn set_time(&mut self, system_time: DateTime<FixedOffset>, monotonic_ms: u64) {
         let state = self.store.data_mut();
         state.system_time = system_time;
         state.monotonic_ms = monotonic_ms;
+        // Clamp so that wasm_delta doesn't underflow when time rewinds
+        // (e.g. after a capture span resets the timeline cursor).
+        state.last_wasm_render_at_ms = state.last_wasm_render_at_ms.min(monotonic_ms);
     }
 
     /// Take all recorded events (drains the buffer). Used by the capture binary
@@ -2092,56 +2080,84 @@ impl WasmWidgetRuntime {
 
         while ef.cursor < ef.events.len() && ef.events[ef.cursor].at_ms <= monotonic_ms {
             let event = &ef.events[ef.cursor];
-            match &event.kind {
+
+            // For channel-based events, check if the target channel exists.
+            // If not, the widget hasn't opened the connection yet — stop here
+            // and retry next frame (the widget will create the channel during
+            // its render call).
+            let delivered = match &event.kind {
                 FixtureEventKind::WsOpen { ws_id } => {
                     if let Some(tx) = ef.ws_event_txs.get(ws_id) {
                         let _ = tx.send(WsEvent::Open);
+                        true
+                    } else {
+                        false
                     }
                 }
                 FixtureEventKind::WsMessage { ws_id, data } => {
                     if let Some(tx) = ef.ws_event_txs.get(ws_id) {
                         let _ = tx.send(WsEvent::Message(data.clone()));
+                        true
+                    } else {
+                        false
                     }
                 }
                 FixtureEventKind::WsClose { ws_id, code } => {
                     if let Some(tx) = ef.ws_event_txs.get(ws_id) {
                         let _ = tx.send(WsEvent::Close(*code));
+                        true
+                    } else {
+                        false
                     }
                 }
                 FixtureEventKind::SocketConnected { socket_id } => {
                     if let Some(tx) = ef.socket_event_txs.get(socket_id) {
                         let _ = tx.send(SocketEvent::Connected);
+                        true
+                    } else {
+                        false
                     }
                 }
                 FixtureEventKind::SocketData { socket_id, data } => {
                     if let Some(tx) = ef.socket_event_txs.get(socket_id) {
                         let _ = tx.send(SocketEvent::Data(data.clone()));
+                        true
+                    } else {
+                        false
                     }
                 }
                 FixtureEventKind::SocketClosed { socket_id, code } => {
                     if let Some(tx) = ef.socket_event_txs.get(socket_id) {
                         let _ = tx.send(SocketEvent::Closed(*code));
+                        true
+                    } else {
+                        false
                     }
                 }
+                // Discovery events are always deliverable (channels created at init)
                 FixtureEventKind::SsdpFound { search_id, data } => {
                     if let Some(tx) = ef.ssdp_event_txs.get(search_id) {
                         let _ = tx.send(SsdpEvent::Found(data.clone()));
                     }
+                    true
                 }
                 FixtureEventKind::SsdpRemoved { search_id, data } => {
                     if let Some(tx) = ef.ssdp_event_txs.get(search_id) {
                         let _ = tx.send(SsdpEvent::Removed(data.clone()));
                     }
+                    true
                 }
                 FixtureEventKind::MdnsFound { browse_id, data } => {
                     if let Some(tx) = ef.mdns_event_txs.get(browse_id) {
                         let _ = tx.send(MdnsEvent::Found(data.clone()));
                     }
+                    true
                 }
                 FixtureEventKind::MdnsRemoved { browse_id, data } => {
                     if let Some(tx) = ef.mdns_event_txs.get(browse_id) {
                         let _ = tx.send(MdnsEvent::Removed(data.clone()));
                     }
+                    true
                 }
                 FixtureEventKind::UdpResponse {
                     broadcast_id,
@@ -2151,7 +2167,21 @@ impl WasmWidgetRuntime {
                     if let Some(tx) = ef.udp_event_txs.get(broadcast_id) {
                         let _ = tx.send(UdpBroadcastEvent::Response(data.clone(), source.clone()));
                     }
+                    true
                 }
+            };
+
+            if !delivered {
+                // Channel not ready — the widget hasn't opened this connection
+                // yet (it will during its next render call).  Stop here and
+                // retry next frame to preserve causal ordering.
+                tracing::debug!(
+                    cursor = ef.cursor,
+                    at_ms = event.at_ms,
+                    kind = ?event.kind,
+                    "fixture event deferred — channel not yet registered"
+                );
+                break;
             }
             ef.cursor += 1;
         }
@@ -2207,6 +2237,54 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn host_sdk_version() -> (u16, u16, u16) {
         SDK_VERSION
+    }
+
+    /// Look up the screen-space bounds of a registered UI element by string ID.
+    ///
+    /// Delegates to [`InteractionState::element_bounds`]. Must be called after
+    /// a render pass (hit regions are rebuilt each frame).
+    #[must_use]
+    pub fn element_bounds(&self, id: &str) -> Option<crate::interaction::Rect> {
+        self.store.data().interaction.element_bounds(id)
+    }
+
+    /// Return all registered hit region element IDs (sorted).
+    #[must_use]
+    pub fn element_ids(&self) -> Vec<&str> {
+        self.store.data().interaction.element_ids()
+    }
+
+    /// Hit test against registered UI regions.
+    ///
+    /// Delegates to [`InteractionState::hit_test`]. Must be called after
+    /// a render pass (hit regions are rebuilt each frame).
+    #[must_use]
+    pub fn hit_test(&self, x: i32, y: i32) -> Option<String> {
+        self.store.data().interaction.hit_test(x, y)
+    }
+
+    /// Whether a deferred render is pending (widget called `request_frame_after`
+    /// and the deadline hasn't been reached yet).
+    #[must_use]
+    pub fn has_deferred_render(&self) -> bool {
+        let state = self.store.data();
+        state
+            .deferred_wasm_render_at_ms
+            .is_some_and(|deadline| state.monotonic_ms < deadline)
+    }
+
+    /// Whether all fixture events up to the current virtual time have been injected.
+    ///
+    /// Returns `true` when there are no fixtures loaded, or when the cursor has
+    /// advanced past all events whose `at_ms <= monotonic_ms`. Used by interaction
+    /// settlement to avoid waiting for persistent browse/search sessions to close.
+    #[must_use]
+    pub fn fixture_events_caught_up(&self) -> bool {
+        let state = self.store.data();
+        let Some(ref ef) = state.event_fixtures else {
+            return true;
+        };
+        ef.cursor >= ef.events.len() || ef.events[ef.cursor].at_ms > state.monotonic_ms
     }
 
     /// Get the instance for additional exports.
@@ -2287,10 +2365,10 @@ impl WasmWidgetRuntime {
         {
             let state = self.store.data_mut();
             for resp in &responses {
-                if let Some(key) = state.fetch_keys.remove(&resp.request_id) {
-                    if let Some(ref observer) = state.fetch_observer {
-                        observer(&key, resp.status, &resp.body);
-                    }
+                if let Some(key) = state.fetch_keys.remove(&resp.request_id)
+                    && let Some(ref observer) = state.fetch_observer
+                {
+                    observer(&key, resp.status, &resp.body);
                 }
             }
         }

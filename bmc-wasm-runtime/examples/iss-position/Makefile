@@ -19,4 +19,4 @@ preview: ## Start local texture comparison viewer
 
 .PHONY: lint
 lint: ## Type-check tools scripts with their local venv
-	uvx ty check --project $(TOOLS_DIR)
+	uvx ty check --project $(TOOLS_DIR) --python "$$(uv run --project $(TOOLS_DIR) python -c 'import sys; print(sys.prefix)')"
