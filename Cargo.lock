@@ -1152,9 +1152,11 @@ dependencies = [
 name = "bmc-platform"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "index-bmc",
  "strum",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

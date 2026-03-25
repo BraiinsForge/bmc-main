@@ -18,7 +18,7 @@ bmc.workspace = true
 bmc-button.workspace = true
 bmc-led.workspace = true
 bmc-mock-display.workspace = true
-bmc-platform.workspace = true
+bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true
 bmc-support.workspace = true
