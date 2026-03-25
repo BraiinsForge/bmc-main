@@ -20,7 +20,7 @@ bmc-display.workspace = true
 bmc-grpc.workspace = true
 bmc-ipc.workspace = true
 bmc-led.workspace = true
-bmc-platform.workspace = true
+bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-scheduler.workspace = true
 bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true
