@@ -32,6 +32,13 @@ the chicken-and-egg problem: activating the initial profile installs
 the `nix-activator` service, which handles activation on subsequent
 boots.
 
+After the initializer activates the profile, it writes the `nix_init`
+U-Boot env var for the `nix-factory-reset` service.
+
+The initializer also handles the initial servers.json config. It has a
+config embedded in itself and it copies the default config from
+firmware if it exists.
+
 This service will run only after the boot has finalized, only as a
 regular service, not using `boot()` function. In case it detects the
 store is initialized, it exits. The service does not show anything on
@@ -44,7 +51,8 @@ service that will remove the /nix/store so that the bmc initializer
 may perform (re)initialization. During factory reset, the U-Boot
 environment is always cleaned out. Thanks to this the service can
 check it and see that `nix_init` U-Boot variable is missing. When that
-happens, it removes the /mnt/data/nix under /mnt/data.
+happens, it removes the /mnt/data/nix under /mnt/data. There will be a
+mechanism to prevent this for development, `/mnt/data/NIX_INHIBIT_INIT`.
 
 This service has to run before any Nix services so that the store is
 not in use yet. There will be a contract that no Nix service should
