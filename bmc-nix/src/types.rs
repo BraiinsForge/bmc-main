@@ -146,7 +146,7 @@ pub struct ManifestPackage {
 /// Profile generation metadata
 #[derive(Debug, Clone)]
 pub struct ProfileGeneration {
-    pub number: u32,
+    pub number: usize,
     pub path: PathBuf,
     pub manifest: Manifest,
 }
