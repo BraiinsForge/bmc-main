@@ -19,7 +19,6 @@ use bmc_openwrt::{
 use bmc_openwrt::{cli::Args, log::build_panic_hook_with_tracing};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
-use bmc_upgrade::firmware::FirmwareResolver;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
@@ -56,7 +55,6 @@ async fn main() -> Result<()> {
     };
 
     let bmc_index = bmc::firmware::BmcIndex::default();
-    let firmware_resolver = FirmwareResolver::new(bmc_index);
 
     let current_timezone = iana_time_zone::get_timezone()
         .ok()
@@ -110,7 +108,7 @@ async fn main() -> Result<()> {
         config,
         backlight_driver,
         led_driver.0,
-        firmware_resolver,
+        bmc_index,
         Arc::new(Box::new(UEventButtons)),
         compositor,
     )
