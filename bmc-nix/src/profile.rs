@@ -277,7 +277,7 @@ pub async fn build_symlink_tree(
 /// Returns the [`ProfileGeneration`] metadata for the new generation.
 pub async fn build_profile(
     profile_dir: &Path,
-    generation: u32,
+    generation: usize,
     packages: &[ResolvedPackage],
     hooks_dir_name: &str,
     hooks_override_path: Option<&Path>,
@@ -334,7 +334,7 @@ pub async fn build_profile(
 /// Scans existing directories matching the pattern `N-link` (where N is
 /// a number) and returns `max(N) + 1`. Returns `1` if no generations exist
 /// or if the profile directory does not exist.
-pub fn next_generation_number(profile_dir: &Path) -> Result<u32, BuildProfileError> {
+pub fn next_generation_number(profile_dir: &Path) -> Result<usize, BuildProfileError> {
     if !profile_dir.exists() {
         return Ok(1);
     }
@@ -342,7 +342,7 @@ pub fn next_generation_number(profile_dir: &Path) -> Result<u32, BuildProfileErr
     let entries =
         std::fs::read_dir(profile_dir).map_err(|source| BuildProfileError::ReadDir { source })?;
 
-    let mut max_gen: u32 = 0;
+    let mut max_gen: usize = 0;
 
     for entry in entries {
         let entry = entry.map_err(|source| BuildProfileError::ReadDir { source })?;
@@ -361,9 +361,9 @@ pub fn next_generation_number(profile_dir: &Path) -> Result<u32, BuildProfileErr
 }
 
 /// Parse a generation number from a directory name matching `N-link`.
-fn parse_generation_number(name: &str) -> Option<u32> {
+fn parse_generation_number(name: &str) -> Option<usize> {
     let stripped = name.strip_suffix("-link")?;
-    stripped.parse::<u32>().ok()
+    stripped.parse::<usize>().ok()
 }
 
 /// Resolve the path to the current generation, if one exists.
