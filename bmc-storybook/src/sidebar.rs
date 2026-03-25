@@ -201,6 +201,7 @@ fn render_tree_node(
 ) -> bool {
     use crate::icons::icon_image;
     let mut changed = false;
+    let filtering = !filter.is_empty();
 
     let folder_icon = &icons.folder;
     let folder_color = to_egui(bmc_render::colors::GOLD_60);
@@ -211,15 +212,15 @@ fn render_tree_node(
     let icon_size = 12.0;
 
     for (name, child) in &node.children {
-        let dir_matches = !filter.is_empty() && fuzzy_match(name, filter);
-        if !filter.is_empty()
+        let name_matches = filtering && fuzzy_match(name, filter);
+        if filtering
             && !ancestor_matched
-            && !dir_matches
+            && !name_matches
             && !node_matches_filter(child, stories, name, filter)
         {
             continue;
         }
-        let child_ancestor_matched = ancestor_matched || dir_matches;
+        let child_ancestor_matched = ancestor_matched || name_matches;
 
         // Default stories in single-leaf groups: render as a flat selectable
         // entry using the group name (e.g. "ProgressBar" instead of an
@@ -242,19 +243,23 @@ fn render_tree_node(
                 changed = true;
             }
         } else {
-            let resp = egui::CollapsingHeader::new(name)
-                .default_open(false)
-                .show(ui, |ui| {
-                    changed |= render_tree_node(
-                        ui,
-                        child,
-                        stories,
-                        selected_idx,
-                        filter,
-                        child_ancestor_matched,
-                        icons,
-                    );
-                });
+            let mut header = egui::CollapsingHeader::new(name);
+            header = if filtering {
+                header.open(Some(true))
+            } else {
+                header.default_open(false)
+            };
+            let resp = header.show(ui, |ui| {
+                changed |= render_tree_node(
+                    ui,
+                    child,
+                    stories,
+                    selected_idx,
+                    filter,
+                    child_ancestor_matched,
+                    icons,
+                );
+            });
             // Paint folder icon over the default triangle arrow.
             let hr = resp.header_response.rect;
             ui.painter().image(
@@ -271,7 +276,7 @@ fn render_tree_node(
 
     for &idx in &node.stories {
         let entry = &stories[idx];
-        if !filter.is_empty() && !ancestor_matched && !fuzzy_match(&entry.name, filter) {
+        if filtering && !ancestor_matched && !fuzzy_match(&entry.name, filter) {
             continue;
         }
         let is_selected = *selected_idx == Some(idx);
@@ -321,19 +326,26 @@ fn collect_visible_indices(
     ancestor_matched: bool,
     out: &mut Vec<usize>,
 ) {
+    let filtering = !filter.is_empty();
     for (name, child) in &node.children {
-        let dir_matches = !filter.is_empty() && fuzzy_match(name, filter);
-        if !filter.is_empty()
+        let name_matches = filtering && fuzzy_match(name, filter);
+        if filtering
             && !ancestor_matched
-            && !dir_matches
+            && !name_matches
             && !node_matches_filter(child, stories, name, filter)
         {
             continue;
         }
-        collect_visible_indices(child, stories, filter, ancestor_matched || dir_matches, out);
+        collect_visible_indices(
+            child,
+            stories,
+            filter,
+            ancestor_matched || name_matches,
+            out,
+        );
     }
     for &idx in &node.stories {
-        if !filter.is_empty() && !ancestor_matched && !fuzzy_match(&stories[idx].name, filter) {
+        if filtering && !ancestor_matched && !fuzzy_match(&stories[idx].name, filter) {
             continue;
         }
         out.push(idx);

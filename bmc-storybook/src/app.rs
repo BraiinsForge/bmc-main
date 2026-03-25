@@ -172,7 +172,11 @@ impl PerfStats {
     }
 }
 
-#[expect(missing_debug_implementations)]
+#[expect(
+    missing_debug_implementations,
+    clippy::struct_excessive_bools,
+    reason = "UI state naturally uses independent toggle bools"
+)]
 pub struct StorybookApp {
     sidebar: SidebarState,
     ctx: StoryCtx,
@@ -199,6 +203,12 @@ pub struct StorybookApp {
     doc_blocks: Vec<DocBlock>,
     /// Show source code tab instead of preview.
     show_source: bool,
+    /// Left sidebar visibility (toggled via Ctrl+Shift+L).
+    show_sidebar: bool,
+    /// Right controls panel visibility (toggled via Ctrl+Shift+R).
+    show_right_panel: bool,
+    /// Bottom panel visibility (toggled via Ctrl+Shift+B).
+    show_bottom_panel: bool,
     /// When true, animations are frozen (delta_ms = 0).
     anim_paused: bool,
     /// Scrub position in 0.0..=1.0 range (maps to 0..10s of animation time).
@@ -308,6 +318,9 @@ impl StorybookApp {
 
         // Restore persisted state — in hot-reload mode, defer selection until first .so load.
         let mut pending_selection = None;
+        let mut show_sidebar = true;
+        let mut show_right_panel = true;
+        let mut show_bottom_panel = true;
         if let Some(storage) = cc.storage {
             if let Some(name) = storage.get_string("selected_story")
                 && !sidebar.select_by_module_path(&name)
@@ -316,6 +329,15 @@ impl StorybookApp {
             }
             if let Some(filter) = storage.get_string("filter") {
                 sidebar.filter = filter;
+            }
+            if storage.get_string("show_sidebar").as_deref() == Some("false") {
+                show_sidebar = false;
+            }
+            if storage.get_string("show_right_panel").as_deref() == Some("false") {
+                show_right_panel = false;
+            }
+            if storage.get_string("show_bottom_panel").as_deref() == Some("false") {
+                show_bottom_panel = false;
             }
         }
 
@@ -338,6 +360,9 @@ impl StorybookApp {
             perf: PerfStats::new(),
             doc_blocks: Vec::new(),
             show_source: false,
+            show_sidebar,
+            show_right_panel,
+            show_bottom_panel,
             anim_paused: false,
             anim_scrub: 0.0,
         }
@@ -371,6 +396,99 @@ impl StorybookApp {
             });
     }
 
+    /// Render toggle buttons at each panel boundary (sidebar, controls, bottom).
+    /// Called from the destructured block — takes field references, not `&mut self`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "passes destructured UI state for panel toggle rendering"
+    )]
+    fn render_panel_toggles(
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        sidebar_edge: f32,
+        right_edge: f32,
+        bottom_edge: f32,
+        icons: &crate::icons::Icons,
+        show_sidebar: &mut bool,
+        show_right_panel: &mut bool,
+        show_bottom_panel: &mut bool,
+    ) {
+        let inset = 16.0;
+        let below_header = HEADER_HEIGHT + inset;
+        Self::edge_toggle(
+            ctx,
+            "sidebar_toggle",
+            egui::pos2(sidebar_edge - 4.0, screen.top() + below_header),
+            if *show_sidebar {
+                &icons.caret_left
+            } else {
+                &icons.caret_right
+            },
+            if *show_sidebar {
+                "Hide sidebar (Ctrl+Shift+L)"
+            } else {
+                "Show sidebar (Ctrl+Shift+L)"
+            },
+            show_sidebar,
+        );
+        Self::edge_toggle(
+            ctx,
+            "right_panel_toggle",
+            egui::pos2(right_edge - 14.0, screen.top() + below_header),
+            if *show_right_panel {
+                &icons.caret_right
+            } else {
+                &icons.caret_left
+            },
+            if *show_right_panel {
+                "Hide controls (Ctrl+Shift+R)"
+            } else {
+                "Show controls (Ctrl+Shift+R)"
+            },
+            show_right_panel,
+        );
+        Self::edge_toggle(
+            ctx,
+            "bottom_panel_toggle",
+            egui::pos2(sidebar_edge + inset, bottom_edge - 14.0),
+            if *show_bottom_panel {
+                &icons.caret_down
+            } else {
+                &icons.caret_up
+            },
+            if *show_bottom_panel {
+                "Hide bottom panel (Ctrl+Shift+B)"
+            } else {
+                "Show bottom panel (Ctrl+Shift+B)"
+            },
+            show_bottom_panel,
+        );
+    }
+
+    fn edge_toggle(
+        ctx: &egui::Context,
+        id: &str,
+        pos: egui::Pos2,
+        icon: &egui::TextureHandle,
+        tooltip: &str,
+        visible: &mut bool,
+    ) {
+        egui::Area::new(egui::Id::new(id))
+            .fixed_pos(pos)
+            .order(egui::Order::Foreground)
+            .interactable(true)
+            .show(ctx, |ui| {
+                ui.spacing_mut().button_padding = egui::vec2(4.0, 4.0);
+                let btn = ui.add(
+                    egui::Button::image(crate::icons::icon_image(icon, 10.0, SHORTCUT_COLOR))
+                        .fill(HEADER_BG),
+                );
+                if btn.on_hover_text(tooltip).clicked() {
+                    *visible = !*visible;
+                }
+            });
+    }
+
     fn filter_id() -> egui::Id {
         egui::Id::new("story_filter")
     }
@@ -387,6 +505,29 @@ impl StorybookApp {
     }
 
     fn handle_keyboard(&mut self, ctx: &egui::Context) {
+        const CMD_SHIFT: egui::Modifiers = egui::Modifiers {
+            alt: false,
+            ctrl: false,
+            shift: true,
+            mac_cmd: false,
+            command: true,
+        };
+
+        // Ctrl+Shift+L → toggle left sidebar
+        if ctx.input_mut(|i| i.consume_key(CMD_SHIFT, egui::Key::L)) {
+            self.show_sidebar = !self.show_sidebar;
+        }
+
+        // Ctrl+Shift+R → toggle right panel
+        if ctx.input_mut(|i| i.consume_key(CMD_SHIFT, egui::Key::R)) {
+            self.show_right_panel = !self.show_right_panel;
+        }
+
+        // Ctrl+Shift+B → toggle bottom panel
+        if ctx.input_mut(|i| i.consume_key(CMD_SHIFT, egui::Key::B)) {
+            self.show_bottom_panel = !self.show_bottom_panel;
+        }
+
         // Ctrl+F → focus filter input
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
             ctx.memory_mut(|m| m.request_focus(Self::filter_id()));
@@ -485,7 +626,7 @@ impl StorybookApp {
         dr: &mut DocumentRenderer,
         frame_idx: &mut usize,
     ) {
-        for block in blocks {
+        for (block_idx, block) in blocks.iter().enumerate() {
             match block {
                 DocBlock::Frame { size, .. } | DocBlock::CustomRender { size, .. } => {
                     Self::render_doc_frame(ui, dr, frame_idx, *size);
@@ -510,7 +651,12 @@ impl StorybookApp {
                     ui.add_space(4.0);
                 }
                 DocBlock::Grid { cols, gap, cells } => {
-                    egui::Grid::new(ui.next_auto_id())
+                    // Anchor the Grid id to the block index rather than the parent
+                    // ui's auto-id counter. The auto-id chain is sensitive to anything
+                    // that shifts the parent's allocation count (panel toggles, scroll
+                    // state changes), and Grid stores per-id column widths, so an
+                    // unstable id wipes that state on every shift.
+                    egui::Grid::new(egui::Id::new("doc_grid").with(block_idx))
                         .num_columns(*cols as usize)
                         .spacing([*gap, *gap])
                         .show(ui, |ui| {
@@ -1018,8 +1164,9 @@ impl StorybookApp {
     // ── Panel rendering methods (called from eframe::App::update) ─────
 
     /// Left sidebar: filter input, story tree, navigation hint footer.
-    fn render_sidebar(&mut self, ui: &mut egui::Ui) {
-        egui::SidePanel::left("sidebar")
+    /// Returns the panel's right edge x coordinate.
+    fn render_sidebar(&mut self, ui: &mut egui::Ui) -> f32 {
+        let r = egui::SidePanel::left("sidebar")
             .default_width(200.0)
             .frame(Frame::NONE.fill(PANEL_BG))
             .show_inside(ui, |ui| {
@@ -1079,6 +1226,7 @@ impl StorybookApp {
                         });
                 });
             });
+        r.response.rect.right()
     }
 
     /// Filter text input with Ctrl+F pill / clear button overlay.
@@ -1150,8 +1298,9 @@ impl StorybookApp {
     }
 
     /// Right panel: Controls (top 70%) + Actions log (bottom 30%).
-    fn render_right_panel(&mut self, ui: &mut egui::Ui) {
-        egui::SidePanel::right("controls")
+    /// Returns the panel's left edge x coordinate.
+    fn render_right_panel(&mut self, ui: &mut egui::Ui) -> f32 {
+        let r = egui::SidePanel::right("controls")
             .default_width(250.0)
             .frame(Frame::NONE.fill(PANEL_BG))
             .show_inside(ui, |ui| {
@@ -1183,6 +1332,7 @@ impl StorybookApp {
                     self.render_actions_panel(ui);
                 });
             });
+        r.response.rect.left()
     }
 
     /// Actions log panel: header with clear button + scrollable event list.
@@ -1489,6 +1639,59 @@ impl StorybookApp {
             });
     }
 
+    /// Central preview area: story preview, source view, or status messages.
+    ///
+    /// Painted with `Frame::NONE.fill(PREVIEW_BG)` rather than `CentralPanel` so the
+    /// preview background tone is independent of the egui style's central-panel fill.
+    fn render_central_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::NONE.fill(PREVIEW_BG).show(ui, |ui| {
+            self.preview_width = ui.available_width().max(1.0);
+            self.preview_height = ui.available_height().max(1.0);
+
+            if let Some(entry) = self.sidebar.selected() {
+                let group = self.sidebar.group_title_for(entry);
+                Self::render_preview_heading(ui, entry, group, &mut self.show_source, &self.icons);
+
+                if let Some(err) = &self.build_error {
+                    Self::render_status_message(
+                        ui,
+                        &format!("Build failed:\n\n{err}"),
+                        c(colors::RED_60),
+                    );
+                } else if let Some(err) = &self.story_error {
+                    Self::render_status_message(
+                        ui,
+                        &format!("Story panicked:\n\n{err}"),
+                        c(colors::RED_60),
+                    );
+                } else if self.show_source {
+                    Self::render_source_view(ui, &entry.source);
+                } else if let Some(dr) = self.doc_renderer.as_mut() {
+                    Self::render_document(ui, &self.doc_blocks, dr);
+                }
+            } else if let Some(started) = &self.build_started {
+                let elapsed = started.elapsed().as_secs_f32();
+                Self::render_status_message(
+                    ui,
+                    &format!("Building stories... ({elapsed:.1}s)"),
+                    SHORTCUT_COLOR,
+                );
+            } else if let Some(err) = &self.build_error {
+                Self::render_status_message(
+                    ui,
+                    &format!("Build failed:\n\n{err}"),
+                    c(colors::RED_60),
+                );
+            } else {
+                ui.centered_and_justified(|ui| {
+                    ui.label("Select a story from the sidebar");
+                });
+            }
+
+            self.perf.record(ui.input(|i| i.stable_dt));
+        });
+    }
+
     /// Render source code view for the selected story.
     fn render_source_view(ui: &mut Ui, source: &str) {
         let theme = egui_extras::syntax_highlighting::CodeTheme::dark(13.0);
@@ -1512,95 +1715,97 @@ impl StorybookApp {
 }
 
 impl eframe::App for StorybookApp {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        self.handle_keyboard(ui.ctx());
+    /// Non-painting state mutation. eframe 0.34 splits `App` into `logic` + `ui`,
+    /// where `logic` is the documented home for state updates and `ui` is the home
+    /// for painting. Both are called once per layout pass (typically once per frame,
+    /// but more if any widget calls `ctx.request_discard`); inputs consumed via
+    /// `consume_key` are removed from the input queue on first read so re-runs see
+    /// no event.
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.handle_keyboard(ctx);
         self.handle_hot_reload();
-
-        self.render_sidebar(ui);
-        self.render_right_panel(ui);
         self.render_story_to_fbo(frame);
 
         // Keep repainting while animations run or a build is in progress.
         if self.sidebar.selected().is_some() || self.build_started.is_some() {
-            ui.ctx().request_repaint();
+            ctx.request_repaint();
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let screen = ui.ctx().screen_rect();
+
+        // Each `Panel::show_inside` advances the parent ui's auto-id counter by one
+        // (`ui.new_child`). When a panel is hidden we skip that slot manually so the
+        // counter — and every auto-id derived from it downstream in the central area —
+        // stays put across toggles. egui itself uses this idiom in
+        // `Panel::show_animated_inside`. Without it, toggling a panel shifts every
+        // auto-id by one, the rect-changed-id-between-passes debug check fires for one
+        // frame on each toggle, and red debug rects flash around interactive widgets.
+        let sidebar_edge = if self.show_sidebar {
+            self.render_sidebar(ui)
+        } else {
+            ui.skip_ahead_auto_ids(1);
+            screen.left()
+        };
+        let right_edge = if self.show_right_panel {
+            self.render_right_panel(ui)
+        } else {
+            ui.skip_ahead_auto_ids(1);
+            screen.right()
+        };
+
+        // Scoped destructuring: bottom panel + toggles need concurrent field
+        // access, then release borrows so render_central_panel can take &mut self.
+        {
+            let Self {
+                show_sidebar,
+                show_right_panel,
+                show_bottom_panel,
+                anim_paused,
+                anim_scrub,
+                doc_renderer,
+                icons,
+                perf,
+                ..
+            } = &mut *self;
+
+            // ── Bottom panel (toggleable) ──
+            // See sibling skip_ahead_auto_ids comment above `render_sidebar`.
+            let bottom_edge = if *show_bottom_panel {
+                let r = egui::TopBottomPanel::bottom("bottom_panel")
+                    .frame(Frame::NONE.fill(PANEL_BG))
+                    .min_height(Self::SUB_HEADER_H + 36.0)
+                    .show_inside(ui, |ui| {
+                        Self::render_bottom_panel(
+                            ui,
+                            anim_paused,
+                            anim_scrub,
+                            doc_renderer,
+                            icons,
+                            perf,
+                        );
+                    });
+                r.response.rect.top()
+            } else {
+                ui.skip_ahead_auto_ids(1);
+                screen.bottom()
+            };
+
+            Self::render_panel_toggles(
+                ui.ctx(),
+                screen,
+                sidebar_edge,
+                right_edge,
+                bottom_edge,
+                icons,
+                show_sidebar,
+                show_right_panel,
+                show_bottom_panel,
+            );
         }
 
-        // Destructure for the panels that need concurrent field access.
-        let Self {
-            sidebar,
-            doc_renderer,
-            doc_blocks,
-            story_error,
-            build_error,
-            build_started,
-            preview_width,
-            preview_height,
-            show_source,
-            anim_paused,
-            anim_scrub,
-            icons,
-            perf,
-            ..
-        } = self;
-
-        // ── Bottom panel ──
-        egui::TopBottomPanel::bottom("bottom_panel")
-            .frame(Frame::NONE.fill(PANEL_BG))
-            .min_height(Self::SUB_HEADER_H + 36.0)
-            .show_inside(ui, |ui| {
-                Self::render_bottom_panel(ui, anim_paused, anim_scrub, doc_renderer, icons, perf);
-            });
-
-        // ── Central preview area ──
-        egui::CentralPanel::default()
-            .frame(Frame::NONE.fill(PREVIEW_BG))
-            .show_inside(ui, |ui| {
-                *preview_width = ui.available_width().max(1.0);
-                *preview_height = ui.available_height().max(1.0);
-
-                if let Some(entry) = sidebar.selected() {
-                    let group = sidebar.group_title_for(entry);
-                    Self::render_preview_heading(ui, entry, group, show_source, icons);
-
-                    if let Some(err) = build_error {
-                        Self::render_status_message(
-                            ui,
-                            &format!("Build failed:\n\n{err}"),
-                            c(colors::RED_60),
-                        );
-                    } else if let Some(err) = story_error {
-                        Self::render_status_message(
-                            ui,
-                            &format!("Story panicked:\n\n{err}"),
-                            c(colors::RED_60),
-                        );
-                    } else if *show_source {
-                        Self::render_source_view(ui, &entry.source);
-                    } else if let Some(dr) = doc_renderer.as_mut() {
-                        Self::render_document(ui, doc_blocks, dr);
-                    }
-                } else if let Some(started) = build_started {
-                    let elapsed = started.elapsed().as_secs_f32();
-                    Self::render_status_message(
-                        ui,
-                        &format!("Building stories... ({elapsed:.1}s)"),
-                        SHORTCUT_COLOR,
-                    );
-                } else if let Some(err) = build_error {
-                    Self::render_status_message(
-                        ui,
-                        &format!("Build failed:\n\n{err}"),
-                        c(colors::RED_60),
-                    );
-                } else {
-                    ui.centered_and_justified(|ui| {
-                        ui.label("Select a story from the sidebar");
-                    });
-                }
-
-                // Record frame time (rendered in the bottom panel).
-                perf.record(ui.input(|i| i.stable_dt));
-            });
+        self.render_central_panel(ui);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1608,6 +1813,9 @@ impl eframe::App for StorybookApp {
             storage.set_string("selected_story", entry.module_path.clone());
         }
         storage.set_string("filter", self.sidebar.filter.clone());
+        storage.set_string("show_sidebar", self.show_sidebar.to_string());
+        storage.set_string("show_right_panel", self.show_right_panel.to_string());
+        storage.set_string("show_bottom_panel", self.show_bottom_panel.to_string());
     }
 }
 
