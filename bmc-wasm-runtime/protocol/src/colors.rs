@@ -73,6 +73,27 @@ impl Color {
         Self::from_rgba(r, g, b, 0xFF)
     }
 
+    /// Create an opaque color from HSV (hue 0–360, saturation 0–1, value 0–1).
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "RGB channels are clamped to 0–255"
+    )]
+    pub fn from_hsv(h: f32, s: f32, v: f32) -> Self {
+        use palette::{FromColor, Hsv, Srgb};
+        debug_assert!(
+            h.is_finite() && s.is_finite() && v.is_finite(),
+            "from_hsv: non-finite input h={h} s={s} v={v}"
+        );
+        let rgb = Srgb::from_color(Hsv::new(h, s, v));
+        Self::from_rgb(
+            (rgb.red * 255.0) as u8,
+            (rgb.green * 255.0) as u8,
+            (rgb.blue * 255.0) as u8,
+        )
+    }
+
     /// Create from a raw packed `0xRRGGBBAA` value.
     ///
     /// Prefer [`from_hex`](Self::from_hex) or [`from_rgba`](Self::from_rgba)
@@ -263,15 +284,15 @@ pub const GRAY_80: Color = Color::from_hex(0x39_39_39);
 pub const GRAY_90: Color = Color::from_hex(0x26_26_26);
 pub const GRAY_100: Color = Color::from_hex(0x16_1616);
 
-pub const LIME__10: Color = Color::from_hex(0xE0_FC_D6);
-pub const LIME__20: Color = Color::from_hex(0xA6_F3_82);
-pub const LIME__30: Color = Color::from_hex(0x89_DB_5D);
-pub const LIME__40: Color = Color::from_hex(0x6D_BC_39);
-pub const LIME__50: Color = Color::from_hex(0x59_9F_2A);
-pub const LIME__60: Color = Color::from_hex(0x45_7D_1F);
-pub const LIME__70: Color = Color::from_hex(0x35_5C_15);
-pub const LIME__80: Color = Color::from_hex(0x26_40_0C);
-pub const LIME__90: Color = Color::from_hex(0x18_2B_05);
+pub const LIME_10: Color = Color::from_hex(0xE0_FC_D6);
+pub const LIME_20: Color = Color::from_hex(0xA6_F3_82);
+pub const LIME_30: Color = Color::from_hex(0x89_DB_5D);
+pub const LIME_40: Color = Color::from_hex(0x6D_BC_39);
+pub const LIME_50: Color = Color::from_hex(0x59_9F_2A);
+pub const LIME_60: Color = Color::from_hex(0x45_7D_1F);
+pub const LIME_70: Color = Color::from_hex(0x35_5C_15);
+pub const LIME_80: Color = Color::from_hex(0x26_40_0C);
+pub const LIME_90: Color = Color::from_hex(0x18_2B_05);
 pub const LIME_100: Color = Color::from_hex(0x08_19_05);
 
 pub const GREEN_10: Color = Color::from_hex(0xDD_FB_E9);
@@ -388,30 +409,106 @@ pub const BLACK: Color = Color::from_hex(0x00_00_00);
 pub const WHITE: Color = Color::from_hex(0xFF_FF_FF);
 pub const TRANSPARENT: Color = Color::from_rgba(0, 0, 0, 0);
 
-// ── Legacy macro ────────────────────────────────────────────────────
-//
-// Delegates to Color methods. Prefer calling methods directly:
-//   color!(c, alpha: 0.5)                     → c.with_alpha(0.5)
-//   color!(c, brightness: 0.8)                → c.brightness(0.8)
-//   color!(c, lightness: 0.12)                → c.lightness(0.12)
-//   color!(c, lightness: 0.12, chroma: 0.04)  → c.lightness(0.12).chroma(0.04)
+// ── Palette collection ──────────────────────────────────────────────
 
-/// Color manipulation macro. Prefer calling Color methods directly.
-#[macro_export]
-macro_rules! color {
-    ($base:expr, alpha: $a:expr) => {
-        ($base).with_alpha($a)
-    };
-    ($base:expr, brightness: $l:expr) => {
-        ($base).brightness($l)
-    };
-    ($base:expr, alpha: $a:expr, brightness: $l:expr) => {
-        ($base).brightness($l).with_alpha($a)
-    };
-    ($base:expr, lightness: $l:expr) => {
-        ($base).lightness($l)
-    };
-    ($base:expr, lightness: $l:expr, chroma: $c:expr) => {
-        ($base).lightness($l).chroma($c)
-    };
+/// A named row of 10 color swatches (steps 10–100).
+#[derive(Debug, Clone, Copy)]
+pub struct ColorSwatch {
+    pub name: &'static str,
+    pub colors: [Color; 10],
 }
+
+/// The full design system palette — all color families at steps 10–100.
+pub const PALETTE: &[ColorSwatch] = &[
+    ColorSwatch {
+        name: "Gray",
+        colors: [
+            GRAY_10, GRAY_20, GRAY_30, GRAY_40, GRAY_50, GRAY_60, GRAY_70, GRAY_80, GRAY_90,
+            GRAY_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Blue",
+        colors: [
+            BLUE_10, BLUE_20, BLUE_30, BLUE_40, BLUE_50, BLUE_60, BLUE_70, BLUE_80, BLUE_90,
+            BLUE_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Green",
+        colors: [
+            GREEN_10, GREEN_20, GREEN_30, GREEN_40, GREEN_50, GREEN_60, GREEN_70, GREEN_80,
+            GREEN_90, GREEN_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Red",
+        colors: [
+            RED_10, RED_20, RED_30, RED_40, RED_50, RED_60, RED_70, RED_80, RED_90, RED_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Violet",
+        colors: [
+            VIOLET_10, VIOLET_20, VIOLET_30, VIOLET_40, VIOLET_50, VIOLET_60, VIOLET_70, VIOLET_80,
+            VIOLET_90, VIOLET_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Gold",
+        colors: [
+            GOLD_10, GOLD_20, GOLD_30, GOLD_40, GOLD_50, GOLD_60, GOLD_70, GOLD_80, GOLD_90,
+            GOLD_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Yellow",
+        colors: [
+            YELLOW_10, YELLOW_20, YELLOW_30, YELLOW_40, YELLOW_50, YELLOW_60, YELLOW_70, YELLOW_80,
+            YELLOW_90, YELLOW_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Orange",
+        colors: [
+            ORANGE_10, ORANGE_20, ORANGE_30, ORANGE_40, ORANGE_50, ORANGE_60, ORANGE_70, ORANGE_80,
+            ORANGE_90, ORANGE_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Teal",
+        colors: [
+            TEAL_10, TEAL_20, TEAL_30, TEAL_40, TEAL_50, TEAL_60, TEAL_70, TEAL_80, TEAL_90,
+            TEAL_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Purple",
+        colors: [
+            PURPLE_10, PURPLE_20, PURPLE_30, PURPLE_40, PURPLE_50, PURPLE_60, PURPLE_70, PURPLE_80,
+            PURPLE_90, PURPLE_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Magenta",
+        colors: [
+            MAGENTA_10,
+            MAGENTA_20,
+            MAGENTA_30,
+            MAGENTA_40,
+            MAGENTA_50,
+            MAGENTA_60,
+            MAGENTA_70,
+            MAGENTA_80,
+            MAGENTA_90,
+            MAGENTA_100,
+        ],
+    },
+    ColorSwatch {
+        name: "Lime",
+        colors: [
+            LIME_10, LIME_20, LIME_30, LIME_40, LIME_50, LIME_60, LIME_70, LIME_80, LIME_90,
+            LIME_100,
+        ],
+    },
+];

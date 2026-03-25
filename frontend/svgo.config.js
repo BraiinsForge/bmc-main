@@ -1,7 +1,7 @@
 /** @type {import('svgo').Config} */
 export default {
     multipass: true,
-    js2svg: { pretty: true },
+    js2svg: { pretty: true, indent: 4 },
     plugins: [
         {
             name: 'preset-default',

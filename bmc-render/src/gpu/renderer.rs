@@ -1,0 +1,756 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! FemtoVG-based GPU renderer implementing the [`Renderer`] trait.
+//!
+//! Wraps a `femtovg::Canvas<OpenGl>` for shape/text drawing and a
+//! `cosmic_text::FontSystem` + [`ParagraphLayoutCache`] for rich-text paragraph layout.
+
+#![expect(clippy::cast_precision_loss)]
+
+use std::ffi::c_void;
+use std::num::NonZeroU32;
+
+use anyhow::Result;
+use bmc_wasm_protocol::colors::Color;
+use cosmic_text::fontdb;
+use femtovg::renderer::OpenGl;
+use femtovg::{Canvas, FontId, Paint, Path, RenderTarget};
+use glow::HasContext;
+
+use super::bitmap::BitmapRegistry;
+use super::icons::IconRegistry;
+use super::mesh::{MeshDrawArgs, MeshRenderer};
+use super::sphere::SphereRenderer;
+use super::text::{ParagraphLayoutCache, to_femtovg_color};
+use crate::renderer::Renderer;
+use crate::tree::{SpanData, TextAlign, TextStyle};
+
+// Embed BraiinsSans fonts at compile time from the top-level assets directory.
+const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Regular.otf");
+const FONT_BOLD: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Bold.otf");
+
+/// GPU-accelerated renderer backed by FemtoVG (OpenGL ES 2.0+).
+///
+/// Owns the FemtoVG canvas, font IDs, cosmic-text `FontSystem`, and a
+/// paragraph layout cache. Created once per runtime lifetime.
+pub struct FemtoVgRenderer {
+    gl: glow::Context,
+    canvas: Canvas<OpenGl>,
+    /// The FBO that FemtoVG should render to (stored separately because FemtoVG's
+    /// `Canvas::set_render_target(Screen)` skips the `SetRenderTarget` command when
+    /// `current_render_target` is already `Screen` — which is always true since it's
+    /// the default. We must explicitly bind the FBO before each flush.)
+    screen_fbo: Option<glow::NativeFramebuffer>,
+    font_regular: FontId,
+    font_bold: FontId,
+    font_system: cosmic_text::FontSystem,
+    paragraph_cache: ParagraphLayoutCache,
+    icon_registry: IconRegistry,
+    bitmap_registry: BitmapRegistry,
+    sphere: Option<SphereRenderer>,
+    mesh_renderer: Option<MeshRenderer>,
+    mesh_msaa_samples: u32,
+    width: f32,
+    height: f32,
+    frame_counter: u64,
+}
+
+impl std::fmt::Debug for FemtoVgRenderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FemtoVgRenderer")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("frame_counter", &self.frame_counter)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Re-export femtovg's `ImageId` for use by storybook viewport rendering.
+pub type FemtovgImageId = femtovg::ImageId;
+
+impl FemtoVgRenderer {
+    /// Direct access to the underlying femtovg canvas (for testbed-only effects).
+    pub fn canvas_mut(&mut self) -> &mut Canvas<OpenGl> {
+        &mut self.canvas
+    }
+
+    /// Switch the FBO target for multi-viewport rendering.
+    ///
+    /// Allows a single renderer to serve multiple viewports by changing which
+    /// FBO `begin_frame` binds before rendering.
+    pub fn set_target_fbo(&mut self, fbo_id: u32) {
+        self.screen_fbo = NonZeroU32::new(fbo_id).map(glow::NativeFramebuffer);
+    }
+
+    /// Create a femtovg-managed render target image.
+    ///
+    /// Returns `(ImageId, raw_gl_texture_name)`. femtovg owns the texture and
+    /// its internal FBO+stencil. The raw GL name can be registered with egui
+    /// for display.
+    pub fn create_render_target(&mut self, width: u32, height: u32) -> (femtovg::ImageId, u32) {
+        let image_id = self
+            .canvas
+            .create_image_empty(
+                width as usize,
+                height as usize,
+                femtovg::PixelFormat::Rgba8,
+                femtovg::ImageFlags::empty(),
+            )
+            .expect("BUG: failed to create femtovg render target image");
+        let native = self
+            .canvas
+            .get_native_texture(image_id)
+            .expect("BUG: failed to get native texture from femtovg image");
+        let gl_name = native.0.get();
+        tracing::debug!(?image_id, gl_name, width, height, "created render target");
+        (image_id, gl_name)
+    }
+
+    /// Begin a frame targeting a femtovg Image (offscreen render target).
+    ///
+    /// Like [`Renderer::begin_frame`] but renders to the given Image instead of
+    /// the screen FBO. femtovg manages its own FBO with stencil for the Image.
+    ///
+    /// Both `set_render_target` and `clear_rect` are queued commands processed
+    /// during the next `flush()`. We intentionally skip `canvas.set_size()` here
+    /// because it queues `SetRenderTarget(Screen)` which would undo the Image
+    /// binding. For Image targets, femtovg derives dimensions from the image info.
+    pub fn begin_frame_to_image(
+        &mut self,
+        image_id: femtovg::ImageId,
+        width: u32,
+        height: u32,
+        dpi_scale: f32,
+    ) {
+        self.width = width as f32;
+        self.height = height as f32;
+        self.frame_counter += 1;
+        self.canvas.set_render_target(RenderTarget::Image(image_id));
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let (pw, ph) = (
+            (width as f32 * dpi_scale) as u32,
+            (height as f32 * dpi_scale) as u32,
+        );
+        self.canvas
+            .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
+        self.paragraph_cache.begin_frame(self.frame_counter);
+    }
+
+    /// Restore rendering to the screen FBO.
+    pub fn set_render_target_screen(&mut self) {
+        self.canvas.set_render_target(RenderTarget::Screen);
+    }
+
+    /// Create a new GPU renderer targeting a specific FBO.
+    ///
+    /// The `fbo_id` is the OpenGL framebuffer object that FemtoVG should render to.
+    /// This is typically the staging FBO from the EGL two-FBO pipeline.
+    ///
+    /// Loads BraiinsSans fonts into both FemtoVG (for GPU glyph rendering) and
+    /// cosmic-text (for paragraph shaping/layout). The cosmic-text `FontSystem`
+    /// uses an empty DB with only the embedded fonts — no system font discovery.
+    ///
+    /// # Safety
+    /// `load_fn` must return valid OpenGL function pointers for the current GL context.
+    pub unsafe fn new<F>(
+        mut load_fn: F,
+        width: u32,
+        height: u32,
+        fbo_id: u32,
+        mesh_msaa_samples: u32,
+    ) -> Result<Self>
+    where
+        F: FnMut(&str) -> *const c_void,
+    {
+        // Create glow context for direct GL access (globe renderer, etc.)
+        let gl = unsafe { glow::Context::from_loader_function(&mut load_fn) };
+
+        // Create FemtoVG OpenGL renderer (shares the same GL context)
+        let mut gl_renderer = unsafe { OpenGl::new_from_function(&mut load_fn) }?;
+
+        // Store FBO for explicit binding in begin_frame (FemtoVG's
+        // set_render_target(Screen) skips the GL bind when already targeting Screen).
+        let screen_fbo = NonZeroU32::new(fbo_id).map(glow::NativeFramebuffer);
+        if let Some(fbo) = screen_fbo {
+            gl_renderer.set_screen_target(Some(fbo));
+            tracing::info!("FemtoVG screen target set to FBO {fbo_id}");
+        } else {
+            tracing::info!("FBO id is 0, using default screen target");
+        }
+
+        let mut canvas = Canvas::new(gl_renderer)?;
+        canvas.set_size(width, height, 1.0);
+
+        // Load fonts into FemtoVG for GPU rendering
+        let font_regular = canvas.add_font_mem(FONT_REGULAR)?;
+        let font_bold = canvas.add_font_mem(FONT_BOLD)?;
+
+        // Build cosmic-text FontSystem with only our embedded fonts.
+        // Loading the same two files keeps glyph advances in sync with FemtoVG.
+        let mut db = fontdb::Database::new();
+        db.load_font_data(FONT_REGULAR.to_vec());
+        db.load_font_data(FONT_BOLD.to_vec());
+        let font_system = cosmic_text::FontSystem::new_with_locale_and_db("en-US".into(), db);
+
+        let mut icon_registry = IconRegistry::new();
+        icon_registry.register_builtins();
+
+        Ok(Self {
+            gl,
+            canvas,
+            screen_fbo,
+            font_regular,
+            font_bold,
+            font_system,
+            paragraph_cache: ParagraphLayoutCache::new(),
+            icon_registry,
+            bitmap_registry: BitmapRegistry::new(),
+            sphere: None,
+            mesh_renderer: None,
+            mesh_msaa_samples,
+            width: width as f32,
+            height: height as f32,
+            frame_counter: 0,
+        })
+    }
+
+    /// Lazy-initialise the mesh renderer on first use. Logs and leaves
+    /// `self.mesh_renderer` as `None` if creation fails — callers must
+    /// observe the `None` and bail out gracefully rather than relying on
+    /// "init succeeded just now" invariants.
+    fn lazy_init_mesh_renderer(&mut self) {
+        if self.mesh_renderer.is_some() {
+            return;
+        }
+        match MeshRenderer::new(&self.gl, &mut self.canvas, self.mesh_msaa_samples) {
+            Ok(r) => self.mesh_renderer = Some(r),
+            Err(e) => tracing::error!("mesh renderer init failed: {e}"),
+        }
+    }
+
+    /// Re-clear the FBO with transparent black (for compositing over checkerboard etc.).
+    pub fn clear_transparent(&mut self) {
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let (pw, ph) = (self.width as u32, self.height as u32);
+        self.canvas
+            .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
+    }
+}
+
+impl Drop for FemtoVgRenderer {
+    fn drop(&mut self) {
+        if let Some(sphere) = self.sphere.take() {
+            sphere.destroy(&self.gl, &mut self.canvas);
+        }
+        if let Some(mesh) = self.mesh_renderer.take() {
+            mesh.destroy(&self.gl, &mut self.canvas);
+        }
+        self.bitmap_registry.clear(&mut self.canvas);
+    }
+}
+
+// ── Renderer trait implementation ───────────────────────────────────
+
+impl Renderer for FemtoVgRenderer {
+    // -- Shapes --
+
+    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
+        let mut path = Path::new();
+        path.rect(x, y, w, h);
+        self.canvas
+            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
+    }
+
+    fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: Color) {
+        let mut path = Path::new();
+        path.rounded_rect(x, y, w, h, radius);
+        self.canvas
+            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
+    }
+
+    fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: Color) {
+        let mut path = Path::new();
+        path.circle(cx, cy, r);
+        self.canvas
+            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
+    }
+
+    fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color) {
+        let mut path = Path::new();
+        path.rect(x, y, w, h);
+        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
+        paint.set_line_width(border_width);
+        self.canvas.stroke_path(&path, &paint);
+    }
+
+    fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Color) {
+        let mut path = Path::new();
+        path.move_to(x1, y1);
+        path.line_to(x2, y2);
+        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
+        paint.set_line_width(width);
+        self.canvas.stroke_path(&path, &paint);
+    }
+
+    // -- Paths --
+
+    fn stroke_path(
+        &mut self,
+        points: &[(f32, f32)],
+        stroke_width: f32,
+        color: Color,
+        closed: bool,
+        smooth: bool,
+    ) {
+        if points.len() < 2 {
+            return;
+        }
+        let path = build_femtovg_path(points, closed, smooth);
+        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
+        paint.set_line_width(stroke_width);
+        paint.set_line_cap(femtovg::LineCap::Round);
+        paint.set_line_join(femtovg::LineJoin::Round);
+        self.canvas.stroke_path(&path, &paint);
+    }
+
+    fn fill_path_points(&mut self, points: &[(f32, f32)], color: Color, smooth: bool) {
+        if points.len() < 3 {
+            return;
+        }
+        let path = build_femtovg_path(points, true, smooth);
+        self.canvas
+            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
+    }
+
+    // -- Transform stack --
+
+    fn save(&mut self) {
+        self.canvas.save();
+    }
+
+    fn restore(&mut self) {
+        self.canvas.restore();
+    }
+
+    fn translate(&mut self, x: f32, y: f32) {
+        self.canvas.translate(x, y);
+    }
+
+    fn rotate(&mut self, angle_radians: f32) {
+        self.canvas.rotate(angle_radians);
+    }
+
+    // -- Scissor clipping --
+
+    fn push_scissor(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.canvas.save();
+        // Use intersect_scissor so nested clips (e.g. canvas inside scroll) work correctly.
+        // When no scissor is active, intersect_scissor acts like scissor.
+        self.canvas.intersect_scissor(x, y, w, h);
+    }
+
+    fn pop_scissor(&mut self) {
+        self.canvas.restore();
+    }
+
+    // -- Simple text --
+
+    fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
+        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
+        paint.set_font(&[self.font_regular]);
+        paint.set_font_size(size);
+        paint.set_text_baseline(femtovg::Baseline::Top);
+        let _ = self.canvas.fill_text(x, y, text, &paint);
+    }
+
+    fn measure_text(&mut self, text: &str, size: f32) -> f32 {
+        let mut paint = Paint::color(femtovg::Color::white());
+        paint.set_font(&[self.font_regular]);
+        paint.set_font_size(size);
+        self.canvas
+            .measure_text(0.0, 0.0, text, &paint)
+            .map_or(0.0, |m| m.width())
+    }
+
+    // -- Canvas text --
+
+    fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle) {
+        let font = if style.weight >= 600 {
+            self.font_bold
+        } else {
+            self.font_regular
+        };
+        let size = style.size as f32;
+        let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
+        paint.set_font(&[font]);
+        paint.set_font_size(size);
+        paint.set_text_baseline(femtovg::Baseline::Top);
+
+        // Alignment: measure text width and offset x for Center/Right
+        let draw_x = match style.align {
+            TextAlign::Left => x,
+            TextAlign::Center => {
+                let width = self
+                    .canvas
+                    .measure_text(0.0, 0.0, text, &paint)
+                    .map_or(0.0, |m| m.width());
+                x - width / 2.0
+            }
+            TextAlign::Right => {
+                let width = self
+                    .canvas
+                    .measure_text(0.0, 0.0, text, &paint)
+                    .map_or(0.0, |m| m.width());
+                x - width
+            }
+        };
+
+        // Text outline via 8-direction fill_text at each 1px ring up to outline_width.
+        // 8 textured-quad draws per ring — cheap on GPU even on embedded.
+        if style.outline_color != crate::colors::TRANSPARENT && style.outline_width > 0.0 {
+            let mut outline_paint = Paint::color(to_femtovg_color(style.outline_color.to_u32()));
+            outline_paint.set_font(&[font]);
+            outline_paint.set_font_size(size);
+            outline_paint.set_text_baseline(femtovg::Baseline::Top);
+            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let rings = style.outline_width.ceil() as u32;
+            for ring in 1..=rings {
+                let d = ring as f32;
+                for &(dx, dy) in &[
+                    (d, 0.0),
+                    (-d, 0.0),
+                    (0.0, d),
+                    (0.0, -d),
+                    (d, d),
+                    (-d, -d),
+                    (d, -d),
+                    (-d, d),
+                ] {
+                    let _ = self
+                        .canvas
+                        .fill_text(draw_x + dx, y + dy, text, &outline_paint);
+                }
+            }
+        }
+
+        let _ = self.canvas.fill_text(draw_x, y, text, &paint);
+
+        // Decorations
+        if style.underline || style.strikethrough {
+            let width = self
+                .canvas
+                .measure_text(0.0, 0.0, text, &paint)
+                .map_or(0.0, |m| m.width());
+            let thickness = (size / 14.0).max(1.0);
+
+            if style.underline {
+                let uy = y + size + 1.0;
+                self.fill_rect(draw_x, uy, width, thickness, style.color);
+            }
+            if style.strikethrough {
+                let sy = y + size / 2.0;
+                self.fill_rect(draw_x, sy, width, thickness, style.color);
+            }
+        }
+    }
+
+    // -- Rich text paragraphs --
+
+    fn measure_paragraph(
+        &mut self,
+        style: &TextStyle,
+        spans: &[SpanData],
+        max_width: Option<f32>,
+    ) -> (f32, f32) {
+        self.paragraph_cache
+            .measure(&mut self.font_system, style, spans, max_width)
+    }
+
+    fn draw_paragraph(
+        &mut self,
+        style: &TextStyle,
+        spans: &[SpanData],
+        x: f32,
+        y: f32,
+        max_width: f32,
+    ) {
+        self.paragraph_cache.draw(
+            &mut self.font_system,
+            &mut self.canvas,
+            self.font_regular,
+            self.font_bold,
+            style,
+            spans,
+            x,
+            y,
+            max_width,
+        );
+    }
+
+    fn draw_paragraph_clipped(
+        &mut self,
+        style: &TextStyle,
+        spans: &[SpanData],
+        x: f32,
+        y: f32,
+        max_width: f32,
+        clip_top: f32,
+        clip_bottom: f32,
+    ) {
+        self.push_scissor(x, clip_top, max_width, clip_bottom - clip_top);
+        self.draw_paragraph(style, spans, x, y, max_width);
+        self.pop_scissor();
+    }
+
+    // -- Icons --
+
+    fn register_icon(&mut self, data: &[u8]) -> u16 {
+        self.icon_registry.register(data)
+    }
+
+    fn draw_icon(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: Color,
+        icon_id: u16,
+        anti_alias: bool,
+    ) {
+        if let Some(icon) = self.icon_registry.get(icon_id) {
+            super::icons::draw_icon(&mut self.canvas, icon, x, y, w, h, color, anti_alias);
+        }
+    }
+
+    // -- Bitmaps --
+
+    fn register_bitmap(&mut self, data: &[u8]) -> u16 {
+        self.bitmap_registry
+            .register(data, &mut self.canvas, femtovg::ImageFlags::empty())
+    }
+
+    fn register_bitmap_nearest(&mut self, data: &[u8]) -> u16 {
+        self.bitmap_registry
+            .register(data, &mut self.canvas, femtovg::ImageFlags::NEAREST)
+    }
+
+    fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16) {
+        if let Some(image_id) = self.bitmap_registry.get(bitmap_id) {
+            super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
+        }
+    }
+
+    fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<Color> {
+        self.bitmap_registry
+            .sample(bitmap_id, x, y, w, h)
+            .map(Color::from_raw)
+    }
+
+    fn draw_nine_patch(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+        left: u16,
+        top: u16,
+        right: u16,
+        bottom: u16,
+    ) {
+        if let Some((image_id, src_w, src_h)) = self.bitmap_registry.get_with_size(bitmap_id) {
+            super::bitmap::draw_nine_patch(
+                &mut self.canvas,
+                image_id,
+                src_w as f32,
+                src_h as f32,
+                x,
+                y,
+                w,
+                h,
+                f32::from(left),
+                f32::from(top),
+                f32::from(right),
+                f32::from(bottom),
+            );
+        }
+    }
+
+    fn register_mesh(&mut self, data: &[u8]) -> u16 {
+        self.lazy_init_mesh_renderer();
+        let Some(renderer) = self.mesh_renderer.as_mut() else {
+            return 0;
+        };
+        renderer.register_mesh(&self.gl, data)
+    }
+
+    fn draw_mesh(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        slot_index: u8,
+        mesh_id: u16,
+        args: MeshDrawArgs,
+    ) {
+        self.lazy_init_mesh_renderer();
+        let Some(renderer) = self.mesh_renderer.as_mut() else {
+            return;
+        };
+
+        // Render mesh to atlas slot (skips if params unchanged)
+        let (image_id, sx, sy, sw, sh) = renderer.render(&self.gl, slot_index, mesh_id, &args);
+
+        // Draw the atlas sub-rect via femtovg
+        let (atlas_w, atlas_h) = renderer.atlas_size();
+        super::bitmap::draw_bitmap_subrect(
+            &mut self.canvas,
+            image_id,
+            atlas_w,
+            atlas_h,
+            sx,
+            sy,
+            sw,
+            sh,
+            x,
+            y,
+            w,
+            h,
+        );
+    }
+
+    #[expect(clippy::many_single_char_names)]
+    fn draw_sphere(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bitmap_id: u16,
+        center_lat: f32,
+        center_lon: f32,
+        zoom: f32,
+        light_lat: f32,
+        light_lon: f32,
+        atmosphere: bool,
+    ) {
+        // Lazy-init sphere renderer on first call
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        if self.sphere.is_none() {
+            match SphereRenderer::new(&self.gl, &mut self.canvas, w as u32, h as u32) {
+                Ok(s) => self.sphere = Some(s),
+                Err(e) => {
+                    tracing::error!("sphere init failed: {e}");
+                    self.draw_bitmap(x, y, w, h, bitmap_id);
+                    return;
+                }
+            }
+        }
+        let sphere = self
+            .sphere
+            .as_mut()
+            .expect("BUG: sphere is initialized above");
+
+        // Lazy-init texture from the registered bitmap
+        if !sphere.has_texture()
+            && let Some(image_id) = self.bitmap_registry.get(bitmap_id)
+            && let Ok(tex) = self.canvas.get_native_texture(image_id)
+        {
+            sphere.set_texture(tex);
+        }
+
+        // When light is NaN, pass zero-vector to disable shading
+        let (sl, sn) = if light_lat.is_nan() {
+            (0.0, 0.0)
+        } else {
+            (light_lat, light_lon)
+        };
+
+        // Render sphere to offscreen FBO (skips if params unchanged)
+        sphere.render(&self.gl, center_lat, center_lon, zoom, sl, sn, atmosphere);
+
+        // Draw the FBO texture via femtovg
+        let image_id = sphere.image_id();
+        super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
+    }
+
+    // -- Frame lifecycle --
+
+    fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32) {
+        self.width = width as f32;
+        self.height = height as f32;
+        self.frame_counter += 1;
+        // FemtoVG's `set_render_target(Screen)` skips the SetRenderTarget command
+        // when the Canvas already thinks it's targeting Screen (the default).
+        // This means flush() never calls glBindFramebuffer. We must bind the
+        // target FBO explicitly so clear_rect and draw commands hit the right FBO.
+        unsafe {
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, self.screen_fbo);
+        }
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.set_size(width, height, dpi_scale);
+        // clear_rect uses physical pixels when dpi_scale > 1.0
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let (pw, ph) = (
+            (width as f32 * dpi_scale) as u32,
+            (height as f32 * dpi_scale) as u32,
+        );
+        self.canvas
+            .clear_rect(0, 0, pw, ph, femtovg::Color::rgbf(0.0, 0.0, 0.0));
+        self.paragraph_cache.begin_frame(self.frame_counter);
+    }
+
+    fn flush(&mut self) {
+        self.canvas.flush();
+    }
+
+    fn width(&self) -> f32 {
+        self.width
+    }
+
+    fn height(&self) -> f32 {
+        self.height
+    }
+}
+
+/// Build a FemtoVG `Path` from a sequence of points.
+///
+/// - `smooth = false`: straight line segments (`move_to` + `line_to`).
+/// - `smooth = true`: Catmull-Rom spline converted to cubic Bézier curves.
+///   Each segment between `p[i]` and `p[i+1]` uses control points derived
+///   from neighboring points, producing a smooth curve through all points.
+fn build_femtovg_path(points: &[(f32, f32)], closed: bool, smooth: bool) -> Path {
+    let mut path = Path::new();
+
+    if smooth && points.len() >= 2 {
+        let n = points.len();
+        path.move_to(points[0].0, points[0].1);
+
+        for i in 0..n - 1 {
+            let p0 = points[if i == 0 { 0 } else { i - 1 }];
+            let p1 = points[i];
+            let p2 = points[i + 1];
+            let p3 = points[if i + 2 < n { i + 2 } else { n - 1 }];
+
+            // Catmull-Rom → cubic Bézier control points (tension = 1.0)
+            let cp1x = p1.0 + (p2.0 - p0.0) / 6.0;
+            let cp1y = p1.1 + (p2.1 - p0.1) / 6.0;
+            let cp2x = p2.0 - (p3.0 - p1.0) / 6.0;
+            let cp2y = p2.1 - (p3.1 - p1.1) / 6.0;
+
+            path.bezier_to(cp1x, cp1y, cp2x, cp2y, p2.0, p2.1);
+        }
+    } else {
+        path.move_to(points[0].0, points[0].1);
+        for &(x, y) in &points[1..] {
+            path.line_to(x, y);
+        }
+    }
+
+    if closed {
+        path.close();
+    }
+    path
+}

@@ -47,7 +47,7 @@ unsafe extern "C" {
 pub type RequestCallback = fn(HttpListener, &HttpRequest);
 
 /// Handle to an active HTTP listener.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct HttpListener(pub u32);
 
 impl HttpListener {
@@ -65,6 +65,7 @@ impl HttpListener {
 }
 
 /// An inbound HTTP request delivered from the host.
+#[derive(Debug)]
 pub struct HttpRequest {
     pub request_id: u32,
     pub method: String,

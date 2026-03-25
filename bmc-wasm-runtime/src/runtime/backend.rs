@@ -16,10 +16,12 @@ use bmc_wasm_protocol::{
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
-use crate::gpu::FemtoVgRenderer;
-use crate::host_api::{FixtureEvent, FrameTimings, HostState};
-use crate::renderer::Renderer;
-use crate::tree::{self, TouchHit};
+use bmc_render::FrameTimings;
+use bmc_render::gpu::FemtoVgRenderer;
+use bmc_render::renderer::Renderer;
+use bmc_render::tree::{self, TouchHit};
+
+use crate::host_api::{FixtureEvent, HostState};
 
 /// Write a `TouchHit` (4×f32 LE = 16 bytes) to WASM memory at `out_ptr`.
 pub(super) fn write_touch_hit(caller: &mut Caller<'_, HostState>, out_ptr: u32, hit: &TouchHit) {
@@ -368,11 +370,11 @@ impl WasmWidgetRuntime {
 
         #[cfg(feature = "profiling")]
         if ii_stopwatch::every_expired!(self.wasm_every) {
-            let rss = crate::proc_mem::read_self_rss();
+            let rss = bmc_render::proc_mem::read_self_rss();
             let vm_rss_kb = rss.map_or(0, |s| s.vm_rss_kb);
             let rss_shmem_kb = rss.map_or(0, |s| s.rss_shmem_kb);
             tracing::info!(
-                target: crate::profile::TARGET,
+                target: bmc_render::profile::TARGET,
                 "wasm_tick {wasm} vm_rss_kb={vm_rss_kb} rss_shmem_kb={rss_shmem_kb}",
                 wasm = self.wasm_w,
             );
@@ -425,20 +427,23 @@ impl WasmWidgetRuntime {
         let frame_counter = state.frame_counter;
         state.frame_counter += 1;
         let mut timings = FrameTimings::default();
+        let mut ctx = bmc_render::ProcessContext {
+            interaction: &mut state.interaction,
+            modal_states: &mut state.modal_states,
+            scroll_states: &mut state.scroll_states,
+            animation_states: &mut state.animation_states,
+            transition_states: &mut state.transition_states,
+            taffy: &mut state.taffy,
+            frame_counter,
+            delta_ms,
+        };
         match tree::layout_and_render(
             tree_node,
             width,
             height,
             &mut state.renderer,
-            &mut state.interaction,
-            &mut state.modal_states,
-            &mut state.scroll_states,
-            &mut state.animation_states,
-            &mut state.transition_states,
-            frame_counter,
-            delta_ms,
             &mut timings,
-            &mut state.taffy,
+            &mut ctx,
         ) {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
@@ -562,7 +567,7 @@ impl WasmWidgetRuntime {
     }
 
     /// Push a touch event to be processed next frame.
-    pub fn push_touch_event(&mut self, event: crate::interaction::TouchEvent) {
+    pub fn push_touch_event(&mut self, event: bmc_render::interaction::TouchEvent) {
         self.store.data_mut().interaction.push_event(event);
     }
 
@@ -583,7 +588,7 @@ impl WasmWidgetRuntime {
     /// Delegates to [`InteractionState::element_bounds`]. Must be called after
     /// a render pass (hit regions are rebuilt each frame).
     #[must_use]
-    pub fn element_bounds(&self, id: &str) -> Option<crate::interaction::Rect> {
+    pub fn element_bounds(&self, id: &str) -> Option<bmc_render::interaction::Rect> {
         self.store.data().interaction.element_bounds(id)
     }
 

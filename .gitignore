@@ -7,6 +7,9 @@ result**
 .codex
 .idea
 
+# Hot-reload cdylib output
+*.so
+
 # Misc Artifacts
 .DS_Store
 *.log

@@ -229,7 +229,7 @@ fn colors_section() -> Node {
 
 fn rich_text_section() -> Node {
     col(
-        props!(flex: 1.0, gap: 8.0, background: color!(GRAY_90, alpha: 0.9), padding: 12.0),
+        props!(flex: 1.0, gap: 8.0, background: GRAY_90.with_alpha(0.9), padding: 12.0),
         [
             text("Rich Text", style!(size: 20, color: GRAY_10)),
             row(

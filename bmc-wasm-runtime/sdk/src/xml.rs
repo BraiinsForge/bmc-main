@@ -37,6 +37,7 @@ unsafe extern "C" {
 ///
 /// Query fields using simplified XPath-like paths (see module docs).
 /// The document is freed on the host when this handle is dropped.
+#[derive(Debug)]
 pub struct XmlDoc(u32);
 
 impl XmlDoc {

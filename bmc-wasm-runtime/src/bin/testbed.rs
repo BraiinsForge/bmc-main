@@ -41,16 +41,17 @@ use bmc_wasm_protocol::{
 };
 use owo_colors::OwoColorize;
 
-use bmc_wasm_runtime::components::{ButtonSize, ButtonStyle, draw_button};
+use bmc_render::FrameTimings;
+use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};
+use bmc_render::gpu::FemtoVgRenderer;
+use bmc_render::interaction::{InteractionState, TouchEvent};
+use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::fixtures::{self, find_widget_root, seed_kv_from_secrets, snapshot_kv_dir};
-use bmc_wasm_runtime::gpu::FemtoVgRenderer;
-use bmc_wasm_runtime::interaction::{InteractionState, TouchEvent};
 use bmc_wasm_runtime::perf_overlay::PerfOverlay;
-use bmc_wasm_runtime::renderer::Renderer;
 use bmc_wasm_runtime::unified_fixture::{
     FixtureHeader, TimelineEvent, UnifiedEvent, UnifiedFixture,
 };
-use bmc_wasm_runtime::{FrameTimings, RenderStatus, RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use chrono::Local;
 
 // Layout constants
@@ -98,7 +99,7 @@ fn scaled(logical: u32, dpi: f32) -> u32 {
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    bmc_wasm_runtime::tree::init_debug_flags();
+    bmc_render::tree::init_debug_flags();
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -1236,6 +1237,9 @@ fn blit_fbo_to_screen(
             glow::COLOR_BUFFER_BIT,
             glow::LINEAR,
         );
+        // Reset framebuffer bindings so subsequent FemtoVG begin_frame calls
+        // don't inherit a stale READ_FRAMEBUFFER from the blit.
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
     }
 }
 
@@ -1514,7 +1518,7 @@ fn draw_stats_panel(
         None,
     );
 
-    let debug_on = bmc_wasm_runtime::tree::debug_layout_enabled();
+    let debug_on = bmc_render::tree::debug_layout_enabled();
     let debug_label = "Debug layout";
     let debug_w = renderer.measure_text(debug_label, btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
     let debug_style = if debug_on {
@@ -1538,7 +1542,7 @@ fn draw_stats_panel(
         None,
     );
     if debug_clicked.0 {
-        bmc_wasm_runtime::tree::toggle_debug_layout();
+        bmc_render::tree::toggle_debug_layout();
     }
 
     let y_offset = y + btn_h + 4.0;

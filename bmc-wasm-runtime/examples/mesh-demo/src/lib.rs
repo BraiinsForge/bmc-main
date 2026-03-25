@@ -1,10 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! 3D mesh demo — Suzanne viewer + Google Dice-style tray.
-//!
-//! Modes (tabs at top):
-//! 1. **Suzanne** — textured monkey head, drag to rotate
-//! 2. **Dice Tray** — add D4/D6/D8/D10/D12/D20, tap die to remove, Roll All, running total
 
 use std::cell::{Cell, RefCell};
 
@@ -580,7 +576,7 @@ fn render_tray(w: u32, h: u32, delta_ms: u32) {
                         height: 32.0,
                         padding: 8.0,
                         cross_align: CrossAlign::Center,
-                        background: color!(BLACK, alpha: 0.6)
+                        background: BLACK.with_alpha(0.6)
                     ),
                     [text(
                         fmt!("\u{03A3} {}", total),
@@ -614,7 +610,7 @@ fn render_tray(w: u32, h: u32, delta_ms: u32) {
             [col(
                 props!(
                     padding: 12.0,
-                    background: color!(BLACK, alpha: 0.75)
+                    background: BLACK.with_alpha(0.75)
                 ),
                 [text(
                     "Tap again to remove",

@@ -20,7 +20,7 @@ unsafe extern "C" {
 pub type BroadcastCallback = fn(UdpBroadcast, &UdpBroadcastEvent<'_>);
 
 /// Handle to an active UDP broadcast session.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct UdpBroadcast(pub u32);
 
 impl UdpBroadcast {
@@ -31,6 +31,7 @@ impl UdpBroadcast {
 }
 
 /// Event delivered from the host for a UDP broadcast session.
+#[derive(Debug)]
 pub enum UdpBroadcastEvent<'a> {
     /// Response received: data payload and source address string.
     Response { data: &'a str, source: &'a str },

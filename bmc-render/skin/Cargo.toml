@@ -1,0 +1,20 @@
+[package]
+name = "bmc-render-skin"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
+
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"

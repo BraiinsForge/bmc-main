@@ -49,7 +49,7 @@ unsafe extern "C" {
 pub type Callback = fn(Socket, &SocketEvent<'_>);
 
 /// Handle to an active TLS socket connection.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Socket(pub u32);
 
 impl Socket {
@@ -69,6 +69,7 @@ impl Socket {
 }
 
 /// Event delivered from the host for a TLS socket.
+#[derive(Debug)]
 pub enum SocketEvent<'a> {
     /// Connection successfully established.
     Connected,

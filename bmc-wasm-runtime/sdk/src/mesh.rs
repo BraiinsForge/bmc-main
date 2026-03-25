@@ -16,6 +16,7 @@ use crate::orientation::Orientation;
 /// `face_normals` contains per-face normals in glTF Y-up space, ordered by
 /// display face number (index 0 = face 1). Extracted from glTF `extras` at
 /// compile time. Empty if the model has no face normal metadata.
+#[derive(Debug)]
 pub struct Mesh {
     pub data: &'static [u8],
     pub face_normals: &'static [[f32; 3]],

@@ -9,14 +9,17 @@
 use crate::host::{ButtonSize, ButtonStyle};
 use crate::props;
 
-#[expect(clippy::wildcard_imports)]
-use crate::tree::*;
-
-#[expect(clippy::wildcard_imports)]
-use bmc_wasm_protocol::*;
+use crate::tree::{
+    Draw, Node, PropsData, StyleResult, TextStyle, TreeRenderResult, canvas, col, make_button, row,
+    spacer, text,
+};
+use bmc_wasm_protocol::{
+    CrossAlign, GRAY_40, GRAY_50, GRAY_60, GRAY_80, GRAY_90, ICON_MINUS, ICON_PLUS, ICON_WARN_ALT,
+    ICON_WARN_FILLED, RED_50, WHITE, YELLOW_30,
+};
 
 /// Configuration for a number input.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct NumberInputProps {
     pub label: &'static str,
     pub suffix: &'static str,
@@ -30,7 +33,9 @@ pub struct NumberInputProps {
 }
 
 /// Build a number input from key, value, and props.
-pub fn number_input(key: &str, value: i32, p: NumberInputProps) -> Node {
+#[must_use]
+#[expect(clippy::too_many_lines)]
+pub fn number_input(key: &str, value: i32, p: &NumberInputProps) -> Node {
     let has_error = !p.error.is_empty();
     let has_warning = !p.warning.is_empty();
     let text_color = if p.disabled { GRAY_60 } else { WHITE };
@@ -170,6 +175,7 @@ pub fn number_input(key: &str, value: i32, p: NumberInputProps) -> Node {
 }
 
 /// Handle +/- clicks for a number input. Returns `Some(new_value)` if changed.
+#[must_use]
 pub fn number_input_handle(
     key: &str,
     value: i32,

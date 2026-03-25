@@ -36,6 +36,7 @@ unsafe extern "C" {
 ///
 /// Query fields using JSON Pointer paths (RFC 6901).
 /// The document is freed on the host when this handle is dropped.
+#[derive(Debug)]
 pub struct JsonDoc(u32);
 
 impl JsonDoc {

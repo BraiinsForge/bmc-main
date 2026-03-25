@@ -15,9 +15,9 @@
 use std::fmt;
 use std::time::Instant;
 
-use crate::FrameTimings;
-use crate::colors::*;
-use crate::renderer::Renderer;
+use bmc_render::FrameTimings;
+use bmc_render::colors::*;
+use bmc_render::renderer::Renderer;
 
 use bmc_wasm_protocol::colors::Color;
 

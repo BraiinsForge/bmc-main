@@ -52,6 +52,28 @@ skip = [
     { crate = "prost-derive@0.12" },
     { crate = "prost-types@0.12" },
 
+    # Slint pins older resvg/usvg/tiny-skia than workspace direct deps
+    { crate = "resvg@0.45" },
+    { crate = "usvg@0.45" },
+    { crate = "svgtypes@0.15" },
+    { crate = "tiny-skia@0.11" },
+    { crate = "tiny-skia-path@0.11" },
+    { crate = "imagesize@0.13" },
+    { crate = "kurbo@0.11" },
+    { crate = "roxmltree@0.20" },
+    { crate = "quick-xml@0.38" },
+
+    # syntect (via egui_extras) pulls bincode 1.x
+    { crate = "bincode@1" },
+
+    # egui/eframe transitive deps
+    { crate = "clipboard-win@3" },
+    { crate = "jni@0.21" },
+    { crate = "jni-sys@0.3" },
+
+    # gltf (sdk-macros) uses base64 0.13
+    { crate = "base64@0.13" },
+
     # Wayland/Smithay ecosystem splits
     { crate = "calloop@0.13" },
     { crate = "gbm@0.17" },
@@ -105,9 +127,13 @@ skip = [
     { crate = "thiserror-impl@1" },
     { crate = "toml_datetime@0.6" },
     { crate = "toml_edit@0.22" },
+    { crate = "aligned-vec@0.5" },
+    { crate = "gif@0.13" },
+    { crate = "zune-core@0.4" },
+    { crate = "zune-jpeg@0.4" },
     { crate = "hermit-abi@0.3" },
+    { crate = "hermit-abi@0.4" },
     { crate = "r-efi@5" },
-    { crate = "version-compare@0.1" },
     { crate = "winapi@0.3" },
 
     # Audio ecosystem (cpal/rodio pulls older ndk via oboe)

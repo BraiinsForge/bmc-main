@@ -10,10 +10,11 @@ use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
 use wasmi::{Caller, Linker};
 
-use crate::components::{ButtonSize, ButtonStyle, draw_button};
+use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};
+use bmc_render::renderer::Renderer;
+use bmc_render::tree;
+
 use crate::host_api::HostState;
-use crate::renderer::Renderer;
-use crate::tree;
 
 use super::super::backend::write_touch_hit;
 use super::super::memory::{read_bytes, read_string};
@@ -175,20 +176,17 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
             state.frame_counter += 1;
             let w = width as f32;
             let h = height as f32;
-            match tree::process_tree(
-                &data,
-                w,
-                h,
-                &mut state.renderer,
-                &mut state.interaction,
-                &mut state.modal_states,
-                &mut state.scroll_states,
-                &mut state.animation_states,
-                &mut state.transition_states,
+            let mut ctx = bmc_render::ProcessContext {
+                interaction: &mut state.interaction,
+                modal_states: &mut state.modal_states,
+                scroll_states: &mut state.scroll_states,
+                animation_states: &mut state.animation_states,
+                transition_states: &mut state.transition_states,
+                taffy: &mut state.taffy,
                 frame_counter,
                 delta_ms,
-                &mut state.taffy,
-            ) {
+            };
+            match tree::process_tree(&data, w, h, &mut state.renderer, &mut ctx) {
                 Ok((tree_node, result, has_active, timings)) => {
                     let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
                     state.tree_clicks = result.clicks;

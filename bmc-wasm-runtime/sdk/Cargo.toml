@@ -13,25 +13,12 @@ math-3d = ["glam"]
 
 [dependencies]
 bmc-led = { path = "../../bmc-led", default-features = false }
+bmc-render-macros = { path = "../../bmc-render/macros" }
+bmc-render-skin = { path = "../../bmc-render/skin" }
 bmc-wasm-protocol = { path = "../protocol" }
 bmc-wasm-sdk-macros = { path = "../sdk-macros" }
-bmc-wasm-skin = { path = "../skin" }
 glam = { workspace = true, default-features = false, features = ["libm"], optional = true }
 ufmt = { workspace = true }
 
-[lints.rust]
-unused_must_use = "deny"
-
-[lints.clippy]
-pedantic = { level = "warn", priority = -1 }
-doc_markdown = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-module_name_repetitions = "allow"
-
-# Keep this crate out of the main workspace
-[workspace]
-
-[workspace.dependencies]
-glam = { version = "0.32", default-features = false }
-ufmt = { version = "0.2", features = ["std"] }
+[lints]
+workspace = true

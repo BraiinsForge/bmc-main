@@ -485,7 +485,7 @@ fn gauge_bar_with_label(label: &str, frac: f32, bg_color: Color, font_size: u32)
                     weight: 600,
                     color: WHITE,
                     align: TextAlign::Center,
-                    outline_color: color!(bg_color, brightness: 0.4),
+                    outline_color: bg_color.brightness(0.4),
                     outline_width: 2.0,
                 ),
             ),

@@ -8,7 +8,7 @@
 
 use crate::egl::EglState;
 use anyhow::{Context, Result};
-use bmc_wasm_runtime::renderer::Renderer;
+use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
 use std::path::Path;
@@ -77,7 +77,7 @@ impl WaylandClient {
                     )]
                     WidgetEvent::TouchDown { x, y, .. } => {
                         if let Some(rs) = render.as_mut() {
-                            use bmc_wasm_runtime::interaction::TouchEvent;
+                            use bmc_render::interaction::TouchEvent;
                             rs.runtime.push_touch_event(TouchEvent::Down {
                                 x: x as f32,
                                 y: y as f32,
@@ -91,7 +91,7 @@ impl WaylandClient {
                     )]
                     WidgetEvent::TouchMotion { x, y, .. } => {
                         if let Some(rs) = render.as_mut() {
-                            use bmc_wasm_runtime::interaction::TouchEvent;
+                            use bmc_render::interaction::TouchEvent;
                             rs.runtime.push_touch_event(TouchEvent::Move {
                                 x: x as f32,
                                 y: y as f32,
@@ -101,14 +101,14 @@ impl WaylandClient {
                     }
                     WidgetEvent::TouchUp { .. } => {
                         if let Some(rs) = render.as_mut() {
-                            use bmc_wasm_runtime::interaction::TouchEvent;
+                            use bmc_render::interaction::TouchEvent;
                             rs.runtime.push_touch_event(TouchEvent::Up);
                             self.surface.mark_needs_render();
                         }
                     }
                     WidgetEvent::TouchCancel => {
                         if let Some(rs) = render.as_mut() {
-                            use bmc_wasm_runtime::interaction::TouchEvent;
+                            use bmc_render::interaction::TouchEvent;
                             rs.runtime.push_touch_event(TouchEvent::Cancel);
                             self.surface.mark_needs_render();
                         }

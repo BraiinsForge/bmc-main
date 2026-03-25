@@ -1,0 +1,24 @@
+[package]
+name = "bmc-render-macros"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+bmc-icon-compiler = { path = "../../bmc-wasm-runtime/icon-compiler" }
+bmc-render-skin = { path = "../skin" }
+bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
+gltf = { workspace = true, features = ["extras"] }
+image = { workspace = true, default-features = false, features = ["png"] }
+intel_tex_2 = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+serde_json = { workspace = true }
+syn = { workspace = true }
+toml = { workspace = true }
+zip = { workspace = true, default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true

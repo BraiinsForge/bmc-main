@@ -1755,10 +1755,10 @@ fn on_album_art(response: &FetchResponse) {
                 .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
 
             // Sample full image average and darken for background tint
-            let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX).map_or(
-                GRAY_100,
-                |c| color!(Color::from_raw(c), lightness: 0.22, chroma: 0.06),
-            );
+            let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX)
+                .map_or(GRAY_100, |c| {
+                    Color::from_raw(c).lightness(0.22).chroma(0.06)
+                });
 
             STATE.with(|s| {
                 let mut state = s.borrow_mut();
@@ -2011,10 +2011,10 @@ fn on_mpd_art(data: &[u8]) {
     if bitmap_id > 0 {
         let aspect = host::image_dimensions(data)
             .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
-        let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX).map_or(
-            GRAY_100,
-            |c| color!(Color::from_raw(c), lightness: 0.22, chroma: 0.06),
-        );
+        let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX)
+            .map_or(GRAY_100, |c| {
+                Color::from_raw(c).lightness(0.22).chroma(0.06)
+            });
 
         STATE.with(|s| {
             let mut state = s.borrow_mut();
@@ -2314,7 +2314,7 @@ fn render_discovery_log(max_lines: usize, right_aligned: bool) -> Node {
             let alpha = 1.0 - (i as f32 / max_lines as f32);
             text(
                 msg.as_str(),
-                style!(size: 9, color: color!(GRAY_70, alpha: alpha), line_height: 1.0),
+                style!(size: 9, color: GRAY_70.with_alpha(alpha), line_height: 1.0),
             )
         })
         .collect();
@@ -2392,16 +2392,9 @@ fn render_media_screen(
     // Inject modal overlays into the content node's children.
     // The modal is an overlay — it doesn't affect layout when closed,
     // and the host renders it on top with a backdrop when open.
-    let modal_margin = match size.variant {
-        SizeVariant::Small => 4,
-        SizeVariant::Large => 12,
-        SizeVariant::Medium => 24,
-        SizeVariant::Full => 48,
-    };
     let pal = active_palette();
     let make_props = |h: f32| ModalProps {
         height: h,
-        margin: modal_margin,
         backdrop_alpha: 180,
         bg_color: pal.layer1,
         header_color: pal.layer2,

@@ -20,6 +20,108 @@ pub const BUTTON_SIZE_SMALL: u8 = 0;
 pub const BUTTON_SIZE_NORMAL: u8 = 1;
 pub const BUTTON_SIZE_LARGE: u8 = 2;
 
+/// Button style variants — shared between SDK and host renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ButtonStyle {
+    Primary = 0,
+    Secondary = 1,
+    Danger = 2,
+    Tertiary = 3,
+    /// Transparent background, no border. Pressed state shows a subtle rectangular fill.
+    Ghost = 4,
+}
+
+impl From<u32> for ButtonStyle {
+    fn from(value: u32) -> Self {
+        match value {
+            1 => Self::Secondary,
+            2 => Self::Danger,
+            3 => Self::Tertiary,
+            4 => Self::Ghost,
+            _ => Self::Primary,
+        }
+    }
+}
+
+/// Button size variants — shared between SDK and host renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ButtonSize {
+    Small = 0,
+    Normal = 1,
+    Large = 2,
+}
+
+impl From<u8> for ButtonSize {
+    fn from(value: u8) -> Self {
+        match value {
+            BUTTON_SIZE_SMALL => Self::Small,
+            BUTTON_SIZE_LARGE => Self::Large,
+            _ => Self::Normal,
+        }
+    }
+}
+
+impl ButtonStyle {
+    #[must_use]
+    pub fn is_outline(self) -> bool {
+        matches!(self, Self::Tertiary)
+    }
+
+    #[must_use]
+    pub fn is_ghost(self) -> bool {
+        matches!(self, Self::Ghost)
+    }
+}
+
+impl ButtonSize {
+    #[must_use]
+    pub fn height(self) -> f32 {
+        match self {
+            Self::Small => 32.0,
+            Self::Normal => 48.0,
+            Self::Large => 56.0,
+        }
+    }
+
+    #[must_use]
+    pub fn font_size(self) -> f32 {
+        match self {
+            Self::Small => 13.0,
+            Self::Normal => 16.0,
+            Self::Large => 18.0,
+        }
+    }
+
+    #[must_use]
+    pub fn icon_size(self) -> f32 {
+        match self {
+            Self::Small => 14.0,
+            Self::Normal => 16.0,
+            Self::Large => 20.0,
+        }
+    }
+
+    #[must_use]
+    pub fn h_padding(self) -> f32 {
+        match self {
+            Self::Small => 12.0,
+            Self::Normal => 16.0,
+            Self::Large => 20.0,
+        }
+    }
+
+    #[must_use]
+    pub fn icon_text_gap(self) -> f32 {
+        match self {
+            Self::Small => 6.0,
+            Self::Normal => 8.0,
+            Self::Large => 10.0,
+        }
+    }
+}
+
 // Draw commands — shapes (0x40–0x5F)
 pub const DRAW_RECT: u8 = 0x40;
 pub const DRAW_CIRCLE: u8 = 0x41;

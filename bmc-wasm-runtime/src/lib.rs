@@ -90,29 +90,13 @@
 //!   and `__on_ws_event` use `Vec::from_raw_parts` to transfer ownership of
 //!   host-allocated buffers.
 
-mod animation;
-pub mod gpu;
-#[cfg(feature = "profiling")]
-mod proc_mem;
-#[cfg(feature = "profiling")]
-mod profile;
-pub mod renderer;
 mod runtime_limits;
 mod xml;
 
-// Re-export colors and color macro from protocol crate
-pub mod colors {
-    pub use bmc_wasm_protocol::colors::*;
-}
-pub use bmc_wasm_protocol::color;
 mod host_api;
 #[cfg(feature = "perf-overlay")]
 pub mod perf_overlay;
 mod runtime;
-pub mod tree;
-
-pub mod components;
-pub mod interaction;
 
 #[cfg(feature = "fixtures")]
 pub mod capture_config;
@@ -121,5 +105,5 @@ pub mod fixtures;
 #[cfg(feature = "fixtures")]
 pub mod unified_fixture;
 
-pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState, FrameTimings};
+pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
 pub use runtime::{RenderStatus, RuntimeConfig, RuntimeResourceLimits, WasmWidgetRuntime};

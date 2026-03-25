@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use crate::json::JsonDoc;
 
 /// Response from an HTTP fetch request.
+#[derive(Debug)]
 pub struct FetchResponse {
     /// HTTP status code (200, 404, etc.). 0 if network error.
     pub status: u32,
@@ -144,6 +145,7 @@ pub fn fetch_after(
 }
 
 /// Builder for HTTP fetch requests with method, headers, and optional body.
+#[derive(Debug)]
 pub struct FetchRequest<'a> {
     method: &'a str,
     url: &'a str,

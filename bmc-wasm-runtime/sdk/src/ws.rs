@@ -59,6 +59,7 @@ impl Ws {
 }
 
 /// Events delivered by the host for a WebSocket connection.
+#[derive(Debug)]
 pub enum WsEvent<'a> {
     /// Connection successfully opened.
     Open,
@@ -68,7 +69,7 @@ pub enum WsEvent<'a> {
     Close(u16),
 }
 
-type Callback = fn(Ws, &WsEvent);
+type Callback = fn(Ws, &WsEvent<'_>);
 
 thread_local! {
     /// Registered callbacks indexed by position.

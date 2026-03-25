@@ -61,8 +61,8 @@ const GLOBE_SMOOTH_MS: f64 = 300.0;
 const ISS_ICON: Icon = include_icon!("assets/icon-iss.svg");
 
 const MARKET_COLOR: Color = BLUE_70;
-const ORBIT_COLOR: Color = color!(MARKET_COLOR, alpha: 0.8);
-const MARKER_GLOW_COLOR: Color = color!(MARKET_COLOR, alpha: 0.2);
+const ORBIT_COLOR: Color = MARKET_COLOR.with_alpha(0.8);
+const MARKER_GLOW_COLOR: Color = MARKET_COLOR.with_alpha(0.2);
 const MARKER_GLOW_R: f32 = 40.0;
 const MARKER_SOLID_R: f32 = 24.0;
 const MARKER_SIZE: f32 = 56.0;

@@ -3,22 +3,29 @@
 //! Run subcommand — headless capture of a single widget at a given size.
 
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::io::IsTerminal;
+#[cfg(target_os = "linux")]
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use glow::HasContext;
+#[cfg(target_os = "linux")]
 use glutin::config::ConfigTemplateBuilder;
+#[cfg(target_os = "linux")]
 use glutin::context::{ContextApi, ContextAttributesBuilder};
+#[cfg(target_os = "linux")]
 use glutin::display::{Display, GetGlDisplay};
+#[cfg(target_os = "linux")]
 use glutin::prelude::*;
+#[cfg(target_os = "linux")]
 use glutin::surface::{PbufferSurface, SurfaceAttributesBuilder};
 
+use bmc_render::interaction::TouchEvent;
+use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::capture_config::CaptureConfig;
-use bmc_wasm_runtime::interaction::TouchEvent;
-use bmc_wasm_runtime::renderer::Renderer;
 use bmc_wasm_runtime::unified_fixture::{
     TimelineEvent, UnifiedEvent, UnifiedFixture, load_unified_fixture, validate_fixture,
 };
@@ -190,8 +197,7 @@ fn run_unified_capture(
     }
     rt_config.event_fixtures = network_events;
 
-    let (gl, fbo, _texture, _surface, _gl_context, mut runtime) =
-        setup_gl_and_runtime(ctx, rt_config)?;
+    let (gl, fbo, _keep_alive, mut runtime) = setup_gl_and_runtime(ctx, rt_config)?;
 
     let (major, minor, patch) = runtime.sdk_version();
     eprintln!(
@@ -905,16 +911,17 @@ fn save_screenshot(pixels: &[u8], w: u32, h: u32, path: &Path) -> Result<()> {
     Ok(())
 }
 
-// ── Headless EGL display creation ────────────────────────────────────
+// ── Headless GL setup ────────────────────────────────────────────────
+//
+// Platform-specific EGL context creation.  Everything after this point
+// goes through `glow::Context` and is fully cross-platform.
+//
+// Linux  — glutin + Mesa EGL (llvmpipe for deterministic CI rendering)
+// macOS  — khronos-egl + ANGLE (Metal backend, loaded at runtime)
 
-/// Create a headless EGL display using the EGL device API.
-///
-/// Enumerates EGL devices and prefers the Mesa software renderer
-/// (`EGL_MESA_device_software`) for deterministic CI rendering.
-/// Falls back to the first available device for local dev with a GPU.
-///
-/// Requires `LIBGL_ALWAYS_SOFTWARE=1` on headless CI runners (set by
-/// the nix wrapper) so Mesa exposes llvmpipe as an EGL device.
+// ── Linux: glutin + Mesa EGL ────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
 fn create_headless_egl_display() -> Result<Display> {
     let devices: Vec<_> = glutin::api::egl::device::Device::query_devices()
         .context("EGL device enumeration not supported (missing EGL_EXT_device_query?)")?
@@ -932,22 +939,16 @@ fn create_headless_egl_display() -> Result<Display> {
     Ok(Display::Egl(display))
 }
 
-// ── GL + runtime setup (headless EGL + pbuffer) ─────────────────────
-
+#[cfg(target_os = "linux")]
 fn setup_gl_and_runtime(
     ctx: &CaptureCtx,
     rt_config: RuntimeConfig,
 ) -> Result<(
     glow::Context,
     glow::Framebuffer,
-    glow::Texture,
-    glutin::surface::Surface<PbufferSurface>,
-    glutin::context::PossiblyCurrentContext,
+    Box<dyn std::any::Any>,
     WasmWidgetRuntime,
 )> {
-    // Headless EGL display. Try the EGL device API first (works without a
-    // display server — needed for CI with Mesa llvmpipe). Fall back to the
-    // default display for local dev where a GPU + display server is present.
     let egl_display =
         create_headless_egl_display().context("failed to create headless EGL display")?;
 
@@ -1011,7 +1012,147 @@ fn setup_gl_and_runtime(
     }
     .context("failed to create WASM runtime")?;
 
-    Ok((gl, fbo, texture, surface, gl_context, runtime))
+    let keep_alive: Box<dyn std::any::Any> = Box::new((texture, surface, gl_context));
+    Ok((gl, fbo, keep_alive, runtime))
+}
+
+// ── macOS: khronos-egl + ANGLE ──────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+fn load_angle_egl() -> Result<khronos_egl::DynamicInstance<khronos_egl::EGL1_4>> {
+    // Try default search path first (works when DYLD_LIBRARY_PATH is set,
+    // e.g. inside `nix develop`), then fall back to common Homebrew prefixes.
+    let candidates = [
+        "libEGL.dylib",
+        "/opt/homebrew/lib/libEGL.dylib", // Homebrew on Apple Silicon
+        "/usr/local/lib/libEGL.dylib",    // Homebrew on Intel
+    ];
+
+    let mut last_err = None;
+    for path in candidates {
+        // SAFETY: loading a well-known library path.
+        match unsafe {
+            khronos_egl::DynamicInstance::<khronos_egl::EGL1_4>::load_required_from_filename(path)
+        } {
+            Ok(instance) => return Ok(instance),
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "failed to load libEGL.dylib: {}\n\n\
+         ANGLE is required on macOS for headless GL rendering.\n\
+         Install via one of:\n  \
+         - nix develop\n  \
+         - brew tap startergo/angle && brew install angle",
+        last_err.expect("BUG: candidates list is empty"),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn setup_gl_and_runtime(
+    ctx: &CaptureCtx,
+    rt_config: RuntimeConfig,
+) -> Result<(
+    glow::Context,
+    glow::Framebuffer,
+    Box<dyn std::any::Any>,
+    WasmWidgetRuntime,
+)> {
+    use khronos_egl as egl;
+
+    let instance = load_angle_egl()?;
+
+    // SAFETY: DEFAULT_DISPLAY is a well-known constant — ANGLE handles it.
+    let display =
+        unsafe { instance.get_display(egl::DEFAULT_DISPLAY) }.context("eglGetDisplay failed")?;
+    instance
+        .initialize(display)
+        .context("eglInitialize failed")?;
+
+    let config = instance
+        .choose_first_config(
+            display,
+            &[
+                egl::RED_SIZE,
+                8,
+                egl::GREEN_SIZE,
+                8,
+                egl::BLUE_SIZE,
+                8,
+                egl::ALPHA_SIZE,
+                8,
+                egl::STENCIL_SIZE,
+                8,
+                egl::SURFACE_TYPE,
+                egl::PBUFFER_BIT,
+                egl::RENDERABLE_TYPE,
+                egl::OPENGL_ES2_BIT,
+                egl::NONE,
+            ],
+        )?
+        .context("no suitable EGL config")?;
+
+    let context = instance
+        .create_context(
+            display,
+            config,
+            None,
+            &[egl::CONTEXT_CLIENT_VERSION, 2, egl::NONE],
+        )
+        .context("eglCreateContext failed")?;
+
+    let surface = instance
+        .create_pbuffer_surface(
+            display,
+            config,
+            &[
+                egl::WIDTH,
+                ctx.width.cast_signed(),
+                egl::HEIGHT,
+                ctx.height.cast_signed(),
+                egl::NONE,
+            ],
+        )
+        .context("eglCreatePbufferSurface failed")?;
+
+    instance
+        .make_current(display, Some(surface), Some(surface), Some(context))
+        .context("eglMakeCurrent failed")?;
+
+    let gl = unsafe {
+        glow::Context::from_loader_function(|s| {
+            instance
+                .get_proc_address(s)
+                .map_or(std::ptr::null(), |f| f as *const _)
+        })
+    };
+
+    let (fbo, texture) = create_fbo(&gl, ctx.width, ctx.height)?;
+    let fbo_id = fbo.0.get();
+
+    let wasm_bytes = std::fs::read(&ctx.wasm_path).context("failed to read WASM file")?;
+    let runtime = unsafe {
+        WasmWidgetRuntime::new(
+            &wasm_bytes,
+            |s| {
+                instance
+                    .get_proc_address(s)
+                    .map_or(std::ptr::null(), |f| f as *const _)
+            },
+            ctx.width,
+            ctx.height,
+            fbo_id,
+            rt_config,
+        )
+    }
+    .context("failed to create WASM runtime")?;
+
+    // Keep EGL state alive — dropping tears down the GL context.
+    let keep_alive: Box<dyn std::any::Any> =
+        Box::new((instance, display, context, surface, texture));
+
+    Ok((gl, fbo, keep_alive, runtime))
 }
 
 // ── Init subcommand ─────────────────────────────────────────────────

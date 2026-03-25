@@ -36,7 +36,7 @@ unsafe extern "C" {
 pub type SearchCallback = fn(SsdpSearch, &SsdpEvent<'_>);
 
 /// Handle to an active SSDP search session.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SsdpSearch(pub u32);
 
 impl SsdpSearch {
@@ -47,6 +47,7 @@ impl SsdpSearch {
 }
 
 /// Event delivered from the host for an SSDP search session.
+#[derive(Debug)]
 pub enum SsdpEvent<'a> {
     /// Device found. Data is JSON with device details:
     /// `{"usn":"...","location":"...","name":"...","host":"...","port":N,

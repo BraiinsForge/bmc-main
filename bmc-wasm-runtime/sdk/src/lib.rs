@@ -4,58 +4,91 @@
 //!
 //! Provides host bindings and UI primitives for building widgets.
 //! Layout is computed on the host side for minimal WASM binary size.
+//!
+//! When compiled for native targets (non-wasm32), FFI-dependent modules
+//! are gated out. The tree-building API (`col`, `row`, `text`, `button!`,
+//! `props!`, `style!`) and pure types remain available for the storybook
+//! and other native consumers.
 
 // wasm32: usize == u32, so these truncation warnings are false positives.
-#![expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_lossless,
-    clippy::same_length_and_capacity
-)]
+// cast_sign_loss only fires on wasm32 (gated FFI code).
+#![expect(clippy::cast_possible_truncation, clippy::cast_lossless)]
+#![cfg_attr(target_arch = "wasm32", expect(clippy::cast_sign_loss))]
 
 // Embed protocol version as a WASM export.
 // The host calls this after instantiation to verify compatibility.
+#[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn __bmc_sdk_version() -> u64 {
     version_pack(SDK_VERSION)
 }
 
+// -- WASM-only modules (require host FFI) --
+#[cfg(target_arch = "wasm32")]
 pub mod alloc;
+pub mod assets;
+#[cfg(target_arch = "wasm32")]
 pub mod calendar;
+#[cfg(target_arch = "wasm32")]
 pub mod format;
 pub mod host;
+#[cfg(target_arch = "wasm32")]
 pub mod http_listener;
+#[cfg(target_arch = "wasm32")]
 pub mod json;
+pub mod json_str;
+#[cfg(target_arch = "wasm32")]
 pub mod kv;
+#[cfg(target_arch = "wasm32")]
 pub mod led;
+#[cfg(target_arch = "wasm32")]
 pub mod log;
 #[cfg(feature = "math-3d")]
 pub mod math;
+#[cfg(target_arch = "wasm32")]
 pub mod mdns;
 pub mod mesh;
+pub mod modal;
+#[cfg(target_arch = "wasm32")]
 pub mod net;
+pub mod notification;
 pub mod number_input;
 pub mod orientation;
+pub mod progress_bar;
+#[cfg(target_arch = "wasm32")]
 pub mod socket;
+#[cfg(target_arch = "wasm32")]
 pub mod ssdp;
+pub mod text;
 pub mod tree;
+#[cfg(target_arch = "wasm32")]
 pub mod udp_broadcast;
+#[cfg(target_arch = "wasm32")]
 pub mod ws;
+#[cfg(target_arch = "wasm32")]
 pub mod xml;
 
+pub use bmc_render_macros::*;
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::*;
+#[cfg(target_arch = "wasm32")]
 pub use format::{format_date, format_duration};
 pub use host::*;
+#[cfg(target_arch = "wasm32")]
 pub use json::JsonDoc;
+pub use json_str::JsonStr;
+#[cfg(target_arch = "wasm32")]
 pub use led::LedEffect;
 pub use mesh::*;
+#[cfg(target_arch = "wasm32")]
 pub use net::*;
 pub use number_input::*;
 pub use orientation::Orientation;
 pub use tree::*;
 pub use ufmt;
+#[cfg(target_arch = "wasm32")]
 pub use ws::{Ws, WsEvent, ws_connect};
+#[cfg(target_arch = "wasm32")]
 pub use xml::XmlDoc;
 
 /// Helper for `button!` macro — converts label to String.
@@ -64,7 +97,48 @@ pub fn __macro_string_from(s: impl Into<String>) -> String {
     s.into()
 }
 
-/// Shorthand for PropsData: `props!()` or `props!(gap: 16.0, background: 0xFF)`
+// ── Props field coercion ─────────────────────────────────────────────
+
+/// Trait that allows integer literals to be used for `f32` fields in `props!`.
+///
+/// Identity impl covers all types (f32→f32, bool→bool, Color→Color, etc.).
+/// Additional impls convert integer types to f32 so you can write
+/// `props!(gap: 12, padding: 16)` instead of `props!(gap: 12.0, padding: 16.0)`.
+#[doc(hidden)]
+pub trait PropsFieldValue<T> {
+    fn into_field(self) -> T;
+}
+
+impl<T> PropsFieldValue<T> for T {
+    fn into_field(self) -> T {
+        self
+    }
+}
+
+macro_rules! impl_int_to_f32_lossless {
+    ($($t:ty),*) => {
+        $(impl PropsFieldValue<f32> for $t {
+            fn into_field(self) -> f32 { f32::from(self) }
+        })*
+    };
+}
+
+macro_rules! impl_int_to_f32_lossy {
+    ($($t:ty),*) => {
+        $(impl PropsFieldValue<f32> for $t {
+            #[expect(clippy::cast_precision_loss)]
+            fn into_field(self) -> f32 { self as f32 }
+        })*
+    };
+}
+
+impl_int_to_f32_lossless!(i8, i16, u8, u16);
+impl_int_to_f32_lossy!(i32, i64, u32, u64, isize, usize);
+
+/// Shorthand for PropsData: `props!()` or `props!(gap: 16, background: 0xFF)`
+///
+/// Integer literals are automatically converted to `f32` for layout fields
+/// (padding, margin, gap, width, height, etc.).
 ///
 /// Supports a special `bg_nine_patch: <NinePatch>` field that expands a
 /// `NinePatch` into the underlying `bg_np_*` fields on `PropsData`.
@@ -72,7 +146,6 @@ pub fn __macro_string_from(s: impl Into<String>) -> String {
 macro_rules! props {
     () => { $crate::tree::PropsData::default() };
     ($($field:ident: $value:expr),* $(,)?) => {{
-        #[allow(unused_mut)]
         let mut p = $crate::tree::PropsData::default();
         $(props!(@set p, $field: $value);)*
         p
@@ -86,7 +159,7 @@ macro_rules! props {
         $p.bg_np_bottom = np.bottom;
     }};
     (@set $p:ident, $field:ident: $v:expr) => {
-        $p.$field = $v;
+        $p.$field = $crate::PropsFieldValue::into_field($v);
     };
 }
 
@@ -303,7 +376,7 @@ macro_rules! number_input {
         #[allow(unused_mut)]
         let mut p = $crate::number_input::NumberInputProps::default();
         $($(p.$field = $val;)*)?
-        $crate::number_input::number_input($key, $value, p)
+        $crate::number_input::number_input($key, ::core::convert::Into::into($value), &p)
     }};
 }
 
@@ -392,13 +465,13 @@ macro_rules! style {
     (@route $ts:expr, $p:expr, max_width: $v:expr) => { $ts.max_width = $v; };
     (@route $ts:expr, $p:expr, outline_color: $v:expr) => { $ts.outline_color = $v; };
     (@route $ts:expr, $p:expr, outline_width: $v:expr) => { $ts.outline_width = $v; };
-    // Layout fields
-    (@route $ts:expr, $p:expr, padding: $v:expr) => { $p.padding = $v; };
-    (@route $ts:expr, $p:expr, margin: $v:expr) => { $p.margin = $v; };
-    (@route $ts:expr, $p:expr, gap: $v:expr) => { $p.gap = $v; };
-    (@route $ts:expr, $p:expr, flex: $v:expr) => { $p.flex = $v; };
-    (@route $ts:expr, $p:expr, width: $v:expr) => { $p.width = $v; };
-    (@route $ts:expr, $p:expr, height: $v:expr) => { $p.height = $v; };
+    // Layout fields (use coercion so integer literals work for f32 fields)
+    (@route $ts:expr, $p:expr, padding: $v:expr) => { $p.padding = $crate::PropsFieldValue::into_field($v); };
+    (@route $ts:expr, $p:expr, margin: $v:expr) => { $p.margin = $crate::PropsFieldValue::into_field($v); };
+    (@route $ts:expr, $p:expr, gap: $v:expr) => { $p.gap = $crate::PropsFieldValue::into_field($v); };
+    (@route $ts:expr, $p:expr, flex: $v:expr) => { $p.flex = $crate::PropsFieldValue::into_field($v); };
+    (@route $ts:expr, $p:expr, width: $v:expr) => { $p.width = $crate::PropsFieldValue::into_field($v); };
+    (@route $ts:expr, $p:expr, height: $v:expr) => { $p.height = $crate::PropsFieldValue::into_field($v); };
     (@route $ts:expr, $p:expr, background: $v:expr) => { $p.background = $v; };
     (@route $ts:expr, $p:expr, color: $v:expr) => { $ts.color = $v; };
 }

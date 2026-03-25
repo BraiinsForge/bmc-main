@@ -5,30 +5,36 @@
 //! Parses a JSON-like token stream with `#(expr)` / `#s(expr)` interpolations
 //! and emits a `bmc_wasm_sdk::fmt!()` call with all `{` / `}` pre-escaped.
 
-use proc_macro2::{Delimiter, Literal, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Literal, Span, TokenStream, TokenTree};
 use quote::quote;
 
 /// Entry point: parse the full token stream and emit the resulting expression.
 pub fn expand(input: TokenStream) -> TokenStream {
+    expand_impl(input).unwrap_or_else(syn::Error::into_compile_error)
+}
+
+fn expand_impl(input: TokenStream) -> syn::Result<TokenStream> {
     let tokens: Vec<TokenTree> = input.into_iter().collect();
     let mut pos = 0;
     let mut fmt_str = String::new();
     let mut args: Vec<TokenStream> = Vec::new();
 
-    parse_value(&tokens, &mut pos, &mut fmt_str, &mut args);
+    parse_value(&tokens, &mut pos, &mut fmt_str, &mut args)?;
 
     if pos < tokens.len() {
-        let span = tokens[pos].span();
-        return syn::Error::new(span, "unexpected tokens after JSON value").to_compile_error();
+        return Err(syn::Error::new(
+            tokens[pos].span(),
+            "unexpected tokens after JSON value",
+        ));
     }
 
-    if args.is_empty() {
+    Ok(if args.is_empty() {
         // Static JSON — emit a string literal directly
         let lit = Literal::string(&fmt_str);
         quote! { String::from(#lit) }
     } else {
         quote! { bmc_wasm_sdk::fmt!(#fmt_str, #(#args),*) }
-    }
+    })
 }
 
 // ── Recursive descent parser ────────────────────────────────────
@@ -38,16 +44,19 @@ fn parse_value(
     pos: &mut usize,
     fmt: &mut String,
     args: &mut Vec<TokenStream>,
-) {
+) -> syn::Result<()> {
     let Some(tok) = tokens.get(*pos) else {
-        panic!("json!: unexpected end of input");
+        return Err(syn::Error::new(
+            tokens.last().map_or_else(Span::call_site, TokenTree::span),
+            "json!: unexpected end of input",
+        ));
     };
     match tok {
         TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
-            parse_object(tokens, pos, fmt, args);
+            parse_object(tokens, pos, fmt, args)?;
         }
         TokenTree::Group(g) if g.delimiter() == Delimiter::Bracket => {
-            parse_array(tokens, pos, fmt, args);
+            parse_array(tokens, pos, fmt, args)?;
         }
         TokenTree::Literal(_) => {
             parse_literal(tokens, pos, fmt);
@@ -59,11 +68,16 @@ fn parse_value(
                     fmt.push_str(&s);
                     *pos += 1;
                 }
-                _ => panic!("json!: unexpected identifier `{s}`"),
+                _ => {
+                    return Err(syn::Error::new(
+                        id.span(),
+                        format!("json!: unexpected identifier `{s}`"),
+                    ));
+                }
             }
         }
         TokenTree::Punct(p) if p.as_char() == '#' => {
-            parse_interpolation(tokens, pos, fmt, args);
+            parse_interpolation(tokens, pos, fmt, args)?;
         }
         // Negative number: `-` followed by literal
         TokenTree::Punct(p) if p.as_char() == '-' => {
@@ -72,13 +86,20 @@ fn parse_value(
             if let Some(TokenTree::Literal(_)) = tokens.get(*pos) {
                 parse_literal(tokens, pos, fmt);
             } else {
-                panic!("json!: expected number after `-`");
+                return Err(syn::Error::new(
+                    tokens.get(*pos).map_or_else(|| p.span(), TokenTree::span),
+                    "json!: expected number after `-`",
+                ));
             }
         }
         other => {
-            panic!("json!: unexpected token: {other}");
+            return Err(syn::Error::new(
+                other.span(),
+                format!("json!: unexpected token: {other}"),
+            ));
         }
     }
+    Ok(())
 }
 
 fn parse_object(
@@ -86,11 +107,12 @@ fn parse_object(
     pos: &mut usize,
     fmt: &mut String,
     args: &mut Vec<TokenStream>,
-) {
+) -> syn::Result<()> {
     let TokenTree::Group(g) = &tokens[*pos] else {
         unreachable!();
     };
     let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+    let group_span = g.span();
     *pos += 1;
 
     fmt.push_str("{{");
@@ -106,24 +128,42 @@ fn parse_object(
         match &inner[ipos] {
             TokenTree::Literal(lit) => {
                 let repr = lit.to_string();
-                assert!(
-                    repr.starts_with('"'),
-                    "json!: object key must be a string, got `{repr}`"
-                );
+                if !repr.starts_with('"') {
+                    return Err(syn::Error::new(
+                        lit.span(),
+                        format!("json!: object key must be a string, got `{repr}`"),
+                    ));
+                }
                 fmt.push_str(&repr);
                 ipos += 1;
             }
-            other => panic!("json!: expected string key, got `{other}`"),
+            other => {
+                return Err(syn::Error::new(
+                    other.span(),
+                    format!("json!: expected string key, got `{other}`"),
+                ));
+            }
         }
 
         // Colon
         match inner.get(ipos) {
             Some(TokenTree::Punct(p)) if p.as_char() == ':' => ipos += 1,
-            other => panic!("json!: expected `:` after key, got {other:?}"),
+            Some(other) => {
+                return Err(syn::Error::new(
+                    other.span(),
+                    format!("json!: expected `:` after key, got `{other}`"),
+                ));
+            }
+            None => {
+                return Err(syn::Error::new(
+                    group_span,
+                    "json!: expected `:` after key, got end of object",
+                ));
+            }
         }
 
         fmt.push_str(": ");
-        parse_value(&inner, &mut ipos, fmt, args);
+        parse_value(&inner, &mut ipos, fmt, args)?;
 
         // Optional comma
         if let Some(TokenTree::Punct(p)) = inner.get(ipos)
@@ -133,6 +173,7 @@ fn parse_object(
         }
     }
     fmt.push_str("}}");
+    Ok(())
 }
 
 fn parse_array(
@@ -140,7 +181,7 @@ fn parse_array(
     pos: &mut usize,
     fmt: &mut String,
     args: &mut Vec<TokenStream>,
-) {
+) -> syn::Result<()> {
     let TokenTree::Group(g) = &tokens[*pos] else {
         unreachable!();
     };
@@ -155,7 +196,7 @@ fn parse_array(
             fmt.push_str(", ");
         }
         first = false;
-        parse_value(&inner, &mut ipos, fmt, args);
+        parse_value(&inner, &mut ipos, fmt, args)?;
 
         // Optional comma
         if let Some(TokenTree::Punct(p)) = inner.get(ipos)
@@ -165,6 +206,7 @@ fn parse_array(
         }
     }
     fmt.push(']');
+    Ok(())
 }
 
 fn parse_literal(tokens: &[TokenTree], pos: &mut usize, fmt: &mut String) {
@@ -181,17 +223,14 @@ fn parse_interpolation(
     pos: &mut usize,
     fmt: &mut String,
     args: &mut Vec<TokenStream>,
-) {
+) -> syn::Result<()> {
     // Skip the `#`
+    let hash_span = tokens[*pos].span();
     *pos += 1;
 
     // Check for `s` (string interpolation) before the group
     let is_string = match tokens.get(*pos) {
-        #[expect(
-            clippy::cmp_owned,
-            reason = "proc_macro2::Ident does not expose a borrowed string comparator"
-        )]
-        Some(TokenTree::Ident(id)) if id.to_string() == "s" => {
+        Some(TokenTree::Ident(id)) if *id == "s" => {
             *pos += 1;
             true
         }
@@ -204,17 +243,34 @@ fn parse_interpolation(
             *pos += 1;
             g.stream()
         }
-        other => panic!("json!: expected `(expr)` after `#`, got {other:?}"),
+        Some(other) => {
+            return Err(syn::Error::new(
+                other.span(),
+                format!("json!: expected `(expr)` after `#`, got `{other}`"),
+            ));
+        }
+        None => {
+            return Err(syn::Error::new(
+                hash_span,
+                "json!: expected `(expr)` after `#`, got end of input",
+            ));
+        }
     };
 
     if is_string {
-        // #s(expr) → "value" in JSON output — push real quotes into the format string
+        // #s(expr) → "value" in JSON output. Wrap the expression in
+        // `JsonStr` so its `uDisplay` impl escapes `"`, `\`, and ASCII
+        // control characters per RFC 8259 — without this, an interpolated
+        // value containing `"` would terminate the surrounding string
+        // literal and corrupt or inject into the output JSON.
         fmt.push('"');
         fmt.push_str("{}");
         fmt.push('"');
+        args.push(quote! { bmc_wasm_sdk::JsonStr(#group) });
     } else {
         // #(expr) → "{}" in format string
         fmt.push_str("{}");
+        args.push(group);
     }
-    args.push(group);
+    Ok(())
 }

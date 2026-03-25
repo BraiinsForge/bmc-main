@@ -363,7 +363,9 @@ fn handle_settings_interactions(result: &TreeRenderResult) {
     }
 
     // Close/save
-    if result.clicks.contains_key("settings::close") || result.clicks.contains_key("config_save") {
+    if result.clicks.contains_key("settings::close")
+        || result.clicks.contains_key("settings::primary")
+    {
         SETTINGS_OPEN.set(false);
     }
 }
@@ -578,10 +580,7 @@ fn settings_modal(size: WidgetSize) -> Node {
             margin,
             max_width: SizeVariant::Medium.width() as u16,
             footer: Some(ModalFooter {
-                primary: ModalAction {
-                    key: "config_save",
-                    label: "Save",
-                },
+                primary: ModalAction { label: "Save" },
                 secondary: None,
                 danger: false,
             }),

@@ -12,6 +12,9 @@ profiling = ["bmc-wasm-runtime/profiling"]
 bmc-wasm-protocol = { workspace = true }
 bmc-wasm-runtime = { workspace = true }
 
+# Rendering engine (extracted from bmc-wasm-runtime)
+bmc-render = { path = "../../bmc-render" }
+
 # Widget SDK (gpu feature provides EGL/GBM/DMA-BUF + Wayland surface client)
 bmc-widget = { workspace = true, features = ["gpu"] }
 

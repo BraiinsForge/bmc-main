@@ -1,0 +1,36 @@
+[package]
+name = "bmc-render"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+bmc-render-skin = { path = "skin" }
+bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
+ii-stopwatch.workspace = true
+tracing.workspace = true
+
+# 3D math (quaternions, matrices, vectors)
+glam.workspace = true
+
+# Rendering
+cosmic-text.workspace = true
+femtovg.workspace = true
+glow.workspace = true
+image = { workspace = true, features = ["default-formats"] }
+imgref.workspace = true
+rgb.workspace = true
+
+# Layout
+taffy.workspace = true
+
+[build-dependencies]
+bmc-icon-compiler = { path = "../bmc-wasm-runtime/icon-compiler" }
+bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
+
+[features]
+default = []
+profiling = ["ii-stopwatch/enabled"]
+
+[lints]
+workspace = true

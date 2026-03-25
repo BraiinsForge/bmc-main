@@ -8,8 +8,9 @@ use anyhow::{Result, bail};
 use bmc_wasm_protocol::colors::Color;
 use wasmi::{Caller, Extern, Linker};
 
+use bmc_render::renderer::Renderer;
+
 use crate::host_api::HostState;
-use crate::renderer::Renderer;
 
 use super::super::super::memory::read_bytes;
 
@@ -49,7 +50,7 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
         "host_register_mesh",
         |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
             #[cfg(feature = "profiling")]
-            let probe = crate::profile::MemProbe::start();
+            let probe = bmc_render::profile::MemProbe::start();
 
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return 0;
@@ -96,10 +97,10 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
 /// `MeshRenderer::register_mesh` emits its own narrower log line for the
 /// upload portion. The difference between the two is the wasmi memory copy.
 #[cfg(feature = "profiling")]
-fn log_host_register_mesh(id: u32, data_len: u32, probe: &crate::profile::MemProbe) {
+fn log_host_register_mesh(id: u32, data_len: u32, probe: &bmc_render::profile::MemProbe) {
     let s = probe.snapshot();
     tracing::info!(
-        target: crate::profile::TARGET,
+        target: bmc_render::profile::TARGET,
         "host_register_mesh id={id} data_len={data_len} ffi_us={ffi_us} \
          vmrss_delta_kb={vmrss:+} rss_shmem_delta_kb={shmem:+} \
          cma_free_delta_kb={cma:+} mem_free_kb={mem_free}",

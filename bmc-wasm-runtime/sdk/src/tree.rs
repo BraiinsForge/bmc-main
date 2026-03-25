@@ -9,276 +9,40 @@
 //! Spacer: [type][flex:f32]
 //! Canvas: [type][props:32B]
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::string::String;
 use std::vec::Vec;
 
-use std::cell::RefCell;
-
 use bmc_wasm_protocol::{
     AnimProperty, Color, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MESH,
     DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE,
-    DRAW_TEXT, Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN,
-    NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL,
-    NODE_SPACER,
+    DRAW_TEXT, Easing, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
+    NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER,
 };
 
+use crate::PropsFieldValue;
 use crate::mesh::{Mesh, MeshView};
 
 // Re-export for macro paths
 pub use bmc_wasm_protocol::{PropsData, TextStyle};
 
-pub use bmc_wasm_skin::{
+pub use bmc_render_skin::{
     ButtonSkin, NinePatch, NinePatchAsset, Skin, SkinAsset, SkinEntry, SkinPalette, SliderSkin,
     color_or, ensure_nine_patch_registered,
 };
 
 use crate::host::{ButtonSize, ButtonStyle};
 
-const INVALID_RESOURCE_ID: u16 = 0;
-
-/// Compiled icon data (output of `include_icon!` proc macro).
-///
-/// The `data` field contains the compact binary representation of SVG paths
-/// produced at compile time. On first use, this data is sent to the host via
-/// `host_register_icon()` which returns an opaque ID used for rendering.
-pub struct Icon {
-    pub data: &'static [u8],
-}
-
-// Icon registration — lazy, once per icon per runtime lifetime.
-thread_local! {
-    static ICON_IDS: RefCell<Vec<(usize, u16)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Register an icon with the host (if not already registered) and return its ID.
-///
-/// Useful when you need a raw icon ID for `button_with_icon` or `icon_button`.
-#[must_use]
-pub fn ensure_registered(icon: &Icon) -> u16 {
-    ICON_IDS.with(|ids| {
-        let mut ids = ids.borrow_mut();
-        cache_successful_resource_id(&mut ids, icon.data.as_ptr() as usize, || {
-            host::register_icon(icon.data)
-        })
-    })
-}
-
-/// Embedded raster image data (output of `include_bitmap!` proc macro).
-///
-/// The `data` field contains raw PNG (or other image format) bytes embedded
-/// at compile time. On first use, this data is sent to the host via
-/// `host_register_bitmap()` which decodes it and uploads the texture to VRAM.
-pub struct Bitmap {
-    pub data: &'static [u8],
-}
-
-// Bitmap registration — lazy, once per bitmap per runtime lifetime.
-thread_local! {
-    static BITMAP_IDS: RefCell<Vec<(usize, u16)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Register a bitmap with the host (if not already registered) and return its ID.
-#[must_use]
-pub fn ensure_bitmap_registered(bmp: &Bitmap) -> u16 {
-    BITMAP_IDS.with(|ids| {
-        let mut ids = ids.borrow_mut();
-        cache_successful_resource_id(&mut ids, bmp.data.as_ptr() as usize, || {
-            host::register_bitmap(bmp.data)
-        })
-    })
-}
-
-/// Embedded audio data (output of `include_audio!` proc macro).
-///
-/// The `data` field contains raw WAV/OGG/MP3 bytes embedded at compile time.
-/// On first use, this data is sent to the host via `host_register_audio()`
-/// which decodes to PCM and caches the samples for playback.
-pub struct Audio {
-    pub data: &'static [u8],
-    /// Human-readable name derived from filename (for fixture debugging).
-    pub name: &'static str,
-}
-
-// Audio registration — lazy, once per audio asset per runtime lifetime.
-thread_local! {
-    static AUDIO_IDS: RefCell<Vec<(usize, u16)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Register an audio asset with the host (if not already registered) and return its ID.
-#[must_use]
-pub fn ensure_audio_registered(audio: &Audio) -> u16 {
-    AUDIO_IDS.with(|ids| {
-        let mut ids = ids.borrow_mut();
-        let key = audio.data.as_ptr() as usize;
-        for &(k, id) in ids.iter() {
-            if k == key {
-                return id;
-            }
-        }
-        let id = host::register_audio(audio.data, audio.name);
-        ids.push((key, id));
-        id
-    })
-}
-
-// Mesh registration — lazy, once per mesh per runtime lifetime.
-thread_local! {
-    static MESH_IDS: RefCell<Vec<(usize, u16)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Register a mesh with the host (if not already registered) and return its ID.
-#[must_use]
-pub fn ensure_mesh_registered(mesh: &Mesh) -> u16 {
-    MESH_IDS.with(|ids| {
-        let mut ids = ids.borrow_mut();
-        cache_successful_resource_id(&mut ids, mesh.data.as_ptr() as usize, || {
-            host::register_mesh(mesh.data)
-        })
-    })
-}
-
-fn cache_successful_resource_id(
-    ids: &mut Vec<(usize, u16)>,
-    key: usize,
-    register: impl FnOnce() -> u16,
-) -> u16 {
-    for &(known_key, id) in ids.iter() {
-        if known_key == key {
-            return id;
-        }
-    }
-
-    let id = register();
-    if id != INVALID_RESOURCE_ID {
-        ids.push((key, id));
-    }
-    id
-}
-
-/// Definition of a single animation (serialized to host).
-#[derive(Clone, Debug)]
-pub struct AnimationDef {
-    pub property: AnimProperty,
-    pub from: f32,
-    pub to: f32,
-    pub duration_ms: u32,
-    pub delay_ms: u16,
-    pub easing: Easing,
-    pub loop_mode: LoopMode,
-}
-
-/// Definition of a transition (serialized to host).
-#[derive(Clone, Debug)]
-pub struct TransitionDef {
-    pub duration_ms: u32,
-    pub easing: Easing,
-}
-
-/// Path interpolation mode.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Interpolation {
-    /// Straight line segments between points.
-    #[default]
-    Linear = 0,
-    /// Smooth Catmull-Rom spline through all points (host converts to cubic Bézier).
-    CatmullRom = 1,
-}
-
-/// A text span with optional style overrides
-#[derive(Clone, Debug)]
-pub struct Span {
-    pub text: String,
-    pub weight: Option<u16>,
-    pub color: Option<Color>,
-    pub italic: bool,
-    pub underline: bool,
-    pub strikethrough: bool,
-}
-
-impl Span {
-    /// Serialize span style flags (u16) and optional color
-    /// flags bits:
-    ///   0-11:  weight (if has_weight)
-    ///   12:    has_weight
-    ///   13:    has_color (color u32 follows after text)
-    ///   14:    italic
-    ///   15:    underline
-    /// Note: strikethrough is in the extra byte if needed
-    #[must_use]
-    pub fn flags(&self) -> u16 {
-        let weight_bits = self.weight.unwrap_or(0) & 0xFFF;
-        let has_weight = if self.weight.is_some() { 1 << 12 } else { 0 };
-        let has_color = if self.color.is_some() { 1 << 13 } else { 0 };
-        let italic_bit = if self.italic { 1 << 14 } else { 0 };
-        let underline_bit = if self.underline { 1 << 15 } else { 0 };
-        weight_bits | has_weight | has_color | italic_bit | underline_bit
-    }
-
-    /// Extra flags byte for strikethrough (separate to fit in u16)
-    #[must_use]
-    pub fn extra_flags(&self) -> u8 {
-        u8::from(self.strikethrough)
-    }
-}
-
-/// Inline notification severity kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum NotificationKind {
-    Error = 0,
-    Warning = 1,
-    Success = 2,
-    Info = 3,
-}
-
-/// Trait for optional style argument in span()
-pub trait IntoSpanStyle {
-    fn apply(self, span: &mut Span);
-}
-
-impl IntoSpanStyle for () {
-    fn apply(self, _span: &mut Span) {}
-}
-
-impl IntoSpanStyle for StyleResult {
-    fn apply(self, span: &mut Span) {
-        let ts = self.0;
-        if ts.weight != 400 {
-            span.weight = Some(ts.weight);
-        }
-        if ts.color != GRAY_10 {
-            span.color = Some(ts.color);
-        }
-        span.italic = ts.italic;
-        span.underline = ts.underline;
-        span.strikethrough = ts.strikethrough;
-    }
-}
-
-/// Create a text span, optionally with style overrides
-///
-/// # Examples
-/// ```ignore
-/// span("plain text", ())
-/// span("bold", style!(weight: 700))
-/// span("colored", style!(color: RED_50))
-/// ```
-pub fn span(text: impl Into<String>, style: impl IntoSpanStyle) -> Span {
-    let mut s = Span {
-        text: text.into(),
-        weight: None,
-        color: None,
-        italic: false,
-        underline: false,
-        strikethrough: false,
-    };
-    style.apply(&mut s);
-    s
-}
+// Re-export extracted modules so `tree::*` still covers everything
+pub use crate::assets::*;
+pub use crate::modal::*;
+pub use crate::notification::*;
+pub use crate::progress_bar::*;
+pub use crate::text::*;
 
 /// Tree buffer for serialization
+#[derive(Debug)]
 pub struct TreeBuffer {
     data: Vec<u8>,
 }
@@ -299,6 +63,12 @@ impl TreeBuffer {
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Consume the buffer and return the serialized bytes.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.data
     }
 
     fn write_u8(&mut self, v: u8) {
@@ -539,25 +309,38 @@ impl Default for TreeBuffer {
 }
 
 // Global tree buffer for the current frame
-std::thread_local! {
+thread_local! {
     static TREE_BUFFER: RefCell<TreeBuffer> = RefCell::new(TreeBuffer::new());
 }
 
 /// Begin building a tree (clears buffer)
+#[cfg(target_arch = "wasm32")]
 pub fn begin_tree() {
     use std::sync::Once;
     static SKIN_INIT: Once = Once::new();
-    SKIN_INIT.call_once(|| bmc_wasm_skin::init(host::register_bitmap_nearest));
+    SKIN_INIT.call_once(|| bmc_render_skin::init(host::register_bitmap_nearest));
 
     TREE_BUFFER.with(|buf| buf.borrow_mut().clear());
 }
 
 /// Submit the serialized tree to the host and clear the buffer.
+#[cfg(target_arch = "wasm32")]
 pub fn submit_and_clear(width: u32, height: u32) {
     TREE_BUFFER.with(|buf| {
         let b = buf.borrow();
         host::submit_tree(b.as_slice(), width, height);
     });
+}
+
+/// Serialize a `Node` to its wire-format bytes (native path for storybook).
+///
+/// Returns the serialized tree buffer that can be passed to
+/// `bmc_render::deserialize_tree()` on the host side.
+#[must_use]
+pub fn serialize_node_to_bytes(node: &Node) -> Vec<u8> {
+    let mut buf = TreeBuffer::new();
+    serialize_node(&mut buf, node);
+    buf.into_bytes()
 }
 
 /// Access the tree buffer for writing
@@ -572,10 +355,12 @@ where
 // High-level Node API (mirrors ui.rs but serializes to tree buffer)
 // ============================================================================
 
+use crate::TouchHit;
+#[cfg(target_arch = "wasm32")]
 use crate::host;
 
 /// Draw command for canvas children (local coordinates)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Draw {
     /// Rectangle at absolute local position
     Rect {
@@ -826,25 +611,37 @@ impl Draw {
     /// On first call for a given asset, registers its bitmap with the host.
     /// Subsequent calls reuse the cached ID — zero per-frame overhead.
     #[must_use]
-    pub fn nine_patch(x: f32, y: f32, w: f32, h: f32, asset: &NinePatchAsset) -> Self {
+    pub fn nine_patch(
+        x: impl PropsFieldValue<f32>,
+        y: impl PropsFieldValue<f32>,
+        w: impl PropsFieldValue<f32>,
+        h: impl PropsFieldValue<f32>,
+        asset: &NinePatchAsset,
+    ) -> Self {
         let np = ensure_nine_patch_registered(asset);
         Self::NinePatch {
-            x,
-            y,
-            w,
-            h,
+            x: x.into_field(),
+            y: y.into_field(),
+            w: w.into_field(),
+            h: h.into_field(),
             nine_patch: np,
         }
     }
 
     /// 9-patch from a pre-registered [`NinePatch`] (for dynamically created 9-patches).
     #[must_use]
-    pub fn nine_patch_id(x: f32, y: f32, w: f32, h: f32, np: NinePatch) -> Self {
+    pub fn nine_patch_id(
+        x: impl PropsFieldValue<f32>,
+        y: impl PropsFieldValue<f32>,
+        w: impl PropsFieldValue<f32>,
+        h: impl PropsFieldValue<f32>,
+        np: NinePatch,
+    ) -> Self {
         Self::NinePatch {
-            x,
-            y,
-            w,
-            h,
+            x: x.into_field(),
+            y: y.into_field(),
+            w: w.into_field(),
+            h: h.into_field(),
             nine_patch: np,
         }
     }
@@ -1023,6 +820,10 @@ impl Draw {
     /// Add a repeating animation with a start delay.
     #[must_use]
     #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "any non-Modified Draw is wrapped identically; new variants don't change the wrap"
+    )]
     pub fn animate_delayed(
         self,
         property: AnimProperty,
@@ -1094,6 +895,10 @@ impl Draw {
 
     /// Add a transition with explicit color interpolation space.
     #[must_use]
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "any non-Modified Draw is wrapped identically; new variants don't change the wrap"
+    )]
     pub fn transition_with_color_space(
         self,
         duration_ms: u32,
@@ -1107,9 +912,9 @@ impl Draw {
         match self {
             Draw::Modified {
                 animations,
-                transition: _,
                 color_space: cs,
                 inner,
+                ..
             } => Draw::Modified {
                 animations,
                 transition,
@@ -1130,16 +935,8 @@ impl Draw {
     }
 }
 
-/// Progress bar display mode.
-#[derive(Clone, Copy, Debug)]
-pub enum ProgressMode {
-    /// Known progress as a fraction (0.0–1.0). Shows fill + playhead dot.
-    Fraction(f32),
-    /// Unknown duration — animated indicator across full width.
-    Indeterminate,
-}
-
 /// A UI node in the tree (for building before serialization)
+#[derive(Clone, Debug)]
 pub enum Node {
     Column(PropsData, Vec<Node>),
     Row(PropsData, Vec<Node>),
@@ -1220,12 +1017,12 @@ pub enum Node {
 }
 
 /// Result from tree rendering
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct TreeRenderResult {
     /// One-shot clicks on buttons and interactive canvases (on finger-up)
-    pub clicks: HashMap<String, host::TouchHit>,
+    pub clicks: HashMap<String, TouchHit>,
     /// Active drag positions on interactive canvases (while finger is down)
-    pub drags: HashMap<String, host::TouchHit>,
+    pub drags: HashMap<String, TouchHit>,
 }
 
 /// Column layout
@@ -1241,40 +1038,6 @@ pub fn row(props: PropsData, children: impl IntoIterator<Item = Node>) -> Node {
 /// Centered container
 pub fn center(props: PropsData, children: impl IntoIterator<Item = Node>) -> Node {
     Node::Center(props, children.into_iter().collect())
-}
-
-/// Combined text style and layout props for the style!() macro
-#[derive(Clone, Copy)]
-pub struct StyleResult(pub TextStyle, pub PropsData);
-
-impl From<StyleResult> for TextStyle {
-    fn from(sr: StyleResult) -> Self {
-        sr.0
-    }
-}
-
-impl From<StyleResult> for PropsData {
-    fn from(sr: StyleResult) -> Self {
-        sr.1
-    }
-}
-
-/// Simple text node with unified styling
-pub fn text(content: impl Into<String>, style: StyleResult) -> Node {
-    Node::Paragraph {
-        props: style.1,
-        base_style: style.0,
-        spans: vec![span(content, ())],
-    }
-}
-
-/// Rich paragraph with multiple styled spans
-pub fn paragraph(style: StyleResult, spans: impl IntoIterator<Item = Span>) -> Node {
-    Node::Paragraph {
-        props: style.1,
-        base_style: style.0,
-        spans: spans.into_iter().collect(),
-    }
 }
 
 /// Create a button node (used by the `button!` macro).
@@ -1299,23 +1062,12 @@ pub fn make_button(
     }
 }
 
-/// Inline notification banner
-pub fn notification(
-    kind: NotificationKind,
-    title: impl Into<String>,
-    subtitle: impl Into<String>,
-) -> Node {
-    Node::Notification {
-        kind,
-        title: title.into(),
-        subtitle: subtitle.into(),
-    }
-}
-
 /// Flexible spacer
 #[must_use]
-pub fn spacer(flex: f32) -> Node {
-    Node::Spacer { flex }
+pub fn spacer(flex: impl crate::PropsFieldValue<f32>) -> Node {
+    Node::Spacer {
+        flex: flex.into_field(),
+    }
 }
 
 /// Scrollable container — clips children and allows vertical scrolling.
@@ -1349,192 +1101,6 @@ pub fn touchable(key: &str, props: PropsData, draws: impl IntoIterator<Item = Dr
         props,
         touch_key: Some(String::from(key)),
         draws: draws.into_iter().collect(),
-    }
-}
-
-/// Host-rendered progress bar with optional touch interaction.
-///
-/// Uses `flex: 1.0` layout. The host computes all drawing (track, fill,
-/// squiggle animation, playhead dot) — zero per-frame draw data on the wire.
-///
-/// - `touch_key`: interaction key for drag/click. Pass `""` for non-interactive.
-/// - `track_h`: track thickness in pixels (also controls squiggle amplitude).
-/// - `mode`: `ProgressMode::Fraction(0.0..=1.0)` or `ProgressMode::Indeterminate`.
-/// - `active`: when true, filled portion uses animated squiggle.
-/// - `fill_color`: fill, playhead dot, and squiggle color.
-/// - `track_color`: background track color.
-/// - `bg_color`: used to clip squiggle past the playhead. Pass `0` when not active.
-#[expect(clippy::too_many_arguments)]
-#[must_use]
-pub fn progress_bar(
-    touch_key: &str,
-    track_h: f32,
-    mode: ProgressMode,
-    active: bool,
-    fill_color: Color,
-    track_color: Color,
-    bg_color: Color,
-    skin: Option<SliderSkin>,
-) -> Node {
-    Node::ProgressBar {
-        touch_key: String::from(touch_key),
-        track_h,
-        mode,
-        active,
-        fill_color,
-        track_color,
-        bg_color,
-        skin,
-    }
-}
-
-/// A labeled button action for modal footers.
-#[derive(Clone)]
-pub struct ModalAction {
-    pub key: &'static str,
-    pub label: &'static str,
-}
-
-/// Modal footer descriptor — the host renders buttons at the appropriate size.
-///
-/// Layout follows CDS conventions:
-/// - Two buttons: `[secondary | primary]`, each 50% width
-/// - One button (no secondary): `[spacer | primary]`, right-aligned 50%
-/// - `danger`: primary renders as Danger style (e.g. delete confirmation)
-#[derive(Clone)]
-pub struct ModalFooter {
-    pub primary: ModalAction,
-    pub secondary: Option<ModalAction>,
-    pub danger: bool,
-}
-
-/// Modal dialog configuration.
-///
-/// All fields default to sensible values via `Default`. Only set what you need.
-#[derive(Clone, Default)]
-pub struct ModalProps {
-    /// Estimated total height of body content for scroll sizing.
-    /// Default: 0.0
-    pub height: f32,
-
-    /// Margin around the modal content area in pixels.
-    /// This creates space between the modal and screen edges where the
-    /// semi-transparent backdrop is visible.
-    /// Default: 48 pixels
-    pub margin: u16,
-
-    /// Backdrop opacity as 0-255 value (0 = fully transparent, 255 = fully opaque).
-    /// The backdrop is the dark overlay behind the modal that dims the background content.
-    /// Lower values make more of the background visible through the overlay.
-    /// Default: 128 (50% opacity)
-    pub backdrop_alpha: u8,
-
-    /// Modal body background color. Default = use default (GRAY_90).
-    pub bg_color: Color,
-
-    /// Modal header background color. Default = use default (GRAY_100).
-    pub header_color: Color,
-
-    /// Modal title text color. Default = use default (GRAY_10).
-    pub title_color: Color,
-
-    /// Maximum modal width in pixels. `0` = no limit (fill available space).
-    pub max_width: u16,
-
-    /// Optional footer with primary (and optional secondary) action buttons.
-    pub footer: Option<ModalFooter>,
-}
-
-impl ModalProps {
-    /// Default margin around modal content (48 pixels)
-    pub const DEFAULT_MARGIN: u16 = 48;
-    /// Default backdrop opacity (128 = 50%)
-    pub const DEFAULT_BACKDROP_ALPHA: u8 = 128;
-}
-
-/// Create a modal dialog overlay.
-///
-/// # Arguments
-/// - `key` — unique ID for state tracking; close button gets `"{key}::close"`
-/// - `open` — whether the modal is visible
-/// - `title` — header title text
-/// - `content` — body child nodes
-/// - `props` — styling, layout, and footer configuration
-///
-/// # Examples
-/// ```ignore
-/// // Simple — no footer, default props
-/// modal("about", MODAL_OPEN.get(), "About", vec![text("Hello", s)], None)
-///
-/// // With footer + props
-/// modal("settings", SETTINGS_OPEN.get(), "Settings",
-///     vec![number_input!("work", 25, label: "Work")],
-///     Some(ModalProps {
-///         height: 200.0,
-///         footer: Some(ModalFooter {
-///             primary: ModalAction { key: "save", label: "Save" },
-///             secondary: None,
-///             danger: false,
-///         }),
-///         ..Default::default()
-///     }),
-/// )
-/// ```
-pub fn modal(
-    key: impl Into<String>,
-    open: bool,
-    title: impl Into<String>,
-    content: Vec<Node>,
-    props: Option<ModalProps>,
-) -> Node {
-    let props = props.unwrap_or_default();
-    let (pk, pl, sk, sl, danger) = match &props.footer {
-        Some(f) => {
-            let (sk, sl) = match &f.secondary {
-                Some(s) => (s.key.to_owned(), s.label.to_owned()),
-                None => (String::new(), String::new()),
-            };
-            (
-                f.primary.key.to_owned(),
-                f.primary.label.to_owned(),
-                sk,
-                sl,
-                f.danger,
-            )
-        }
-        None => (
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-            false,
-        ),
-    };
-    Node::Modal {
-        modal_id: key.into(),
-        is_open: open,
-        title: title.into(),
-        content_height: props.height,
-        padding: if props.margin == 0 {
-            ModalProps::DEFAULT_MARGIN
-        } else {
-            props.margin
-        },
-        backdrop_alpha: if props.backdrop_alpha == 0 {
-            ModalProps::DEFAULT_BACKDROP_ALPHA
-        } else {
-            props.backdrop_alpha
-        },
-        max_width: props.max_width,
-        bg_color: props.bg_color,
-        header_color: props.header_color,
-        title_color: props.title_color,
-        body: content,
-        footer_primary_key: pk,
-        footer_primary_label: pl,
-        footer_secondary_key: sk,
-        footer_secondary_label: sl,
-        footer_danger: danger,
     }
 }
 
@@ -2062,6 +1628,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
 }
 
 /// Collect interaction keys from the tree (buttons, touchable canvases, progress bars).
+#[cfg(target_arch = "wasm32")]
 fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
     match node {
         Node::Button { id, .. } => keys.push(id.clone()),
@@ -2116,6 +1683,7 @@ fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
 /// Returns click and drag interactions keyed by string IDs.
 #[must_use]
 #[expect(clippy::needless_pass_by_value)] // Node is consumed by serialization
+#[cfg(target_arch = "wasm32")]
 pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     let mut keys = Vec::new();
     collect_interaction_keys(&root, &mut keys);
@@ -2137,44 +1705,4 @@ pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     }
 
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{INVALID_RESOURCE_ID, cache_successful_resource_id};
-
-    #[test]
-    fn successful_registrations_are_cached() {
-        let mut ids = Vec::new();
-        let mut calls = 0;
-
-        let first = cache_successful_resource_id(&mut ids, 7, || {
-            calls += 1;
-            11
-        });
-        let second = cache_successful_resource_id(&mut ids, 7, || {
-            calls += 1;
-            12
-        });
-
-        assert_eq!(first, 11);
-        assert_eq!(second, 11);
-        assert_eq!(calls, 1);
-    }
-
-    #[test]
-    fn failed_registrations_are_not_cached() {
-        let mut ids = Vec::new();
-        let mut responses = [INVALID_RESOURCE_ID, 9].into_iter();
-
-        let first = cache_successful_resource_id(&mut ids, 42, || {
-            responses.next().expect("BUG: missing first test response")
-        });
-        let second = cache_successful_resource_id(&mut ids, 42, || {
-            responses.next().expect("BUG: missing second test response")
-        });
-
-        assert_eq!(first, INVALID_RESOURCE_ID);
-        assert_eq!(second, 9);
-    }
 }

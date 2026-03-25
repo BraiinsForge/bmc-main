@@ -264,7 +264,7 @@ def ensure_textures(
 
 def setup_material(obj, albedo_path: str, normal_path: str, name: str = 'DieMaterial'):
     """Create principled BSDF material with albedo + normal map textures."""
-    import bpy  # type: ignore[import-not-found, import-outside-top-level]
+    import bpy  # noqa: PLC0415  # type: ignore[import-not-found]
 
     mat = bpy.data.materials.new(name=name)
     nodes = mat.node_tree.nodes
@@ -298,8 +298,8 @@ def setup_material(obj, albedo_path: str, normal_path: str, name: str = 'DieMate
 
 def normalize_scale(obj):
     """Normalize object to fit in a unit bounding box."""
-    import bpy  # type: ignore[import-not-found, import-outside-top-level]
-    import mathutils  # type: ignore[import-not-found, import-outside-top-level]
+    import bpy  # noqa: PLC0415  # type: ignore[import-not-found]
+    import mathutils  # noqa: PLC0415  # type: ignore[import-not-found]
 
     bbox = [obj.matrix_world @ mathutils.Vector(c) for c in obj.bound_box]
     dims = [max(v[i] for v in bbox) - min(v[i] for v in bbox) for i in range(3)]
@@ -314,7 +314,7 @@ def finalize_and_export(
     obj, output_path: str, face_normals_flat: list[float], face_count: int
 ):
     """Mark seams, triangulate, normalize, embed extras, export GLB."""
-    import bpy  # type: ignore[import-not-found]
+    import bpy  # noqa: PLC0415  # type: ignore[import-not-found]
 
     # Mark UV seams for glTF vertex split
     bpy.ops.object.mode_set(mode='EDIT')

@@ -46,7 +46,7 @@ unsafe extern "C" {
 pub type BrowseCallback = fn(MdnsBrowse, &MdnsEvent<'_>);
 
 /// Handle to an active mDNS browse session.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct MdnsBrowse(pub u32);
 
 impl MdnsBrowse {
@@ -57,7 +57,7 @@ impl MdnsBrowse {
 }
 
 /// Handle to an active mDNS service registration.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct MdnsRegistration(pub u32);
 
 impl MdnsRegistration {
@@ -68,6 +68,7 @@ impl MdnsRegistration {
 }
 
 /// Event delivered from the host for an mDNS browse session.
+#[derive(Debug)]
 pub enum MdnsEvent<'a> {
     /// Service found/resolved. Data is JSON with service details:
     /// `{"service_type":"...","name":"...","host":"...","port":N,"txt":{...}}`
