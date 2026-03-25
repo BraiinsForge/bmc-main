@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 pub const APA102_MAX_BRIGHTNESS: u8 = 31; // APA102 max brightness value (5 bits)
 pub const LED_FRACTION_MAX: f32 = 1.0;

@@ -1,15 +1,15 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
-use crate::led_driver::embedded_hal::SpidevHalWrapper;
-use crate::led_driver::{
+use super::embedded_hal::SpidevHalWrapper;
+use super::{
     config::{self, APA102_MAX_BRIGHTNESS, FRAME_RATE_HZ},
     effects,
 };
-use apa102_spi::{Apa102Pixel, SmartLedsWrite};
-use bmc_led::{
+use crate::{
     data::{self, LedCommand, LedEffect, LedScene},
     led_driver::{LedDriver, LedDriverFactory},
 };
+use apa102_spi::{Apa102Pixel, SmartLedsWrite};
 use spidev::{SpiModeFlags, Spidev, SpidevOptions};
 use std::{path::PathBuf, time::Duration};
 use tokio::{
@@ -240,7 +240,7 @@ async fn led_worker(device_path: PathBuf, mut led_cmd_rx: Receiver<LedCommand>) 
     let mut spi = SpidevHalWrapper(raw_spi);
     let mut strip = apa102_spi::Apa102Writer::new(
         &mut spi,
-        bmc_led::config::LED_COUNT as usize,
+        crate::config::LED_COUNT as usize,
         apa102_spi::PixelOrder::BGR,
     );
     let mut led_state = LedState::new();

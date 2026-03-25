@@ -7,7 +7,6 @@ authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
 anyhow.workspace = true
-apa102-spi.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
 axum-extra.workspace = true
@@ -16,7 +15,7 @@ bmc-button.workspace = true
 bmc-display.workspace = true
 bmc-gpio.workspace = true
 bmc-kobject.workspace = true
-bmc-led.workspace = true
+bmc-led = { workspace = true, features = ["apa102_spi"] }
 bmc-platform.workspace = true
 bmc-shared-ii-net.workspace = true
 bmc-shared-ii-net-drv.workspace = true
@@ -28,8 +27,6 @@ calloop.workspace = true
 clap.workspace = true
 drm.workspace = true
 drm-fourcc.workspace = true
-embedded-hal.workspace = true
-embedded-hal-async.workspace = true
 evdev.workspace = true
 file-rotate.workspace = true
 flume.workspace = true
@@ -48,9 +45,7 @@ rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 slint = { workspace = true, features = ["renderer-software"] }
-smart-leds-trait.workspace = true
 smithay.workspace = true
-spidev.workspace = true
 sysfs_gpio = { workspace = true, features = ["async-tokio"] }
 thiserror.workspace = true
 time.workspace = true
