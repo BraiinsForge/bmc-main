@@ -1,0 +1,36 @@
+[package]
+name = "bmc-storybook"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+toml.workspace = true
+
+[dependencies]
+bmc-render = { path = "../bmc-render" }
+bmc-render-skin = { path = "../bmc-render/skin" }
+bmc-storybook-api = { path = "api" }
+bmc-storybook-macros = { path = "storybook-macros" }
+bmc-wasm-sdk = { path = "../bmc-wasm-runtime/sdk" }
+
+anstyle-parse.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
+femtovg.workspace = true
+inventory.workspace = true
+libloading.workspace = true
+notify.workspace = true
+resvg.workspace = true
+sublime_fuzzy.workspace = true
+taffy.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Workaround for egui glow backend not setting NSColorSpace on macOS (egui#2712).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5.2"
+raw-window-handle = "0.6"
+
+[lints]
+workspace = true

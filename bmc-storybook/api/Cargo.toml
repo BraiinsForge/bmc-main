@@ -1,0 +1,13 @@
+[package]
+name = "bmc-storybook-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bmc-render = { path = "../../bmc-render" }
+bmc-storybook-macros = { path = "../storybook-macros" }
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+inventory.workspace = true
+
+[lints]
+workspace = true

@@ -58,6 +58,16 @@ validate-wasm: format validate-protocol-no-std
 validate-protocol-no-std:
     cargo build -p bmc-wasm-protocol --target riscv32imc-unknown-none-elf
 
+# === Storybook ===
+
+# Run the widget storybook (interactive component catalog).
+storybook:
+    cargo run -p bmc-storybook
+
+# Run the storybook with hot-reload (rebuilds stories cdylib on change).
+storybook-hot:
+    cargo run -p bmc-storybook -- --hot-reload
+
 # === Tooling ===
 
 # Find unused workspace dependencies declared in Cargo.toml.

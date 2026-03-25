@@ -1,0 +1,308 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Preview pane: renders SDK tree nodes through bmc-render's FemtoVG pipeline.
+//!
+//! Each `DocBlock::Frame` gets its own femtovg offscreen render target via
+//! `create_render_target` / `begin_frame_to_image`. A bootstrap FBO is needed
+//! only for `FemtoVgRenderer` initialization.
+
+use std::collections::HashMap;
+
+use bmc_render::gpu::FemtoVgRenderer;
+use bmc_render::interaction::InteractionState;
+use bmc_render::renderer::Renderer;
+use bmc_render::tree::{NodeContext, TouchHit};
+use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState};
+use bmc_storybook_api::{DocBlock, FrameSize};
+use taffy::TaffyTree;
+
+/// Bootstrap FBO dimensions — only used for `FemtoVgRenderer::new()`.
+const BOOTSTRAP_W: u32 = 64;
+const BOOTSTRAP_H: u32 = 64;
+
+// ── Bootstrap FBO ───────────────────────────────────────────────────
+
+/// Minimal FBO for `FemtoVgRenderer` initialization.
+/// Not used for actual rendering — each frame gets its own offscreen image.
+pub struct BootstrapFbo {
+    pub width: u32,
+    pub height: u32,
+    fbo: eframe::glow::Framebuffer,
+}
+
+impl BootstrapFbo {
+    #[expect(unsafe_code, clippy::cast_possible_wrap)]
+    pub fn new(gl: &eframe::glow::Context) -> Self {
+        use eframe::glow::HasContext;
+        unsafe {
+            let texture = gl
+                .create_texture()
+                .expect("BUG: failed to create GL texture");
+            gl.bind_texture(eframe::glow::TEXTURE_2D, Some(texture));
+            gl.tex_image_2d(
+                eframe::glow::TEXTURE_2D,
+                0,
+                eframe::glow::SRGB8_ALPHA8 as i32,
+                BOOTSTRAP_W as i32,
+                BOOTSTRAP_H as i32,
+                0,
+                eframe::glow::RGBA,
+                eframe::glow::UNSIGNED_BYTE,
+                eframe::glow::PixelUnpackData::Slice(None),
+            );
+            let fbo = gl
+                .create_framebuffer()
+                .expect("BUG: failed to create GL framebuffer");
+            gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, Some(fbo));
+            gl.framebuffer_texture_2d(
+                eframe::glow::FRAMEBUFFER,
+                eframe::glow::COLOR_ATTACHMENT0,
+                eframe::glow::TEXTURE_2D,
+                Some(texture),
+                0,
+            );
+            let rbo = gl
+                .create_renderbuffer()
+                .expect("BUG: failed to create GL renderbuffer");
+            gl.bind_renderbuffer(eframe::glow::RENDERBUFFER, Some(rbo));
+            gl.renderbuffer_storage(
+                eframe::glow::RENDERBUFFER,
+                eframe::glow::DEPTH24_STENCIL8,
+                BOOTSTRAP_W as i32,
+                BOOTSTRAP_H as i32,
+            );
+            gl.framebuffer_renderbuffer(
+                eframe::glow::FRAMEBUFFER,
+                eframe::glow::DEPTH_STENCIL_ATTACHMENT,
+                eframe::glow::RENDERBUFFER,
+                Some(rbo),
+            );
+            gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, None);
+            gl.bind_texture(eframe::glow::TEXTURE_2D, None);
+            gl.bind_renderbuffer(eframe::glow::RENDERBUFFER, None);
+
+            Self {
+                width: BOOTSTRAP_W,
+                height: BOOTSTRAP_H,
+                fbo,
+            }
+        }
+    }
+
+    pub fn fbo_id(&self) -> u32 {
+        self.fbo.0.get()
+    }
+}
+
+// ── Per-frame rendering state ───────────────────────────────────────
+
+/// State for a single rendered frame.
+pub struct FrameState {
+    pub interaction: InteractionState,
+    pub modal_states: HashMap<String, ModalState>,
+    pub scroll_states: HashMap<String, ScrollState>,
+    pub animation_states: HashMap<u64, AnimationState>,
+    pub transition_states: HashMap<(u16, u16), TransitionState>,
+    pub taffy: TaffyTree<NodeContext>,
+    pub frame_counter: u64,
+    pub content_size: (f32, f32),
+    pub drags: HashMap<String, TouchHit>,
+    /// `true` between `Down` and the matching `Up` — the frame "owns" the
+    /// gesture and must receive subsequent `Move`/`Up` events even when the
+    /// pointer leaves its display rect (otherwise sliders/drags get stuck
+    /// in pressed state when the user drags past the frame edge).
+    pub pointer_captured: bool,
+}
+
+impl FrameState {
+    fn new() -> Self {
+        Self {
+            interaction: InteractionState::new(),
+            modal_states: HashMap::new(),
+            scroll_states: HashMap::new(),
+            animation_states: HashMap::new(),
+            transition_states: HashMap::new(),
+            taffy: TaffyTree::new(),
+            frame_counter: 0,
+            content_size: (0.0, 0.0),
+            drags: HashMap::new(),
+            pointer_captured: false,
+        }
+    }
+}
+
+/// A femtovg offscreen render target for one frame.
+pub struct FrameRenderTarget {
+    pub width: u32,
+    pub height: u32,
+    pub image_id: femtovg::ImageId,
+    pub egui_texture_id: Option<egui::TextureId>,
+    pub state: FrameState,
+    pub frame_size: FrameSize,
+}
+
+/// Rendered frame output.
+pub struct RenderedFrame {
+    pub target_idx: usize,
+    pub content_size: (f32, f32),
+}
+
+/// Document-level renderer with per-frame offscreen images.
+pub struct DocumentRenderer {
+    pub renderer: FemtoVgRenderer,
+    /// femtovg offscreen render targets, one per unique `(width, height)`
+    /// ever rendered in this process — reused on subsequent renders of
+    /// the same size, never evicted.
+    ///
+    /// Eviction is deliberately not implemented: `eframe::Frame` (0.34)
+    /// exposes `register_native_glow_texture` but no companion
+    /// `free_native_glow_texture`, so calling femtovg's `delete_image`
+    /// would leave a dangling `egui::TextureId` registered with the
+    /// painter — strictly worse than retaining both. Bound in practice
+    /// by the small set of frame sizes a storybook session navigates
+    /// through.
+    pub targets: Vec<FrameRenderTarget>,
+    pub rendered_frames: Vec<RenderedFrame>,
+}
+
+impl DocumentRenderer {
+    pub fn new(renderer: FemtoVgRenderer) -> Self {
+        Self {
+            renderer,
+            targets: Vec::new(),
+            rendered_frames: Vec::new(),
+        }
+    }
+
+    /// Reset all animation and transition states across all frame targets.
+    pub fn reset_animation_states(&mut self) {
+        for target in &mut self.targets {
+            target.state.animation_states.clear();
+            target.state.transition_states.clear();
+            target.state.frame_counter = 0;
+        }
+    }
+
+    /// Render all Frame blocks into per-frame offscreen images.
+    #[expect(unsafe_code)]
+    pub fn render_doc_blocks(
+        &mut self,
+        blocks: &[DocBlock],
+        gl: &eframe::glow::Context,
+        egui_frame: &mut eframe::Frame,
+        delta_ms: u32,
+    ) {
+        use eframe::glow::HasContext;
+
+        self.rendered_frames.clear();
+
+        let frame_specs: Vec<(usize, FrameSize)> = blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(i, block)| match block {
+                DocBlock::Frame { size, .. } => Some((i, *size)),
+                DocBlock::Header { .. }
+                | DocBlock::Code { .. }
+                | DocBlock::Prose { .. }
+                | DocBlock::Divider => None,
+            })
+            .collect();
+
+        // Match/allocate per-frame offscreen images.
+        let mut used = vec![false; self.targets.len()];
+        let mut assignments: Vec<(usize, usize)> = Vec::new();
+
+        for (block_idx, size) in &frame_specs {
+            let w = size.width();
+            let h = size.fbo_height();
+            let target_idx = self
+                .targets
+                .iter()
+                .enumerate()
+                .position(|(i, t)| !used[i] && t.width == w && t.height == h);
+            let target_idx = if let Some(idx) = target_idx {
+                used[idx] = true;
+                self.targets[idx].frame_size = *size;
+                idx
+            } else {
+                let (image_id, gl_name) = self.renderer.create_render_target(w, h);
+                let native = eframe::glow::NativeTexture(
+                    std::num::NonZeroU32::new(gl_name).expect("BUG: GL texture name is zero"),
+                );
+                let tex_id = egui_frame.register_native_glow_texture(native);
+                let idx = self.targets.len();
+                self.targets.push(FrameRenderTarget {
+                    width: w,
+                    height: h,
+                    image_id,
+                    egui_texture_id: Some(tex_id),
+                    state: FrameState::new(),
+                    frame_size: *size,
+                });
+                used.push(true);
+                idx
+            };
+            assignments.push((*block_idx, target_idx));
+        }
+
+        let srgb_was_enabled = unsafe { gl.is_enabled(eframe::glow::FRAMEBUFFER_SRGB) };
+        unsafe { gl.disable(eframe::glow::FRAMEBUFFER_SRGB) };
+
+        for (block_idx, target_idx) in &assignments {
+            let DocBlock::Frame { node, .. } = &blocks[*block_idx] else {
+                unreachable!("BUG: assignments only contain Frame blocks")
+            };
+            let target = &mut self.targets[*target_idx];
+            let size = target.frame_size;
+
+            let bytes = bmc_wasm_sdk::tree::serialize_node_to_bytes(node);
+
+            self.renderer
+                .begin_frame_to_image(target.image_id, target.width, target.height, 1.0);
+            target.state.interaction.begin_frame();
+
+            let layout_w = size.layout_width();
+            let layout_h = size.layout_height();
+
+            let mut ctx = bmc_render::ProcessContext {
+                interaction: &mut target.state.interaction,
+                modal_states: &mut target.state.modal_states,
+                scroll_states: &mut target.state.scroll_states,
+                animation_states: &mut target.state.animation_states,
+                transition_states: &mut target.state.transition_states,
+                taffy: &mut target.state.taffy,
+                frame_counter: target.state.frame_counter,
+                delta_ms,
+            };
+            match bmc_render::process_tree(&bytes, layout_w, layout_h, &mut self.renderer, &mut ctx)
+            {
+                Ok((_tree, result, _has_active, _timings)) => {
+                    target.state.content_size = result.content_size;
+                    target.state.drags = result.drags;
+                }
+                Err(e) => tracing::error!("process_tree failed: {e}"),
+            }
+
+            self.renderer.flush();
+            if delta_ms > 0 {
+                target.state.frame_counter += 1;
+            }
+
+            self.rendered_frames.push(RenderedFrame {
+                target_idx: *target_idx,
+                content_size: target.state.content_size,
+            });
+        }
+
+        // Switch to screen and flush — the flush resolves the offscreen
+        // image's render target to its GL texture (needed for egui display).
+        self.renderer.set_render_target_screen();
+        self.renderer.flush();
+        unsafe {
+            gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, None);
+            if srgb_was_enabled {
+                gl.enable(eframe::glow::FRAMEBUFFER_SRGB);
+            }
+        }
+    }
+}
