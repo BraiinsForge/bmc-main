@@ -8,6 +8,7 @@ use anyhow::Result;
 use bmc::backlight::DisplayBacklightDriver;
 use bmc::compositor::Compositor;
 use bmc::{BmcManager, Configuration};
+use bmc_led::apa102_spi::platform_led_driver::PlatformLedDriver;
 use bmc_led::led_driver::LedDriverFactory;
 use bmc_openwrt::cli::Parser;
 use bmc_openwrt::compositor::EglCompositor;
@@ -15,10 +16,7 @@ use bmc_openwrt::{
     button_driver::UEventButtons, generic_backlight_driver::GenericBacklightDriver,
     manager::Manager, session::OpenwrtSessionManager,
 };
-use bmc_openwrt::{
-    cli::Args, led_driver::platform_led_driver::PlatformLedDriver,
-    log::build_panic_hook_with_tracing,
-};
+use bmc_openwrt::{cli::Args, log::build_panic_hook_with_tracing};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::FirmwareResolver;

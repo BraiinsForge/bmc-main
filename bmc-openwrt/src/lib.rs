@@ -4,7 +4,6 @@ pub mod button_driver;
 pub mod cli;
 pub mod compositor;
 pub mod generic_backlight_driver;
-pub mod led_driver;
 pub mod linux_drm_platform;
 pub mod log;
 pub mod manager;

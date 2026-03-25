@@ -3,13 +3,24 @@ name = "bmc-led"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+apa102_spi = [
+    "dep:apa102-spi",
+    "dep:embedded-hal",
+    "dep:smart-leds-trait",
+    "dep:spidev",
+    "dep:ux",
+]
+
 [dependencies]
 anyhow.workspace = true
-apa102-spi.workspace = true
-async-trait.workspace = true
-smart-leds-trait.workspace = true
+apa102-spi = { workspace = true, optional = true }
+embedded-hal = { workspace = true, optional = true }
+smart-leds-trait = { workspace = true, optional = true }
+spidev = { workspace = true, optional = true }
 tokio.workspace = true
 tracing.workspace = true
+ux = { workspace = true, optional = true }
 
 [lints]
 workspace = true
