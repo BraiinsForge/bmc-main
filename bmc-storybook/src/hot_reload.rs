@@ -159,7 +159,7 @@ pub struct HotReloader {
     library: Option<Arc<libloading::Library>>,
     /// Set by the .so file watcher when the file changes.
     so_changed: Arc<AtomicBool>,
-    /// Set by the source file watcher when story sources change.
+    /// Set by the workspace file watcher when any source file changes.
     source_changed: Arc<AtomicBool>,
     _so_watcher: notify::RecommendedWatcher,
     _source_watcher: notify::RecommendedWatcher,
@@ -172,14 +172,18 @@ pub struct HotReloader {
     /// Suppress .so watcher events briefly after a managed build completes,
     /// since `BuildSucceeded` already triggers a load.
     suppress_so_until: Option<Instant>,
+    /// When set, a previous `try_load_so` call hit a transient dlopen failure
+    /// (cargo still flushing the .so). At this instant `poll()` re-emits
+    /// `SoChanged` so the caller retries — keeps the retry off the UI thread.
+    load_retry_at: Option<Instant>,
 }
 
 impl HotReloader {
     /// Create a new hot reloader.
     ///
     /// - `so_path`: path to `libbmc_storybook_stories.so`
-    /// - `source_dirs`: directories containing `*.stories.rs` (watched for changes)
-    pub fn new(so_path: PathBuf, source_dirs: &[PathBuf]) -> Result<Self, String> {
+    /// - `workspace_root`: workspace root directory (watched recursively for changes)
+    pub fn new(so_path: PathBuf, workspace_root: &Path) -> Result<Self, String> {
         use notify::Watcher;
 
         // Clean up stale temp files from previous runs (crash recovery).
@@ -210,19 +214,28 @@ impl HotReloader {
                 .map_err(|e| format!("failed to watch .so directory: {e}"))?;
         }
 
-        // Watch story source directory for changes.
+        // Watch source directories to pick up transitive-dep edits (e.g.
+        // editing `bmc-keyboard/` while running storybook). The naive
+        // approach — `RecursiveMode::Recursive` on the workspace root —
+        // tells inotify to install a watch on every subdirectory under
+        // `target/` (hundreds of thousands after a debug build), easily
+        // hitting `fs.inotify.max_user_watches` (8192 on many distros) and
+        // silently breaking the watcher.
         //
-        // The filter triggers a rebuild for `.rs` files (the stories
-        // themselves) and for asset extensions embedded via the
-        // `include_*!` macros (`png`/`jpg`/`jpeg`/`glb`/`svg`/`toml`).
-        // Without the asset extensions, editing a texture or skin would
-        // not kick off a rebuild even though `include_bitmap!` etc. depend
-        // on the file content.
+        // Instead: walk the workspace root once at startup, recursively
+        // watch each non-denylisted top-level directory, and watch the
+        // root itself non-recursively for top-level files like `Cargo.toml`
+        // and `justfile`. Total watched directories is bounded by source
+        // tree size, never by `target/`.
+        //
+        // The event filter still applies an extension allowlist
+        // (`rs`/`png`/`jpg`/`jpeg`/`glb`/`svg`/`toml`) to suppress noise
+        // from incidental file activity inside source dirs.
         let flag = Arc::clone(&source_changed);
         let mut source_watcher =
             notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
-                    let is_relevant = event.paths.iter().any(|p| {
+                    let has_relevant_ext = event.paths.iter().any(|p| {
                         p.extension().is_some_and(|ext| {
                             matches!(
                                 ext.to_str(),
@@ -230,22 +243,47 @@ impl HotReloader {
                             )
                         })
                     });
-                    if is_relevant && (event.kind.is_modify() || event.kind.is_create()) {
+                    if has_relevant_ext && (event.kind.is_modify() || event.kind.is_create()) {
                         flag.store(true, Ordering::Release);
                     }
                 }
             })
             .map_err(|e| format!("failed to create source watcher: {e}"))?;
 
-        for dir in source_dirs {
-            // Recursive: stories live in subdirectories (e.g. components/),
-            // and `build_stories.rs` walks them recursively too — the watcher
-            // must match or sub-tree edits don't trigger a rebuild.
+        // Top-level files (Cargo.toml, justfile, etc.) without recursing into
+        // `target/`.
+        source_watcher
+            .watch(workspace_root, notify::RecursiveMode::NonRecursive)
+            .map_err(|e| format!("failed to watch {}: {e}", workspace_root.display()))?;
+
+        // Each non-denylisted top-level directory, recursively.
+        let mut watched_count = 0_usize;
+        let entries = std::fs::read_dir(workspace_root)
+            .map_err(|e| format!("failed to read workspace root: {e}"))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name_bytes = name.as_encoded_bytes();
+            // Denylist: build artifacts, vcs, dotdirs.
+            if name_bytes == b"target"
+                || name_bytes == b"node_modules"
+                || name_bytes.starts_with(b".")
+            {
+                continue;
+            }
             source_watcher
-                .watch(dir, notify::RecursiveMode::Recursive)
-                .map_err(|e| format!("failed to watch {}: {e}", dir.display()))?;
-            tracing::info!(source = %dir.display(), "hot-reload: watching source dir");
+                .watch(&path, notify::RecursiveMode::Recursive)
+                .map_err(|e| format!("failed to watch {}: {e}", path.display()))?;
+            watched_count += 1;
         }
+        tracing::info!(
+            root = %workspace_root.display(),
+            top_level_dirs = watched_count,
+            "hot-reload: watching workspace"
+        );
 
         tracing::info!(so = %so_path.display(), "hot-reload: watchers started");
 
@@ -260,6 +298,7 @@ impl HotReloader {
             so_debounce_start: None,
             load_generation: 0,
             suppress_so_until: None,
+            load_retry_at: None,
         })
     }
 
@@ -340,6 +379,16 @@ impl HotReloader {
             return Some(ReloadEvent::SoChanged);
         }
 
+        // 5. Pending dlopen retry from a prior transient failure.
+        //    Re-emit `SoChanged` once the retry delay has elapsed so the
+        //    caller invokes `try_load_so` again next frame.
+        if let Some(deadline) = self.load_retry_at
+            && Instant::now() >= deadline
+        {
+            self.load_retry_at = None;
+            return Some(ReloadEvent::SoChanged);
+        }
+
         None
     }
 
@@ -382,18 +431,26 @@ impl HotReloader {
     pub fn try_load_so(
         &mut self,
     ) -> Result<(Vec<OwnedStoryEntry>, Vec<OwnedStoryGroupMeta>), String> {
-        // First attempt
         match self.load_so_inner() {
-            Ok(result) => return Ok(result),
-            Err(e) if e.is_permanent() => return Err(e.to_string()),
+            Ok(result) => {
+                self.load_retry_at = None;
+                Ok(result)
+            }
+            Err(e) if e.is_permanent() => {
+                self.load_retry_at = None;
+                Err(e.to_string())
+            }
             Err(e) => {
-                tracing::warn!("hot-reload: dlopen failed, retrying in {SO_RETRY_DELAY:?}: {e}");
+                // Transient failure — cargo may still be flushing the .so.
+                // Schedule a retry on the next `poll()` after `SO_RETRY_DELAY`
+                // instead of sleeping the UI thread.
+                tracing::warn!(
+                    "hot-reload: dlopen failed, scheduling retry in {SO_RETRY_DELAY:?}: {e}"
+                );
+                self.load_retry_at = Some(Instant::now() + SO_RETRY_DELAY);
+                Err(e.to_string())
             }
         }
-
-        // Retry once after delay (cargo may still be writing the .so).
-        std::thread::sleep(SO_RETRY_DELAY);
-        self.load_so_inner().map_err(|e| e.to_string())
     }
 
     #[expect(unsafe_code)]
@@ -476,6 +533,12 @@ impl HotReloader {
         self.library = Some(library);
 
         // Clean up the previous generation's temp file (best effort).
+        //
+        // Older `OwnedStoryEntry` values may still hold `Arc<Library>` to this file.
+        // On Linux + macOS (the platforms storybook targets), `unlink` removes only
+        // the directory entry — the inode and any active `mmap` region stay live
+        // until the last mapping is released, so removing while mapped is safe.
+        // Windows wouldn't allow it, but storybook isn't supported there.
         if generation > 0 {
             let prev_path = self
                 .so_path
@@ -537,15 +600,11 @@ pub fn default_so_path() -> PathBuf {
     workspace_root.join("target/debug/libbmc_storybook_stories.so")
 }
 
-/// Compute the default story source directories.
+/// Compute the workspace root directory.
 #[must_use]
-pub fn default_source_dirs() -> Vec<PathBuf> {
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+pub fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("BUG: bmc-storybook must be inside workspace");
-    vec![
-        workspace_root.join("bmc-render/src"),
-        workspace_root.join("bmc-wasm-runtime/sdk/src"),
-        workspace_root.join("bmc-wasm-runtime/protocol/src"),
-    ]
+        .expect("BUG: bmc-storybook must be inside workspace")
+        .to_owned()
 }

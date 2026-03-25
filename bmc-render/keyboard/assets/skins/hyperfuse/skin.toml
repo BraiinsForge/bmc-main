@@ -9,7 +9,7 @@ key_group_alpha_bg = "#c8c4bc"
 key_group_alpha_bg_pressed = "#9a968e"
 key_group_alpha_fg = "#2a2a35"
 key_group_alpha_fg_pressed = "#1a1a25"
-key_group_alpha_hint = "#8a8898"
+key_group_alpha_hint = "#747181"
 
 # Function keys — purple (GMK Hyperfuse modifiers)
 key_group_fn_bg = "#7b5ea7"

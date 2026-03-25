@@ -36,8 +36,7 @@ use bmc_storybook_api::knobs::StoryCtx;
 use bmc_storybook_api::{DocBlock, FrameSize, StoryEntry, StoryGroupMeta};
 
 use crate::hot_reload::{
-    HotReloader, OwnedStoryEntry, OwnedStoryGroupMeta, ReloadEvent, default_so_path,
-    default_source_dirs,
+    HotReloader, OwnedStoryEntry, OwnedStoryGroupMeta, ReloadEvent, default_so_path, workspace_root,
 };
 use crate::preview::{BootstrapFbo, DocumentRenderer};
 use crate::sidebar::SidebarState;
@@ -278,7 +277,7 @@ impl StorybookApp {
         Option<Instant>,
     ) {
         if hot_reload {
-            match HotReloader::new(default_so_path(), &default_source_dirs()) {
+            match HotReloader::new(default_so_path(), &workspace_root()) {
                 Ok(mut reloader) => {
                     let started = if reloader.start_build().is_ok() {
                         Some(Instant::now())
