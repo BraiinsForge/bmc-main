@@ -28,7 +28,7 @@ use anyhow::Result;
 use bmc_button::Buttons;
 use bmc_led::led_driver::LedDriver;
 use bmc_scheduler::JobScheduler;
-use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
+use bmc_upgrade::firmware::FirmwareIndex;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::sync::{RwLock, watch};
@@ -70,7 +70,7 @@ where
         session_manager: T::SessionManager,
         _backlight_driver: Arc<Mutex<U>>,
         led_driver: LedDriver,
-        firmware_resolver: FirmwareResolver<V>,
+        firmware_index: V,
         buttons: Arc<Box<dyn Buttons + Send + Sync>>,
         compositor: Arc<dyn Compositor>,
     ) -> Result<Self> {
@@ -104,7 +104,7 @@ where
         .await;
 
         let system_upgrade_service = SystemUpgradeService::new(
-            firmware_resolver,
+            firmware_index,
             &config.upgrade_image_path,
             manager.clone(),
             state_service.clone(),

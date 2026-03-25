@@ -18,7 +18,6 @@ pub mod scene;
 pub mod session;
 mod sound;
 mod startup;
-mod storage_checker;
 mod system_manager;
 mod system_upgrade;
 pub mod utils;

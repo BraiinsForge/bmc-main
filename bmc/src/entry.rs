@@ -5,7 +5,7 @@ use crate::compositor::Compositor;
 use crate::{App, BmcManager, Configuration};
 use anyhow::Result;
 use bmc_led::led_driver::LedDriver;
-use bmc_upgrade::firmware::{FirmwareIndex, FirmwareResolver};
+use bmc_upgrade::firmware::FirmwareIndex;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -14,7 +14,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
     config: Configuration,
     backlight_driver: Arc<Mutex<T>>,
     led_driver: LedDriver,
-    firmware_resolver: FirmwareResolver<U>,
+    firmware_index: U,
     buttons: Arc<Box<dyn bmc_button::Buttons + Send + Sync>>,
     compositor: Arc<dyn Compositor>,
 ) -> Result<()> {
@@ -27,7 +27,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
         session_manager,
         backlight_driver,
         led_driver,
-        firmware_resolver,
+        firmware_index,
         buttons,
         compositor,
     )

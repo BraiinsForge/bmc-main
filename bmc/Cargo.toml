@@ -26,7 +26,7 @@ bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true
 bmc-shared-utils.workspace = true
 bmc-support.workspace = true
-bmc-upgrade.workspace = true
+bmc-upgrade = { workspace = true, features = ["disk-check"] }
 bmc-widget.workspace = true
 bmc-widget-protocol.workspace = true
 chrono = { workspace = true }
@@ -45,7 +45,6 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
-sysinfo = { workspace = true, features = ["linux-tmpfs"] }
 tap.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
