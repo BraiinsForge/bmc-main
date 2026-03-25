@@ -6,6 +6,8 @@
 //! shared atlas texture. Each slot tracks the last-rendered draw args so
 //! the next frame can skip GL work when the parameters haven't changed.
 
+use bmc_wasm_protocol::MeshId;
+
 use super::MeshDrawArgs;
 
 /// AABB record (6 × `f32`) immediately follows the binary header.
@@ -31,28 +33,25 @@ pub(super) const MAX_SLOTS: u32 = ATLAS_COLS * ATLAS_ROWS;
 /// viewport arguments. The 2× margin keeps a comfortable safety buffer.
 const _: () = assert!(ATLAS_W.saturating_mul(2) < i32::MAX as u32);
 const _: () = assert!(ATLAS_H.saturating_mul(2) < i32::MAX as u32);
-/// Sentinel returned when mesh registration fails.
-pub(super) const INVALID_MESH_ID: u16 = 0;
-
 /// Dirty-check state for a single atlas slot. Stores the last-rendered
 /// `(mesh_id, args)` pair; a `None` `prev_args` represents "never rendered
 /// yet" and forces a first-frame draw.
 #[derive(Clone)]
 pub(super) struct SlotState {
-    prev_mesh_id: u16,
+    prev_mesh_id: MeshId,
     prev_args: Option<MeshDrawArgs>,
 }
 
 impl SlotState {
     pub(super) fn new() -> Self {
         Self {
-            prev_mesh_id: u16::MAX,
+            prev_mesh_id: MeshId::from_raw(u16::MAX),
             prev_args: None,
         }
     }
 
     /// Returns true if the slot needs re-rendering for the given parameters.
-    pub(super) fn check_and_update(&mut self, mesh_id: u16, args: &MeshDrawArgs) -> bool {
+    pub(super) fn check_and_update(&mut self, mesh_id: MeshId, args: &MeshDrawArgs) -> bool {
         let dirty = self.prev_mesh_id != mesh_id
             || self
                 .prev_args
@@ -101,10 +100,9 @@ pub(super) fn mesh_id_to_storage_index(mesh_id: u16) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DIRTY_EPSILON, INVALID_MESH_ID, is_dirty, mesh_id_from_storage_index,
-        mesh_id_to_storage_index,
-    };
+    use bmc_wasm_protocol::MeshId;
+
+    use super::{DIRTY_EPSILON, is_dirty, mesh_id_from_storage_index, mesh_id_to_storage_index};
 
     #[test]
     fn mesh_ids_are_one_based() {
@@ -114,7 +112,7 @@ mod tests {
 
     #[test]
     fn invalid_mesh_id_does_not_map_to_storage() {
-        assert_eq!(mesh_id_to_storage_index(INVALID_MESH_ID), None);
+        assert_eq!(mesh_id_to_storage_index(MeshId::NONE.raw()), None);
     }
 
     #[test]

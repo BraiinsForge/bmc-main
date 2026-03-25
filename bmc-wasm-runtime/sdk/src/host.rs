@@ -7,6 +7,8 @@
 //! `SystemTime`, `TouchHit`) are always available.
 
 // Re-export from protocol — single source of truth for wire-format enums
+#[cfg(target_arch = "wasm32")]
+use bmc_wasm_protocol::{BitmapId, IconId, MeshId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
 // ============================================================================
@@ -172,8 +174,8 @@ mod ffi {
     /// Register icon data with the host, returns an opaque icon ID.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_icon(data: &[u8]) -> u16 {
-        unsafe { host_register_icon(data.as_ptr(), data.len() as u32) as u16 }
+    pub fn register_icon(data: &[u8]) -> IconId {
+        IconId::from_raw(unsafe { host_register_icon(data.as_ptr(), data.len() as u32) as u16 })
     }
 
     /// Parse an ISO 8601 date string (e.g. "2026-02-13T10:15:56Z") into a unix timestamp.
@@ -190,8 +192,8 @@ mod ffi {
     /// The host uploads VBO, IBO, and texture to GPU. One-time cost.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_mesh(data: &[u8]) -> u16 {
-        unsafe { host_register_mesh(data.as_ptr(), data.len() as u32) as u16 }
+    pub fn register_mesh(data: &[u8]) -> MeshId {
+        MeshId::from_raw(unsafe { host_register_mesh(data.as_ptr(), data.len() as u32) as u16 })
     }
 
     /// Register audio data (WAV/OGG/MP3 bytes) with the host, returns an opaque audio ID.
@@ -224,21 +226,23 @@ mod ffi {
     /// Register bitmap data (PNG bytes) with the host, returns an opaque bitmap ID.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_bitmap(data: &[u8]) -> u16 {
-        unsafe { host_register_bitmap(data.as_ptr(), data.len() as u32) as u16 }
+    pub fn register_bitmap(data: &[u8]) -> BitmapId {
+        BitmapId::from_raw(unsafe { host_register_bitmap(data.as_ptr(), data.len() as u32) as u16 })
     }
 
     /// Register bitmap data with nearest-neighbor filtering (no bilinear interpolation).
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_bitmap_nearest(data: &[u8]) -> u16 {
-        unsafe { host_register_bitmap_nearest(data.as_ptr(), data.len() as u32) as u16 }
+    pub fn register_bitmap_nearest(data: &[u8]) -> BitmapId {
+        BitmapId::from_raw(unsafe {
+            host_register_bitmap_nearest(data.as_ptr(), data.len() as u32) as u16
+        })
     }
 
     /// Sample the average color of a rectangular region within a registered bitmap.
     #[must_use]
-    pub fn bitmap_sample(bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
-        let result = unsafe { host_bitmap_sample(u32::from(bitmap_id), x, y, w, h) };
+    pub fn bitmap_sample(bitmap_id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
+        let result = unsafe { host_bitmap_sample(u32::from(bitmap_id.raw()), x, y, w, h) };
         if result == 0 { None } else { Some(result) }
     }
 

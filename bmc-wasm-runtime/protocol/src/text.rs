@@ -3,6 +3,7 @@
 //! Text styling types shared between SDK and host.
 
 use crate::colors::{Color, GRAY_10, TRANSPARENT};
+use crate::ids::BitmapId;
 
 /// Text alignment
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -242,8 +243,8 @@ pub struct PropsData {
     /// Enable flex wrapping: children wrap to the next line when they exceed
     /// the container's main-axis size. Equivalent to CSS `flex-wrap: wrap`.
     pub wrap: bool,
-    /// Nine-patch background image. `bitmap_id == 0` means none.
-    pub bg_np_id: u16,
+    /// Nine-patch background image. `bitmap_id == NONE` means none.
+    pub bg_np_id: BitmapId,
     pub bg_np_left: u16,
     pub bg_np_top: u16,
     pub bg_np_right: u16,
@@ -270,7 +271,7 @@ impl Default for PropsData {
             max_height: 0.0,
             cross_align: CrossAlign::Stretch,
             wrap: false,
-            bg_np_id: 0,
+            bg_np_id: BitmapId::NONE,
             bg_np_left: 0,
             bg_np_top: 0,
             bg_np_right: 0,
@@ -309,7 +310,7 @@ impl PropsData {
         buf[32..36].copy_from_slice(&self.max_height.to_le_bytes());
         let layout_flags = LayoutFlags::new(self.cross_align, self.wrap);
         buf[36..40].copy_from_slice(&layout_flags.bits().to_le_bytes());
-        buf[40..42].copy_from_slice(&self.bg_np_id.to_le_bytes());
+        buf[40..42].copy_from_slice(&self.bg_np_id.raw().to_le_bytes());
         buf[42..44].copy_from_slice(&self.bg_np_left.to_le_bytes());
         buf[44..46].copy_from_slice(&self.bg_np_top.to_le_bytes());
         buf[46..48].copy_from_slice(&self.bg_np_right.to_le_bytes());
@@ -343,7 +344,7 @@ impl PropsData {
                 data[36], data[37], data[38], data[39],
             ]))
             .wrap(),
-            bg_np_id: u16::from_le_bytes([data[40], data[41]]),
+            bg_np_id: BitmapId::from_raw(u16::from_le_bytes([data[40], data[41]])),
             bg_np_left: u16::from_le_bytes([data[42], data[43]]),
             bg_np_top: u16::from_le_bytes([data[44], data[45]]),
             bg_np_right: u16::from_le_bytes([data[46], data[47]]),

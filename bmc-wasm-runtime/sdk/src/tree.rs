@@ -15,10 +15,11 @@ use std::string::String;
 use std::vec::Vec;
 
 use bmc_wasm_protocol::{
-    AnimProperty, Color, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MESH,
-    DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE,
-    DRAW_TEXT, Easing, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
-    NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER,
+    AnimProperty, BitmapId, Color, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON,
+    DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED,
+    DRAW_SPHERE, DRAW_TEXT, Easing, IconId, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS,
+    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR,
+    NODE_ROW, NODE_SCROLL, NODE_SPACER,
 };
 
 use crate::PropsFieldValue;
@@ -150,7 +151,7 @@ impl TreeBuffer {
         label: &str,
         style: ButtonStyle,
         size: ButtonSize,
-        icon_id: u16,
+        icon_id: IconId,
         disabled: bool,
     ) {
         self.write_u8(NODE_BUTTON);
@@ -159,7 +160,7 @@ impl TreeBuffer {
         self.write_bytes(id_bytes);
         self.write_u8(style as u8);
         self.write_u8(size as u8);
-        self.write_u16(icon_id);
+        self.write_u16(icon_id.raw());
         self.write_u8(u8::from(disabled));
         let bytes = label.as_bytes();
         self.write_u16(bytes.len() as u16);
@@ -275,17 +276,17 @@ impl TreeBuffer {
         if let Some(sk) = skin {
             self.write_u8(1);
             // Track 9-patch: bitmap_id + insets
-            self.write_u16(sk.track.bitmap_id);
+            self.write_u16(sk.track.bitmap_id.raw());
             self.write_u16(sk.track.left);
             self.write_u16(sk.track.top);
             self.write_u16(sk.track.right);
             self.write_u16(sk.track.bottom);
             self.write_u16(sk.track_h);
             // Thumb
-            self.write_u16(sk.thumb_id);
+            self.write_u16(sk.thumb_id.raw());
             self.write_u16(sk.thumb_w);
             self.write_u16(sk.thumb_h);
-            self.write_u16(sk.thumb_pressed_id);
+            self.write_u16(sk.thumb_pressed_id.raw());
         } else {
             self.write_u8(0);
         }
@@ -394,7 +395,7 @@ pub enum Draw {
         w: f32,
         h: f32,
         color: Color,
-        icon_id: u16,
+        icon_id: IconId,
         anti_alias: bool,
     },
     /// Bitmap (raster image) at absolute local position
@@ -403,7 +404,7 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: u16,
+        bitmap_id: BitmapId,
     },
     /// Draw with host-computed animations and/or transitions
     Modified {
@@ -443,7 +444,7 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: u16,
+        bitmap_id: BitmapId,
         atmosphere: bool,
         center_lat: f32,
         center_lon: f32,
@@ -457,7 +458,7 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
-        mesh_id: u16,
+        mesh_id: MeshId,
         fov: f32,
         distance: f32,
         qx: f32,
@@ -550,7 +551,7 @@ impl Draw {
     ///
     /// Use `ICON_CLOSE` or other `ICON_*` constants from the protocol crate.
     #[must_use]
-    pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: u16, color: Color) -> Self {
+    pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: IconId, color: Color) -> Self {
         Self::Icon {
             x,
             y,
@@ -596,7 +597,7 @@ impl Draw {
     /// Use `host::register_bitmap()` to register image data and get an ID,
     /// then pass it here to render. Useful for album art and other runtime images.
     #[must_use]
-    pub fn bitmap_id(x: f32, y: f32, w: f32, h: f32, bitmap_id: u16) -> Self {
+    pub fn bitmap_id(x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId) -> Self {
         Self::Bitmap {
             x,
             y,
@@ -951,7 +952,7 @@ pub enum Node {
         label: String,
         style: ButtonStyle,
         size: ButtonSize,
-        icon_id: u16,
+        icon_id: IconId,
         disabled: bool,
         skin: Option<ButtonSkin>,
     },
@@ -1047,7 +1048,7 @@ pub fn make_button(
     label: String,
     style: ButtonStyle,
     size: ButtonSize,
-    icon_id: u16,
+    icon_id: IconId,
     disabled: bool,
     skin: Option<ButtonSkin>,
 ) -> Node {
@@ -1257,7 +1258,7 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             if let Some(s) = skin {
                 buf.write_u8(1); // has_skin
                 // Normal 9-patch
-                buf.write_u16(s.normal.bitmap_id);
+                buf.write_u16(s.normal.bitmap_id.raw());
                 buf.write_u16(s.normal.left);
                 buf.write_u16(s.normal.top);
                 buf.write_u16(s.normal.right);
@@ -1265,7 +1266,7 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
                 // Pressed 9-patch (optional)
                 if let Some(p) = &s.pressed {
                     buf.write_u8(1); // has_pressed
-                    buf.write_u16(p.bitmap_id);
+                    buf.write_u16(p.bitmap_id.raw());
                     buf.write_u16(p.left);
                     buf.write_u16(p.top);
                     buf.write_u16(p.right);
@@ -1411,7 +1412,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*w);
             buf.write_f32(*h);
             buf.write_color(*color);
-            buf.write_u16(*icon_id);
+            buf.write_u16(icon_id.raw());
             buf.write_u8(u8::from(*anti_alias));
         }
         Draw::Bitmap {
@@ -1426,7 +1427,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_f32(*w);
             buf.write_f32(*h);
-            buf.write_u16(*bitmap_id);
+            buf.write_u16(bitmap_id.raw());
         }
         Draw::Centered { inner } => {
             buf.write_u8(DRAW_CENTERED);
@@ -1541,7 +1542,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_f32(*w);
             buf.write_f32(*h);
-            buf.write_u16(*bitmap_id);
+            buf.write_u16(bitmap_id.raw());
             let flags: u8 = u8::from(*atmosphere);
             buf.write_u8(flags);
             buf.write_f32(*center_lat);
@@ -1583,7 +1584,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_f32(*w);
             buf.write_f32(*h);
-            buf.write_u16(*mesh_id);
+            buf.write_u16(mesh_id.raw());
             buf.write_f32(*fov);
             buf.write_f32(*distance);
             buf.write_f32(*qx);
@@ -1618,7 +1619,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_f32(*w);
             buf.write_f32(*h);
-            buf.write_u16(np.bitmap_id);
+            buf.write_u16(np.bitmap_id.raw());
             buf.write_u16(np.left);
             buf.write_u16(np.top);
             buf.write_u16(np.right);

@@ -128,7 +128,7 @@ pub enum DrawCommand {
         w: f32,
         h: f32,
         color: Color,
-        icon_id: u16,
+        icon_id: IconId,
         anti_alias: bool,
     },
     Bitmap {
@@ -136,7 +136,7 @@ pub enum DrawCommand {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: u16,
+        bitmap_id: BitmapId,
     },
     Rotated {
         angle: f32,
@@ -161,7 +161,7 @@ pub enum DrawCommand {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: u16,
+        bitmap_id: BitmapId,
         atmosphere: bool,
         center_lat: f32,
         center_lon: f32,
@@ -174,7 +174,7 @@ pub enum DrawCommand {
         y: f32,
         w: f32,
         h: f32,
-        mesh_id: u16,
+        mesh_id: MeshId,
         args: MeshDrawArgs,
     },
     Text {
@@ -188,7 +188,7 @@ pub enum DrawCommand {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: u16,
+        bitmap_id: BitmapId,
         left: u16,
         top: u16,
         right: u16,
@@ -199,7 +199,7 @@ pub enum DrawCommand {
 /// 9-patch inset data (deserialized from wire format).
 #[derive(Debug, Clone, Copy)]
 pub struct NinePatchData {
-    pub bitmap_id: u16,
+    pub bitmap_id: BitmapId,
     pub left: u16,
     pub top: u16,
     pub right: u16,
@@ -233,7 +233,7 @@ pub enum TreeNode {
         label: String,
         style: u8,
         size: u8,
-        icon_id: u16,
+        icon_id: IconId,
         disabled: bool,
         skin: Option<ButtonSkinData>,
     },
@@ -352,7 +352,7 @@ impl<'a> TreeReader<'a> {
 
     fn read_nine_patch_data(&mut self) -> Result<NinePatchData> {
         Ok(NinePatchData {
-            bitmap_id: self.read_u16()?,
+            bitmap_id: BitmapId::from_raw(self.read_u16()?),
             left: self.read_u16()?,
             top: self.read_u16()?,
             right: self.read_u16()?,
@@ -461,7 +461,7 @@ impl<'a> TreeReader<'a> {
                 let id = self.read_string(id_len)?;
                 let style = self.read_u8()?;
                 let size = self.read_u8()?;
-                let icon_id = self.read_u16()?;
+                let icon_id = IconId::from_raw(self.read_u16()?);
                 let disabled = self.read_u8()? != 0;
                 let len = self.read_u16()?;
                 let label = self.read_string(len)?;
@@ -610,17 +610,17 @@ impl<'a> TreeReader<'a> {
                 let skin = if self.read_u8()? != 0 {
                     Some(SliderSkinData {
                         track: NinePatchData {
-                            bitmap_id: self.read_u16()?,
+                            bitmap_id: BitmapId::from_raw(self.read_u16()?),
                             left: self.read_u16()?,
                             top: self.read_u16()?,
                             right: self.read_u16()?,
                             bottom: self.read_u16()?,
                         },
                         track_h: self.read_u16()?,
-                        thumb_id: self.read_u16()?,
+                        thumb_id: BitmapId::from_raw(self.read_u16()?),
                         thumb_w: self.read_u16()?,
                         thumb_h: self.read_u16()?,
-                        thumb_pressed_id: self.read_u16()?,
+                        thumb_pressed_id: BitmapId::from_raw(self.read_u16()?),
                     })
                 } else {
                     None
@@ -666,7 +666,7 @@ impl<'a> TreeReader<'a> {
                 let w = self.read_f32()?;
                 let h = self.read_f32()?;
                 let color = Color::from_raw(self.read_u32()?);
-                let icon_id = self.read_u16()?;
+                let icon_id = IconId::from_raw(self.read_u16()?);
                 let anti_alias = self.read_u8()? != 0;
                 Ok(DrawCommand::Icon {
                     x,
@@ -683,7 +683,7 @@ impl<'a> TreeReader<'a> {
                 let y = self.read_f32()?;
                 let w = self.read_f32()?;
                 let h = self.read_f32()?;
-                let bitmap_id = self.read_u16()?;
+                let bitmap_id = BitmapId::from_raw(self.read_u16()?);
                 Ok(DrawCommand::Bitmap {
                     x,
                     y,
@@ -800,7 +800,8 @@ impl<'a> TreeReader<'a> {
                 let y = self.read_f32()?;
                 let w = self.read_f32()?;
                 let h = self.read_f32()?;
-                let bitmap_id = self.read_u16()?;
+                let bitmap_id = BitmapId::from_raw(self.read_u16()?);
+
                 let flags = self.read_u8()?;
                 let atmosphere = flags & 0x01 != 0;
                 let center_lat = self.read_f32()?;
@@ -827,7 +828,8 @@ impl<'a> TreeReader<'a> {
                 let y = self.read_f32()?;
                 let w = self.read_f32()?;
                 let h = self.read_f32()?;
-                let mesh_id = self.read_u16()?;
+                let mesh_id = MeshId::from_raw(self.read_u16()?);
+
                 let fov = self.read_f32()?;
                 let distance = self.read_f32()?;
                 let qx = self.read_f32()?;
@@ -894,7 +896,8 @@ impl<'a> TreeReader<'a> {
                 let y = self.read_f32()?;
                 let w = self.read_f32()?;
                 let h = self.read_f32()?;
-                let bitmap_id = self.read_u16()?;
+                let bitmap_id = BitmapId::from_raw(self.read_u16()?);
+
                 let left = self.read_u16()?;
                 let top = self.read_u16()?;
                 let right = self.read_u16()?;
@@ -1004,19 +1007,31 @@ pub(crate) struct ButtonContext {
     label: String,
     style: u8,
     size: u8,
-    icon_id: u16,
+    icon_id: IconId,
     disabled: bool,
     skin: Option<ButtonSkinData>,
 }
 
-/// Nine-patch background image data (bitmap_id == 0 means none).
-#[derive(Clone, Copy, Default, Debug)]
+/// Nine-patch background image data (bitmap_id == NONE means none).
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct BgNinePatch {
-    bitmap_id: u16,
+    bitmap_id: BitmapId,
     left: u16,
     top: u16,
     right: u16,
     bottom: u16,
+}
+
+impl Default for BgNinePatch {
+    fn default() -> Self {
+        Self {
+            bitmap_id: BitmapId::NONE,
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        }
+    }
 }
 
 /// Host-side slider skin data (deserialized from wire).
@@ -1024,11 +1039,11 @@ pub(crate) struct BgNinePatch {
 pub struct SliderSkinData {
     pub(crate) track: NinePatchData,
     pub(crate) track_h: u16,
-    pub(crate) thumb_id: u16,
+    pub(crate) thumb_id: BitmapId,
     pub(crate) thumb_w: u16,
     pub(crate) thumb_h: u16,
     #[expect(dead_code)] // used when touch-pressed state rendering is added
-    pub(crate) thumb_pressed_id: u16,
+    pub(crate) thumb_pressed_id: BitmapId,
 }
 
 /// Node data attached to taffy nodes
@@ -1297,7 +1312,7 @@ pub(crate) fn build_taffy_node(
             };
 
             let id = taffy.new_with_children(style, &child_ids)?;
-            if props.background != Color::default() || props.bg_np_id != 0 {
+            if props.background != Color::default() || props.bg_np_id != BitmapId::NONE {
                 taffy.set_node_context(
                     id,
                     Some(NodeContext {
@@ -1663,9 +1678,9 @@ pub(crate) fn compute_taffy_layout(
                 if let Some(ref btn) = ctx.button {
                     let sz = ButtonSize::from(btn.size);
                     let h = sz.height();
-                    let w = if btn.icon_id != 0 && btn.label.is_empty() {
+                    let w = if btn.icon_id != IconId::NONE && btn.label.is_empty() {
                         h
-                    } else if btn.icon_id != 0 {
+                    } else if btn.icon_id != IconId::NONE {
                         let text_w = renderer.measure_text(&btn.label, sz.font_size());
                         sz.h_padding()
                             + sz.icon_size()
@@ -1719,7 +1734,7 @@ pub(crate) fn render_taffy_node(
         .and_then(|ctx| ctx.touch_key.clone());
 
     if let Some(ctx) = taffy.get_node_context(node_id) {
-        if ctx.bg_nine_patch.bitmap_id != 0 {
+        if ctx.bg_nine_patch.bitmap_id != BitmapId::NONE {
             let np = &ctx.bg_nine_patch;
             renderer.draw_nine_patch(
                 x,

@@ -8,7 +8,7 @@
     clippy::cast_sign_loss
 )]
 
-use bmc_wasm_protocol::Color;
+use bmc_wasm_protocol::{BitmapId, Color};
 
 use crate::renderer::Renderer;
 use crate::tree::{AnimationContext, SliderSkinData};
@@ -143,7 +143,7 @@ fn render_progress_bar_skinned(
     );
 
     // Draw thumb at progress position (scale down when bar is narrow)
-    if skin.thumb_id != 0 && pb.mode == 0 {
+    if skin.thumb_id != BitmapId::NONE && pb.mode == 0 {
         let fraction = pb.fraction.clamp(0.0, 1.0);
         let thumb_w = f32::from(skin.thumb_w);
         let thumb_h = f32::from(skin.thumb_h);

@@ -11,6 +11,7 @@ use std::fmt;
 use std::io::Cursor;
 use std::panic;
 
+use bmc_wasm_protocol::BitmapId;
 use femtovg::{ImageFlags, ImageId, ImageSource, Paint, Path};
 use imgref::ImgRef;
 use rgb::{FromSlice as _, RGBA8};
@@ -26,7 +27,7 @@ struct StoredBitmap {
 /// Registry mapping opaque widget-side IDs to FemtoVG GPU texture handles
 /// and retained RGBA pixel data for host-side sampling.
 pub struct BitmapRegistry {
-    bitmaps: HashMap<u16, StoredBitmap>,
+    bitmaps: HashMap<BitmapId, StoredBitmap>,
     next_id: u16,
 }
 
@@ -59,8 +60,8 @@ impl BitmapRegistry {
         data: &[u8],
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
         flags: ImageFlags,
-    ) -> u16 {
-        let id = self.next_id;
+    ) -> BitmapId {
+        let id = BitmapId::from_raw(self.next_id);
         self.next_id += 1;
 
         match decode_and_upload(data, canvas, flags) {
@@ -84,13 +85,13 @@ impl BitmapRegistry {
 
     /// Get the FemtoVG `ImageId` for a registered bitmap.
     #[must_use]
-    pub fn get(&self, id: u16) -> Option<ImageId> {
+    pub fn get(&self, id: BitmapId) -> Option<ImageId> {
         self.bitmaps.get(&id).map(|b| b.image_id)
     }
 
     /// Get the FemtoVG `ImageId` and source dimensions for a registered bitmap.
     #[must_use]
-    pub fn get_with_size(&self, id: u16) -> Option<(ImageId, u32, u32)> {
+    pub fn get_with_size(&self, id: BitmapId) -> Option<(ImageId, u32, u32)> {
         self.bitmaps
             .get(&id)
             .map(|b| (b.image_id, b.width, b.height))
@@ -109,7 +110,7 @@ impl BitmapRegistry {
     /// is not registered or the region is empty after clamping.
     #[must_use]
     #[expect(clippy::many_single_char_names)]
-    pub fn sample(&self, id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
+    pub fn sample(&self, id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
         let bmp = self.bitmaps.get(&id)?;
 
         let x0 = x.min(bmp.width);

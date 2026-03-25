@@ -12,6 +12,7 @@ use std::num::NonZeroU32;
 
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
+use bmc_wasm_protocol::{BitmapId, IconId, MeshId};
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, FontId, Paint, Path, RenderTarget};
@@ -504,7 +505,7 @@ impl Renderer for FemtoVgRenderer {
 
     // -- Icons --
 
-    fn register_icon(&mut self, data: &[u8]) -> u16 {
+    fn register_icon(&mut self, data: &[u8]) -> IconId {
         self.icon_registry.register(data)
     }
 
@@ -515,7 +516,7 @@ impl Renderer for FemtoVgRenderer {
         w: f32,
         h: f32,
         color: Color,
-        icon_id: u16,
+        icon_id: IconId,
         anti_alias: bool,
     ) {
         if let Some(icon) = self.icon_registry.get(icon_id) {
@@ -525,23 +526,23 @@ impl Renderer for FemtoVgRenderer {
 
     // -- Bitmaps --
 
-    fn register_bitmap(&mut self, data: &[u8]) -> u16 {
+    fn register_bitmap(&mut self, data: &[u8]) -> BitmapId {
         self.bitmap_registry
             .register(data, &mut self.canvas, femtovg::ImageFlags::empty())
     }
 
-    fn register_bitmap_nearest(&mut self, data: &[u8]) -> u16 {
+    fn register_bitmap_nearest(&mut self, data: &[u8]) -> BitmapId {
         self.bitmap_registry
             .register(data, &mut self.canvas, femtovg::ImageFlags::NEAREST)
     }
 
-    fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16) {
+    fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId) {
         if let Some(image_id) = self.bitmap_registry.get(bitmap_id) {
             super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
         }
     }
 
-    fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<Color> {
+    fn bitmap_sample(&self, bitmap_id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<Color> {
         self.bitmap_registry
             .sample(bitmap_id, x, y, w, h)
             .map(Color::from_raw)
@@ -553,7 +554,7 @@ impl Renderer for FemtoVgRenderer {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: u16,
+        bitmap_id: BitmapId,
         left: u16,
         top: u16,
         right: u16,
@@ -577,10 +578,10 @@ impl Renderer for FemtoVgRenderer {
         }
     }
 
-    fn register_mesh(&mut self, data: &[u8]) -> u16 {
+    fn register_mesh(&mut self, data: &[u8]) -> MeshId {
         self.lazy_init_mesh_renderer();
         let Some(renderer) = self.mesh_renderer.as_mut() else {
-            return 0;
+            return MeshId::NONE;
         };
         renderer.register_mesh(&self.gl, data)
     }
@@ -592,7 +593,7 @@ impl Renderer for FemtoVgRenderer {
         w: f32,
         h: f32,
         slot_index: u8,
-        mesh_id: u16,
+        mesh_id: MeshId,
         args: MeshDrawArgs,
     ) {
         self.lazy_init_mesh_renderer();
@@ -628,7 +629,7 @@ impl Renderer for FemtoVgRenderer {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: u16,
+        bitmap_id: BitmapId,
         center_lat: f32,
         center_lon: f32,
         zoom: f32,

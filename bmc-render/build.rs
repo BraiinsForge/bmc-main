@@ -13,7 +13,7 @@ use bmc_wasm_protocol::{
 };
 
 /// Maps SVG file stem → builtin icon ID from the protocol crate.
-const BUILTIN_ICON_MAP: &[(&str, u16)] = &[
+const BUILTIN_ICON_MAP: &[(&str, bmc_wasm_protocol::IconId)] = &[
     ("close", ICON_CLOSE),
     ("error--solid", ICON_ERROR),
     ("warning--solid", ICON_WARNING),
@@ -86,13 +86,15 @@ fn main() {
 
     // Generate Rust source with the icon data table
     let mut generated = String::from(
-        "/// Built-in icon data compiled from SVGs at build time.\n\
-         pub const BUILTIN_ICON_DATA: &[(u16, &[u8])] = &[\n",
+        "use bmc_wasm_protocol::IconId;\n\
+         /// Built-in icon data compiled from SVGs at build time.\n\
+         pub const BUILTIN_ICON_DATA: &[(IconId, &[u8])] = &[\n",
     );
     for (stem, id) in &entries {
+        let raw = id.raw();
         writeln!(
             generated,
-            "    (0x{id:04X}, include_bytes!(concat!(env!(\"OUT_DIR\"), \"/icon_{stem}.bin\"))),"
+            "    (IconId::from_raw(0x{raw:04X}), include_bytes!(concat!(env!(\"OUT_DIR\"), \"/icon_{stem}.bin\"))),"
         )
         .unwrap_or_else(|e| panic!("failed to write generated source: {e}"));
     }

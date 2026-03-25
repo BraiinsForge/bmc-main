@@ -5,6 +5,7 @@
 #![expect(clippy::cast_possible_truncation)]
 
 use anyhow::{Result, bail};
+use bmc_wasm_protocol::BitmapId;
 use bmc_wasm_protocol::colors::Color;
 use wasmi::{Caller, Extern, Linker};
 
@@ -29,7 +30,7 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
                 return 0;
             };
             let state = caller.data_mut();
-            u32::from(state.renderer.register_icon(&data))
+            u32::from(state.renderer.register_icon(&data).raw())
         },
     )?;
 
@@ -41,7 +42,7 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
                 return 0;
             };
             let state = caller.data_mut();
-            u32::from(state.renderer.register_bitmap(&data))
+            u32::from(state.renderer.register_bitmap(&data).raw())
         },
     )?;
 
@@ -56,7 +57,7 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
                 return 0;
             };
             let state = caller.data_mut();
-            let id = u32::from(state.renderer.register_mesh(&data));
+            let id = u32::from(state.renderer.register_mesh(&data).raw());
 
             #[cfg(feature = "profiling")]
             log_host_register_mesh(id, data_len, &probe);
@@ -73,7 +74,7 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
                 return 0;
             };
             let state = caller.data_mut();
-            u32::from(state.renderer.register_bitmap_nearest(&data))
+            u32::from(state.renderer.register_bitmap_nearest(&data).raw())
         },
     )?;
 
@@ -84,7 +85,7 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
             let state = caller.data();
             state
                 .renderer
-                .bitmap_sample(bitmap_id as u16, x, y, w, h)
+                .bitmap_sample(BitmapId::from_raw(bitmap_id as u16), x, y, w, h)
                 .map_or(0, Color::to_u32)
         },
     )?;

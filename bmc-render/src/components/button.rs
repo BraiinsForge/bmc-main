@@ -9,6 +9,7 @@ use crate::interaction::{InteractionState, Rect};
 use crate::renderer::Renderer;
 use crate::tree::ButtonSkinData;
 
+use bmc_wasm_protocol::IconId;
 use bmc_wasm_protocol::colors::Color;
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
@@ -85,7 +86,7 @@ pub fn draw_button(
     h: f32,
     style: ButtonStyle,
     size: ButtonSize,
-    icon_id: u16,
+    icon_id: IconId,
     disabled: bool,
     skin: Option<&ButtonSkinData>,
 ) -> (bool, Option<(f32, f32)>) {
@@ -187,7 +188,7 @@ fn draw_button_disabled(
     h: f32,
     style: ButtonStyle,
     size: ButtonSize,
-    icon_id: u16,
+    icon_id: IconId,
     skin: Option<&ButtonSkinData>,
 ) {
     let fg_color = if let Some(skin) = skin {
@@ -231,14 +232,14 @@ fn draw_button_content(
     w: f32,
     h: f32,
     size: ButtonSize,
-    icon_id: u16,
+    icon_id: IconId,
     fg_color: Color,
 ) {
     let font_size = size.font_size();
     let icon_sz = size.icon_size();
     let gap = size.icon_text_gap();
 
-    let has_icon = icon_id != 0;
+    let has_icon = icon_id != IconId::NONE;
     let has_label = !label.is_empty();
 
     let pad = size.h_padding();

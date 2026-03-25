@@ -9,6 +9,7 @@
 
 use std::cell::RefCell;
 
+use bmc_wasm_protocol::BitmapId;
 use bmc_wasm_protocol::colors::Color;
 
 // ---------------------------------------------------------------------------
@@ -17,7 +18,7 @@ use bmc_wasm_protocol::colors::Color;
 
 /// Function pointer type for registering bitmap data with the host.
 /// Returns a host-assigned bitmap ID.
-type BitmapRegistrar = fn(&[u8]) -> u16;
+type BitmapRegistrar = fn(&[u8]) -> BitmapId;
 
 thread_local! {
     static BITMAP_REGISTRAR: RefCell<BitmapRegistrar> = const {
@@ -33,7 +34,7 @@ pub fn init(register_fn: BitmapRegistrar) {
     BITMAP_REGISTRAR.with(|r| *r.borrow_mut() = register_fn);
 }
 
-fn register_bitmap(data: &[u8]) -> u16 {
+fn register_bitmap(data: &[u8]) -> BitmapId {
     BITMAP_REGISTRAR.with(|r| r.borrow()(data))
 }
 
@@ -64,7 +65,7 @@ pub struct NinePatchAsset {
 /// [`ensure_nine_patch_registered`], or directly via [`NinePatch::from_id`].
 #[derive(Clone, Copy, Debug)]
 pub struct NinePatch {
-    pub bitmap_id: u16,
+    pub bitmap_id: BitmapId,
     pub left: u16,
     pub top: u16,
     pub right: u16,
@@ -74,7 +75,7 @@ pub struct NinePatch {
 impl NinePatch {
     /// Create a `NinePatch` from a pre-registered bitmap ID and explicit insets.
     #[must_use]
-    pub fn from_id(bitmap_id: u16, left: u16, top: u16, right: u16, bottom: u16) -> Self {
+    pub fn from_id(bitmap_id: BitmapId, left: u16, top: u16, right: u16, bottom: u16) -> Self {
         Self {
             bitmap_id,
             left,
@@ -293,12 +294,12 @@ pub struct SliderSkin {
     pub track: NinePatch,
     /// Track nine-patch height (pixels) — needed for layout.
     pub track_h: u16,
-    /// Thumb bitmap ID (non-9-patch, fixed size). `0` = no thumb.
-    pub thumb_id: u16,
+    /// Thumb bitmap ID (non-9-patch, fixed size). `NONE` = no thumb.
+    pub thumb_id: BitmapId,
     pub thumb_w: u16,
     pub thumb_h: u16,
-    /// Pressed thumb bitmap ID. `0` = use `thumb_id` with host-side darkening.
-    pub thumb_pressed_id: u16,
+    /// Pressed thumb bitmap ID. `NONE` = use `thumb_id` with host-side darkening.
+    pub thumb_pressed_id: BitmapId,
 }
 
 // ---------------------------------------------------------------------------

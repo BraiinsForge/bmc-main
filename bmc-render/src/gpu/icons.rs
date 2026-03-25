@@ -11,7 +11,7 @@ use std::fmt;
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
     ICON_FLAG_EVENODD, ICON_FLAG_HAS_FILL, ICON_FLAG_HAS_STROKE, ICON_OP_CLOSE, ICON_OP_CUBIC_TO,
-    ICON_OP_LINE_TO, ICON_OP_MOVE_TO, ICON_OP_QUAD_TO,
+    ICON_OP_LINE_TO, ICON_OP_MOVE_TO, ICON_OP_QUAD_TO, IconId,
 };
 use femtovg::{FillRule, Paint, Path};
 
@@ -38,7 +38,7 @@ pub struct RegisteredIcon {
 
 /// Registry mapping opaque IDs to parsed FemtoVG icon data.
 pub struct IconRegistry {
-    icons: HashMap<u16, RegisteredIcon>,
+    icons: HashMap<IconId, RegisteredIcon>,
     next_id: u16,
 }
 
@@ -61,8 +61,8 @@ impl IconRegistry {
     }
 
     /// Parse binary icon data and register it, returning the assigned ID.
-    pub fn register(&mut self, data: &[u8]) -> u16 {
-        let id = self.next_id;
+    pub fn register(&mut self, data: &[u8]) -> IconId {
+        let id = IconId::from_raw(self.next_id);
         self.next_id += 1;
 
         match parse_icon(data) {
@@ -77,13 +77,13 @@ impl IconRegistry {
     }
 
     /// Parse binary icon data and register it with an explicit ID.
-    pub fn register_with_id(&mut self, id: u16, data: &[u8]) {
+    pub fn register_with_id(&mut self, id: IconId, data: &[u8]) {
         match parse_icon(data) {
             Ok(icon) => {
                 self.icons.insert(id, icon);
             }
             Err(e) => {
-                tracing::error!("failed to parse icon data for id 0x{id:04X}: {e}");
+                tracing::error!("failed to parse icon data for id 0x{:04X}: {e}", id.raw());
             }
         }
     }
@@ -96,7 +96,7 @@ impl IconRegistry {
     }
 
     #[must_use]
-    pub fn get(&self, id: u16) -> Option<&RegisteredIcon> {
+    pub fn get(&self, id: IconId) -> Option<&RegisteredIcon> {
         self.icons.get(&id)
     }
 }

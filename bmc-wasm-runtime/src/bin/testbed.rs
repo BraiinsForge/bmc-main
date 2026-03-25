@@ -37,7 +37,7 @@ use winit::window::{Window, WindowButtons};
 
 use bmc_wasm_protocol::{
     GRAY_30, GRAY_40, GRAY_60, ICON_DEV_CAMERA, ICON_DEV_CURSOR, ICON_DEV_DOWNLOAD,
-    ICON_DEV_SCROLL, ICON_DEV_UNLINK, ICON_DEV_UPLOAD, WHITE,
+    ICON_DEV_SCROLL, ICON_DEV_UNLINK, ICON_DEV_UPLOAD, IconId, WHITE,
 };
 use owo_colors::OwoColorize;
 
@@ -1513,7 +1513,7 @@ fn draw_stats_panel(
         btn_h,
         ButtonStyle::Danger,
         btn_sz,
-        0,
+        IconId::NONE,
         false,
         None,
     );
@@ -1537,7 +1537,7 @@ fn draw_stats_panel(
         btn_h,
         debug_style,
         btn_sz,
-        0,
+        IconId::NONE,
         false,
         None,
     );
@@ -1656,7 +1656,7 @@ struct RecordingPanelResult {
 
 /// Format a timeline event for the recording panel log.
 /// Map a unified event to its dev icon ID.
-fn event_icon_id(event: &UnifiedEvent) -> u16 {
+fn event_icon_id(event: &UnifiedEvent) -> IconId {
     match event {
         UnifiedEvent::Capture { .. } => ICON_DEV_CAMERA,
         UnifiedEvent::Click { .. } | UnifiedEvent::Drag { .. } => ICON_DEV_CURSOR,
@@ -1759,7 +1759,7 @@ enum LogRow<'a> {
     Group {
         at_ms: u64,
         count: usize,
-        icon_id: u16,
+        icon_id: IconId,
     },
 }
 
@@ -1901,7 +1901,7 @@ fn draw_recording_buttons(
             ButtonStyle::Secondary
         },
         btn_sz,
-        0,
+        IconId::NONE,
         false,
         None,
     );
@@ -1928,7 +1928,7 @@ fn draw_recording_buttons(
         btn_h,
         ButtonStyle::Secondary,
         btn_sz,
-        0,
+        IconId::NONE,
         false,
         None,
     );
@@ -1959,7 +1959,7 @@ fn draw_recording_buttons(
         btn_h,
         ButtonStyle::Danger,
         btn_sz,
-        0,
+        IconId::NONE,
         false,
         None,
     );

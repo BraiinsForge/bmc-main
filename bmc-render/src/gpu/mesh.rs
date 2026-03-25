@@ -20,9 +20,11 @@ mod decoder;
 mod math;
 mod raii;
 
+use bmc_wasm_protocol::MeshId;
+
 use atlas::{
-    ATLAS_COLS, ATLAS_H, ATLAS_ROWS, ATLAS_W, INVALID_MESH_ID, MAX_SLOTS, SLOT_SIZE, SlotState,
-    is_dirty, mesh_id_from_storage_index, mesh_id_to_storage_index, warn_slot_overflow_once,
+    ATLAS_COLS, ATLAS_H, ATLAS_ROWS, ATLAS_W, MAX_SLOTS, SLOT_SIZE, SlotState, is_dirty,
+    mesh_id_from_storage_index, mesh_id_to_storage_index, warn_slot_overflow_once,
 };
 use decoder::parse_and_upload;
 use math::{compute_mvp, flatten_mat3, quat_to_mat3};
@@ -442,7 +444,7 @@ impl MeshRenderer {
 
     /// Upload mesh binary data to GPU (VBO + IBO + optional texture).
     /// Returns an opaque non-zero mesh ID.
-    pub fn register_mesh(&mut self, gl: &glow::Context, data: &[u8]) -> u16 {
+    pub fn register_mesh(&mut self, gl: &glow::Context, data: &[u8]) -> MeshId {
         #[cfg(feature = "profiling")]
         let profile_before = profile::RegisterMeshProbe::start();
 
@@ -451,14 +453,14 @@ impl MeshRenderer {
         // `UploadedMesh` has no `Drop` impl that frees GPU handles.
         let Some(id) = mesh_id_from_storage_index(self.meshes.len()) else {
             tracing::error!("mesh registration failed: id space exhausted");
-            return INVALID_MESH_ID;
+            return MeshId::NONE;
         };
 
         let mesh = match parse_and_upload(gl, data) {
             Ok(m) => m,
             Err(e) => {
                 tracing::error!("mesh upload failed: {e}");
-                return INVALID_MESH_ID;
+                return MeshId::NONE;
             }
         };
 
@@ -472,7 +474,7 @@ impl MeshRenderer {
         #[cfg(feature = "profiling")]
         profile_before.finish(id, data.len());
 
-        id
+        MeshId::from_raw(id)
     }
 
     /// Render a mesh into an atlas slot. Returns the atlas image ID and sub-rect
@@ -484,7 +486,7 @@ impl MeshRenderer {
         &mut self,
         gl: &glow::Context,
         slot_index: u8,
-        mesh_id: u16,
+        mesh_id: MeshId,
         args: &MeshDrawArgs,
     ) -> (ImageId, f32, f32, f32, f32) {
         let si = u32::from(slot_index);
@@ -508,7 +510,7 @@ impl MeshRenderer {
             SLOT_SIZE as f32,
         );
 
-        let Some(mesh_idx) = mesh_id_to_storage_index(mesh_id) else {
+        let Some(mesh_idx) = mesh_id_to_storage_index(mesh_id.raw()) else {
             return subrect;
         };
         if mesh_idx >= self.meshes.len() || self.meshes[mesh_idx].is_none() {

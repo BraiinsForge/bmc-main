@@ -6,6 +6,7 @@
 //! internally if the backend requires it.
 
 use bmc_wasm_protocol::colors::Color;
+use bmc_wasm_protocol::{BitmapId, IconId, MeshId};
 
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{SpanData, TextStyle};
@@ -77,7 +78,7 @@ pub trait Renderer {
     // -- Icons --
 
     /// Register icon data (compact binary from proc macro), returns opaque ID.
-    fn register_icon(&mut self, data: &[u8]) -> u16;
+    fn register_icon(&mut self, data: &[u8]) -> IconId;
 
     /// Draw a registered icon at the given position and size.
     #[expect(clippy::too_many_arguments)]
@@ -88,22 +89,22 @@ pub trait Renderer {
         w: f32,
         h: f32,
         color: Color,
-        icon_id: u16,
+        icon_id: IconId,
         anti_alias: bool,
     );
 
     // -- Bitmaps --
 
     /// Register bitmap data (PNG/JPEG bytes), decode and upload to GPU. Returns opaque ID.
-    fn register_bitmap(&mut self, data: &[u8]) -> u16;
+    fn register_bitmap(&mut self, data: &[u8]) -> BitmapId;
 
     /// Register bitmap with nearest-neighbor filtering (no bilinear interpolation).
     /// Use for pixel-art assets (9-patch skins) where bilinear filtering would
     /// cause color bleeding across sub-rect boundaries.
-    fn register_bitmap_nearest(&mut self, data: &[u8]) -> u16;
+    fn register_bitmap_nearest(&mut self, data: &[u8]) -> BitmapId;
 
     /// Draw a registered bitmap at the given position and size.
-    fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: u16);
+    fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId);
 
     /// Draw a 9-patch bitmap: slice into 9 quads using insets and stretch appropriately.
     ///
@@ -116,7 +117,7 @@ pub trait Renderer {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: u16,
+        bitmap_id: BitmapId,
         left: u16,
         top: u16,
         right: u16,
@@ -127,12 +128,12 @@ pub trait Renderer {
     ///
     /// Returns the average RGBA as a [`Color`], or `None` if the
     /// bitmap ID is invalid or the region is empty.
-    fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<Color>;
+    fn bitmap_sample(&self, bitmap_id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<Color>;
 
     // -- Meshes --
 
     /// Register mesh binary data, upload VBO/IBO/texture to GPU. Returns opaque ID.
-    fn register_mesh(&mut self, data: &[u8]) -> u16;
+    fn register_mesh(&mut self, data: &[u8]) -> MeshId;
 
     /// Draw a 3D mesh with quaternion-based orientation and optional directional light.
     ///
@@ -148,7 +149,7 @@ pub trait Renderer {
         w: f32,
         h: f32,
         slot_index: u8,
-        mesh_id: u16,
+        mesh_id: MeshId,
         args: MeshDrawArgs,
     );
 
@@ -165,7 +166,7 @@ pub trait Renderer {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: u16,
+        bitmap_id: BitmapId,
         center_lat: f32,
         center_lon: f32,
         zoom: f32,

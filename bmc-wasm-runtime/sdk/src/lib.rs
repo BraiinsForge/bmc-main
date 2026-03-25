@@ -185,7 +185,7 @@ macro_rules! button {
             [$label]
             [style: $crate::ButtonStyle::Primary]
             [size: $crate::ButtonSize::Normal]
-            [icon: 0u16]
+            [icon: $crate::IconId::NONE]
             [disabled: false]
             [skin: None]
             $($($rest)*)?

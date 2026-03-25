@@ -427,8 +427,12 @@ impl HotReloader {
         // per-shared-object, so we pass the binary's registrar function
         // pointers which call back through RENDERER_PTR.
         unsafe {
-            type Registrar = fn(&[u8]) -> u16;
-            type InitFn = fn(Registrar, Registrar, Registrar, Registrar);
+            type InitFn = fn(
+                fn(&[u8]) -> bmc_wasm_sdk::IconId,
+                fn(&[u8]) -> bmc_wasm_sdk::BitmapId,
+                fn(&[u8]) -> bmc_wasm_sdk::MeshId,
+                fn(&[u8]) -> bmc_wasm_sdk::BitmapId,
+            );
             let init: libloading::Symbol<'_, InitFn> = library
                 .get(b"__init_registrars")
                 .map_err(LoadSoError::SymbolLookup)?;

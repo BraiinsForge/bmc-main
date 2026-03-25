@@ -7,6 +7,7 @@
 mod assets;
 
 use anyhow::Result;
+use bmc_wasm_protocol::IconId;
 use bmc_wasm_protocol::colors::Color;
 use wasmi::{Caller, Linker};
 
@@ -150,7 +151,7 @@ fn register_button_import(linker: &mut Linker<HostState>) -> Result<()> {
                 h as f32,
                 ButtonStyle::from(style),
                 ButtonSize::Normal,
-                0,
+                IconId::NONE,
                 false,
                 None,
             );

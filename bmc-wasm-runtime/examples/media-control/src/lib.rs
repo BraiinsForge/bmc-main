@@ -105,10 +105,11 @@ impl ActiveSkin {
                 self.slider = Some(SliderSkin {
                     track: track.nine_patch,
                     track_h: track.height,
-                    thumb_id: thumb.map_or(0, |t| t.nine_patch.bitmap_id),
+                    thumb_id: thumb.map_or(BitmapId::NONE, |t| t.nine_patch.bitmap_id),
                     thumb_w: thumb.map_or(0, |t| t.width),
                     thumb_h: thumb.map_or(0, |t| t.height),
-                    thumb_pressed_id: thumb_pressed.map_or(0, |t| t.nine_patch.bitmap_id),
+                    thumb_pressed_id: thumb_pressed
+                        .map_or(BitmapId::NONE, |t| t.nine_patch.bitmap_id),
                 });
             }
         }
@@ -237,8 +238,8 @@ struct MediaState {
     volume: VolumeInfo,
     /// Available transport actions (from protocol capability query).
     actions: TransportActions,
-    /// Album art bitmap ID (0 = none registered).
-    art_bitmap_id: u16,
+    /// Album art bitmap ID (`NONE` = none registered).
+    art_bitmap_id: BitmapId,
     /// Album art natural aspect ratio (width / height). 1.0 = square.
     art_aspect: f32,
     /// URL of the currently loaded album art (to avoid re-fetching).
@@ -264,7 +265,7 @@ impl Default for MediaState {
             position: PositionInfo::default(),
             volume: VolumeInfo::default(),
             actions: TransportActions::default(),
-            art_bitmap_id: 0,
+            art_bitmap_id: BitmapId::NONE,
             art_aspect: 1.0,
             art_url: String::new(),
             accent_bg: GRAY_100,
@@ -1118,8 +1119,8 @@ fn fetch_album_art(url: &str) {
 
 /// Clear album art and accent background on the current media state.
 fn clear_album_art(media: &mut MediaState) {
-    if media.art_bitmap_id > 0 {
-        media.art_bitmap_id = 0;
+    if media.art_bitmap_id != BitmapId::NONE {
+        media.art_bitmap_id = BitmapId::NONE;
         media.art_url.clear();
         media.accent_bg = GRAY_100;
     }
@@ -1749,7 +1750,7 @@ fn on_mute(response: &FetchResponse) {
 fn on_album_art(response: &FetchResponse) {
     if response.ok() && !response.body().is_empty() {
         let bitmap_id = host::register_bitmap(response.body());
-        if bitmap_id > 0 {
+        if bitmap_id != BitmapId::NONE {
             // Get natural dimensions for aspect ratio (lightweight — no RGBA allocation)
             let aspect = host::image_dimensions(response.body())
                 .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
@@ -2008,7 +2009,7 @@ fn on_mpd_art(data: &[u8]) {
         return;
     }
     let bitmap_id = host::register_bitmap(data);
-    if bitmap_id > 0 {
+    if bitmap_id != BitmapId::NONE {
         let aspect = host::image_dimensions(data)
             .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
         let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX)
@@ -2502,7 +2503,7 @@ fn build_skin_picker_body() -> Vec<Node> {
             SkinPreview::FromSkin => opt
                 .skin
                 .and_then(|s| s.preview())
-                .map_or(0, |e| e.nine_patch.bitmap_id),
+                .map_or(BitmapId::NONE, |e| e.nine_patch.bitmap_id),
         };
 
         let is_active = i == current;
@@ -2634,7 +2635,7 @@ fn render_album_art(media: &MediaState, art_size: f32) -> Node {
     });
     let inner = art_size - inset * 2.0;
 
-    let art_node = if media.art_bitmap_id > 0 {
+    let art_node = if media.art_bitmap_id != BitmapId::NONE {
         // Contain: fit image inside inner×inner, center, no cropping
         let aspect = media.art_aspect;
         let (bw, bh, bx, by) = if aspect > 1.0 {

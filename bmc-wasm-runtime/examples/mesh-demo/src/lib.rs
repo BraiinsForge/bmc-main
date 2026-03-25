@@ -538,7 +538,7 @@ fn render_tray(w: u32, h: u32, delta_ms: u32) {
             dt.label().into(),
             ButtonStyle::Secondary,
             ButtonSize::Small,
-            0,
+            IconId::NONE,
             !can_add,
             None,
         ));
@@ -567,7 +567,7 @@ fn render_tray(w: u32, h: u32, delta_ms: u32) {
                     "Roll".into(),
                     ButtonStyle::Primary,
                     ButtonSize::Small,
-                    0,
+                    IconId::NONE,
                     any_rolling_now || n == 0,
                     None,
                 ),
@@ -656,7 +656,7 @@ fn mode_tabs_overlay(active: Mode) -> Node {
             label.into(),
             style,
             ButtonSize::Small,
-            0,
+            IconId::NONE,
             false,
             None,
         )
