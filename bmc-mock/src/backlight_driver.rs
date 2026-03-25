@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use bmc::backlight::DisplayBacklightDriver;
+use bmc_platform::backlight::DisplayBacklightDriver;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU8, Ordering},
