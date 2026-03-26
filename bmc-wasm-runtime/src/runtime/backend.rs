@@ -512,7 +512,7 @@ impl WasmWidgetRuntime {
     /// Delegates to [`InteractionState::hit_test`]. Must be called after
     /// a render pass (hit regions are rebuilt each frame).
     #[must_use]
-    pub fn hit_test(&self, x: i32, y: i32) -> Option<String> {
+    pub fn hit_test(&self, x: f32, y: f32) -> Option<String> {
         self.store.data().interaction.hit_test(x, y)
     }
 

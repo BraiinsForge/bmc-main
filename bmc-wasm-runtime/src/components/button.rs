@@ -3,7 +3,6 @@
 //! Button component with immediate-mode API.
 
 #![allow(clippy::wildcard_imports)]
-#![expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 use crate::colors::*;
 use crate::interaction::{InteractionState, Rect};
@@ -187,7 +186,7 @@ pub fn draw_button(
     disabled: bool,
     skin: Option<&ButtonSkinData>,
 ) -> (bool, Option<(f32, f32)>) {
-    let bounds = Rect::new(x as i32, y as i32, w as u32, h as u32);
+    let bounds = Rect::new(x, y, w, h);
 
     if disabled {
         renderer.push_scissor(x, y, w, h);

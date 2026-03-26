@@ -22,13 +22,13 @@ pub struct InteractionState {
     pending_click: Option<String>,
 
     /// Click position (absolute) for the pending click.
-    pending_click_pos: Option<(i32, i32)>,
+    pending_click_pos: Option<(f32, f32)>,
 
     /// Last touch position for drag tracking.
-    last_touch_pos: Option<(i32, i32)>,
+    last_touch_pos: Option<(f32, f32)>,
 
     /// Accumulated drag delta for the current frame (y-axis for scrolling).
-    drag_delta_y: i32,
+    drag_delta_y: f32,
 }
 
 impl InteractionState {
@@ -41,14 +41,14 @@ impl InteractionState {
             pending_click: None,
             pending_click_pos: None,
             last_touch_pos: None,
-            drag_delta_y: 0,
+            drag_delta_y: 0.0,
         }
     }
 
     /// Clear hit regions for new frame.
     pub fn begin_frame(&mut self) {
         // Reset drag delta for new frame
-        self.drag_delta_y = 0;
+        self.drag_delta_y = 0.0;
 
         // Process pending events BEFORE clearing hit regions
         // (events need to hit-test against previous frame's regions)
@@ -72,8 +72,7 @@ impl InteractionState {
                 }
                 TouchEvent::Move { x, y } => {
                     // Track drag delta for scrolling
-                    if let Some((last_x, last_y)) = self.last_touch_pos {
-                        let _ = x - last_x; // dx (unused for now)
+                    if let Some((_last_x, last_y)) = self.last_touch_pos {
                         let dy = y - last_y;
                         self.drag_delta_y += dy;
                     }
@@ -109,7 +108,6 @@ impl InteractionState {
 
     /// Register a hit region and check if it was clicked, returning the
     /// click position relative to `bounds` as `(local_x, local_y)`.
-    #[expect(clippy::cast_precision_loss)]
     pub fn button_with_pos(&mut self, key: &str, bounds: Rect) -> (bool, Option<(f32, f32)>) {
         // Register hit region for future hit testing
         self.hit_regions.insert(key.to_owned(), bounds);
@@ -120,7 +118,7 @@ impl InteractionState {
             let pos = self
                 .pending_click_pos
                 .take()
-                .map(|(cx, cy)| ((cx - bounds.x) as f32, (cy - bounds.y) as f32));
+                .map(|(cx, cy)| (cx - bounds.x, cy - bounds.y));
             return (true, pos);
         }
 
@@ -138,11 +136,10 @@ impl InteractionState {
     /// Returns `Some((local_x, local_y))` if the user is actively touching
     /// (finger down + moved) on the element identified by `key`.
     #[must_use]
-    #[expect(clippy::cast_precision_loss)]
     pub fn get_drag_pos(&self, key: &str, bounds: Rect) -> Option<(f32, f32)> {
         if self.touch_down_key.as_deref() == Some(key) {
             self.last_touch_pos
-                .map(|(x, y)| ((x - bounds.x) as f32, (y - bounds.y) as f32))
+                .map(|(x, y)| (x - bounds.x, y - bounds.y))
         } else {
             None
         }
@@ -152,20 +149,20 @@ impl InteractionState {
     /// Returns the delta if the touch/scroll started on the specified element.
     /// Positive = scroll down (content moves up), negative = scroll up.
     #[must_use]
-    pub fn get_scroll_delta(&self, key: &str) -> i32 {
+    pub fn get_scroll_delta(&self, key: &str) -> f32 {
         // Return scroll delta if drag is happening on this element
-        if self.touch_down_key.as_deref() == Some(key) || self.drag_delta_y != 0 {
+        if self.touch_down_key.as_deref() == Some(key) || self.drag_delta_y != 0.0 {
             // For mouse wheel, we don't check the key since wheel events
             // should work when mouse is over any scroll region
             self.drag_delta_y
         } else {
-            0
+            0.0
         }
     }
 
     /// Get the global scroll delta (for any scrollable region).
     #[must_use]
-    pub fn get_global_scroll_delta(&self) -> i32 {
+    pub fn get_global_scroll_delta(&self) -> f32 {
         self.drag_delta_y
     }
 
@@ -193,11 +190,11 @@ impl InteractionState {
     /// This ensures buttons inside scroll containers win over the scroll
     /// container's own hit region.
     #[must_use]
-    pub fn hit_test(&self, x: i32, y: i32) -> Option<String> {
-        let mut best: Option<(&str, u64)> = None;
+    pub fn hit_test(&self, x: f32, y: f32) -> Option<String> {
+        let mut best: Option<(&str, f32)> = None;
         for (key, rect) in &self.hit_regions {
             if rect.contains(x, y) {
-                let area = u64::from(rect.w) * u64::from(rect.h);
+                let area = rect.area();
                 if best.as_ref().is_none_or(|(_, best_area)| area < *best_area) {
                     best = Some((key, area));
                 }

@@ -233,7 +233,7 @@ struct PreviewState {
     last_frame: Instant,
     needs_render: bool,
     pending_reload: bool,
-    mouse_pos: (i32, i32),
+    mouse_pos: (f32, f32),
     mouse_down: bool,
     perf_overlay: PerfOverlay,
     stats_interaction: InteractionState,
@@ -502,7 +502,7 @@ impl App {
             last_frame: Instant::now(),
             needs_render: true,
             pending_reload: false,
-            mouse_pos: (0, 0),
+            mouse_pos: (0.0, 0.0),
             mouse_down: false,
             perf_overlay: PerfOverlay::new(),
             stats_interaction: InteractionState::new(),
@@ -630,7 +630,10 @@ fn handle_preview_event(
         WindowEvent::CursorMoved { position, .. } => {
             // Convert physical cursor position to logical coordinates
             let s = f64::from(state.dpi_scale);
-            state.mouse_pos = ((position.x / s) as i32, (position.y / s) as i32);
+            #[expect(clippy::cast_possible_truncation, reason = "display coords fit f32")]
+            {
+                state.mouse_pos = ((position.x / s) as f32, (position.y / s) as f32);
+            }
             if state.mouse_down
                 && let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos)
             {
@@ -639,7 +642,7 @@ fn handle_preview_event(
                     && idx == rec.active_tile
                     && let Some(ref mut g) = rec.gesture
                 {
-                    g.current_pos = (lx as f32, ly as f32);
+                    g.current_pos = (lx, ly);
                 }
                 state.tiles[idx]
                     .runtime
@@ -663,8 +666,8 @@ fn handle_preview_event(
                                 // Start gesture tracking
                                 let element = state.tiles[idx].runtime.hit_test(lx, ly);
                                 rec.gesture = Some(GestureTracker {
-                                    start_pos: (lx as f32, ly as f32),
-                                    current_pos: (lx as f32, ly as f32),
+                                    start_pos: (lx, ly),
+                                    current_pos: (lx, ly),
                                     start_element: element,
                                 });
                                 state.tiles[idx]
@@ -734,11 +737,12 @@ fn handle_preview_event(
         }
 
         WindowEvent::MouseWheel { delta, .. } => {
+            #[expect(clippy::cast_possible_truncation, reason = "scroll delta fits f32")]
             let delta_y = match delta {
-                MouseScrollDelta::LineDelta(_, y) => (-y * 30.0) as i32,
-                MouseScrollDelta::PixelDelta(pos) => -pos.y as i32,
+                MouseScrollDelta::LineDelta(_, y) => -y * 30.0,
+                MouseScrollDelta::PixelDelta(pos) => -pos.y as f32,
             };
-            if delta_y != 0 {
+            if delta_y != 0.0 {
                 if let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos) {
                     // In recording mode, only forward scroll to active tile
                     if state
@@ -764,7 +768,11 @@ fn handle_preview_event(
                                 at_ms,
                                 event: UnifiedEvent::Scroll {
                                     element,
-                                    delta: delta_y,
+                                    #[expect(
+                                        clippy::cast_possible_truncation,
+                                        reason = "fixture scroll deltas remain integer pixels"
+                                    )]
+                                    delta: delta_y.round() as i32,
                                 },
                             });
                             auto_scroll_log(rec);
@@ -774,7 +782,7 @@ fn handle_preview_event(
                 } else if let Some((_lx, _ly)) = hit_test_stats(state.mouse_pos) {
                     // Scroll on the recording panel — scroll the step log
                     if let Some(ref mut rec) = state.recording {
-                        rec.scroll_offset = (rec.scroll_offset + delta_y as f32).max(0.0);
+                        rec.scroll_offset = (rec.scroll_offset + delta_y).max(0.0);
                         state.needs_render = true;
                     }
                 }
@@ -1150,13 +1158,30 @@ fn render_checkerboard_to_fbo(gl: &glow::Context, fbo: glow::Framebuffer, w: u32
     }
 }
 
-#[expect(clippy::cast_possible_wrap)]
 /// Check if window coordinates are inside the stats panel, return local coords.
-fn hit_test_stats(pos: (i32, i32)) -> Option<(i32, i32)> {
+fn hit_test_stats(pos: (f32, f32)) -> Option<(f32, f32)> {
     let (mx, my) = pos;
-    let sx = STATS_X as i32;
-    let sy = STATS_Y as i32;
-    if mx >= sx && mx < sx + STATS_W as i32 && my >= sy && my < sy + STATS_H as i32 {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "stats panel coordinates fit in f32"
+    )]
+    let sx = STATS_X as f32;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "stats panel coordinates fit in f32"
+    )]
+    let sy = STATS_Y as f32;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "stats panel coordinates fit in f32"
+    )]
+    let stats_w = STATS_W as f32;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "stats panel coordinates fit in f32"
+    )]
+    let stats_h = STATS_H as f32;
+    if mx >= sx && mx < sx + stats_w && my >= sy && my < sy + stats_h {
         Some((mx - sx, my - sy))
     } else {
         None
@@ -1164,13 +1189,30 @@ fn hit_test_stats(pos: (i32, i32)) -> Option<(i32, i32)> {
 }
 
 /// Find which tile contains the given window coordinates, returning (index, local_x, local_y).
-#[expect(clippy::cast_possible_wrap)]
-fn hit_test_tile(tiles: &[PreviewTile], pos: (i32, i32)) -> Option<(usize, i32, i32)> {
+fn hit_test_tile(tiles: &[PreviewTile], pos: (f32, f32)) -> Option<(usize, f32, f32)> {
     let (mx, my) = pos;
     for (i, tile) in tiles.iter().enumerate() {
-        let tx = tile.x as i32;
-        let ty = tile.y as i32;
-        if mx >= tx && mx < tx + tile.w as i32 && my >= ty && my < ty + tile.h as i32 {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "tile coordinates fit in f32 preview layout"
+        )]
+        let tx = tile.x as f32;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "tile coordinates fit in f32 preview layout"
+        )]
+        let ty = tile.y as f32;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "tile coordinates fit in f32 preview layout"
+        )]
+        let tile_w = tile.w as f32;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "tile coordinates fit in f32 preview layout"
+        )]
+        let tile_h = tile.h as f32;
+        if mx >= tx && mx < tx + tile_w && my >= ty && my < ty + tile_h {
             return Some((i, mx - tx, my - ty));
         }
     }

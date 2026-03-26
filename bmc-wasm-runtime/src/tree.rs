@@ -1684,7 +1684,7 @@ fn render_taffy_node(
 
     // Canvas touch hit-testing (needs mutable interaction, outside the immutable ctx borrow)
     if let Some(ref tk) = touch_key {
-        let bounds = crate::interaction::Rect::new(x as i32, y as i32, w as u32, h as u32);
+        let bounds = crate::interaction::Rect::new(x, y, w, h);
         let (clicked, click_pos) = interaction.button_with_pos(tk, bounds);
         if clicked && let Some((lx, ly)) = click_pos {
             result.clicks.insert(
@@ -1741,12 +1741,7 @@ fn render_taffy_node(
         let sbar_hit_w = sbar_width_active + sbar_margin;
         let sbar_key = format!("{sk}::sbar");
         let sbar_pressed = if has_scrollbar {
-            let sbar_hit_rect = crate::interaction::Rect::new(
-                (x + w - sbar_hit_w) as i32,
-                y as i32,
-                sbar_hit_w as u32,
-                h as u32,
-            );
+            let sbar_hit_rect = crate::interaction::Rect::new(x + w - sbar_hit_w, y, sbar_hit_w, h);
             interaction.button(&sbar_key, sbar_hit_rect);
             interaction.is_pressed(&sbar_key)
         } else {
@@ -1754,13 +1749,13 @@ fn render_taffy_node(
         };
 
         // Register content hit region for drag/wheel scrolling
-        let scroll_region = crate::interaction::Rect::new(x as i32, y as i32, w as u32, h as u32);
+        let scroll_region = crate::interaction::Rect::new(x, y, w, h);
         interaction.button(sk, scroll_region);
 
         // Read scroll delta — scrollbar drag scales by content/viewport ratio
         let scroll_delta = if sbar_pressed {
             let ratio = if h > 0.0 { content_height / h } else { 1.0 };
-            (interaction.get_scroll_delta(&sbar_key) as f32 * ratio) as i32
+            interaction.get_scroll_delta(&sbar_key) * ratio
         } else if interaction.is_pressed(sk) {
             -interaction.get_scroll_delta(sk)
         } else {
@@ -1768,7 +1763,7 @@ fn render_taffy_node(
         };
 
         let state = scroll_states.entry(sk.clone()).or_default();
-        state.scroll_offset += scroll_delta as f32;
+        state.scroll_offset += scroll_delta;
         state.scroll_offset = state.scroll_offset.clamp(0.0, max_scroll);
 
         let offset = state.scroll_offset;
@@ -2935,12 +2930,7 @@ fn render_modal(
 
     // Register scroll region for touch handling
     let body_key = format!("{}::body", modal.modal_id);
-    let scroll_region = crate::interaction::Rect::new(
-        body_x as i32,
-        body_y as i32,
-        modal_width as u32,
-        body_height as u32,
-    );
+    let scroll_region = crate::interaction::Rect::new(body_x, body_y, modal_width, body_height);
     interaction.button(&body_key, scroll_region);
 
     // Apply scroll delta from touch drag or mouse wheel
@@ -2951,7 +2941,7 @@ fn render_modal(
         // Mouse wheel: use global delta (positive = scroll down)
         interaction.get_global_scroll_delta()
     };
-    state.scroll_offset += scroll_delta as f32;
+    state.scroll_offset += scroll_delta;
 
     // Clamp scroll offset
     let max_scroll = (modal.content_height - body_height).max(0.0);

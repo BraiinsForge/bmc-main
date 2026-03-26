@@ -134,7 +134,7 @@ fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
 #[expect(
     clippy::too_many_lines,
     clippy::integer_division,
-    clippy::cast_possible_wrap
+    clippy::cast_precision_loss
 )]
 fn run_unified_capture(
     ctx: &CaptureCtx,
@@ -371,7 +371,7 @@ fn run_unified_capture(
                              available elements: [{available}]"
                         )
                     })?;
-                    let (cx, cy) = (b.x + b.w as i32 / 2, b.y + b.h as i32 / 2);
+                    let (cx, cy) = (b.x + b.w / 2.0, b.y + b.h / 2.0);
                     runtime.push_touch_event(TouchEvent::Down { x: cx, y: cy });
                     tick_one_frame(
                         &mut runtime,
@@ -402,9 +402,9 @@ fn run_unified_capture(
                              available elements: [{available}]"
                         )
                     })?;
-                    let (cx, cy) = (b.x + b.w as i32 / 2, b.y + b.h as i32 / 2);
+                    let (cx, cy) = (b.x + b.w / 2.0, b.y + b.h / 2.0);
                     let steps = 5;
-                    let step_delta = delta / steps;
+                    let step_delta = *delta as f32 / 5.0;
                     runtime.push_touch_event(TouchEvent::Down { x: cx, y: cy });
                     tick_one_frame(
                         &mut runtime,
@@ -455,9 +455,9 @@ fn run_unified_capture(
                              available elements: [{available}]"
                         )
                     })?;
-                    let cy = b.y + b.h as i32 / 2;
-                    let start_x = b.x + (*from * f64::from(b.w)) as i32;
-                    let end_x = b.x + (*to * f64::from(b.w)) as i32;
+                    let cy = b.y + b.h / 2.0;
+                    let start_x = b.x + from * b.w;
+                    let end_x = b.x + to * b.w;
                     runtime.push_touch_event(TouchEvent::Down { x: start_x, y: cy });
                     tick_one_frame(
                         &mut runtime,
@@ -469,8 +469,8 @@ fn run_unified_capture(
                         &mut frame_count,
                     )?;
                     for i in 1..=DRAG_FRAMES {
-                        let t = f64::from(i) / f64::from(DRAG_FRAMES);
-                        let x = start_x + (f64::from(end_x - start_x) * t) as i32;
+                        let t = i as f32 / DRAG_FRAMES as f32;
+                        let x = start_x + (end_x - start_x) * t;
                         runtime.push_touch_event(TouchEvent::Move { x, y: cy });
                         tick_one_frame(
                             &mut runtime,

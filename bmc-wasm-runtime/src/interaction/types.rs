@@ -6,44 +6,49 @@
 #[derive(Debug, Clone, Copy)]
 pub enum TouchEvent {
     Down {
-        x: i32,
-        y: i32,
+        x: f32,
+        y: f32,
     },
     Up {
-        x: i32,
-        y: i32,
+        x: f32,
+        y: f32,
     },
     Move {
-        x: i32,
-        y: i32,
+        x: f32,
+        y: f32,
     },
     /// Mouse wheel scroll event. delta_y is positive for scroll down, negative for scroll up.
     Scroll {
-        x: i32,
-        y: i32,
-        delta_y: i32,
+        x: f32,
+        y: f32,
+        delta_y: f32,
     },
 }
 
 /// Rectangle for hit testing.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Rect {
-    pub x: i32,
-    pub y: i32,
-    pub w: u32,
-    pub h: u32,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
 }
 
 impl Rect {
     #[must_use]
-    pub fn new(x: i32, y: i32, w: u32, h: u32) -> Self {
+    pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
         Self { x, y, w, h }
     }
 
     /// Check if a point is inside the rectangle.
     #[must_use]
-    #[expect(clippy::cast_possible_wrap)]
-    pub fn contains(&self, px: i32, py: i32) -> bool {
-        px >= self.x && py >= self.y && px < self.x + self.w as i32 && py < self.y + self.h as i32
+    pub fn contains(&self, px: f32, py: f32) -> bool {
+        px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
+    }
+
+    /// Area for hit-test specificity (smaller area = more specific target).
+    #[must_use]
+    pub fn area(&self) -> f32 {
+        self.w * self.h
     }
 }

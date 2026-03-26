@@ -115,8 +115,8 @@ pub enum UnifiedEvent {
     /// Drag across an element from one fractional X position to another.
     Drag {
         element: String,
-        from: f64,
-        to: f64,
+        from: f32,
+        to: f32,
     },
 
     // ── HTTP fetch ──────────────────────────────────────────────
