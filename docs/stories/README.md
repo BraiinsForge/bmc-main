@@ -14,6 +14,14 @@ requiring the user to look at the screen.  Effects are prioritized so
 concurrent events resolve deterministically, and a master toggle lets the user
 silence them entirely.
 
+### [Nix Store Initializer](nix-store-initializer.md)
+
+A last-resort recovery component that runs on every boot.  When the device has
+no initialized Nix store — typically after a factory reset — it takes over the
+display, guides the user through WiFi setup via an open access point, downloads
+and activates the Nix store, and falls back to firmware upgrade if no matching
+bundle exists.
+
 ### Audio & Alarms
 
 *Not yet documented.*  Alarm scheduling with repeat patterns, snooze, and
