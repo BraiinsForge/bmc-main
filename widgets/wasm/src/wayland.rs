@@ -47,10 +47,10 @@ impl WaylandClient {
 
         while self.surface.running() {
             let timeout_ms = self.compute_poll_timeout(render.as_ref());
-            self.surface.poll_dispatch(timeout_ms)?;
+            let outcome = self.surface.poll_dispatch(timeout_ms)?;
 
-            // On poll timeout, treat as a frame scheduling tick
-            if timeout_ms >= 0 {
+            // Only a real timeout advances delayed frame scheduling.
+            if outcome == bmc_widget::surface::PollOutcome::Timeout {
                 self.surface.mark_needs_render();
             }
 
