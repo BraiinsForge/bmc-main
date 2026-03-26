@@ -9,10 +9,11 @@ pub enum TouchEvent {
         x: f32,
         y: f32,
     },
-    Up {
-        x: f32,
-        y: f32,
-    },
+    /// Finger lifted. Coordinates are not included because the Wayland
+    /// `wl_touch::up` event does not carry them. `InteractionState` uses
+    /// the last known position from the preceding `Move` or `Down` for
+    /// hit-testing the release.
+    Up,
     Move {
         x: f32,
         y: f32,

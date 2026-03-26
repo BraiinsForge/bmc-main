@@ -382,7 +382,7 @@ fn run_unified_capture(
                         &mut system_time,
                         &mut frame_count,
                     )?;
-                    runtime.push_touch_event(TouchEvent::Up { x: cx, y: cy });
+                    runtime.push_touch_event(TouchEvent::Up);
                     tick_one_frame(
                         &mut runtime,
                         ctx,
@@ -432,10 +432,7 @@ fn run_unified_capture(
                             &mut frame_count,
                         )?;
                     }
-                    runtime.push_touch_event(TouchEvent::Up {
-                        x: cx,
-                        y: current_y,
-                    });
+                    runtime.push_touch_event(TouchEvent::Up);
                     tick_one_frame(
                         &mut runtime,
                         ctx,
@@ -482,7 +479,7 @@ fn run_unified_capture(
                             &mut frame_count,
                         )?;
                     }
-                    runtime.push_touch_event(TouchEvent::Up { x: end_x, y: cy });
+                    runtime.push_touch_event(TouchEvent::Up);
                     tick_one_frame(
                         &mut runtime,
                         ctx,

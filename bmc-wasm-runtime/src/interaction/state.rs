@@ -58,13 +58,15 @@ impl InteractionState {
                     self.touch_down_key = self.hit_test(x, y);
                     self.last_touch_pos = Some((x, y));
                 }
-                TouchEvent::Up { x, y } => {
+                TouchEvent::Up => {
+                    // Use last known position for hit-testing the release.
+                    // wl_touch::up does not carry coordinates.
                     if let Some(down_key) = &self.touch_down_key
-                        && self.hit_test(x, y).as_ref() == Some(down_key)
+                        && let Some((ux, uy)) = self.last_touch_pos
+                        && self.hit_test(ux, uy).as_ref() == Some(down_key)
                     {
-                        // Touch up on same element = click
                         self.pending_click = Some(down_key.clone());
-                        self.pending_click_pos = Some((x, y));
+                        self.pending_click_pos = Some((ux, uy));
                     }
 
                     self.touch_down_key = None;

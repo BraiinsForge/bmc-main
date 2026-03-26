@@ -681,9 +681,7 @@ fn handle_preview_event(
                                 if let Some(gesture) = rec.gesture.take() {
                                     classify_and_record_gesture(rec, &gesture);
                                 }
-                                state.tiles[idx]
-                                    .runtime
-                                    .push_touch_event(TouchEvent::Up { x: lx, y: ly });
+                                state.tiles[idx].runtime.push_touch_event(TouchEvent::Up);
                                 state.needs_render = true;
                             }
                         }
@@ -705,9 +703,7 @@ fn handle_preview_event(
                         }
                         ElementState::Released => {
                             state.mouse_down = false;
-                            state.tiles[idx]
-                                .runtime
-                                .push_touch_event(TouchEvent::Up { x: lx, y: ly });
+                            state.tiles[idx].runtime.push_touch_event(TouchEvent::Up);
                             state.needs_render = true;
                         }
                     }
@@ -727,7 +723,7 @@ fn handle_preview_event(
                     }
                     ElementState::Released => {
                         state.mouse_down = false;
-                        interaction.push_event(TouchEvent::Up { x: lx, y: ly });
+                        interaction.push_event(TouchEvent::Up);
                         state.needs_render = true;
                     }
                 }
