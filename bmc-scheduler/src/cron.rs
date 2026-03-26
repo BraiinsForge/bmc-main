@@ -241,13 +241,13 @@ impl Crontab {
         let mut entry_string = entry_lines.join("\n");
         entry_string.push('\n');
 
-        tokio::fs::OpenOptions::new()
+        let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)
-            .await?
-            .write_all(entry_string.as_bytes())
             .await?;
+        file.write_all(entry_string.as_bytes()).await?;
+        file.flush().await?;
 
         Ok(())
     }
