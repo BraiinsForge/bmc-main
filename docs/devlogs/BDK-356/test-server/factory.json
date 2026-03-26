@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "tarballs": [
+    {
+      "bos_version": "2026-03-27-0-a11e594b-26.02.1",
+      "download_url": "http://${HOST_IP}:9080/init-tarball.tar.gz",
+      "profile_path": "/nix/var/nix/gcroots/profiles/bmc"
+    }
+  ]
+}
