@@ -215,3 +215,46 @@ impl Default for InteractionState {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::InteractionState;
+    use crate::interaction::{Rect, TouchEvent};
+
+    #[test]
+    fn coordinate_less_up_uses_last_touch_position_for_click() {
+        let bounds = Rect::new(50.0, 20.0, 100.0, 40.0);
+        let mut state = InteractionState::new();
+
+        assert!(!state.button("btn", bounds));
+
+        state.push_event(TouchEvent::Down { x: 80.0, y: 35.0 });
+        state.push_event(TouchEvent::Move { x: 90.0, y: 40.0 });
+        state.push_event(TouchEvent::Up);
+        state.begin_frame();
+
+        let (clicked, pos) = state.button_with_pos("btn", bounds);
+        assert!(clicked);
+        assert_eq!(pos, Some((40.0, 20.0)));
+    }
+
+    #[test]
+    fn cancel_clears_pressed_state_without_emitting_click() {
+        let bounds = Rect::new(50.0, 20.0, 100.0, 40.0);
+        let mut state = InteractionState::new();
+
+        assert!(!state.button("btn", bounds));
+
+        state.push_event(TouchEvent::Down { x: 80.0, y: 35.0 });
+        state.push_event(TouchEvent::Move { x: 90.0, y: 40.0 });
+        state.push_event(TouchEvent::Cancel);
+        state.begin_frame();
+
+        assert!(!state.is_pressed("btn"));
+        assert_eq!(state.get_drag_pos("btn", bounds), None);
+
+        let (clicked, pos) = state.button_with_pos("btn", bounds);
+        assert!(!clicked);
+        assert_eq!(pos, None);
+    }
+}
