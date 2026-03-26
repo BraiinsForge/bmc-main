@@ -17,6 +17,7 @@ flate2 = { workspace = true, features = ["rust_backend"] }
 pcap-file.workspace = true
 ping.workspace = true
 pnet.workspace = true
+regex.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 thiserror.workspace = true
 tracing.workspace = true
