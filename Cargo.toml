@@ -185,8 +185,10 @@ serde_with = { version = "3.14.0", default-features = false, features = ["macros
 sha2 = "0.10.9"
 walkdir = "2.5.0"
 zip = { version = "4.3.0", default-features = false }
-slint = { version = "=1.13.1", default-features = false, features = ["compat-1-2", "image-default-formats", "log", "serde", "std"] }
-slint-build = "=1.13.1"
+# we cannot upgrade to 1.13.0 because it leaks memory on multiple
+# widgets!
+slint = { version = "=1.10.0", default-features = false, features = ["compat-1-2", "image-default-formats", "log", "serde", "std"] }
+slint-build = "=1.10.0"
 smart-leds-trait = { version = "0.3.1" }
 spidev = { version = "0.7.0" }
 strum = { version = "0.27", default-features = false }

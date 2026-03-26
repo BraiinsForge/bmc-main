@@ -60,8 +60,30 @@ component AutomaticSceneCycler {
         running: !self.restarting && (root.enabled && root.scenes-count > 1);
         interval: Math.max(root.duration, 1s);
 
+        public function restart() {
+            self.restarting = true;
+
+            // Run timer to revert self.restarting back to false in the next event loop cycle.
+            // This is something like `setTimeout(callback, 0)` in JavaScript.
+            restart_workaround_timer.running = true;
+        }
+
         triggered() => {
             root.scene-index = Math.mod(root.scene-index + 1, root.scenes-count);
+        }
+    }
+
+    // this is needed until https://github.com/slint-ui/slint/pull/8821 is released
+    restart_workaround_timer := Timer {
+        // triggered manually from timer.restart()
+        running: false;
+        interval: 0ms;
+
+        triggered => {
+            timer.restarting = false;
+
+            // run only once when requested
+            self.running = false;
         }
     }
 }
