@@ -1,0 +1,9 @@
+{
+  "factory": {
+    "id": "local-test",
+    "index_url": "http://${HOST_IP}:9080/factory.json",
+    "known_public_key": "placeholder",
+    "priority": 1,
+    "enabled": true
+  }
+}

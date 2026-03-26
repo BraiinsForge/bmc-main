@@ -1,0 +1,5 @@
+:9080 {
+	root * {$SERVE_DIR}
+	file_server
+	log
+}
