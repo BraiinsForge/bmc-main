@@ -244,7 +244,7 @@ Builds an initial Nix store tarball for device initialization.
 { pkgs, lib, mkIndex }:
 { packages          # same format as mkIndex
 , bmc-nix-cli       # derivation of the bmc-nix CLI tool
-, bos_version       # "26.01"
+, bos_version       # "2026-03-04-0-8436f26b-26.02"
 , profile_path ? "/nix/var/nix/gcroots/profiles/bmc"
 , extraFiles ? null  # optional derivation whose contents are overlaid
                      # into the tarball root (e.g. /etc/nix/nix.conf)
@@ -341,9 +341,9 @@ This is the most involved derivation. Steps inside the build:
 
 ```json
 {
-  "bos_version": "26.01",
+  "bos_version": "2026-03-04-0-8436f26b-26.02",
   "profile_path": "/nix/var/nix/gcroots/profiles/bmc",
-  "tarball_name": "nix-26.01.tar.gz"
+  "tarball_name": "nix-2026-03-04-0-8436f26b-26.02.tar.gz"
 }
 ```
 
@@ -424,7 +424,7 @@ let
     # bmc-nix-cli is a [[bin]] target of the bmc-nix crate;
     # workspace.nix needs to export it as a package
     bmc-nix-cli = workspace.packages.bmc-nix-cli;
-    bos_version = "26.01";
+    bos_version = "2026-03-04-0-8436f26b-26.02";
     extraFiles = pkgs.writeTextDir "etc/nix/nix.conf" ''
       substituters = https://cache.braiins.com
       trusted-public-keys = cache.braiins.com:AAAAB3NzaC1...
@@ -457,7 +457,7 @@ in
   packages.x86_64-linux = workspace.packages // {
     inherit (artifacts) index tarball;
     # nix build .#index    → result/index.json
-    # nix build .#tarball  → result/nix-26.01.tar.gz
+    # nix build .#tarball  → result/nix-2026-03-04-0-8436f26b-26.02.tar.gz
     #                        result/metadata.json
   };
 }
