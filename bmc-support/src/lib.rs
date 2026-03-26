@@ -2,6 +2,7 @@
 
 pub mod constants;
 pub mod encrypt;
+mod filters;
 pub mod network;
 
 use crate::constants::{
@@ -219,6 +220,8 @@ impl<'w, W: Write> SupportZipWriter<'w, W> {
         let mut file = File::open(path)?;
         let mut buf = vec![];
         file.read_to_end(&mut buf)?;
+
+        let buf = filters::apply(path, buf);
 
         let name = Path::new("filesystem")
             .join(path.strip_prefix("/")?)
