@@ -24,12 +24,6 @@ const TAP_MAX_DURATION_MS: u128 = 300;
 /// Maximum movement (px) for a tap gesture.
 const TAP_MAX_MOVEMENT: i32 = 30;
 
-/// Time window (ms) after touch start during which position updates are
-/// treated as the initial touch-down position rather than motion. Evdev
-/// often delivers the first coordinate in a separate SYN_REPORT from
-/// BTN_TOUCH, so this window captures that initial position.
-const TOUCH_START_WINDOW_MS: u128 = 10;
-
 /// Current drag offset while finger is down.
 #[derive(Debug, Clone, Copy)]
 pub struct DragInfo {
@@ -67,6 +61,10 @@ struct TouchState {
     pending_raw_y: i32,
     start_time: Instant,
     is_touching: bool,
+    /// Set on BTN_TOUCH press, consumed on the first SYN_REPORT with
+    /// position data. Replaces the timing-based `TOUCH_START_WINDOW_MS`
+    /// heuristic with deterministic first-sample detection.
+    needs_down: bool,
     /// Whether the drag dead zone has been exceeded.
     drag_active: bool,
     /// Recent (logical_x, timestamp) samples for velocity estimation.
@@ -84,6 +82,7 @@ impl Default for TouchState {
             pending_raw_y: 0,
             start_time: Instant::now(),
             is_touching: false,
+            needs_down: false,
             drag_active: false,
             velocity_samples: VecDeque::with_capacity(VELOCITY_SAMPLE_COUNT),
         }
@@ -301,6 +300,7 @@ impl TouchInput {
                     let pressed = value == 1;
                     if pressed && !self.state.is_touching {
                         self.state.is_touching = true;
+                        self.state.needs_down = true;
                         self.state.drag_active = false;
                         self.state.start_time = Instant::now();
                         self.state.velocity_samples.clear();
@@ -326,17 +326,15 @@ impl TouchInput {
                         let (lx, ly) = self
                             .calibration
                             .to_logical(self.state.pending_raw_x, self.state.pending_raw_y);
-                        let is_start =
-                            self.state.start_time.elapsed().as_millis() < TOUCH_START_WINDOW_MS;
 
-                        if is_start {
-                            self.state.start_x = lx;
-                            self.state.start_y = ly;
-                        }
                         self.state.current_x = lx;
                         self.state.current_y = ly;
 
-                        if is_start {
+                        if self.state.needs_down {
+                            // First position sample after BTN_TOUCH — treat as start.
+                            self.state.needs_down = false;
+                            self.state.start_x = lx;
+                            self.state.start_y = ly;
                             self.raw_events.push(RawTouchEvent::Down {
                                 id: 0,
                                 x: lx,
