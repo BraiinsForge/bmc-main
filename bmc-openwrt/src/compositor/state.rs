@@ -599,11 +599,10 @@ impl CompositorHandler for CompositorState {
             }
         }
 
-        // Track render surface → instance_id mapping for wl_touch event routing
+        // Track render surface → instance_id mapping for wl_touch event routing.
+        // Always insert (not or_insert) so reconnecting widgets update the surface.
         if let Some(ref id) = instance_id {
-            self.render_surfaces
-                .entry(id.clone())
-                .or_insert_with(|| surface.clone());
+            self.render_surfaces.insert(id.clone(), surface.clone());
         }
 
         with_states(surface, |states| {

@@ -687,6 +687,9 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 .compositor
                 .deck_widget_state
                 .unregister_widget(&instance_id);
+            // Remove stale touch routing surface so a reconnecting widget
+            // gets a fresh entry via the surface commit path.
+            state.compositor.render_surfaces.remove(&instance_id);
         }
         CompositorCommand::SetActiveScene { layout } => {
             tracing::info!("Setting active scene with {} widgets", layout.widgets.len());
