@@ -135,6 +135,17 @@ impl OpenwrtWifiManager {
         }
     }
 
+    pub async fn get_sta_ssid(&self) -> Option<String> {
+        let uci = UciHelper::new(&self.wlan_dev_syspath);
+        let config = uci.wifi_iface_find_enabled().await?;
+
+        if config.mode == WifiMode::Station {
+            Some(config.ssid)
+        } else {
+            None
+        }
+    }
+
     pub async fn get_phy_macaddress(&self) -> anyhow::Result<String> {
         let phy = WifiUtils::get_phy_path_by_syspath(&self.wlan_dev_syspath).await?;
         let mac = tokio::fs::read_to_string(phy.join("macaddress"))
