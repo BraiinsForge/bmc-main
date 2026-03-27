@@ -14,6 +14,12 @@ requiring the user to look at the screen.  Effects are prioritized so
 concurrent events resolve deterministically, and a master toggle lets the user
 silence them entirely.
 
+### [Support Archive Credential Censoring](support-archive-credential-censoring.md)
+
+The support archive automatically censors credentials (Braiins Pool API keys,
+Wi-Fi passwords) before bundling diagnostic files, so users can safely share
+archives with support without exposing secrets.
+
 ### Audio & Alarms
 
 *Not yet documented.*  Alarm scheduling with repeat patterns, snooze, and
