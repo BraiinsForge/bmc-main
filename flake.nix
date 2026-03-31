@@ -3,6 +3,7 @@
   nixConfig.bash-prompt-prefix = "(bmc) ";
 
   inputs = {
+    self.lfs = true;
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib";
