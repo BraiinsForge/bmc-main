@@ -134,22 +134,20 @@ impl EglCompositor {
         tracing::info!("Wayland socket created: {}", socket_name);
 
         let loop_handle = event_loop.handle();
-        if let Ok(poll_fd) = display.backend().poll_fd().try_clone_to_owned()
-            && loop_handle
-                .insert_source(
-                    Generic::new(poll_fd, Interest::READ, Mode::Level),
-                    |_, _, state| {
-                        state.display.dispatch_clients(&mut state.compositor)?;
-                        Ok(PostAction::Continue)
-                    },
-                )
-                .is_err()
-        {
-            let err = "Failed to add display fd to event loop".to_owned();
-            tracing::error!("{}", err);
-            let _ = ready_tx.send(Err(err));
-            return;
-        }
+        let poll_fd = try_init!(
+            display.backend().poll_fd().try_clone_to_owned(),
+            "Failed to clone display poll fd"
+        );
+        try_init!(
+            loop_handle.insert_source(
+                Generic::new(poll_fd, Interest::READ, Mode::Level),
+                |_, _, state| {
+                    state.display.dispatch_clients(&mut state.compositor)?;
+                    Ok(PostAction::Continue)
+                },
+            ),
+            "Failed to add display fd to event loop"
+        );
 
         // Signal ready to main thread
         if ready_tx.send(Ok(socket_name.clone())).is_err() {
@@ -169,7 +167,7 @@ impl EglCompositor {
         };
 
         // Add DRM device fd for vblank/page-flip events
-        if let Ok(drm_fd) = app_state
+        match app_state
             .scene_renderer
             .output()
             .drm()
@@ -177,22 +175,27 @@ impl EglCompositor {
             .as_fd()
             .try_clone_to_owned()
         {
-            let _ = loop_handle.insert_source(
-                Generic::new(drm_fd, Interest::READ, Mode::Level),
-                |_, _, state| {
-                    if let Ok(events) = state.scene_renderer.output().drm().receive_events() {
-                        for event in events {
-                            match event {
-                                DrmEvent::Vblank(_) | DrmEvent::PageFlip(_) => {
-                                    state.scene_renderer.output_mut().on_vblank();
+            Ok(drm_fd) => {
+                if let Err(e) = loop_handle.insert_source(
+                    Generic::new(drm_fd, Interest::READ, Mode::Level),
+                    |_, _, state| {
+                        if let Ok(events) = state.scene_renderer.output().drm().receive_events() {
+                            for event in events {
+                                match event {
+                                    DrmEvent::Vblank(_) | DrmEvent::PageFlip(_) => {
+                                        state.scene_renderer.output_mut().on_vblank();
+                                    }
+                                    DrmEvent::Unknown(_) => {}
                                 }
-                                DrmEvent::Unknown(_) => {}
                             }
                         }
-                    }
-                    Ok(PostAction::Continue)
-                },
-            );
+                        Ok(PostAction::Continue)
+                    },
+                ) {
+                    tracing::error!("Failed to add DRM fd to event loop: {e}");
+                }
+            }
+            Err(e) => tracing::error!("Failed to clone DRM device fd: {e}"),
         }
 
         tracing::info!("Compositor event loop starting");
