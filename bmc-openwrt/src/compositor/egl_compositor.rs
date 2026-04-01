@@ -46,11 +46,51 @@ const HEADLESS_REFRESH_MHZ: i32 = 60_000;
 /// Headless frame-callback pacing (~60 Hz).
 const HEADLESS_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
-fn dispatch_timeout(needs_redraw: bool, flip_pending: bool) -> Option<Duration> {
-    if needs_redraw && !flip_pending {
-        Some(Duration::ZERO)
-    } else {
-        None
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RedrawState {
+    Idle,
+    Queued,
+    WaitingForVblank { redraw_queued: bool },
+}
+
+impl RedrawState {
+    fn queue(self) -> Self {
+        match self {
+            Self::Idle | Self::Queued => Self::Queued,
+            Self::WaitingForVblank { .. } => Self::WaitingForVblank {
+                redraw_queued: true,
+            },
+        }
+    }
+
+    fn on_vblank(self, flip_pending: bool) -> Self {
+        if flip_pending {
+            return self;
+        }
+
+        match self {
+            Self::WaitingForVblank {
+                redraw_queued: true,
+            }
+            | Self::Queued => Self::Queued,
+            Self::WaitingForVblank {
+                redraw_queued: false,
+            }
+            | Self::Idle => Self::Idle,
+        }
+    }
+
+    fn on_frame_submitted() -> Self {
+        Self::WaitingForVblank {
+            redraw_queued: false,
+        }
+    }
+}
+
+fn dispatch_timeout(redraw_state: RedrawState) -> Option<Duration> {
+    match redraw_state {
+        RedrawState::Queued => Some(Duration::ZERO),
+        RedrawState::Idle | RedrawState::WaitingForVblank { .. } => None,
     }
 }
 
@@ -245,6 +285,7 @@ impl EglCompositor {
             action_tx,
             event_tx,
             should_exit: false,
+            redraw_state: RedrawState::Idle,
         };
 
         // Add listening socket fd for new Wayland client connections
@@ -311,8 +352,9 @@ impl EglCompositor {
             use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
             let timer = Timer::from_duration(HEADLESS_FRAME_INTERVAL);
             if let Err(e) = loop_handle.insert_source(timer, |_, (), state| {
-                if state.compositor.needs_redraw {
-                    state.compositor.needs_redraw = false;
+                state.refresh_redraw_state();
+                if matches!(state.redraw_state, RedrawState::Queued) {
+                    state.redraw_state = RedrawState::Idle;
                     #[expect(
                         clippy::cast_possible_truncation,
                         reason = "wrapping is acceptable for frame time"
@@ -369,6 +411,7 @@ impl EglCompositor {
             }
 
             process_protocol_events(&mut app_state);
+            app_state.refresh_redraw_state();
 
             if let Some(renderer) = &mut app_state.scene_renderer {
                 // Invalidate texture cache for destroyed buffers — do this
@@ -388,7 +431,7 @@ impl EglCompositor {
                 if !app_state.compositor.pending_capture_frames.is_empty()
                     && !renderer.capture_cache_ready()
                 {
-                    app_state.compositor.needs_redraw = true;
+                    app_state.redraw_state = app_state.redraw_state.queue();
                 }
 
                 // Gate rendering on flip_pending: if a prior page-flip has not
@@ -398,10 +441,10 @@ impl EglCompositor {
                 // and `import_textures` never reimports them, causing permanent
                 // "No cached texture" spam until the next client commit.
                 // The DRM fd wake will re-enter this block once the flip lands.
-                let needs_render =
-                    app_state.compositor.needs_redraw && !renderer.output().is_flip_pending();
+                let should_render = matches!(app_state.redraw_state, RedrawState::Queued)
+                    && !renderer.output().is_flip_pending();
 
-                if needs_render {
+                if should_render {
                     ii_stopwatch::stopwatch_start!(render_w);
                     let dirty: Vec<_> = app_state.compositor.dirty_buffers.drain(..).collect();
                     let capture_frames: Vec<_> = app_state
@@ -435,16 +478,16 @@ impl EglCompositor {
                         .extend(unconsumed_captures);
                     ii_stopwatch::stopwatch_stop!(render_w);
 
-                    // Only clear needs_redraw and send frame callbacks
+                    // Only clear redraw state and send frame callbacks
                     // when a frame was actually produced.
                     //
-                    // If render was skipped (flip pending), keep needs_redraw set so
+                    // If render was skipped (flip pending), keep redraw queued so
                     // the dispatch timeout (below) blocks on the DRM fd until the flip completes,
                     // then renders on the next iteration.
                     //
                     // Withhold callbacks to pace widget rendering at the actual display rate.
                     if rendered {
-                        app_state.compositor.needs_redraw = false;
+                        app_state.redraw_state = RedrawState::on_frame_submitted();
 
                         ii_stopwatch::stopwatch_start!(callbacks_w);
                         #[expect(
@@ -455,8 +498,14 @@ impl EglCompositor {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_millis() as u32)
                             .unwrap_or(0);
-                        app_state.compositor.send_frame_callbacks_for_presented_widgets(time);
+                        app_state
+                            .compositor
+                            .send_frame_callbacks_for_presented_widgets(time);
                         ii_stopwatch::stopwatch_stop!(callbacks_w);
+                    } else {
+                        app_state.redraw_state = RedrawState::WaitingForVblank {
+                            redraw_queued: true,
+                        };
                     }
                 }
 
@@ -479,19 +528,13 @@ impl EglCompositor {
 
             let _ = app_state.display.flush_clients();
 
-            // Dispatch timeout: sleep until the next event unless we can render right now
+            // Dispatch timeout: sleep until the next event unless we can render right now.
             //
-            // IMPORTANT: do NOT use Duration::ZERO when flip is pending.
-            // The DRM fd is a calloop source — the page-flip-complete event
-            // will wake dispatch(None) the instant the flip lands.
-            // Polling with ZERO timeout while flip_pending causes a ~1600 Hz
-            // busy-spin that wastes a full CPU core and starves the widget
-            // process (measured: 25→30 fps improvement by eliminating it).
-            let flip_pending = app_state
-                .scene_renderer
-                .as_ref()
-                .is_some_and(|r| r.output().is_flip_pending());
-            let timeout = dispatch_timeout(app_state.compositor.needs_redraw, flip_pending);
+            // IMPORTANT: `RedrawState` already encodes whether a flip is pending.
+            // `dispatch_timeout` returns `Some(ZERO)` only for `Queued` — never
+            // while waiting for vblank — so we avoid the ~1600 Hz busy-spin that
+            // used to waste a full CPU core when polling with ZERO during flip.
+            let timeout = dispatch_timeout(app_state.redraw_state);
             ii_stopwatch::stopwatch_start!(dispatch_w);
             if event_loop.dispatch(timeout, &mut app_state).is_err() {
                 tracing::error!("Event loop dispatch error");
@@ -529,6 +572,22 @@ struct AppState {
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
     should_exit: bool,
+    redraw_state: RedrawState,
+}
+
+impl AppState {
+    fn refresh_redraw_state(&mut self) {
+        let flip_pending = self
+            .scene_renderer
+            .as_ref()
+            .is_some_and(|r| r.output().is_flip_pending());
+        self.redraw_state = self.redraw_state.on_vblank(flip_pending);
+
+        if self.compositor.needs_redraw {
+            self.redraw_state = self.redraw_state.queue();
+            self.compositor.needs_redraw = false;
+        }
+    }
 }
 
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
@@ -571,7 +630,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 );
             }
             state.compositor.widgets.set_active_scene(layout);
-            state.compositor.needs_redraw = true;
+            state.redraw_state = state.redraw_state.queue();
         }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
@@ -596,11 +655,14 @@ fn process_protocol_events(state: &mut AppState) {
             .send(CompositorEvent::WidgetReady { instance_id });
     }
 
-    for instance_id in state.compositor.deck_widget_state.drain_disconnected() {
-        tracing::info!("Widget disconnected: {}", instance_id);
-        let _ = state
-            .event_tx
-            .send(CompositorEvent::WidgetDisconnected { instance_id });
+    for disconnected in state.compositor.deck_widget_state.drain_disconnected() {
+        state
+            .compositor
+            .drop_widget_callback_state(&disconnected.instance_id, disconnected.pid);
+        tracing::info!("Widget disconnected: {}", disconnected.instance_id);
+        let _ = state.event_tx.send(CompositorEvent::WidgetDisconnected {
+            instance_id: disconnected.instance_id,
+        });
     }
 
     for (instance_id, payload) in state.compositor.deck_widget_state.drain_actions() {
@@ -769,21 +831,61 @@ impl Compositor for EglCompositor {
 
 #[cfg(test)]
 mod tests {
-    use super::dispatch_timeout;
+    use super::{RedrawState, dispatch_timeout};
     use std::time::Duration;
 
     #[test]
     fn queued_redraw_without_pending_flip_retries_immediately() {
-        assert_eq!(dispatch_timeout(true, false), Some(Duration::ZERO));
+        assert_eq!(dispatch_timeout(RedrawState::Queued), Some(Duration::ZERO));
     }
 
     #[test]
     fn queued_redraw_with_pending_flip_waits_for_events() {
-        assert_eq!(dispatch_timeout(true, true), None);
+        assert_eq!(
+            dispatch_timeout(RedrawState::WaitingForVblank {
+                redraw_queued: true,
+            }),
+            None
+        );
     }
 
     #[test]
     fn idle_state_waits_for_events() {
-        assert_eq!(dispatch_timeout(false, false), None);
+        assert_eq!(dispatch_timeout(RedrawState::Idle), None);
+    }
+
+    #[test]
+    fn queued_redraw_during_vblank_wait_is_retained() {
+        assert_eq!(
+            RedrawState::WaitingForVblank {
+                redraw_queued: false,
+            }
+            .queue(),
+            RedrawState::WaitingForVblank {
+                redraw_queued: true
+            }
+        );
+    }
+
+    #[test]
+    fn vblank_promotes_waiting_redraw_to_queued() {
+        assert_eq!(
+            RedrawState::WaitingForVblank {
+                redraw_queued: true
+            }
+            .on_vblank(false),
+            RedrawState::Queued
+        );
+    }
+
+    #[test]
+    fn vblank_without_new_work_returns_to_idle() {
+        assert_eq!(
+            RedrawState::WaitingForVblank {
+                redraw_queued: false,
+            }
+            .on_vblank(false),
+            RedrawState::Idle
+        );
     }
 }

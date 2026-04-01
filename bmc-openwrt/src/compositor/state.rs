@@ -101,6 +101,7 @@ pub struct CompositorState {
 pub struct PendingFrameCallback {
     pub callback: WlCallback,
     pub instance_id: Option<InstanceId>,
+    pub client_pid: Option<u32>,
     pub generation: u64,
 }
 
@@ -115,7 +116,7 @@ fn should_complete_frame_callback(
     generation: u64,
     eligible_generations: &std::collections::HashMap<InstanceId, u64>,
 ) -> bool {
-    instance_id.is_none_or(|instance_id| {
+    instance_id.is_some_and(|instance_id| {
         eligible_generations
             .get(instance_id)
             .is_some_and(|eligible_generation| generation <= *eligible_generation)
@@ -224,6 +225,7 @@ impl CompositorState {
         &mut self,
         callbacks: &mut Vec<WlCallback>,
         instance_id: Option<&InstanceId>,
+        client_pid: Option<u32>,
         generation: Option<u64>,
     ) {
         let pending_instance_id = instance_id.cloned();
@@ -233,8 +235,27 @@ impl CompositorState {
             .extend(callbacks.drain(..).map(|callback| PendingFrameCallback {
                 callback,
                 instance_id: pending_instance_id.clone(),
+                client_pid,
                 generation: pending_generation,
             }));
+    }
+
+    fn surface_client_pid(&self, surface: &WlSurface) -> Option<u32> {
+        let client = surface.client()?;
+        let credentials = client.get_credentials(&self.display_handle).ok()?;
+        #[expect(clippy::cast_sign_loss, reason = "PID is always positive")]
+        Some(credentials.pid as u32)
+    }
+
+    fn resolve_pending_callback_instance_id(
+        &self,
+        pending: &PendingFrameCallback,
+    ) -> Option<InstanceId> {
+        pending.instance_id.clone().or_else(|| {
+            self.deck_widget_state
+                .instance_id_for_surface_by_pid(pending.client_pid)
+                .cloned()
+        })
     }
 
     fn widget_has_buffer(&self, instance_id: &InstanceId) -> bool {
@@ -286,11 +307,13 @@ impl CompositorState {
 
     pub fn send_frame_callbacks_for_presented_widgets(&mut self, time: u32) {
         let eligible_generations = self.eligible_callback_generations();
-        let mut deferred = Vec::with_capacity(self.pending_frame_callbacks.len());
+        let pending_callbacks = std::mem::take(&mut self.pending_frame_callbacks);
+        let mut deferred = Vec::with_capacity(pending_callbacks.len());
 
-        for pending in self.pending_frame_callbacks.drain(..) {
+        for pending in pending_callbacks {
+            let resolved_instance_id = self.resolve_pending_callback_instance_id(&pending);
             if should_complete_frame_callback(
-                pending.instance_id.as_ref(),
+                resolved_instance_id.as_ref(),
                 pending.generation,
                 &eligible_generations,
             ) {
@@ -301,6 +324,28 @@ impl CompositorState {
         }
 
         self.pending_frame_callbacks = deferred;
+    }
+
+    pub fn drop_widget_callback_state(
+        &mut self,
+        instance_id: &InstanceId,
+        client_pid: Option<u32>,
+    ) {
+        self.widget_frame_clocks.remove(instance_id);
+        self.pending_frame_callbacks.retain(|pending| {
+            if pending.instance_id.as_ref() == Some(instance_id) {
+                return false;
+            }
+
+            if pending.instance_id.is_none()
+                && client_pid.is_some()
+                && pending.client_pid == client_pid
+            {
+                return false;
+            }
+
+            true
+        });
     }
 }
 
@@ -324,6 +369,7 @@ impl CompositorHandler for CompositorState {
 
     fn commit(&mut self, surface: &WlSurface) {
         tracing::trace!("Surface committed: {:?}", surface.id());
+        let surface_pid = self.surface_client_pid(surface);
 
         // First try to match by surface directly (for protocol surface)
         let mut instance_id = self
@@ -332,24 +378,19 @@ impl CompositorHandler for CompositorState {
             .cloned();
 
         // If not found, try to match by PID (for Slint render surfaces)
-        if instance_id.is_none() {
-            // Get PID from surface's client
-            if let Some(client) = surface.client()
-                && let Ok(creds) = client.get_credentials(&self.display_handle)
-            {
-                #[expect(clippy::cast_sign_loss, reason = "PID is always positive")]
-                let pid = creds.pid as u32;
-                instance_id = self
-                    .deck_widget_state
-                    .instance_id_for_surface_by_pid(Some(pid))
-                    .cloned();
-                if instance_id.is_some() {
-                    tracing::trace!(
-                        "Matched surface {:?} to widget by PID {}",
-                        surface.id(),
-                        pid
-                    );
-                }
+        if instance_id.is_none()
+            && let Some(pid) = surface_pid
+        {
+            instance_id = self
+                .deck_widget_state
+                .instance_id_for_surface_by_pid(Some(pid))
+                .cloned();
+            if instance_id.is_some() {
+                tracing::trace!(
+                    "Matched surface {:?} to widget by PID {}",
+                    surface.id(),
+                    pid
+                );
             }
         }
 
@@ -370,6 +411,7 @@ impl CompositorHandler for CompositorState {
             self.queue_frame_callbacks(
                 &mut attributes.frame_callbacks,
                 instance_id.as_ref(),
+                surface_pid,
                 callback_generation,
             );
 
@@ -673,8 +715,8 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn unknown_surface_callback_completes_on_any_frame() {
-        assert!(should_complete_frame_callback(None, 0, &HashMap::new()));
+    fn unknown_surface_callback_stays_deferred_until_it_resolves() {
+        assert!(!should_complete_frame_callback(None, 0, &HashMap::new()));
     }
 
     #[test]

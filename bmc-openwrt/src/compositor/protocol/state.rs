@@ -19,12 +19,18 @@ pub struct WidgetData {
     pub pid: Option<u32>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DisconnectedWidget {
+    pub instance_id: InstanceId,
+    pub pid: Option<u32>,
+}
+
 #[derive(Debug)]
 pub struct DeckWidgetProtocolState {
     widgets: HashMap<InstanceId, WidgetData>,
     pending_actions: Vec<(InstanceId, ActionPayload)>,
     newly_connected: Vec<InstanceId>,
-    newly_disconnected: Vec<InstanceId>,
+    newly_disconnected: Vec<DisconnectedWidget>,
 }
 
 impl DeckWidgetProtocolState {
@@ -74,8 +80,11 @@ impl DeckWidgetProtocolState {
     }
 
     pub fn unregister_widget(&mut self, instance_id: &InstanceId) {
-        if self.widgets.remove(instance_id).is_some() {
-            self.newly_disconnected.push(instance_id.clone());
+        if let Some(widget) = self.widgets.remove(instance_id) {
+            self.newly_disconnected.push(DisconnectedWidget {
+                instance_id: widget.instance_id,
+                pid: widget.pid,
+            });
         }
     }
 
@@ -95,7 +104,7 @@ impl DeckWidgetProtocolState {
         std::mem::take(&mut self.newly_connected)
     }
 
-    pub fn drain_disconnected(&mut self) -> Vec<InstanceId> {
+    pub fn drain_disconnected(&mut self) -> Vec<DisconnectedWidget> {
         std::mem::take(&mut self.newly_disconnected)
     }
 
