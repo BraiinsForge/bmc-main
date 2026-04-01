@@ -55,7 +55,7 @@ ssh "$ssh_target" '
   set -e
   mkdir -p /mnt/data/nix
   mkdir -p /nix
-  if ! mountpoint -q /nix; then
+  if ! grep -q ' /nix ' /proc/mounts; then
     mount --bind /mnt/data/nix /nix
   fi
 '
