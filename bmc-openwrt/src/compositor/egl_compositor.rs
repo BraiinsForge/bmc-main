@@ -46,6 +46,14 @@ const HEADLESS_REFRESH_MHZ: i32 = 60_000;
 /// Headless frame-callback pacing (~60 Hz).
 const HEADLESS_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
+fn dispatch_timeout(needs_redraw: bool, flip_pending: bool) -> Option<Duration> {
+    if needs_redraw && !flip_pending {
+        Some(Duration::ZERO)
+    } else {
+        None
+    }
+}
+
 pub struct EglCompositor {
     wayland_display: Mutex<Option<String>>,
     command_tx: calloop_channel::Sender<CompositorCommand>,
@@ -313,7 +321,7 @@ impl EglCompositor {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u32)
                         .unwrap_or(0);
-                    state.compositor.send_frame_callbacks(time);
+                    state.compositor.send_frame_callbacks_for_presented_widgets(time);
                 }
                 TimeoutAction::ToDuration(HEADLESS_FRAME_INTERVAL)
             }) {
@@ -447,7 +455,7 @@ impl EglCompositor {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_millis() as u32)
                             .unwrap_or(0);
-                        app_state.compositor.send_frame_callbacks(time);
+                        app_state.compositor.send_frame_callbacks_for_presented_widgets(time);
                         ii_stopwatch::stopwatch_stop!(callbacks_w);
                     }
                 }
@@ -471,7 +479,7 @@ impl EglCompositor {
 
             let _ = app_state.display.flush_clients();
 
-            // Dispatch timeout: sleep until the next event unless a we can render right now
+            // Dispatch timeout: sleep until the next event unless we can render right now
             //
             // IMPORTANT: do NOT use Duration::ZERO when flip is pending.
             // The DRM fd is a calloop source — the page-flip-complete event
@@ -479,16 +487,11 @@ impl EglCompositor {
             // Polling with ZERO timeout while flip_pending causes a ~1600 Hz
             // busy-spin that wastes a full CPU core and starves the widget
             // process (measured: 25→30 fps improvement by eliminating it).
-            let timeout = if app_state.compositor.needs_redraw
-                && !app_state
-                    .scene_renderer
-                    .as_ref()
-                    .is_some_and(|r| r.output().is_flip_pending())
-            {
-                Some(Duration::ZERO)
-            } else {
-                None
-            };
+            let flip_pending = app_state
+                .scene_renderer
+                .as_ref()
+                .is_some_and(|r| r.output().is_flip_pending());
+            let timeout = dispatch_timeout(app_state.compositor.needs_redraw, flip_pending);
             ii_stopwatch::stopwatch_start!(dispatch_w);
             if event_loop.dispatch(timeout, &mut app_state).is_err() {
                 tracing::error!("Event loop dispatch error");
@@ -761,5 +764,26 @@ impl Compositor for EglCompositor {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dispatch_timeout;
+    use std::time::Duration;
+
+    #[test]
+    fn queued_redraw_without_pending_flip_retries_immediately() {
+        assert_eq!(dispatch_timeout(true, false), Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn queued_redraw_with_pending_flip_waits_for_events() {
+        assert_eq!(dispatch_timeout(true, true), None);
+    }
+
+    #[test]
+    fn idle_state_waits_for_events() {
+        assert_eq!(dispatch_timeout(false, false), None);
     }
 }

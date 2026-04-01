@@ -69,10 +69,14 @@ pub struct CompositorState {
     pub physical_width: u32,
     pub physical_height: u32,
     pub widget_buffers: Vec<(WlBuffer, InstanceId)>,
-    pub pending_frame_callbacks: Vec<WlCallback>,
+    pub pending_frame_callbacks: Vec<PendingFrameCallback>,
 
     /// Widget registration and connection tracking.
     pub widgets: WidgetTracker,
+
+    /// Per-widget frame generations used to correlate frame callbacks with
+    /// the content that was actually presented.
+    widget_frame_clocks: std::collections::HashMap<InstanceId, WidgetFrameClockState>,
 
     /// Buffer IDs that have been destroyed and need texture cache invalidation.
     pub invalidated_buffers: Vec<ObjectId>,
@@ -91,6 +95,31 @@ pub struct CompositorState {
 
     /// Set when widget content or scene layout changes and a new frame must be rendered.
     pub needs_redraw: bool,
+}
+
+#[derive(Debug)]
+pub struct PendingFrameCallback {
+    pub callback: WlCallback,
+    pub instance_id: Option<InstanceId>,
+    pub generation: u64,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct WidgetFrameClockState {
+    latest_generation: u64,
+    last_presented_generation: u64,
+}
+
+fn should_complete_frame_callback(
+    instance_id: Option<&InstanceId>,
+    generation: u64,
+    eligible_generations: &std::collections::HashMap<InstanceId, u64>,
+) -> bool {
+    instance_id.is_none_or(|instance_id| {
+        eligible_generations
+            .get(instance_id)
+            .is_some_and(|eligible_generation| generation <= *eligible_generation)
+    })
 }
 
 impl CompositorState {
@@ -173,6 +202,7 @@ impl CompositorState {
             widget_buffers: Vec::new(),
             pending_frame_callbacks: Vec::new(),
             widgets: WidgetTracker::new(),
+            widget_frame_clocks: std::collections::HashMap::new(),
             invalidated_buffers: Vec::new(),
             dirty_buffers: Vec::new(),
             pending_capture_frames: Vec::new(),
@@ -181,10 +211,96 @@ impl CompositorState {
         }
     }
 
-    pub fn send_frame_callbacks(&mut self, time: u32) {
-        for callback in self.pending_frame_callbacks.drain(..) {
-            callback.done(time);
+    fn advance_widget_frame_generation(&mut self, instance_id: &InstanceId) -> u64 {
+        let state = self
+            .widget_frame_clocks
+            .entry(instance_id.clone())
+            .or_default();
+        state.latest_generation = state.latest_generation.wrapping_add(1).max(1);
+        state.latest_generation
+    }
+
+    fn queue_frame_callbacks(
+        &mut self,
+        callbacks: &mut Vec<WlCallback>,
+        instance_id: Option<&InstanceId>,
+        generation: Option<u64>,
+    ) {
+        let pending_instance_id = instance_id.cloned();
+        let pending_generation = generation.unwrap_or(0);
+
+        self.pending_frame_callbacks
+            .extend(callbacks.drain(..).map(|callback| PendingFrameCallback {
+                callback,
+                instance_id: pending_instance_id.clone(),
+                generation: pending_generation,
+            }));
+    }
+
+    fn widget_has_buffer(&self, instance_id: &InstanceId) -> bool {
+        self.widget_buffers
+            .iter()
+            .any(|(_buffer, existing_id)| existing_id == instance_id)
+    }
+
+    fn eligible_callback_generations(&mut self) -> std::collections::HashMap<InstanceId, u64> {
+        let visible_widgets: std::collections::HashSet<_> = self
+            .widgets
+            .active_scene()
+            .widgets
+            .iter()
+            .filter(|widget| widget.visible)
+            .map(|widget| widget.instance_id.clone())
+            .collect();
+        let mut eligible = std::collections::HashMap::new();
+
+        for (_buffer, instance_id) in &self.widget_buffers {
+            if !visible_widgets.contains(instance_id) {
+                continue;
+            }
+
+            let Some(state) = self.widget_frame_clocks.get_mut(instance_id) else {
+                continue;
+            };
+
+            if state.latest_generation > state.last_presented_generation {
+                state.last_presented_generation = state.latest_generation;
+                eligible.insert(instance_id.clone(), state.latest_generation);
+            }
         }
+
+        for instance_id in visible_widgets {
+            let Some(state) = self.widget_frame_clocks.get(&instance_id) else {
+                continue;
+            };
+
+            // Bootstrap visible widgets that still wait for their first frame
+            // callback and have not attached a buffer yet.
+            if state.last_presented_generation == 0 && !self.widget_has_buffer(&instance_id) {
+                eligible.insert(instance_id, state.latest_generation);
+            }
+        }
+
+        eligible
+    }
+
+    pub fn send_frame_callbacks_for_presented_widgets(&mut self, time: u32) {
+        let eligible_generations = self.eligible_callback_generations();
+        let mut deferred = Vec::with_capacity(self.pending_frame_callbacks.len());
+
+        for pending in self.pending_frame_callbacks.drain(..) {
+            if should_complete_frame_callback(
+                pending.instance_id.as_ref(),
+                pending.generation,
+                &eligible_generations,
+            ) {
+                pending.callback.done(time);
+            } else {
+                deferred.push(pending);
+            }
+        }
+
+        self.pending_frame_callbacks = deferred;
     }
 }
 
@@ -240,6 +356,22 @@ impl CompositorHandler for CompositorState {
         with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             let attributes = guard.current();
+            let had_buffer_assignment = attributes.buffer.is_some();
+            let had_frame_callbacks = !attributes.frame_callbacks.is_empty();
+
+            let callback_generation = instance_id.as_ref().and_then(|id| {
+                if had_buffer_assignment || had_frame_callbacks {
+                    Some(self.advance_widget_frame_generation(id))
+                } else {
+                    None
+                }
+            });
+
+            self.queue_frame_callbacks(
+                &mut attributes.frame_callbacks,
+                instance_id.as_ref(),
+                callback_generation,
+            );
 
             if let Some(assignment) = attributes.buffer.take() {
                 match assignment {
@@ -285,15 +417,13 @@ impl CompositorHandler for CompositorState {
             // Any commit with frame callbacks indicates the client rendered
             // and expects display feedback — trigger a redraw. This covers
             // Slint widgets that render to the same buffer without re-attaching.
-            if !attributes.frame_callbacks.is_empty() {
+            if had_frame_callbacks {
                 self.needs_redraw = true;
             }
 
             // Drain frame_callbacks and damage to prevent unbounded accumulation.
             // Smithay's merge_into() uses extend() on these fields, so they grow
             // indefinitely if not cleared after processing.
-            self.pending_frame_callbacks
-                .append(&mut attributes.frame_callbacks);
             attributes.damage.clear();
         });
     }
@@ -536,3 +666,60 @@ smithay::reexports::wayland_server::delegate_dispatch!(
 smithay::reexports::wayland_server::delegate_dispatch!(
     CompositorState: [DeckWidgetSurfaceV1: WidgetSurfaceUserData] => DeckWidgetProtocolState
 );
+
+#[cfg(test)]
+mod tests {
+    use super::should_complete_frame_callback;
+    use std::collections::HashMap;
+
+    #[test]
+    fn unknown_surface_callback_completes_on_any_frame() {
+        assert!(should_complete_frame_callback(None, 0, &HashMap::new()));
+    }
+
+    #[test]
+    fn presented_generation_completes_equal_or_older_callback() {
+        let mut presented = HashMap::new();
+        presented.insert(String::from("clock-left"), 3);
+
+        assert!(should_complete_frame_callback(
+            Some(&String::from("clock-left")),
+            3,
+            &presented,
+        ));
+        assert!(should_complete_frame_callback(
+            Some(&String::from("clock-left")),
+            2,
+            &presented,
+        ));
+    }
+
+    #[test]
+    fn newer_or_unpresented_widget_callback_is_deferred() {
+        let mut eligible_generations = HashMap::new();
+        eligible_generations.insert(String::from("clock-left"), 2);
+
+        assert!(!should_complete_frame_callback(
+            Some(&String::from("clock-left")),
+            3,
+            &eligible_generations,
+        ));
+        assert!(!should_complete_frame_callback(
+            Some(&String::from("clock-right")),
+            1,
+            &eligible_generations,
+        ));
+    }
+
+    #[test]
+    fn bootstrap_generation_allows_initial_widget_callback() {
+        let mut eligible_generations = HashMap::new();
+        eligible_generations.insert(String::from("clock-left"), 1);
+
+        assert!(should_complete_frame_callback(
+            Some(&String::from("clock-left")),
+            1,
+            &eligible_generations,
+        ));
+    }
+}
