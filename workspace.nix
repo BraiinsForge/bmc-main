@@ -256,11 +256,14 @@ let
     })
     widgets);
 
-  # Native activation package (hooks run on build host during init tarball build)
-  nativeCorePackage = bmc.lib.mkCorePackage {
-    bmc-hook-merge-files = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-merge-files { };
-    bmc-hook-file-symlinks = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-file-symlinks { };
-    bmc-hook-activation-resolver = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-activation-resolver { };
+  # Native hooks package (hooks run on build host during init tarball build)
+  nativeHooksPackage = bmc.lib.mkPackage {
+    name = "native-hooks";
+    hooks = [
+      { prefix = "001"; bin = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-merge-files { }; }
+      { prefix = "002"; bin = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-file-symlinks { }; }
+      { prefix = "099"; bin = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-activation-resolver { }; }
+    ];
   };
 
   armv7PackageDefs = import ./nix/packages.nix {
@@ -271,7 +274,7 @@ let
     inherit self pkgs lib mkIndex mkTarball;
     packages = armv7PackageDefs;
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
-    hooksOverridePath = "${nativeCorePackage}/hooks";
+    hooksOverridePath = "${nativeHooksPackage}/hooks";
   };
 
 in

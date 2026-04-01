@@ -5,28 +5,13 @@
 # select the subset they need.
 { bmc, armv7Pkgs, deps }:
 let
-  inherit (bmc.lib) mkCorePackage mkWidgetPackage autopatchelfBinaries;
+  inherit (bmc.lib) mkWidgetPackage;
   inherit (bmc) crates;
-  inherit (deps) compositorRuntimeDeps widgetRuntimeDeps;
+  inherit (deps) widgetRuntimeDeps;
   profile = bmc.profiles.armv7-glibc-release;
 in
 {
-  core = {
-    pkg = mkCorePackage {
-      bmc-openwrt = autopatchelfBinaries {
-        drv = profile.buildCrate crates.bmc-openwrt { };
-        runtimeDeps = compositorRuntimeDeps armv7Pkgs;
-      };
-      bmc-hook-merge-files = profile.buildCrate crates.bmc-hook-merge-files { };
-      bmc-hook-file-symlinks = profile.buildCrate crates.bmc-hook-file-symlinks { };
-      bmc-hook-activation-resolver = profile.buildCrate crates.bmc-hook-activation-resolver { };
-    };
-    version = "0.1.0";
-    category = "core";
-    description = "Core system package (bmc-openwrt + activation/hooks)";
-    upgrade_strategy = "reboot";
-    install_strategy = null;
-  };
+  core = import ./pkgs/core { inherit bmc armv7Pkgs deps; };
   nix = {
     pkg = armv7Pkgs.nix;
     version = armv7Pkgs.nix.version;

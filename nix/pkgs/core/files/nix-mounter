@@ -1,0 +1,9 @@
+#!/bin/sh /etc/rc.common
+
+START=91
+
+boot() {
+    [ -d /mnt/data/nix ] || return 0
+    mkdir -p /nix
+    mount --bind /mnt/data/nix /nix
+}
