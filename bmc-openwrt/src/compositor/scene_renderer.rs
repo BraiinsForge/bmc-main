@@ -233,13 +233,14 @@ impl SceneRenderer {
             let physical_y = output_height - logical_x - phys_h;
 
             let dst = Rectangle::from_loc_and_size((physical_x, physical_y), (phys_w, phys_h));
+            let texture_damage = [Rectangle::from_loc_and_size((0, 0), (phys_w, phys_h))];
 
             // Use per-widget damage region for efficient partial updates
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
                 dst,
-                &[dst],
+                &texture_damage,
                 &[],
                 Transform::_270,
                 1.0,
