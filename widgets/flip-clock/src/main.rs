@@ -9,6 +9,7 @@ mod digits;
 mod digits3d;
 mod egl;
 pub mod ipc;
+mod layout;
 mod renderer;
 mod wayland;
 

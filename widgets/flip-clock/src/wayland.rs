@@ -10,6 +10,7 @@ use crate::AnimationMode;
 use crate::digits::DigitTextures;
 use crate::digits3d::Digit3DMeshes;
 use crate::egl::EglState;
+use crate::layout::ClockLayout;
 use crate::renderer::{Mat4, Renderer};
 use anyhow::Result;
 use bmc_widget::surface::{
@@ -203,17 +204,14 @@ fn run_render_loop(
                 (now.hour() as u8, now.minute() as u8, now.second() as u8);
 
             flip_state.update(hours, minutes, seconds);
+            let layout = ClockLayout::for_viewport(surface.width(), surface.height());
 
             egl.begin_frame()?;
             egl.clear(0.0, 0.0, 0.0, 1.0);
             let gl = egl.gl();
 
             render_clock(
-                &renderer,
-                &digit_textures,
-                digit_meshes.as_ref(),
-                gl,
-                &flip_state,
+                &layout, &renderer, &digit_textures, digit_meshes.as_ref(), gl, &flip_state,
             );
 
             let (dmabuf_info, slot) = egl.end_frame()?;
@@ -235,19 +233,13 @@ fn run_render_loop(
 
 /// Render the HH:MM:SS clock face.
 fn render_clock(
+    layout: &ClockLayout,
     renderer: &Renderer,
     digit_textures: &DigitTextures,
     digit_meshes: Option<&Digit3DMeshes>,
     gl: &glow::Context,
     state: &FlipState,
 ) {
-    let scale_factor = 0.85;
-    let panel_height = (257.0 * scale_factor) / 480.0;
-    let panel_width = (200.0 * scale_factor) / 480.0;
-    let colon_width = 0.05;
-    let gap = 0.02;
-    let total_width = 6.0 * panel_width + 2.0 * colon_width + 7.0 * gap;
-    let start_x = -total_width / 2.0 + panel_width / 2.0;
     let panel_color = [0.10, 0.10, 0.18, 1.0];
 
     unsafe {
@@ -255,15 +247,16 @@ fn render_clock(
         gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
     }
 
-    let mut x = start_x;
+    let mut x = layout.start_x;
     for i in 0..6 {
         if i == 2 || i == 4 {
-            let colon_x = x - panel_width / 2.0 - gap - colon_width / 2.0;
+            let colon_x =
+                x - layout.panel_width / 2.0 - layout.gap - layout.colon_width / 2.0;
 
             if let Some(digit_meshes) = digit_meshes {
-                render_3d_colon(renderer, digit_meshes, gl, colon_x, panel_height);
+                render_3d_colon(renderer, digit_meshes, gl, colon_x, layout.panel_height);
             } else {
-                render_2d_colon(renderer, gl, colon_x, colon_width);
+                render_2d_colon(renderer, gl, colon_x, layout.colon_width);
             }
         }
 
@@ -272,7 +265,14 @@ fn render_clock(
         let flip_progress = state.flip_progress(i);
         let digit_changed = current_digit != prev_digit;
 
-        renderer.draw_rect(gl, x, 0.0, panel_width, panel_height, panel_color);
+        renderer.draw_rect(
+            gl,
+            x,
+            0.0,
+            layout.panel_width,
+            layout.panel_height,
+            panel_color,
+        );
 
         if let Some(digit_meshes) = digit_meshes {
             render_3d_digit(
@@ -280,7 +280,7 @@ fn render_clock(
                 digit_meshes,
                 gl,
                 x,
-                panel_height,
+                layout.panel_height,
                 current_digit,
                 prev_digit,
                 digit_changed,
@@ -292,7 +292,7 @@ fn render_clock(
                 digit_textures,
                 gl,
                 x,
-                panel_width,
+                layout,
                 current_digit,
                 prev_digit,
                 digit_changed,
@@ -300,9 +300,9 @@ fn render_clock(
             );
         }
 
-        x += panel_width + gap;
+        x += layout.panel_width + layout.gap;
         if i == 1 || i == 3 {
-            x += colon_width + gap;
+            x += layout.colon_width + layout.gap;
         }
     }
 
@@ -471,17 +471,13 @@ fn render_2d_digit(
     digit_textures: &DigitTextures,
     gl: &glow::Context,
     x: f32,
-    panel_width: f32,
+    layout: &ClockLayout,
     current_digit: u8,
     prev_digit: u8,
     digit_changed: bool,
     flip_progress: f32,
 ) {
-    let aspect_ratio = 257.0 / 200.0;
-    let adjusted_panel_height = panel_width * aspect_ratio;
-    let half_height = adjusted_panel_height / 2.0;
-    let gap_height = panel_width * 4.0 / 200.0;
-    let border_width = 0.008;
+    let half_height = layout.panel_height / 2.0;
     let split_point = 0.45;
     let digit_scale = 0.7;
 
@@ -518,8 +514,8 @@ fn render_2d_digit(
         gl,
         x,
         0.0,
-        panel_width + border_width * 2.0,
-        adjusted_panel_height + border_width * 2.0,
+        layout.panel_width + layout.border_width * 2.0,
+        layout.panel_height + layout.border_width * 2.0,
         frame_color,
     );
 
@@ -530,8 +526,8 @@ fn render_2d_digit(
             gl,
             x,
             0.0,
-            panel_width,
-            adjusted_panel_height,
+            layout.panel_width,
+            layout.panel_height,
             &gradient_colors,
             &gradient_stops,
         );
@@ -539,8 +535,8 @@ fn render_2d_digit(
         renderer.draw_textured_half_rect_split(
             gl,
             x,
-            -gap_height / 2.0 - half_height / 2.0,
-            panel_width * digit_scale,
+            -layout.gap_height / 2.0 - half_height / 2.0,
+            layout.panel_width * digit_scale,
             half_height,
             digit_textures.get(current_digit),
             false,
@@ -549,8 +545,8 @@ fn render_2d_digit(
         renderer.draw_textured_half_rect_split(
             gl,
             x,
-            gap_height / 2.0 + half_height / 2.0,
-            panel_width * digit_scale,
+            layout.gap_height / 2.0 + half_height / 2.0,
+            layout.panel_width * digit_scale,
             half_height,
             digit_textures.get(prev_digit),
             true,
@@ -562,7 +558,7 @@ fn render_2d_digit(
                 gl,
                 x,
                 0.0,
-                panel_width,
+                layout.panel_width,
                 half_height,
                 -angle,
                 false,
@@ -576,7 +572,7 @@ fn render_2d_digit(
                 gl,
                 x,
                 0.0,
-                panel_width * digit_scale,
+                layout.panel_width * digit_scale,
                 half_height,
                 -angle,
                 false,
@@ -590,7 +586,7 @@ fn render_2d_digit(
                 gl,
                 x,
                 0.0,
-                panel_width,
+                layout.panel_width,
                 half_height,
                 -angle,
                 false,
@@ -604,7 +600,7 @@ fn render_2d_digit(
                 gl,
                 x,
                 0.0,
-                panel_width * digit_scale,
+                layout.panel_width * digit_scale,
                 half_height,
                 -angle,
                 false,
@@ -619,8 +615,8 @@ fn render_2d_digit(
             gl,
             x,
             0.0,
-            panel_width + border_width,
-            gap_height,
+            layout.panel_width + layout.border_width,
+            layout.gap_height,
             [0.0, 0.0, 0.0, 1.0],
         );
     } else {
@@ -628,8 +624,8 @@ fn render_2d_digit(
             gl,
             x,
             0.0,
-            panel_width,
-            adjusted_panel_height,
+            layout.panel_width,
+            layout.panel_height,
             &gradient_colors,
             &gradient_stops,
         );
@@ -637,8 +633,8 @@ fn render_2d_digit(
         renderer.draw_textured_half_rect_split(
             gl,
             x,
-            gap_height / 2.0 + half_height / 2.0,
-            panel_width * digit_scale,
+            layout.gap_height / 2.0 + half_height / 2.0,
+            layout.panel_width * digit_scale,
             half_height,
             digit_textures.get(current_digit),
             true,
@@ -647,8 +643,8 @@ fn render_2d_digit(
         renderer.draw_textured_half_rect_split(
             gl,
             x,
-            -gap_height / 2.0 - half_height / 2.0,
-            panel_width * digit_scale,
+            -layout.gap_height / 2.0 - half_height / 2.0,
+            layout.panel_width * digit_scale,
             half_height,
             digit_textures.get(current_digit),
             false,
@@ -659,8 +655,8 @@ fn render_2d_digit(
             gl,
             x,
             0.0,
-            panel_width + border_width,
-            gap_height,
+            layout.panel_width + layout.border_width,
+            layout.gap_height,
             [0.0, 0.0, 0.0, 1.0],
         );
     }
