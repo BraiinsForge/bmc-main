@@ -12,6 +12,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
+tracing-subscriber.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
@@ -32,6 +33,10 @@ path = "src/bin/hooks/file_symlinks.rs"
 [[bin]]
 name = "bmc-hook-activation-resolver"
 path = "src/bin/hooks/activation_resolver.rs"
+
+[[bin]]
+name = "bmc-activation-copy-files"
+path = "src/bin/activation/copy_files.rs"
 
 [lints]
 workspace = true

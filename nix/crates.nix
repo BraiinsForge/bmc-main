@@ -29,6 +29,11 @@
     packageName = "bmc-nix";
     binName = "bmc-hook-activation-resolver";
   };
+  bmc-activation-copy-files = defineCrate {
+    path = "./bmc-nix";
+    packageName = "bmc-nix";
+    binName = "bmc-activation-copy-files";
+  };
   widget-digital-clock = defineCrate {
     path = "./widgets/digital-clock";
     packageName = "bmc-widget-digital-clock";

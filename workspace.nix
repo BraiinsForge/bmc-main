@@ -284,6 +284,7 @@ in
     bmc-hook-merge-files = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-merge-files { };
     bmc-hook-file-symlinks = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-file-symlinks { };
     bmc-hook-activation-resolver = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-activation-resolver { };
+    bmc-activation-copy-files-armv7-glibc-release = bmc.profiles.armv7-glibc-release.buildCrate bmc.crates.bmc-activation-copy-files { };
 
     # Native widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
     widgets = bmc.lib.mkAllWidgets { inherit widgets; profile = bmc.profiles.fast; };
