@@ -23,15 +23,15 @@ path = "src/bin/cli.rs"
 
 [[bin]]
 name = "bmc-hook-merge-files"
-path = "src/bin/hook_merge_files.rs"
+path = "src/bin/hooks/merge_files.rs"
 
 [[bin]]
 name = "bmc-hook-file-symlinks"
-path = "src/bin/hook_file_symlinks.rs"
+path = "src/bin/hooks/file_symlinks.rs"
 
 [[bin]]
 name = "bmc-hook-activation-resolver"
-path = "src/bin/hook_activation_resolver.rs"
+path = "src/bin/hooks/activation_resolver.rs"
 
 [lints]
 workspace = true
