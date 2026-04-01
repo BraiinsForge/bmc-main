@@ -93,6 +93,8 @@ pub struct CompositorState {
     /// fail cleanly instead of poisoning normal rendering.
     pub capture_enabled: bool,
 
+    output_damage: OutputDamageTracker,
+
     /// Set when widget content or scene layout changes and a new frame must be rendered.
     pub needs_redraw: bool,
 }
@@ -109,6 +111,44 @@ pub struct PendingFrameCallback {
 struct WidgetFrameClockState {
     latest_generation: u64,
     last_presented_generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutputDamage {
+    Full,
+    Widgets(std::collections::HashSet<InstanceId>),
+}
+
+#[derive(Debug, Default)]
+struct OutputDamageTracker {
+    full_damage: bool,
+    widgets: std::collections::HashSet<InstanceId>,
+}
+
+impl OutputDamageTracker {
+    fn mark_full(&mut self) {
+        self.full_damage = true;
+        self.widgets.clear();
+    }
+
+    fn mark_widget(&mut self, instance_id: &InstanceId) {
+        if !self.full_damage {
+            self.widgets.insert(instance_id.clone());
+        }
+    }
+
+    fn snapshot(&self) -> OutputDamage {
+        if self.full_damage {
+            OutputDamage::Full
+        } else {
+            OutputDamage::Widgets(self.widgets.clone())
+        }
+    }
+
+    fn clear(&mut self) {
+        self.full_damage = false;
+        self.widgets.clear();
+    }
 }
 
 fn should_complete_frame_callback(
@@ -208,6 +248,10 @@ impl CompositorState {
             dirty_buffers: Vec::new(),
             pending_capture_frames: Vec::new(),
             capture_enabled: true,
+            output_damage: OutputDamageTracker {
+                full_damage: true,
+                widgets: std::collections::HashSet::new(),
+            },
             needs_redraw: true,
         }
     }
@@ -347,6 +391,22 @@ impl CompositorState {
             true
         });
     }
+
+    pub fn mark_full_output_damage(&mut self) {
+        self.output_damage.mark_full();
+    }
+
+    pub fn mark_widget_output_damage(&mut self, instance_id: &InstanceId) {
+        self.output_damage.mark_widget(instance_id);
+    }
+
+    pub fn current_output_damage(&self) -> OutputDamage {
+        self.output_damage.snapshot()
+    }
+
+    pub fn clear_output_damage(&mut self) {
+        self.output_damage.clear();
+    }
 }
 
 impl DeckWidgetHandler for CompositorState {
@@ -419,30 +479,33 @@ impl CompositorHandler for CompositorState {
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
                         self.needs_redraw = true;
-                        if let Some(id) = instance_id.take() {
+                        if let Some(id) = instance_id.as_ref() {
+                            self.mark_widget_output_damage(id);
                             // Release previous buffer so the client can reuse or
                             // destroy it.  Without this the client allocates a new
                             // buffer every frame and old textures leak.
                             for (old_buf, _) in
-                                self.widget_buffers.iter().filter(|(_, eid)| eid == &id)
+                                self.widget_buffers.iter().filter(|(_, eid)| eid == id)
                             {
                                 old_buf.release();
                             }
                             self.widget_buffers
-                                .retain(|(_, existing_id)| existing_id != &id);
+                                .retain(|(_, existing_id)| existing_id != id);
                             tracing::trace!(
                                 "Buffer attached for widget {} (total buffers: {})",
                                 id,
                                 self.widget_buffers.len() + 1
                             );
                             self.dirty_buffers.push(buffer.id());
-                            self.widget_buffers.push((buffer.clone(), id));
+                            self.widget_buffers.push((buffer.clone(), id.clone()));
                         } else {
+                            self.mark_full_output_damage();
                             tracing::debug!("Buffer attached to unknown surface (no instance_id)");
                         }
                     }
                     BufferAssignment::Removed => {
                         if let Some(ref id) = instance_id {
+                            self.mark_widget_output_damage(id);
                             for (old_buf, _) in
                                 self.widget_buffers.iter().filter(|(_, eid)| eid == id)
                             {
@@ -461,6 +524,11 @@ impl CompositorHandler for CompositorState {
             // Slint widgets that render to the same buffer without re-attaching.
             if had_frame_callbacks {
                 self.needs_redraw = true;
+                if let Some(id) = instance_id.as_ref() {
+                    self.mark_widget_output_damage(id);
+                } else {
+                    self.mark_full_output_damage();
+                }
             }
 
             // Drain frame_callbacks and damage to prevent unbounded accumulation.
@@ -711,7 +779,7 @@ smithay::reexports::wayland_server::delegate_dispatch!(
 
 #[cfg(test)]
 mod tests {
-    use super::should_complete_frame_callback;
+    use super::{OutputDamage, OutputDamageTracker, should_complete_frame_callback};
     use std::collections::HashMap;
 
     #[test]
@@ -763,5 +831,40 @@ mod tests {
             1,
             &eligible_generations,
         ));
+    }
+
+    #[test]
+    fn full_damage_overrides_widget_damage() {
+        let mut tracker = OutputDamageTracker::default();
+        tracker.mark_widget(&String::from("clock-left"));
+        tracker.mark_full();
+
+        assert_eq!(tracker.snapshot(), OutputDamage::Full);
+    }
+
+    #[test]
+    fn widget_damage_accumulates_instances() {
+        let mut tracker = OutputDamageTracker::default();
+        tracker.mark_widget(&String::from("clock-left"));
+        tracker.mark_widget(&String::from("clock-right"));
+
+        let OutputDamage::Widgets(widgets) = tracker.snapshot() else {
+            panic!("BUG: tracker should keep partial widget damage");
+        };
+        assert_eq!(widgets.len(), 2);
+        assert!(widgets.contains("clock-left"));
+        assert!(widgets.contains("clock-right"));
+    }
+
+    #[test]
+    fn clearing_damage_resets_tracker() {
+        let mut tracker = OutputDamageTracker::default();
+        tracker.mark_full();
+        tracker.clear();
+
+        assert_eq!(
+            tracker.snapshot(),
+            OutputDamage::Widgets(std::collections::HashSet::new()),
+        );
     }
 }

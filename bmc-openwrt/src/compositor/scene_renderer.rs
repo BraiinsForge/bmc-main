@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use smithay::{
     backend::renderer::{
-        Bind, Frame as RendererFrame, ImportDma, ImportMemWl, Renderer, Texture,
+        Bind, Color32F, Frame as RendererFrame, ImportDma, ImportMemWl, Renderer, Texture,
         gles::{GlesRenderer, GlesTexture, ffi},
     },
     reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_buffer::WlBuffer},
-    utils::{Buffer as BufferCoord, Rectangle, Size, Transform},
+    utils::{Buffer as BufferCoord, Physical, Rectangle, Size, Transform},
     wayland::{
         dmabuf::get_dmabuf,
         image_copy_capture::{self, CaptureFailureReason},
@@ -20,7 +20,10 @@ use smithay::{
 };
 
 use super::render::{BufferPool, DrmOutput, EglContext};
+use super::state::OutputDamage;
 use super::widget_tracker::WidgetTracker;
+
+const BACKGROUND_COLOR: Color32F = Color32F::new(0.05, 0.05, 0.1, 1.0);
 
 pub struct SceneRenderer {
     egl: EglContext,
@@ -157,6 +160,7 @@ impl SceneRenderer {
         dirty: &[ObjectId],
         capture_frames: Vec<image_copy_capture::Frame>,
         capture_active: bool,
+        output_damage: &OutputDamage,
     ) -> Result<(bool, Vec<image_copy_capture::Frame>, bool)> {
         // Flip-pending gating happens in the caller (egl_compositor) so that
         // dirty_buffers aren't consumed when the render would be skipped.
@@ -198,6 +202,18 @@ impl SceneRenderer {
             .render(&mut framebuffer, output_size, Transform::Normal)
             .context("Failed to begin frame")?;
 
+        let output_rect = Rectangle::from_size(output_size);
+        let mut damage_rects = match output_damage {
+            OutputDamage::Full => vec![output_rect],
+            OutputDamage::Widgets(_) => Vec::new(),
+        };
+
+        if matches!(output_damage, OutputDamage::Full) {
+            frame
+                .clear(BACKGROUND_COLOR, &damage_rects)
+                .context("Failed to clear full output damage")?;
+        }
+
         ii_stopwatch::stopwatch_start!(self.compose_w);
         for (buffer_id, placement) in &to_render {
             let Some(texture) = self.texture_cache.get(buffer_id) else {
@@ -234,6 +250,12 @@ impl SceneRenderer {
 
             let dst = Rectangle::from_loc_and_size((physical_x, physical_y), (phys_w, phys_h));
             let texture_damage = [Rectangle::from_loc_and_size((0, 0), (phys_w, phys_h))];
+
+            if let OutputDamage::Widgets(dirty_widgets) = output_damage
+                && dirty_widgets.contains(&placement.instance_id)
+            {
+                damage_rects.push(dst);
+            }
 
             // Use per-widget damage region for efficient partial updates
             if let Err(e) = frame.render_texture_from_to(
@@ -280,8 +302,14 @@ impl SceneRenderer {
         }
         ii_stopwatch::stopwatch_stop!(self.finish_w);
 
+        let damage_rects = if damage_rects.is_empty() {
+            vec![output_rect]
+        } else {
+            merge_damage_rects(damage_rects)
+        };
+
         ii_stopwatch::stopwatch_start!(self.flip_w);
-        self.output.page_flip(fb)?;
+        self.output.page_flip(fb, &damage_rects)?;
         ii_stopwatch::stopwatch_stop!(self.flip_w);
 
         self.buffers.swap();
@@ -436,5 +464,84 @@ fn update_capture_cache(
             cache.valid = false;
             true
         }
+    }
+}
+
+fn merge_damage_rects(
+    damage_rects: Vec<Rectangle<i32, Physical>>,
+) -> Vec<Rectangle<i32, Physical>> {
+    let mut merged = Vec::new();
+
+    for rect in damage_rects {
+        if let Some(existing) = merged
+            .iter_mut()
+            .find(|existing| rectangles_overlap(existing, &rect))
+        {
+            *existing = rectangle_union(existing, &rect);
+        } else {
+            merged.push(rect);
+        }
+    }
+
+    merged
+}
+
+fn rectangles_overlap(lhs: &Rectangle<i32, Physical>, rhs: &Rectangle<i32, Physical>) -> bool {
+    lhs.loc.x < rhs.loc.x + rhs.size.w
+        && rhs.loc.x < lhs.loc.x + lhs.size.w
+        && lhs.loc.y < rhs.loc.y + rhs.size.h
+        && rhs.loc.y < lhs.loc.y + lhs.size.h
+}
+
+fn rectangle_union(
+    lhs: &Rectangle<i32, Physical>,
+    rhs: &Rectangle<i32, Physical>,
+) -> Rectangle<i32, Physical> {
+    let x1 = lhs.loc.x.min(rhs.loc.x);
+    let y1 = lhs.loc.y.min(rhs.loc.y);
+    let x2 = (lhs.loc.x + lhs.size.w).max(rhs.loc.x + rhs.size.w);
+    let y2 = (lhs.loc.y + lhs.size.h).max(rhs.loc.y + rhs.size.h);
+
+    Rectangle::from_loc_and_size((x1, y1), (x2 - x1, y2 - y1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_damage_rects, rectangle_union};
+    use smithay::utils::{Physical, Rectangle};
+
+    #[test]
+    fn overlapping_damage_rectangles_are_merged() {
+        let merged = merge_damage_rects(vec![
+            Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (10, 10)),
+            Rectangle::<i32, Physical>::from_loc_and_size((5, 5), (10, 10)),
+        ]);
+
+        assert_eq!(
+            merged,
+            vec![Rectangle::<i32, Physical>::from_loc_and_size(
+                (0, 0),
+                (15, 15)
+            )]
+        );
+    }
+
+    #[test]
+    fn disjoint_damage_rectangles_stay_separate() {
+        let lhs = Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (10, 10));
+        let rhs = Rectangle::<i32, Physical>::from_loc_and_size((20, 20), (10, 10));
+
+        assert_eq!(merge_damage_rects(vec![lhs, rhs]), vec![lhs, rhs]);
+    }
+
+    #[test]
+    fn rectangle_union_covers_both_inputs() {
+        let lhs = Rectangle::<i32, Physical>::from_loc_and_size((10, 20), (5, 5));
+        let rhs = Rectangle::<i32, Physical>::from_loc_and_size((12, 18), (8, 10));
+
+        assert_eq!(
+            rectangle_union(&lhs, &rhs),
+            Rectangle::<i32, Physical>::from_loc_and_size((10, 18), (10, 10))
+        );
     }
 }

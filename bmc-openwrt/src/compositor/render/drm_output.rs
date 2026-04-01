@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use smithay::{
-    backend::drm::{DrmDevice, DrmDeviceFd, DrmSurface, PlaneConfig, PlaneState},
+    backend::drm::{DrmDevice, DrmDeviceFd, DrmSurface, PlaneConfig, PlaneDamageClips, PlaneState},
     reexports::drm::control::{Device as ControlDevice, Mode, connector, crtc, framebuffer, plane},
     utils::{Buffer as BufferCoord, Physical, Rectangle, Size, Transform},
 };
@@ -158,7 +158,11 @@ impl DrmOutput {
         self.flip_pending = false;
     }
 
-    pub fn page_flip(&mut self, fb: framebuffer::Handle) -> Result<()> {
+    pub fn page_flip(
+        &mut self,
+        fb: framebuffer::Handle,
+        damage: &[Rectangle<i32, Physical>],
+    ) -> Result<()> {
         let src_size: Size<f64, BufferCoord> =
             Size::from((f64::from(self.width), f64::from(self.height)));
         let src_rect = Rectangle::from_size(src_size);
@@ -166,13 +170,20 @@ impl DrmOutput {
         #[expect(clippy::cast_possible_wrap)]
         let dst_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
         let dst_rect = Rectangle::from_size(dst_size);
+        let damage_clips = PlaneDamageClips::from_damage(
+            self.surface.device_fd(),
+            src_rect,
+            dst_rect,
+            damage.iter().copied(),
+        )
+        .context("Failed to build plane damage clips")?;
 
         let plane_config = PlaneConfig {
             src: src_rect,
             dst: dst_rect,
             transform: Transform::Normal,
             alpha: 1.0,
-            damage_clips: None,
+            damage_clips: damage_clips.as_ref().map(PlaneDamageClips::blob),
             fb,
             fence: None,
         };

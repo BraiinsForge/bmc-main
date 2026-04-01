@@ -363,7 +363,9 @@ impl EglCompositor {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u32)
                         .unwrap_or(0);
-                    state.compositor.send_frame_callbacks_for_presented_widgets(time);
+                    state
+                        .compositor
+                        .send_frame_callbacks_for_presented_widgets(time);
                 }
                 TimeoutAction::ToDuration(HEADLESS_FRAME_INTERVAL)
             }) {
@@ -453,6 +455,7 @@ impl EglCompositor {
                         .drain(..)
                         .collect();
                     let capture_active = !app_state.compositor.capture_sessions.is_empty();
+                    let output_damage = app_state.compositor.current_output_damage();
                     let (rendered, unconsumed_captures, capture_failed) = renderer
                         .render_scene(
                             &app_state.compositor.widgets,
@@ -460,6 +463,7 @@ impl EglCompositor {
                             &dirty,
                             capture_frames,
                             capture_active,
+                            &output_damage,
                         )
                         .unwrap_or_else(|e| {
                             tracing::error!("Render error: {}", e);
@@ -487,6 +491,7 @@ impl EglCompositor {
                     //
                     // Withhold callbacks to pace widget rendering at the actual display rate.
                     if rendered {
+                        app_state.compositor.clear_output_damage();
                         app_state.redraw_state = RedrawState::on_frame_submitted();
 
                         ii_stopwatch::stopwatch_start!(callbacks_w);
@@ -611,6 +616,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         }
         CompositorCommand::UnregisterWidget { instance_id } => {
             tracing::debug!("Unregistering widget {}", instance_id);
+            state.compositor.mark_full_output_damage();
             state
                 .compositor
                 .deck_widget_state
@@ -630,6 +636,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 );
             }
             state.compositor.widgets.set_active_scene(layout);
+            state.compositor.mark_full_output_damage();
             state.redraw_state = state.redraw_state.queue();
         }
         CompositorCommand::BroadcastSetting { setting } => {
@@ -656,6 +663,7 @@ fn process_protocol_events(state: &mut AppState) {
     }
 
     for disconnected in state.compositor.deck_widget_state.drain_disconnected() {
+        state.compositor.mark_full_output_damage();
         state
             .compositor
             .drop_widget_callback_state(&disconnected.instance_id, disconnected.pid);

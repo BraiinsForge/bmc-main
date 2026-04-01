@@ -211,7 +211,12 @@ fn run_render_loop(
             let gl = egl.gl();
 
             render_clock(
-                &layout, &renderer, &digit_textures, digit_meshes.as_ref(), gl, &flip_state,
+                &layout,
+                &renderer,
+                &digit_textures,
+                digit_meshes.as_ref(),
+                gl,
+                &flip_state,
             );
 
             let (dmabuf_info, slot) = egl.end_frame()?;
@@ -250,8 +255,7 @@ fn render_clock(
     let mut x = layout.start_x;
     for i in 0..6 {
         if i == 2 || i == 4 {
-            let colon_x =
-                x - layout.panel_width / 2.0 - layout.gap - layout.colon_width / 2.0;
+            let colon_x = x - layout.panel_width / 2.0 - layout.gap - layout.colon_width / 2.0;
 
             if let Some(digit_meshes) = digit_meshes {
                 render_3d_colon(renderer, digit_meshes, gl, colon_x, layout.panel_height);
