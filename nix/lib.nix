@@ -5,10 +5,11 @@ let
     inherit lib;
     autoPatchelfHook = armv7Pkgs.autoPatchelfHook;
   };
+  packageLib = import ./package.nix { inherit pkgs lib; };
 in
 {
   inherit autopatchelfBinaries;
-  mkCorePackage = import ./pkgs/core/package.nix { inherit pkgs lib; };
+  inherit (packageLib) mkPackage mkPrioritizedEntries;
   inherit (import ./widget.nix { inherit pkgs lib autopatchelfBinaries; })
     mkWidgetPackage mkAllWidgets;
 }
