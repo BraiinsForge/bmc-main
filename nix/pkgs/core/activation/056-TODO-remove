@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+set -euxo pipefail
 
 for service in /etc/init.d/nix-mounter /etc/init.d/nix-activator; do
     [ -f "$service" ] || continue

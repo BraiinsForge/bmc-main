@@ -30,7 +30,7 @@ fn create_activation_entrypoint(store_path: &std::path::Path) {
     std::fs::write(
         &entrypoint,
         r#"#!/bin/sh
-set -e
+set -euxo pipefail
 profile_dir="$(dirname "$PROFILE_NEW_GENERATION")"
 current_link="$profile_dir/current"
 gen_dir_name="$(basename "$PROFILE_NEW_GENERATION")"
