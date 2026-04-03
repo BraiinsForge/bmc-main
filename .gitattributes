@@ -25,3 +25,5 @@ frontend/src/styles/fonts/braiins/BraiinsSans-SemiBold.otf filter=lfs diff=lfs m
 frontend/src/styles/fonts/braiins/BraiinsSans-Bold-Italic.otf filter=lfs diff=lfs merge=lfs -text
 frontend/src/styles/fonts/braiins/BraiinsSans-Regular-Italic.otf filter=lfs diff=lfs merge=lfs -text
 frontend/src/styles/fonts/braiins/BraiinsSans-SemiBold-Italic.otf filter=lfs diff=lfs merge=lfs -text
+*.7z filter=lfs diff=lfs merge=lfs -text
+*.gz filter=lfs diff=lfs merge=lfs -text
