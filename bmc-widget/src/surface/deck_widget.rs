@@ -18,10 +18,10 @@ use crate::egl::DmaBufInfo;
 use crate::wayland::setting_from_protocol;
 
 use super::common::{
-    blocking_dispatch_impl, impl_common_dispatch, invalidate_cached_wl_buffers, poll_dispatch,
-    submit_buffer_to_surface,
+    blocking_dispatch_impl, create_buffer_from_dmabuf, impl_common_dispatch,
+    invalidate_cached_wl_buffers, poll_dispatch, submit_buffer_to_surface,
 };
-use super::{WidgetEvent, WidgetSurface, create_buffer_from_dmabuf};
+use super::{WidgetEvent, WidgetSurface};
 
 /// Events from the compositor to a `deck_widget_v1` widget.
 #[derive(Debug, Clone)]
@@ -159,18 +159,6 @@ impl DeckWidgetSurfaceState {
     }
 
     /// Get a reference to the `zwp_linux_dmabuf_v1` global, if bound.
-    #[must_use]
-    pub fn linux_dmabuf(&self) -> Option<&zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1> {
-        self.linux_dmabuf.as_ref()
-    }
-
-    /// Get a reference to the `wl_surface`, if created.
-    #[must_use]
-    pub fn wl_surface(&self) -> Option<&wl_surface::WlSurface> {
-        self.surface.as_ref()
-    }
-
-    /// Switch to per-frame `wl_buffer` lifecycle mode.
     fn enable_per_frame_mode(&mut self) -> Result<()> {
         self.submission_mode.enter_per_frame()
     }
@@ -309,17 +297,6 @@ impl DeckWidgetSurfaceClient {
     #[must_use]
     pub fn state(&self) -> &DeckWidgetSurfaceState {
         &self.state
-    }
-
-    /// Get a mutable reference to the surface state.
-    pub fn state_mut(&mut self) -> &mut DeckWidgetSurfaceState {
-        &mut self.state
-    }
-
-    /// Get a handle to the event queue for creating Wayland protocol objects.
-    #[must_use]
-    pub fn queue_handle(&self) -> QueueHandle<DeckWidgetSurfaceState> {
-        self.queue.handle()
     }
 
     /// Commit a rendered DMA-BUF frame to the compositor.

@@ -13,10 +13,10 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use crate::egl::DmaBufInfo;
 
 use super::common::{
-    blocking_dispatch_impl, impl_common_dispatch, invalidate_cached_wl_buffers, poll_dispatch,
-    submit_buffer_to_surface,
+    blocking_dispatch_impl, create_buffer_from_dmabuf, impl_common_dispatch,
+    invalidate_cached_wl_buffers, poll_dispatch, submit_buffer_to_surface,
 };
-use super::{WidgetEvent, WidgetSurface, create_buffer_from_dmabuf};
+use super::{WidgetEvent, WidgetSurface};
 
 /// Wayland surface state for an XDG toplevel with DMA-BUF support.
 ///
@@ -58,22 +58,6 @@ impl fmt::Debug for XdgSurfaceState {
             .field("frame_count", &self.frame_count)
             .field("configured", &self.configured)
             .finish_non_exhaustive()
-    }
-}
-
-impl XdgSurfaceState {
-    /// Get the `zwp_linux_dmabuf_v1` global (for widgets that manage their own
-    /// `wl_buffer` lifecycle, e.g. cached buffers).
-    #[must_use]
-    pub fn linux_dmabuf(&self) -> Option<&zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1> {
-        self.linux_dmabuf.as_ref()
-    }
-
-    /// Get the `wl_surface` (for widgets that need direct surface access, e.g.
-    /// to attach cached buffers or request frame callbacks manually).
-    #[must_use]
-    pub fn wl_surface(&self) -> Option<&wl_surface::WlSurface> {
-        self.surface.as_ref()
     }
 }
 
@@ -184,17 +168,6 @@ impl XdgSurfaceClient {
     #[must_use]
     pub fn state(&self) -> &XdgSurfaceState {
         &self.state
-    }
-
-    /// Get a mutable reference to the surface state.
-    pub fn state_mut(&mut self) -> &mut XdgSurfaceState {
-        &mut self.state
-    }
-
-    /// Get the queue handle for creating protocol objects.
-    #[must_use]
-    pub fn queue_handle(&self) -> QueueHandle<XdgSurfaceState> {
-        self.queue.handle()
     }
 
     /// Commit a rendered DMA-BUF frame to the compositor.

@@ -247,7 +247,7 @@ pub trait WidgetSurface {
 /// Create a `wl_buffer` from DMA-BUF info using the `linux-dmabuf` protocol.
 #[must_use]
 #[expect(clippy::cast_possible_wrap, reason = "buffer dimensions fit in i32")]
-pub fn create_buffer_from_dmabuf<S>(
+pub(crate) fn create_buffer_from_dmabuf<S>(
     linux_dmabuf: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     info: &DmaBufInfo,
     qh: &QueueHandle<S>,

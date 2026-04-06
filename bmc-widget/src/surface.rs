@@ -11,6 +11,6 @@ mod common;
 mod deck_widget;
 mod xdg;
 
-pub use common::{SettingUpdate, WidgetEvent, WidgetSurface, create_buffer_from_dmabuf};
+pub use common::{SettingUpdate, WidgetEvent, WidgetSurface};
 pub use deck_widget::{DeckWidgetEvent, DeckWidgetSurfaceClient, DeckWidgetSurfaceState};
 pub use xdg::{XdgSurfaceClient, XdgSurfaceState};
