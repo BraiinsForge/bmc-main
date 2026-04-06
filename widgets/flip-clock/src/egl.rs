@@ -10,37 +10,35 @@ use anyhow::Result;
 use glow::HasContext;
 
 pub use bmc_widget::egl::DmaBufInfo;
-use bmc_widget::egl::{DoubleBufferState, EglContext};
+use bmc_widget::egl::DoubleBufferedEglState;
 
 /// EGL state for the flip-clock's direct-FBO rendering pipeline.
 ///
-/// Double-buffers two export buffers via [`DoubleBufferState`]. Each frame:
+/// Double-buffers two export buffers via [`DoubleBufferedEglState`]. Each
+/// frame:
 /// bind the back buffer's FBO, render, `glFinish()`, export DMA-BUF, swap.
 pub struct EglState {
-    ctx: EglContext,
-    db: DoubleBufferState,
+    egl: DoubleBufferedEglState,
 }
 
 impl EglState {
     /// Create EGL context and prepare for rendering at the given dimensions.
     pub fn new(width: u32, height: u32) -> Result<Self> {
-        let ctx = EglContext::new()?;
         Ok(Self {
-            ctx,
-            db: DoubleBufferState::new(width, height),
+            egl: DoubleBufferedEglState::new(width, height)?,
         })
     }
 
     /// Begin a frame -- allocate the back buffer if needed, bind its FBO.
     #[expect(clippy::cast_possible_wrap, reason = "dimensions fit in i32")]
     pub fn begin_frame(&mut self) -> Result<()> {
-        let buf = self.db.ensure_current(&self.ctx)?;
+        let buf = self.egl.ensure_current()?;
         let fbo = buf.fbo;
-        let (w, h) = (self.db.width(), self.db.height());
+        let (w, h) = (self.egl.width(), self.egl.height());
 
         unsafe {
-            self.ctx.gl().bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-            self.ctx.gl().viewport(0, 0, w as i32, h as i32);
+            self.egl.gl().bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            self.egl.gl().viewport(0, 0, w as i32, h as i32);
         }
         Ok(())
     }
@@ -48,8 +46,8 @@ impl EglState {
     /// Clear the screen with a color.
     pub fn clear(&self, r: f32, g: f32, b: f32, a: f32) {
         unsafe {
-            self.ctx.gl().clear_color(r, g, b, a);
-            self.ctx.gl().clear(glow::COLOR_BUFFER_BIT);
+            self.egl.gl().clear_color(r, g, b, a);
+            self.egl.gl().clear(glow::COLOR_BUFFER_BIT);
         }
     }
 
@@ -58,24 +56,18 @@ impl EglState {
     /// Returns the DMA-BUF info and the slot index of the exported buffer.
     pub fn end_frame(&mut self) -> Result<(DmaBufInfo, usize)> {
         unsafe {
-            self.ctx.gl().finish();
+            self.egl.gl().finish();
         }
-        self.db.export_and_swap()
+        self.egl.export_and_swap()
     }
 
     /// Resize -- deallocate existing buffers so they're reallocated at the new size.
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.db.resize(&self.ctx, width, height);
+        self.egl.resize(width, height);
     }
 
     /// Get the glow OpenGL ES context.
     pub fn gl(&self) -> &glow::Context {
-        self.ctx.gl()
-    }
-}
-
-impl Drop for EglState {
-    fn drop(&mut self) {
-        self.db.destroy_all(&self.ctx);
+        self.egl.gl()
     }
 }
