@@ -501,13 +501,92 @@ impl DoubleBufferState {
 
     /// Destroy all allocated buffers, freeing GPU resources.
     ///
-    /// Call this before dropping if the [`EglContext`] is still alive.
+    /// Low-level helper for owners that manage the associated [`EglContext`]
+    /// themselves. Prefer [`DoubleBufferedEglState`] when possible so this
+    /// cleanup happens automatically in `Drop`.
     pub fn destroy_all(&mut self, ctx: &EglContext) {
         for buffer in &mut self.buffers {
             if let Some(buf) = buffer.take() {
                 ctx.destroy_export_buffer(buf);
             }
         }
+    }
+}
+
+/// Owning EGL + double-buffer helper with automatic buffer cleanup.
+///
+/// This pairs [`EglContext`] with [`DoubleBufferState`] so their destruction
+/// order is always correct: allocated export buffers are destroyed first,
+/// while the EGL/GL context is still alive, and only then is the context
+/// dropped. Widgets with direct-FBO double-buffer pipelines can use this
+/// instead of manually calling [`DoubleBufferState::destroy_all`] in `Drop`.
+pub struct DoubleBufferedEglState {
+    ctx: EglContext,
+    buffers: DoubleBufferState,
+}
+
+impl fmt::Debug for DoubleBufferedEglState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DoubleBufferedEglState")
+            .field("ctx", &self.ctx)
+            .field("buffers", &self.buffers)
+            .finish()
+    }
+}
+
+impl DoubleBufferedEglState {
+    /// Create EGL context and empty double-buffer state at the given size.
+    pub fn new(width: u32, height: u32) -> Result<Self> {
+        Ok(Self {
+            ctx: EglContext::new()?,
+            buffers: DoubleBufferState::new(width, height),
+        })
+    }
+
+    /// Get the glow OpenGL ES context.
+    pub fn gl(&self) -> &glow::Context {
+        self.ctx.gl()
+    }
+
+    /// Ensure the current back buffer is allocated, return a reference to it.
+    pub fn ensure_current(&mut self) -> Result<&ExportBuffer> {
+        self.buffers.ensure_current(&self.ctx)
+    }
+
+    /// Get a reference to the current back buffer (`None` if not yet allocated).
+    #[must_use]
+    pub fn current_ref(&self) -> Option<&ExportBuffer> {
+        self.buffers.current_ref()
+    }
+
+    /// Buffer width in pixels.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.buffers.width()
+    }
+
+    /// Buffer height in pixels.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.buffers.height()
+    }
+
+    /// Export the current buffer as DMA-BUF and swap to the next buffer.
+    ///
+    /// Returns the DMA-BUF info and the slot index of the exported buffer.
+    pub fn export_and_swap(&mut self) -> Result<(DmaBufInfo, usize)> {
+        self.buffers.export_and_swap()
+    }
+
+    /// Resize and drop any existing export buffers.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.buffers.resize(&self.ctx, width, height);
+    }
+}
+
+impl Drop for DoubleBufferedEglState {
+    fn drop(&mut self) {
+        self.buffers.destroy_all(&self.ctx);
     }
 }
 
