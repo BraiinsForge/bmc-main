@@ -41,6 +41,8 @@ pub struct Manager {
     pub session_manager: OpenwrtSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     wifi_manager: Arc<OpenwrtWifiManager>,
+    /// Resolved WiFi network interface name (e.g. "wlan0", "phy0-sta0").
+    wifi_iface_name: String,
     wifi_ap_ssid_base: String,
     wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
     uboot_env_manager: UbootEnvManager,
@@ -51,6 +53,7 @@ impl Manager {
     const SYSUPGRADE_ARG_NO_SAVE: &str = "-n";
     const UPGRADE_RESULT_FILE_PATH: &str = "/etc/upgrade_result";
     const DEFAULT_INTERFACE: &str = "wlan0";
+
     const UCI_SYSTEM_ZONENAME: &str = "system.@system[0].zonename";
     const UCI_SYSTEM_TIMEZONE: &str = "system.@system[0].timezone";
     const UCI_SYSTEM_HOSTNAME: &str = "system.@system[0].hostname";
@@ -67,7 +70,7 @@ impl Manager {
     const WIFI_INTERFACE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
     #[must_use]
-    pub fn new(
+    pub async fn new(
         session_manager: OpenwrtSessionManager,
         timezone: Timezone,
         wifi_manager: Arc<OpenwrtWifiManager>,
@@ -84,11 +87,22 @@ impl Manager {
             }
         };
 
+        // Resolve WiFi interface name once from wifi_manager (reads sysfs net/ dir).
+        // Falls back to DEFAULT_INTERFACE if the device isn't ready yet.
+        let wifi_iface_name = wifi_manager
+            .get_wifi_device_name()
+            .await
+            .unwrap_or_else(|err| {
+                error!(?err, "failed to resolve WiFi interface name, using default");
+                Self::DEFAULT_INTERFACE.to_owned()
+            });
+
         Self {
             bmc_info: Arc::new(bmc_info),
             session_manager,
             timezone_sender,
             wifi_manager,
+            wifi_iface_name,
             wifi_ap_ssid_base,
             wifi_event_sender,
             uboot_env_manager: UbootEnvManager::new(),
@@ -119,8 +133,8 @@ impl Manager {
         }
     }
 
-    fn get_mac_address() -> Option<String> {
-        NetworkInterface::get_by_name(Self::DEFAULT_INTERFACE)
+    fn get_mac_address(&self) -> Option<String> {
+        NetworkInterface::get_by_name(&self.wifi_iface_name)
             .and_then(|network| network.mac_address().map(|mac| mac.to_string()))
     }
 
@@ -464,25 +478,13 @@ impl BmcManager for Manager {
     }
 
     fn mac_address(&self) -> Option<String> {
-        Self::get_mac_address()
+        self.get_mac_address()
     }
 
     async fn ip_address(&self) -> Option<IpAddr> {
-        if let Some(ip) = Self::get_network_ip_by_name(Self::DEFAULT_INTERFACE) {
+        if let Some(ip) = Self::get_network_ip_by_name(&self.wifi_iface_name) {
             return Some(ip);
         }
-
-        let wifi_ip_addr = self
-            .wifi_manager
-            .get_wifi_device_name()
-            .await
-            .ok()
-            .and_then(|wifi_dev_name| Self::get_network_ip_by_name(wifi_dev_name.as_ref()));
-
-        if wifi_ip_addr.is_some() {
-            return wifi_ip_addr;
-        }
-
         get_ip_address()
     }
 

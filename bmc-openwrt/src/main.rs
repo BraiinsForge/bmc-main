@@ -63,26 +63,32 @@ async fn main() -> Result<()> {
         .and_then(|timezone| Timezone::from_str(&timezone).ok())
         .unwrap_or_default();
 
-    // Detect board type by checking vendor ID at shared USB path
+    // BMC_WIFI_SYSPATH overrides auto-detection (used for x86 QEMU emulation with mac80211_hwsim).
+    // Otherwise detect board type by checking vendor ID at the shared USB path:
     // - Hubless: 3-1 is the WiFi (vendor 0bda)
     // - Hubbed: 3-1 is the USB hub, WiFi is at 3-1.1
-    let vendor = std::fs::read_to_string(format!("{SHARED_USB_DEVICE}idVendor"))
-        .map(|v| v.trim().to_owned())
-        .unwrap_or_default();
-
-    info!("Detecting WiFi: {}idVendor = {}", SHARED_USB_DEVICE, vendor);
-
-    let wifi_path = if vendor == WIFI_VENDOR_ID {
-        info!("Hubless board detected, WiFi at {}", WIFI_PATH_HUBLESS);
-        WIFI_PATH_HUBLESS
+    let wifi_path: String = if let Ok(path) = std::env::var("BMC_WIFI_SYSPATH") {
+        info!("Using WiFi device path from BMC_WIFI_SYSPATH: {}", path);
+        path
     } else {
-        info!("Hubbed board detected, WiFi at {}", WIFI_PATH_HUBBED);
-        WIFI_PATH_HUBBED
+        let vendor = std::fs::read_to_string(format!("{SHARED_USB_DEVICE}idVendor"))
+            .map(|v| v.trim().to_owned())
+            .unwrap_or_default();
+
+        info!("Detecting WiFi: {}idVendor = {}", SHARED_USB_DEVICE, vendor);
+
+        if vendor == WIFI_VENDOR_ID {
+            info!("Hubless board detected, WiFi at {}", WIFI_PATH_HUBLESS);
+            WIFI_PATH_HUBLESS.to_owned()
+        } else {
+            info!("Hubbed board detected, WiFi at {}", WIFI_PATH_HUBBED);
+            WIFI_PATH_HUBBED.to_owned()
+        }
     };
 
     info!("Using WiFi device path: {}", wifi_path);
     let wifi_manager = Arc::new(
-        OpenwrtWifiManager::new(wifi_path)
+        OpenwrtWifiManager::new(&wifi_path)
             .inspect_err(|err| error!(?err, "Failed to initialize WiFi Manager"))?,
     );
 
@@ -91,7 +97,8 @@ async fn main() -> Result<()> {
         current_timezone,
         wifi_manager,
         "Braiins Deck".to_owned(),
-    );
+    )
+    .await;
 
     // Has check on factory default already
     if let Err(err) = manager.init_wifi_ap().await {
