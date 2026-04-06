@@ -919,6 +919,19 @@ pub enum DeckWidgetEvent {
     Shutdown,
 }
 
+/// `wl_buffer` lifecycle mode for a deck widget surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BufferMode {
+    /// No buffer submission API has been used yet.
+    Unknown,
+    /// `commit_buffer()` creates a fresh `wl_buffer` per frame and destroys it
+    /// on `wl_buffer::Release`.
+    PerFrame,
+    /// `commit_cached_buffer()` reuses a small set of cached `wl_buffer`s and
+    /// treats `wl_buffer::Release` as a no-op.
+    Cached,
+}
+
 /// Surface state for a `deck_widget_v1` widget with DMA-BUF support.
 ///
 /// Tracks compositor globals, surface lifecycle, frame scheduling, and
@@ -937,12 +950,12 @@ pub struct DeckWidgetSurfaceState {
     pub pending_buffers: u32,
     /// Number of frames rendered (wrapping counter).
     pub frame_count: u32,
-    /// Whether buffer caching is active (set on first `commit_cached_buffer`).
+    /// Current `wl_buffer` lifecycle mode for this client.
     ///
-    /// When true, the `wl_buffer::Release` handler is a no-op because cached
-    /// buffers are reused across frames. When false, per-frame buffers are
-    /// destroyed on release.
-    pub buffer_caching: bool,
+    /// This is set by the first submission API used and then remains fixed for
+    /// the lifetime of the client, so late `wl_buffer::Release` events from
+    /// invalidated cached buffers are not misclassified as per-frame buffers.
+    buffer_mode: BufferMode,
 
     // -- Wayland objects (internal) --
     compositor: Option<wl_compositor::WlCompositor>,
@@ -970,6 +983,40 @@ impl DeckWidgetSurfaceState {
     pub fn wl_surface(&self) -> Option<&wl_surface::WlSurface> {
         self.surface.as_ref()
     }
+
+    /// Switch to per-frame `wl_buffer` lifecycle mode.
+    fn enable_per_frame_mode(&mut self) -> Result<()> {
+        match self.buffer_mode {
+            BufferMode::Unknown => {
+                self.buffer_mode = BufferMode::PerFrame;
+                tracing::debug!("Per-frame buffer mode enabled for deck_widget surface");
+                Ok(())
+            }
+            BufferMode::PerFrame => Ok(()),
+            BufferMode::Cached => {
+                anyhow::bail!(
+                    "commit_buffer() cannot be used after commit_cached_buffer() on DeckWidgetSurfaceClient"
+                );
+            }
+        }
+    }
+
+    /// Switch to cached `wl_buffer` lifecycle mode.
+    fn enable_cached_mode(&mut self) -> Result<()> {
+        match self.buffer_mode {
+            BufferMode::Unknown => {
+                self.buffer_mode = BufferMode::Cached;
+                tracing::debug!("Cached buffer mode enabled for deck_widget surface");
+                Ok(())
+            }
+            BufferMode::Cached => Ok(()),
+            BufferMode::PerFrame => {
+                anyhow::bail!(
+                    "commit_cached_buffer() cannot be used after commit_buffer() on DeckWidgetSurfaceClient"
+                );
+            }
+        }
+    }
 }
 
 impl fmt::Debug for DeckWidgetSurfaceState {
@@ -981,7 +1028,7 @@ impl fmt::Debug for DeckWidgetSurfaceState {
             .field("needs_render", &self.needs_render)
             .field("pending_buffers", &self.pending_buffers)
             .field("frame_count", &self.frame_count)
-            .field("buffer_caching", &self.buffer_caching)
+            .field("buffer_mode", &self.buffer_mode)
             .field("pending_events", &self.pending_events.len())
             .finish_non_exhaustive()
     }
@@ -1042,7 +1089,7 @@ impl DeckWidgetSurfaceClient {
             needs_render: false,
             pending_buffers: 0,
             frame_count: 0,
-            buffer_caching: false,
+            buffer_mode: BufferMode::Unknown,
             compositor: None,
             widget_manager: None,
             linux_dmabuf: None,
@@ -1125,6 +1172,8 @@ impl DeckWidgetSurfaceClient {
     /// callback, and commits. The buffer is destroyed on release by the
     /// compositor (see `wl_buffer` dispatch).
     pub fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> Result<()> {
+        self.state.enable_per_frame_mode()?;
+
         let qh = self.queue.handle();
         let linux_dmabuf = self
             .state
@@ -1143,9 +1192,9 @@ impl DeckWidgetSurfaceClient {
     ///
     /// On first call for a given `slot`, creates a `wl_buffer` from the
     /// DMA-BUF info and caches it. Subsequent calls reuse the cached buffer,
-    /// avoiding per-frame `wl_buffer` creation overhead. Enables buffer
-    /// caching mode on first call, which makes the `wl_buffer::Release`
-    /// handler a no-op.
+    /// avoiding per-frame `wl_buffer` creation overhead. The first cached
+    /// submission fixes the client in cached-buffer mode, which makes the
+    /// `wl_buffer::Release` handler a no-op.
     ///
     /// Call [`invalidate_cached_buffers`](Self::invalidate_cached_buffers)
     /// when the surface is resized or the underlying DMA-BUF changes.
@@ -1155,18 +1204,14 @@ impl DeckWidgetSurfaceClient {
         slot: usize,
         request_frame: bool,
     ) -> Result<()> {
+        self.state.enable_cached_mode()?;
+
         let qh = self.queue.handle();
         let linux_dmabuf = self
             .state
             .linux_dmabuf
             .as_ref()
             .context("zwp_linux_dmabuf_v1 not available")?;
-
-        // Enable buffer caching mode on first call
-        if !self.state.buffer_caching {
-            self.state.buffer_caching = true;
-            tracing::debug!("Buffer caching enabled for deck_widget surface");
-        }
 
         // Grow slot storage if needed
         if slot >= self.cached_buffers.len() {
@@ -1203,11 +1248,12 @@ impl DeckWidgetSurfaceClient {
     ///
     /// Destroys any cached `wl_buffer`s. Call this when the surface is
     /// resized or when the underlying DMA-BUF export buffers are recreated.
+    ///
+    /// This does not reset the submission mode: late `wl_buffer::Release`
+    /// events from previously cached buffers must still be treated as cached
+    /// releases, i.e. as no-ops.
     pub fn invalidate_cached_buffers(&mut self) {
-        let destroyed = invalidate_cached_wl_buffers(&mut self.cached_buffers);
-        if destroyed > 0 {
-            self.state.buffer_caching = false;
-        }
+        invalidate_cached_wl_buffers(&mut self.cached_buffers);
     }
 
     /// Request the first frame callback (call once after setup, before the
@@ -1436,14 +1482,96 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for DeckWidgetSurfaceState {
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            if state.buffer_caching {
-                // Buffer caching mode: cached buffers are reused across
-                // frames, so don't destroy them on release.
-            } else {
-                // Per-frame mode: destroy the buffer and decrement the counter.
-                buffer.destroy();
-                state.pending_buffers = state.pending_buffers.saturating_sub(1);
+            match state.buffer_mode {
+                BufferMode::Cached => {
+                    // Cached mode: cached buffers are reused across frames, so
+                    // don't destroy them on release.
+                }
+                BufferMode::PerFrame => {
+                    // Per-frame mode: destroy the buffer and decrement the
+                    // counter.
+                    buffer.destroy();
+                    state.pending_buffers = state.pending_buffers.saturating_sub(1);
+                }
+                BufferMode::Unknown => {
+                    tracing::warn!(
+                        "Received wl_buffer.release before DeckWidgetSurfaceClient buffer mode was established"
+                    );
+                }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BufferMode, DeckWidgetSurfaceState};
+
+    fn deck_widget_surface_state() -> DeckWidgetSurfaceState {
+        DeckWidgetSurfaceState {
+            running: true,
+            width: 320,
+            height: 240,
+            needs_render: false,
+            pending_buffers: 0,
+            frame_count: 0,
+            buffer_mode: BufferMode::Unknown,
+            compositor: None,
+            widget_manager: None,
+            linux_dmabuf: None,
+            surface: None,
+            widget_surface: None,
+            pending_events: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn deck_widget_surface_state_allows_repeated_per_frame_mode() {
+        let mut state = deck_widget_surface_state();
+
+        assert!(state.enable_per_frame_mode().is_ok());
+        assert!(state.enable_per_frame_mode().is_ok());
+        assert_eq!(state.buffer_mode, BufferMode::PerFrame);
+    }
+
+    #[test]
+    fn deck_widget_surface_state_allows_repeated_cached_mode() {
+        let mut state = deck_widget_surface_state();
+
+        assert!(state.enable_cached_mode().is_ok());
+        assert!(state.enable_cached_mode().is_ok());
+        assert_eq!(state.buffer_mode, BufferMode::Cached);
+    }
+
+    #[test]
+    fn deck_widget_surface_state_rejects_switch_from_per_frame_to_cached() {
+        let mut state = deck_widget_surface_state();
+        state
+            .enable_per_frame_mode()
+            .expect("BUG: initial per-frame mode must be accepted");
+
+        let err = state
+            .enable_cached_mode()
+            .expect_err("switching from per-frame to cached mode must fail");
+
+        assert!(
+            err.to_string().contains("commit_cached_buffer() cannot be used after commit_buffer()")
+        );
+    }
+
+    #[test]
+    fn deck_widget_surface_state_rejects_switch_from_cached_to_per_frame() {
+        let mut state = deck_widget_surface_state();
+        state
+            .enable_cached_mode()
+            .expect("BUG: initial cached mode must be accepted");
+
+        let err = state
+            .enable_per_frame_mode()
+            .expect_err("switching from cached to per-frame mode must fail");
+
+        assert!(
+            err.to_string().contains("commit_buffer() cannot be used after commit_cached_buffer()")
+        );
     }
 }
