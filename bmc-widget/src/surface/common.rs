@@ -1,3 +1,5 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
 use std::os::fd::{AsFd, AsRawFd};
 
 use anyhow::{Context, Result};
