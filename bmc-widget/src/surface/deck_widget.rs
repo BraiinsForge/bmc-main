@@ -50,6 +50,74 @@ enum BufferMode {
     Cached,
 }
 
+/// Encapsulate submission-mode transitions and `wl_buffer.release` handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SubmissionMode {
+    mode: BufferMode,
+}
+
+impl Default for SubmissionMode {
+    fn default() -> Self {
+        Self {
+            mode: BufferMode::Unknown,
+        }
+    }
+}
+
+impl SubmissionMode {
+    fn enter_per_frame(&mut self) -> Result<()> {
+        match self.mode {
+            BufferMode::Unknown => {
+                self.mode = BufferMode::PerFrame;
+                tracing::debug!("Per-frame buffer mode enabled for deck_widget surface");
+                Ok(())
+            }
+            BufferMode::PerFrame => Ok(()),
+            BufferMode::Cached => {
+                anyhow::bail!(
+                    "commit_buffer() cannot be used after commit_cached_buffer() on DeckWidgetSurfaceClient"
+                );
+            }
+        }
+    }
+
+    fn enter_cached(&mut self) -> Result<()> {
+        match self.mode {
+            BufferMode::Unknown => {
+                self.mode = BufferMode::Cached;
+                tracing::debug!("Cached buffer mode enabled for deck_widget surface");
+                Ok(())
+            }
+            BufferMode::Cached => Ok(()),
+            BufferMode::PerFrame => {
+                anyhow::bail!(
+                    "commit_cached_buffer() cannot be used after commit_buffer() on DeckWidgetSurfaceClient"
+                );
+            }
+        }
+    }
+
+    fn handle_release(self, buffer: &wl_buffer::WlBuffer, pending_buffers: &mut u32) {
+        match self.mode {
+            BufferMode::Cached => {}
+            BufferMode::PerFrame => {
+                buffer.destroy();
+                *pending_buffers = pending_buffers.saturating_sub(1);
+            }
+            BufferMode::Unknown => {
+                tracing::warn!(
+                    "Received wl_buffer.release before DeckWidgetSurfaceClient buffer mode was established"
+                );
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn current(self) -> BufferMode {
+        self.mode
+    }
+}
+
 /// Surface state for a `deck_widget_v1` widget with DMA-BUF support.
 ///
 /// Tracks compositor globals, surface lifecycle, frame scheduling, and
@@ -73,7 +141,7 @@ pub struct DeckWidgetSurfaceState {
     /// This is set by the first submission API used and then remains fixed for
     /// the lifetime of the client, so late `wl_buffer::Release` events from
     /// invalidated cached buffers are not misclassified as per-frame buffers.
-    buffer_mode: BufferMode,
+    submission_mode: SubmissionMode,
 
     // -- Wayland objects (internal) --
     compositor: Option<wl_compositor::WlCompositor>,
@@ -104,36 +172,12 @@ impl DeckWidgetSurfaceState {
 
     /// Switch to per-frame `wl_buffer` lifecycle mode.
     fn enable_per_frame_mode(&mut self) -> Result<()> {
-        match self.buffer_mode {
-            BufferMode::Unknown => {
-                self.buffer_mode = BufferMode::PerFrame;
-                tracing::debug!("Per-frame buffer mode enabled for deck_widget surface");
-                Ok(())
-            }
-            BufferMode::PerFrame => Ok(()),
-            BufferMode::Cached => {
-                anyhow::bail!(
-                    "commit_buffer() cannot be used after commit_cached_buffer() on DeckWidgetSurfaceClient"
-                );
-            }
-        }
+        self.submission_mode.enter_per_frame()
     }
 
     /// Switch to cached `wl_buffer` lifecycle mode.
     fn enable_cached_mode(&mut self) -> Result<()> {
-        match self.buffer_mode {
-            BufferMode::Unknown => {
-                self.buffer_mode = BufferMode::Cached;
-                tracing::debug!("Cached buffer mode enabled for deck_widget surface");
-                Ok(())
-            }
-            BufferMode::Cached => Ok(()),
-            BufferMode::PerFrame => {
-                anyhow::bail!(
-                    "commit_cached_buffer() cannot be used after commit_buffer() on DeckWidgetSurfaceClient"
-                );
-            }
-        }
+        self.submission_mode.enter_cached()
     }
 }
 
@@ -146,7 +190,7 @@ impl fmt::Debug for DeckWidgetSurfaceState {
             .field("needs_render", &self.needs_render)
             .field("pending_buffers", &self.pending_buffers)
             .field("frame_count", &self.frame_count)
-            .field("buffer_mode", &self.buffer_mode)
+            .field("submission_mode", &self.submission_mode)
             .field("pending_events", &self.pending_events.len())
             .finish_non_exhaustive()
     }
@@ -207,7 +251,7 @@ impl DeckWidgetSurfaceClient {
             needs_render: false,
             pending_buffers: 0,
             frame_count: 0,
-            buffer_mode: BufferMode::Unknown,
+            submission_mode: SubmissionMode::default(),
             compositor: None,
             widget_manager: None,
             linux_dmabuf: None,
@@ -590,71 +634,47 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for DeckWidgetSurfaceState {
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            match state.buffer_mode {
-                BufferMode::Cached => {}
-                BufferMode::PerFrame => {
-                    buffer.destroy();
-                    state.pending_buffers = state.pending_buffers.saturating_sub(1);
-                }
-                BufferMode::Unknown => {
-                    tracing::warn!(
-                        "Received wl_buffer.release before DeckWidgetSurfaceClient buffer mode was established"
-                    );
-                }
-            }
+            state
+                .submission_mode
+                .handle_release(buffer, &mut state.pending_buffers);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BufferMode, DeckWidgetSurfaceState};
+    use super::{BufferMode, SubmissionMode};
 
-    fn deck_widget_surface_state() -> DeckWidgetSurfaceState {
-        DeckWidgetSurfaceState {
-            running: true,
-            width: 320,
-            height: 240,
-            needs_render: false,
-            pending_buffers: 0,
-            frame_count: 0,
-            buffer_mode: BufferMode::Unknown,
-            compositor: None,
-            widget_manager: None,
-            linux_dmabuf: None,
-            surface: None,
-            widget_surface: None,
-            pending_events: Vec::new(),
-        }
+    fn submission_mode() -> SubmissionMode {
+        SubmissionMode::default()
     }
 
     #[test]
-    fn deck_widget_surface_state_allows_repeated_per_frame_mode() {
-        let mut state = deck_widget_surface_state();
+    fn submission_mode_allows_repeated_per_frame_mode() {
+        let mut mode = submission_mode();
 
-        assert!(state.enable_per_frame_mode().is_ok());
-        assert!(state.enable_per_frame_mode().is_ok());
-        assert_eq!(state.buffer_mode, BufferMode::PerFrame);
+        assert!(mode.enter_per_frame().is_ok());
+        assert!(mode.enter_per_frame().is_ok());
+        assert_eq!(mode.current(), BufferMode::PerFrame);
     }
 
     #[test]
-    fn deck_widget_surface_state_allows_repeated_cached_mode() {
-        let mut state = deck_widget_surface_state();
+    fn submission_mode_allows_repeated_cached_mode() {
+        let mut mode = submission_mode();
 
-        assert!(state.enable_cached_mode().is_ok());
-        assert!(state.enable_cached_mode().is_ok());
-        assert_eq!(state.buffer_mode, BufferMode::Cached);
+        assert!(mode.enter_cached().is_ok());
+        assert!(mode.enter_cached().is_ok());
+        assert_eq!(mode.current(), BufferMode::Cached);
     }
 
     #[test]
-    fn deck_widget_surface_state_rejects_switch_from_per_frame_to_cached() {
-        let mut state = deck_widget_surface_state();
-        state
-            .enable_per_frame_mode()
+    fn submission_mode_rejects_switch_from_per_frame_to_cached() {
+        let mut mode = submission_mode();
+        mode.enter_per_frame()
             .expect("BUG: initial per-frame mode must be accepted");
 
-        let err = state
-            .enable_cached_mode()
+        let err = mode
+            .enter_cached()
             .expect_err("switching from per-frame to cached mode must fail");
 
         assert!(
@@ -664,14 +684,13 @@ mod tests {
     }
 
     #[test]
-    fn deck_widget_surface_state_rejects_switch_from_cached_to_per_frame() {
-        let mut state = deck_widget_surface_state();
-        state
-            .enable_cached_mode()
+    fn submission_mode_rejects_switch_from_cached_to_per_frame() {
+        let mut mode = submission_mode();
+        mode.enter_cached()
             .expect("BUG: initial cached mode must be accepted");
 
-        let err = state
-            .enable_per_frame_mode()
+        let err = mode
+            .enter_per_frame()
             .expect_err("switching from cached to per-frame mode must fail");
 
         assert!(
