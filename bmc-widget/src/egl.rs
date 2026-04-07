@@ -398,7 +398,7 @@ impl ExportBuffer {
 /// Manages two lazily-allocated [`ExportBuffer`]s with ping-pong swap.
 /// Widgets compose this with [`EglContext`] and their own rendering pipeline
 /// (direct FBO, staging+blit, etc.).
-pub struct DoubleBufferState {
+struct DoubleBufferState {
     buffers: [Option<ExportBuffer>; 2],
     current_buffer: usize,
     width: u32,
@@ -515,11 +515,11 @@ impl DoubleBufferState {
 
 /// Owning EGL + double-buffer helper with automatic buffer cleanup.
 ///
-/// This pairs [`EglContext`] with [`DoubleBufferState`] so their destruction
-/// order is always correct: allocated export buffers are destroyed first,
-/// while the EGL/GL context is still alive, and only then is the context
-/// dropped. Widgets with direct-FBO double-buffer pipelines can use this
-/// instead of manually calling [`DoubleBufferState::destroy_all`] in `Drop`.
+/// This pairs [`EglContext`] with the internal double-buffer state so their
+/// destruction order is always correct: allocated export buffers are destroyed
+/// first, while the EGL/GL context is still alive, and only then is the
+/// context dropped. Widgets with direct-FBO double-buffer pipelines can use
+/// this instead of managing manual export-buffer cleanup in `Drop`.
 pub struct DoubleBufferedEglState {
     ctx: EglContext,
     buffers: DoubleBufferState,
