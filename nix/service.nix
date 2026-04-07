@@ -1,0 +1,118 @@
+# mkOpenWrtService / mkOpenWrtDaemon: Generators for OpenWrt init.d scripts.
+#
+# mkOpenWrtService produces an executable flat file at $out matching the
+# OpenWrt /etc/init.d convention.  mkOpenWrtDaemon wraps it for procd-managed
+# daemons with declarative configuration.
+{ pkgs, lib }:
+let
+  # indentBody: Take a body string, strip surrounding whitespace, and
+  # re-indent every line with 4 spaces.
+  indentBody = body:
+    let
+      trimmed = lib.trim body;
+      lines = lib.splitString "\n" trimmed;
+      indented = map (l: "    " + l) lines;
+    in
+    lib.concatStringsSep "\n" indented;
+
+  # renderFunction: Render a single shell function definition.
+  renderFunction = fn:
+    "${fn.name}() {\n${indentBody fn.body}\n}";
+
+  mkOpenWrtService =
+    { name
+    , start
+    , stop ? null
+    , enabled ? true
+    , serviceConfig ? null
+    , shebang ? "#!/bin/sh /etc/rc.common"
+    , variables ? { }
+    , functions ? [ ]
+    }:
+    let
+      startLine = "START=${toString start}";
+      stopLine = lib.optionalString (stop != null) "STOP=${toString stop}\n";
+      variables = variables ++ {
+        "START" = toString start;
+      } // (lib.optionalAttrs (stop != null) {
+        "STOP" = toString stop;
+      });
+      varNames = builtins.attrNames variables;
+      varLines = lib.concatMapStringsSep "\n"
+        (k: ''${k}="${variables.${k}}"'')
+        varNames;
+      headerBlock = varLines + "\n";
+      funcBlock = lib.concatStringsSep "\n\n" (map renderFunction functions);
+      script = shebang + "\n\n"
+        + headerBlock
+        + (lib.optionalString (functions != [ ]) ("\n" + funcBlock + "\n"));
+      service = pkgs.writeTextFile {
+        name = "init.d-${name}";
+        text = script;
+        executable = true;
+      };
+      serviceConfigFile =
+        if serviceConfig != null
+        then pkgs.writeText "init.d.conf-${name}.json" (builtins.toJSON serviceConfig)
+        else null;
+    in
+    { inherit name service start stop enabled serviceConfigFile; };
+
+  mkOpenWrtDaemon =
+    { name
+    , start
+    , command
+    , args ? [ ]
+    , env ? { }
+    , respawn ? { threshold = 3600; timeout = 5; retry = 0; }
+    , termTimeout ? 20
+    , pidFile ? "/var/run/${name}.pid"
+    , stop ? null
+    , enabled ? true
+    , serviceConfig ? null
+    , extraVariables ? { }
+    , extraFunctions ? [ ]
+    , stdout ? true
+    , stderr ? true
+    }:
+    let
+      quotedArgs = lib.concatMapStringsSep " "
+        (a: ''"${a}"'')
+        args;
+      commandLine = ''"${command}"''
+        + lib.optionalString (args != [ ]) (" " + quotedArgs);
+      envNames = builtins.attrNames env;
+      envLines = lib.concatMapStringsSep "\n"
+        (k: ''procd_set_param env "${k}=${env.${k}}"'')
+        envNames;
+      boolToInt = b: if b then "1" else "0";
+      startBody = lib.concatStringsSep "\n" (
+        [
+          "procd_open_instance"
+          "procd_set_param command ${commandLine}"
+        ]
+        ++ lib.optional (env != { }) envLines
+        ++ [
+          "procd_set_param respawn ${toString respawn.threshold} ${toString respawn.timeout} ${toString respawn.retry}"
+          "procd_set_param stdout ${boolToInt stdout}"
+          "procd_set_param stderr ${boolToInt stderr}"
+          ''procd_set_param pidfile "${pidFile}"''
+          "procd_set_param term_timeout ${toString termTimeout}"
+          "procd_close_instance"
+        ]
+      );
+      reloadBody = "stop\nstart";
+      generatedFunctions = [
+        { name = "start_service"; body = startBody; }
+        { name = "reload_service"; body = reloadBody; }
+      ];
+    in
+    mkOpenWrtService {
+      inherit name start stop enabled serviceConfig;
+      variables = { USE_PROCD = "1"; } // extraVariables;
+      functions = generatedFunctions ++ extraFunctions;
+    };
+in
+{
+  inherit mkOpenWrtService mkOpenWrtDaemon;
+}
