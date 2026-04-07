@@ -1,10 +1,49 @@
 # Core package: bmc-openwrt with activation scripts, hooks, and copy-files.
 { bmc, armv7Pkgs, deps }:
 let
-  inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries;
+  inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries
+    mkOpenWrtService;
   inherit (bmc) crates;
   inherit (deps) compositorRuntimeDeps;
   profile = bmc.profiles.armv7-glibc-release;
+
+  nix-mounter = mkOpenWrtService {
+    name = "nix-mounter";
+    start = 91;
+    serviceConfig = { init = [ ]; removed = [ ]; upgrade = [ ]; };
+    functions = [
+      {
+        name = "boot";
+        body = ''
+          [ -d /mnt/data/nix ] || return 0
+          mkdir -p /nix
+          mount --bind /mnt/data/nix /nix
+        '';
+      }
+    ];
+  };
+
+  nix-activator = mkOpenWrtService {
+    name = "nix-activator";
+    start = 92;
+    serviceConfig = { init = [ ]; removed = [ ]; upgrade = [ ]; };
+    functions = [
+      {
+        name = "boot";
+        body = ''
+          grep -q ' /nix ' /proc/mounts || return 0
+          profile_dir="/nix/var/nix/gcroots/profiles/bmc"
+          current="$profile_dir/current"
+          if [ -L "$current" ]; then
+              entrypoint="$(readlink -f "$current")/core/activation/entrypoint"
+              if [ -x "$entrypoint" ]; then
+                  "$entrypoint"
+              fi
+          fi
+        '';
+      }
+    ];
+  };
 in
 {
   pkg = mkPackage {
@@ -21,19 +60,14 @@ in
     activation = mkPrioritizedEntries ./activation ++ [
       { prefix = "055"; bin = profile.buildCrate crates.bmc-activation-copy-files { }; }
     ];
+    services = [ nix-mounter nix-activator ];
     out = [
       { src = ./scripts; dest = "bin"; }
     ];
     copyFiles = [
-      { src = ./files/nix-mounter; dest = "/etc/init.d/nix-mounter"; }
-      { src = ./files/nix-activator; dest = "/etc/init.d/nix-activator"; }
       { src = ./files/profile; dest = "/root/.profile"; }
     ];
     conffiles = [
-      "/etc/init.d/nix-mounter"
-      "/etc/init.d/nix-activator"
-      "/etc/rc.d/S91nix-mounter"
-      "/etc/rc.d/S92nix-activator"
       "/root/.profile"
     ];
   };

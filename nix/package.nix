@@ -27,9 +27,11 @@ in
     , package ? null
     , hooks ? [ ]
     , activation ? [ ]
+    , services ? [ ]
     , out ? [ ]
     , copyFiles ? [ ]
     , conffiles ? [ ]
+    , postBuild ? ""
     }:
     let
       hooksCmds = lib.concatMapStringsSep "\n"
@@ -68,6 +70,21 @@ in
         '')
         out;
 
+      servicesCmds = lib.concatMapStringsSep "\n"
+        (s: ''
+          cp ${s.service} $out/etc/init.d/${s.name}
+        ''
+        + lib.optionalString (s.enabled or true) ''
+          ln -s ../init.d/${s.name} $out/etc/rc.d/S${toString s.start}${s.name}
+        ''
+        + lib.optionalString ((s.enabled or true) && (s.stop or null) != null) ''
+          ln -s ../init.d/${s.name} $out/etc/rc.d/K${toString s.stop}${s.name}
+        ''
+        + lib.optionalString ((s.serviceConfigFile or null) != null) ''
+          cp ${s.serviceConfigFile} $out/etc/init.d.conf/${s.name}.json
+        '')
+        services;
+
       copyFilesCmds = lib.concatMapStringsSep "\n"
         (cf:
           let
@@ -78,6 +95,18 @@ in
             cp '${cf.src}' "$out/special/copy/${dest}"
           '')
         copyFiles;
+
+      servicesConffiles = lib.concatMap
+        (s:
+          [ "/etc/init.d/${s.name}" ]
+          ++ lib.optional (s.enabled or true)
+            "/etc/rc.d/S${toString s.start}${s.name}"
+          ++ lib.optional ((s.enabled or true) && (s.stop or null) != null)
+            "/etc/rc.d/K${toString s.stop}${s.name}"
+        )
+        services;
+
+      allConffiles = servicesConffiles ++ conffiles;
 
       conffilesPath = "/lib/upgrade/keep.d/${name}.conffiles";
 
@@ -96,18 +125,37 @@ in
           ${activationCmds}
         ''}
 
+        ${lib.optionalString (services != [ ]) ''
+          mkdir -p $out/etc/init.d $out/etc/rc.d $out/etc/init.d.conf
+          ${servicesCmds}
+          # Mirror service files into special/copy so the copy-files
+          # activation copies them to the system's /etc.
+          mkdir -p $out/special/copy/etc/init.d $out/special/copy/etc/rc.d $out/special/copy/etc/init.d.conf
+          for f in $out/etc/init.d/*; do
+            ln -s "$f" $out/special/copy/etc/init.d/
+          done
+          for f in $out/etc/rc.d/*; do
+            ln -s "$f" $out/special/copy/etc/rc.d/
+          done
+          for f in $out/etc/init.d.conf/*; do
+            [ -e "$f" ] && ln -s "$f" $out/special/copy/etc/init.d.conf/
+          done
+        ''}
+
         ${lib.optionalString (out != [ ]) outCmds}
 
-        ${lib.optionalString (copyFiles != [ ] || conffiles != [ ]) ''
+        ${lib.optionalString (copyFiles != [ ] || allConffiles != [ ]) ''
           mkdir -p $out/special/copy
           ${copyFilesCmds}
         ''}
 
-        ${lib.optionalString (conffiles != [ ]) ''
+        ${lib.optionalString (allConffiles != [ ]) ''
           mkdir -p $out/special/copy/lib/upgrade/keep.d
-          printf '%s\n' ${lib.escapeShellArgs (conffiles ++ [ conffilesPath ])} \
+          printf '%s\n' ${lib.escapeShellArgs (allConffiles ++ [ conffilesPath ])} \
             > $out/special/copy/lib/upgrade/keep.d/${name}.conffiles
         ''}
+
+        ${postBuild}
       '';
 
       paths = lib.optional (package != null) package ++ [ extras ];
