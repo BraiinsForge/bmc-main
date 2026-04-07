@@ -229,10 +229,12 @@ pub trait WidgetSurface {
     fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<bool>;
     /// Request the first frame callback (call once before the event loop).
     fn request_frame(&self);
-    /// Submit a DMA-BUF frame. Optionally request a frame callback.
-    fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> anyhow::Result<()>;
-    /// Submit a DMA-BUF frame using cached `wl_buffer` for a double-buffer slot.
-    fn commit_cached_buffer(
+    /// Submit a DMA-BUF frame for a reusable buffer slot.
+    ///
+    /// Surface clients cache one `wl_buffer` per slot and reuse it across
+    /// frames. Call [`invalidate_cached_buffers`](Self::invalidate_cached_buffers)
+    /// when the underlying DMA-BUF objects are recreated, e.g. on resize.
+    fn submit_buffer(
         &mut self,
         info: &DmaBufInfo,
         slot: usize,

@@ -469,7 +469,7 @@ impl DoubleBufferState {
     /// Export the current buffer as DMA-BUF and swap to the next buffer.
     ///
     /// Returns the DMA-BUF info and the slot index of the exported buffer
-    /// (for use with [`crate::surface::WidgetSurface::commit_cached_buffer`]).
+    /// (for use with [`crate::surface::WidgetSurface::submit_buffer`]).
     pub fn export_and_swap(&mut self) -> Result<(DmaBufInfo, usize)> {
         let slot = self.current_buffer;
         let buf = self.buffers[slot]

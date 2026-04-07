@@ -133,7 +133,7 @@ fn run_render_loop(
             );
 
             let (dmabuf_info, slot) = egl.end_frame()?;
-            surface.commit_cached_buffer(&dmabuf_info, slot, true)?;
+            surface.submit_buffer(&dmabuf_info, slot, true)?;
 
             if surface.frame_count().is_multiple_of(60) {
                 tracing::debug!("Frame {}", surface.frame_count());

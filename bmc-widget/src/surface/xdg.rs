@@ -65,7 +65,7 @@ impl fmt::Debug for XdgSurfaceState {
 ///
 /// Handles connection, global binding, surface creation, frame callbacks, and
 /// buffer submission. The widget owns the render loop and calls
-/// [`commit_buffer`](Self::commit_buffer) after each frame.
+/// [`submit_buffer`](Self::submit_buffer) after each frame.
 pub struct XdgSurfaceClient {
     conn: Connection,
     queue: EventQueue<XdgSurfaceState>,
@@ -170,32 +170,15 @@ impl XdgSurfaceClient {
         &self.state
     }
 
-    /// Commit a rendered DMA-BUF frame to the compositor.
-    ///
-    /// Creates a `wl_buffer` from the DMA-BUF info, attaches it to the
-    /// surface, damages the full area, optionally requests a frame callback,
-    /// and commits.
-    pub fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> Result<()> {
-        let qh = self.queue.handle();
-        let linux_dmabuf = self
-            .state
-            .linux_dmabuf
-            .as_ref()
-            .context("zwp_linux_dmabuf_v1 not available")?;
-
-        let buffer = create_buffer_from_dmabuf(linux_dmabuf, info, &qh);
-        self.submit_buffer(&buffer, info, request_frame)
-    }
-
-    /// Commit a cached DMA-BUF frame for a double-buffer slot.
+    /// Submit a DMA-BUF frame for a reusable buffer slot.
     ///
     /// On first call for a given `slot`, creates a `wl_buffer` from the
     /// DMA-BUF info and caches it. Subsequent calls reuse the cached buffer,
-    /// avoiding per-frame `wl_buffer` creation overhead.
+    /// avoiding repeated `wl_buffer` creation overhead.
     ///
     /// Call [`invalidate_cached_buffers`](Self::invalidate_cached_buffers)
     /// when the surface is resized or the underlying DMA-BUF changes.
-    pub fn commit_cached_buffer(
+    pub fn submit_buffer(
         &mut self,
         info: &DmaBufInfo,
         slot: usize,
@@ -221,11 +204,11 @@ impl XdgSurfaceClient {
         let buffer = self.cached_buffers[slot]
             .as_ref()
             .expect("BUG: cached buffer should exist after creation above");
-        self.submit_buffer(buffer, info, request_frame)
+        self.submit_wl_buffer(buffer, info, request_frame)
     }
 
     /// Attach buffer, damage, optionally request frame callback, and commit.
-    fn submit_buffer(
+    fn submit_wl_buffer(
         &self,
         buffer: &wl_buffer::WlBuffer,
         info: &DmaBufInfo,
@@ -336,17 +319,13 @@ impl WidgetSurface for XdgSurfaceClient {
         XdgSurfaceClient::request_frame(self);
     }
 
-    fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> anyhow::Result<()> {
-        XdgSurfaceClient::commit_buffer(self, info, request_frame)
-    }
-
-    fn commit_cached_buffer(
+    fn submit_buffer(
         &mut self,
         info: &DmaBufInfo,
         slot: usize,
         request_frame: bool,
     ) -> anyhow::Result<()> {
-        XdgSurfaceClient::commit_cached_buffer(self, info, slot, request_frame)
+        XdgSurfaceClient::submit_buffer(self, info, slot, request_frame)
     }
 
     fn invalidate_cached_buffers(&mut self) {
@@ -488,11 +467,8 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for XdgSurfaceState {
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            // Buffer released by compositor. Current XDG users submit cached
-            // buffers and reuse them across frames, so release is
-            // intentionally ignored here. If XDG gains per-frame buffer
-            // submission in the future, its wl_buffer lifecycle must be
-            // tracked in XdgSurfaceClient.
+            // XDG only supports slot-based cached wl_buffer submission, so
+            // release is intentionally ignored here.
         }
     }
 }

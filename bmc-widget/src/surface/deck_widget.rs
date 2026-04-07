@@ -37,87 +37,6 @@ pub enum DeckWidgetEvent {
     Shutdown,
 }
 
-/// `wl_buffer` lifecycle mode for a deck widget surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BufferMode {
-    /// No buffer submission API has been used yet.
-    Unknown,
-    /// `commit_buffer()` creates a fresh `wl_buffer` per frame and destroys it
-    /// on `wl_buffer::Release`.
-    PerFrame,
-    /// `commit_cached_buffer()` reuses a small set of cached `wl_buffer`s and
-    /// treats `wl_buffer::Release` as a no-op.
-    Cached,
-}
-
-/// Encapsulate submission-mode transitions and `wl_buffer.release` handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SubmissionMode {
-    mode: BufferMode,
-}
-
-impl Default for SubmissionMode {
-    fn default() -> Self {
-        Self {
-            mode: BufferMode::Unknown,
-        }
-    }
-}
-
-impl SubmissionMode {
-    fn enter_per_frame(&mut self) -> Result<()> {
-        match self.mode {
-            BufferMode::Unknown => {
-                self.mode = BufferMode::PerFrame;
-                tracing::debug!("Per-frame buffer mode enabled for deck_widget surface");
-                Ok(())
-            }
-            BufferMode::PerFrame => Ok(()),
-            BufferMode::Cached => {
-                anyhow::bail!(
-                    "commit_buffer() cannot be used after commit_cached_buffer() on DeckWidgetSurfaceClient"
-                );
-            }
-        }
-    }
-
-    fn enter_cached(&mut self) -> Result<()> {
-        match self.mode {
-            BufferMode::Unknown => {
-                self.mode = BufferMode::Cached;
-                tracing::debug!("Cached buffer mode enabled for deck_widget surface");
-                Ok(())
-            }
-            BufferMode::Cached => Ok(()),
-            BufferMode::PerFrame => {
-                anyhow::bail!(
-                    "commit_cached_buffer() cannot be used after commit_buffer() on DeckWidgetSurfaceClient"
-                );
-            }
-        }
-    }
-
-    fn handle_release(self, buffer: &wl_buffer::WlBuffer, pending_buffers: &mut u32) {
-        match self.mode {
-            BufferMode::Cached => {}
-            BufferMode::PerFrame => {
-                buffer.destroy();
-                *pending_buffers = pending_buffers.saturating_sub(1);
-            }
-            BufferMode::Unknown => {
-                tracing::warn!(
-                    "Received wl_buffer.release before DeckWidgetSurfaceClient buffer mode was established"
-                );
-            }
-        }
-    }
-
-    #[cfg(test)]
-    fn current(self) -> BufferMode {
-        self.mode
-    }
-}
-
 /// Surface state for a `deck_widget_v1` widget with DMA-BUF support.
 ///
 /// Tracks compositor globals, surface lifecycle, frame scheduling, and
@@ -133,15 +52,13 @@ pub struct DeckWidgetSurfaceState {
     /// A frame callback fired -- widget should render.
     pub needs_render: bool,
     /// Number of `wl_buffer`s currently held by the compositor.
+    ///
+    /// Kept for compatibility with the shared trait. Slot-based cached
+    /// submission does not accumulate per-frame `wl_buffer`s, so this remains
+    /// at zero.
     pub pending_buffers: u32,
     /// Number of frames rendered (wrapping counter).
     pub frame_count: u32,
-    /// Current `wl_buffer` lifecycle mode for this client.
-    ///
-    /// This is set by the first submission API used and then remains fixed for
-    /// the lifetime of the client, so late `wl_buffer::Release` events from
-    /// invalidated cached buffers are not misclassified as per-frame buffers.
-    submission_mode: SubmissionMode,
 
     // -- Wayland objects (internal) --
     compositor: Option<wl_compositor::WlCompositor>,
@@ -157,16 +74,6 @@ impl DeckWidgetSurfaceState {
     pub fn drain_events(&mut self) -> std::vec::Drain<'_, DeckWidgetEvent> {
         self.pending_events.drain(..)
     }
-
-    /// Get a reference to the `zwp_linux_dmabuf_v1` global, if bound.
-    fn enable_per_frame_mode(&mut self) -> Result<()> {
-        self.submission_mode.enter_per_frame()
-    }
-
-    /// Switch to cached `wl_buffer` lifecycle mode.
-    fn enable_cached_mode(&mut self) -> Result<()> {
-        self.submission_mode.enter_cached()
-    }
 }
 
 impl fmt::Debug for DeckWidgetSurfaceState {
@@ -178,7 +85,6 @@ impl fmt::Debug for DeckWidgetSurfaceState {
             .field("needs_render", &self.needs_render)
             .field("pending_buffers", &self.pending_buffers)
             .field("frame_count", &self.frame_count)
-            .field("submission_mode", &self.submission_mode)
             .field("pending_events", &self.pending_events.len())
             .finish_non_exhaustive()
     }
@@ -187,10 +93,7 @@ impl fmt::Debug for DeckWidgetSurfaceState {
 /// Single-connection Wayland client for `deck_widget_v1` widgets with DMA-BUF.
 ///
 /// Handles connection, global binding, surface creation, frame callbacks, and
-/// buffer submission using the `deck_widget_v1` protocol. Widgets can either
-/// submit per-frame buffers that are destroyed on release or cached buffers
-/// that are reused across frames. The first submission API call fixes that
-/// lifecycle mode for the lifetime of the client.
+/// slot-based buffer submission using the `deck_widget_v1` protocol.
 pub struct DeckWidgetSurfaceClient {
     conn: Connection,
     queue: EventQueue<DeckWidgetSurfaceState>,
@@ -239,7 +142,6 @@ impl DeckWidgetSurfaceClient {
             needs_render: false,
             pending_buffers: 0,
             frame_count: 0,
-            submission_mode: SubmissionMode::default(),
             compositor: None,
             widget_manager: None,
             linux_dmabuf: None,
@@ -299,47 +201,20 @@ impl DeckWidgetSurfaceClient {
         &self.state
     }
 
-    /// Commit a rendered DMA-BUF frame to the compositor.
-    ///
-    /// Creates a per-frame `wl_buffer` from the DMA-BUF info, attaches it to
-    /// the surface, damages the full area, optionally requests a frame
-    /// callback, and commits. The buffer is destroyed on release by the
-    /// compositor (see `wl_buffer` dispatch).
-    pub fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> Result<()> {
-        self.state.enable_per_frame_mode()?;
-
-        let qh = self.queue.handle();
-        let linux_dmabuf = self
-            .state
-            .linux_dmabuf
-            .as_ref()
-            .context("zwp_linux_dmabuf_v1 not available")?;
-
-        let buffer = create_buffer_from_dmabuf(linux_dmabuf, info, &qh);
-        self.submit_buffer(&buffer, info, request_frame)?;
-        self.state.pending_buffers += 1;
-
-        Ok(())
-    }
-
-    /// Commit a cached DMA-BUF frame for a double-buffer slot.
+    /// Submit a DMA-BUF frame for a reusable buffer slot.
     ///
     /// On first call for a given `slot`, creates a `wl_buffer` from the
     /// DMA-BUF info and caches it. Subsequent calls reuse the cached buffer,
-    /// avoiding per-frame `wl_buffer` creation overhead. The first cached
-    /// submission fixes the client in cached-buffer mode, which makes the
-    /// `wl_buffer::Release` handler a no-op.
+    /// avoiding repeated `wl_buffer` creation overhead.
     ///
     /// Call [`invalidate_cached_buffers`](Self::invalidate_cached_buffers)
     /// when the surface is resized or the underlying DMA-BUF changes.
-    pub fn commit_cached_buffer(
+    pub fn submit_buffer(
         &mut self,
         info: &DmaBufInfo,
         slot: usize,
         request_frame: bool,
     ) -> Result<()> {
-        self.state.enable_cached_mode()?;
-
         let qh = self.queue.handle();
         let linux_dmabuf = self
             .state
@@ -360,11 +235,11 @@ impl DeckWidgetSurfaceClient {
         let buffer = self.cached_buffers[slot]
             .as_ref()
             .expect("BUG: cached buffer should exist after creation above");
-        self.submit_buffer(buffer, info, request_frame)
+        self.submit_wl_buffer(buffer, info, request_frame)
     }
 
     /// Attach buffer, damage, optionally request frame callback, and commit.
-    fn submit_buffer(
+    fn submit_wl_buffer(
         &self,
         buffer: &wl_buffer::WlBuffer,
         info: &DmaBufInfo,
@@ -381,9 +256,8 @@ impl DeckWidgetSurfaceClient {
     /// Destroys any cached `wl_buffer`s. Call this when the surface is
     /// resized or when the underlying DMA-BUF export buffers are recreated.
     ///
-    /// This does not reset the submission mode: late `wl_buffer::Release`
-    /// events from previously cached buffers must still be treated as cached
-    /// releases, i.e. as no-ops.
+    /// Late `wl_buffer::Release` events from previously cached buffers are
+    /// harmless and ignored.
     pub fn invalidate_cached_buffers(&mut self) {
         invalidate_cached_wl_buffers(&mut self.cached_buffers);
     }
@@ -457,8 +331,8 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
         self.state.pending_buffers
     }
 
-    fn can_submit_frame(&self, max_pending: u32) -> bool {
-        self.state.pending_buffers < max_pending
+    fn can_submit_frame(&self, _max_pending: u32) -> bool {
+        true
     }
 
     fn frame_count(&self) -> u32 {
@@ -477,17 +351,13 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
         DeckWidgetSurfaceClient::request_frame(self);
     }
 
-    fn commit_buffer(&mut self, info: &DmaBufInfo, request_frame: bool) -> anyhow::Result<()> {
-        DeckWidgetSurfaceClient::commit_buffer(self, info, request_frame)
-    }
-
-    fn commit_cached_buffer(
+    fn submit_buffer(
         &mut self,
         info: &DmaBufInfo,
         slot: usize,
         request_frame: bool,
     ) -> anyhow::Result<()> {
-        DeckWidgetSurfaceClient::commit_cached_buffer(self, info, slot, request_frame)
+        DeckWidgetSurfaceClient::submit_buffer(self, info, slot, request_frame)
     }
 
     fn invalidate_cached_buffers(&mut self) {
@@ -603,76 +473,16 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
 
 impl Dispatch<wl_buffer::WlBuffer, ()> for DeckWidgetSurfaceState {
     fn event(
-        state: &mut Self,
-        buffer: &wl_buffer::WlBuffer,
+        _: &mut Self,
+        _buffer: &wl_buffer::WlBuffer,
         event: wl_buffer::Event,
         (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            state
-                .submission_mode
-                .handle_release(buffer, &mut state.pending_buffers);
+            // deck_widget surfaces only support slot-based cached wl_buffer
+            // submission, so release is intentionally ignored.
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{BufferMode, SubmissionMode};
-
-    fn submission_mode() -> SubmissionMode {
-        SubmissionMode::default()
-    }
-
-    #[test]
-    fn submission_mode_allows_repeated_per_frame_mode() {
-        let mut mode = submission_mode();
-
-        assert!(mode.enter_per_frame().is_ok());
-        assert!(mode.enter_per_frame().is_ok());
-        assert_eq!(mode.current(), BufferMode::PerFrame);
-    }
-
-    #[test]
-    fn submission_mode_allows_repeated_cached_mode() {
-        let mut mode = submission_mode();
-
-        assert!(mode.enter_cached().is_ok());
-        assert!(mode.enter_cached().is_ok());
-        assert_eq!(mode.current(), BufferMode::Cached);
-    }
-
-    #[test]
-    fn submission_mode_rejects_switch_from_per_frame_to_cached() {
-        let mut mode = submission_mode();
-        mode.enter_per_frame()
-            .expect("BUG: initial per-frame mode must be accepted");
-
-        let err = mode
-            .enter_cached()
-            .expect_err("switching from per-frame to cached mode must fail");
-
-        assert!(
-            err.to_string()
-                .contains("commit_cached_buffer() cannot be used after commit_buffer()")
-        );
-    }
-
-    #[test]
-    fn submission_mode_rejects_switch_from_cached_to_per_frame() {
-        let mut mode = submission_mode();
-        mode.enter_cached()
-            .expect("BUG: initial cached mode must be accepted");
-
-        let err = mode
-            .enter_per_frame()
-            .expect_err("switching from cached to per-frame mode must fail");
-
-        assert!(
-            err.to_string()
-                .contains("commit_buffer() cannot be used after commit_cached_buffer()")
-        );
     }
 }
