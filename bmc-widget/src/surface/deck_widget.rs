@@ -51,12 +51,6 @@ pub struct DeckWidgetSurfaceState {
     pub height: u32,
     /// A frame callback fired -- widget should render.
     pub needs_render: bool,
-    /// Number of `wl_buffer`s currently held by the compositor.
-    ///
-    /// Kept for compatibility with the shared trait. Slot-based cached
-    /// submission does not accumulate per-frame `wl_buffer`s, so this remains
-    /// at zero.
-    pub pending_buffers: u32,
     /// Number of frames rendered (wrapping counter).
     pub frame_count: u32,
 
@@ -83,7 +77,6 @@ impl fmt::Debug for DeckWidgetSurfaceState {
             .field("width", &self.width)
             .field("height", &self.height)
             .field("needs_render", &self.needs_render)
-            .field("pending_buffers", &self.pending_buffers)
             .field("frame_count", &self.frame_count)
             .field("pending_events", &self.pending_events.len())
             .finish_non_exhaustive()
@@ -140,7 +133,6 @@ impl DeckWidgetSurfaceClient {
             width,
             height,
             needs_render: false,
-            pending_buffers: 0,
             frame_count: 0,
             compositor: None,
             widget_manager: None,
@@ -325,14 +317,6 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
 
     fn mark_needs_render(&mut self) {
         self.state.needs_render = true;
-    }
-
-    fn pending_buffer_count(&self) -> u32 {
-        self.state.pending_buffers
-    }
-
-    fn can_submit_frame(&self, _max_pending: u32) -> bool {
-        true
     }
 
     fn frame_count(&self) -> u32 {

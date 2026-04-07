@@ -203,24 +203,6 @@ pub trait WidgetSurface {
     fn take_render_requested(&mut self) -> bool;
     /// Signal that a render is needed (e.g. after poll timeout).
     fn mark_needs_render(&mut self);
-    /// Number of per-frame buffers currently held by the compositor.
-    ///
-    /// This is meaningful for backends that create a fresh `wl_buffer` per
-    /// submit and destroy it on `Release`.
-    ///
-    /// Cached-buffer backends reuse the same small set of `wl_buffer`s across
-    /// frames and rely on frame callbacks for backpressure instead, so this may
-    /// remain `0` even while frames continue to be presented.
-    fn pending_buffer_count(&self) -> u32;
-    /// Whether more frames can be submitted without exceeding the limit.
-    ///
-    /// For per-frame buffer backends this typically compares
-    /// [`pending_buffer_count`](Self::pending_buffer_count) with `max_pending`.
-    ///
-    /// Cached-buffer backends may return `true` unconditionally because the
-    /// compositor backpressures them through frame callbacks rather than
-    /// per-frame in-flight buffer accumulation.
-    fn can_submit_frame(&self, max_pending: u32) -> bool;
     /// Frame counter (wrapping).
     fn frame_count(&self) -> u32;
     /// Block until a Wayland event arrives, then dispatch.

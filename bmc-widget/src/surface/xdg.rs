@@ -295,14 +295,6 @@ impl WidgetSurface for XdgSurfaceClient {
         self.state.needs_render = true;
     }
 
-    fn pending_buffer_count(&self) -> u32 {
-        0
-    }
-
-    fn can_submit_frame(&self, _max_pending: u32) -> bool {
-        true
-    }
-
     fn frame_count(&self) -> u32 {
         self.state.frame_count
     }
