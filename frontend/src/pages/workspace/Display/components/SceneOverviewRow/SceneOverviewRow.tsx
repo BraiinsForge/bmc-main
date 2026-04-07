@@ -39,7 +39,7 @@ export interface SceneOverviewRowProps {
     icon: ReactNode;
     title: ReactNode;
     description: ReactNode;
-    type: Pick<SceneTypeIconsProps, 'night' | 'local' | 'cloud'>;
+    type: Pick<SceneTypeIconsProps, 'night'>;
 
     // DnD
     dndRootProps?: DetailedHTMLProps<HTMLAttributes<HTMLDivElement>, HTMLDivElement>;

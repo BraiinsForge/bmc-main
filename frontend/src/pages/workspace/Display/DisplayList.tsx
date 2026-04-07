@@ -1,5 +1,5 @@
 import { Component, createRef, Fragment } from 'react';
-import { cloneDeep, debounce, isPlainObject } from 'es-toolkit';
+import { debounce } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
 import { type NavigateFunction, useNavigate } from 'react-router';
@@ -8,9 +8,8 @@ import { type NavigateFunction, useNavigate } from 'react-router';
 import { getID } from './const';
 import { toast } from '@/lib/toast';
 import { listenDocumentEvent } from '@/lib/dom';
-import { assertUnreachable, assertUndefined } from '@/lib/ts';
 import { setState, Sized, stopEventPropagation } from '@/lib/react';
-import { Form, type FormPropsToLocalState, type iField } from '@/lib/form';
+import { Form, type iField } from '@/lib/form';
 
 // App
 import * as pb from '@/proto';
@@ -32,78 +31,13 @@ import css from './DisplayList.scss';
 
 const $ = getID('list').get;
 
-type FormStateBlockHeight = FormPropsToLocalState<Comp.FormWidgetBlockHeightProps>;
-type FormStateBlockchainData = FormPropsToLocalState<Comp.FormWidgetBlockchainDataProps>;
-type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormWidgetBraiinsPoolProps>;
-type FormStateClock = FormPropsToLocalState<Comp.FormWidgetClockProps>;
-type FormStateHalvingCountdown = FormPropsToLocalState<Comp.FormWidgetHalvingCountdownProps>;
-type FormStateRemoteImage = FormPropsToLocalState<Comp.FormWidgetRemoteImageProps>;
-type FormStateRemoteWidget = FormPropsToLocalState<Comp.FormWidgetRemoteWidgetProps>;
-type FormStateTicker = FormPropsToLocalState<Comp.FormWidgetTickerProps>;
+type OpenDialogKind = null | 'scene-select' | 'manifest';
 
-// Can be both edit & create dialogs
-type DialogStates = {
-    blockHeight: {
-        data: FormStateBlockHeight;
-        isEdit: boolean;
-        sceneID: string;
-    };
-    blockchainData: {
-        data: FormStateBlockchainData;
-        isEdit: boolean;
-        sceneID: string;
-    };
-    braiinsPool: {
-        data: FormStateBraiinsPool;
-        isEdit: boolean;
-        sceneID: string;
-    };
-    clock: {
-        data: FormStateClock;
-        isEdit: boolean;
-        sceneID: string;
-    };
-    halvingCountdown: {
-        data: FormStateHalvingCountdown;
-        isEdit: boolean;
-        sceneID: string;
-    };
-    remoteImage: {
-        data: FormStateRemoteImage;
-        isEdit: boolean;
-        sceneID: string;
-    };
-    remoteWidget: {
-        data: FormStateRemoteWidget;
-        isEdit: boolean;
-        sceneID: string;
-    };
-    ticker: {
-        data: FormStateTicker;
-        isEdit: boolean;
-        sceneID: string;
-    };
-};
-function getInitialDialogStates(): DialogStates {
-    const getForm = () => ({
-        isEdit: false,
-        sceneID: '',
-        data: {
-            errors: null,
-            values: {},
-        },
-    });
-
-    return {
-        blockHeight: getForm(),
-        blockchainData: getForm(),
-        braiinsPool: getForm(),
-        clock: getForm(),
-        halvingCountdown: getForm(),
-        remoteImage: getForm(),
-        remoteWidget: getForm(),
-        ticker: getForm(),
-    };
+interface ManifestFormState {
+    manifest: null | pb.WidgetManifest;
+    sceneID: string;
+    widgetID: string;
+    params: Record<string, string>;
 }
 
 interface Props {
@@ -115,9 +49,10 @@ interface State {
     isLoading: boolean;
 
     scenes: pb.Scene[];
-    accounts: pb.Account[];
+    manifestWidgets: pb.WidgetManifest[];
+    manifestLookup: pb.ManifestLookup;
+    manifestsLoading: boolean;
     timezones: pb.Timezone[];
-    recentRemoteWidgets: pb.RemoteWidget[];
 
     cycle: {
         isOpen: boolean;
@@ -126,20 +61,18 @@ interface State {
         effect: pb.SceneCyclingTransition;
     };
 
-    openDialogKind: null | 'scene-select' | keyof DialogStates;
-    remoteWidgetUrl: {
-        value: string;
-        errors: null | string[];
-    };
-    dialogStates: DialogStates;
+    openDialogKind: OpenDialogKind;
+    manifestForm: ManifestFormState;
 }
+
 const getInitialState = (): State => ({
     isLoading: false,
 
     scenes: [],
-    accounts: [],
+    manifestWidgets: [],
+    manifestLookup: new Map(),
+    manifestsLoading: false,
     timezones: [],
-    recentRemoteWidgets: [],
 
     cycle: {
         isOpen: false,
@@ -149,8 +82,7 @@ const getInitialState = (): State => ({
     },
 
     openDialogKind: null,
-    remoteWidgetUrl: { value: '', errors: null },
-    dialogStates: getInitialDialogStates(),
+    manifestForm: { manifest: null, sceneID: '', widgetID: '', params: {} },
 });
 
 class View extends Component<Props, State> {
@@ -175,7 +107,8 @@ class View extends Component<Props, State> {
         this.#windowClickUnsubscribe = unsubscribe;
         this.#loadMetadata();
         this.#loadScenes();
-        this.#loadRecentRemoteWidgets();
+        this.#loadManifestWidgets();
+        this.#loadTimezones();
     }
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
@@ -196,16 +129,8 @@ class View extends Component<Props, State> {
 
         try {
             const { signal } = this.abortLoadMetadata.replace();
-            const reqConf = { signal };
-
-            const [{ timezones }, { sceneCycling }, { accounts }] = await Promise.all([
-                pb.rpc.sys.getTimezoneList({}, reqConf),
-                pb.rpc.scenes.getSceneCycling({}, reqConf),
-                pb.rpc.accounts.getAllAccounts({}, reqConf),
-            ]);
+            const { sceneCycling } = await pb.rpc.scenes.getSceneCycling({}, { signal });
             this.setState(s => ({
-                accounts,
-                timezones,
                 cycle: {
                     ...s.cycle,
                     effect: sceneCycling?.transition ?? s.cycle.effect,
@@ -216,24 +141,34 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load timezones!' });
+            msg ||= formatMessage({ defaultMessage: 'Failed to load scene cycling settings!' });
             toast.error(msg);
         }
     };
 
-    private abortRecentRemoteWidgetsLoad = pb.abort.get();
-    #loadRecentRemoteWidgets = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-
+    private abortManifestWidgetsLoad = pb.abort.get();
+    #loadManifestWidgets = async (): Promise<void> => {
+        this.setState({ manifestsLoading: true });
         try {
-            const { signal } = this.abortRecentRemoteWidgetsLoad.replace();
-            const { recentRemoteWidgets } = await pb.rpc.scenes.getRecentRemoteWidgets({}, { signal });
-            this.setState({ recentRemoteWidgets });
+            const { signal } = this.abortManifestWidgetsLoad.replace();
+            const { widgets: manifestWidgets } = await pb.rpc.scenes.getAvailableWidgets({}, { signal });
+            const manifestLookup: pb.ManifestLookup = new Map(manifestWidgets.map(m => [m.uid, m]));
+            this.setState({ manifestWidgets, manifestLookup, manifestsLoading: false });
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load recent remote widgets!' });
-            toast.error(msg);
+            this.setState({ manifestsLoading: false });
+        }
+    };
+
+    private abortLoadTimezones = pb.abort.get();
+    #loadTimezones = async (): Promise<void> => {
+        try {
+            const { signal } = this.abortLoadTimezones.replace();
+            const { timezones } = await pb.rpc.sys.getTimezoneList({}, { signal });
+            this.setState({ timezones });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            // Non-fatal: timezone-typed params will fall back to an empty picker.
         }
     };
 
@@ -262,191 +197,50 @@ class View extends Component<Props, State> {
             title: formatMessage({ defaultMessage: 'Display Widgets' }),
             on: formatMessage({ defaultMessage: 'On' }),
             off: formatMessage({ defaultMessage: 'Off' }),
-            cancel: formatMessage({ defaultMessage: 'Cancel' }),
             addNew: formatMessage({ defaultMessage: 'Add New' }),
         };
     }
 
     #sceneAddChooseKind = (): void => {
-        this.setState({ openDialogKind: 'scene-select' }, this.#loadRecentRemoteWidgets);
+        this.setState({ openDialogKind: 'scene-select' }, () => {
+            this.#loadManifestWidgets();
+        });
     };
-    #sceneAddFullscreen = async (kind: Comp.SceneKind): Promise<void> => {
+
+    #sceneAddFullscreenManifest = async (manifest: pb.WidgetManifest): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { remoteWidgetUrl } = this.state;
 
-        let $kind: pb.WidgetKind['value'];
-        let $openDialogKind: NonNullable<State['openDialogKind']>;
-
-        switch (kind) {
-            case 'clock':
-                $openDialogKind = 'clock';
-                $kind = { case: 'clock', value: pb.create(pb.ClockWidgetSchema) };
-                break;
-
-            case 'tickerBtc':
-                $openDialogKind = 'ticker';
-                $kind = { case: 'tickerBtc', value: pb.create(pb.TickerBtcWidgetSchema) };
-                break;
-
-            case 'blockHeight':
-                $openDialogKind = 'blockHeight';
-                $kind = { case: 'blockHeight', value: pb.create(pb.BlockHeightWidgetSchema) };
-                break;
-
-            case 'blockchainData':
-                $openDialogKind = 'blockchainData';
-                $kind = { case: 'blockchainData', value: pb.create(pb.BlockchainDataWidgetSchema) };
-                break;
-
-            case 'braiinsPool':
-                $openDialogKind = 'braiinsPool';
-                $kind = { case: 'braiinsPool', value: pb.create(pb.BraiinsPoolWidgetSchema) };
-                break;
-
-            case 'remoteImage':
-                $openDialogKind = 'remoteImage';
-                $kind = { case: 'remoteImage', value: pb.create(pb.RemoteImageWidgetSchema) };
-                break;
-
-            case 'halvingCountdown':
-                $openDialogKind = 'halvingCountdown';
-                $kind = { case: 'halvingCountdown', value: pb.create(pb.HalvingCountdownWidgetSchema) };
-                break;
-
-            case 'remoteWidget':
-                $openDialogKind = 'remoteWidget';
-                $kind = {
-                    case: 'remoteWidget',
-                    // At the time of writing, the remote widget is the only one
-                    // that actually reads these values upon creation, so we
-                    // need to provide them and read potential errors.
-                    value: pb.create(pb.RemoteWidgetSchema, { widgetUrl: remoteWidgetUrl.value }),
-                };
-                break;
-
-            default:
-                assertUnreachable(kind, 'Invalid scene kind!');
-        }
-
-        // When the widget is created, we get back a scene ID
-        // and have to reload the scenes to get the new scene data.
-        //
-        // This can fail with addition of remote widget
-        // because it validates the provided URL.
-        let sceneID: string;
         try {
-            const res = await pb.rpc.scenes.addFullscreenScene({
-                widgetKind: { $typeName: 'braiins.bmc.web.WidgetKind', value: $kind },
+            const { value: sceneID } = await pb.rpc.scenes.addFullscreenScene({
+                config: { widgetUid: manifest.uid, params: {} },
             });
             this.#notifySceneAdded();
-            sceneID = res.value;
+
+            const scenes = await this.#loadScenes();
+            const newScene = scenes.find(s => s.id === sceneID);
+            const widget = newScene?.kind.case === 'fullscreen' ? newScene.kind.value.widget : undefined;
+
+            if (!widget) {
+                this.setState({ openDialogKind: null });
+                return;
+            }
+
+            const params: Record<string, string> = {};
+            for (const def of manifest.params) params[def.key] = def.defaultValue;
+
+            this.setState({
+                openDialogKind: 'manifest',
+                manifestForm: { manifest, sceneID, widgetID: widget.id, params },
+            });
         } catch ($) {
-            const e = pb.parseFormErrors<pb.AddFullscreenSceneRequest>($);
-            const wke = e.fields.widgetKind as Maybe<Rec>;
+            if (pb.abort.is($)) return;
 
-            // We either manage to parse out errors for the remote widget URL…
-            if (isPlainObject(wke) && 'remoteWidget' in wke && Array.isArray(wke.remoteWidget)) {
-                const errors = wke.remoteWidget as string[];
-                this.setState(s => ({
-                    remoteWidgetUrl: { ...s.remoteWidgetUrl, errors },
-                }));
-            }
-
-            // …or just notify generically that something has failed
-            else {
-                let msg = pb.collectAllErrorsAsFormattedList($);
-                msg ||= formatMessage({ defaultMessage: 'Failed to add display widget!' });
-                toast.error(msg);
-            }
-
-            return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to add manifest widget!' });
+            toast.error(msg);
         }
-
-        // Now that the scene has been added, we need to re-load the scenes
-        // to get the new scene data to make sure our state is consistent with the server.
-        const scenes = await this.#loadScenes();
-        const scene = scenes.find(x => x.id === sceneID);
-        const dialogStates = getInitialDialogStates();
-        const size = pb.WidgetSize.FULL;
-
-        if (scene?.kind.case === 'fullscreen' && scene.kind.value.widget) {
-            const widgetKind = scene.kind.value.widget.kind;
-            switch (widgetKind?.value?.case) {
-                case undefined:
-                    break;
-
-                case 'clock':
-                    dialogStates.clock.data = {
-                        errors: null,
-                        values: Comp.unpackClockWidgetKind(widgetKind, size),
-                    };
-                    break;
-
-                case 'tickerBtc':
-                    dialogStates.ticker.data = {
-                        errors: null,
-                        values: Comp.unpackTicketWidgetKind(widgetKind, size),
-                    };
-                    break;
-
-                case 'blockHeight':
-                    dialogStates.blockHeight.data = {
-                        errors: null,
-                        values: Comp.unpackBlockHeightWidgetKind(widgetKind, size),
-                    };
-                    break;
-
-                case 'blockchainData':
-                    dialogStates.blockchainData.data = {
-                        errors: null,
-                        values: Comp.unpackBlockchainDataWidgetKind(widgetKind, size),
-                    };
-                    break;
-
-                case 'braiinsPool':
-                    dialogStates.braiinsPool.data = {
-                        errors: null,
-                        values: Comp.unpackBraiinsPoolWidgetKind(widgetKind, size),
-                    };
-                    break;
-
-                case 'remoteImage':
-                    dialogStates.remoteImage.data = {
-                        errors: null,
-                        values: Comp.unpackRemoteImageWidgetKind(widgetKind, size),
-                    };
-                    break;
-
-                case 'halvingCountdown':
-                    dialogStates.halvingCountdown.data = {
-                        errors: null,
-                        values: Comp.unpackHalvingCountdownWidgetKind(widgetKind, size),
-                    };
-                    break;
-
-                case 'remoteWidget':
-                    dialogStates.remoteWidget.data = {
-                        errors: null,
-                        values: Comp.unpackRemoteWidgetKind(widgetKind, size),
-                    };
-                    break;
-
-                default:
-                    widgetKind?.value && assertUnreachable(widgetKind?.value, 'Unknown widget kind!');
-            }
-        }
-
-        dialogStates[$openDialogKind].sceneID = sceneID;
-        await setState(this, {
-            dialogStates,
-            openDialogKind: $openDialogKind,
-            remoteWidgetUrl: { value: '', errors: null },
-        });
-        this.#previewOpen(sceneID);
     };
-    #sceneAddFullscreenRemote = async (): Promise<void> => {
-        this.#sceneAddFullscreen('remoteWidget');
-    };
+
     #sceneAddCombined = async (): Promise<void> => {
         const { navigate } = this.props;
 
@@ -458,81 +252,7 @@ class View extends Component<Props, State> {
 
     #openDialogCancel = (): void => {
         this.abortPreview.abort();
-        const { openDialogKind, dialogStates } = getInitialState();
-        this.setState({
-            openDialogKind,
-            dialogStates,
-            remoteWidgetUrl: { value: '', errors: null },
-        });
-    };
-
-    #getFormChangeHandler = <
-        const Kind extends keyof DialogStates,
-        const FieldKey extends keyof DialogStates[Kind]['data']['values'],
-    >(
-        widgetKind: Kind,
-        fieldKey: FieldKey,
-    ) => {
-        return (value: DialogStates[Kind]['data']['values'][FieldKey]) => {
-            this.setState(s => {
-                const form = cloneDeep(s.dialogStates[widgetKind]);
-                form.data = {
-                    errors: null,
-                    values: {
-                        ...form.data.values,
-                        [fieldKey]: value,
-                    },
-                };
-
-                return {
-                    dialogStates: {
-                        ...s.dialogStates,
-                        [widgetKind]: form,
-                    },
-                };
-            }, this.#sceneFullscreenWidgetSubmitDebounced);
-        };
-    };
-    #getFormFieldValue = <
-        const Kind extends keyof DialogStates,
-        const FieldKey extends keyof DialogStates[Kind]['data']['values'],
-    >(
-        widgetKind: Kind,
-        fieldKey: FieldKey,
-    ) => {
-        const { dialogStates } = this.state;
-
-        const values = dialogStates[widgetKind].data.values as DialogStates[Kind]['data']['values'];
-        return values?.[fieldKey] ?? null;
-    };
-    #getFormFieldError = <
-        const Kind extends keyof DialogStates,
-        const FieldKey extends keyof DialogStates[Kind]['data']['values'],
-    >(
-        widgetKind: Kind,
-        fieldKey: FieldKey,
-    ): null | string => {
-        const { dialogStates } = this.state;
-
-        const errors = dialogStates[widgetKind].data.errors as null | pb.FormErrors<any>;
-        if (!errors) return null;
-
-        const fieldError = errors.fields?.[fieldKey] as null | pb.FieldErrors;
-        return pb.renderFieldErrorsAsList(fieldError);
-    };
-    #getFormFieldStruct = <
-        const Kind extends keyof DialogStates,
-        const FieldKey extends keyof DialogStates[Kind]['data']['values'],
-    >(
-        widgetKind: Kind,
-        fieldKey: FieldKey,
-    ) => {
-        return {
-            value: this.#getFormFieldValue(widgetKind, fieldKey),
-            error: this.#getFormFieldError(widgetKind, fieldKey),
-            onChange: this.#getFormChangeHandler(widgetKind, fieldKey),
-            disabled: false,
-        };
+        this.setState({ openDialogKind: null });
     };
 
     private abortPreview = pb.abort.get();
@@ -550,272 +270,88 @@ class View extends Component<Props, State> {
         }
     };
 
-    #sceneFullscreenWidgetSubmit = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-
-        const { openDialogKind, dialogStates } = this.state;
-        if (!openDialogKind || !(openDialogKind in dialogStates)) {
-            toast.error(formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }));
-            return;
-        }
-
-        const data = dialogStates[openDialogKind as keyof DialogStates];
-        const scene = this.#getScene(data.sceneID);
-
-        if (!scene) {
-            toast.error(formatMessage({ defaultMessage: 'Widget edit: data not found!' }));
-            return;
-        }
-        if (scene.kind.case !== 'fullscreen') {
-            toast.error(formatMessage({ defaultMessage: 'Widget edit: not a fullscreen widget, aborting!' }));
-            return;
-        }
-
-        let widgetKind: pb.WidgetKind;
-        switch (openDialogKind) {
-            case 'scene-select': {
-                toast.error(formatMessage({ defaultMessage: 'Invalid state, cannot submit without open dialog!' }));
-                return;
+    #handleManifestParamChange = (key: string, value: string | undefined): void => {
+        this.setState(s => {
+            const params = { ...s.manifestForm.params };
+            if (value === undefined) {
+                delete params[key];
+            } else {
+                params[key] = value;
             }
+            return {
+                manifestForm: {
+                    ...s.manifestForm,
+                    params,
+                },
+            };
+        });
+    };
 
-            case 'clock':
-                widgetKind = Comp.createClockWidgetKind(dialogStates.clock.data.values);
-                break;
+    #handleManifestFormDone = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { manifestForm } = this.state;
+        const { manifest, sceneID, widgetID, params } = manifestForm;
 
-            case 'ticker':
-                widgetKind = Comp.createTickerWidgetKind(dialogStates.ticker.data.values);
-                break;
-
-            case 'blockHeight':
-                widgetKind = Comp.createBlockHeightWidgetKind(dialogStates.blockHeight.data.values);
-                break;
-
-            case 'blockchainData':
-                widgetKind = Comp.createBlockchainDataWidgetKind(dialogStates.blockchainData.data.values);
-                break;
-
-            case 'braiinsPool':
-                widgetKind = Comp.createBraiinsPoolWidgetKind(dialogStates.braiinsPool.data.values);
-                break;
-
-            case 'remoteImage':
-                widgetKind = Comp.createRemoteImageWidgetKind(dialogStates.remoteImage.data.values);
-                break;
-
-            case 'halvingCountdown':
-                widgetKind = Comp.createHalvingCountdownWidgetKind(dialogStates.halvingCountdown.data.values);
-                break;
-
-            case 'remoteWidget':
-                widgetKind = Comp.createRemoteWidgetKind(dialogStates.remoteWidget.data.values);
-                break;
-
-            default:
-                assertUnreachable(openDialogKind, 'Submit: Invalid dialog kind!');
-        }
-
-        const widget = scene.kind.value.widget;
-        if (!widget) {
-            toast.error(formatMessage({ defaultMessage: 'Scene edit: no widget value, aborting!' }));
+        if (!manifest || !widgetID) {
+            this.setState({ openDialogKind: null });
             return;
         }
 
         try {
-            const payload = pb.create(pb.UpdateWidgetRequestSchema, {
-                id: widget.id,
-                sceneId: scene.id,
-                kind: widgetKind,
-                // These are given for a full-screen widget
-                size: pb.WidgetSize.FULL,
-                position: { row: 0, col: 0 },
+            const scene = this.#getScene(sceneID);
+            const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
+
+            await pb.rpc.scenes.updateWidget({
+                id: widgetID,
+                sceneId: sceneID,
+                position: widget?.position ?? pb.create(pb.WidgetPositionSchema),
+                size: widget?.size ?? pb.WidgetSize.FULL,
+                params,
             });
-            await pb.rpc.scenes.updateWidget(payload);
-            toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
+
+            this.abortPreview.abort();
+            this.setState({ openDialogKind: null });
+            this.#loadScenesDebounced();
         } catch ($) {
-            // Parse out form specific errors
-            const { global, fields } = pb.parseFormErrors($);
+            if (pb.abort.is($)) return;
 
-            const res = this.state.dialogStates;
-            (Object.keys(dialogStates) as Array<keyof DialogStates>).forEach(key => {
-                if (!Object.hasOwn(fields, key)) return;
-                res[key].data.errors = { fields: fields[key] };
-            });
-            this.setState({ dialogStates: res });
-
-            if (global.length) {
-                let msg = pb.renderFieldErrorsAsList(global);
-                msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
-                toast.error(msg);
-            }
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
+            toast.error(msg);
         }
+    };
 
-        this.#loadScenesDebounced();
-    };
-    #sceneFullscreenWidgetSubmitDebounced = debounce(this.#sceneFullscreenWidgetSubmit, 300);
-    #sceneRemoteWidgetUrlChange = (url: string): void => {
-        this.setState({ remoteWidgetUrl: { value: url, errors: null } });
-    };
     #sceneAddRender = (): ReactElement => {
-        const {
-            openDialogKind,
-            remoteWidgetUrl,
-            recentRemoteWidgets,
-            dialogStates: {
-                clock,
-                ticker,
-                blockHeight,
-                blockchainData,
-                braiinsPool,
-                halvingCountdown,
-                remoteImage,
-                remoteWidget,
-            },
-            timezones,
-            accounts,
-        } = this.state;
-        const cancel = this.#openDialogCancel;
+        const { openDialogKind } = this.state;
+
+        const fullscreenWidgets = this.state.manifestWidgets.filter(m => m.supportedSizes.includes(pb.WidgetSize.FULL));
 
         return (
             <Fragment>
                 <Comp.FormSceneSelect
                     isOpen={openDialogKind === 'scene-select'}
-                    onClose={cancel}
-                    onSelection={this.#sceneAddFullscreen}
-                    remoteWidgetUrl={{
-                        value: remoteWidgetUrl.value,
-                        error: pb.renderFieldErrorsAsList(remoteWidgetUrl.errors),
-                        disabled: false,
-                        onChange: this.#sceneRemoteWidgetUrlChange,
-                        onSubmit: this.#sceneAddFullscreenRemote,
-                    }}
-                    remoteWidgetRecents={recentRemoteWidgets}
+                    onClose={this.#openDialogCancel}
+                    onManifestSelection={this.#sceneAddFullscreenManifest}
+                    manifestWidgets={fullscreenWidgets}
+                    isLoading={this.state.manifestsLoading}
                 />
 
-                <Comp.FormWidgetClock
-                    isOpen={openDialogKind === 'clock'}
-                    isEdit={openDialogKind === 'clock' && clock.isEdit}
-                    onClose={cancel}
-                    error={openDialogKind === 'clock' ? pb.renderFieldErrorsAsList(clock.data.errors?.global) : null}
-                    // No size selector for the fullscreen widgets we operate with here
-                    widgetSize={null}
-                    clockStyle={this.#getFormFieldStruct('clock', 'clockStyle')}
-                    fontStyle={this.#getFormFieldStruct('clock', 'fontStyle')}
-                    showDate={this.#getFormFieldStruct('clock', 'showDate')}
-                    showSeconds={this.#getFormFieldStruct('clock', 'showSeconds')}
-                    showTimezone={this.#getFormFieldStruct('clock', 'showTimezone')}
-                    timezone={{ ...this.#getFormFieldStruct('clock', 'timezone'), options: timezones }}
-
-                    // showWeather={this.#clockGetFieldStruct('clock', 'showWeather')}
-                    // weatherLocation={this.#clockGetFieldStruct('clock', 'weatherLocation')}
-                />
-
-                <Comp.FormWidgetTicker
-                    isOpen={openDialogKind === 'ticker'}
-                    isEdit={openDialogKind === 'ticker' && ticker.isEdit}
-                    onClose={cancel}
-                    error={openDialogKind === 'ticker' ? pb.renderFieldErrorsAsList(ticker.data?.errors?.global) : null}
-                    // No size selector for the fullscreen widgets we operate with here
-                    widgetSize={null}
-                    timeFrame={this.#getFormFieldStruct('ticker', 'timeFrame')}
-                />
-
-                <Comp.FormWidgetBlockHeight
-                    isOpen={openDialogKind === 'blockHeight'}
-                    isEdit={openDialogKind === 'blockHeight' && blockHeight.isEdit}
-                    onClose={cancel}
-                    error={
-                        openDialogKind === 'blockHeight'
-                            ? pb.renderFieldErrorsAsList(blockHeight.data?.errors?.global)
-                            : null
-                    }
-                    // No size selector for the fullscreen widgets we operate with here
-                    widgetSize={null}
-                    showDate={this.#getFormFieldStruct('blockHeight', 'showDate')}
-                    fontStyle={this.#getFormFieldStruct('blockHeight', 'fontStyle')}
-                />
-
-                <Comp.FormWidgetBlockchainData
-                    isOpen={openDialogKind === 'blockchainData'}
-                    isEdit={openDialogKind === 'blockchainData' && blockchainData.isEdit}
-                    onClose={cancel}
-                    error={
-                        openDialogKind === 'blockchainData'
-                            ? pb.renderFieldErrorsAsList(blockchainData.data?.errors?.global)
-                            : null
-                    }
-                    // No size selector for the fullscreen widgets we operate with here
-                    widgetSize={null}
-                />
-
-                <Comp.FormWidgetHalvingCountdown
-                    isOpen={openDialogKind === 'halvingCountdown'}
-                    isEdit={openDialogKind === 'halvingCountdown' && halvingCountdown.isEdit}
-                    onClose={cancel}
-                    error={
-                        openDialogKind === 'halvingCountdown'
-                            ? pb.renderFieldErrorsAsList(halvingCountdown.data?.errors?.global)
-                            : null
-                    }
-                    // No size selector for the fullscreen widgets we operate with here
-                    widgetSize={null}
-                />
-
-                <Comp.FormWidgetBraiinsPool
-                    isOpen={openDialogKind === 'braiinsPool'}
-                    isEdit={openDialogKind === 'braiinsPool' && braiinsPool.isEdit}
-                    onClose={cancel}
-                    error={
-                        openDialogKind === 'braiinsPool'
-                            ? pb.renderFieldErrorsAsList(braiinsPool.data?.errors?.global)
-                            : null
-                    }
-                    // No size selector for the fullscreen widgets we operate with here
-                    widgetSize={null}
-                    accountId={{
-                        ...this.#getFormFieldStruct('braiinsPool', 'accountId'),
-                        options: accounts,
-                    }}
-                    sceneStyle={this.#getFormFieldStruct('braiinsPool', 'sceneStyle')}
-                    timeFrame={this.#getFormFieldStruct('braiinsPool', 'timeFrame')}
-                />
-
-                <Comp.FormWidgetRemoteImage
-                    isOpen={openDialogKind === 'remoteImage'}
-                    isEdit={openDialogKind === 'remoteImage' && remoteImage.isEdit}
-                    onClose={cancel}
-                    error={
-                        openDialogKind === 'remoteImage'
-                            ? pb.renderFieldErrorsAsList(remoteImage.data?.errors?.global)
-                            : null
-                    }
-                    // No size selector for the fullscreen widgets we operate with here
-                    widgetSize={null}
-                    url={this.#getFormFieldStruct('remoteImage', 'url')}
-                    refreshDurationSec={this.#getFormFieldStruct('remoteImage', 'refreshDurationSec')}
-                    imageScaleMode={this.#getFormFieldStruct('remoteImage', 'imageScaleMode')}
-                />
-
-                <Comp.FormWidgetRemoteWidget
-                    isOpen={openDialogKind === 'remoteWidget'}
-                    isEdit={openDialogKind === 'remoteWidget' && remoteWidget.isEdit}
-                    onClose={cancel}
-                    error={
-                        openDialogKind === 'remoteWidget'
-                            ? pb.renderFieldErrorsAsList(remoteWidget.data?.errors?.global)
-                            : null
-                    }
-                    // No size selector for the fullscreen widgets we operate with here
-                    widgetSize={null}
-                    url={this.#getFormFieldStruct('remoteWidget', 'url')}
-                    name={this.#getFormFieldStruct('remoteWidget', 'name')}
-                    params={this.#getFormFieldStruct('remoteWidget', 'params')}
+                <Comp.FormWidgetManifest
+                    isOpen={openDialogKind === 'manifest'}
+                    onSave={this.#handleManifestFormDone}
+                    onCancel={this.#openDialogCancel}
+                    error={null}
+                    manifest={this.state.manifestForm.manifest}
+                    params={this.state.manifestForm.params}
+                    onParamChange={this.#handleManifestParamChange}
+                    timezones={this.state.timezones}
                 />
             </Fragment>
         );
     };
 
     //
-    // /Scene list handlers
+    // Scene list handlers
     //
 
     #getScene = (id: string): null | pb.Scene => {
@@ -850,7 +386,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to move the widget!' });
+            msg ||= formatMessage({ defaultMessage: 'Failed to move widget!' });
             toast.error(msg);
         }
 
@@ -866,6 +402,14 @@ class View extends Component<Props, State> {
 
         // Optimistic update first
         this.setState(s => ({ scenes: s.scenes.map(x => (x.id === id ? { ...x, cycleDurationSec } : x)) }));
+
+        // Skip submit when the value violates the proto's >= 1 contract.
+        // The input already flags this visually via Carbon's min=1 constraint;
+        // no point spamming the backend with rejections.
+        if (cycleDurationSec !== undefined && (Number.isNaN(cycleDurationSec) || cycleDurationSec < 1)) {
+            return;
+        }
+
         this.#sceneListSetDurationSubmit(id, cycleDurationSec);
     };
     private abortSceneSetDuration = pb.abort.get();
@@ -929,7 +473,7 @@ class View extends Component<Props, State> {
             // Optimistic update first
             this.setState(s => ({ scenes: s.scenes.filter(x => x.id !== id) }));
 
-            pb.rpc.scenes.removeScene({ value: id }, { signal });
+            await pb.rpc.scenes.removeScene({ value: id }, { signal });
             toast.success(formatMessage({ defaultMessage: 'Widget deleted!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -961,7 +505,7 @@ class View extends Component<Props, State> {
                 return { scenes: res };
             });
 
-            pb.rpc.scenes.cloneScene({ value: id }, { signal });
+            await pb.rpc.scenes.cloneScene({ value: id }, { signal });
             toast.success(formatMessage({ defaultMessage: 'Widget cloned!' }));
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -976,165 +520,50 @@ class View extends Component<Props, State> {
 
     #sceneListEdit = (id: string): void => {
         const { navigate } = this.props;
+        const { formatMessage } = this.props.intl;
         const scene = this.#getScene(id);
         const kind = scene?.kind;
 
         switch (kind?.case) {
             case null:
             case undefined:
-                break;
+                return;
 
-            case 'combined': {
+            case 'combined':
                 navigate(URLS.pages.display.combined.getHref(id), { replace: false });
-                break;
-            }
+                return;
 
-            // fullscreen
-            default: {
-                const widgetKind = kind?.value.widget?.kind;
-                switch (widgetKind?.value.case) {
-                    case undefined:
-                        break;
+            case 'fullscreen': {
+                const widget = kind.value.widget;
+                const widgetUid = widget?.config?.widgetUid;
+                if (!widgetUid) {
+                    toast.error(formatMessage({ defaultMessage: 'Scene has no widget configured.' }));
+                    return;
+                }
 
-                    case 'clock': {
-                        const ds = getInitialDialogStates();
-                        ds.clock.sceneID = id;
-                        ds.clock.isEdit = true;
-                        ds.clock.data.values = Comp.unpackClockWidgetKind(widgetKind, pb.WidgetSize.FULL);
+                const manifest = this.state.manifestLookup.get(widgetUid);
+                if (!manifest) {
+                    toast.error(
+                        formatMessage({ defaultMessage: 'Unknown widget type — no matching manifest installed.' }),
+                    );
+                    return;
+                }
 
-                        this.setState(
-                            // Set state
-                            { openDialogKind: 'clock', dialogStates: ds },
-                            // ...and open the dialog
-                            () => this.#previewOpen(id),
-                        );
-
-                        break;
-                    }
-
-                    case 'tickerBtc': {
-                        const ds = getInitialDialogStates();
-                        ds.ticker.sceneID = id;
-                        ds.ticker.isEdit = true;
-                        ds.ticker.data.values = Comp.unpackTicketWidgetKind(widgetKind, pb.WidgetSize.FULL);
-
-                        this.setState(
-                            // Set state
-                            { openDialogKind: 'ticker', dialogStates: ds },
-                            // ...and open the dialog
-                            () => this.#previewOpen(id),
-                        );
-
-                        break;
-                    }
-
-                    case 'blockHeight': {
-                        const ds = getInitialDialogStates();
-                        ds.blockHeight.sceneID = id;
-                        ds.blockHeight.isEdit = true;
-                        ds.blockHeight.data.values = Comp.unpackBlockHeightWidgetKind(widgetKind, pb.WidgetSize.FULL);
-
-                        this.setState(
-                            // Set state
-                            { openDialogKind: 'blockHeight', dialogStates: ds },
-                            // ...and open the dialog
-                            () => this.#previewOpen(id),
-                        );
-
-                        break;
-                    }
-
-                    case 'blockchainData': {
-                        const ds = getInitialDialogStates();
-                        ds.blockchainData.sceneID = id;
-                        ds.blockchainData.isEdit = true;
-                        ds.blockchainData.data.values = Comp.unpackBlockchainDataWidgetKind(
-                            widgetKind,
-                            pb.WidgetSize.FULL,
-                        );
-
-                        this.setState(
-                            // Set state
-                            { openDialogKind: 'blockchainData', dialogStates: ds },
-                            // ...and open the dialog
-                            () => this.#previewOpen(id),
-                        );
-
-                        break;
-                    }
-
-                    case 'braiinsPool': {
-                        const ds = getInitialDialogStates();
-                        ds.braiinsPool.sceneID = id;
-                        ds.braiinsPool.isEdit = true;
-                        ds.braiinsPool.data.values = Comp.unpackBraiinsPoolWidgetKind(widgetKind, pb.WidgetSize.FULL);
-
-                        this.setState(
-                            // Set state
-                            { openDialogKind: 'braiinsPool', dialogStates: ds },
-                            // ...and open the dialog
-                            () => this.#previewOpen(id),
-                        );
-
-                        break;
-                    }
-
-                    case 'remoteImage': {
-                        const ds = getInitialDialogStates();
-                        ds.remoteImage.sceneID = id;
-                        ds.remoteImage.isEdit = true;
-                        ds.remoteImage.data.values = Comp.unpackRemoteImageWidgetKind(widgetKind, pb.WidgetSize.FULL);
-
-                        this.setState(
-                            // Set state
-                            { openDialogKind: 'remoteImage', dialogStates: ds },
-                            // ...and open the dialog
-                            () => this.#previewOpen(id),
-                        );
-
-                        break;
-                    }
-
-                    case 'halvingCountdown': {
-                        const ds = getInitialDialogStates();
-                        ds.halvingCountdown.sceneID = id;
-                        ds.halvingCountdown.isEdit = true;
-                        ds.halvingCountdown.data.values = Comp.unpackHalvingCountdownWidgetKind(
-                            widgetKind,
-                            pb.WidgetSize.FULL,
-                        );
-
-                        this.setState(
-                            // Set state
-                            { openDialogKind: 'halvingCountdown', dialogStates: ds },
-                            // ...and open the dialog
-                            () => this.#previewOpen(id),
-                        );
-
-                        break;
-                    }
-
-                    case 'remoteWidget': {
-                        const ds = getInitialDialogStates();
-                        ds.remoteWidget.sceneID = id;
-                        ds.remoteWidget.isEdit = true;
-                        ds.remoteWidget.data.values = Comp.unpackRemoteWidgetKind(widgetKind, pb.WidgetSize.FULL);
-
-                        this.setState(
-                            // Set state
-                            { openDialogKind: 'remoteWidget', dialogStates: ds },
-                            // ...and open the dialog
-                            () => this.#previewOpen(id),
-                        );
-
-                        break;
-                    }
-
-                    default: {
-                        assertUndefined(widgetKind?.value, 'Invalid widget kind!');
+                const params: Record<string, string> = {};
+                if (widget.config?.params && typeof widget.config.params === 'object') {
+                    for (const [k, v] of Object.entries(widget.config.params as Record<string, unknown>)) {
+                        params[k] = typeof v === 'string' ? v : JSON.stringify(v);
                     }
                 }
-                break;
+
+                this.setState(
+                    {
+                        openDialogKind: 'manifest',
+                        manifestForm: { manifest, sceneID: id, widgetID: widget.id, params },
+                    },
+                    () => this.#previewOpen(id),
+                );
+                return;
             }
         }
     };
@@ -1307,6 +736,7 @@ class View extends Component<Props, State> {
                 <main>
                     <Comp.SceneOverviewList
                         scenes={scenes}
+                        manifests={this.state.manifestLookup}
                         onMove={this.#sceneListMove}
                         onEdit={this.#sceneListEdit}
                         onClone={this.#sceneListClone}
@@ -1331,7 +761,7 @@ interface ScreenCyclingConfigFormProps {
     render(x: { title: string; content: ReactElement }): ReactElement;
 }
 function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElement {
-    const { cycle, duration, /* transitionEffect */ render } = props;
+    const { cycle, duration, render } = props;
     const intl = useIntl();
 
     const { formatMessage } = intl;
@@ -1341,24 +771,12 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
         off: formatMessage({ defaultMessage: 'Off' }),
 
         defaultDuration: formatMessage({ defaultMessage: 'Default Display Duration' }),
-        // txEffect: formatMessage({ defaultMessage: 'Transition Effect' }),
         title: formatMessage({ defaultMessage: 'Screen Cycling' }),
     };
 
-    /**
-     * CDS expects specific children types in some places and passes down props that they then use in the child.
-     * One example for all is children of menus where they get some handlers.
-     *
-     * Here, it would however produce errors as form passes everthing it does not consume down to the form element.
-     * The extra function wrapper makes sure that no props are passed down to the form element.
-     */
     const Content = (): ReactElement => {
         return (
-            <Form
-                className={css.screenCycleForm}
-                // Prevents click events from bubbling up to the dropdown menu and closing it.
-                onClick={stopEventPropagation}
-            >
+            <Form className={css.screenCycleForm} onClick={stopEventPropagation}>
                 <Toggle
                     id={$('cycle-active')}
                     size="md"
@@ -1379,17 +797,6 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
                     itemToString={pb.sceneCycleDurationToString}
                     renderSelectedItem={pb.sceneCycleDurationToString}
                 />
-
-                {/* <Dropdown<pb.SceneCyclingTransition>
-                    id={$('cycle-effect')}
-                    label={txt.txEffect}
-                    titleText={txt.txEffect}
-                    items={pb.sceneCyclingEffectOptions}
-                    onChange={x => (x.selectedItem ? transitionEffect.onChange?.(x.selectedItem) : null)}
-                    selectedItem={transitionEffect.value ?? undefined}
-                    itemToString={x => pb.sceneCyclingEffectToString(intl, x) ?? 'N/A'}
-                    renderSelectedItem={x => pb.sceneCyclingEffectToString(intl, x) ?? 'N/A'}
-                /> */}
             </Form>
         );
     };

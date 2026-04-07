@@ -1,6 +1,7 @@
-import type { Meta } from '@storybook/react';
+import type { CSSProperties } from 'react';
 import { action } from 'storybook/actions';
 import styled from '@emotion/styled';
+import type { Meta } from '@storybook/react';
 
 import * as pb from '@/proto';
 import { ScenePreview } from '../images/preview';
@@ -10,9 +11,18 @@ import {
     SceneOverviewRowSkeleton,
 } from './SceneOverviewRow';
 
+const clockManifest = pb.create(pb.WidgetManifestSchema, {
+    uid: 'manifest-clock',
+    name: 'Clock',
+    description: 'Displays the current time.',
+    version: '0.0.0',
+    supportedSizes: [pb.WidgetSize.FULL],
+    params: [],
+});
+
 export default {
-    title: 'display/components/SceneOverviewRow',
-    component: SceneOverviewRow,
+    title: 'Display/Components/SceneOverviewRow',
+    component: Component,
     args: {
         id: '1',
 
@@ -31,11 +41,7 @@ export default {
 
         icon: null,
         title: '',
-        type: {
-            local: true,
-            cloud: true,
-            night: true,
-        },
+        type: { night: true },
         description: '',
         layout: 'row',
     } satisfies SceneOverviewRowProps,
@@ -51,6 +57,7 @@ const Group = styled.div`
     flex-direction: column;
     gap: 4px;
 `;
+
 const layouts: Array<[layout: SceneOverviewRowProps['layout'], containerStyles: CSSProperties]> = [
     ['row', {}],
     ['card', { width: 400, marginInline: 'auto' }],
@@ -58,58 +65,34 @@ const layouts: Array<[layout: SceneOverviewRowProps['layout'], containerStyles: 
 
 export function SceneOverviewRow(args: SceneOverviewRowProps) {
     return (
-        <Base
-            children={layouts.map(([layout, styles]) => (
+        <Base>
+            {layouts.map(([layout, styles]) => (
                 <Group key={layout} style={styles}>
                     <Component
                         {...args}
                         icon={<ScenePreview kind="combined" />}
                         title="Combined Scene"
-                        type={{ local: true, cloud: true, night: true }}
+                        type={{ night: true }}
                         description="Clock, Clock, Weather, Ticker (BTC-USD)"
                         layout={layout}
                     />
                     <Component
                         {...args}
-                        icon={
-                            <ScenePreview
-                                kind={{
-                                    case: 'clock',
-                                    value: pb.create(pb.ClockWidgetSchema, {
-                                        clockStyle: pb.ClockWidget_ClockStyle.ANALOG_RECT,
-                                    }),
-                                }}
-                            />
-                        }
-                        title="Clock – Analog Rectangular"
-                        description="Horizontal analog layout in a rectangular frame"
+                        icon={<ScenePreview kind={{ manifest: clockManifest }} />}
+                        title="Clock"
+                        description="Displays the current time."
                         layout={layout}
                     />
                     <Component
                         {...args}
-                        icon={
-                            <ScenePreview
-                                kind={{ case: 'tickerBtc', value: pb.create(pb.TickerBtcWidgetSchema, {}) }}
-                            />
-                        }
-                        title="Ticker: BTC Price"
-                        description="Exsul potuss, tanquam velox extum."
-                        layout={layout}
-                    />
-                    <Component
-                        {...args}
-                        icon={
-                            <ScenePreview
-                                kind={{ case: 'blockHeight', value: pb.create(pb.BlockHeightWidgetSchema, {}) }}
-                            />
-                        }
-                        title="Block Height"
-                        description="Teachers, winds, and special saints will always protect them."
+                        icon={<ScenePreview kind={null} />}
+                        title="N/A"
+                        description="No preview — ScenePreview returns null when kind is missing."
                         layout={layout}
                     />
                 </Group>
             ))}
-        />
+        </Base>
     );
 }
 SceneOverviewRow.storyName = 'SceneOverviewRow';

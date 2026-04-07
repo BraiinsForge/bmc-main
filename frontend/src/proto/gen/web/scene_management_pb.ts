@@ -5,12 +5,8 @@
 import type { GenEnum, GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv2';
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
 import type { EmptySchema, StringValueSchema } from '@bufbuild/protobuf/wkt';
-import {
-    file_google_protobuf_empty,
-    file_google_protobuf_struct,
-    file_google_protobuf_wrappers,
-} from '@bufbuild/protobuf/wkt';
-import type { JsonObject, Message } from '@bufbuild/protobuf';
+import { file_google_protobuf_empty, file_google_protobuf_wrappers } from '@bufbuild/protobuf/wkt';
+import type { Message } from '@bufbuild/protobuf';
 
 /**
  * Describes the file web/scene_management.proto.
@@ -18,8 +14,8 @@ import type { JsonObject, Message } from '@bufbuild/protobuf';
 export const file_web_scene_management: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chp3ZWIvc2NlbmVfbWFuYWdlbWVudC5wcm90bxIPYnJhaWlucy5ibWMud2ViIr8CCgVTY2VuZRIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgBiAEBEjcKCmZ1bGxzY3JlZW4YBCABKAsyIS5icmFpaW5zLmJtYy53ZWIuU2NlbmUuRnVsbHNjcmVlbkgAEjMKCGNvbWJpbmVkGAUgASgLMh8uYnJhaWlucy5ibWMud2ViLlNjZW5lLkNvbWJpbmVkSAAaNQoKRnVsbHNjcmVlbhInCgZ3aWRnZXQYASABKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0GjQKCENvbWJpbmVkEigKB3dpZGdldHMYASADKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0QgYKBGtpbmRCFQoTX2N5Y2xlX2R1cmF0aW9uX3NlYyI7ChFHZXRTY2VuZXNSZXNwb25zZRImCgZzY2VuZXMYASADKAsyFi5icmFpaW5zLmJtYy53ZWIuU2NlbmUiTQoZQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBIwCgt3aWRnZXRfa2luZBgBIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRLaW5kImkKElVwZGF0ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgAiAEBQhUKE19jeWNsZV9kdXJhdGlvbl9zZWMiLQoQTW92ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRINCgVpbmRleBgCIAEoDSI2Cg1TY2VuZVJlc3BvbnNlEiUKBXNjZW5lGAEgASgLMhYuYnJhaWlucy5ibWMud2ViLlNjZW5lIioKDldpZGdldFBvc2l0aW9uEgsKA3JvdxgBIAEoDRILCgNjb2wYAiABKA0inQEKBldpZGdldBIKCgJpZBgBIAEoCRIxCghwb3NpdGlvbhgCIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRQb3NpdGlvbhIpCgRzaXplGAMgASgOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSKQoEa2luZBgEIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRLaW5kIq0BChBBZGRXaWRnZXRSZXF1ZXN0EhAKCHNjZW5lX2lkGAEgASgJEjEKCHBvc2l0aW9uGAIgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYAyABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRIpCgRraW5kGAQgASgLMhsuYnJhaWlucy5ibWMud2ViLldpZGdldEtpbmQivAEKE1VwZGF0ZVdpZGdldFJlcXVlc3QSCgoCaWQYASABKAkSEAoIc2NlbmVfaWQYAiABKAkSMQoIcG9zaXRpb24YAyABKAsyHy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0UG9zaXRpb24SKQoEc2l6ZRgEIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRTaXplEikKBGtpbmQYBSABKAsyGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0S2luZCIzChNSZW1vdmVXaWRnZXRSZXF1ZXN0EgoKAmlkGAEgASgJEhAKCHNjZW5lX2lkGAIgASgJIjkKDldpZGdldFJlc3BvbnNlEicKBndpZGdldBgBIAEoCzIXLmJyYWlpbnMuYm1jLndlYi5XaWRnZXQi8AMKCldpZGdldEtpbmQSLQoFY2xvY2sYASABKAsyHC5icmFpaW5zLmJtYy53ZWIuQ2xvY2tXaWRnZXRIABI2Cgp0aWNrZXJfYnRjGAIgASgLMiAuYnJhaWlucy5ibWMud2ViLlRpY2tlckJ0Y1dpZGdldEgAEjoKDGJsb2NrX2hlaWdodBgDIAEoCzIiLmJyYWlpbnMuYm1jLndlYi5CbG9ja0hlaWdodFdpZGdldEgAEjoKDGJyYWlpbnNfcG9vbBgEIAEoCzIiLmJyYWlpbnMuYm1jLndlYi5CcmFpaW5zUG9vbFdpZGdldEgAEjoKDHJlbW90ZV9pbWFnZRgFIAEoCzIiLmJyYWlpbnMuYm1jLndlYi5SZW1vdGVJbWFnZVdpZGdldEgAEkAKD2Jsb2NrY2hhaW5fZGF0YRgGIAEoCzIlLmJyYWlpbnMuYm1jLndlYi5CbG9ja2NoYWluRGF0YVdpZGdldEgAEjYKDXJlbW90ZV93aWRnZXQYByABKAsyHS5icmFpaW5zLmJtYy53ZWIuUmVtb3RlV2lkZ2V0SAASRAoRaGFsdmluZ19jb3VudGRvd24YCCABKAsyJy5icmFpaW5zLmJtYy53ZWIuSGFsdmluZ0NvdW50ZG93bldpZGdldEgAQgcKBXZhbHVlIuYCCgtDbG9ja1dpZGdldBI8CgtjbG9ja19zdHlsZRgBIAEoDjInLmJyYWlpbnMuYm1jLndlYi5DbG9ja1dpZGdldC5DbG9ja1N0eWxlEjYKEm51bWJlcnNfZm9udF9zdHlsZRgCIAEoDjIaLmJyYWlpbnMuYm1jLndlYi5Gb250U3R5bGUSEQoJc2hvd19kYXRlGAMgASgIEhQKDHNob3dfc2Vjb25kcxgEIAEoCBIVCg1zaG93X3RpbWV6b25lGAUgASgIEhUKCHRpbWV6b25lGAYgASgJSACIAQEifQoKQ2xvY2tTdHlsZRIbChdDTE9DS19TVFlMRV9VTlNQRUNJRklFRBAAEhwKGENMT0NLX1NUWUxFX0FOQUxPR19ST1VORBABEhsKF0NMT0NLX1NUWUxFX0FOQUxPR19SRUNUEAISFwoTQ0xPQ0tfU1RZTEVfRElHSVRBTBADQgsKCV90aW1lem9uZSLgAgoPVGlja2VyQnRjV2lkZ2V0Ej4KCnRpbWVfZnJhbWUYASABKA4yKi5icmFpaW5zLmJtYy53ZWIuVGlja2VyQnRjV2lkZ2V0LlRpbWVGcmFtZSKMAgoJVGltZUZyYW1lEhoKFlRJTUVfRlJBTUVfVU5TUEVDSUZJRUQQABIUChBUSU1FX0ZSQU1FX0RBWV8xEAESFQoRVElNRV9GUkFNRV9XRUVLXzEQAhIVChFUSU1FX0ZSQU1FX1dFRUtfMhADEhYKElRJTUVfRlJBTUVfTU9OVEhfMRAEEhYKElRJTUVfRlJBTUVfTU9OVEhfMxAFEhYKElRJTUVfRlJBTUVfTU9OVEhfNhAGEhUKEVRJTUVfRlJBTUVfWUVBUl8xEAcSFQoRVElNRV9GUkFNRV9ZRUFSXzIQCBIVChFUSU1FX0ZSQU1FX1lFQVJfNRAJEhIKDlRJTUVfRlJBTUVfQUxMEAoiYwoRQmxvY2tIZWlnaHRXaWRnZXQSFgoOc2hvd190aW1lc3RhbXAYASABKAgSNgoSbnVtYmVyc19mb250X3N0eWxlGAIgASgOMhouYnJhaWlucy5ibWMud2ViLkZvbnRTdHlsZSLPAwoRQnJhaWluc1Bvb2xXaWRnZXQSTwoSYnJhaWluc19wb29sX3N0eWxlGAEgASgOMjMuYnJhaWlucy5ibWMud2ViLkJyYWlpbnNQb29sV2lkZ2V0LkJyYWlpbnNQb29sU3R5bGUSQAoKdGltZV9mcmFtZRgCIAEoDjIsLmJyYWlpbnMuYm1jLndlYi5CcmFpaW5zUG9vbFdpZGdldC5UaW1lRnJhbWUSFwoKYWNjb3VudF9pZBgDIAEoCUgAiAEBIngKEEJyYWlpbnNQb29sU3R5bGUSIgoeQlJBSUlOU19QT09MX1NUWUxFX1VOU1BFQ0lGSUVEEAASHwobQlJBSUlOU19QT09MX1NUWUxFX09WRVJWSUVXEAESHwobQlJBSUlOU19QT09MX1NUWUxFX0JJR0NIQVJUEAIihAEKCVRpbWVGcmFtZRIaChZUSU1FX0ZSQU1FX1VOU1BFQ0lGSUVEEAASFQoRVElNRV9GUkFNRV9IT1VSXzQQARIWChJUSU1FX0ZSQU1FX0hPVVJfMTIQAhIWChJUSU1FX0ZSQU1FX0hPVVJfMjQQAxIUChBUSU1FX0ZSQU1FX0RBWV83EARCDQoLX2FjY291bnRfaWQi9AEKEVJlbW90ZUltYWdlV2lkZ2V0EgsKA3VybBgBIAEoCRIcChRyZWZyZXNoX2R1cmF0aW9uX3NlYxgCIAEoDRJLChBpbWFnZV9zY2FsZV9tb2RlGAMgASgOMjEuYnJhaWlucy5ibWMud2ViLlJlbW90ZUltYWdlV2lkZ2V0LkltYWdlU2NhbGVNb2RlImcKDkltYWdlU2NhbGVNb2RlEiAKHElNQUdFX1NDQUxFX01PREVfVU5TUEVDSUZJRUQQABIYChRJTUFHRV9TQ0FMRV9NT0RFX0ZJVBABEhkKFUlNQUdFX1NDQUxFX01PREVfRklMTBACIoABCgxSZW1vdGVXaWRnZXQSDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRISCgp3aWRnZXRfdXJsGAMgASgJEhAKCGljb25fdXJsGAQgASgJEicKBnBhcmFtcxgFIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QiLwoZUmVtb3RlV2lkZ2V0UGFyYW1zUmVxdWVzdBISCgp3aWRnZXRfdXJsGAEgASgJIlMKGlJlbW90ZVdpZGdldFBhcmFtc1Jlc3BvbnNlEjUKFHJlbW90ZV93aWRnZXRfcGFyYW1zGAEgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCJbChtSZWNlbnRSZW1vdGVXaWRnZXRzUmVzcG9uc2USPAoVcmVjZW50X3JlbW90ZV93aWRnZXRzGAEgAygLMh0uYnJhaWlucy5ibWMud2ViLlJlbW90ZVdpZGdldCIYChZIYWx2aW5nQ291bnRkb3duV2lkZ2V0Ip4BCgxTY2VuZUN5Y2xpbmcSIQoZYXV0b21hdGljX2N5Y2xpbmdfZW5hYmxlZBgBIAEoCBIuCiZhdXRvbWF0aWNfY3ljbGluZ19kZWZhdWx0X2R1cmF0aW9uX3NlYxgCIAEoDRI7Cgp0cmFuc2l0aW9uGAMgASgOMicuYnJhaWlucy5ibWMud2ViLlNjZW5lQ3ljbGluZ1RyYW5zaXRpb24iTwoXR2V0U2NlbmVDeWNsaW5nUmVzcG9uc2USNAoNc2NlbmVfY3ljbGluZxgBIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmciTgoWU2V0U2NlbmVDeWNsaW5nUmVxdWVzdBI0Cg1zY2VuZV9jeWNsaW5nGAEgASgLMh0uYnJhaWlucy5ibWMud2ViLlNjZW5lQ3ljbGluZyIWChRCbG9ja2NoYWluRGF0YVdpZGdldCqFAQoKV2lkZ2V0U2l6ZRIbChdXSURHRVRfU0laRV9VTlNQRUNJRklFRBAAEhUKEVdJREdFVF9TSVpFX1NNQUxMEAESFgoSV0lER0VUX1NJWkVfTUVESVVNEAISFQoRV0lER0VUX1NJWkVfTEFSR0UQAxIUChBXSURHRVRfU0laRV9GVUxMEAQqaQoJRm9udFN0eWxlEhoKFkZPTlRfU1RZTEVfVU5TUEVDSUZJRUQQABIUChBGT05UX1NUWUxFX0xJR0hUEAESFQoRRk9OVF9TVFlMRV9NRURJVU0QAhITCg9GT05UX1NUWUxFX0JPTEQQAyqJAQoWU2NlbmVDeWNsaW5nVHJhbnNpdGlvbhIoCiRTQ0VORV9DWUNMSU5HX1RSQU5TSVRJT05fVU5TUEVDSUZJRUQQABIiCh5TQ0VORV9DWUNMSU5HX1RSQU5TSVRJT05fU0xJREUQARIhCh1TQ0VORV9DWUNMSU5HX1RSQU5TSVRJT05fRkFERRACMqUKChZTY2VuZU1hbmFnZW1lbnRTZXJ2aWNlEkcKCUdldFNjZW5lcxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRoiLmJyYWlpbnMuYm1jLndlYi5HZXRTY2VuZXNSZXNwb25zZRJICghHZXRTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoeLmJyYWlpbnMuYm1jLndlYi5TY2VuZVJlc3BvbnNlEl4KEkFkZEZ1bGxzY3JlZW5TY2VuZRIqLmJyYWlpbnMuYm1jLndlYi5BZGRGdWxsc2NyZWVuU2NlbmVSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkgKEEFkZENvbWJpbmVkU2NlbmUSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUSSgoLVXBkYXRlU2NlbmUSIy5icmFpaW5zLmJtYy53ZWIuVXBkYXRlU2NlbmVSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkYKCU1vdmVTY2VuZRIhLmJyYWlpbnMuYm1jLndlYi5Nb3ZlU2NlbmVSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkgKCkNsb25lU2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUSQwoLUmVtb3ZlU2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSRgoMUHJldmlld1NjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5MAESTAoJQWRkV2lkZ2V0EiEuYnJhaWlucy5ibWMud2ViLkFkZFdpZGdldFJlcXVlc3QaHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUSTAoMVXBkYXRlV2lkZ2V0EiQuYnJhaWlucy5ibWMud2ViLlVwZGF0ZVdpZGdldFJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSTAoMUmVtb3ZlV2lkZ2V0EiQuYnJhaWlucy5ibWMud2ViLlJlbW92ZVdpZGdldFJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkScAoVR2V0UmVtb3RlV2lkZ2V0UGFyYW1zEiouYnJhaWlucy5ibWMud2ViLlJlbW90ZVdpZGdldFBhcmFtc1JlcXVlc3QaKy5icmFpaW5zLmJtYy53ZWIuUmVtb3RlV2lkZ2V0UGFyYW1zUmVzcG9uc2USXgoWR2V0UmVjZW50UmVtb3RlV2lkZ2V0cxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRosLmJyYWlpbnMuYm1jLndlYi5SZWNlbnRSZW1vdGVXaWRnZXRzUmVzcG9uc2USUwoPR2V0U2NlbmVDeWNsaW5nEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiguYnJhaWlucy5ibWMud2ViLkdldFNjZW5lQ3ljbGluZ1Jlc3BvbnNlElIKD1NldFNjZW5lQ3ljbGluZxInLmJyYWlpbnMuYm1jLndlYi5TZXRTY2VuZUN5Y2xpbmdSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5YgZwcm90bzM',
-        [file_google_protobuf_empty, file_google_protobuf_struct, file_google_protobuf_wrappers],
+        'Chp3ZWIvc2NlbmVfbWFuYWdlbWVudC5wcm90bxIPYnJhaWlucy5ibWMud2ViIr8CCgVTY2VuZRIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgBiAEBEjcKCmZ1bGxzY3JlZW4YBCABKAsyIS5icmFpaW5zLmJtYy53ZWIuU2NlbmUuRnVsbHNjcmVlbkgAEjMKCGNvbWJpbmVkGAUgASgLMh8uYnJhaWlucy5ibWMud2ViLlNjZW5lLkNvbWJpbmVkSAAaNQoKRnVsbHNjcmVlbhInCgZ3aWRnZXQYASABKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0GjQKCENvbWJpbmVkEigKB3dpZGdldHMYASADKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0QgYKBGtpbmRCFQoTX2N5Y2xlX2R1cmF0aW9uX3NlYyI7ChFHZXRTY2VuZXNSZXNwb25zZRImCgZzY2VuZXMYASADKAsyFi5icmFpaW5zLmJtYy53ZWIuU2NlbmUiSgoZQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBItCgZjb25maWcYASABKAsyHS5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0Q29uZmlnImkKElVwZGF0ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgAiAEBQhUKE19jeWNsZV9kdXJhdGlvbl9zZWMiLQoQTW92ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRINCgVpbmRleBgCIAEoDSI2Cg1TY2VuZVJlc3BvbnNlEiUKBXNjZW5lGAEgASgLMhYuYnJhaWlucy5ibWMud2ViLlNjZW5lIioKDldpZGdldFBvc2l0aW9uEgsKA3JvdxgBIAEoDRILCgNjb2wYAiABKA0ijAEKDFdpZGdldENvbmZpZxISCgp3aWRnZXRfdWlkGAEgASgJEjkKBnBhcmFtcxgCIAMoCzIpLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRDb25maWcuUGFyYW1zRW50cnkaLQoLUGFyYW1zRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKhAQoGV2lkZ2V0EgoKAmlkGAEgASgJEjEKCHBvc2l0aW9uGAIgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYAyABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRItCgZjb25maWcYBCABKAsyHS5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0Q29uZmlnIrEBChBBZGRXaWRnZXRSZXF1ZXN0EhAKCHNjZW5lX2lkGAEgASgJEjEKCHBvc2l0aW9uGAIgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYAyABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRItCgZjb25maWcYBCABKAsyHS5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0Q29uZmlnIoICChNVcGRhdGVXaWRnZXRSZXF1ZXN0EgoKAmlkGAEgASgJEhAKCHNjZW5lX2lkGAIgASgJEjEKCHBvc2l0aW9uGAMgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYBCABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRJACgZwYXJhbXMYBSADKAsyMC5icmFpaW5zLmJtYy53ZWIuVXBkYXRlV2lkZ2V0UmVxdWVzdC5QYXJhbXNFbnRyeRotCgtQYXJhbXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIjMKE1JlbW92ZVdpZGdldFJlcXVlc3QSCgoCaWQYASABKAkSEAoIc2NlbmVfaWQYAiABKAkiOQoOV2lkZ2V0UmVzcG9uc2USJwoGd2lkZ2V0GAEgASgLMhcuYnJhaWlucy5ibWMud2ViLldpZGdldCKeAQoMU2NlbmVDeWNsaW5nEiEKGWF1dG9tYXRpY19jeWNsaW5nX2VuYWJsZWQYASABKAgSLgomYXV0b21hdGljX2N5Y2xpbmdfZGVmYXVsdF9kdXJhdGlvbl9zZWMYAiABKA0SOwoKdHJhbnNpdGlvbhgDIAEoDjInLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmdUcmFuc2l0aW9uIk8KF0dldFNjZW5lQ3ljbGluZ1Jlc3BvbnNlEjQKDXNjZW5lX2N5Y2xpbmcYASABKAsyHS5icmFpaW5zLmJtYy53ZWIuU2NlbmVDeWNsaW5nIk4KFlNldFNjZW5lQ3ljbGluZ1JlcXVlc3QSNAoNc2NlbmVfY3ljbGluZxgBIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmcikwIKDldpZGdldE1hbmlmZXN0EgsKA3VpZBgBIAEoCRIMCgRuYW1lGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEg8KB3ZlcnNpb24YBCABKAkSGAoLYXV0aG9yX25hbWUYBSABKAlIAIgBARIXCgphdXRob3JfdXJsGAYgASgJSAGIAQESNAoPc3VwcG9ydGVkX3NpemVzGAcgAygOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSOAoGcGFyYW1zGAggAygLMiguYnJhaWlucy5ibWMud2ViLk1hbmlmZXN0UGFyYW1EZWZpbml0aW9uQg4KDF9hdXRob3JfbmFtZUINCgtfYXV0aG9yX3VybCLjAgoXTWFuaWZlc3RQYXJhbURlZmluaXRpb24SCwoDa2V5GAEgASgJEgwKBG5hbWUYAiABKAkSNgoKcGFyYW1fdHlwZRgDIAEoDjIiLmJyYWlpbnMuYm1jLndlYi5NYW5pZmVzdFBhcmFtVHlwZRIYCgtkZXNjcmlwdGlvbhgEIAEoCUgAiAEBEhUKDWRlZmF1bHRfdmFsdWUYBSABKAkSTQoLZW51bV92YWx1ZXMYBiADKAsyOC5icmFpaW5zLmJtYy53ZWIuTWFuaWZlc3RQYXJhbURlZmluaXRpb24uRW51bVZhbHVlc0VudHJ5EhAKA21pbhgHIAEoAUgBiAEBEhAKA21heBgIIAEoAUgCiAEBGjEKD0VudW1WYWx1ZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQg4KDF9kZXNjcmlwdGlvbkIGCgRfbWluQgYKBF9tYXgiTwobR2V0QXZhaWxhYmxlV2lkZ2V0c1Jlc3BvbnNlEjAKB3dpZGdldHMYASADKAsyHy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0TWFuaWZlc3QqhQEKCldpZGdldFNpemUSGwoXV0lER0VUX1NJWkVfVU5TUEVDSUZJRUQQABIVChFXSURHRVRfU0laRV9TTUFMTBABEhYKEldJREdFVF9TSVpFX01FRElVTRACEhUKEVdJREdFVF9TSVpFX0xBUkdFEAMSFAoQV0lER0VUX1NJWkVfRlVMTBAEKokBChZTY2VuZUN5Y2xpbmdUcmFuc2l0aW9uEigKJFNDRU5FX0NZQ0xJTkdfVFJBTlNJVElPTl9VTlNQRUNJRklFRBAAEiIKHlNDRU5FX0NZQ0xJTkdfVFJBTlNJVElPTl9TTElERRABEiEKHVNDRU5FX0NZQ0xJTkdfVFJBTlNJVElPTl9GQURFEAIq2gEKEU1hbmlmZXN0UGFyYW1UeXBlEiMKH01BTklGRVNUX1BBUkFNX1RZUEVfVU5TUEVDSUZJRUQQABIeChpNQU5JRkVTVF9QQVJBTV9UWVBFX1NUUklORxABEh8KG01BTklGRVNUX1BBUkFNX1RZUEVfQk9PTEVBThACEh4KGk1BTklGRVNUX1BBUkFNX1RZUEVfTlVNQkVSEAMSHQoZTUFOSUZFU1RfUEFSQU1fVFlQRV9BUlJBWRAEEiAKHE1BTklGRVNUX1BBUkFNX1RZUEVfVElNRVpPTkUQBTKECgoWU2NlbmVNYW5hZ2VtZW50U2VydmljZRJHCglHZXRTY2VuZXMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaIi5icmFpaW5zLmJtYy53ZWIuR2V0U2NlbmVzUmVzcG9uc2USSAoIR2V0U2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaHi5icmFpaW5zLmJtYy53ZWIuU2NlbmVSZXNwb25zZRJeChJBZGRGdWxsc2NyZWVuU2NlbmUSKi5icmFpaW5zLmJtYy53ZWIuQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJIChBBZGRDb21iaW5lZFNjZW5lEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkoKC1VwZGF0ZVNjZW5lEiMuYnJhaWlucy5ibWMud2ViLlVwZGF0ZVNjZW5lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJGCglNb3ZlU2NlbmUSIS5icmFpaW5zLmJtYy53ZWIuTW92ZVNjZW5lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJICgpDbG9uZVNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkMKC1JlbW92ZVNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkYKDFByZXZpZXdTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eTABEkwKCUFkZFdpZGdldBIhLmJyYWlpbnMuYm1jLndlYi5BZGRXaWRnZXRSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkwKDFVwZGF0ZVdpZGdldBIkLmJyYWlpbnMuYm1jLndlYi5VcGRhdGVXaWRnZXRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkwKDFJlbW92ZVdpZGdldBIkLmJyYWlpbnMuYm1jLndlYi5SZW1vdmVXaWRnZXRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElMKD0dldFNjZW5lQ3ljbGluZxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRooLmJyYWlpbnMuYm1jLndlYi5HZXRTY2VuZUN5Y2xpbmdSZXNwb25zZRJSCg9TZXRTY2VuZUN5Y2xpbmcSJy5icmFpaW5zLmJtYy53ZWIuU2V0U2NlbmVDeWNsaW5nUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJbChNHZXRBdmFpbGFibGVXaWRnZXRzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiwuYnJhaWlucy5ibWMud2ViLkdldEF2YWlsYWJsZVdpZGdldHNSZXNwb25zZRJSChFHZXRXaWRnZXRNYW5pZmVzdBIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRofLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRNYW5pZmVzdGIGcHJvdG8z',
+        [file_google_protobuf_empty, file_google_protobuf_wrappers],
     );
 
 /**
@@ -27,15 +23,11 @@ export const file_web_scene_management: GenFile =
  */
 export type Scene = Message<'braiins.bmc.web.Scene'> & {
     /**
-     * required
-     *
      * @generated from field: string id = 1;
      */
     id: string;
 
     /**
-     * required
-     *
      * @generated from field: bool enabled = 2;
      */
     enabled: boolean;
@@ -48,8 +40,6 @@ export type Scene = Message<'braiins.bmc.web.Scene'> & {
     cycleDurationSec?: number;
 
     /**
-     * required
-     *
      * @generated from oneof braiins.bmc.web.Scene.kind
      */
     kind:
@@ -81,8 +71,6 @@ export const SceneSchema: GenMessage<Scene> = /*@__PURE__*/ messageDesc(file_web
  */
 export type Scene_Fullscreen = Message<'braiins.bmc.web.Scene.Fullscreen'> & {
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.Widget widget = 1;
      */
     widget?: Widget;
@@ -139,12 +127,9 @@ export const GetScenesResponseSchema: GenMessage<GetScenesResponse> =
  */
 export type AddFullscreenSceneRequest = Message<'braiins.bmc.web.AddFullscreenSceneRequest'> & {
     /**
-     * required
-     * backend cares only about kind discriminant, frontend can send "empty" message with default values
-     *
-     * @generated from field: braiins.bmc.web.WidgetKind widget_kind = 1;
+     * @generated from field: braiins.bmc.web.WidgetConfig config = 1;
      */
-    widgetKind?: WidgetKind;
+    config?: WidgetConfig;
 };
 
 /**
@@ -160,15 +145,11 @@ export const AddFullscreenSceneRequestSchema: GenMessage<AddFullscreenSceneReque
  */
 export type UpdateSceneRequest = Message<'braiins.bmc.web.UpdateSceneRequest'> & {
     /**
-     * required
-     *
      * @generated from field: string id = 1;
      */
     id: string;
 
     /**
-     * required
-     *
      * @generated from field: bool enabled = 2;
      */
     enabled: boolean;
@@ -194,14 +175,12 @@ export const UpdateSceneRequestSchema: GenMessage<UpdateSceneRequest> =
  */
 export type MoveSceneRequest = Message<'braiins.bmc.web.MoveSceneRequest'> & {
     /**
-     * required
-     *
      * @generated from field: string id = 1;
      */
     id: string;
 
     /**
-     * required, zero based
+     * zero based
      *
      * @generated from field: uint32 index = 2;
      */
@@ -221,8 +200,6 @@ export const MoveSceneRequestSchema: GenMessage<MoveSceneRequest> =
  */
 export type SceneResponse = Message<'braiins.bmc.web.SceneResponse'> & {
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.Scene scene = 1;
      */
     scene?: Scene;
@@ -235,8 +212,8 @@ export type SceneResponse = Message<'braiins.bmc.web.SceneResponse'> & {
 export const SceneResponseSchema: GenMessage<SceneResponse> = /*@__PURE__*/ messageDesc(file_web_scene_management, 5);
 
 /**
- * Position of the widget on the combined scene grid
- * Full screen widget position is row: 0, col: 0
+ * Position of the widget on the combined scene grid.
+ * Full screen widget position is row: 0, col: 0.
  *
  * @generated from message braiins.bmc.web.WidgetPosition
  */
@@ -259,76 +236,87 @@ export type WidgetPosition = Message<'braiins.bmc.web.WidgetPosition'> & {
 export const WidgetPositionSchema: GenMessage<WidgetPosition> = /*@__PURE__*/ messageDesc(file_web_scene_management, 6);
 
 /**
+ * @generated from message braiins.bmc.web.WidgetConfig
+ */
+export type WidgetConfig = Message<'braiins.bmc.web.WidgetConfig'> & {
+    /**
+     * UID of the manifest
+     *
+     * @generated from field: string widget_uid = 1;
+     */
+    widgetUid: string;
+
+    /**
+     * Parameter values (key → JSON-encoded value).
+     *
+     * @generated from field: map<string, string> params = 2;
+     */
+    params: { [key: string]: string };
+};
+
+/**
+ * Describes the message braiins.bmc.web.WidgetConfig.
+ * Use `create(WidgetConfigSchema)` to create a new message.
+ */
+export const WidgetConfigSchema: GenMessage<WidgetConfig> = /*@__PURE__*/ messageDesc(file_web_scene_management, 7);
+
+/**
+ * A widget instance placed in a scene. Every widget is driven by a manifest;
+ * its identity is the manifest UID, its configuration is the params map.
+ *
  * @generated from message braiins.bmc.web.Widget
  */
 export type Widget = Message<'braiins.bmc.web.Widget'> & {
     /**
-     * required
-     *
      * @generated from field: string id = 1;
      */
     id: string;
 
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.WidgetPosition position = 2;
      */
     position?: WidgetPosition;
 
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.WidgetSize size = 3;
      */
     size: WidgetSize;
 
     /**
-     * required
-     *
-     * @generated from field: braiins.bmc.web.WidgetKind kind = 4;
+     * @generated from field: braiins.bmc.web.WidgetConfig config = 4;
      */
-    kind?: WidgetKind;
+    config?: WidgetConfig;
 };
 
 /**
  * Describes the message braiins.bmc.web.Widget.
  * Use `create(WidgetSchema)` to create a new message.
  */
-export const WidgetSchema: GenMessage<Widget> = /*@__PURE__*/ messageDesc(file_web_scene_management, 7);
+export const WidgetSchema: GenMessage<Widget> = /*@__PURE__*/ messageDesc(file_web_scene_management, 8);
 
 /**
  * @generated from message braiins.bmc.web.AddWidgetRequest
  */
 export type AddWidgetRequest = Message<'braiins.bmc.web.AddWidgetRequest'> & {
     /**
-     * required
-     *
      * @generated from field: string scene_id = 1;
      */
     sceneId: string;
 
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.WidgetPosition position = 2;
      */
     position?: WidgetPosition;
 
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.WidgetSize size = 3;
      */
     size: WidgetSize;
 
     /**
-     * required
-     * backend cares only about kind discriminant, frontend can send "empty" message with default values
-     *
-     * @generated from field: braiins.bmc.web.WidgetKind kind = 4;
+     * @generated from field: braiins.bmc.web.WidgetConfig config = 4;
      */
-    kind?: WidgetKind;
+    config?: WidgetConfig;
 };
 
 /**
@@ -337,47 +325,38 @@ export type AddWidgetRequest = Message<'braiins.bmc.web.AddWidgetRequest'> & {
  */
 export const AddWidgetRequestSchema: GenMessage<AddWidgetRequest> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 8);
+    messageDesc(file_web_scene_management, 9);
 
 /**
  * @generated from message braiins.bmc.web.UpdateWidgetRequest
  */
 export type UpdateWidgetRequest = Message<'braiins.bmc.web.UpdateWidgetRequest'> & {
     /**
-     * required
-     *
      * @generated from field: string id = 1;
      */
     id: string;
 
     /**
-     * required
-     *
      * @generated from field: string scene_id = 2;
      */
     sceneId: string;
 
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.WidgetPosition position = 3;
      */
     position?: WidgetPosition;
 
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.WidgetSize size = 4;
      */
     size: WidgetSize;
 
     /**
-     * required
-     * not allowed to switch kind, only update inner values
+     * Parameter values set by user (key → JSON-encoded value)
      *
-     * @generated from field: braiins.bmc.web.WidgetKind kind = 5;
+     * @generated from field: map<string, string> params = 5;
      */
-    kind?: WidgetKind;
+    params: { [key: string]: string };
 };
 
 /**
@@ -386,22 +365,18 @@ export type UpdateWidgetRequest = Message<'braiins.bmc.web.UpdateWidgetRequest'>
  */
 export const UpdateWidgetRequestSchema: GenMessage<UpdateWidgetRequest> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 9);
+    messageDesc(file_web_scene_management, 10);
 
 /**
  * @generated from message braiins.bmc.web.RemoveWidgetRequest
  */
 export type RemoveWidgetRequest = Message<'braiins.bmc.web.RemoveWidgetRequest'> & {
     /**
-     * required
-     *
      * @generated from field: string id = 1;
      */
     id: string;
 
     /**
-     * required
-     *
      * @generated from field: string scene_id = 2;
      */
     sceneId: string;
@@ -413,15 +388,13 @@ export type RemoveWidgetRequest = Message<'braiins.bmc.web.RemoveWidgetRequest'>
  */
 export const RemoveWidgetRequestSchema: GenMessage<RemoveWidgetRequest> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 10);
+    messageDesc(file_web_scene_management, 11);
 
 /**
  * @generated from message braiins.bmc.web.WidgetResponse
  */
 export type WidgetResponse = Message<'braiins.bmc.web.WidgetResponse'> & {
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.Widget widget = 1;
      */
     widget?: Widget;
@@ -433,565 +406,25 @@ export type WidgetResponse = Message<'braiins.bmc.web.WidgetResponse'> & {
  */
 export const WidgetResponseSchema: GenMessage<WidgetResponse> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 11);
-
-/**
- * @generated from message braiins.bmc.web.WidgetKind
- */
-export type WidgetKind = Message<'braiins.bmc.web.WidgetKind'> & {
-    /**
-     * required
-     *
-     * @generated from oneof braiins.bmc.web.WidgetKind.value
-     */
-    value:
-        | {
-              /**
-               * @generated from field: braiins.bmc.web.ClockWidget clock = 1;
-               */
-              value: ClockWidget;
-              case: 'clock';
-          }
-        | {
-              /**
-               * @generated from field: braiins.bmc.web.TickerBtcWidget ticker_btc = 2;
-               */
-              value: TickerBtcWidget;
-              case: 'tickerBtc';
-          }
-        | {
-              /**
-               * @generated from field: braiins.bmc.web.BlockHeightWidget block_height = 3;
-               */
-              value: BlockHeightWidget;
-              case: 'blockHeight';
-          }
-        | {
-              /**
-               * @generated from field: braiins.bmc.web.BraiinsPoolWidget braiins_pool = 4;
-               */
-              value: BraiinsPoolWidget;
-              case: 'braiinsPool';
-          }
-        | {
-              /**
-               * @generated from field: braiins.bmc.web.RemoteImageWidget remote_image = 5;
-               */
-              value: RemoteImageWidget;
-              case: 'remoteImage';
-          }
-        | {
-              /**
-               * @generated from field: braiins.bmc.web.BlockchainDataWidget blockchain_data = 6;
-               */
-              value: BlockchainDataWidget;
-              case: 'blockchainData';
-          }
-        | {
-              /**
-               * @generated from field: braiins.bmc.web.RemoteWidget remote_widget = 7;
-               */
-              value: RemoteWidget;
-              case: 'remoteWidget';
-          }
-        | {
-              /**
-               * @generated from field: braiins.bmc.web.HalvingCountdownWidget halving_countdown = 8;
-               */
-              value: HalvingCountdownWidget;
-              case: 'halvingCountdown';
-          }
-        | { case: undefined; value?: undefined };
-};
-
-/**
- * Describes the message braiins.bmc.web.WidgetKind.
- * Use `create(WidgetKindSchema)` to create a new message.
- */
-export const WidgetKindSchema: GenMessage<WidgetKind> = /*@__PURE__*/ messageDesc(file_web_scene_management, 12);
-
-/**
- * @generated from message braiins.bmc.web.ClockWidget
- */
-export type ClockWidget = Message<'braiins.bmc.web.ClockWidget'> & {
-    /**
-     * required
-     *
-     * @generated from field: braiins.bmc.web.ClockWidget.ClockStyle clock_style = 1;
-     */
-    clockStyle: ClockWidget_ClockStyle;
-
-    /**
-     * required
-     *
-     * @generated from field: braiins.bmc.web.FontStyle numbers_font_style = 2;
-     */
-    numbersFontStyle: FontStyle;
-
-    /**
-     * required, used only in fullscreen size
-     *
-     * @generated from field: bool show_date = 3;
-     */
-    showDate: boolean;
-
-    /**
-     * required, used only in digital style
-     *
-     * @generated from field: bool show_seconds = 4;
-     */
-    showSeconds: boolean;
-
-    /**
-     * required
-     *
-     * @generated from field: bool show_timezone = 5;
-     */
-    showTimezone: boolean;
-
-    /**
-     * optional, empty value means - use system timezone
-     *
-     * @generated from field: optional string timezone = 6;
-     */
-    timezone?: string;
-};
-
-/**
- * Describes the message braiins.bmc.web.ClockWidget.
- * Use `create(ClockWidgetSchema)` to create a new message.
- */
-export const ClockWidgetSchema: GenMessage<ClockWidget> = /*@__PURE__*/ messageDesc(file_web_scene_management, 13);
-
-/**
- * @generated from enum braiins.bmc.web.ClockWidget.ClockStyle
- */
-export enum ClockWidget_ClockStyle {
-    /**
-     * @generated from enum value: CLOCK_STYLE_UNSPECIFIED = 0;
-     */
-    UNSPECIFIED = 0,
-
-    /**
-     * @generated from enum value: CLOCK_STYLE_ANALOG_ROUND = 1;
-     */
-    ANALOG_ROUND = 1,
-
-    /**
-     * @generated from enum value: CLOCK_STYLE_ANALOG_RECT = 2;
-     */
-    ANALOG_RECT = 2,
-
-    /**
-     * @generated from enum value: CLOCK_STYLE_DIGITAL = 3;
-     */
-    DIGITAL = 3,
-}
-
-/**
- * Describes the enum braiins.bmc.web.ClockWidget.ClockStyle.
- */
-export const ClockWidget_ClockStyleSchema: GenEnum<ClockWidget_ClockStyle> =
-    /*@__PURE__*/
-    enumDesc(file_web_scene_management, 13, 0);
-
-/**
- * @generated from message braiins.bmc.web.TickerBtcWidget
- */
-export type TickerBtcWidget = Message<'braiins.bmc.web.TickerBtcWidget'> & {
-    /**
-     * required
-     *
-     * @generated from field: braiins.bmc.web.TickerBtcWidget.TimeFrame time_frame = 1;
-     */
-    timeFrame: TickerBtcWidget_TimeFrame;
-};
-
-/**
- * Describes the message braiins.bmc.web.TickerBtcWidget.
- * Use `create(TickerBtcWidgetSchema)` to create a new message.
- */
-export const TickerBtcWidgetSchema: GenMessage<TickerBtcWidget> =
-    /*@__PURE__*/
-    messageDesc(file_web_scene_management, 14);
-
-/**
- * @generated from enum braiins.bmc.web.TickerBtcWidget.TimeFrame
- */
-export enum TickerBtcWidget_TimeFrame {
-    /**
-     * @generated from enum value: TIME_FRAME_UNSPECIFIED = 0;
-     */
-    UNSPECIFIED = 0,
-
-    /**
-     * @generated from enum value: TIME_FRAME_DAY_1 = 1;
-     */
-    DAY_1 = 1,
-
-    /**
-     * @generated from enum value: TIME_FRAME_WEEK_1 = 2;
-     */
-    WEEK_1 = 2,
-
-    /**
-     * @generated from enum value: TIME_FRAME_WEEK_2 = 3;
-     */
-    WEEK_2 = 3,
-
-    /**
-     * @generated from enum value: TIME_FRAME_MONTH_1 = 4;
-     */
-    MONTH_1 = 4,
-
-    /**
-     * @generated from enum value: TIME_FRAME_MONTH_3 = 5;
-     */
-    MONTH_3 = 5,
-
-    /**
-     * @generated from enum value: TIME_FRAME_MONTH_6 = 6;
-     */
-    MONTH_6 = 6,
-
-    /**
-     * @generated from enum value: TIME_FRAME_YEAR_1 = 7;
-     */
-    YEAR_1 = 7,
-
-    /**
-     * @generated from enum value: TIME_FRAME_YEAR_2 = 8;
-     */
-    YEAR_2 = 8,
-
-    /**
-     * @generated from enum value: TIME_FRAME_YEAR_5 = 9;
-     */
-    YEAR_5 = 9,
-
-    /**
-     * @generated from enum value: TIME_FRAME_ALL = 10;
-     */
-    ALL = 10,
-}
-
-/**
- * Describes the enum braiins.bmc.web.TickerBtcWidget.TimeFrame.
- */
-export const TickerBtcWidget_TimeFrameSchema: GenEnum<TickerBtcWidget_TimeFrame> =
-    /*@__PURE__*/
-    enumDesc(file_web_scene_management, 14, 0);
-
-/**
- * @generated from message braiins.bmc.web.BlockHeightWidget
- */
-export type BlockHeightWidget = Message<'braiins.bmc.web.BlockHeightWidget'> & {
-    /**
-     * required
-     *
-     * @generated from field: bool show_timestamp = 1;
-     */
-    showTimestamp: boolean;
-
-    /**
-     * required
-     *
-     * @generated from field: braiins.bmc.web.FontStyle numbers_font_style = 2;
-     */
-    numbersFontStyle: FontStyle;
-};
-
-/**
- * Describes the message braiins.bmc.web.BlockHeightWidget.
- * Use `create(BlockHeightWidgetSchema)` to create a new message.
- */
-export const BlockHeightWidgetSchema: GenMessage<BlockHeightWidget> =
-    /*@__PURE__*/
-    messageDesc(file_web_scene_management, 15);
-
-/**
- * @generated from message braiins.bmc.web.BraiinsPoolWidget
- */
-export type BraiinsPoolWidget = Message<'braiins.bmc.web.BraiinsPoolWidget'> & {
-    /**
-     * required
-     *
-     * @generated from field: braiins.bmc.web.BraiinsPoolWidget.BraiinsPoolStyle braiins_pool_style = 1;
-     */
-    braiinsPoolStyle: BraiinsPoolWidget_BraiinsPoolStyle;
-
-    /**
-     * required
-     *
-     * @generated from field: braiins.bmc.web.BraiinsPoolWidget.TimeFrame time_frame = 2;
-     */
-    timeFrame: BraiinsPoolWidget_TimeFrame;
-
-    /**
-     * optional
-     *
-     * @generated from field: optional string account_id = 3;
-     */
-    accountId?: string;
-};
-
-/**
- * Describes the message braiins.bmc.web.BraiinsPoolWidget.
- * Use `create(BraiinsPoolWidgetSchema)` to create a new message.
- */
-export const BraiinsPoolWidgetSchema: GenMessage<BraiinsPoolWidget> =
-    /*@__PURE__*/
-    messageDesc(file_web_scene_management, 16);
-
-/**
- * @generated from enum braiins.bmc.web.BraiinsPoolWidget.BraiinsPoolStyle
- */
-export enum BraiinsPoolWidget_BraiinsPoolStyle {
-    /**
-     * @generated from enum value: BRAIINS_POOL_STYLE_UNSPECIFIED = 0;
-     */
-    UNSPECIFIED = 0,
-
-    /**
-     * @generated from enum value: BRAIINS_POOL_STYLE_OVERVIEW = 1;
-     */
-    OVERVIEW = 1,
-
-    /**
-     * @generated from enum value: BRAIINS_POOL_STYLE_BIGCHART = 2;
-     */
-    BIGCHART = 2,
-}
-
-/**
- * Describes the enum braiins.bmc.web.BraiinsPoolWidget.BraiinsPoolStyle.
- */
-export const BraiinsPoolWidget_BraiinsPoolStyleSchema: GenEnum<BraiinsPoolWidget_BraiinsPoolStyle> =
-    /*@__PURE__*/
-    enumDesc(file_web_scene_management, 16, 0);
-
-/**
- * @generated from enum braiins.bmc.web.BraiinsPoolWidget.TimeFrame
- */
-export enum BraiinsPoolWidget_TimeFrame {
-    /**
-     * @generated from enum value: TIME_FRAME_UNSPECIFIED = 0;
-     */
-    UNSPECIFIED = 0,
-
-    /**
-     * @generated from enum value: TIME_FRAME_HOUR_4 = 1;
-     */
-    HOUR_4 = 1,
-
-    /**
-     * @generated from enum value: TIME_FRAME_HOUR_12 = 2;
-     */
-    HOUR_12 = 2,
-
-    /**
-     * @generated from enum value: TIME_FRAME_HOUR_24 = 3;
-     */
-    HOUR_24 = 3,
-
-    /**
-     * @generated from enum value: TIME_FRAME_DAY_7 = 4;
-     */
-    DAY_7 = 4,
-}
-
-/**
- * Describes the enum braiins.bmc.web.BraiinsPoolWidget.TimeFrame.
- */
-export const BraiinsPoolWidget_TimeFrameSchema: GenEnum<BraiinsPoolWidget_TimeFrame> =
-    /*@__PURE__*/
-    enumDesc(file_web_scene_management, 16, 1);
-
-/**
- * @generated from message braiins.bmc.web.RemoteImageWidget
- */
-export type RemoteImageWidget = Message<'braiins.bmc.web.RemoteImageWidget'> & {
-    /**
-     * required (can be empty)
-     *
-     * @generated from field: string url = 1;
-     */
-    url: string;
-
-    /**
-     * required
-     *
-     * @generated from field: uint32 refresh_duration_sec = 2;
-     */
-    refreshDurationSec: number;
-
-    /**
-     * @generated from field: braiins.bmc.web.RemoteImageWidget.ImageScaleMode image_scale_mode = 3;
-     */
-    imageScaleMode: RemoteImageWidget_ImageScaleMode;
-};
-
-/**
- * Describes the message braiins.bmc.web.RemoteImageWidget.
- * Use `create(RemoteImageWidgetSchema)` to create a new message.
- */
-export const RemoteImageWidgetSchema: GenMessage<RemoteImageWidget> =
-    /*@__PURE__*/
-    messageDesc(file_web_scene_management, 17);
-
-/**
- * @generated from enum braiins.bmc.web.RemoteImageWidget.ImageScaleMode
- */
-export enum RemoteImageWidget_ImageScaleMode {
-    /**
-     * @generated from enum value: IMAGE_SCALE_MODE_UNSPECIFIED = 0;
-     */
-    UNSPECIFIED = 0,
-
-    /**
-     * @generated from enum value: IMAGE_SCALE_MODE_FIT = 1;
-     */
-    FIT = 1,
-
-    /**
-     * @generated from enum value: IMAGE_SCALE_MODE_FILL = 2;
-     */
-    FILL = 2,
-}
-
-/**
- * Describes the enum braiins.bmc.web.RemoteImageWidget.ImageScaleMode.
- */
-export const RemoteImageWidget_ImageScaleModeSchema: GenEnum<RemoteImageWidget_ImageScaleMode> =
-    /*@__PURE__*/
-    enumDesc(file_web_scene_management, 17, 0);
-
-/**
- * @generated from message braiins.bmc.web.RemoteWidget
- */
-export type RemoteWidget = Message<'braiins.bmc.web.RemoteWidget'> & {
-    /**
-     * @generated from field: string name = 1;
-     */
-    name: string;
-
-    /**
-     * @generated from field: string description = 2;
-     */
-    description: string;
-
-    /**
-     * @generated from field: string widget_url = 3;
-     */
-    widgetUrl: string;
-
-    /**
-     * @generated from field: string icon_url = 4;
-     */
-    iconUrl: string;
-
-    /**
-     * @generated from field: google.protobuf.Struct params = 5;
-     */
-    params?: JsonObject;
-};
-
-/**
- * Describes the message braiins.bmc.web.RemoteWidget.
- * Use `create(RemoteWidgetSchema)` to create a new message.
- */
-export const RemoteWidgetSchema: GenMessage<RemoteWidget> = /*@__PURE__*/ messageDesc(file_web_scene_management, 18);
-
-/**
- * @generated from message braiins.bmc.web.RemoteWidgetParamsRequest
- */
-export type RemoteWidgetParamsRequest = Message<'braiins.bmc.web.RemoteWidgetParamsRequest'> & {
-    /**
-     * @generated from field: string widget_url = 1;
-     */
-    widgetUrl: string;
-};
-
-/**
- * Describes the message braiins.bmc.web.RemoteWidgetParamsRequest.
- * Use `create(RemoteWidgetParamsRequestSchema)` to create a new message.
- */
-export const RemoteWidgetParamsRequestSchema: GenMessage<RemoteWidgetParamsRequest> =
-    /*@__PURE__*/
-    messageDesc(file_web_scene_management, 19);
-
-/**
- * @generated from message braiins.bmc.web.RemoteWidgetParamsResponse
- */
-export type RemoteWidgetParamsResponse = Message<'braiins.bmc.web.RemoteWidgetParamsResponse'> & {
-    /**
-     * @generated from field: google.protobuf.Struct remote_widget_params = 1;
-     */
-    remoteWidgetParams?: JsonObject;
-};
-
-/**
- * Describes the message braiins.bmc.web.RemoteWidgetParamsResponse.
- * Use `create(RemoteWidgetParamsResponseSchema)` to create a new message.
- */
-export const RemoteWidgetParamsResponseSchema: GenMessage<RemoteWidgetParamsResponse> =
-    /*@__PURE__*/
-    messageDesc(file_web_scene_management, 20);
-
-/**
- * @generated from message braiins.bmc.web.RecentRemoteWidgetsResponse
- */
-export type RecentRemoteWidgetsResponse = Message<'braiins.bmc.web.RecentRemoteWidgetsResponse'> & {
-    /**
-     * @generated from field: repeated braiins.bmc.web.RemoteWidget recent_remote_widgets = 1;
-     */
-    recentRemoteWidgets: RemoteWidget[];
-};
-
-/**
- * Describes the message braiins.bmc.web.RecentRemoteWidgetsResponse.
- * Use `create(RecentRemoteWidgetsResponseSchema)` to create a new message.
- */
-export const RecentRemoteWidgetsResponseSchema: GenMessage<RecentRemoteWidgetsResponse> =
-    /*@__PURE__*/
-    messageDesc(file_web_scene_management, 21);
-
-/**
- * No configuration needed - countdown is based purely on block height
- *
- * @generated from message braiins.bmc.web.HalvingCountdownWidget
- */
-export type HalvingCountdownWidget = Message<'braiins.bmc.web.HalvingCountdownWidget'> & {};
-
-/**
- * Describes the message braiins.bmc.web.HalvingCountdownWidget.
- * Use `create(HalvingCountdownWidgetSchema)` to create a new message.
- */
-export const HalvingCountdownWidgetSchema: GenMessage<HalvingCountdownWidget> =
-    /*@__PURE__*/
-    messageDesc(file_web_scene_management, 22);
+    messageDesc(file_web_scene_management, 12);
 
 /**
  * @generated from message braiins.bmc.web.SceneCycling
  */
 export type SceneCycling = Message<'braiins.bmc.web.SceneCycling'> & {
     /**
-     * required
-     *
      * @generated from field: bool automatic_cycling_enabled = 1;
      */
     automaticCyclingEnabled: boolean;
 
     /**
-     * required, minimum 1
+     * minimum 1
      *
      * @generated from field: uint32 automatic_cycling_default_duration_sec = 2;
      */
     automaticCyclingDefaultDurationSec: number;
 
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.SceneCyclingTransition transition = 3;
      */
     transition: SceneCyclingTransition;
@@ -1001,15 +434,13 @@ export type SceneCycling = Message<'braiins.bmc.web.SceneCycling'> & {
  * Describes the message braiins.bmc.web.SceneCycling.
  * Use `create(SceneCyclingSchema)` to create a new message.
  */
-export const SceneCyclingSchema: GenMessage<SceneCycling> = /*@__PURE__*/ messageDesc(file_web_scene_management, 23);
+export const SceneCyclingSchema: GenMessage<SceneCycling> = /*@__PURE__*/ messageDesc(file_web_scene_management, 13);
 
 /**
  * @generated from message braiins.bmc.web.GetSceneCyclingResponse
  */
 export type GetSceneCyclingResponse = Message<'braiins.bmc.web.GetSceneCyclingResponse'> & {
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.SceneCycling scene_cycling = 1;
      */
     sceneCycling?: SceneCycling;
@@ -1021,15 +452,13 @@ export type GetSceneCyclingResponse = Message<'braiins.bmc.web.GetSceneCyclingRe
  */
 export const GetSceneCyclingResponseSchema: GenMessage<GetSceneCyclingResponse> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 24);
+    messageDesc(file_web_scene_management, 14);
 
 /**
  * @generated from message braiins.bmc.web.SetSceneCyclingRequest
  */
 export type SetSceneCyclingRequest = Message<'braiins.bmc.web.SetSceneCyclingRequest'> & {
     /**
-     * required
-     *
      * @generated from field: braiins.bmc.web.SceneCycling scene_cycling = 1;
      */
     sceneCycling?: SceneCycling;
@@ -1041,20 +470,153 @@ export type SetSceneCyclingRequest = Message<'braiins.bmc.web.SetSceneCyclingReq
  */
 export const SetSceneCyclingRequestSchema: GenMessage<SetSceneCyclingRequest> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 25);
+    messageDesc(file_web_scene_management, 15);
 
 /**
- * @generated from message braiins.bmc.web.BlockchainDataWidget
+ * @generated from message braiins.bmc.web.WidgetManifest
  */
-export type BlockchainDataWidget = Message<'braiins.bmc.web.BlockchainDataWidget'> & {};
+export type WidgetManifest = Message<'braiins.bmc.web.WidgetManifest'> & {
+    /**
+     * Widget UID (UUID v4 from manifest.json)
+     *
+     * @generated from field: string uid = 1;
+     */
+    uid: string;
+
+    /**
+     * @generated from field: string name = 2;
+     */
+    name: string;
+
+    /**
+     * @generated from field: string description = 3;
+     */
+    description: string;
+
+    /**
+     * @generated from field: string version = 4;
+     */
+    version: string;
+
+    /**
+     * Author info
+     *
+     * @generated from field: optional string author_name = 5;
+     */
+    authorName?: string;
+
+    /**
+     * @generated from field: optional string author_url = 6;
+     */
+    authorUrl?: string;
+
+    /**
+     * Sizes this widget supports (subset of WidgetSize)
+     *
+     * @generated from field: repeated braiins.bmc.web.WidgetSize supported_sizes = 7;
+     */
+    supportedSizes: WidgetSize[];
+
+    /**
+     * Parameter definitions — frontend generates form inputs from these
+     *
+     * @generated from field: repeated braiins.bmc.web.ManifestParamDefinition params = 8;
+     */
+    params: ManifestParamDefinition[];
+};
 
 /**
- * Describes the message braiins.bmc.web.BlockchainDataWidget.
- * Use `create(BlockchainDataWidgetSchema)` to create a new message.
+ * Describes the message braiins.bmc.web.WidgetManifest.
+ * Use `create(WidgetManifestSchema)` to create a new message.
  */
-export const BlockchainDataWidgetSchema: GenMessage<BlockchainDataWidget> =
+export const WidgetManifestSchema: GenMessage<WidgetManifest> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 26);
+    messageDesc(file_web_scene_management, 16);
+
+/**
+ * @generated from message braiins.bmc.web.ManifestParamDefinition
+ */
+export type ManifestParamDefinition = Message<'braiins.bmc.web.ManifestParamDefinition'> & {
+    /**
+     * Parameter key (used in the params map when configuring a widget)
+     *
+     * @generated from field: string key = 1;
+     */
+    key: string;
+
+    /**
+     * Human-readable label
+     *
+     * @generated from field: string name = 2;
+     */
+    name: string;
+
+    /**
+     * Parameter type
+     *
+     * @generated from field: braiins.bmc.web.ManifestParamType param_type = 3;
+     */
+    paramType: ManifestParamType;
+
+    /**
+     * Optional description / help text
+     *
+     * @generated from field: optional string description = 4;
+     */
+    description?: string;
+
+    /**
+     * Default value as JSON string
+     *
+     * @generated from field: string default_value = 5;
+     */
+    defaultValue: string;
+
+    /**
+     * For enum types: map of value → display label
+     *
+     * @generated from field: map<string, string> enum_values = 6;
+     */
+    enumValues: { [key: string]: string };
+
+    /**
+     * For number types: optional range constraints
+     *
+     * @generated from field: optional double min = 7;
+     */
+    min?: number;
+
+    /**
+     * @generated from field: optional double max = 8;
+     */
+    max?: number;
+};
+
+/**
+ * Describes the message braiins.bmc.web.ManifestParamDefinition.
+ * Use `create(ManifestParamDefinitionSchema)` to create a new message.
+ */
+export const ManifestParamDefinitionSchema: GenMessage<ManifestParamDefinition> =
+    /*@__PURE__*/
+    messageDesc(file_web_scene_management, 17);
+
+/**
+ * @generated from message braiins.bmc.web.GetAvailableWidgetsResponse
+ */
+export type GetAvailableWidgetsResponse = Message<'braiins.bmc.web.GetAvailableWidgetsResponse'> & {
+    /**
+     * @generated from field: repeated braiins.bmc.web.WidgetManifest widgets = 1;
+     */
+    widgets: WidgetManifest[];
+};
+
+/**
+ * Describes the message braiins.bmc.web.GetAvailableWidgetsResponse.
+ * Use `create(GetAvailableWidgetsResponseSchema)` to create a new message.
+ */
+export const GetAvailableWidgetsResponseSchema: GenMessage<GetAvailableWidgetsResponse> =
+    /*@__PURE__*/
+    messageDesc(file_web_scene_management, 18);
 
 /**
  * @generated from enum braiins.bmc.web.WidgetSize
@@ -1092,38 +654,6 @@ export enum WidgetSize {
 export const WidgetSizeSchema: GenEnum<WidgetSize> = /*@__PURE__*/ enumDesc(file_web_scene_management, 0);
 
 /**
- * Font style
- *
- * @generated from enum braiins.bmc.web.FontStyle
- */
-export enum FontStyle {
-    /**
-     * @generated from enum value: FONT_STYLE_UNSPECIFIED = 0;
-     */
-    UNSPECIFIED = 0,
-
-    /**
-     * @generated from enum value: FONT_STYLE_LIGHT = 1;
-     */
-    LIGHT = 1,
-
-    /**
-     * @generated from enum value: FONT_STYLE_MEDIUM = 2;
-     */
-    MEDIUM = 2,
-
-    /**
-     * @generated from enum value: FONT_STYLE_BOLD = 3;
-     */
-    BOLD = 3,
-}
-
-/**
- * Describes the enum braiins.bmc.web.FontStyle.
- */
-export const FontStyleSchema: GenEnum<FontStyle> = /*@__PURE__*/ enumDesc(file_web_scene_management, 1);
-
-/**
  * @generated from enum braiins.bmc.web.SceneCyclingTransition
  */
 export enum SceneCyclingTransition {
@@ -1148,12 +678,52 @@ export enum SceneCyclingTransition {
  */
 export const SceneCyclingTransitionSchema: GenEnum<SceneCyclingTransition> =
     /*@__PURE__*/
-    enumDesc(file_web_scene_management, 2);
+    enumDesc(file_web_scene_management, 1);
+
+/**
+ * @generated from enum braiins.bmc.web.ManifestParamType
+ */
+export enum ManifestParamType {
+    /**
+     * @generated from enum value: MANIFEST_PARAM_TYPE_UNSPECIFIED = 0;
+     */
+    UNSPECIFIED = 0,
+
+    /**
+     * @generated from enum value: MANIFEST_PARAM_TYPE_STRING = 1;
+     */
+    STRING = 1,
+
+    /**
+     * @generated from enum value: MANIFEST_PARAM_TYPE_BOOLEAN = 2;
+     */
+    BOOLEAN = 2,
+
+    /**
+     * @generated from enum value: MANIFEST_PARAM_TYPE_NUMBER = 3;
+     */
+    NUMBER = 3,
+
+    /**
+     * @generated from enum value: MANIFEST_PARAM_TYPE_ARRAY = 4;
+     */
+    ARRAY = 4,
+
+    /**
+     * @generated from enum value: MANIFEST_PARAM_TYPE_TIMEZONE = 5;
+     */
+    TIMEZONE = 5,
+}
+
+/**
+ * Describes the enum braiins.bmc.web.ManifestParamType.
+ */
+export const ManifestParamTypeSchema: GenEnum<ManifestParamType> = /*@__PURE__*/ enumDesc(file_web_scene_management, 2);
 
 /**
  * Configures scenes & widgets for individual scenes.
- * CQRS pattern, commands only modify state, queries only return state.
- * FE should fetch scene(s) after executing command to get into proper state.
+ * CQRS pattern: commands only modify state, queries only return state.
+ * FE should fetch scene(s) after executing a command to sync its view.
  *
  * FE implementation tips:
  *
@@ -1166,8 +736,9 @@ export const SceneCyclingTransitionSchema: GenEnum<SceneCyclingTransition> =
  *   - call `GetScene`
  *   - call `PreviewScene` & keep stream open while user is on grid page
  * - fullscreen:
- *   - call `AddFullscreenScene` - you *don't need* to specify inner values for widget kind (BE ignores them)
- *     - creates scene with single fullscreen widget (with default values, decided by BE)
+ *   - call `AddFullscreenScene` with the chosen widget manifest UID
+ *     - creates scene with single fullscreen widget (with manifest defaults
+ *       unless overridden in `params`)
  *     - response contains ID of newly created scene
  *   - call `GetScene` & show modal to edit fullscreen widget
  *   - call `PreviewScene` & keep stream open while modal is open
@@ -1194,13 +765,14 @@ export const SceneCyclingTransitionSchema: GenEnum<SceneCyclingTransition> =
  *
  * add widget:
  * - combined:
- *   - call `AddWidget` - you *don't need* to specify inner values for widget kind (BE ignores them)
+ *   - call `AddWidget` with the chosen widget manifest UID and optional
+ *     param overrides.
  *     - response contains ID of newly created widget
  *   - call `GetScene` & show modal to edit new widget
  *
  * update widget:
  * - combined & fullscreen:
- *   - call `UpdateWidget` - you *must* specify all inner values for widget kind
+ *   - call `UpdateWidget` with the full params map
  *   - call `GetScene`
  *
  * remove widget:
@@ -1222,7 +794,7 @@ export const SceneManagementService: GenService<{
         output: typeof GetScenesResponseSchema;
     };
     /**
-     * Get single scene by ID. This is an optimization for FE to avoid fetching all scenes
+     * Get single scene by ID. Optimization for FE to avoid fetching all scenes.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.GetScene
      */
@@ -1232,8 +804,7 @@ export const SceneManagementService: GenService<{
         output: typeof SceneResponseSchema;
     };
     /**
-     * Add fullscreen scene. It contains single fullscreen widget at position (0,0).
-     * It will use default values for widget kind specific params.
+     * Add fullscreen scene containing a single widget at position (0, 0).
      * Returns ID of the new scene.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.AddFullscreenScene
@@ -1244,8 +815,8 @@ export const SceneManagementService: GenService<{
         output: typeof StringValueSchema;
     };
     /**
-     * Add combined screen without any widget in it.
-     * Returns ID of thew new scene.
+     * Add combined scene without any widgets.
+     * Returns ID of the new scene.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.AddCombinedScene
      */
@@ -1255,8 +826,8 @@ export const SceneManagementService: GenService<{
         output: typeof StringValueSchema;
     };
     /**
-     * Update only common properties for fullscreen and combined scene, not widgets.
-     * This is not patch, but rather full update.
+     * Update common properties of a scene (enabled, cycle duration). Not widgets.
+     * Full update, not patch.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.UpdateScene
      */
@@ -1266,7 +837,7 @@ export const SceneManagementService: GenService<{
         output: typeof EmptySchema;
     };
     /**
-     * Move scene to different index
+     * Move scene to a different index.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.MoveScene
      */
@@ -1276,8 +847,8 @@ export const SceneManagementService: GenService<{
         output: typeof EmptySchema;
     };
     /**
-     * Add copy of a scene by ID, placed right next to it (index + 1).
-     * Returns ID of thew new scene.
+     * Clone scene by ID, placed right next to it (index + 1).
+     * Returns ID of the new scene.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.CloneScene
      */
@@ -1297,7 +868,8 @@ export const SceneManagementService: GenService<{
         output: typeof EmptySchema;
     };
     /**
-     * Keep preview screen shown on the display while stream is open. Takes scene ID as an argument.
+     * Keep preview scene shown on the display while the stream is open.
+     * Takes scene ID as an argument.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.PreviewScene
      */
@@ -1307,9 +879,7 @@ export const SceneManagementService: GenService<{
         output: typeof EmptySchema;
     };
     /**
-     * Add widget into the scene. You need to specify size, position, kind.
-     * It will use default values for widget kind specific params.
-     * Returns ID of the new widget.
+     * Add widget to a scene from a manifest. Returns ID of the new widget.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.AddWidget
      */
@@ -1319,9 +889,7 @@ export const SceneManagementService: GenService<{
         output: typeof StringValueSchema;
     };
     /**
-     * Update widget by ID. You need to specify size, position, kind.
-     * It will use passed values for widget kind specific params.
-     * This is not patch, but rather full update.
+     * Update widget params by ID. Full update of the params map, not patch.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.UpdateWidget
      */
@@ -1341,27 +909,7 @@ export const SceneManagementService: GenService<{
         output: typeof EmptySchema;
     };
     /**
-     * Get remote widget parameters from server
-     *
-     * @generated from rpc braiins.bmc.web.SceneManagementService.GetRemoteWidgetParams
-     */
-    getRemoteWidgetParams: {
-        methodKind: 'unary';
-        input: typeof RemoteWidgetParamsRequestSchema;
-        output: typeof RemoteWidgetParamsResponseSchema;
-    };
-    /**
-     * Get recently used remote widgets
-     *
-     * @generated from rpc braiins.bmc.web.SceneManagementService.GetRecentRemoteWidgets
-     */
-    getRecentRemoteWidgets: {
-        methodKind: 'unary';
-        input: typeof EmptySchema;
-        output: typeof RecentRemoteWidgetsResponseSchema;
-    };
-    /**
-     * Get scene cycling
+     * Get scene cycling configuration.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.GetSceneCycling
      */
@@ -1371,7 +919,7 @@ export const SceneManagementService: GenService<{
         output: typeof GetSceneCyclingResponseSchema;
     };
     /**
-     * Set scene cycling
+     * Set scene cycling configuration.
      *
      * @generated from rpc braiins.bmc.web.SceneManagementService.SetSceneCycling
      */
@@ -1379,5 +927,26 @@ export const SceneManagementService: GenService<{
         methodKind: 'unary';
         input: typeof SetSceneCyclingRequestSchema;
         output: typeof EmptySchema;
+    };
+    /**
+     * ── Manifest registry RPCs ──────────────────────────────────────
+     * Get all installed widget manifests (for the widget picker UI).
+     *
+     * @generated from rpc braiins.bmc.web.SceneManagementService.GetAvailableWidgets
+     */
+    getAvailableWidgets: {
+        methodKind: 'unary';
+        input: typeof EmptySchema;
+        output: typeof GetAvailableWidgetsResponseSchema;
+    };
+    /**
+     * Get a single widget manifest by UID.
+     *
+     * @generated from rpc braiins.bmc.web.SceneManagementService.GetWidgetManifest
+     */
+    getWidgetManifest: {
+        methodKind: 'unary';
+        input: typeof StringValueSchema;
+        output: typeof WidgetManifestSchema;
     };
 }> = /*@__PURE__*/ serviceDesc(file_web_scene_management, 0);

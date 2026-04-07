@@ -235,64 +235,6 @@ export function sceneCyclingEffectToString(intl: IntlShape, x?: null | pb.SceneC
     }
 }
 
-export const tickerTimeFrameOptions: Array<Exclude<pb.TickerBtcWidget_TimeFrame, 0>> = [
-    pb.TickerBtcWidget_TimeFrame.DAY_1,
-    pb.TickerBtcWidget_TimeFrame.WEEK_1,
-    pb.TickerBtcWidget_TimeFrame.WEEK_2,
-    pb.TickerBtcWidget_TimeFrame.MONTH_1,
-    pb.TickerBtcWidget_TimeFrame.MONTH_3,
-    pb.TickerBtcWidget_TimeFrame.MONTH_6,
-    pb.TickerBtcWidget_TimeFrame.YEAR_1,
-    pb.TickerBtcWidget_TimeFrame.YEAR_2,
-    pb.TickerBtcWidget_TimeFrame.YEAR_5,
-    pb.TickerBtcWidget_TimeFrame.ALL,
-];
-export function tickerTimeFrameToString(intl: IntlShape, x?: Maybe<pb.TickerBtcWidget_TimeFrame>): null;
-export function tickerTimeFrameToString(intl: IntlShape, x: Exclude<pb.TickerBtcWidget_TimeFrame, 0>): string;
-export function tickerTimeFrameToString(intl: IntlShape, x?: null | pb.TickerBtcWidget_TimeFrame) {
-    const { formatMessage } = intl;
-
-    switch (x) {
-        case null:
-        case undefined:
-        case pb.TickerBtcWidget_TimeFrame.UNSPECIFIED:
-            return null;
-
-        case pb.TickerBtcWidget_TimeFrame.DAY_1:
-            return formatMessage({ defaultMessage: '1 Day' });
-
-        case pb.TickerBtcWidget_TimeFrame.WEEK_1:
-            return formatMessage({ defaultMessage: '1 Week' });
-
-        case pb.TickerBtcWidget_TimeFrame.WEEK_2:
-            return formatMessage({ defaultMessage: '2 Weeks' });
-
-        case pb.TickerBtcWidget_TimeFrame.MONTH_1:
-            return formatMessage({ defaultMessage: '1 Month' });
-
-        case pb.TickerBtcWidget_TimeFrame.MONTH_3:
-            return formatMessage({ defaultMessage: '3 Months' });
-
-        case pb.TickerBtcWidget_TimeFrame.MONTH_6:
-            return formatMessage({ defaultMessage: '6 Months' });
-
-        case pb.TickerBtcWidget_TimeFrame.YEAR_1:
-            return formatMessage({ defaultMessage: '1 Year' });
-
-        case pb.TickerBtcWidget_TimeFrame.YEAR_2:
-            return formatMessage({ defaultMessage: '2 Years' });
-
-        case pb.TickerBtcWidget_TimeFrame.YEAR_5:
-            return formatMessage({ defaultMessage: '5 Years' });
-
-        case pb.TickerBtcWidget_TimeFrame.ALL:
-            return formatMessage({ defaultMessage: 'All' });
-
-        default:
-            assertUnreachable(x, 'ticker time frame');
-    }
-}
-
 export const sceneCycleDurationOptions: number[] = [10, 20, 30, 40, 50, 60, 90, 120];
 export function sceneCycleDurationToString(value: Maybe<number>): string {
     if (value == null) return 'N/A';
@@ -438,51 +380,6 @@ export function numberFormatToString(x: Maybe<pb.NumberFormat>): null | string {
     }
 }
 
-export function clockStyleToString(intl: IntlShape, style: pb.ClockWidget_ClockStyle): null | string {
-    if (!style) return null;
-    switch (style) {
-        case pb.ClockWidget_ClockStyle.ANALOG_ROUND:
-            return intl.formatMessage({ defaultMessage: 'Analog (round)' });
-
-        case pb.ClockWidget_ClockStyle.ANALOG_RECT:
-            return intl.formatMessage({ defaultMessage: 'Analog (rectangular)' });
-
-        case pb.ClockWidget_ClockStyle.DIGITAL:
-            return intl.formatMessage({ defaultMessage: 'Digital' });
-
-        default:
-            assertUnreachable(style, 'clock style');
-    }
-}
-
-export const fontStyleOptions: Array<Exclude<pb.FontStyle, 0>> = [
-    pb.FontStyle.LIGHT,
-    pb.FontStyle.MEDIUM,
-    pb.FontStyle.BOLD,
-] as const;
-export function fontStyleToString(intl: IntlShape, x?: Maybe<pb.FontStyle>): null;
-export function fontStyleToString(intl: IntlShape, x: Exclude<pb.FontStyle, 0>): string;
-export function fontStyleToString(intl: IntlShape, x?: null | pb.FontStyle) {
-    switch (x) {
-        case null:
-        case undefined:
-        case pb.FontStyle.UNSPECIFIED:
-            return null;
-
-        case pb.FontStyle.LIGHT:
-            return intl.formatMessage({ defaultMessage: 'Light' });
-
-        case pb.FontStyle.MEDIUM:
-            return intl.formatMessage({ defaultMessage: 'Medium' });
-
-        case pb.FontStyle.BOLD:
-            return intl.formatMessage({ defaultMessage: 'Bold' });
-
-        default:
-            assertUnreachable(x, 'clock style');
-    }
-}
-
 export const accountTypeOptions: Array<Exclude<pb.AccountType, 0>> = [pb.AccountType.BRAIINSPOOL];
 export function accountTypeToString(intl: IntlShape, x?: Maybe<pb.AccountType>): null;
 export function accountTypeToString(intl: IntlShape, x: Exclude<pb.AccountType, 0>): string;
@@ -501,193 +398,58 @@ export function accountTypeToString(intl: IntlShape, x?: null | pb.AccountType) 
     }
 }
 
-type BraiinsPoolStyle = pb.BraiinsPoolWidget_BraiinsPoolStyle;
-export const braiinsPoolStyleOptions: Array<Exclude<BraiinsPoolStyle, 0>> = [
-    pb.BraiinsPoolWidget_BraiinsPoolStyle.OVERVIEW,
-    pb.BraiinsPoolWidget_BraiinsPoolStyle.BIGCHART,
-];
-export function braiinsPoolStyleToString(intl: IntlShape, x?: Maybe<BraiinsPoolStyle>): null;
-export function braiinsPoolStyleToString(intl: IntlShape, x: Exclude<BraiinsPoolStyle, 0>): string;
-export function braiinsPoolStyleToString(intl: IntlShape, x?: null | BraiinsPoolStyle) {
-    switch (x) {
-        case null:
-        case undefined:
-        case pb.BraiinsPoolWidget_BraiinsPoolStyle.UNSPECIFIED:
-            return null;
+// ── Manifest-driven scene / widget helpers ────────────────────────────
+//
+// Since every widget is identified by a manifest UID, titles and
+// descriptions come from the manifest registry.  Callers pass a lookup
+// (typically a Map<string, WidgetManifest>) so we can resolve UIDs
+// synchronously per render.
 
-        case pb.BraiinsPoolWidget_BraiinsPoolStyle.OVERVIEW:
-            return intl.formatMessage({ defaultMessage: 'Overview' });
+export type ManifestLookup = Map<string, pb.WidgetManifest>;
 
-        case pb.BraiinsPoolWidget_BraiinsPoolStyle.BIGCHART:
-            return intl.formatMessage({ defaultMessage: 'Big Chart' });
-
-        default:
-            assertUnreachable(x, 'view style');
-    }
+/** Display title for a widget — prefers the manifest's human-readable name. */
+export function widgetTitle(widget: Maybe<pb.Widget>, manifests: Maybe<ManifestLookup>): null | string {
+    if (!widget) return null;
+    return manifests?.get(widget.config?.widgetUid ?? '')?.name || null;
 }
 
-type BraiinsPoolTimeFrame = pb.BraiinsPoolWidget_TimeFrame;
-export const braiinsPoolTimeFrameOptions: Array<Exclude<BraiinsPoolTimeFrame, 0>> = [
-    pb.BraiinsPoolWidget_TimeFrame.HOUR_4,
-    pb.BraiinsPoolWidget_TimeFrame.HOUR_12,
-    pb.BraiinsPoolWidget_TimeFrame.HOUR_24,
-    pb.BraiinsPoolWidget_TimeFrame.DAY_7,
-];
-export function braiinsPoolTimeFrameToString(intl: IntlShape, x?: Maybe<BraiinsPoolTimeFrame>): null;
-export function braiinsPoolTimeFrameToString(intl: IntlShape, x: Exclude<BraiinsPoolTimeFrame, 0>): string;
-export function braiinsPoolTimeFrameToString(intl: IntlShape, x?: null | BraiinsPoolTimeFrame) {
-    const { formatMessage } = intl;
-
-    switch (x) {
-        case null:
-        case undefined:
-        case pb.BraiinsPoolWidget_TimeFrame.UNSPECIFIED:
-            return null;
-
-        case pb.BraiinsPoolWidget_TimeFrame.HOUR_4:
-            return formatMessage({ defaultMessage: '4 Hours' });
-
-        case pb.BraiinsPoolWidget_TimeFrame.HOUR_12:
-            return formatMessage({ defaultMessage: '12 Hours' });
-
-        case pb.BraiinsPoolWidget_TimeFrame.HOUR_24:
-            return formatMessage({ defaultMessage: '24 Hours' });
-
-        case pb.BraiinsPoolWidget_TimeFrame.DAY_7:
-            return formatMessage({ defaultMessage: '7 Days' });
-
-        default:
-            assertUnreachable(x, 'pool time frame');
-    }
+/** Short description of a widget — uses the manifest's description text. */
+export function widgetDescription(widget: Maybe<pb.Widget>, manifests: Maybe<ManifestLookup>): null | string {
+    if (!widget) return null;
+    return manifests?.get(widget.config?.widgetUid ?? '')?.description || null;
 }
 
-export function getRemoteImageRefreshIntervalOptions(intl: IntlShape): Array<{ seconds: number; label: string }> {
-    return [
-        { seconds: 10, label: intl.formatMessage({ defaultMessage: '10 seconds' }) },
-        { seconds: 30, label: intl.formatMessage({ defaultMessage: '30 seconds' }) },
-        { seconds: 60, label: intl.formatMessage({ defaultMessage: '1 minute' }) },
-        { seconds: 5 * 60, label: intl.formatMessage({ defaultMessage: '5 minutes' }) },
-        { seconds: 10 * 60, label: intl.formatMessage({ defaultMessage: '10 minutes' }) },
-        { seconds: 30 * 60, label: intl.formatMessage({ defaultMessage: '30 minutes' }) },
-        { seconds: 60 * 60, label: intl.formatMessage({ defaultMessage: '1 hour' }) },
-        { seconds: 24 * 60 * 60, label: intl.formatMessage({ defaultMessage: '1 day' }) },
-    ];
-}
-
-export function sceneTitle(intl: IntlShape, kind: Maybe<ProtoOneofCase<pb.WidgetKind['value']>>): null | string {
-    switch (kind) {
-        case null:
+/** Title for a scene — names the fullscreen widget, or a fixed label for combined scenes. */
+export function sceneTitle(intl: IntlShape, scene: Maybe<pb.Scene>, manifests: Maybe<ManifestLookup>): null | string {
+    if (!scene) return null;
+    const { case: sceneKindCase } = scene.kind;
+    switch (sceneKindCase) {
         case undefined:
             return null;
-
-        case 'clock':
-            return intl.formatMessage({ defaultMessage: 'Clock' });
-
-        case 'tickerBtc':
-            return intl.formatMessage({ defaultMessage: 'Bitcoin Ticker' });
-
-        case 'blockHeight':
-            return intl.formatMessage({ defaultMessage: 'Block Height' });
-
-        case 'blockchainData':
-            return intl.formatMessage({ defaultMessage: 'Bitcoin Mining Data' });
-
-        case 'braiinsPool':
-            return intl.formatMessage({ defaultMessage: 'Braiins Pool' });
-
-        case 'remoteImage':
-            return intl.formatMessage({ defaultMessage: 'Image' });
-
-        case 'remoteWidget':
-            return intl.formatMessage({ defaultMessage: 'Remote Widget' });
-
-        case 'halvingCountdown':
-            return intl.formatMessage({ defaultMessage: 'Halving Countdown' });
-
+        case 'combined':
+            return intl.formatMessage({ defaultMessage: 'Combined Scene' });
+        case 'fullscreen':
+            return widgetTitle(scene.kind.value.widget, manifests);
         default:
-            assertUnreachable(kind);
+            assertUnreachable(sceneKindCase, 'scene kind');
     }
 }
 
-export function widgetDescription(intl: IntlShape, data: Maybe<pb.WidgetKind>) {
-    const { formatMessage } = intl;
-    const val = data?.value;
-    switch (val?.case) {
+/** Description of a scene — widget list for combined, single description for fullscreen. */
+export function sceneDescription(scene: Maybe<pb.Scene>, manifests: Maybe<ManifestLookup>): null | string {
+    if (!scene) return null;
+    const { case: sceneKindCase } = scene.kind;
+    switch (sceneKindCase) {
         case undefined:
             return null;
-
-        case 'clock':
-            return intl.formatMessage(
-                { defaultMessage: 'Style: {style}, font: {font}' },
-                {
-                    style: clockStyleToString(intl, val.value.clockStyle) || 'N/A',
-                    font: fontStyleToString(intl, val.value.numbersFontStyle) || 'N/A',
-                },
-            );
-
-        case 'tickerBtc':
-            return intl.formatMessage(
-                { defaultMessage: 'Time frame: {timeframe}' },
-                {
-                    timeframe: tickerTimeFrameToString(intl, val.value.timeFrame) || 'N/A',
-                },
-            );
-
-        case 'blockHeight':
-            return intl.formatMessage(
-                { defaultMessage: 'Time & date: {dateTime}, font: {font}' },
-                {
-                    dateTime: val.value.showTimestamp
-                        ? formatMessage({ defaultMessage: 'Yes' })
-                        : formatMessage({ defaultMessage: 'No' }),
-                    font: fontStyleToString(intl, val.value.numbersFontStyle) || 'N/A',
-                },
-            );
-
-        case 'blockchainData':
-            return intl.formatMessage({ defaultMessage: 'No parameters' });
-
-        case 'braiinsPool': {
-            const d = val.value satisfies pb.BraiinsPoolWidget;
-            return intl.formatMessage(
-                { defaultMessage: 'Time frame: {timeframe}' },
-                {
-                    timeframe: braiinsPoolTimeFrameToString(intl, d.timeFrame) || 'N/A',
-                },
-            );
-        }
-
-        case 'remoteImage': {
-            const d = val.value satisfies pb.RemoteImageWidget;
-            return intl.formatMessage({ defaultMessage: 'URL: {url}' }, { url: d.url || 'N/A' });
-        }
-
-        case 'remoteWidget':
-            return val.value.description;
-
-        case 'halvingCountdown':
-            return intl.formatMessage({ defaultMessage: 'Countdown to the next Bitcoin halving' });
-
+        case 'combined':
+            return scene.kind.value.widgets
+                .map(w => widgetTitle(w, manifests))
+                .filter((x): x is string => !!x)
+                .join(', ');
+        case 'fullscreen':
+            return widgetDescription(scene.kind.value.widget, manifests);
         default:
-            assertUnreachable(val, 'fullscreen widget kind');
+            assertUnreachable(sceneKindCase, 'scene kind');
     }
-}
-export function sceneDescription(intl: IntlShape, data: Maybe<MaybeArray<pb.Widget>>): null | string {
-    if (data == null) return null;
-
-    // Combined scene
-    if (Array.isArray(data)) {
-        const res: string[] = [];
-        data.forEach(x => {
-            const r =
-                x.kind?.value.case === 'remoteWidget' ? x.kind.value.value.name : sceneTitle(intl, x.kind?.value.case);
-            if (r) res.push(r);
-        });
-        return res.join(', ');
-    }
-
-    // Fullscreen widget
-    else if (data) return widgetDescription(intl, data.kind);
-    // Fail
-    else assertUnreachable(data);
 }
