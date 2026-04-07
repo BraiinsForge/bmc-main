@@ -1,15 +1,13 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-// TODO: display refactor
-#![allow(dead_code, unused_imports, clippy::too_many_arguments)]
-
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::alarm::{AlarmBus, AlarmController};
+use crate::alarm::AlarmBus;
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
 use crate::compositor::Compositor;
@@ -19,11 +17,9 @@ use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::manager::BmcManager;
-use crate::sound::SoundController;
-use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
-use crate::widget::{Coordinator, WidgetManager};
+use crate::widget::{Coordinator, WidgetManager, WidgetRegistry};
 // TODO: display refactor
 // use crate::widget_tasks::WidgetTasks;
 use anyhow::Result;
@@ -32,41 +28,43 @@ use bmc_led::led_driver::LedDriver;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::FirmwareIndex;
 use tokio::net::TcpListener;
-use tokio::signal::unix::SignalKind;
 use tokio::sync::Mutex;
 use tokio::sync::{RwLock, watch};
 use tracing::info;
 
 #[derive(Debug)]
-pub struct App<T, V>
+pub struct App<T, U, V>
 where
     T: BmcManager,
+    U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
     listener: TcpListener,
     manager: Arc<T>,
     session_manager: Arc<T::SessionManager>,
-    #[expect(dead_code)]
     config: Configuration,
-    // TODO: display refactor
-    // display_tasks: DisplayTasks<T, U>,
-    // widget_tasks: WidgetTasks,
     system_upgrade_service: SystemUpgradeService<V, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    // TODO: display refactor
-    // display_controller: DisplayController,
     initial_setup: InitialSetup<T, V>,
     button_manager: ButtonManager<T>,
     led_controller: LedController<T>,
-    widget_coordinator: Coordinator,
+    widget_coordinator: Arc<Coordinator>,
+    widget_registry: Arc<WidgetRegistry>,
+    _backlight_driver: PhantomData<U>,
 }
 
-impl<T, V> App<T, V>
+impl<T, U, V> App<T, U, V>
 where
     T: BmcManager,
+    U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
-    pub async fn init<U: DisplayBacklightDriver>(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "initialization collects independent subsystem handles; grouping them \
+                  into a wrapper struct just to satisfy the lint would hurt clarity"
+    )]
+    pub async fn init(
         config: Configuration,
         manager: Arc<T>,
         session_manager: T::SessionManager,
@@ -193,7 +191,8 @@ where
         let button_manager = ButtonManager::new(buttons, manager.clone());
 
         let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
-        let widget_coordinator = Coordinator::new(widget_manager, compositor);
+        let widget_registry = widget_manager.registry();
+        let widget_coordinator = Arc::new(Coordinator::new(widget_manager, compositor));
 
         {
             let config_guard = config_handle.read().await;
@@ -215,21 +214,14 @@ where
             manager,
             session_manager: session_manager.into(),
             config,
-            // TODO: display refactor
-            // display_tasks,
-            // widget_tasks,
             system_upgrade_service,
             config_handle,
-            // TODO: display refactor
-            // display_controller,
             initial_setup,
-            // TODO: display refactor
-            // system_manager,
-            // sound_controller,
-            // alarm_controller,
             button_manager,
             led_controller,
             widget_coordinator,
+            widget_registry,
+            _backlight_driver: PhantomData,
         })
     }
 
@@ -237,41 +229,28 @@ where
         let address = self.listener.local_addr()?;
         info!("Starting server on http://{}", address);
 
-        // TODO: display refactor
-        // self.display_tasks.spawn();
-
         tokio::spawn(self.button_manager.run());
 
-        // TODO: display refactor - WebService needs many display-related components
-        // WebService::new(
-        //     self.manager,
-        //     self.session_manager,
-        //     self.config.server_config,
-        //     self.system_upgrade_service,
-        //     self.config_handle,
-        //     self.display_controller,
-        //     self.widget_tasks,
-        //     self.initial_setup,
-        //     self.system_manager,
-        //     self.sound_controller,
-        //     self.alarm_controller,
-        //     self.led_state_sender,
-        //     self.led_controller,
-        // )
-        // .run(self.listener)
-        // .await?;
+        WebService::<T, _, V, U>::new(
+            self.manager,
+            self.session_manager,
+            self.config.server_config,
+            self.system_upgrade_service,
+            self.config_handle,
+            self.initial_setup,
+            self.led_controller,
+            self.widget_registry,
+            self.widget_coordinator.clone(),
+            // TODO: display refactor — re-enable display-dependent services here.
+            // self.system_manager,
+            // self.sound_controller,
+            // self.alarm_controller,
+        )
+        .run(self.listener)
+        .await?;
 
-        let mut sigterm = tokio::signal::unix::signal(SignalKind::terminate())
-            .expect("BUG: failed to register SIGTERM handler");
-        let mut sigquit = tokio::signal::unix::signal(SignalKind::quit())
-            .expect("BUG: failed to register SIGQUIT handler");
-
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => info!("SIGINT received, shutting down"),
-            _ = sigterm.recv() => info!("SIGTERM received, shutting down"),
-            _ = sigquit.recv() => info!("SIGQUIT received, shutting down"),
-        }
-
+        // In case the app panics, this is not executed.
+        // The children are SIGKILL'd thanks to kill_on_drop(true).
         self.widget_coordinator.stop_all().await;
         Ok(())
     }

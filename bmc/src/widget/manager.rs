@@ -23,7 +23,7 @@ const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub struct WidgetManager {
-    registry: WidgetRegistry,
+    registry: Arc<WidgetRegistry>,
     spawner: WaylandSpawner,
     children: Arc<RwLock<HashMap<String, Child>>>,
 }
@@ -38,7 +38,7 @@ impl WidgetManager {
         let discovery = PathDiscovery::new(widgets_paths);
         let widgets = discovery.discover().await;
 
-        let registry = WidgetRegistry::new(widgets);
+        let registry = Arc::new(WidgetRegistry::new(widgets));
         info!(count = registry.len(), "widget discovery complete");
 
         for widget in registry.list() {
@@ -57,6 +57,12 @@ impl WidgetManager {
             spawner,
             children: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Get a shared reference to the widget registry.
+    #[must_use]
+    pub fn registry(&self) -> Arc<WidgetRegistry> {
+        self.registry.clone()
     }
 
     /// Spawn a widget process and return its OS pid. The compositor needs

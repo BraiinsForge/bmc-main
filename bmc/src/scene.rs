@@ -70,8 +70,8 @@ pub struct WidgetPosition {
 }
 
 impl WidgetPosition {
-    pub const MAX_ROWS: u32 = 2;
-    pub const MAX_COLS: u32 = 4;
+    pub const MAX_ROWS: usize = 2;
+    pub const MAX_COLS: usize = 4;
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -138,22 +138,22 @@ impl Widget {
 
     #[must_use]
     pub fn in_bounds(&self) -> bool {
-        let bottom = u32::from(self.position.row + self.size.row_span());
-        let right = u32::from(self.position.col + self.size.col_span());
+        let bottom = usize::from(self.position.row) + usize::from(self.size.row_span());
+        let right = usize::from(self.position.col) + usize::from(self.size.col_span());
         (bottom <= WidgetPosition::MAX_ROWS) && (right <= WidgetPosition::MAX_COLS)
     }
 
     #[must_use]
     pub fn overlaps(&self, other: &Self) -> bool {
-        let self_left = self.position.col;
-        let self_right = self_left + self.size.col_span();
-        let self_top = self.position.row;
-        let self_bottom = self_top + self.size.row_span();
+        let self_left = usize::from(self.position.col);
+        let self_right = self_left + usize::from(self.size.col_span());
+        let self_top = usize::from(self.position.row);
+        let self_bottom = self_top + usize::from(self.size.row_span());
 
-        let other_left = other.position.col;
-        let other_right = other_left + other.size.col_span();
-        let other_top = other.position.row;
-        let other_bottom = other_top + other.size.row_span();
+        let other_left = usize::from(other.position.col);
+        let other_right = other_left + usize::from(other.size.col_span());
+        let other_top = usize::from(other.position.row);
+        let other_bottom = other_top + usize::from(other.size.row_span());
 
         (self_left < other_right)
             && (self_right > other_left)
@@ -296,4 +296,46 @@ fn deserialize_widgets<'de, D: Deserializer<'de>>(
     let vec = Vec::<Widget>::deserialize(deserializer)?;
     let map = vec.into_iter().map(|widget| (widget.id, widget)).collect();
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn in_bounds_does_not_overflow_u8_addition() {
+        let widget = Widget {
+            id: WidgetId::generate(),
+            position: WidgetPosition {
+                row: u8::MAX,
+                col: 0,
+            },
+            size: WidgetSize::Small,
+            widget_type_id: Uuid::nil(),
+            params: serde_json::Value::Null,
+        };
+        assert!(
+            !widget.in_bounds(),
+            "widget at row=255 must not be in bounds"
+        );
+    }
+
+    #[test]
+    fn overlaps_does_not_overflow_u8_addition() {
+        let a = Widget {
+            id: WidgetId::generate(),
+            position: WidgetPosition {
+                row: u8::MAX,
+                col: 0,
+            },
+            size: WidgetSize::Small,
+            widget_type_id: Uuid::nil(),
+            params: serde_json::Value::Null,
+        };
+        let b = a.clone_with_new_id();
+        assert!(
+            a.overlaps(&b),
+            "two identical widgets at row=255 must be reported as overlapping",
+        );
+    }
 }

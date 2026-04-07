@@ -45,12 +45,23 @@ async fn main() -> Result<()> {
 
     let led_driver = PlatformLedDriver::new("/dev/spidev0.0");
 
-    let config = Configuration {
+    let mut config = Configuration {
         widgets_paths: args
             .widgets_paths
             .unwrap_or_else(|| vec![PathBuf::from("/run/current-profile/lib/bmc-widgets")]),
         ..Configuration::default()
     };
+
+    if let Some(address) = args.address {
+        config.address = address;
+    }
+    if let Some(www_path) = args.www_path {
+        config.server_config = config
+            .server_config
+            .set_www_root_path(www_path.clone())
+            .set_www_assets_path(www_path.join("assets"))
+            .set_www_var_path(www_path.join("var"));
+    }
 
     let bmc_index = bmc::firmware::BmcIndex::default();
 

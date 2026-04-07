@@ -84,21 +84,41 @@ impl WidgetTracker {
         }
     }
 
-    /// Set all scenes for drag-based cycling. Resets to the first scene.
+    /// Replace the cycling list. Tries to keep the same scene active
+    /// by remapping `current_index` via `scene_id`; falls back to 0
+    /// when the active scene is no longer in the list. Cancels any
+    /// in-progress drag.
     pub fn set_scene_cycling(&mut self, scenes: Vec<SceneLayout>) {
+        let active_id = self.scenes.get(self.current_index).and_then(|s| s.scene_id);
+
         if scenes.is_empty() {
             self.scenes = vec![SceneLayout::default()];
+            self.current_index = 0;
         } else {
+            let new_index = active_id
+                .and_then(|id| scenes.iter().position(|s| s.scene_id == Some(id)))
+                .unwrap_or(0);
             self.scenes = scenes;
+            self.current_index = new_index;
         }
-        self.current_index = 0;
         self.drag_offset = None;
     }
 
-    /// Set a single active scene (replaces all scenes).
+    /// Show `layout` as the active scene. If a scene with the same
+    /// `scene_id` is already in the cycling list, replace it in place
+    /// and move `current_index` to it; otherwise reset to a single-scene
+    /// list with this layout.
     pub fn set_active_scene(&mut self, layout: SceneLayout) {
-        self.scenes = vec![layout];
-        self.current_index = 0;
+        let idx = layout
+            .scene_id
+            .and_then(|id| self.scenes.iter().position(|s| s.scene_id == Some(id)));
+        if let Some(idx) = idx {
+            self.scenes[idx] = layout;
+            self.current_index = idx;
+        } else {
+            self.scenes = vec![layout];
+            self.current_index = 0;
+        }
         self.drag_offset = None;
     }
 
@@ -227,6 +247,7 @@ fn collect_visible_widget_ids(scene: &SceneLayout, ids: &mut HashSet<InstanceId>
 #[cfg(test)]
 mod tests {
     use bmc::compositor::{Position, SceneLayout, Size, WidgetPlacement};
+    use bmc::scene::SceneId;
 
     use super::{SceneCommitConfig, WidgetTracker};
 
@@ -352,6 +373,7 @@ mod tests {
 
     fn scene_with_widget(id: &str) -> SceneLayout {
         SceneLayout {
+            scene_id: None,
             widgets: vec![WidgetPlacement {
                 instance_id: id.to_owned(),
                 position: Position { x: 0, y: 0 },
@@ -390,6 +412,63 @@ mod tests {
         assert_eq!(
             t.presented_widget_ids(),
             std::collections::HashSet::from([String::from("active"), String::from("next")])
+        );
+    }
+
+    fn scene_with_id(id: SceneId) -> SceneLayout {
+        SceneLayout {
+            scene_id: Some(id),
+            widgets: vec![],
+        }
+    }
+
+    #[test]
+    fn set_scene_cycling_preserves_active_scene_after_reorder() {
+        let id_a = SceneId::generate();
+        let id_b = SceneId::generate();
+        let id_c = SceneId::generate();
+
+        let a = scene_with_id(id_a);
+        let b = scene_with_id(id_b);
+        let c = scene_with_id(id_c);
+
+        let mut tracker = WidgetTracker::default();
+        tracker.set_scene_cycling(vec![a.clone(), b.clone(), c.clone()]);
+        // Move to B (index 1).
+        tracker.set_active_scene(b.clone());
+        assert_eq!(
+            tracker.active_scene().scene_id,
+            Some(id_b),
+            "active scene should be B after set_active_scene"
+        );
+
+        // Reorder so B is at index 2.
+        tracker.set_scene_cycling(vec![a, c, b]);
+        assert_eq!(
+            tracker.active_scene().scene_id,
+            Some(id_b),
+            "active scene must follow its scene_id, not its old index",
+        );
+    }
+
+    #[test]
+    fn set_scene_cycling_falls_back_to_zero_when_active_scene_missing() {
+        let id_a = SceneId::generate();
+        let id_b = SceneId::generate();
+
+        let a = scene_with_id(id_a);
+        let b = scene_with_id(id_b);
+
+        let mut tracker = WidgetTracker::default();
+        tracker.set_scene_cycling(vec![a.clone(), b]);
+        tracker.set_active_scene(scene_with_id(id_b));
+        // Drop B from the cycling list.
+        tracker.set_scene_cycling(vec![a]);
+        // Current index falls back to 0 (only scene left is A).
+        assert_eq!(
+            tracker.active_scene().scene_id,
+            Some(id_a),
+            "should fall back to index 0 when active scene is removed"
         );
     }
 }
