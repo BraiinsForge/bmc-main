@@ -6,10 +6,12 @@ let
     autoPatchelfHook = armv7Pkgs.autoPatchelfHook;
   };
   packageLib = import ./package.nix { inherit pkgs lib; };
+  serviceLib = import ./service.nix { inherit pkgs lib; };
 in
 {
   inherit autopatchelfBinaries;
   inherit (packageLib) mkPackage mkPrioritizedEntries;
+  inherit (serviceLib) mkOpenWrtService mkOpenWrtDaemon;
   inherit (import ./widget.nix { inherit pkgs lib autopatchelfBinaries; })
     mkWidgetPackage mkAllWidgets;
 }
