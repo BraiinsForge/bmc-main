@@ -356,6 +356,8 @@ in
 {
   inherit commonDeps bmc deps makeRustflagsEnv;
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
+    deck-packages = armv7PackageDefs;
+    armv7-nixpkgs = armv7Pkgs;
     inherit bmc-video-play-armv7;
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
     bmc-nix-init-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-init-mock { };
