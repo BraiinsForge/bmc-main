@@ -30,21 +30,15 @@ let
     , functions ? [ ]
     }:
     let
-      startLine = "START=${toString start}";
-      stopLine = lib.optionalString (stop != null) "STOP=${toString stop}\n";
-      variables = variables ++ {
-        "START" = toString start;
-      } // (lib.optionalAttrs (stop != null) {
-        "STOP" = toString stop;
-      });
-      varNames = builtins.attrNames variables;
+      allVariables = { START = toString start; }
+        // lib.optionalAttrs (stop != null) { STOP = toString stop; }
+        // variables;
       varLines = lib.concatMapStringsSep "\n"
-        (k: ''${k}="${variables.${k}}"'')
-        varNames;
-      headerBlock = varLines + "\n";
+        (k: ''${k}="${allVariables.${k}}"'')
+        (builtins.attrNames allVariables);
       funcBlock = lib.concatStringsSep "\n\n" (map renderFunction functions);
       script = shebang + "\n\n"
-        + headerBlock
+        + varLines + "\n"
         + (lib.optionalString (functions != [ ]) ("\n" + funcBlock + "\n"));
       service = pkgs.writeTextFile {
         name = "init.d-${name}";
