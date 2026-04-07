@@ -2,12 +2,13 @@
 
 use bmc_shared_time::time::Timezone;
 use bmc_widget_protocol::{Localization, SizeType, WidgetInitialConfig};
+use indexmap::IndexMap;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::compositor::{Compositor, Position, SceneLayout, Size, WidgetPlacement};
 use crate::config::LocalizationConfig;
-use crate::scene::{Scene, Widget, WidgetSize};
+use crate::scene::{Scene, SceneId, Widget, WidgetSize};
 
 use super::WidgetManager;
 
@@ -47,7 +48,7 @@ impl Coordinator {
 
     pub async fn spawn_initial_widgets(
         &self,
-        scenes: &indexmap::IndexMap<crate::scene::SceneId, Scene>,
+        scenes: &IndexMap<SceneId, Scene>,
         localization: &LocalizationConfig,
         timezone: &Timezone,
         night_mode_active: bool,
@@ -67,27 +68,33 @@ impl Coordinator {
             let _ = self.compositor.broadcast_setting(setting);
         }
 
-        let enabled_scenes: Vec<_> = scenes.values().filter(|s| s.enabled).collect();
-        info!(
-            count = enabled_scenes.len(),
-            "spawning widgets for enabled scenes"
-        );
-
-        for scene in &enabled_scenes {
+        let enabled_count = scenes.values().filter(|s| s.enabled).count();
+        info!(count = enabled_count, "spawning widgets for enabled scenes");
+        for scene in scenes.values().filter(|s| s.enabled) {
             self.spawn_scene_widgets(scene).await;
         }
 
-        // Send all scene layouts to compositor for drag-based cycling.
-        let layouts: Vec<_> = enabled_scenes
-            .iter()
-            .map(|s| Self::scene_to_layout(s))
-            .collect();
-        info!(count = layouts.len(), "setting scene cycling on compositor");
-        if let Err(e) = self.compositor.set_scene_cycling(layouts) {
-            warn!(error = %e, "failed to set scene cycling");
-        }
+        self.refresh_scene_cycling(scenes);
 
         info!("all scene widgets spawned");
+    }
+
+    /// Push the current enabled-scenes layout list to the compositor's
+    /// drag-cycling state. Call after any scene-set or widget-layout
+    /// mutation so swipe targets the post-mutation layouts.
+    pub fn refresh_scene_cycling(&self, scenes: &IndexMap<SceneId, Scene>) {
+        let layouts: Vec<_> = scenes
+            .values()
+            .filter(|s| s.enabled)
+            .map(Self::scene_to_layout)
+            .collect();
+        debug!(
+            count = layouts.len(),
+            "refreshing scene cycling on compositor"
+        );
+        if let Err(e) = self.compositor.set_scene_cycling(layouts) {
+            warn!(error = %e, "failed to refresh scene cycling");
+        }
     }
 
     pub async fn spawn_scene_widgets(&self, scene: &Scene) {
@@ -253,7 +260,10 @@ impl Coordinator {
             })
             .collect();
 
-        SceneLayout { widgets }
+        SceneLayout {
+            scene_id: Some(scene.id),
+            widgets,
+        }
     }
 
     fn widget_to_position(widget: &Widget) -> Position {

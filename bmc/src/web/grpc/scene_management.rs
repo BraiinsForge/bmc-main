@@ -1,92 +1,346 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-// TODO: display refactor
-// This module needs to be updated to use the new scene types from bmc::scene.
-// Temporarily disabled until the migration is complete.
-
-/*
-
-use crate::BmcManager;
-use crate::config::ConfigHandle;
-use crate::led::LedController;
-use crate::web::grpc::GrpcError;
-use crate::widget_tasks::WidgetTasks;
-use bmc_display::data::{
-    AccountId, AddWidgetError, BlockHeightWidget, BraiinsPoolWidget, ClockStyle, ClockWidget,
-    FontStyle, ImageScaleMode, PoolChartTimeFrame, PoolStyle, RemoteImageWidget, RemoteWidget,
-    RemoteWidgetMetadata, RemoveWidgetError, Scene, SceneCycling, SceneCyclingTransition, SceneId,
-    SceneKind, TickerBtcWidget, TickerTimeFrame, UpdateWidgetError, Widget, WidgetId, WidgetKind,
-    WidgetPosition, WidgetSize,
-};
-use bmc_display::display_controller::DisplayController;
-use bmc_grpc::web;
-use bmc_led::data::LedEvent;
-use bmc_shared_time::time::Timezone;
-use futures::StreamExt;
-use futures::stream::BoxStream;
-use prost_types::{ListValue, Struct, Value as ProstValue, value::Kind as ProstKind};
-use reqwest::Client;
-use serde_json::Value as JsonValue;
-use std::collections::HashSet;
-use std::fmt::Display;
-use std::panic;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tap::{TapFallible, TapOptional};
+
+use bmc_grpc::web;
+use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
+use bmc_ipc::SizeType;
+use bmc_widget::{ParamDefinition, ParamType};
+use futures::stream::{BoxStream, StreamExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
 use tokio_stream::wrappers::IntervalStream;
 use tonic::{Request, Response, Status};
-use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
-use tooling_std::attach_data::AttachData;
-use tracing::{error, warn};
-use url::Url;
+use uuid::Uuid;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
-const RECENT_REMOTE_WIDGETS: usize = 3;
+use crate::config::ConfigHandle;
+use crate::data::{SceneCycling, SceneCyclingTransition};
+use crate::scene;
+use crate::widget::{Coordinator, WidgetRegistry};
 
-pub(crate) struct SceneManagementService<T: BmcManager> {
+pub(crate) struct SceneManagementService {
+    widget_registry: Arc<WidgetRegistry>,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    display_controller: DisplayController,
-    widget_tasks: WidgetTasks,
-    preview_scene_id: Arc<Mutex<Option<SceneId>>>,
-    led_controller: LedController<T>,
+    coordinator: Arc<Coordinator>,
+    /// Scene currently held open by a `preview_scene` stream. While set,
+    /// that scene overrides the first-enabled pick in `restore_active_scene`
+    /// so edits made during a preview stay focused on it.
+    preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
 }
 
-impl<T: BmcManager> SceneManagementService<T> {
+impl SceneManagementService {
     pub(crate) fn new(
+        widget_registry: Arc<WidgetRegistry>,
         config_handle: Arc<RwLock<ConfigHandle>>,
-        display_controller: DisplayController,
-        widget_tasks: WidgetTasks,
-        led_controller: LedController<T>,
+        coordinator: Arc<Coordinator>,
     ) -> Self {
         Self {
+            widget_registry,
             config_handle,
-            display_controller,
-            widget_tasks,
+            coordinator,
             preview_scene_id: Arc::default(),
-            led_controller,
         }
+    }
+
+    /// Refresh the compositor's cycling list from current config; if a
+    /// preview is active, also push that scene as the destructive active.
+    async fn restore_active_scene(&self) {
+        let config = self.config_handle.read().await;
+        self.coordinator.refresh_scene_cycling(&config.scenes);
+        let preview_id = *self.preview_scene_id.lock().await;
+        if let Some(preview_id) = preview_id
+            && let Some(scene) = config.scenes.get(&preview_id)
+        {
+            self.coordinator.set_active_scene(scene);
+        }
+    }
+
+    /// Whether the given scene is currently shown on the display — either
+    /// because it's enabled or because it's being previewed. Gates the
+    /// "apply to live compositor" branches of add_widget / update_widget so
+    /// edits during a preview reach the widget process that's already up.
+    async fn scene_is_showing(&self, scene_id: &scene::SceneId) -> bool {
+        let config = self.config_handle.read().await;
+        let enabled = config.scenes.get(scene_id).is_some_and(|s| s.enabled);
+        drop(config);
+        enabled || self.preview_scene_id.lock().await.as_ref() == Some(scene_id)
+    }
+
+    /// Spawn a widget and log failures instead of propagating them.
+    async fn try_spawn_widget(&self, scene_id: &scene::SceneId, widget: &scene::Widget) {
+        // Settings travel through the compositor's cached state — each
+        // widget's initial configure batch replays them on connect, so the
+        // runtime spawn path no longer threads them through.
+        self.coordinator.spawn_widget(scene_id, widget).await;
+    }
+
+    /// Save config, returning a gRPC-friendly error on failure.
+    async fn save_config(config: &mut ConfigHandle) -> Result<(), Status> {
+        config
+            .save()
+            .await
+            .map_err(|e| Status::internal(format!("failed to save config: {e}")))
+    }
+}
+
+/// Build a params object starting from the manifest's declared defaults and
+/// overlaying any user-provided overrides on top. Used on widget creation,
+/// where omitted params fall back to manifest defaults.
+fn build_widget_params(
+    manifest_params: &std::collections::HashMap<String, ParamDefinition>,
+    user_overrides: &std::collections::HashMap<String, String>,
+) -> serde_json::Value {
+    let mut map: serde_json::Map<String, serde_json::Value> = manifest_params
+        .iter()
+        .map(|(key, def)| (key.clone(), def.default.clone()))
+        .collect();
+
+    for (key, val) in user_overrides {
+        let parsed = serde_json::from_str(val).unwrap_or(serde_json::Value::String(val.clone()));
+        map.insert(key.clone(), parsed);
+    }
+
+    map.into()
+}
+
+fn size_type_to_proto(size: SizeType) -> i32 {
+    match size {
+        SizeType::Small => web::WidgetSize::Small.into(),
+        SizeType::Medium => web::WidgetSize::Medium.into(),
+        SizeType::Large => web::WidgetSize::Large.into(),
+        SizeType::Full => web::WidgetSize::Full.into(),
+    }
+}
+
+fn param_type_to_proto(param_type: ParamType) -> i32 {
+    match param_type {
+        ParamType::String => web::ManifestParamType::String.into(),
+        ParamType::Boolean => web::ManifestParamType::Boolean.into(),
+        ParamType::Number => web::ManifestParamType::Number.into(),
+        ParamType::Array => web::ManifestParamType::Array.into(),
+        ParamType::Timezone => web::ManifestParamType::Timezone.into(),
+    }
+}
+
+fn param_definition_to_proto(key: &str, param: &ParamDefinition) -> web::ManifestParamDefinition {
+    web::ManifestParamDefinition {
+        key: key.to_owned(),
+        name: param.name.clone(),
+        param_type: param_type_to_proto(param.param_type),
+        description: param.description.clone(),
+        default_value: param.default.to_string(),
+        enum_values: param.enum_values.clone().unwrap_or_default(),
+        min: param.min,
+        max: param.max,
+    }
+}
+
+fn widget_info_to_proto(info: &crate::widget::WidgetInfo) -> web::WidgetManifest {
+    let manifest = &info.manifest;
+    web::WidgetManifest {
+        uid: manifest.uid.to_string(),
+        name: manifest.name.clone(),
+        description: manifest.description.clone(),
+        version: manifest.version.to_string(),
+        author_name: manifest.author.as_ref().map(|a| a.name.clone()),
+        author_url: manifest.author.as_ref().and_then(|a| a.url.clone()),
+        supported_sizes: manifest
+            .sizes
+            .iter()
+            .copied()
+            .map(size_type_to_proto)
+            .collect(),
+        params: manifest
+            .params
+            .iter()
+            .map(|(key, param)| param_definition_to_proto(key, param))
+            .collect(),
+    }
+}
+
+fn proto_size_to_scene(size: i32) -> Result<scene::WidgetSize, Status> {
+    match web::WidgetSize::try_from(size) {
+        Ok(web::WidgetSize::Small) => Ok(scene::WidgetSize::Small),
+        Ok(web::WidgetSize::Medium) => Ok(scene::WidgetSize::Medium),
+        Ok(web::WidgetSize::Large) => Ok(scene::WidgetSize::Large),
+        Ok(web::WidgetSize::Full) => Ok(scene::WidgetSize::Full),
+        Ok(web::WidgetSize::Unspecified) => {
+            Err(Status::invalid_argument("widget size unspecified"))
+        }
+        Err(_) => Err(Status::invalid_argument("invalid widget size")),
+    }
+}
+
+/// Convert the proto's u32 row/col into the scene model's u8, rejecting
+/// values that don't fit instead of silently clamping to u8::MAX — a
+/// clamped position would subsequently fail the bounds check anyway,
+/// but reporting it as an explicit argument error gives the client a
+/// much more useful message than "out of grid bounds".
+fn proto_position_to_scene(position: web::WidgetPosition) -> Result<scene::WidgetPosition, Status> {
+    let row = u8::try_from(position.row).map_err(|_| {
+        Status::invalid_argument(format!("row {} does not fit in u8", position.row))
+    })?;
+    let col = u8::try_from(position.col).map_err(|_| {
+        Status::invalid_argument(format!("col {} does not fit in u8", position.col))
+    })?;
+    Ok(scene::WidgetPosition { row, col })
+}
+
+/// Rejects widgets that either fall outside the display grid or collide with
+/// another widget in the same scene. `exclude_id` is set to the widget's own
+/// id when validating an update so it doesn't report overlapping with itself.
+fn validate_widget_placement(
+    scene: &scene::Scene,
+    widget: &scene::Widget,
+    exclude_id: Option<scene::WidgetId>,
+) -> Result<(), Status> {
+    if !widget.in_bounds() {
+        return Err(Status::invalid_argument(format!(
+            "widget at ({},{}) size {} is out of grid bounds",
+            widget.position.row, widget.position.col, widget.size,
+        )));
+    }
+
+    let overlaps = scene
+        .widgets
+        .iter()
+        .any(|(id, existing)| exclude_id != Some(*id) && existing.overlaps(widget));
+    if overlaps {
+        return Err(Status::invalid_argument(
+            "widget overlaps with an existing widget",
+        ));
+    }
+
+    Ok(())
+}
+
+fn reject_remove_widget_in_fullscreen(kind: &scene::SceneKind) -> Result<(), Status> {
+    if *kind == scene::SceneKind::Fullscreen {
+        return Err(Status::failed_precondition(
+            "cannot remove widget in fullscreen scene",
+        ));
+    }
+    Ok(())
+}
+
+fn reject_update_widget_in_fullscreen(
+    kind: &scene::SceneKind,
+    new_position: web::WidgetPosition,
+    new_size: scene::WidgetSize,
+) -> Result<(), Status> {
+    if *kind != scene::SceneKind::Fullscreen {
+        return Ok(());
+    }
+    if new_position.row != 0 || new_position.col != 0 {
+        return Err(Status::failed_precondition(
+            "cannot move widget in fullscreen scene",
+        ));
+    }
+    if new_size != scene::WidgetSize::Full {
+        return Err(Status::failed_precondition(
+            "cannot resize widget in fullscreen scene",
+        ));
+    }
+    Ok(())
+}
+
+fn scene_widget_size_to_proto(size: scene::WidgetSize) -> i32 {
+    match size {
+        scene::WidgetSize::Small => web::WidgetSize::Small.into(),
+        scene::WidgetSize::Medium => web::WidgetSize::Medium.into(),
+        scene::WidgetSize::Large => web::WidgetSize::Large.into(),
+        scene::WidgetSize::Full => web::WidgetSize::Full.into(),
+    }
+}
+
+fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
+    // Convert params JSON object to map<string, string>
+    let params = widget
+        .params
+        .as_object()
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, v)| (k.clone(), v.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    web::Widget {
+        id: widget.id.as_uuid().to_string(),
+        position: Some(web::WidgetPosition {
+            row: u32::from(widget.position.row),
+            col: u32::from(widget.position.col),
+        }),
+        size: scene_widget_size_to_proto(widget.size),
+        config: Some(web::WidgetConfig {
+            widget_uid: widget.widget_type_id.to_string(),
+            params,
+        }),
+    }
+}
+
+fn scene_to_proto(scene: &scene::Scene) -> web::Scene {
+    let widgets: Vec<web::Widget> = scene.widgets.values().map(scene_widget_to_proto).collect();
+
+    let kind = match scene.kind {
+        scene::SceneKind::Fullscreen => web::scene::Kind::Fullscreen(web::scene::Fullscreen {
+            widget: widgets.into_iter().next(),
+        }),
+        scene::SceneKind::Combined => web::scene::Kind::Combined(web::scene::Combined { widgets }),
+    };
+
+    web::Scene {
+        id: scene.id.to_string(),
+        enabled: scene.enabled,
+        cycle_duration_sec: scene.cycle_duration.map(|d| {
+            #[expect(clippy::cast_possible_truncation)]
+            let secs = d.as_secs() as u32;
+            secs
+        }),
+        kind: Some(kind),
     }
 }
 
 #[async_trait::async_trait]
-impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
-    for SceneManagementService<T>
-{
+impl GrpcSceneManagementService for SceneManagementService {
+    async fn get_available_widgets(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<web::GetAvailableWidgetsResponse>, Status> {
+        let widgets = self
+            .widget_registry
+            .list()
+            .map(widget_info_to_proto)
+            .collect();
+
+        Ok(Response::new(web::GetAvailableWidgetsResponse { widgets }))
+    }
+
+    async fn get_widget_manifest(
+        &self,
+        request: Request<String>,
+    ) -> Result<Response<web::WidgetManifest>, Status> {
+        let uid_str = request.into_inner();
+        let uid = Uuid::parse_str(&uid_str)
+            .map_err(|_| Status::invalid_argument(format!("invalid widget UID: {uid_str}")))?;
+
+        let info = self
+            .widget_registry
+            .get(&uid)
+            .ok_or_else(|| Status::not_found(format!("widget not found: {uid}")))?;
+
+        Ok(Response::new(widget_info_to_proto(info)))
+    }
+
+    // ── Scene read RPCs (from config) ──────────────────────────────────
+
     async fn get_scenes(
         &self,
         _request: Request<()>,
     ) -> Result<Response<web::GetScenesResponse>, Status> {
         let config = self.config_handle.read().await;
-        let scenes = config
-            .scenes
-            .clone()
-            .into_values()
-            .map(map_scene_to_proto)
-            .collect();
-
+        let scenes = config.scenes.values().map(scene_to_proto).collect();
         Ok(Response::new(web::GetScenesResponse { scenes }))
     }
 
@@ -94,434 +348,248 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         &self,
         request: Request<String>,
     ) -> Result<Response<web::SceneResponse>, Status> {
-        let value = request.into_inner();
-
-        let (id, field_violations) = parse_scene_id("value", &value);
-
-        if !field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(field_violations),
-            ));
-        }
-
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
+        let id_str = request.into_inner();
+        let id = Uuid::parse_str(&id_str)
+            .map_err(|_| Status::invalid_argument(format!("invalid scene ID: {id_str}")))?;
 
         let config = self.config_handle.read().await;
         let scene = config
             .scenes
-            .get(&id)
-            .cloned()
-            .map(map_scene_to_proto)
-            .ok_or_else(|| Status::not_found("Scene not found"))?;
+            .get(&scene::SceneId::from(id))
+            .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
-        Ok(Response::new(web::SceneResponse { scene: Some(scene) }))
+        Ok(Response::new(web::SceneResponse {
+            scene: Some(scene_to_proto(scene)),
+        }))
     }
 
     async fn add_fullscreen_scene(
         &self,
         request: Request<web::AddFullscreenSceneRequest>,
     ) -> Result<Response<String>, Status> {
-        let request = request.into_inner();
+        let req = request.into_inner();
+        let config = req
+            .config
+            .ok_or_else(|| Status::invalid_argument("config is required"))?;
 
-        let (widget_kind, field_violations) =
-            parse_widget_kind_with_default_params("widget_kind", request.widget_kind).await;
+        let widget_uid = Uuid::parse_str(&config.widget_uid)
+            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
 
-        if !field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(field_violations),
-            ));
+        let manifest_info = self
+            .widget_registry
+            .get(&widget_uid)
+            .ok_or_else(|| Status::not_found(format!("widget not found: {widget_uid}")))?;
+
+        let params = build_widget_params(&manifest_info.manifest.params, &config.params);
+
+        let widget = scene::Widget::new(
+            widget_uid,
+            params,
+            scene::WidgetPosition { row: 0, col: 0 },
+            scene::WidgetSize::Full,
+        );
+        let widget_clone = widget.clone();
+
+        let scene = scene::Scene {
+            id: scene::SceneId::generate(),
+            enabled: true,
+            cycle_duration: None,
+            kind: scene::SceneKind::Fullscreen,
+            widgets: indexmap::indexmap! { widget.id => widget },
+        };
+        let scene_id_key = scene.id;
+        let scene_id = scene_id_key.to_string();
+
+        {
+            let mut config = self.config_handle.write().await;
+            config.scenes.insert(scene.id, scene);
+            Self::save_config(&mut config).await?;
         }
 
-        let widget_kind = widget_kind.ok_or_else(unchecked_field_violations_status)?;
+        self.try_spawn_widget(&scene_id_key, &widget_clone).await;
+        self.restore_active_scene().await;
 
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            let widget_tasks = self.widget_tasks.clone();
-            async move {
-                let new_scene = Scene::fullscreen(widget_kind);
-                let new_scene_id = new_scene.id.clone();
-
-                {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
-
-                    let replaced_scene = temp_config
-                        .scenes
-                        .insert(new_scene_id.clone(), new_scene.clone());
-                    debug_assert!(replaced_scene.is_none());
-
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                }
-
-                if new_scene.enabled {
-                    widget_tasks
-                        .spawn_all(&new_scene.id, new_scene.widgets.values())
-                        .await;
-                }
-
-                display_controller.add_scene(new_scene);
-
-                Ok(Response::new(new_scene_id.to_string()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
+        Ok(Response::new(scene_id))
     }
 
     async fn add_combined_scene(&self, _request: Request<()>) -> Result<Response<String>, Status> {
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            let widget_tasks = self.widget_tasks.clone();
-            async move {
-                let new_scene = Scene::combined();
-                let new_scene_id = new_scene.id.clone();
+        let scene = scene::Scene {
+            id: scene::SceneId::generate(),
+            enabled: true,
+            cycle_duration: None,
+            kind: scene::SceneKind::Combined,
+            widgets: indexmap::IndexMap::new(),
+        };
+        let scene_id = scene.id.to_string();
 
-                {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
+        {
+            let mut config = self.config_handle.write().await;
+            config.scenes.insert(scene.id, scene);
+            Self::save_config(&mut config).await?;
+        }
 
-                    let replaced_scene = temp_config
-                        .scenes
-                        .insert(new_scene_id.clone(), new_scene.clone());
-                    debug_assert!(replaced_scene.is_none());
+        self.restore_active_scene().await;
 
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                }
-
-                if new_scene.enabled {
-                    widget_tasks
-                        .spawn_all(&new_scene.id, new_scene.widgets.values())
-                        .await;
-                }
-
-                display_controller.add_scene(new_scene);
-
-                Ok(Response::new(new_scene_id.to_string()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
+        Ok(Response::new(scene_id))
     }
 
     async fn update_scene(
         &self,
         request: Request<web::UpdateSceneRequest>,
     ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-        let mut all_field_violations = FieldViolations::new();
+        let req = request.into_inner();
+        let id =
+            Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
 
-        let (id, field_violations) = parse_scene_id("id", &request.id);
-        all_field_violations.extend(field_violations);
-
-        let (cycle_duration, field_violations) =
-            parse_scene_cycle_duration("cycle_duration_sec", request.cycle_duration_sec);
-        all_field_violations.extend(field_violations);
-
-        let enabled = request.enabled;
-
-        if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
+        if req.cycle_duration_sec == Some(0) {
+            return Err(Status::invalid_argument(
+                "cycle_duration_sec must be >= 1 when set",
             ));
         }
 
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
-        let cycle_duration = cycle_duration.ok_or_else(unchecked_field_violations_status)?;
+        let scene_id_key = scene::SceneId::from(id);
+        let was_enabled;
+        {
+            let mut config = self.config_handle.write().await;
+            let scene = config
+                .scenes
+                .get_mut(&scene_id_key)
+                .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            let widget_tasks = self.widget_tasks.clone();
-            async move {
-                let previously_enabled = {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
+            was_enabled = scene.enabled;
+            scene.enabled = req.enabled;
+            scene.cycle_duration = req
+                .cycle_duration_sec
+                .map(|s| std::time::Duration::from_secs(u64::from(s)));
 
-                    let scene = temp_config
-                        .scenes
-                        .get_mut(&id)
-                        .ok_or_else(|| Status::not_found("Scene not found"))?;
+            Self::save_config(&mut config).await?;
+        }
 
-                    let previously_enabled = scene.enabled;
-
-                    scene.enabled = enabled;
-                    scene.cycle_duration = cycle_duration;
-
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                    previously_enabled
-                };
-
-                if enabled != previously_enabled {
-                    let config = config_handle.read().await;
-                    let scene = &config.scenes[&id];
-
-                    if previously_enabled {
-                        widget_tasks.abort_all(&scene.id).await;
-                    }
-
-                    if enabled {
-                        widget_tasks
-                            .spawn_all(&scene.id, scene.widgets.values())
-                            .await;
-                    }
-
-                    // NOTE: we need to reset cycler, because this operation could move scene to another index
-                    display_controller.reset_cycler();
+        // Spawn/stop widgets based on enabled state change
+        if was_enabled != req.enabled {
+            let config = self.config_handle.read().await;
+            if let Some(scene) = config.scenes.get(&scene_id_key) {
+                if req.enabled {
+                    self.coordinator.spawn_scene_widgets(scene).await;
+                } else {
+                    self.coordinator.stop_scene_widgets(scene).await;
                 }
-
-                display_controller.update_scene(id, enabled, cycle_duration);
-
-                Ok(Response::new(()))
             }
-        });
+        }
 
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
+        self.restore_active_scene().await;
+
+        Ok(Response::new(()))
     }
 
     async fn move_scene(
         &self,
         request: Request<web::MoveSceneRequest>,
     ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-        let mut all_field_violations = FieldViolations::new();
+        let req = request.into_inner();
+        let id =
+            Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
 
-        let (id, field_violations) = parse_scene_id("id", &request.id);
-        all_field_violations.extend(field_violations);
+        let mut config = self.config_handle.write().await;
+        let scene_id = scene::SceneId::from(id);
 
-        let to_index = request.index as usize;
+        let current_idx = config
+            .scenes
+            .get_index_of(&scene_id)
+            .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
-        if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
-            ));
+        let target_idx = req.index as usize;
+        if target_idx >= config.scenes.len() {
+            return Err(Status::invalid_argument(format!(
+                "target index {target_idx} out of bounds (scene count: {})",
+                config.scenes.len()
+            )));
         }
+        config.scenes.move_index(current_idx, target_idx);
 
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
+        Self::save_config(&mut config).await?;
+        drop(config);
 
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            let preview_scene_id = self.preview_scene_id.clone();
-            async move {
-                let (from_index, to_index) = {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
+        self.restore_active_scene().await;
 
-                    let from_index = temp_config
-                        .scenes
-                        .get_index_of(&id)
-                        .ok_or_else(|| Status::not_found("Scene not found"))?;
-
-                    let to_index = to_index.min(temp_config.scenes.len() - 1);
-
-                    if from_index == to_index {
-                        return Ok(Response::new(()));
-                    }
-                    temp_config.scenes.move_index(from_index, to_index);
-
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                    (from_index, to_index)
-                };
-
-                display_controller.move_scene(from_index, to_index);
-
-                // NOTE: we need to reset cycler, because this operation could move scene to another index
-                display_controller.reset_cycler();
-
-                // NOTE: we need to re-focus preview scene, because this operation could move scene to another index
-                display_controller.set_preview_scene(preview_scene_id.lock().await.clone());
-
-                Ok(Response::new(()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
+        Ok(Response::new(()))
     }
 
     async fn clone_scene(&self, request: Request<String>) -> Result<Response<String>, Status> {
-        let value = request.into_inner();
+        let id_str = request.into_inner();
+        let id =
+            Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
 
-        let (id, field_violations) = parse_scene_id("value", &value);
+        let mut config = self.config_handle.write().await;
+        let source = config
+            .scenes
+            .get(&scene::SceneId::from(id))
+            .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?
+            .clone();
 
-        if !field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(field_violations),
-            ));
+        let mut cloned = source;
+        cloned.id = scene::SceneId::generate();
+        // Give each widget a new ID
+        let old_widgets = std::mem::take(&mut cloned.widgets);
+        for (_, widget) in old_widgets {
+            let new_widget = widget.clone_with_new_id();
+            cloned.widgets.insert(new_widget.id, new_widget);
         }
 
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
+        let cloned_id = cloned.id.to_string();
+        let cloned_key = cloned.id;
+        let cloned_enabled = cloned.enabled;
 
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            let widget_tasks = self.widget_tasks.clone();
-            let preview_scene_id = self.preview_scene_id.clone();
-            async move {
-                let (cloned_scene, cloned_scene_index) = {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
+        // Insert right after the source scene
+        let source_idx = config
+            .scenes
+            .get_index_of(&scene::SceneId::from(id))
+            .expect("BUG: source scene just verified to exist");
+        config.scenes.insert(cloned.id, cloned);
+        let last_idx = config.scenes.len() - 1;
+        config.scenes.move_index(last_idx, source_idx + 1);
 
-                    let (scene_index, _id, scene) = temp_config
-                        .scenes
-                        .get_full(&id)
-                        .ok_or_else(|| Status::not_found("Scene not found"))?;
+        Self::save_config(&mut config).await?;
+        drop(config);
 
-                    let cloned_scene = scene.clone_with_new_id();
-                    let cloned_scene_id = cloned_scene.id.clone();
-                    let cloned_scene_index = scene_index + 1;
-
-                    let replaced_scene = temp_config.scenes.shift_insert(
-                        cloned_scene_index,
-                        cloned_scene_id,
-                        cloned_scene.clone(),
-                    );
-                    debug_assert!(replaced_scene.is_none());
-
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                    (cloned_scene, cloned_scene_index)
-                };
-
-                let cloned_scene_id = cloned_scene.id.clone();
-
-                if cloned_scene.enabled {
-                    widget_tasks
-                        .spawn_all(&cloned_scene.id, cloned_scene.widgets.values())
-                        .await;
-                }
-
-                display_controller.insert_scene(cloned_scene_index, cloned_scene);
-
-                // NOTE: we need to reset cycler, because this operation could move scene to another index
-                display_controller.reset_cycler();
-
-                // NOTE: we need to re-focus preview scene, because this operation could move scene to another index
-                display_controller.set_preview_scene(preview_scene_id.lock().await.clone());
-
-                Ok(Response::new(cloned_scene_id.to_string()))
+        if cloned_enabled {
+            let config = self.config_handle.read().await;
+            if let Some(scene) = config.scenes.get(&cloned_key) {
+                self.coordinator.spawn_scene_widgets(scene).await;
             }
-        });
+        }
+        self.restore_active_scene().await;
 
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
+        Ok(Response::new(cloned_id))
     }
 
     async fn remove_scene(&self, request: Request<String>) -> Result<Response<()>, Status> {
-        let value = request.into_inner();
+        let id_str = request.into_inner();
+        let id =
+            Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
+        let scene_id_key = scene::SceneId::from(id);
 
-        let (id, field_violations) = parse_scene_id("value", &value);
-
-        if !field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(field_violations),
+        if self.preview_scene_id.lock().await.as_ref() == Some(&scene_id_key) {
+            return Err(Status::failed_precondition(
+                "scene is currently being previewed",
             ));
         }
 
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
-
+        let removed_scene;
         {
-            let preview_scene_id = self.preview_scene_id.lock().await;
-
-            if preview_scene_id
-                .as_ref()
-                .is_some_and(|preview_id| *preview_id == id)
-            {
-                return Err(Status::failed_precondition(
-                    "Scene is currently displayed in preview",
-                ));
-            }
+            let mut config = self.config_handle.write().await;
+            removed_scene = config
+                .scenes
+                .shift_remove(&scene_id_key)
+                .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
+            Self::save_config(&mut config).await?;
         }
 
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            let widget_tasks = self.widget_tasks.clone();
-            let preview_scene_id = self.preview_scene_id.clone();
-            async move {
-                let scene = {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
+        // Stop all widgets from the removed scene
+        self.coordinator.stop_scene_widgets(&removed_scene).await;
+        self.restore_active_scene().await;
 
-                    let scene = temp_config
-                        .scenes
-                        .shift_remove(&id)
-                        .ok_or_else(|| Status::not_found("Scene not found"))?;
-
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                    scene
-                };
-
-                if scene.enabled {
-                    widget_tasks.abort_all(&scene.id).await;
-                }
-
-                display_controller.remove_scene(id);
-
-                // NOTE: we need to reset cycler, because this operation could move scene to another index
-                display_controller.reset_cycler();
-
-                // NOTE: we need to re-focus preview scene, because this operation could move scene to another index
-                display_controller.set_preview_scene(preview_scene_id.lock().await.clone());
-
-                Ok(Response::new(()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
+        Ok(Response::new(()))
     }
 
     type PreviewSceneStream = BoxStream<'static, Result<(), Status>>;
@@ -530,448 +598,115 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         &self,
         request: Request<String>,
     ) -> Result<Response<Self::PreviewSceneStream>, Status> {
-        let value = request.into_inner();
+        let id_str = request.into_inner();
+        let id =
+            Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
+        let scene_id = scene::SceneId::from(id);
 
-        let (id, field_violations) = parse_scene_id("value", &value);
-
-        if !field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(field_violations),
-            ));
-        }
-
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
-
-        let started_temporary_widget_tasks = {
+        // Look the scene up, claim the preview slot, and kick off rendering
+        // in a single config read so the scene can't vanish between the
+        // existence check and the spawn.
+        let scene_was_disabled = {
             let config = self.config_handle.read().await;
             let scene = config
                 .scenes
-                .get(&id)
-                .ok_or_else(|| Status::not_found("Scene not found"))?;
+                .get(&scene_id)
+                .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
-            {
-                let mut preview_scene_id = self.preview_scene_id.lock().await;
-                if preview_scene_id.is_some() {
-                    return Err(Status::resource_exhausted(
-                        "Scene preview is already enabled",
-                    ));
-                }
-                *preview_scene_id = Some(id.clone());
+            let mut preview = self.preview_scene_id.lock().await;
+            if preview.is_some() {
+                return Err(Status::resource_exhausted("scene preview already active"));
             }
+            *preview = Some(scene_id);
+            drop(preview);
 
-            // we want to start temporary widget tasks if scene is disabled, otherwise we won't have
-            // data to properly render preview
-            if scene.enabled {
-                false
-            } else {
-                self.widget_tasks
-                    .spawn_all(&scene.id, scene.widgets.values())
-                    .await;
-
-                true
+            let disabled = !scene.enabled;
+            if disabled {
+                self.coordinator.spawn_scene_widgets(scene).await;
             }
+            self.coordinator.set_active_scene(scene);
+            disabled
         };
 
-        self.display_controller.set_preview_scene(Some(id.clone()));
-        self.led_controller.push_event(LedEvent::PreviewScene);
-
-        struct DisableScenePreviewOnDrop<T: BmcManager> {
-            display_controller: DisplayController,
-            widget_tasks: WidgetTasks,
-            preview_scene_id: Arc<Mutex<Option<SceneId>>>,
-            started_temporary_widget_tasks: bool,
-            led_controller: LedController<T>,
+        // Guard that clears the preview slot and reverts the compositor
+        // back to the first enabled scene when the client drops the stream.
+        // If we spawned widgets to back a disabled preview, stop them too.
+        struct PreviewGuard {
+            coordinator: Arc<Coordinator>,
+            config_handle: Arc<RwLock<ConfigHandle>>,
+            preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
+            spawned_widgets: bool,
         }
-
-        impl<T: BmcManager> Drop for DisableScenePreviewOnDrop<T> {
+        impl Drop for PreviewGuard {
             fn drop(&mut self) {
-                self.display_controller.set_preview_scene(None);
-                self.led_controller.push_event(LedEvent::PreviewSceneEnded);
-
-                tokio::spawn({
-                    let preview_scene_id = self.preview_scene_id.clone();
-                    let widget_tasks = self.widget_tasks.clone();
-                    let started_temporary_widget_tasks = self.started_temporary_widget_tasks;
-                    async move {
-                        let scene_id = preview_scene_id
-                            .lock()
-                            .await
-                            .take()
-                            .expect("BUG: preview_scene_id should be set");
-
-                        // we need to stop temporary widget tasks, because they shouldn't be running
-                        // outside of preview since scene is disabled
-                        if started_temporary_widget_tasks {
-                            widget_tasks.abort_all(&scene_id).await;
-                        }
+                let coordinator = Arc::clone(&self.coordinator);
+                let config_handle = Arc::clone(&self.config_handle);
+                let preview_scene_id = Arc::clone(&self.preview_scene_id);
+                let spawned = self.spawned_widgets;
+                tokio::spawn(async move {
+                    let id = preview_scene_id.lock().await.take();
+                    let config = config_handle.read().await;
+                    if spawned
+                        && let Some(id) = id.as_ref()
+                        && let Some(scene) = config.scenes.get(id)
+                    {
+                        coordinator.stop_scene_widgets(scene).await;
                     }
+                    coordinator.refresh_scene_cycling(&config.scenes);
                 });
             }
         }
 
-        let stream = IntervalStream::new(time::interval(Duration::from_secs(5)))
-            .map(|_| Ok(()))
-            .attach_data(DisableScenePreviewOnDrop {
-                display_controller: self.display_controller.clone(),
-                widget_tasks: self.widget_tasks.clone(),
-                preview_scene_id: self.preview_scene_id.clone(),
-                started_temporary_widget_tasks,
-                led_controller: self.led_controller.clone(),
-            })
-            .boxed();
+        let guard = PreviewGuard {
+            coordinator: Arc::clone(&self.coordinator),
+            config_handle: Arc::clone(&self.config_handle),
+            preview_scene_id: Arc::clone(&self.preview_scene_id),
+            spawned_widgets: scene_was_disabled,
+        };
 
-        Ok(Response::new(stream))
-    }
+        // Heartbeat every 5s so the client sees a live stream; the guard
+        // rides along in the unfold state and drops with the stream.
+        let interval = time::interval(Duration::from_secs(5));
+        let stream = futures::stream::unfold(
+            (guard, IntervalStream::new(interval)),
+            |(guard, mut ticks)| async move { ticks.next().await.map(|_| (Ok(()), (guard, ticks))) },
+        );
 
-    async fn add_widget(
-        &self,
-        request: Request<web::AddWidgetRequest>,
-    ) -> Result<Response<String>, Status> {
-        let request = request.into_inner();
-        let mut all_field_violations = FieldViolations::new();
-
-        let (scene_id, field_violations) = parse_scene_id("scene_id", &request.scene_id);
-        all_field_violations.extend(field_violations);
-
-        let (position, field_violations) = parse_widget_position("position", request.position);
-        all_field_violations.extend(field_violations);
-
-        let (size, field_violations) = parse_widget_size("size", request.size());
-        all_field_violations.extend(field_violations);
-
-        let (kind, field_violations) =
-            parse_widget_kind_with_default_params("kind", request.kind).await;
-        all_field_violations.extend(field_violations);
-
-        if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
-            ));
-        }
-
-        let scene_id = scene_id.ok_or_else(unchecked_field_violations_status)?;
-        let position = position.ok_or_else(unchecked_field_violations_status)?;
-        let size = size.ok_or_else(unchecked_field_violations_status)?;
-        let kind = kind.ok_or_else(unchecked_field_violations_status)?;
-
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            let widget_tasks = self.widget_tasks.clone();
-            let preview_scene_id = self.preview_scene_id.clone();
-            async move {
-                let (new_widget, scene_enabled) = {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
-
-                    let scene = temp_config
-                        .scenes
-                        .get_mut(&scene_id)
-                        .ok_or_else(|| Status::not_found("Scene not found"))?;
-
-                    let new_widget =
-                        scene
-                            .add_widget(position, size, kind)
-                            .map_err(|err| match err {
-                                AddWidgetError::CannotAddWidgetToFullscreenScene
-                                | AddWidgetError::CannotAddFullscreenWidgetToCombinedScene
-                                | AddWidgetError::InvalidWidgetPlacement(_) => {
-                                    Status::failed_precondition(err.to_string())
-                                }
-                            })?;
-
-                    let scene_enabled = scene.enabled;
-
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                    (new_widget, scene_enabled)
-                };
-
-                let new_widget_id = new_widget.id.clone();
-
-                let is_preview_scene = preview_scene_id
-                    .lock()
-                    .await
-                    .as_ref()
-                    .is_some_and(|preview_scene_id| *preview_scene_id == scene_id);
-
-                if scene_enabled || is_preview_scene {
-                    widget_tasks.spawn(&scene_id, &new_widget).await;
-                }
-
-                display_controller.add_scene_widget(scene_id, new_widget);
-
-                Ok(Response::new(new_widget_id.to_string()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
-    }
-
-    async fn update_widget(
-        &self,
-        request: Request<web::UpdateWidgetRequest>,
-    ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-        let mut all_field_violations = FieldViolations::new();
-
-        let (scene_id, field_violations) = parse_scene_id("scene_id", &request.scene_id);
-        all_field_violations.extend(field_violations);
-
-        let (widget_id, field_violations) = parse_widget_id("id", &request.id);
-        all_field_violations.extend(field_violations);
-
-        let (position, field_violations) = parse_widget_position("position", request.position);
-        all_field_violations.extend(field_violations);
-
-        let (size, field_violations) = parse_widget_size("size", request.size());
-        all_field_violations.extend(field_violations);
-
-        let (kind, field_violations) = parse_widget_kind("kind", request.kind);
-        all_field_violations.extend(field_violations);
-
-        if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
-            ));
-        }
-
-        let scene_id = scene_id.ok_or_else(unchecked_field_violations_status)?;
-        let widget_id = widget_id.ok_or_else(unchecked_field_violations_status)?;
-        let position = position.ok_or_else(unchecked_field_violations_status)?;
-        let size = size.ok_or_else(unchecked_field_violations_status)?;
-        let kind = kind.ok_or_else(unchecked_field_violations_status)?;
-
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            let widget_tasks = self.widget_tasks.clone();
-            let preview_scene_id = self.preview_scene_id.clone();
-            async move {
-                let (updated_widget, scene_enabled) = {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
-
-                    let scene = temp_config
-                        .scenes
-                        .get_mut(&scene_id)
-                        .ok_or_else(|| Status::not_found("Scene not found"))?;
-
-                    let updated_widget = scene
-                        .update_widget(&widget_id, position, size, kind)
-                        .map_err(|err| match err {
-                            UpdateWidgetError::NotFound => Status::not_found(err.to_string()),
-                            UpdateWidgetError::CannotUpdateWidgetPositionInFullscreenScene
-                            | UpdateWidgetError::CannotUpdateWidgetSizeInFullscreenScene
-                            | UpdateWidgetError::CannotUpdateWidgetSizeToFullInCombinedScene
-                            | UpdateWidgetError::CannotSwitchWidgetKind
-                            | UpdateWidgetError::InvalidWidgetPlacement(_) => {
-                                Status::failed_precondition(err.to_string())
-                            }
-                        })?;
-
-                    let scene_enabled = scene.enabled;
-
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                    (updated_widget, scene_enabled)
-                };
-
-                let is_preview_scene = preview_scene_id
-                    .lock()
-                    .await
-                    .as_ref()
-                    .is_some_and(|preview_scene_id| *preview_scene_id == scene_id);
-
-                if scene_enabled || is_preview_scene {
-                    widget_tasks.abort(&scene_id, &updated_widget.id).await;
-
-                    widget_tasks.spawn(&scene_id, &updated_widget).await;
-                }
-
-                display_controller.replace_scene_widget(scene_id, updated_widget);
-
-                Ok(Response::new(()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
+        Ok(Response::new(stream.boxed()))
     }
 
     async fn remove_widget(
         &self,
         request: Request<web::RemoveWidgetRequest>,
     ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-        let mut all_field_violations = FieldViolations::new();
+        let req = request.into_inner();
+        let scene_id = Uuid::parse_str(&req.scene_id)
+            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
+        let widget_id =
+            Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid widget ID"))?;
 
-        let (widget_id, field_violations) = parse_widget_id("id", &request.id);
-        all_field_violations.extend(field_violations);
+        let instance_id = widget_id.to_string();
+        {
+            let mut config = self.config_handle.write().await;
+            let scene = config
+                .scenes
+                .get_mut(&scene::SceneId::from(scene_id))
+                .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
-        let (scene_id, field_violations) = parse_scene_id("scene_id", &request.scene_id);
-        all_field_violations.extend(field_violations);
+            reject_remove_widget_in_fullscreen(&scene.kind)?;
 
-        if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
-            ));
+            scene
+                .widgets
+                .shift_remove(&scene::WidgetId::from(widget_id))
+                .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?;
+
+            Self::save_config(&mut config).await?;
         }
 
-        let widget_id = widget_id.ok_or_else(unchecked_field_violations_status)?;
-        let scene_id = scene_id.ok_or_else(unchecked_field_violations_status)?;
+        self.coordinator.stop_widget(&instance_id).await;
+        self.restore_active_scene().await;
 
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            let widget_tasks = self.widget_tasks.clone();
-            async move {
-                let scene_enabled = {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
-
-                    let scene = temp_config
-                        .scenes
-                        .get_mut(&scene_id)
-                        .ok_or_else(|| Status::not_found("Scene not found"))?;
-
-                    let scene_enabled = scene.enabled;
-
-                    scene.remove_widget(&widget_id).map_err(|err| match err {
-                        RemoveWidgetError::NotFound => Status::not_found(err.to_string()),
-                        RemoveWidgetError::CannotRemoveWidgetFromFullscreenScene => {
-                            Status::failed_precondition(err.to_string())
-                        }
-                    })?;
-
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                    scene_enabled
-                };
-
-                if scene_enabled {
-                    widget_tasks.abort(&scene_id, &widget_id).await;
-                }
-
-                display_controller.remove_scene_widget(scene_id, widget_id);
-
-                Ok(Response::new(()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
-    }
-
-    async fn get_remote_widget_params(
-        &self,
-        request: Request<web::RemoteWidgetParamsRequest>,
-    ) -> Result<Response<web::RemoteWidgetParamsResponse>, Status> {
-        let request = request.into_inner();
-
-        let mut parsed_url = match Url::parse(&request.widget_url) {
-            Ok(url) => url,
-            Err(err) => {
-                warn!(?err, "Invalid URL");
-                return Err(Status::invalid_argument("Invalid URL"));
-            }
-        };
-
-        match parsed_url.path_segments_mut() {
-            Ok(mut path_segments) => path_segments.push("metadata"),
-            Err(err) => {
-                warn!(?err, "Failed to get path segments");
-                return Err(Status::internal("Failed to get path segment"));
-            }
-        };
-
-        let client = match Client::builder().timeout(REQUEST_TIMEOUT).build() {
-            Ok(client) => client,
-            Err(err) => {
-                warn!(?err, "Failed to create reqwest client");
-                return Err(Status::internal("Failed to create reqwest client"));
-            }
-        };
-
-        let metadata_response = match client.get(parsed_url).send().await {
-            Ok(response) => {
-                if !response.status().is_success() {
-                    warn!("Failed to get metadata");
-                    return Err(Status::failed_precondition("Failed to get metadata"));
-                }
-                response
-            }
-            Err(err) => {
-                warn!(?err, "Failed to get metadata");
-                return Err(Status::failed_precondition("Failed to get metadata"));
-            }
-        };
-
-        let metadata = match metadata_response.json::<RemoteWidgetMetadata>().await {
-            Ok(metadata) => metadata,
-            Err(err) => {
-                warn!(?err, "Failed to parse metadata");
-                return Err(Status::failed_precondition("Failed to parse metadata"));
-            }
-        };
-
-        let response = web::RemoteWidgetParamsResponse {
-            remote_widget_params: Some(map_params_to_protobuf_struct(metadata.params)),
-        };
-
-        Ok(Response::new(response))
-    }
-
-    async fn get_recent_remote_widgets(
-        &self,
-        _request: Request<()>,
-    ) -> Result<Response<web::RecentRemoteWidgetsResponse>, Status> {
-        let config = self.config_handle.read().await;
-        let mut unique = HashSet::new();
-        let recent_remote_widgets: Vec<web::RemoteWidget> = config
-            .scenes
-            .values()
-            .flat_map(|scene| scene.widgets.values().cloned())
-            .filter_map(|w| {
-                if let WidgetKind::RemoteWidget(remote_widget) = w.kind {
-                    Some(remote_widget)
-                } else {
-                    None
-                }
-            })
-            .filter(|remote_widget| unique.insert(remote_widget.name.clone()))
-            .rev()
-            .take(RECENT_REMOTE_WIDGETS)
-            .map(map_remote_widget_to_proto_remote_widget)
-            .collect();
-
-        Ok(Response::new(web::RecentRemoteWidgetsResponse {
-            recent_remote_widgets,
-        }))
+        Ok(Response::new(()))
     }
 
     async fn get_scene_cycling(
@@ -979,10 +714,19 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         _request: Request<()>,
     ) -> Result<Response<web::GetSceneCyclingResponse>, Status> {
         let config = self.config_handle.read().await;
-        let scene_cycling = map_scene_cycling_to_proto(config.scene_cycling());
-
+        let cycling = config.scene_cycling();
         Ok(Response::new(web::GetSceneCyclingResponse {
-            scene_cycling: Some(scene_cycling),
+            scene_cycling: Some(web::SceneCycling {
+                automatic_cycling_enabled: cycling.automatic_cycling_enabled,
+                automatic_cycling_default_duration_sec: u32::try_from(
+                    cycling.automatic_cycling_default_duration.as_secs(),
+                )
+                .unwrap_or(u32::MAX),
+                transition: match cycling.transition {
+                    SceneCyclingTransition::Slide => web::SceneCyclingTransition::Slide.into(),
+                    SceneCyclingTransition::Fade => web::SceneCyclingTransition::Fade.into(),
+                },
+            }),
         }))
     }
 
@@ -990,938 +734,292 @@ impl<T: BmcManager> web::scene_management_service_server::SceneManagementService
         &self,
         request: Request<web::SetSceneCyclingRequest>,
     ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-        let mut all_field_violations = FieldViolations::new();
+        let req = request.into_inner();
+        let cycling = req
+            .scene_cycling
+            .ok_or_else(|| Status::invalid_argument("scene_cycling is required"))?;
 
-        let (scene_cycling, field_violations) =
-            parse_scene_cycling("scene_cycling", request.scene_cycling);
-        all_field_violations.extend(field_violations);
-
-        if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
+        if cycling.automatic_cycling_default_duration_sec == 0 {
+            return Err(Status::invalid_argument(
+                "automatic_cycling_default_duration_sec must be >= 1",
             ));
         }
 
-        let scene_cycling = scene_cycling.ok_or_else(unchecked_field_violations_status)?;
-
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            let display_controller = self.display_controller.clone();
-            async move {
-                let (previously_enabled, enabled) = {
-                    let mut config = config_handle.write().await;
-                    let mut temp_config = config.clone();
-
-                    let previously_enabled = temp_config.scene_cycling().automatic_cycling_enabled;
-                    let enabled = scene_cycling.automatic_cycling_enabled;
-
-                    temp_config.set_scene_cycling(scene_cycling.clone());
-
-                    if let Err(err) = temp_config.save().await {
-                        error!("Cannot save config: {}", err);
-                        return Err(Status::internal("Failed to save configuration"));
-                    }
-                    *config = temp_config;
-                    (previously_enabled, enabled)
-                };
-
-                display_controller.set_scene_cycling(scene_cycling);
-
-                if enabled != previously_enabled {
-                    display_controller.reset_cycler();
-                }
-
-                Ok(Response::new(()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
-    }
-}
-
-type ParseOutput<T> = (Option<T>, FieldViolations);
-
-struct FieldViolations(Vec<FieldViolation>);
-
-impl FieldViolations {
-    pub fn new() -> Self {
-        Self(Vec::with_capacity(0))
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn push(&mut self, field: impl AsRef<str>, description: impl AsRef<str>) {
-        self.0
-            .push(FieldViolation::new(field.as_ref(), description.as_ref()));
-    }
-
-    pub fn extend(&mut self, other: Self) {
-        self.0.extend(other.0);
-    }
-}
-
-impl From<FieldViolations> for Vec<FieldViolation> {
-    fn from(value: FieldViolations) -> Self {
-        value.0
-    }
-}
-
-fn unchecked_field_violations_status() -> Status {
-    Status::internal("Unchecked field violations")
-}
-
-fn parse_scene_id(field: impl AsRef<str> + Display, input: &str) -> ParseOutput<SceneId> {
-    let mut field_violations = FieldViolations::new();
-
-    let maybe_id = SceneId::from_str(input).ok().tap_none(|| {
-        field_violations.push(field, "Invalid scene ID!");
-    });
-
-    (maybe_id, field_violations)
-}
-
-fn parse_widget_id(field: impl AsRef<str> + Display, input: &str) -> ParseOutput<WidgetId> {
-    let mut field_violations = FieldViolations::new();
-
-    let maybe_id = WidgetId::from_str(input).ok().tap_none(|| {
-        field_violations.push(field, "Invalid widget ID!");
-    });
-
-    (maybe_id, field_violations)
-}
-
-fn parse_scene_cycle_duration(
-    field: impl AsRef<str> + Display,
-    input: Option<u32>,
-) -> ParseOutput<Option<Duration>> {
-    let mut field_violations = FieldViolations::new();
-
-    let Some(input) = input else {
-        return (Some(None), field_violations);
-    };
-    let cycle_duration = Duration::from_secs(input.into());
-
-    if cycle_duration < Scene::MIN_CYCLE_DURATION {
-        field_violations.push(
-            field,
-            format!("Out of range: {}..", Scene::MIN_CYCLE_DURATION.as_secs()),
-        );
-        (None, field_violations)
-    } else {
-        (Some(Some(cycle_duration)), field_violations)
-    }
-}
-
-fn parse_widget_position(
-    field: impl AsRef<str> + Display,
-    input: Option<web::WidgetPosition>,
-) -> ParseOutput<WidgetPosition> {
-    let mut field_violations = FieldViolations::new();
-
-    let Some(input) = input else {
-        field_violations.push(field, "Missing value!");
-        return (None, field_violations);
-    };
-
-    let maybe_row = if input.row < WidgetPosition::MAX_ROWS {
-        #[expect(clippy::cast_possible_truncation)]
-        Some(input.row as u8)
-    } else {
-        field_violations.push(
-            format!("{field}.row"),
-            format!("Out of range: 0..{}", WidgetPosition::MAX_ROWS),
-        );
-        None
-    };
-
-    let maybe_col = if input.col < WidgetPosition::MAX_COLS {
-        #[expect(clippy::cast_possible_truncation)]
-        Some(input.col as u8)
-    } else {
-        field_violations.push(
-            format!("{field}.col"),
-            format!("Out of range: 0..{}", WidgetPosition::MAX_COLS),
-        );
-        None
-    };
-
-    let maybe_position = maybe_row
-        .zip(maybe_col)
-        .map(|(row, col)| WidgetPosition { row, col });
-
-    (maybe_position, field_violations)
-}
-
-fn parse_widget_size(
-    field: impl AsRef<str> + Display,
-    input: web::WidgetSize,
-) -> ParseOutput<WidgetSize> {
-    let mut field_violations = FieldViolations::new();
-
-    let maybe_size = match input {
-        web::WidgetSize::Unspecified => {
-            field_violations.push(field, "Missing value!");
-            None
-        }
-        web::WidgetSize::Small => Some(WidgetSize::Small),
-        web::WidgetSize::Medium => Some(WidgetSize::Medium),
-        web::WidgetSize::Large => Some(WidgetSize::Large),
-        web::WidgetSize::Full => Some(WidgetSize::Full),
-    };
-
-    (maybe_size, field_violations)
-}
-
-async fn parse_widget_kind_with_default_params(
-    field: impl AsRef<str> + Display,
-    input: Option<web::WidgetKind>,
-) -> ParseOutput<WidgetKind> {
-    let mut field_violations = FieldViolations::new();
-
-    let Some(input) = input else {
-        field_violations.push(field, "Missing value!");
-        return (None, field_violations);
-    };
-
-    let Some(value) = input.value else {
-        field_violations.push(format!("{field}.value"), "Missing value!");
-        return (None, field_violations);
-    };
-
-    let kind = match value {
-        web::widget_kind::Value::Clock(_) => WidgetKind::Clock(ClockWidget::default()),
-        web::widget_kind::Value::TickerBtc(_) => WidgetKind::TickerBtc(TickerBtcWidget::default()),
-        web::widget_kind::Value::BlockHeight(_) => {
-            WidgetKind::BlockHeight(BlockHeightWidget::default())
-        }
-        web::widget_kind::Value::BraiinsPool(_) => {
-            WidgetKind::BraiinsPool(BraiinsPoolWidget::default())
-        }
-        web::widget_kind::Value::RemoteImage(_) => {
-            WidgetKind::RemoteImage(RemoteImageWidget::default())
-        }
-        web::widget_kind::Value::BlockchainData(_) => WidgetKind::BlockchainData,
-        web::widget_kind::Value::RemoteWidget(remote_widget) => {
-            match remote_widget_url_validation(&remote_widget, &mut field_violations).await {
-                Some(kind) => kind,
-                None => return (None, field_violations),
-            }
-        }
-        web::widget_kind::Value::HalvingCountdown(_) => WidgetKind::HalvingCountdown,
-    };
-
-    (Some(kind), field_violations)
-}
-
-fn parse_widget_kind(
-    field: impl AsRef<str> + Display,
-    input: Option<web::WidgetKind>,
-) -> ParseOutput<WidgetKind> {
-    let mut all_field_violations = FieldViolations::new();
-
-    let Some(input) = input else {
-        all_field_violations.push(field, "Missing value!");
-        return (None, all_field_violations);
-    };
-
-    let Some(value) = input.value else {
-        all_field_violations.push(format!("{field}.value"), "Missing value!");
-        return (None, all_field_violations);
-    };
-
-    let maybe_kind = match value {
-        web::widget_kind::Value::Clock(clock_proto) => {
-            let (maybe_kind, field_violations) =
-                parse_clock_widget_kind(format!("{field}.clock"), clock_proto);
-            all_field_violations.extend(field_violations);
-            maybe_kind
-        }
-        web::widget_kind::Value::TickerBtc(ticker_btc_proto) => {
-            let (maybe_kind, field_violations) =
-                parse_ticker_btc_widget_kind("ticker_btc", ticker_btc_proto);
-            all_field_violations.extend(field_violations);
-            maybe_kind
-        }
-        web::widget_kind::Value::BlockHeight(block_height_proto) => {
-            let (maybe_kind, field_violations) =
-                parse_block_height_widget_kind("block_height", block_height_proto);
-            all_field_violations.extend(field_violations);
-            maybe_kind
-        }
-        web::widget_kind::Value::BraiinsPool(braiins_pool_proto) => {
-            let (maybe_kind, field_violations) =
-                parse_braiins_pool_widget_kind("braiins_pool", braiins_pool_proto);
-            all_field_violations.extend(field_violations);
-            maybe_kind
-        }
-        web::widget_kind::Value::RemoteImage(remote_image_proto) => {
-            let (maybe_kind, field_violations) =
-                parse_remote_image_widget_kind(format!("{field}.remote_image"), remote_image_proto);
-            all_field_violations.extend(field_violations);
-            maybe_kind
-        }
-        web::widget_kind::Value::BlockchainData(_) => Some(WidgetKind::BlockchainData),
-        web::widget_kind::Value::RemoteWidget(remote_widget_proto) => {
-            Some(map_proto_to_remote_widget_kind(remote_widget_proto))
-        }
-        web::widget_kind::Value::HalvingCountdown(_) => Some(WidgetKind::HalvingCountdown),
-    };
-
-    (maybe_kind, all_field_violations)
-}
-
-fn parse_clock_widget_kind(
-    field: impl AsRef<str> + Display,
-    clock_proto: web::ClockWidget,
-) -> ParseOutput<WidgetKind> {
-    use web::FontStyle as FontStyleProto;
-    use web::clock_widget::ClockStyle as ClockStyleProto;
-
-    let mut field_violations = FieldViolations::new();
-
-    let maybe_clock_style = match clock_proto.clock_style() {
-        ClockStyleProto::Unspecified => {
-            field_violations.push(format!("{field}.clock_style"), "Missing value!");
-            None
-        }
-        ClockStyleProto::AnalogRect => Some(ClockStyle::AnalogRect),
-        ClockStyleProto::AnalogRound => Some(ClockStyle::AnalogRound),
-        ClockStyleProto::Digital => Some(ClockStyle::Digital),
-    };
-
-    let maybe_numbers_font_style = match clock_proto.numbers_font_style() {
-        FontStyleProto::Unspecified => {
-            field_violations.push(format!("{field}.numbers_font_style"), "Missing value!");
-            None
-        }
-        FontStyleProto::Light => Some(FontStyle::Light),
-        FontStyleProto::Medium => Some(FontStyle::Medium),
-        FontStyleProto::Bold => Some(FontStyle::Bold),
-    };
-
-    let maybe_timezone = clock_proto
-        .timezone
-        .map(|timezone| Timezone::from_str(&timezone))
-        .transpose()
-        .tap_err(|_| field_violations.push(format!("{field}.timezone"), "Invalid timezone!"))
-        .ok();
-
-    let maybe_kind = maybe_clock_style
-        .zip(maybe_numbers_font_style)
-        .zip(maybe_timezone)
-        .map(|((clock_style, numbers_font_style), timezone)| {
-            WidgetKind::Clock(ClockWidget {
-                clock_style,
-                numbers_font_style,
-                show_date: clock_proto.show_date,
-                show_seconds: clock_proto.show_seconds,
-                show_timezone: clock_proto.show_timezone,
-                timezone: if clock_proto.show_timezone {
-                    timezone
-                } else {
-                    None
-                },
-            })
-        });
-
-    (maybe_kind, field_violations)
-}
-
-fn parse_ticker_btc_widget_kind(
-    field: &str,
-    ticker_btc_proto: web::TickerBtcWidget,
-) -> ParseOutput<WidgetKind> {
-    use web::ticker_btc_widget::TimeFrame as TimeFrameProto;
-
-    let mut field_violations = FieldViolations::new();
-
-    let maybe_time_frame = match ticker_btc_proto.time_frame() {
-        TimeFrameProto::Unspecified => {
-            field_violations.push(format!("{field}.time_frame"), "Missing value!");
-            None
-        }
-        TimeFrameProto::Day1 => Some(TickerTimeFrame::Day1),
-        TimeFrameProto::Week1 => Some(TickerTimeFrame::Week1),
-        TimeFrameProto::Week2 => Some(TickerTimeFrame::Week2),
-        TimeFrameProto::Month1 => Some(TickerTimeFrame::Month1),
-        TimeFrameProto::Month3 => Some(TickerTimeFrame::Month3),
-        TimeFrameProto::Month6 => Some(TickerTimeFrame::Month6),
-        TimeFrameProto::Year1 => Some(TickerTimeFrame::Year1),
-        TimeFrameProto::Year2 => Some(TickerTimeFrame::Year2),
-        TimeFrameProto::Year5 => Some(TickerTimeFrame::Year5),
-        TimeFrameProto::All => Some(TickerTimeFrame::All),
-    };
-
-    let maybe_kind =
-        maybe_time_frame.map(|time_frame| WidgetKind::TickerBtc(TickerBtcWidget { time_frame }));
-
-    (maybe_kind, field_violations)
-}
-
-fn parse_block_height_widget_kind(
-    field: &str,
-    block_height_proto: web::BlockHeightWidget,
-) -> ParseOutput<WidgetKind> {
-    use web::FontStyle as FontStyleProto;
-
-    let mut field_violations = FieldViolations::new();
-
-    let maybe_numbers_font_style = match block_height_proto.numbers_font_style() {
-        FontStyleProto::Unspecified => {
-            field_violations.push(format!("{field}.numbers_font_style"), "Missing value!");
-            None
-        }
-        FontStyleProto::Light => Some(FontStyle::Light),
-        FontStyleProto::Medium => Some(FontStyle::Medium),
-        FontStyleProto::Bold => Some(FontStyle::Bold),
-    };
-
-    let maybe_kind = maybe_numbers_font_style.map(|numbers_font_style| {
-        WidgetKind::BlockHeight(BlockHeightWidget {
-            show_timestamp: block_height_proto.show_timestamp,
-            numbers_font_style,
-        })
-    });
-
-    (maybe_kind, field_violations)
-}
-
-fn parse_braiins_pool_widget_kind(
-    field: &str,
-    braiins_pool_proto: web::BraiinsPoolWidget,
-) -> ParseOutput<WidgetKind> {
-    use web::braiins_pool_widget::BraiinsPoolStyle as PoolStyleProto;
-    use web::braiins_pool_widget::TimeFrame as TimeFrameProto;
-
-    let mut field_violations = FieldViolations::new();
-
-    let maybe_scene_style = match braiins_pool_proto.braiins_pool_style() {
-        PoolStyleProto::Unspecified => {
-            field_violations.push(format!("{field}.pool_style"), "Missing value!");
-            None
-        }
-        PoolStyleProto::Overview => Some(PoolStyle::Overview),
-        PoolStyleProto::Bigchart => Some(PoolStyle::BigChart),
-    };
-
-    let maybe_time_frame = match braiins_pool_proto.time_frame() {
-        TimeFrameProto::Unspecified => {
-            field_violations.push(format!("{field}.time_frame"), "Missing value!");
-            None
-        }
-        TimeFrameProto::Hour4 => Some(PoolChartTimeFrame::Hours4),
-        TimeFrameProto::Hour12 => Some(PoolChartTimeFrame::Hours12),
-        TimeFrameProto::Hour24 => Some(PoolChartTimeFrame::Hours24),
-        TimeFrameProto::Day7 => Some(PoolChartTimeFrame::Days7),
-    };
-
-    let maybe_account_id = braiins_pool_proto
-        .account_id
-        .map(|account_id| AccountId::from_str(&account_id))
-        .transpose()
-        .tap_err(|_| field_violations.push(format!("{field}.account_id"), "Missing value!"))
-        .ok();
-
-    let maybe_kind = maybe_scene_style
-        .zip(maybe_time_frame)
-        .zip(maybe_account_id)
-        .map(|((pool_style, chart_frame), account_id)| {
-            WidgetKind::BraiinsPool(BraiinsPoolWidget {
-                pool_style,
-                chart_frame,
-                account_id,
-            })
-        });
-
-    (maybe_kind, field_violations)
-}
-
-fn parse_remote_image_widget_kind(
-    field: impl AsRef<str> + Display,
-    remote_image_proto: web::RemoteImageWidget,
-) -> ParseOutput<WidgetKind> {
-    let mut field_violations = FieldViolations::new();
-
-    let refresh_duration = Some(Duration::from_secs(
-        remote_image_proto.refresh_duration_sec.into(),
-    ))
-    .filter(|duration| !duration.is_zero())
-    .tap_none(|| {
-        field_violations.push(
-            format!("{field}.refresh_duration_sec"),
-            "Refresh duration cannot be zero!",
-        );
-    });
-
-    let image_scale_mode = {
-        use web::remote_image_widget::ImageScaleMode as ImageScaleModeProto;
-        match remote_image_proto.image_scale_mode() {
-            ImageScaleModeProto::Unspecified | ImageScaleModeProto::Fit => ImageScaleMode::Fit,
-            ImageScaleModeProto::Fill => ImageScaleMode::Fill,
-        }
-    };
-
-    let maybe_kind = refresh_duration.map(|refresh_duration| {
-        WidgetKind::RemoteImage(RemoteImageWidget {
-            url: remote_image_proto.url,
-            refresh_duration,
-            image_scale_mode,
-        })
-    });
-
-    (maybe_kind, field_violations)
-}
-
-fn map_proto_to_remote_widget_kind(remote_widget_proto: web::RemoteWidget) -> WidgetKind {
-    WidgetKind::RemoteWidget(RemoteWidget {
-        name: remote_widget_proto.name,
-        description: remote_widget_proto.description,
-        widget_url: remote_widget_proto.widget_url,
-        icon_url: remote_widget_proto.icon_url,
-        params: map_protobuf_struct_to_params(remote_widget_proto.params.unwrap_or_default()),
-    })
-}
-
-fn map_scene_to_proto(scene: Scene) -> web::Scene {
-    let kind = match &scene.kind {
-        SceneKind::Fullscreen => web::scene::Kind::Fullscreen(web::scene::Fullscreen {
-            widget: {
-                let widget = scene.widgets.into_values().next().map(map_widget_to_proto);
-                debug_assert!(widget.is_some());
-                widget
+        let mut config = self.config_handle.write().await;
+        config.set_scene_cycling(SceneCycling {
+            automatic_cycling_enabled: cycling.automatic_cycling_enabled,
+            automatic_cycling_default_duration: std::time::Duration::from_secs(u64::from(
+                cycling.automatic_cycling_default_duration_sec,
+            )),
+            transition: match web::SceneCyclingTransition::try_from(cycling.transition) {
+                Ok(web::SceneCyclingTransition::Fade) => SceneCyclingTransition::Fade,
+                Ok(
+                    web::SceneCyclingTransition::Slide | web::SceneCyclingTransition::Unspecified,
+                )
+                | Err(_) => SceneCyclingTransition::Slide,
             },
-        }),
-        SceneKind::Combined => web::scene::Kind::Combined(web::scene::Combined {
-            widgets: scene
+        });
+
+        Self::save_config(&mut config).await?;
+
+        Ok(Response::new(()))
+    }
+
+    async fn add_widget(
+        &self,
+        request: Request<web::AddWidgetRequest>,
+    ) -> Result<Response<String>, Status> {
+        let req = request.into_inner();
+        let config = req
+            .config
+            .ok_or_else(|| Status::invalid_argument("config is required"))?;
+
+        let widget_uid = Uuid::parse_str(&config.widget_uid)
+            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
+
+        let manifest_info = self
+            .widget_registry
+            .get(&widget_uid)
+            .ok_or_else(|| Status::not_found(format!("widget not found: {widget_uid}")))?;
+
+        let scene_id = Uuid::parse_str(&req.scene_id)
+            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
+
+        let position = req
+            .position
+            .ok_or_else(|| Status::invalid_argument("position is required"))?;
+
+        let size = proto_size_to_scene(req.size)?;
+
+        let params = build_widget_params(&manifest_info.manifest.params, &config.params);
+
+        let widget =
+            scene::Widget::new(widget_uid, params, proto_position_to_scene(position)?, size);
+
+        let widget_id = widget.id.as_uuid().to_string();
+        let widget_clone = widget.clone();
+        let scene_id_key = scene::SceneId::from(scene_id);
+
+        {
+            let mut config = self.config_handle.write().await;
+            let scene = config
+                .scenes
+                .get_mut(&scene_id_key)
+                .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
+
+            validate_widget_placement(scene, &widget, None)?;
+
+            scene.widgets.insert(widget.id, widget);
+            Self::save_config(&mut config).await?;
+        }
+
+        if self.scene_is_showing(&scene_id_key).await {
+            self.try_spawn_widget(&scene_id_key, &widget_clone).await;
+        }
+        self.restore_active_scene().await;
+
+        Ok(Response::new(widget_id))
+    }
+
+    async fn update_widget(
+        &self,
+        request: Request<web::UpdateWidgetRequest>,
+    ) -> Result<Response<()>, Status> {
+        let req = request.into_inner();
+
+        let widget_id =
+            Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid widget ID"))?;
+        let scene_id = Uuid::parse_str(&req.scene_id)
+            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
+        let position = req
+            .position
+            .ok_or_else(|| Status::invalid_argument("position is required"))?;
+        let size = proto_size_to_scene(req.size)?;
+
+        let scene_id_key = scene::SceneId::from(scene_id);
+        let widget_key = scene::WidgetId::from(widget_id);
+        let instance_id = widget_id.to_string();
+
+        let widget_clone;
+        {
+            let mut config = self.config_handle.write().await;
+            let scene = config
+                .scenes
+                .get_mut(&scene_id_key)
+                .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
+
+            let existing = scene
                 .widgets
-                .into_values()
-                .map(map_widget_to_proto)
-                .collect(),
-        }),
-    };
+                .get(&widget_key)
+                .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?;
 
-    let cycle_duration_sec = scene.cycle_duration.map(|cycle_duration| {
-        #[expect(clippy::cast_possible_truncation)]
-        let cycle_duration_sec = cycle_duration.as_secs() as u32;
-        cycle_duration_sec
-    });
+            reject_update_widget_in_fullscreen(&scene.kind, position, size)?;
+            let manifest_info = self
+                .widget_registry
+                .get(&existing.widget_type_id)
+                .ok_or_else(|| {
+                    Status::not_found(format!("widget not found: {}", existing.widget_type_id))
+                })?;
+            let params = build_widget_params(&manifest_info.manifest.params, &req.params);
 
-    web::Scene {
-        id: scene.id.to_string(),
-        enabled: scene.enabled,
-        cycle_duration_sec,
-        kind: Some(kind),
+            let updated = scene::Widget {
+                id: existing.id,
+                widget_type_id: existing.widget_type_id,
+                position: proto_position_to_scene(position)?,
+                size,
+                params,
+            };
+
+            validate_widget_placement(scene, &updated, Some(widget_key))?;
+
+            scene.widgets.insert(widget_key, updated.clone());
+            widget_clone = updated;
+            Self::save_config(&mut config).await?;
+        }
+
+        if self.scene_is_showing(&scene_id_key).await {
+            self.coordinator.stop_widget(&instance_id).await;
+            self.try_spawn_widget(&scene_id_key, &widget_clone).await;
+        }
+        self.restore_active_scene().await;
+
+        Ok(Response::new(()))
     }
 }
 
-fn map_widget_to_proto(widget: Widget) -> web::Widget {
-    let kind = match widget.kind {
-        WidgetKind::Clock(clock) => map_clock_to_proto(clock),
-        WidgetKind::TickerBtc(ticker_btc) => map_ticker_btc_to_proto(&ticker_btc),
-        WidgetKind::BlockHeight(block_height) => map_block_height_to_proto(&block_height),
-        WidgetKind::BraiinsPool(braiins_pool) => map_braiins_pool_to_proto(braiins_pool),
-        WidgetKind::RemoteImage(remote_image) => map_remote_image_to_proto(remote_image),
-        WidgetKind::BlockchainData => map_blockchain_data_to_proto(),
-        WidgetKind::RemoteWidget(remote_widget) => map_remote_widget_to_proto(remote_widget),
-        WidgetKind::HalvingCountdown => map_halving_countdown_to_proto(),
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    web::Widget {
-        id: widget.id.to_string(),
-        position: Some(web::WidgetPosition {
-            row: widget.position.row.into(),
-            col: widget.position.col.into(),
-        }),
-        size: match widget.size {
-            WidgetSize::Small => web::WidgetSize::Small.into(),
-            WidgetSize::Medium => web::WidgetSize::Medium.into(),
-            WidgetSize::Large => web::WidgetSize::Large.into(),
-            WidgetSize::Full => web::WidgetSize::Full.into(),
-        },
-        kind: Some(kind),
+    #[test]
+    fn reject_remove_widget_in_fullscreen_passes_for_combined() {
+        assert!(reject_remove_widget_in_fullscreen(&scene::SceneKind::Combined).is_ok());
     }
-}
 
-fn map_clock_to_proto(clock: ClockWidget) -> web::WidgetKind {
-    use web::FontStyle as FontStyleProto;
-    use web::clock_widget::ClockStyle as ClockStyleProto;
-
-    let proto = web::ClockWidget {
-        clock_style: match clock.clock_style {
-            ClockStyle::AnalogRound => ClockStyleProto::AnalogRound,
-            ClockStyle::AnalogRect => ClockStyleProto::AnalogRect,
-            ClockStyle::Digital => ClockStyleProto::Digital,
-        }
-        .into(),
-        numbers_font_style: match clock.numbers_font_style {
-            FontStyle::Light => FontStyleProto::Light,
-            FontStyle::Medium => FontStyleProto::Medium,
-            FontStyle::Bold => FontStyleProto::Bold,
-        }
-        .into(),
-        show_date: clock.show_date,
-        show_seconds: clock.show_seconds,
-        show_timezone: clock.show_timezone,
-        timezone: clock.timezone.map(|timezone| timezone.iana().to_owned()),
-    };
-
-    web::WidgetKind {
-        value: Some(web::widget_kind::Value::Clock(proto)),
+    #[test]
+    fn reject_remove_widget_in_fullscreen_rejects_with_failed_precondition() {
+        let err = reject_remove_widget_in_fullscreen(&scene::SceneKind::Fullscreen)
+            .expect_err("BUG: must reject fullscreen");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
     }
-}
 
-fn parse_scene_cycling(
-    field: impl AsRef<str> + Display,
-    input: Option<web::SceneCycling>,
-) -> ParseOutput<SceneCycling> {
-    use web::SceneCyclingTransition as SceneCyclingTransitionProto;
-
-    let mut all_field_violations = FieldViolations::new();
-
-    let Some(input) = input else {
-        all_field_violations.push(field.as_ref(), "Missing value!");
-        return (None, all_field_violations);
-    };
-
-    let (maybe_automatic_cycling_default_duration, field_violations) = parse_scene_cycle_duration(
-        format!("{field}.automatic_cycling_default_duration_sec"),
-        Some(input.automatic_cycling_default_duration_sec),
-    );
-    all_field_violations.extend(field_violations);
-
-    let maybe_transition = match input.transition() {
-        SceneCyclingTransitionProto::Unspecified => {
-            all_field_violations.push(format!("{field}.transition"), "Missing value!");
-            None
-        }
-        SceneCyclingTransitionProto::Slide => Some(SceneCyclingTransition::Slide),
-        SceneCyclingTransitionProto::Fade => Some(SceneCyclingTransition::Fade),
-    };
-
-    let maybe_scene_cycling = maybe_automatic_cycling_default_duration
-        .zip(maybe_transition)
-        .map(
-            |(automatic_cycling_default_duration, transition)| SceneCycling {
-                automatic_cycling_enabled: input.automatic_cycling_enabled,
-                automatic_cycling_default_duration: automatic_cycling_default_duration
-                    .expect("BUG: automatic_cycling_default_duration should be present, since we wrapped input into Some"),
-                transition,
-            },
+    #[test]
+    fn reject_update_widget_in_fullscreen_passes_for_combined() {
+        let pos = web::WidgetPosition { row: 1, col: 2 };
+        let result = reject_update_widget_in_fullscreen(
+            &scene::SceneKind::Combined,
+            pos,
+            scene::WidgetSize::Small,
         );
-
-    (maybe_scene_cycling, all_field_violations)
-}
-
-#[expect(clippy::needless_pass_by_value)]
-fn map_scene_cycling_to_proto(config: SceneCycling) -> web::SceneCycling {
-    #[expect(clippy::cast_possible_truncation)]
-    let automatic_cycling_default_duration_sec =
-        config.automatic_cycling_default_duration.as_secs() as u32;
-
-    web::SceneCycling {
-        automatic_cycling_enabled: config.automatic_cycling_enabled,
-        automatic_cycling_default_duration_sec,
-        transition: match config.transition {
-            SceneCyclingTransition::Slide => web::SceneCyclingTransition::Slide.into(),
-            SceneCyclingTransition::Fade => web::SceneCyclingTransition::Fade.into(),
-        },
-    }
-}
-
-fn map_ticker_btc_to_proto(ticker_btc: &TickerBtcWidget) -> web::WidgetKind {
-    use web::ticker_btc_widget::TimeFrame as TimeFrameProto;
-
-    let proto = web::TickerBtcWidget {
-        time_frame: match ticker_btc.time_frame {
-            TickerTimeFrame::Day1 => TimeFrameProto::Day1,
-            TickerTimeFrame::Week1 => TimeFrameProto::Week1,
-            TickerTimeFrame::Week2 => TimeFrameProto::Week2,
-            TickerTimeFrame::Month1 => TimeFrameProto::Month1,
-            TickerTimeFrame::Month3 => TimeFrameProto::Month3,
-            TickerTimeFrame::Month6 => TimeFrameProto::Month6,
-            TickerTimeFrame::Year1 => TimeFrameProto::Year1,
-            TickerTimeFrame::Year2 => TimeFrameProto::Year2,
-            TickerTimeFrame::Year5 => TimeFrameProto::Year5,
-            TickerTimeFrame::All => TimeFrameProto::All,
-        }
-        .into(),
-    };
-
-    web::WidgetKind {
-        value: Some(web::widget_kind::Value::TickerBtc(proto)),
-    }
-}
-
-fn map_block_height_to_proto(block_height: &BlockHeightWidget) -> web::WidgetKind {
-    use web::FontStyle as FontStyleProto;
-
-    let proto = web::BlockHeightWidget {
-        show_timestamp: block_height.show_timestamp,
-        numbers_font_style: match block_height.numbers_font_style {
-            FontStyle::Light => FontStyleProto::Light,
-            FontStyle::Medium => FontStyleProto::Medium,
-            FontStyle::Bold => FontStyleProto::Bold,
-        }
-        .into(),
-    };
-
-    web::WidgetKind {
-        value: Some(web::widget_kind::Value::BlockHeight(proto)),
-    }
-}
-
-fn map_braiins_pool_to_proto(braiins_pool: BraiinsPoolWidget) -> web::WidgetKind {
-    use web::braiins_pool_widget::BraiinsPoolStyle as PoolStyleProto;
-    use web::braiins_pool_widget::TimeFrame as TimeFrameProto;
-
-    let proto = web::BraiinsPoolWidget {
-        braiins_pool_style: match braiins_pool.pool_style {
-            PoolStyle::Overview => PoolStyleProto::Overview,
-            PoolStyle::BigChart => PoolStyleProto::Bigchart,
-        }
-        .into(),
-        time_frame: match braiins_pool.chart_frame {
-            PoolChartTimeFrame::Hours4 => TimeFrameProto::Hour4,
-            PoolChartTimeFrame::Hours12 => TimeFrameProto::Hour12,
-            PoolChartTimeFrame::Hours24 => TimeFrameProto::Hour24,
-            PoolChartTimeFrame::Days7 => TimeFrameProto::Day7,
-        }
-        .into(),
-        account_id: braiins_pool
-            .account_id
-            .map(|account_id| account_id.to_string()),
-    };
-
-    web::WidgetKind {
-        value: Some(web::widget_kind::Value::BraiinsPool(proto)),
-    }
-}
-
-fn map_remote_image_to_proto(remote_image: RemoteImageWidget) -> web::WidgetKind {
-    use web::remote_image_widget::ImageScaleMode as ImageScaleModeProto;
-
-    let proto = web::RemoteImageWidget {
-        url: remote_image.url,
-        refresh_duration_sec: {
-            #[expect(clippy::cast_possible_truncation)]
-            let refresh_duration_sec = remote_image.refresh_duration.as_secs() as u32;
-
-            refresh_duration_sec
-        },
-        image_scale_mode: match remote_image.image_scale_mode {
-            ImageScaleMode::Fit => ImageScaleModeProto::Fit,
-            ImageScaleMode::Fill => ImageScaleModeProto::Fill,
-        }
-        .into(),
-    };
-
-    web::WidgetKind {
-        value: Some(web::widget_kind::Value::RemoteImage(proto)),
-    }
-}
-
-fn map_remote_widget_to_proto(remote_widget: RemoteWidget) -> web::WidgetKind {
-    let proto = web::RemoteWidget {
-        name: remote_widget.name,
-        description: remote_widget.description,
-        widget_url: remote_widget.widget_url,
-        icon_url: remote_widget.icon_url,
-        params: Some(map_params_to_protobuf_struct(remote_widget.params)),
-    };
-
-    web::WidgetKind {
-        value: Some(web::widget_kind::Value::RemoteWidget(proto)),
-    }
-}
-
-fn map_remote_widget_to_proto_remote_widget(remote_widget: RemoteWidget) -> web::RemoteWidget {
-    web::RemoteWidget {
-        name: remote_widget.name,
-        description: remote_widget.description,
-        widget_url: remote_widget.widget_url,
-        icon_url: remote_widget.icon_url,
-        params: Some(map_params_to_protobuf_struct(remote_widget.params)),
-    }
-}
-
-fn map_blockchain_data_to_proto() -> web::WidgetKind {
-    web::WidgetKind {
-        value: Some(web::widget_kind::Value::BlockchainData(
-            web::BlockchainDataWidget {},
-        )),
-    }
-}
-
-fn map_halving_countdown_to_proto() -> web::WidgetKind {
-    web::WidgetKind {
-        value: Some(web::widget_kind::Value::HalvingCountdown(
-            web::HalvingCountdownWidget {},
-        )),
-    }
-}
-
-async fn remote_widget_url_validation(
-    remote_widget: &web::RemoteWidget,
-    field_violations: &mut FieldViolations,
-) -> Option<WidgetKind> {
-    let url = remote_widget.widget_url.clone();
-    let mut parsed_url = match Url::parse(&url) {
-        Ok(url) => url,
-        Err(err) => {
-            warn!(?err, "Invalid URL, stopping");
-            field_violations.push("widget_kind.remote_widget", "Invalid URL!");
-            return None;
-        }
-    };
-    match parsed_url.path_segments_mut() {
-        Ok(mut path_segments) => path_segments.push("metadata"),
-        Err(err) => {
-            warn!(?err, "Failed to get path segments");
-            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
-            return None;
-        }
-    };
-
-    let client = match Client::builder().timeout(REQUEST_TIMEOUT).build() {
-        Ok(client) => client,
-        Err(err) => {
-            warn!(?err, "Failed to create reqwest client, stopping");
-            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
-            return None;
-        }
-    };
-
-    let metadata_response = match client.get(parsed_url.clone()).send().await {
-        Ok(response) => {
-            if !response.status().is_success() {
-                warn!("Failed to get metadata, stopping");
-                field_violations.push("widget_kind.remote_widget", "Unexpected error!");
-                return None;
-            }
-            response
-        }
-        Err(err) => {
-            warn!(?err, "Failed to get metadata, stopping");
-            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
-            return None;
-        }
-    };
-
-    let metadata = match metadata_response.json::<RemoteWidgetMetadata>().await {
-        Ok(metadata) => metadata,
-        Err(err) => {
-            warn!(?err, "Failed to parse metadata, stopping");
-            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
-            return None;
-        }
-    };
-
-    let icon_url = match parsed_url.join(&metadata.assets.icon) {
-        Ok(url) => url,
-        Err(err) => {
-            warn!(?err, "Failed to add path segments, stopping");
-            field_violations.push("widget_kind.remote_widget", "Unexpected error!");
-            return None;
-        }
-    };
-
-    Some(WidgetKind::RemoteWidget(RemoteWidget {
-        name: metadata.name,
-        description: metadata.description,
-        widget_url: url,
-        icon_url: icon_url.to_string(),
-        //NOTE: We will serialize only user defined params. No params mean default values.
-        ..Default::default()
-    }))
-}
-
-fn json_to_proto_value(v: JsonValue) -> ProstValue {
-    match v {
-        JsonValue::Null => ProstValue {
-            kind: Some(ProstKind::NullValue(0)),
-        },
-        JsonValue::Bool(b) => ProstValue {
-            kind: Some(ProstKind::BoolValue(b)),
-        },
-        JsonValue::Number(n) => ProstValue {
-            kind: Some(ProstKind::NumberValue(n.as_f64().unwrap_or_default())),
-        },
-        JsonValue::String(s) => ProstValue {
-            kind: Some(ProstKind::StringValue(s)),
-        },
-        JsonValue::Array(arr) => {
-            let values = arr.into_iter().map(json_to_proto_value).collect();
-            ProstValue {
-                kind: Some(ProstKind::ListValue(ListValue { values })),
-            }
-        }
-        JsonValue::Object(map) => {
-            let fields = map
-                .into_iter()
-                .map(|(k, v)| (k, json_to_proto_value(v)))
-                .collect();
-            ProstValue {
-                kind: Some(ProstKind::StructValue(Struct { fields })),
-            }
-        }
-    }
-}
-
-fn proto_to_json_value(v: ProstValue) -> JsonValue {
-    match v.kind {
-        None | Some(ProstKind::NullValue(_)) => JsonValue::Null,
-        Some(ProstKind::NumberValue(n)) => {
-            JsonValue::Number(serde_json::Number::from_f64(n).unwrap_or_else(|| 0.into()))
-        }
-        Some(ProstKind::StringValue(s)) => JsonValue::String(s),
-        Some(ProstKind::BoolValue(b)) => JsonValue::Bool(b),
-        Some(ProstKind::ListValue(list)) => {
-            JsonValue::Array(list.values.into_iter().map(proto_to_json_value).collect())
-        }
-        Some(ProstKind::StructValue(s)) => {
-            let mut map = JsonValue::Object(serde_json::Map::default());
-            if let JsonValue::Object(ref mut inner) = map {
-                for (k, v) in s.fields {
-                    inner.insert(k, proto_to_json_value(v));
-                }
-            }
-            map
-        }
-    }
-}
-
-fn map_protobuf_struct_to_params(param: Struct) -> JsonValue {
-    let mut map = serde_json::Map::new();
-
-    for (k, v) in param.fields {
-        map.insert(k, proto_to_json_value(v));
+        assert!(result.is_ok());
     }
 
-    JsonValue::Object(map)
-}
+    #[test]
+    fn reject_update_widget_in_fullscreen_allows_full_size_at_origin() {
+        let pos = web::WidgetPosition { row: 0, col: 0 };
+        let result = reject_update_widget_in_fullscreen(
+            &scene::SceneKind::Fullscreen,
+            pos,
+            scene::WidgetSize::Full,
+        );
+        assert!(result.is_ok());
+    }
 
-fn map_params_to_protobuf_struct(param: JsonValue) -> Struct {
-    if let JsonValue::Object(map) = param {
-        Struct {
-            fields: map
-                .into_iter()
-                .map(|(k, v)| (k, json_to_proto_value(v)))
-                .collect(),
-        }
-    // Parameters in the JSON are key value pairs.
-    // We expect only the Object variant.
-    } else {
-        Struct {
-            fields: std::collections::BTreeMap::default(),
-        }
+    #[test]
+    fn reject_update_widget_in_fullscreen_rejects_position_change() {
+        let pos = web::WidgetPosition { row: 1, col: 0 };
+        let err = reject_update_widget_in_fullscreen(
+            &scene::SceneKind::Fullscreen,
+            pos,
+            scene::WidgetSize::Full,
+        )
+        .expect_err("BUG: must reject moved fullscreen widget");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("move"));
+    }
+
+    #[test]
+    fn reject_update_widget_in_fullscreen_rejects_size_change() {
+        let pos = web::WidgetPosition { row: 0, col: 0 };
+        let err = reject_update_widget_in_fullscreen(
+            &scene::SceneKind::Fullscreen,
+            pos,
+            scene::WidgetSize::Small,
+        )
+        .expect_err("BUG: must reject resized fullscreen widget");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("resize"));
+    }
+
+    #[test]
+    fn build_widget_params_keeps_default_when_key_omitted() {
+        let manifest_params = std::collections::HashMap::from([(
+            "foo".to_owned(),
+            ParamDefinition {
+                name: "Foo".to_owned(),
+                param_type: ParamType::String,
+                description: None,
+                default: serde_json::Value::String("bar".to_owned()),
+                enum_values: None,
+                min: None,
+                max: None,
+            },
+        )]);
+        let overrides = std::collections::HashMap::new();
+
+        let params = build_widget_params(&manifest_params, &overrides);
+
+        assert_eq!(params["foo"], serde_json::Value::String("bar".to_owned()));
+    }
+
+    #[test]
+    fn build_widget_params_override_wins_over_default() {
+        let manifest_params = std::collections::HashMap::from([(
+            "foo".to_owned(),
+            ParamDefinition {
+                name: "Foo".to_owned(),
+                param_type: ParamType::Number,
+                description: None,
+                default: serde_json::json!(1),
+                enum_values: None,
+                min: None,
+                max: None,
+            },
+        )]);
+        let overrides = std::collections::HashMap::from([("foo".to_owned(), "42".to_owned())]);
+
+        let params = build_widget_params(&manifest_params, &overrides);
+
+        assert_eq!(params["foo"], serde_json::json!(42));
+    }
+
+    #[test]
+    fn build_widget_params_invalid_json_override_is_stored_as_string() {
+        let manifest_params = std::collections::HashMap::from([(
+            "foo".to_owned(),
+            ParamDefinition {
+                name: "Foo".to_owned(),
+                param_type: ParamType::String,
+                description: None,
+                default: serde_json::Value::String("bar".to_owned()),
+                enum_values: None,
+                min: None,
+                max: None,
+            },
+        )]);
+        let overrides = std::collections::HashMap::from([("foo".to_owned(), "broken{".to_owned())]);
+
+        let params = build_widget_params(&manifest_params, &overrides);
+
+        assert_eq!(
+            params["foo"],
+            serde_json::Value::String("broken{".to_owned())
+        );
+    }
+
+    #[test]
+    fn param_type_timezone_maps_to_proto_timezone() {
+        let proto = param_type_to_proto(ParamType::Timezone);
+        assert_eq!(proto, web::ManifestParamType::Timezone as i32);
     }
 }
-*/

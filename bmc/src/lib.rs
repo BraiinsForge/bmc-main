@@ -21,8 +21,6 @@ mod startup;
 mod system_manager;
 mod system_upgrade;
 pub mod utils;
-// TODO: display refactor
-#[expect(dead_code)]
 mod web;
 pub mod widget;
 

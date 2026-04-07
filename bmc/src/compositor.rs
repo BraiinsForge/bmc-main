@@ -34,6 +34,10 @@ pub struct WidgetPlacement {
 
 #[derive(Debug, Clone, Default)]
 pub struct SceneLayout {
+    /// Identifies which scene this layout came from; the compositor matches
+    /// it against its cycling list to update entries in place instead of
+    /// rebuilding. `None` for tests / default values.
+    pub scene_id: Option<crate::scene::SceneId>,
     pub widgets: Vec<WidgetPlacement>,
 }
 

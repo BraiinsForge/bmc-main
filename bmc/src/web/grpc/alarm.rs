@@ -1,5 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// TODO: display refactor — AlarmService construction is commented out in
+// `web::grpc::GrpcWeb::build`; remove this once the service is wired back up.
+#![expect(
+    dead_code,
+    reason = "AlarmService is unused until display services are restored"
+)]
+
 use std::collections::HashSet;
 
 use bmc_grpc::web::{

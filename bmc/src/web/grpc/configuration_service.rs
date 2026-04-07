@@ -1,5 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+// TODO: display refactor — ConfigurationService construction is commented out in
+// `web::grpc::GrpcWeb::build`; remove this once the service is wired back up.
+#![expect(
+    dead_code,
+    reason = "ConfigurationService is unused until display services are restored"
+)]
+
 use crate::config::{ConfigHandle, UnitSystem};
 use crate::sound::Sounds;
 use crate::system_manager::SystemManager;
@@ -27,10 +34,11 @@ use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
 
+use super::GrpcError;
 use super::alarm::{map_weekday_from_proto, map_weekday_to_proto};
 use super::initial_setup::{try_from_date_time, try_from_time_format};
 use super::shared::{naive_time_to_hhmm, parse_hhmm_to_naive_time, try_from_number_format};
-use super::{GrpcError, SoundController};
+use crate::sound::SoundController;
 
 const API_BRIGHTNESS_MIN: u32 = crate::backlight::MIN_BRIGHTNESS_PCT as u32;
 const API_BRIGHTNESS_MAX: u32 = 100;

@@ -6,14 +6,17 @@ mod http_server;
 mod no_password;
 mod session;
 
-use crate::alarm::AlarmController;
+// TODO: display refactor — re-enable AlarmController/SoundController/SystemManager
+// imports when display-dependent services are restored.
+// use crate::alarm::AlarmController;
+// use crate::sound::SoundController;
+// use crate::system_manager::SystemManager;
 use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::session::Manager as SessionManager;
-use crate::sound::SoundController;
-use crate::system_manager::SystemManager;
+use crate::widget::{Coordinator, WidgetRegistry};
 // TODO: display refactor — re-enable once a replacement display layer ships
 // use crate::widget_tasks::WidgetTasks;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
@@ -23,6 +26,7 @@ use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
 // use bmc_display::display_controller::DisplayController;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{
+    marker::PhantomData,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
@@ -47,10 +51,15 @@ pub(crate) struct WebService<
     // display_controller: DisplayController,
     // widget_tasks: WidgetTasks,
     initial_setup: InitialSetup<T, U>,
-    system_manager: SystemManager<V>,
-    sound_controller: SoundController,
-    alarm_controller: AlarmController,
     led_controller: LedController<T>,
+    widget_registry: Arc<WidgetRegistry>,
+    widget_coordinator: Arc<Coordinator>,
+    // TODO: display refactor — re-enable once display services are available
+    // and remove _phantom_v.
+    // system_manager: SystemManager<V>,
+    // sound_controller: SoundController,
+    // alarm_controller: AlarmController,
+    _phantom_v: PhantomData<V>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -67,10 +76,13 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         // display_controller: DisplayController,
         // widget_tasks: WidgetTasks,
         initial_setup: InitialSetup<T, U>,
-        system_manager: SystemManager<V>,
-        sound_controller: SoundController,
-        alarm_controller: AlarmController,
         led_controller: LedController<T>,
+        widget_registry: Arc<WidgetRegistry>,
+        widget_coordinator: Arc<Coordinator>,
+        // TODO: display refactor — re-enable when display services are available
+        // system_manager: SystemManager<V>,
+        // sound_controller: SoundController,
+        // alarm_controller: AlarmController,
     ) -> Self {
         Self {
             manager,
@@ -82,16 +94,19 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             // display_controller,
             // widget_tasks,
             initial_setup,
-            system_manager,
-            sound_controller,
-            alarm_controller,
             led_controller,
+            widget_registry,
+            widget_coordinator,
+            // system_manager,
+            // sound_controller,
+            // alarm_controller,
+            _phantom_v: PhantomData,
         }
     }
 
     pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
         let http_router = http_server::HttpServer::new(self.config, self.manager.clone()).build();
-        let grpc_router = grpc::GrpcWeb::new(
+        let grpc_router = grpc::GrpcWeb::<_, _, _, V>::new(
             self.manager.clone(),
             self.session_manager.clone(),
             self.system_upgrade_service,
@@ -100,10 +115,13 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             // self.display_controller,
             // self.widget_tasks,
             self.initial_setup,
-            self.system_manager,
-            self.sound_controller,
-            self.alarm_controller,
             self.led_controller,
+            self.widget_registry,
+            self.widget_coordinator,
+            // TODO: display refactor — re-enable when display services are available
+            // self.system_manager,
+            // self.sound_controller,
+            // self.alarm_controller,
         )
         .build()
         .into_axum_router()

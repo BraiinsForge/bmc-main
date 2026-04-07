@@ -3,23 +3,19 @@ syntax = "proto3";
 package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
-import "google/protobuf/struct.proto";
 import "google/protobuf/wrappers.proto";
+
 message Scene {
-  // required
   string id = 1;
-  // required
   bool enabled = 2;
   // optional, empty value means - use default cycle duration, minimum 1
   optional uint32 cycle_duration_sec = 3;
-  // required
   oneof kind {
     Fullscreen fullscreen = 4;
     Combined combined = 5;
   }
 
   message Fullscreen {
-    // required
     Widget widget = 1;
   }
 
@@ -34,34 +30,28 @@ message GetScenesResponse {
 }
 
 message AddFullscreenSceneRequest {
-  // required
-  // backend cares only about kind discriminant, frontend can send "empty" message with default values
-  WidgetKind widget_kind = 1;
+  WidgetConfig config = 1;
 }
 
 message UpdateSceneRequest {
-  // required
   string id = 1;
-  // required
   bool enabled = 2;
   // optional, empty value means - use default cycle duration, minimum 1
   optional uint32 cycle_duration_sec = 3;
 }
 
 message MoveSceneRequest {
-  // required
   string id = 1;
-  // required, zero based
+  // zero based
   uint32 index = 2;
 }
 
 message SceneResponse {
-  // required
   Scene scene = 1;
 }
 
-// Position of the widget on the combined scene grid
-// Full screen widget position is row: 0, col: 0
+// Position of the widget on the combined scene grid.
+// Full screen widget position is row: 0, col: 0.
 message WidgetPosition {
   uint32 row = 1;
   uint32 col = 2;
@@ -75,184 +65,46 @@ enum WidgetSize {
   WIDGET_SIZE_FULL = 4;
 }
 
+message WidgetConfig {
+  // UID of the manifest
+  string widget_uid = 1;
+  // Parameter values (key → JSON-encoded value).
+  map<string, string> params = 2;
+}
+
+// A widget instance placed in a scene. Every widget is driven by a manifest;
+// its identity is the manifest UID, its configuration is the params map.
 message Widget {
-  // required
   string id = 1;
-  // required
   WidgetPosition position = 2;
-  // required
   WidgetSize size = 3;
-  // required
-  WidgetKind kind = 4;
+  WidgetConfig config = 4;
 }
 
 message AddWidgetRequest {
-  // required
   string scene_id = 1;
-  // required
   WidgetPosition position = 2;
-  // required
   WidgetSize size = 3;
-  // required
-  // backend cares only about kind discriminant, frontend can send "empty" message with default values
-  WidgetKind kind = 4;
+  WidgetConfig config = 4;
 }
 
 message UpdateWidgetRequest {
-  // required
   string id = 1;
-  // required
   string scene_id = 2;
-  // required
   WidgetPosition position = 3;
-  // required
   WidgetSize size = 4;
-  // required
-  // not allowed to switch kind, only update inner values
-  WidgetKind kind = 5;
+  // Parameter values set by user (key → JSON-encoded value)
+  map<string, string> params = 5;
 }
 
 message RemoveWidgetRequest {
-  // required
   string id = 1;
-  // required
   string scene_id = 2;
 }
 
 message WidgetResponse {
-  // required
   Widget widget = 1;
 }
-
-message WidgetKind {
-  // required
-  oneof value {
-    ClockWidget clock = 1;
-    TickerBtcWidget ticker_btc = 2;
-    BlockHeightWidget block_height = 3;
-    BraiinsPoolWidget braiins_pool = 4;
-    RemoteImageWidget remote_image = 5;
-    BlockchainDataWidget blockchain_data = 6;
-    RemoteWidget remote_widget = 7;
-    HalvingCountdownWidget halving_countdown = 8;
-  }
-}
-
-message ClockWidget {
-  // required
-  ClockStyle clock_style = 1;
-  // required
-  FontStyle numbers_font_style = 2;
-  // required, used only in fullscreen size
-  bool show_date = 3;
-  // required, used only in digital style
-  bool show_seconds = 4;
-  // required
-  bool show_timezone = 5;
-  // optional, empty value means - use system timezone
-  optional string timezone = 6;
-
-  enum ClockStyle {
-    CLOCK_STYLE_UNSPECIFIED = 0;
-    CLOCK_STYLE_ANALOG_ROUND = 1;
-    CLOCK_STYLE_ANALOG_RECT = 2;
-    CLOCK_STYLE_DIGITAL = 3;
-  }
-}
-
-message TickerBtcWidget {
-  // required
-  TimeFrame time_frame = 1;
-
-  enum TimeFrame {
-    TIME_FRAME_UNSPECIFIED = 0;
-    TIME_FRAME_DAY_1 = 1;
-    TIME_FRAME_WEEK_1 = 2;
-    TIME_FRAME_WEEK_2 = 3;
-    TIME_FRAME_MONTH_1 = 4;
-    TIME_FRAME_MONTH_3 = 5;
-    TIME_FRAME_MONTH_6 = 6;
-    TIME_FRAME_YEAR_1 = 7;
-    TIME_FRAME_YEAR_2 = 8;
-    TIME_FRAME_YEAR_5 = 9;
-    TIME_FRAME_ALL = 10;
-  }
-}
-
-message BlockHeightWidget {
-  // required
-  bool show_timestamp = 1;
-  // required
-  FontStyle numbers_font_style = 2;
-}
-
-message BraiinsPoolWidget {
-  // required
-  BraiinsPoolStyle braiins_pool_style = 1;
-  //required
-  TimeFrame time_frame = 2;
-  //optional
-  optional string account_id = 3;
-
-  enum BraiinsPoolStyle {
-    BRAIINS_POOL_STYLE_UNSPECIFIED = 0;
-    BRAIINS_POOL_STYLE_OVERVIEW = 1;
-    BRAIINS_POOL_STYLE_BIGCHART = 2;
-  }
-
-  enum TimeFrame {
-    TIME_FRAME_UNSPECIFIED = 0;
-    TIME_FRAME_HOUR_4 = 1;
-    TIME_FRAME_HOUR_12 = 2;
-    TIME_FRAME_HOUR_24 = 3;
-    TIME_FRAME_DAY_7 = 4;
-  }
-}
-
-// Font style
-enum FontStyle {
-  FONT_STYLE_UNSPECIFIED = 0;
-  FONT_STYLE_LIGHT = 1;
-  FONT_STYLE_MEDIUM = 2;
-  FONT_STYLE_BOLD = 3;
-}
-
-message RemoteImageWidget {
-  enum ImageScaleMode {
-    IMAGE_SCALE_MODE_UNSPECIFIED = 0;
-    IMAGE_SCALE_MODE_FIT = 1;
-    IMAGE_SCALE_MODE_FILL = 2;
-  }
-
-  // required (can be empty)
-  string url = 1;
-  // required
-  uint32 refresh_duration_sec = 2;
-  ImageScaleMode image_scale_mode = 3;
-}
-
-message RemoteWidget {
-  string name = 1;
-  string description = 2;
-  string widget_url = 3;
-  string icon_url = 4;
-  google.protobuf.Struct params = 5;
-}
-
-message RemoteWidgetParamsRequest {
-  string widget_url = 1;
-}
-
-message RemoteWidgetParamsResponse {
-  google.protobuf.Struct remote_widget_params = 1;
-}
-
-message RecentRemoteWidgetsResponse {
-  repeated RemoteWidget recent_remote_widgets = 1;
-}
-
-// No configuration needed - countdown is based purely on block height
-message HalvingCountdownWidget {}
 
 enum SceneCyclingTransition {
   SCENE_CYCLING_TRANSITION_UNSPECIFIED = 0;
@@ -261,29 +113,73 @@ enum SceneCyclingTransition {
 }
 
 message SceneCycling {
-  // required
   bool automatic_cycling_enabled = 1;
-  // required, minimum 1
+  // minimum 1
   uint32 automatic_cycling_default_duration_sec = 2;
-  // required
   SceneCyclingTransition transition = 3;
 }
 
 message GetSceneCyclingResponse {
-  // required
   SceneCycling scene_cycling = 1;
 }
 
 message SetSceneCyclingRequest {
-  // required
   SceneCycling scene_cycling = 1;
 }
 
-message BlockchainDataWidget {}
+// ── Manifest-driven widget system ──────────────────────────────────────
+//
+// Widget parameters are described by custom manifest format.
+
+message WidgetManifest {
+  // Widget UID (UUID v4 from manifest.json)
+  string uid = 1;
+  string name = 2;
+  string description = 3;
+  string version = 4;
+  // Author info
+  optional string author_name = 5;
+  optional string author_url = 6;
+  // Sizes this widget supports (subset of WidgetSize)
+  repeated WidgetSize supported_sizes = 7;
+  // Parameter definitions — frontend generates form inputs from these
+  repeated ManifestParamDefinition params = 8;
+}
+
+message ManifestParamDefinition {
+  // Parameter key (used in the params map when configuring a widget)
+  string key = 1;
+  // Human-readable label
+  string name = 2;
+  // Parameter type
+  ManifestParamType param_type = 3;
+  // Optional description / help text
+  optional string description = 4;
+  // Default value as JSON string
+  string default_value = 5;
+  // For enum types: map of value → display label
+  map<string, string> enum_values = 6;
+  // For number types: optional range constraints
+  optional double min = 7;
+  optional double max = 8;
+}
+
+enum ManifestParamType {
+  MANIFEST_PARAM_TYPE_UNSPECIFIED = 0;
+  MANIFEST_PARAM_TYPE_STRING = 1;
+  MANIFEST_PARAM_TYPE_BOOLEAN = 2;
+  MANIFEST_PARAM_TYPE_NUMBER = 3;
+  MANIFEST_PARAM_TYPE_ARRAY = 4;
+  MANIFEST_PARAM_TYPE_TIMEZONE = 5;
+}
+
+message GetAvailableWidgetsResponse {
+  repeated WidgetManifest widgets = 1;
+}
 
 // Configures scenes & widgets for individual scenes.
-// CQRS pattern, commands only modify state, queries only return state.
-// FE should fetch scene(s) after executing command to get into proper state.
+// CQRS pattern: commands only modify state, queries only return state.
+// FE should fetch scene(s) after executing a command to sync its view.
 //
 // FE implementation tips:
 //
@@ -296,8 +192,9 @@ message BlockchainDataWidget {}
 //   - call `GetScene`
 //   - call `PreviewScene` & keep stream open while user is on grid page
 // - fullscreen:
-//   - call `AddFullscreenScene` - you *don't need* to specify inner values for widget kind (BE ignores them)
-//     - creates scene with single fullscreen widget (with default values, decided by BE)
+//   - call `AddFullscreenScene` with the chosen widget manifest UID
+//     - creates scene with single fullscreen widget (with manifest defaults
+//       unless overridden in `params`)
 //     - response contains ID of newly created scene
 //   - call `GetScene` & show modal to edit fullscreen widget
 //   - call `PreviewScene` & keep stream open while modal is open
@@ -324,13 +221,14 @@ message BlockchainDataWidget {}
 //
 // add widget:
 // - combined:
-//   - call `AddWidget` - you *don't need* to specify inner values for widget kind (BE ignores them)
+//   - call `AddWidget` with the chosen widget manifest UID and optional
+//     param overrides.
 //     - response contains ID of newly created widget
 //   - call `GetScene` & show modal to edit new widget
 //
 // update widget:
 // - combined & fullscreen:
-//   - call `UpdateWidget` - you *must* specify all inner values for widget kind
+//   - call `UpdateWidget` with the full params map
 //   - call `GetScene`
 //
 // remove widget:
@@ -340,43 +238,41 @@ message BlockchainDataWidget {}
 service SceneManagementService {
   // Get all scenes
   rpc GetScenes(google.protobuf.Empty) returns (GetScenesResponse);
-  // Get single scene by ID. This is an optimization for FE to avoid fetching all scenes
+  // Get single scene by ID. Optimization for FE to avoid fetching all scenes.
   rpc GetScene(google.protobuf.StringValue) returns (SceneResponse);
-  // Add fullscreen scene. It contains single fullscreen widget at position (0,0).
-  // It will use default values for widget kind specific params.
+  // Add fullscreen scene containing a single widget at position (0, 0).
   // Returns ID of the new scene.
   rpc AddFullscreenScene(AddFullscreenSceneRequest) returns (google.protobuf.StringValue);
-  // Add combined screen without any widget in it.
-  // Returns ID of thew new scene.
+  // Add combined scene without any widgets.
+  // Returns ID of the new scene.
   rpc AddCombinedScene(google.protobuf.Empty) returns (google.protobuf.StringValue);
-  // Update only common properties for fullscreen and combined scene, not widgets.
-  // This is not patch, but rather full update.
+  // Update common properties of a scene (enabled, cycle duration). Not widgets.
+  // Full update, not patch.
   rpc UpdateScene(UpdateSceneRequest) returns (google.protobuf.Empty);
-  // Move scene to different index
+  // Move scene to a different index.
   rpc MoveScene(MoveSceneRequest) returns (google.protobuf.Empty);
-  // Add copy of a scene by ID, placed right next to it (index + 1).
-  // Returns ID of thew new scene.
+  // Clone scene by ID, placed right next to it (index + 1).
+  // Returns ID of the new scene.
   rpc CloneScene(google.protobuf.StringValue) returns (google.protobuf.StringValue);
   // Remove scene by ID.
   rpc RemoveScene(google.protobuf.StringValue) returns (google.protobuf.Empty);
-  // Keep preview screen shown on the display while stream is open. Takes scene ID as an argument.
+  // Keep preview scene shown on the display while the stream is open.
+  // Takes scene ID as an argument.
   rpc PreviewScene(google.protobuf.StringValue) returns (stream google.protobuf.Empty);
-  // Add widget into the scene. You need to specify size, position, kind.
-  // It will use default values for widget kind specific params.
-  // Returns ID of the new widget.
+  // Add widget to a scene from a manifest. Returns ID of the new widget.
   rpc AddWidget(AddWidgetRequest) returns (google.protobuf.StringValue);
-  // Update widget by ID. You need to specify size, position, kind.
-  // It will use passed values for widget kind specific params.
-  // This is not patch, but rather full update.
+  // Update widget params by ID. Full update of the params map, not patch.
   rpc UpdateWidget(UpdateWidgetRequest) returns (google.protobuf.Empty);
   // Remove widget by ID.
   rpc RemoveWidget(RemoveWidgetRequest) returns (google.protobuf.Empty);
-  // Get remote widget parameters from server
-  rpc GetRemoteWidgetParams(RemoteWidgetParamsRequest) returns (RemoteWidgetParamsResponse);
-  // Get recently used remote widgets
-  rpc GetRecentRemoteWidgets(google.protobuf.Empty) returns (RecentRemoteWidgetsResponse);
-  // Get scene cycling
+  // Get scene cycling configuration.
   rpc GetSceneCycling(google.protobuf.Empty) returns (GetSceneCyclingResponse);
-  // Set scene cycling
+  // Set scene cycling configuration.
   rpc SetSceneCycling(SetSceneCyclingRequest) returns (google.protobuf.Empty);
+
+  // ── Manifest registry RPCs ──────────────────────────────────────
+  // Get all installed widget manifests (for the widget picker UI).
+  rpc GetAvailableWidgets(google.protobuf.Empty) returns (GetAvailableWidgetsResponse);
+  // Get a single widget manifest by UID.
+  rpc GetWidgetManifest(google.protobuf.StringValue) returns (WidgetManifest);
 }
