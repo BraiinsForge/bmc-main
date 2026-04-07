@@ -1,6 +1,5 @@
 import { Component, useRef, type Ref } from 'react';
 import { useSize } from '@/lib/react';
-import { assertUnreachable } from '@/lib/ts';
 import { useIntl, type IntlShape } from 'react-intl';
 
 // App
@@ -18,6 +17,7 @@ import css from './SceneOverviewList.scss';
 
 export interface SceneOverviewListProps {
     scenes: pb.Scene[];
+    manifests: pb.ManifestLookup;
     onMove(scenes: pb.Scene[], move: { id: string; from: number; into: number }): void;
     onEdit(id: string): void;
     onClone(id: string): void;
@@ -40,9 +40,6 @@ class View extends Component<Props> {
 
     componentWillUnmount = () => pb.abort.all(this);
 
-    #isRemote = (x: Maybe<ProtoOneofCase<pb.WidgetKind['value']>>): boolean => {
-        return x === 'remoteWidget' || x === 'remoteImage';
-    };
     #renderItem = (props: RenderSortableListItemProps<pb.Scene>, firstEnabledSceneID: Maybe<pb.Scene['id']>) => {
         const {
             cycleEnabled,
@@ -54,41 +51,30 @@ class View extends Component<Props> {
             onDurationChange,
             intl,
             useCardLayout,
+            manifests,
         } = this.props;
         const { item, state, rootProps, dragHandleProps } = props;
 
-        let title: string = 'N/A';
-        let description: string = '';
-        switch (item.kind.case) {
-            case undefined:
-                break;
+        const title = pb.sceneTitle(intl, item, manifests) || 'N/A';
+        const description = pb.sceneDescription(item, manifests) || '';
 
-            case 'combined':
-                title = intl.formatMessage({ defaultMessage: 'Combined Scene' });
-                description = pb.sceneDescription(intl, item.kind.value.widgets) || '';
-                break;
+        const previewKind: Maybe<'combined' | { manifest?: pb.WidgetManifest }> = (() => {
+            switch (item.kind.case) {
+                case undefined:
+                    return null;
+                case 'combined':
+                    return 'combined';
+                case 'fullscreen': {
+                    const fw = item.kind.value.widget;
+                    const manifest = fw?.config?.widgetUid ? manifests.get(fw.config.widgetUid) : undefined;
+                    return { manifest };
+                }
+                default:
+                    return null;
+            }
+        })();
 
-            case 'fullscreen':
-                title =
-                    item.kind.value.widget?.kind?.value.case === 'remoteWidget'
-                        ? item.kind.value.widget.kind.value.value.name
-                        : (pb.sceneTitle(intl, item.kind.value.widget?.kind?.value.case) ?? 'N/A');
-                title ||= 'N/A';
-                description = pb.sceneDescription(intl, item.kind.value.widget) || '';
-                break;
-
-            default:
-                assertUnreachable(item.kind, 'scene kind');
-        }
-
-        const $kind = item.kind;
         const isNightModeWidget: boolean = firstEnabledSceneID === item.id;
-        const isRemoteWidgetOrHasOneInside: boolean =
-            ($kind.case === 'fullscreen' && this.#isRemote($kind.value?.widget?.kind?.value.case)) ||
-            ($kind.case === 'combined' && $kind.value.widgets.some(x => this.#isRemote(x.kind?.value.case)));
-        const isLocalWidgetOrHasOneInside: boolean =
-            ($kind.case === 'fullscreen' && !this.#isRemote($kind.value?.widget?.kind?.value.case)) ||
-            ($kind.case === 'combined' && !$kind.value.widgets.some(x => this.#isRemote(x.kind?.value.case)));
 
         return (
             <SceneOverviewRow
@@ -100,17 +86,9 @@ class View extends Component<Props> {
                 )}
                 layout={useCardLayout ? 'card' : 'row'}
                 enabled={item.enabled}
-                icon={
-                    <ScenePreview
-                        kind={item.kind.case === 'fullscreen' ? item.kind.value?.widget?.kind?.value : 'combined'}
-                    />
-                }
+                icon={<ScenePreview kind={previewKind} />}
                 title={title}
-                type={{
-                    night: isNightModeWidget,
-                    cloud: isRemoteWidgetOrHasOneInside,
-                    local: isLocalWidgetOrHasOneInside,
-                }}
+                type={{ night: isNightModeWidget }}
                 description={description}
                 cycleEnabled={cycleEnabled}
                 cycleDurationValue={item.cycleDurationSec}

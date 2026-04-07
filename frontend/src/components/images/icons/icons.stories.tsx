@@ -1,5 +1,5 @@
 import type { Meta } from '@storybook/react';
-import { WifiSignalStrength, WidgetPool, WidgetManager, WidgetClocks, WidgetCombined, WidgetTicker } from './index';
+import { WidgetCombined, WifiSignalStrength } from './index';
 
 export default {
     title: 'components/Icons',
@@ -27,9 +27,7 @@ export function Icons() {
                 <WifiSignalStrength size={64} state="scanning" />
             </Row>
             <Row>
-                {[WidgetPool, WidgetManager, WidgetClocks, WidgetCombined, WidgetTicker].map((Icon, i) => (
-                    <Icon key={i} size={64} />
-                ))}
+                <WidgetCombined size={64} />
             </Row>
         </Column>
     );

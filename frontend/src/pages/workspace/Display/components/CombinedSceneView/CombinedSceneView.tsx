@@ -46,6 +46,7 @@ type DroppableData = fn.Located;
 
 export interface CombinedSceneViewProps {
     widgets: pb.Widget[];
+    manifests: pb.ManifestLookup;
 
     onWidgetMove(source: pb.Widget, target: fn.Located): void;
     onWidgetAdd(position: pb.WidgetPosition): void;
@@ -67,6 +68,7 @@ interface ViewProps extends CombinedSceneViewProps {
 function View(props: ViewProps) {
     const {
         widgets,
+        manifests,
         validDropSlots,
 
         // Handlers
@@ -79,7 +81,6 @@ function View(props: ViewProps) {
         style,
     } = props;
 
-    const intl = useIntl();
     const data = fn.injectPlaceholdersToUnoccupiedSlots(widgets);
 
     return (
@@ -106,11 +107,7 @@ function View(props: ViewProps) {
                     }
 
                     const widget = w as pb.Widget;
-                    let title =
-                        widget?.kind?.value.case === 'remoteWidget'
-                            ? widget.kind.value.value.name
-                            : pb.sceneTitle(intl, widget.kind?.value.case);
-                    title ||= 'N/A';
+                    const title = pb.widgetTitle(widget, manifests) || 'N/A';
 
                     return (
                         <Widget
@@ -121,7 +118,7 @@ function View(props: ViewProps) {
                             position={pos}
                             // Content
                             title={title}
-                            subtitle={pb.widgetDescription(intl, widget.kind)}
+                            subtitle={pb.widgetDescription(widget, manifests)}
                             // Modification
                             validDropSlots={validDropSlots}
                             onEdit={() => onWidgetEdit(id)}
@@ -333,8 +330,7 @@ function Widget(props: WidgetProps) {
 }
 
 export function CombinedSceneView(props: CombinedSceneViewProps) {
-    const { widgets, onWidgetMove } = props;
-    const intl = useIntl();
+    const { widgets, manifests, onWidgetMove } = props;
 
     const sensors = useSensors(useSensor(PointerSensor));
     const [activeId, setActiveId] = useState<null | string>(null);
@@ -401,8 +397,8 @@ export function CombinedSceneView(props: CombinedSceneViewProps) {
                         id={activeWidget.id}
                         position={activeWidget.position}
                         size={activeWidget.size}
-                        title={pb.sceneTitle(intl, activeWidget.kind?.value.case) ?? 'N/A'}
-                        subtitle={pb.widgetDescription(intl, activeWidget.kind)}
+                        title={pb.widgetTitle(activeWidget, manifests) ?? 'N/A'}
+                        subtitle={pb.widgetDescription(activeWidget, manifests)}
                     />
                 ) : null}
             </DragOverlay>

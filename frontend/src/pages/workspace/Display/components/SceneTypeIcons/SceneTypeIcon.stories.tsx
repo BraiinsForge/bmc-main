@@ -6,12 +6,7 @@ export default {
     component: Component,
 };
 
-const cases: SceneTypeIconsProps[] = [
-    { cloud: true },
-    { local: true },
-    { night: true },
-    { cloud: true, local: true, night: true },
-];
+const cases: SceneTypeIconsProps[] = [{ night: true }];
 
 const Wrapper = styled.div`
     display: flex;

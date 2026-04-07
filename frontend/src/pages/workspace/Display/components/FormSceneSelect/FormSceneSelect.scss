@@ -22,6 +22,12 @@
     margin: mini-units(2) mini-units(2) mini-units(3);
 }
 
+.empty {
+    padding: mini-units(4) mini-units(2);
+    text-align: center;
+    color: $text-secondary;
+}
+
 .cell {
     --color-background: #{$layer-02};
     --color-border: #{$layer-02};
@@ -76,6 +82,23 @@
         @include type-style(body-short-01);
         text-wrap: balance;
         color: $text-secondary;
+    }
+}
+
+//
+// Manifest widgets section
+//
+
+.manifestSection {
+    padding: 0 mini-units(2);
+
+    h1 {
+        @include type-style(label-01);
+        color: $text-secondary;
+    }
+
+    .grid {
+        margin: mini-units(2) 0 mini-units(3);
     }
 }
 
