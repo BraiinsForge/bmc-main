@@ -12,6 +12,14 @@ let
 in
 {
   core = import ./pkgs/core { inherit bmc armv7Pkgs deps; };
+  bmc-nix-cli = {
+    pkg = profile.buildCrate crates.bmc-nix-cli { };
+    version = "0.1.0";
+    category = "core";
+    description = "Nix package management CLI tool";
+    upgrade_strategy = "reboot";
+    install_strategy = null;
+  };
   nix = {
     pkg = armv7Pkgs.nix;
     version = armv7Pkgs.nix.version;

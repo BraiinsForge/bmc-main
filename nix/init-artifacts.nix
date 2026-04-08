@@ -18,6 +18,7 @@ let
 
   initPackageNames = [
     "core"
+    "bmc-nix-cli"
     "nix"
     "digital-clock"
     "flip-clock"
