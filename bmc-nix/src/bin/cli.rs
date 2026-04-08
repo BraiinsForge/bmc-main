@@ -60,6 +60,22 @@ enum Commands {
         #[arg(long)]
         activate: bool,
     },
+
+    /// Remove packages from the current profile
+    RemovePackages {
+        /// Directory for the profile generations
+        #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
+        profile_dir: PathBuf,
+
+        /// Package names to remove
+        #[arg(long = "name", required = true)]
+        names: Vec<String>,
+
+        /// Activate the profile after building
+        #[arg(long)]
+        activate: bool,
+    },
+
 }
 
 async fn cmd_build_profile(
@@ -154,6 +170,32 @@ async fn cmd_add_packages(
     Ok(())
 }
 
+async fn cmd_remove_packages(
+    profile_dir: PathBuf,
+    names: Vec<String>,
+    activate: bool,
+) -> anyhow::Result<()> {
+    std::fs::create_dir_all(&profile_dir)?;
+
+    let current_manifest = bmc_nix::manifest::read_current_manifest(&profile_dir);
+    let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, None, &[], &names)?;
+
+    let result = bmc_nix::upgrade::apply_profile_change(
+        None,
+        &profile_dir,
+        None,
+        &plan,
+        activate,
+        None,
+        "hooks",
+        None,
+    )
+    .await?;
+
+    println!("{}", result.generation.path.display());
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -174,5 +216,11 @@ async fn main() -> anyhow::Result<()> {
             profile_dir,
             activate,
         } => cmd_add_packages(name, version, store_path, profile_dir, activate).await,
+
+        Commands::RemovePackages {
+            profile_dir,
+            names,
+            activate,
+        } => cmd_remove_packages(profile_dir, names, activate).await,
     }
 }
