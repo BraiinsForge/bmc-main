@@ -76,6 +76,28 @@ enum Commands {
         activate: bool,
     },
 
+    /// Reset profile from an index JSON (no manifest merging)
+    ResetProfile {
+        /// Path to miniminer-index.json
+        #[arg(long)]
+        index: PathBuf,
+
+        /// Directory for the profile generations
+        #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
+        profile_dir: PathBuf,
+
+        /// Name of the hooks directory inside the profile (default: "hooks")
+        #[arg(long, default_value = "hooks")]
+        hooks_dir: String,
+
+        /// Override path for hook executables (for cross-compilation bootstrap)
+        #[arg(long)]
+        hooks_override_path: Option<PathBuf>,
+
+        /// Activate the profile after building
+        #[arg(long)]
+        activate: bool,
+    },
 }
 
 async fn cmd_build_profile(
@@ -196,6 +218,38 @@ async fn cmd_remove_packages(
     Ok(())
 }
 
+async fn cmd_reset_profile(
+    index: PathBuf,
+    profile_dir: PathBuf,
+    hooks_dir: String,
+    hooks_override_path: Option<PathBuf>,
+    activate: bool,
+) -> anyhow::Result<()> {
+    let index_content = std::fs::read_to_string(&index)?;
+    let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
+    let packages = bmc_nix::index::resolve_all_from_index(&package_index)?;
+
+    std::fs::create_dir_all(&profile_dir)?;
+
+    let empty_manifest = bmc_nix::types::Manifest::default();
+    let plan = bmc_nix::manifest::compute_upgrade_plan(&empty_manifest, None, &packages, &[])?;
+
+    let result = bmc_nix::upgrade::apply_profile_change(
+        None,
+        &profile_dir,
+        None,
+        &plan,
+        activate,
+        None,
+        &hooks_dir,
+        hooks_override_path.as_deref(),
+    )
+    .await?;
+
+    println!("{}", result.generation.path.display());
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -222,5 +276,13 @@ async fn main() -> anyhow::Result<()> {
             names,
             activate,
         } => cmd_remove_packages(profile_dir, names, activate).await,
+
+        Commands::ResetProfile {
+            index,
+            profile_dir,
+            hooks_dir,
+            hooks_override_path,
+            activate,
+        } => cmd_reset_profile(index, profile_dir, hooks_dir, hooks_override_path, activate).await,
     }
 }
