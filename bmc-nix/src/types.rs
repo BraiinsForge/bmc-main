@@ -47,14 +47,14 @@ pub struct CacheEntry {
 }
 
 /// Upgrade strategy hints for UI and orchestration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UpgradeStrategy {
     Reboot,
 }
 
 /// Install strategy hints for UI and orchestration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstallStrategy {
     Reboot,
@@ -98,6 +98,10 @@ pub struct ResolvedPackage {
     pub name: String,
     pub version: String,
     pub store_path: String,
+    /// URL of the binary cache to fetch this package from.
+    /// `None` when the store path is already present locally (e.g. kept
+    /// packages from the manifest or local dev builds).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_url: Option<String>,
     /// Name of the binary cache this package was resolved from.
     /// Set to `"local"` for packages resolved from a local index.
@@ -126,7 +130,7 @@ pub enum InstalledBy {
 }
 
 /// Profile manifest (stored in each generation)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Manifest {
     pub packages: BTreeMap<String, ManifestPackage>,
 }
@@ -188,6 +192,73 @@ pub struct FactoryTarball {
     pub bos_version: String,
     pub download_url: String,
     pub profile_path: String,
+}
+
+/// Output of computing an upgrade plan.
+#[derive(Debug)]
+pub struct UpgradePlan {
+    /// Resolved packages to apply (includes unchanged packages).
+    pub packages: Vec<ResolvedPackage>,
+    /// Packages newly added in the target profile.
+    pub added: Vec<PackageVersion>,
+    /// Packages removed from the target profile.
+    pub removed: Vec<PackageVersion>,
+    /// Packages that change version.
+    pub changed: Vec<PackageChange>,
+}
+
+/// A package name+version pair used in upgrade plan summaries.
+#[derive(Debug, Clone)]
+pub struct PackageChange {
+    pub name: String,
+    pub from_version: String,
+    pub to_version: String,
+}
+
+/// A package name+version pair.
+#[derive(Debug, Clone)]
+pub struct PackageVersion {
+    pub name: String,
+    pub version: String,
+}
+
+/// Summary of strategies present in a given install/upgrade run.
+#[derive(Debug)]
+pub struct StrategySummary {
+    pub upgrade: Vec<UpgradeStrategy>,
+    pub install: Vec<InstallStrategy>,
+}
+
+impl StrategySummary {
+    /// Collect unique strategy hints from a set of resolved packages.
+    #[must_use]
+    pub fn from_packages(packages: &[ResolvedPackage]) -> Self {
+        use std::collections::HashSet;
+
+        let mut upgrade_set = HashSet::new();
+        let mut install_set = HashSet::new();
+
+        for pkg in packages {
+            if let Some(ref s) = pkg.upgrade_strategy {
+                upgrade_set.insert(s.clone());
+            }
+            if let Some(ref s) = pkg.install_strategy {
+                install_set.insert(s.clone());
+            }
+        }
+
+        Self {
+            upgrade: upgrade_set.into_iter().collect(),
+            install: install_set.into_iter().collect(),
+        }
+    }
+}
+
+/// Result of an install/upgrade run.
+#[derive(Debug)]
+pub struct InstallResult {
+    pub generation: ProfileGeneration,
+    pub strategies: StrategySummary,
 }
 
 #[cfg(test)]
@@ -379,5 +450,42 @@ mod tests {
         assert_eq!(factory.version, 1);
         assert_eq!(factory.tarballs.len(), 1);
         assert_eq!(factory.tarballs[0].bos_version, "1.0.0");
+    }
+
+    #[test]
+    fn strategy_summary_collects_unique() {
+        let packages = vec![
+            ResolvedPackage {
+                name: "a".into(),
+                version: "1.0.0".into(),
+                store_path: "/nix/store/a".into(),
+                cache_url: None,
+                cache_name: String::new(),
+                category: None,
+                description: None,
+                upgrade_strategy: Some(UpgradeStrategy::Reboot),
+                install_strategy: None,
+                installed_by: InstalledBy::System,
+                installed_from: "local".into(),
+                pinned: PinStrategy::None,
+            },
+            ResolvedPackage {
+                name: "b".into(),
+                version: "1.0.0".into(),
+                store_path: "/nix/store/b".into(),
+                cache_url: None,
+                cache_name: String::new(),
+                category: None,
+                description: None,
+                upgrade_strategy: Some(UpgradeStrategy::Reboot),
+                install_strategy: Some(InstallStrategy::Reboot),
+                installed_by: InstalledBy::System,
+                installed_from: "local".into(),
+                pinned: PinStrategy::None,
+            },
+        ];
+        let summary = StrategySummary::from_packages(&packages);
+        assert_eq!(summary.upgrade.len(), 1);
+        assert_eq!(summary.install.len(), 1);
     }
 }
