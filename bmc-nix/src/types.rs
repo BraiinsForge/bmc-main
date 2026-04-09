@@ -98,7 +98,7 @@ pub struct ResolvedPackage {
     pub name: String,
     pub version: String,
     pub store_path: String,
-    pub cache_url: String,
+    pub cache_url: Option<String>,
     /// Name of the binary cache this package was resolved from.
     /// Set to `"local"` for packages resolved from a local index.
     #[serde(default = "default_cache_name")]
