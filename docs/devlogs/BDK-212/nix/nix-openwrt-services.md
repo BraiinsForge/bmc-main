@@ -65,9 +65,10 @@ activation script that will allow for restarting the services on
 upgrade. Since the activation scripts know the old and new
 generations, they can assess when an upgrade of service has happened.
 
-However, it might not be feasible to restart all of the services, so
-it is possible to inhibit this behavior by providing a restart-inhibit
-file at a given location under the package.
+Each service may provide a JSON configuration file that describes how
+the orchestrator should handle it during upgrades. When the file is
+missing, defaults are assumed. The full format is described in the
+"Service configuration format" section below.
 
 Crucially, it is realized that the activation scripts themselves may
 be ran by such OpenWrt service managed by Nix. Implying that a restart
@@ -78,7 +79,7 @@ also be done by a service. This service will receive as arguments:
 - The services to stop (no longer existing services)
 - The services to restart
 - The services to start (new services)
-This is implemented through the `nix-service-orchestrator` service.
+This is implemented through the `bmc-nix-service-orchestrator`.
 
 Then, during activation, this service is started. It is the only
 service that is (re)started during activation itself. After the
@@ -89,25 +90,154 @@ restarts.
 
 Each package can provide OpenWrt services in `etc/init.d`. These
 services will be automatically symlinked to `/etc/init.d` on the
-system, so they will be picked up by OpenWrt on boot. There might also
-be started before the boot through the `nix-service-orchestrator`.
+system, so they will be picked up by OpenWrt on boot. They might also
+be started before the boot through the `bmc-nix-service-orchestrator`.
 
-To inhibit a restart of a service when restart is not supported,
-the package shall provide `etc/init.d.conf/<service>-restart-inhibit`
-file. This inhibits restart of `<service>`
+Each service may optionally provide a configuration file at
+`etc/init.d.conf/<service>.json` that controls upgrade behavior.
+See the "Service configuration format" section for the full schema.
 
-### Services collection
+### Services diffing
 
-There will be a hook that will collect all the services in
-etc/profile.d of the services. It will collect the information about
-restart inhibits as well. It produces a single json file with all the
-information.
+An activation binary directly scans `etc/init.d/` in both the old and
+new generations. No pre-collected manifest is needed — the directory
+contents and per-service JSON configs are the source of truth.
 
-Then, a single activation binary will collect this file and read it to
-assess if the services have been changed. It knows so by comparison of
-the new and old service files themselves. The services of the same name
-are used. This activation script then starts the `nix-service-orchestrator`
-and sends it the arguments through a file under `/tmp`.
+Services of the same name are compared by their file contents. If the
+contents are identical, the service is considered unchanged and is not
+touched. If the contents differ, the service is treated as upgraded
+and its `etc/init.d.conf/<service>.json` determines what happens.
+
+Services present only in the new generation are new. Services present
+only in the old generation have been removed.
+
+Based on this diff and the per-service configuration, the orchestrator
+determines which services to start, stop, or reload after activation
+has completed successfully.
+
+When the old generation path is empty (first-ever activation, no
+`current` symlink exists yet), the orchestrator treats every service
+in the new generation as new. This means all services get their `init`
+actions executed, which is how services are started for the first
+time after the initial profile installation.
+
+### Service configuration format
+
+Each service may provide `etc/init.d.conf/<service>.json`. When
+missing, defaults are assumed. The full default configuration:
+
+```json
+{
+  "init": ["boot", "start"],
+  "removed": ["stop"],
+  "upgrade": ["reload"],
+  "reboot_required": false,
+  "upgrade_if_status": "running"
+}
+```
+
+#### `init`
+
+An ordered list of `/etc/init.d/<service>` actions to run when the
+service first appears (the old profile did not have it, the new one
+does). Each entry is a standard OpenWrt init.d action such as `boot`,
+`start`, `stop`, `restart`, `reload`, `enable`, or `disable`.
+
+Default: `["boot", "start"]`.
+
+#### `upgrade`
+
+An ordered list of `/etc/init.d/<service>` actions to run when the
+service's generation changes (it existed in the old profile and still
+exists in the new one). Same action values as `init`.
+
+Default: `["reload"]`.
+
+#### `removed`
+
+An ordered list of actions to run when the service disappears from the
+new profile (it existed in the old profile but not in the new one).
+
+The `removed` actions are read from the **old generation's** config
+(the generation that shipped the service). This ensures the package
+author controls how their own service is torn down, even if the new
+generation knows nothing about it.
+
+These actions are executed using the old generation's init script path:
+
+```sh
+$PROFILE_OLD_GENERATION/etc/init.d/<service> <action>
+```
+
+This is necessary because `/etc/init.d/<service>` may already be gone by
+the time the orchestrator runs.
+
+Default: `["stop"]`.
+
+#### `reboot_required`
+
+Whether a system reboot is required for this service to pick up
+changes. In this iteration, the field is metadata for future handling
+and does not suppress any configured actions.
+
+Default: `false`.
+
+#### `upgrade_if_status`
+
+Controls whether the orchestrator should execute the `upgrade` actions
+after it detects that a service changed generation.
+
+Before running `upgrade`, the orchestrator calls:
+
+```sh
+/etc/init.d/<service> status
+```
+
+Supported values:
+
+- `running`: run `upgrade` only when the service status indicates that
+  the service is running
+- `stopped`: run `upgrade` only when the service status indicates that
+  the service is not running
+- `always`: always run `upgrade`, regardless of service status
+
+Default: `running`.
+
+#### Examples
+
+A boot-only service like `nix-mounter` that should never be touched
+by the orchestrator on upgrade:
+
+```json
+{
+  "init": ["boot"],
+  "removed": [],
+  "upgrade": []
+}
+```
+
+The `bmc` compositor service that should be reloaded on upgrade
+(just uses defaults, config file can be omitted entirely):
+
+```json
+{
+  "init": ["boot", "start"],
+  "removed": ["stop"],
+  "upgrade": ["reload"],
+  "upgrade_if_status": "running"
+}
+```
+
+A service requiring a full system reboot:
+
+```json
+{
+  "init": [],
+  "removed": ["stop"],
+  "upgrade": [],
+  "reboot_required": true
+}
+```
 
 ### nix-activator
 
@@ -117,27 +247,107 @@ new generation when BOS has been upgraded. When that happens, the
 profile is not activated before boot like normally, but only
 afterwards by this service.
 
-### nix-service-orchestrator
+#### Boot-time generation semantics
 
-This is the service that restarts other services. It doesn't do
-anything when it starts on boot. Only when it is started by the
-activation, it will stop, restart and start given services after
-the activation has finished.
+The activation entrypoint auto-derives both generation paths. Callers
+do not need to set `PROFILE_NEW_GENERATION` or `PROFILE_OLD_GENERATION`:
 
-The orchestrator service is a one shot service. It doesn't matter what
-the previous version of the service was, so this service lives outside
-of the 'replacement' concept. This service is always just started by
-the activation scripts, even if previous orchestrator service looked
-differently.
+- `PROFILE_NEW_GENERATION` is derived from the entrypoint's own
+  filesystem path (`dirname(dirname(entrypoint_dir))`).
+- `PROFILE_OLD_GENERATION` is derived from the `current` symlink in
+  the profile directory.
 
-The reason for this orchestrator being an OpenWrt service is that we
-cannot permit something killing the activation process itself.
-The activation process itself might be running under an OpenWrt service
-that is being upgraded.
+On boot, `current` already points to the generation being activated.
+The entrypoint derives old == new. The orchestrator sees all services
+as unchanged and executes no actions. This is correct — OpenWRT rc.d
+has already called `boot()` on all enabled services via their `S*`
+links.
 
-NOTE: maybe this doesn't have to be a service, we can also use procd
-directly to start it. The only requirement here is that it is not
-coupled to the activation scripts.
+On upgrade (non-boot activation), `current` still points to the
+previous generation when the entrypoint runs. The entrypoint derives
+old != new. The orchestrator diffs the generations and executes
+init/upgrade/removal actions as configured.
+
+The critical invariant: the `current` symlink is updated only *after*
+activation completes. This is what makes old-generation derivation
+work for upgrades while being harmlessly identity for boot.
+
+Callers may override either env var if they have a specific reason.
+For example, the upgrade code path sets `PROFILE_NEW_GENERATION`
+explicitly to point to a generation that is not yet `current`.
+
+### bmc-nix-service-orchestrator
+
+This is the script that restarts other services. It is launched
+during activation (as one of the ordered activation scripts) and
+then waits for the profile lock to become available before running the
+init/upgrade actions for each service that changed.
+
+The orchestrator is a one-shot script. It doesn't matter what the
+previous version looked like, so it lives outside the 'replacement'
+concept. The activation always starts the current version from the
+new generation's store path.
+
+The orchestrator is not an OpenWrt service. Instead, the activation
+registers it as a one-shot procd instance via `ubus call service set`.
+Procd then spawns and manages the process, fully decoupled from the
+activation — which is important because the activation itself might
+be running under an OpenWrt service that is being upgraded.
+
+Before registering the new one-shot instance, the activation should
+ensure a stale `bmc-nix-service-orchestrator` instance is not still
+present. It should explicitly query procd and delete or terminate the
+previous instance when it exists, rather than relying on `service set`
+to replace it safely.
+
+The activation passes the old generation, new generation, current-link
+path, instance name, and timeout as arguments. The orchestrator then
+diffs the two generations, waits for the profile lock, reacquires it,
+and verifies that `current` points to the new generation. Only then
+does it determine which services need init/upgrade actions and apply
+the `upgrade_if_status` gate for changed services. If `current` does
+not point to the new generation after the lock is acquired, the
+orchestrator exits with an error and runs no service actions.
+
+The activation entrypoint itself participates in profile locking.
+Callers that already hold the profile lock export
+`ACTIVATION_HAS_PROFILE_LOCK=1`, and the shell entrypoint trusts that
+flag and skips self-locking. Callers that do not already hold the
+profile lock make the shell entrypoint open `<profile_dir>/.lock` and
+attempt a non-blocking `flock -n`. If the profile is already locked,
+activation aborts immediately instead of waiting, because a concurrent
+profile mutation makes the request stale.
+
+```sh
+service_name="bmc-nix-service-orchestrator"
+binary="/nix/store/<hash>-bmc-nix-service-orchestrator/bin/bmc-nix-service-orchestrator"
+
+ubus call service set "{
+  \"name\": \"$service_name\",
+  \"instances\": {
+    \"main\": {
+      \"command\": [
+        \"$binary\",
+        \"--old-generation\",
+        \"$PROFILE_OLD_GENERATION\",
+        \"--new-generation\",
+        \"$PROFILE_NEW_GENERATION\",
+        \"--current-link\",
+        \"/nix/var/nix/gcroots/profiles/bmc/current\",
+        \"--instance-name\",
+        \"$service_name\",
+        \"--timeout-seconds\",
+        \"300\"
+      ],
+      \"stdout\": true,
+      \"stderr\": true
+    }
+  }
+}"
+```
+
+Without a `"respawn"` key the process runs once and is cleaned up
+when it exits. Stdout and stderr are forwarded to logd.
 
 ### bmc
 
