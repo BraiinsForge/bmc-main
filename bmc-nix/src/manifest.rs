@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::types::{Manifest, ManifestPackage, ResolvedPackage};
+use crate::types::{
+    Manifest, ManifestPackage, PackageChange, PackageVersion, ResolvedPackage, UpgradePlan,
+};
 
 /// Error type for manifest write operations.
 #[derive(Debug, thiserror::Error)]
@@ -16,6 +18,15 @@ pub enum WriteManifestError {
         #[source]
         source: std::io::Error,
     },
+}
+
+/// Error type for manifest read operations.
+#[derive(Debug, thiserror::Error)]
+pub enum ReadManifestError {
+    #[error("manifest read failed: {0}")]
+    Read(#[source] std::io::Error),
+    #[error("manifest parse failed: {0}")]
+    Parse(#[source] serde_json::Error),
 }
 
 /// Build a [`Manifest`] from a slice of resolved packages.
@@ -61,10 +72,125 @@ pub fn write_manifest(profile_path: &Path, manifest: &Manifest) -> Result<(), Wr
     Ok(())
 }
 
+/// Read a manifest from a profile generation directory.
+///
+/// Reads `<profile_path>/manifest` and deserializes it.
+pub fn read_manifest(profile_path: &Path) -> Result<Manifest, ReadManifestError> {
+    let manifest_path = profile_path.join("manifest");
+    let contents = std::fs::read_to_string(&manifest_path).map_err(ReadManifestError::Read)?;
+    serde_json::from_str(&contents).map_err(ReadManifestError::Parse)
+}
+
+/// Read the manifest from the `current` symlink in `profile_dir`, or return
+/// an empty manifest when no profile exists yet.
+///
+/// Returns an error if the manifest file exists but cannot be parsed.
+pub fn read_current_manifest(profile_dir: &Path) -> Result<Manifest, ReadManifestError> {
+    let current_link = profile_dir.join("current");
+    if current_link.exists() {
+        read_manifest(&current_link)
+    } else {
+        Ok(Manifest::default())
+    }
+}
+
+/// Convert a manifest package back to a resolved package.
+///
+/// This is lossy — `ManifestPackage` does not store `cache_url`, only
+/// `cache` (name). The `cache_url` is set to `None`. The store path
+/// is expected to already be present locally.
+#[must_use]
+pub fn manifest_package_to_resolved(name: &str, mp: &ManifestPackage) -> ResolvedPackage {
+    ResolvedPackage {
+        name: name.to_owned(),
+        version: mp.version.clone(),
+        store_path: mp.store_path.clone(),
+        cache_url: None,
+        cache_name: mp.cache.clone(),
+        category: mp.category.clone(),
+        description: mp.description.clone(),
+        upgrade_strategy: mp.upgrade_strategy.clone(),
+        install_strategy: mp.install_strategy.clone(),
+        installed_by: mp.installed_by.clone(),
+        installed_from: mp.installed_from.clone(),
+        pinned: mp.pinned.clone(),
+    }
+}
+
+/// Compute an upgrade plan by diffing the current manifest against
+/// add/remove requests.
+///
+/// - Existing packages not being removed or replaced are kept at their
+///   current version.
+/// - `add_packages` are new packages to install (or replace existing ones).
+/// - `remove_packages` are package names to remove from the profile.
+#[must_use]
+pub fn compute_upgrade_plan(
+    current: &Manifest,
+    add_packages: &[ResolvedPackage],
+    remove_packages: &[String],
+) -> UpgradePlan {
+    let mut packages = Vec::new();
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut changed = Vec::new();
+
+    // Track which names are being added, so we can detect add-replaces-existing
+    let add_by_name: BTreeMap<&str, &ResolvedPackage> =
+        add_packages.iter().map(|p| (p.name.as_str(), p)).collect();
+
+    for (name, pkg) in &current.packages {
+        // Check if being removed
+        if remove_packages.iter().any(|r| r == name) {
+            removed.push(PackageVersion {
+                name: name.clone(),
+                version: pkg.version.clone(),
+            });
+            continue;
+        }
+
+        // Check if being replaced by an explicit add
+        if let Some(&new_pkg) = add_by_name.get(name.as_str()) {
+            if new_pkg.version != pkg.version {
+                changed.push(PackageChange {
+                    name: name.clone(),
+                    from_version: pkg.version.clone(),
+                    to_version: new_pkg.version.clone(),
+                });
+            }
+            packages.push(new_pkg.clone());
+            continue;
+        }
+
+        // Keep current version
+        packages.push(manifest_package_to_resolved(name, pkg));
+    }
+
+    // Add new packages that aren't replacing existing ones
+    for pkg in add_packages {
+        if !current.packages.contains_key(&pkg.name) {
+            added.push(PackageVersion {
+                name: pkg.name.clone(),
+                version: pkg.version.clone(),
+            });
+            packages.push(pkg.clone());
+        }
+    }
+
+    UpgradePlan {
+        packages,
+        added,
+        removed,
+        changed,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{InstalledBy, PinStrategy};
+    use std::collections::BTreeMap;
+
+    use crate::types::{InstalledBy, ManifestPackage, PinStrategy};
 
     fn test_package(name: &str, store_path: &str) -> ResolvedPackage {
         ResolvedPackage {
@@ -80,6 +206,25 @@ mod tests {
             installed_by: InstalledBy::System,
             installed_from: "local".into(),
             pinned: PinStrategy::None,
+        }
+    }
+
+    fn test_manifest_package(
+        version: &str,
+        installed_from: &str,
+        pinned: PinStrategy,
+    ) -> ManifestPackage {
+        ManifestPackage {
+            version: version.into(),
+            cache: "default".into(),
+            store_path: format!("/nix/store/hash-pkg-{version}"),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: installed_from.into(),
+            pinned,
         }
     }
 
@@ -131,6 +276,20 @@ mod tests {
     }
 
     #[test]
+    fn build_manifest_uses_cache_name_from_resolved() {
+        let mut pkg = test_package("some-pkg", "/nix/store/xyz-some-pkg-1.0.0");
+        pkg.cache_name = "my-cache".into();
+
+        let manifest = build_manifest(&[pkg]);
+        let entry = manifest
+            .packages
+            .get("some-pkg")
+            .expect("BUG: some-pkg should be present");
+
+        assert_eq!(entry.cache, "my-cache");
+    }
+
+    #[test]
     fn write_manifest_creates_file() {
         let dir = tempfile::tempdir().expect("BUG: should create temp dir");
         let packages = vec![test_package("test-pkg", "/nix/store/abc-test-pkg-1.0.0")];
@@ -146,5 +305,129 @@ mod tests {
 
         assert_eq!(parsed.packages.len(), 1);
         assert!(parsed.packages.contains_key("test-pkg"));
+    }
+
+    // ---- read_manifest tests ----
+
+    #[test]
+    fn read_manifest_round_trips() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+
+        let packages = vec![test_package("pkg-a", "/nix/store/aaa")];
+        let manifest = build_manifest(&packages);
+        write_manifest(dir.path(), &manifest).expect("BUG: write failed");
+
+        let read_back = read_manifest(dir.path()).expect("BUG: read failed");
+        assert_eq!(read_back.packages.len(), 1);
+        assert!(read_back.packages.contains_key("pkg-a"));
+    }
+
+    #[test]
+    fn read_manifest_missing_file_returns_error() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let result = read_manifest(dir.path());
+        assert!(result.is_err());
+    }
+
+    // ---- compute_upgrade_plan tests ----
+
+    #[test]
+    fn compute_upgrade_plan_detects_new_package() {
+        let current = Manifest {
+            packages: BTreeMap::new(),
+        };
+        let new_pkg = test_package("new-widget", "/nix/store/new");
+        let plan = compute_upgrade_plan(&current, &[new_pkg], &[]);
+        assert_eq!(plan.added.len(), 1);
+        assert_eq!(plan.added[0].name, "new-widget");
+    }
+
+    #[test]
+    fn upgrade_plan_with_add_and_remove() {
+        let current = Manifest {
+            packages: BTreeMap::from([
+                (
+                    "keep-pkg".into(),
+                    test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                ),
+                (
+                    "remove-pkg".into(),
+                    test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                ),
+            ]),
+        };
+        let new_pkg = test_package("add-pkg", "/nix/store/add");
+        let plan = compute_upgrade_plan(&current, &[new_pkg], &["remove-pkg".into()]);
+        assert_eq!(plan.added.len(), 1);
+        assert_eq!(plan.removed.len(), 1);
+        // keep-pkg + add-pkg
+        assert_eq!(plan.packages.len(), 2);
+    }
+
+    #[test]
+    fn upgrade_plan_add_replaces_existing() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "widget".into(),
+                test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+            )]),
+        };
+        let mut new_pkg = test_package("widget", "/nix/store/widget-2");
+        new_pkg.version = "2.0.0".into();
+        let plan = compute_upgrade_plan(&current, &[new_pkg], &[]);
+        // Should count as a change, not an add
+        assert_eq!(plan.changed.len(), 1);
+        assert!(plan.added.is_empty());
+        assert_eq!(plan.packages.len(), 1);
+    }
+
+    #[test]
+    fn upgrade_plan_offline_mode_keeps_all_current() {
+        let current = Manifest {
+            packages: BTreeMap::from([
+                (
+                    "widget".into(),
+                    test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                ),
+                (
+                    "gadget".into(),
+                    test_manifest_package("3.0.0", "server_a", PinStrategy::None),
+                ),
+            ]),
+        };
+        let plan = compute_upgrade_plan(&current, &[], &[]);
+        assert!(plan.changed.is_empty());
+        assert!(plan.added.is_empty());
+        assert!(plan.removed.is_empty());
+        assert_eq!(plan.packages.len(), 2);
+    }
+
+    #[test]
+    fn upgrade_plan_empty_manifest_with_adds() {
+        let current = Manifest {
+            packages: BTreeMap::new(),
+        };
+        let pkgs = vec![
+            test_package("app-a", "/nix/store/a"),
+            test_package("app-b", "/nix/store/b"),
+        ];
+        let plan = compute_upgrade_plan(&current, &pkgs, &[]);
+        assert_eq!(plan.added.len(), 2);
+        assert_eq!(plan.packages.len(), 2);
+        assert!(plan.changed.is_empty());
+        assert!(plan.removed.is_empty());
+    }
+
+    #[test]
+    fn upgrade_plan_remove_nonexistent_is_noop() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "widget".into(),
+                test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+            )]),
+        };
+        let plan = compute_upgrade_plan(&current, &[], &["nonexistent".into()]);
+        assert!(plan.removed.is_empty());
+        assert_eq!(plan.packages.len(), 1);
     }
 }
