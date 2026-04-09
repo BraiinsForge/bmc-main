@@ -1,8 +1,106 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::types::{FactoryServerEntry, FactoryTarball};
+use crate::types::{FactoryServerEntry, FactoryTarball, ResolvedPackage};
+
+/// Errors that can occur when verifying or copying store paths.
+#[derive(Debug, thiserror::Error)]
+pub enum CopyStorePathsError {
+    #[error("nix path-info failed: {0}")]
+    PathInfoFailed(#[source] std::io::Error),
+    #[error("store path for '{name}' not found: {store_path}")]
+    MissingStorePath { name: String, store_path: String },
+}
+
+/// Abstraction over command execution for testability.
+///
+/// Uses native async fn (RPITIT), which means this trait is NOT
+/// object-safe. Use generics (`impl CommandRunner` or `<R: CommandRunner>`)
+/// instead of `&dyn CommandRunner`.
+pub trait CommandRunner: Send + Sync {
+    fn run(
+        &self,
+        program: &str,
+        args: &[&str],
+    ) -> impl std::future::Future<Output = Result<std::process::Output, std::io::Error>> + Send;
+}
+
+/// Default implementation using `tokio::process::Command`.
+#[derive(Debug)]
+pub struct TokioCommandRunner;
+
+impl CommandRunner for TokioCommandRunner {
+    async fn run(
+        &self,
+        program: &str,
+        args: &[&str],
+    ) -> Result<std::process::Output, std::io::Error> {
+        tokio::process::Command::new(program)
+            .args(args)
+            .output()
+            .await
+    }
+}
+
+/// Check which store paths are registered in the local Nix store.
+///
+/// Queries all paths in a single `nix path-info` invocation.
+/// Returns the set of paths that are present. If `nix path-info`
+/// exits non-zero (some paths missing), parses stdout for the
+/// subset that was found.
+async fn paths_in_store(
+    runner: &impl CommandRunner,
+    store_paths: &[&str],
+) -> Result<HashSet<String>, CopyStorePathsError> {
+    if store_paths.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let mut args: Vec<&str> = vec!["path-info"];
+    args.extend(store_paths);
+
+    let output = runner
+        .run("nix", &args)
+        .await
+        .map_err(CopyStorePathsError::PathInfoFailed)?;
+
+    if output.status.success() {
+        return Ok(store_paths.iter().map(|s| (*s).to_owned()).collect());
+    }
+
+    // Some paths missing — parse stdout for which paths were found
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .map(|l| l.trim().to_owned())
+        .filter(|l| !l.is_empty())
+        .collect())
+}
+
+/// Verify that all store paths are registered in the local Nix store.
+///
+/// Returns an error listing the first missing path. Call this after
+/// `copy_store_paths` to catch kept packages whose store paths were
+/// garbage-collected or otherwise lost.
+pub async fn verify_store_paths(
+    runner: &impl CommandRunner,
+    packages: &[ResolvedPackage],
+) -> Result<(), CopyStorePathsError> {
+    let all_paths: Vec<&str> = packages.iter().map(|p| p.store_path.as_str()).collect();
+    let present = paths_in_store(runner, &all_paths).await?;
+
+    for pkg in packages {
+        if !present.contains(&pkg.store_path) {
+            return Err(CopyStorePathsError::MissingStorePath {
+                name: pkg.name.clone(),
+                store_path: pkg.store_path.clone(),
+            });
+        }
+    }
+    Ok(())
+}
 
 /// Errors that can occur during store initialization.
 #[derive(Debug, thiserror::Error)]
@@ -184,7 +282,121 @@ pub async fn init_store(
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt;
+
     use super::*;
+    use crate::types::{InstalledBy, PinStrategy};
+
+    /// Mock command runner that records invocations and returns configurable output.
+    struct MockCommandRunner {
+        /// Store paths that should be reported as "already in store".
+        existing_paths: Vec<String>,
+        /// Recorded command invocations (program, args).
+        invocations: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+    }
+
+    impl MockCommandRunner {
+        fn new(existing_paths: Vec<String>) -> Self {
+            Self {
+                existing_paths,
+                invocations: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl CommandRunner for MockCommandRunner {
+        async fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+        ) -> Result<std::process::Output, std::io::Error> {
+            self.invocations.lock().expect("BUG: mutex poisoned").push((
+                program.to_owned(),
+                args.iter().map(|s| (*s).to_owned()).collect(),
+            ));
+
+            // Simulate nix path-info: supports batch queries
+            if program == "nix" && args.first() == Some(&"path-info") {
+                let queried_paths = &args[1..];
+                let mut stdout_lines = Vec::new();
+                let mut all_found = true;
+                for path in queried_paths {
+                    if self.existing_paths.iter().any(|p| p == path) {
+                        stdout_lines.push(*path);
+                    } else {
+                        all_found = false;
+                    }
+                }
+                let code = i32::from(!all_found);
+                let stdout = stdout_lines.join("\n").into_bytes();
+                return Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(code << 8),
+                    stdout,
+                    stderr: Vec::new(),
+                });
+            }
+
+            // Simulate nix copy: always succeed
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    fn test_resolved(name: &str, store_path: &str, cache_url: Option<&str>) -> ResolvedPackage {
+        ResolvedPackage {
+            name: name.into(),
+            version: "1.0.0".into(),
+            store_path: store_path.into(),
+            cache_url: cache_url.map(String::from),
+            cache_name: "local".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "local".into(),
+            pinned: PinStrategy::None,
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_store_paths_all_present_succeeds() {
+        let runner = MockCommandRunner::new(vec!["/nix/store/a".into(), "/nix/store/b".into()]);
+        let packages = vec![
+            test_resolved("a", "/nix/store/a", None),
+            test_resolved("b", "/nix/store/b", None),
+        ];
+        verify_store_paths(&runner, &packages)
+            .await
+            .expect("BUG: all paths present, should succeed");
+    }
+
+    #[tokio::test]
+    async fn verify_store_paths_missing_returns_error() {
+        let runner = MockCommandRunner::new(vec!["/nix/store/a".into()]);
+        let packages = vec![
+            test_resolved("a", "/nix/store/a", None),
+            test_resolved("b", "/nix/store/b", None),
+        ];
+        let err = verify_store_paths(&runner, &packages)
+            .await
+            .expect_err("BUG: /nix/store/b missing, should fail");
+        assert!(
+            matches!(err, CopyStorePathsError::MissingStorePath { .. }),
+            "expected MissingStorePath, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_store_paths_empty_list_succeeds() {
+        let runner = MockCommandRunner::new(vec![]);
+        verify_store_paths(&runner, &[])
+            .await
+            .expect("BUG: empty list should always succeed");
+    }
 
     #[test]
     fn find_tarball_for_version_matches() {
