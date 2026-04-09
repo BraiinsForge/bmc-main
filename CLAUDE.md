@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Overview
 
 This is the Braiins clock codebase - a Rust-based embedded system for a smart clock device with a web frontend. The
-project consists of a modular Rust backend running on OpenWRT (ARMv7), a React/TypeScript frontend, and uses Slint for
+project consists of a modular Rust backend running on OpenWRT (ARMv7), a React/TypeScript frontend, and uses Wayland for
 the display UI.
 
 **📖 For detailed architecture information, see [`docs/architecture.md`](docs/architecture.md)** - This contains
@@ -22,7 +22,6 @@ The backend is organized as a Cargo workspace with the following main components
 - **`bmc-openwrt`**: Main binary for the OpenWRT control board - integrates all hardware drivers and BMC core
   functionality for the actual device.
 - **`bmc-mock`**: Mock binary for development/testing on x86_64 with simulated hardware.
-- **`bmc-display`**: Display management using Slint UI framework (`.slint` files in `bmc-display/ui/`).
 - **`bmc-grpc`**: gRPC service definitions (protobuf in `bmc-grpc/proto/web/`) for frontend-backend communication.
 - **`bmc-scheduler`**: Alarm scheduling and cron-like functionality.
 - **`bmc-audio`**, **`bmc-led`**, **`bmc-button`**, **`bmc-gpio`**, **`bmc-kobject`**: Hardware abstraction layers.
@@ -288,6 +287,8 @@ scripts).
 - If you need to explain it, it's too complex
 
 ## Process
+
+Research the codebase before editing. Never change code you haven't read.
 
 ### 1. Planning & Staging
 
