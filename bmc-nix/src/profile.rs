@@ -114,6 +114,41 @@ pub fn try_lock_profile(profile_dir: &Path) -> Result<Option<ProfileLock>, Build
     }
 }
 
+/// Try to acquire an exclusive lock on a profile directory within a timeout.
+///
+/// Returns `Ok(Some(lock))` if acquired within `timeout`, `Ok(None)` if the
+/// timeout elapsed while another process held the lock.
+///
+/// Uses a blocking `flock(LOCK_EX)` on a [`tokio::task::spawn_blocking`]
+/// thread and races it against [`tokio::time::timeout`]. On timeout, the
+/// blocking thread remains parked inside `flock` until the other holder
+/// releases; timing out this function does not cancel the in-flight
+/// `flock(LOCK_EX)` call. Once the other holder releases, the background task
+/// acquires the lock, constructs the resulting [`ProfileLock`], and
+/// immediately drops it, releasing our fd again.
+///
+/// This keeps the implementation free of polling, but a timed-out waiter may
+/// still briefly acquire and release the lock later.
+pub async fn lock_profile_with_timeout(
+    profile_dir: &Path,
+    timeout: std::time::Duration,
+) -> Result<Option<ProfileLock>, BuildProfileError> {
+    let file = open_lock_file(profile_dir)?;
+
+    let handle = tokio::task::spawn_blocking(move || {
+        flock(&file, libc::LOCK_EX).map_err(|source| BuildProfileError::Lock { source })?;
+        Ok::<ProfileLock, BuildProfileError>(ProfileLock { _file: file })
+    });
+
+    match tokio::time::timeout(timeout, handle).await {
+        Ok(join_result) => {
+            let lock = join_result.expect("BUG: lock task should not panic")?;
+            Ok(Some(lock))
+        }
+        Err(_elapsed) => Ok(None),
+    }
+}
+
 /// Build a unified symlink tree from a set of resolved packages.
 ///
 /// Walks each package's `store_path` recursively. For directories, the
@@ -335,9 +370,14 @@ fn current_generation_path(profile_dir: &Path) -> Option<PathBuf> {
 ///
 /// The entrypoint receives `PROFILE_NEW_GENERATION` and
 /// `PROFILE_OLD_GENERATION` environment variables.
+///
+/// When `profile_lock` is [`Some`], the entrypoint also receives
+/// `ACTIVATION_HAS_PROFILE_LOCK=1`, signaling that the caller already holds the
+/// profile lock and the entrypoint must not acquire it again.
 pub async fn activate_profile(
     profile_dir: &Path,
     generation: &ProfileGeneration,
+    profile_lock: Option<&ProfileLock>,
 ) -> Result<(), BuildProfileError> {
     let entrypoint = generation.path.join("core/activation/entrypoint");
 
@@ -355,17 +395,20 @@ pub async fn activate_profile(
         "executing activation entrypoint"
     );
 
-    let output = tokio::process::Command::new(&entrypoint)
+    let mut command = tokio::process::Command::new(&entrypoint);
+    command
         .env("PROFILE_NEW_GENERATION", &generation.path)
-        .env("PROFILE_OLD_GENERATION", &old_gen)
-        .output()
-        .await
-        .map_err(
-            |source| crate::activation::ActivationError::EntrypointExecute {
-                path: entrypoint.display().to_string(),
-                source,
-            },
-        )?;
+        .env("PROFILE_OLD_GENERATION", &old_gen);
+    if profile_lock.is_some() {
+        command.env("ACTIVATION_HAS_PROFILE_LOCK", "1");
+    }
+
+    let output = command.output().await.map_err(|source| {
+        crate::activation::ActivationError::EntrypointExecute {
+            path: entrypoint.display().to_string(),
+            source,
+        }
+    })?;
 
     if !output.status.success() {
         match output.status.code() {
@@ -677,7 +720,7 @@ mod tests {
             .await
             .expect("BUG: build_profile should succeed");
 
-        activate_profile(&profile_dir, &generation)
+        activate_profile(&profile_dir, &generation, None)
             .await
             .expect("BUG: activate_profile should succeed");
 
@@ -685,6 +728,93 @@ mod tests {
         assert!(
             log_content.contains("activated"),
             "activation entrypoint should have run"
+        );
+    }
+
+    #[tokio::test]
+    async fn activate_profile_does_not_set_activation_has_profile_lock_without_lock() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+        let profile_dir = tmp.path().join("bmc");
+
+        let store_a = tmp.path().join("store-a");
+        let activation_dir_in_store = store_a.join("core/activation");
+        std::fs::create_dir_all(&activation_dir_in_store)
+            .expect("BUG: should create activation dir");
+
+        let log_file = tmp.path().join("activation-env.log");
+
+        let entrypoint_content = format!(
+            "#!/bin/sh\nprintf 'ACTIVATION_HAS_PROFILE_LOCK=%s\\n' \"${{ACTIVATION_HAS_PROFILE_LOCK-}}\" > {}\n",
+            log_file.display()
+        );
+        let entrypoint_path = activation_dir_in_store.join("entrypoint");
+        std::fs::write(&entrypoint_path, &entrypoint_content)
+            .expect("BUG: should write entrypoint");
+        std::fs::set_permissions(&entrypoint_path, std::fs::Permissions::from_mode(0o755))
+            .expect("BUG: should set permissions");
+
+        let packages = vec![test_resolved_package(
+            "pkg-a",
+            store_a.to_str().expect("BUG: valid UTF-8"),
+        )];
+
+        let generation = build_profile(&profile_dir, 1, &packages, "hooks", None)
+            .await
+            .expect("BUG: build_profile should succeed");
+
+        activate_profile(&profile_dir, &generation, None)
+            .await
+            .expect("BUG: activate_profile should succeed");
+
+        let log_content = std::fs::read_to_string(&log_file).expect("BUG: should read log file");
+        assert_eq!(
+            log_content, "ACTIVATION_HAS_PROFILE_LOCK=\n",
+            "activation entrypoint should not see the pre-held lock marker without a lock witness"
+        );
+    }
+
+    #[tokio::test]
+    async fn activate_profile_sets_activation_has_profile_lock_when_lock_is_passed() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+        let profile_dir = tmp.path().join("bmc");
+
+        let store_a = tmp.path().join("store-a");
+        let activation_dir_in_store = store_a.join("core/activation");
+        std::fs::create_dir_all(&activation_dir_in_store)
+            .expect("BUG: should create activation dir");
+
+        let log_file = tmp.path().join("activation-env.log");
+
+        let entrypoint_content = format!(
+            "#!/bin/sh\nprintf 'ACTIVATION_HAS_PROFILE_LOCK=%s\\n' \"${{ACTIVATION_HAS_PROFILE_LOCK-}}\" > {}\n",
+            log_file.display()
+        );
+        let entrypoint_path = activation_dir_in_store.join("entrypoint");
+        std::fs::write(&entrypoint_path, &entrypoint_content)
+            .expect("BUG: should write entrypoint");
+        std::fs::set_permissions(&entrypoint_path, std::fs::Permissions::from_mode(0o755))
+            .expect("BUG: should set permissions");
+
+        let packages = vec![test_resolved_package(
+            "pkg-a",
+            store_a.to_str().expect("BUG: valid UTF-8"),
+        )];
+
+        let generation = build_profile(&profile_dir, 1, &packages, "hooks", None)
+            .await
+            .expect("BUG: build_profile should succeed");
+        let lock = lock_profile(&profile_dir)
+            .await
+            .expect("BUG: lock_profile should succeed");
+
+        activate_profile(&profile_dir, &generation, Some(&lock))
+            .await
+            .expect("BUG: activate_profile should succeed");
+
+        let log_content = std::fs::read_to_string(&log_file).expect("BUG: should read log file");
+        assert_eq!(
+            log_content, "ACTIVATION_HAS_PROFILE_LOCK=1\n",
+            "activation entrypoint should see the pre-held lock marker when a lock witness is passed"
         );
     }
 
@@ -705,7 +835,7 @@ mod tests {
             .await
             .expect("BUG: build_profile should succeed");
 
-        let result = activate_profile(&profile_dir, &generation).await;
+        let result = activate_profile(&profile_dir, &generation, None).await;
         assert!(
             result.is_err(),
             "activate_profile should fail when entrypoint is missing"
@@ -790,10 +920,12 @@ mod tests {
 
         // Drop the first lock, now try_lock should succeed.
         drop(lock);
-        let third = try_lock_profile(&profile_dir).expect("BUG: try_lock should not error");
+        let third = lock_profile_with_timeout(&profile_dir, std::time::Duration::from_millis(50))
+            .await
+            .expect("BUG: timed lock should not error");
         assert!(
             third.is_some(),
-            "try_lock should succeed after lock is released"
+            "timed lock should succeed after lock is released"
         );
     }
 
@@ -810,6 +942,50 @@ mod tests {
         assert!(
             profile_dir.join(".lock").exists(),
             ".lock file should exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn lock_profile_waits_until_release_within_timeout() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        let held_lock = lock_profile(&profile_dir)
+            .await
+            .expect("BUG: first lock should succeed");
+
+        let release_task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            drop(held_lock);
+        });
+
+        let second = lock_profile_with_timeout(&profile_dir, std::time::Duration::from_millis(250))
+            .await
+            .expect("BUG: timed lock should not error");
+
+        release_task
+            .await
+            .expect("BUG: release task should not panic");
+        assert!(
+            second.is_some(),
+            "timed lock should succeed after the first lock is released"
+        );
+    }
+
+    #[tokio::test]
+    async fn lock_profile_times_out_while_lock_is_held() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        let _held_lock = lock_profile(&profile_dir)
+            .await
+            .expect("BUG: first lock should succeed");
+
+        let second = lock_profile_with_timeout(&profile_dir, std::time::Duration::from_millis(50))
+            .await
+            .expect("BUG: timed lock should not error");
+
+        assert!(
+            second.is_none(),
+            "timed lock should time out while another lock is held"
         );
     }
 }

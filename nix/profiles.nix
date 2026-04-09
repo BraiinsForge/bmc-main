@@ -10,6 +10,12 @@
       # gbm, while for armv7 libgbm is kept in mesa.
       libgbm
     ];
+    nativeDeps = pkgs: with pkgs; [
+      # bmc-nix activation entrypoint shells out to `flock(1)`; BusyBox
+      # provides it on-device, but the sandboxed nextest build needs an
+      # explicit util-linux.
+      util-linux
+    ];
     inherit pkgs;
   };
   # musl profiles for bmc-openwrt (statically linked)
