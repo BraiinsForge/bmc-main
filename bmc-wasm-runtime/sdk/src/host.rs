@@ -342,7 +342,8 @@ pub fn bitmap_sample(bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u
 ///
 /// Returns `Some((width, height))` on success, `None` on decode error.
 /// This is much cheaper than [`decode_image`] as it only probes the header — no RGBA
-/// buffer is allocated.
+/// buffer is allocated. The host also rejects images whose decoded size exceeds
+/// its configured pixel budget.
 pub fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     let packed =
         unsafe { host_decode_image(data.as_ptr(), data.len() as u32, core::ptr::null_mut(), 0) };
@@ -366,10 +367,11 @@ pub fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
 /// an image decoder into the WASM binary.
 ///
 /// If you only need the aspect ratio, use [`image_dimensions`] instead — it avoids
-/// the large RGBA allocation and is much cheaper on fuel.
+/// the large RGBA allocation and is much cheaper on fuel. Returns `None` when the
+/// host rejects the image for exceeding its decoded pixel budget.
 pub fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let (w, h) = image_dimensions(data)?;
-    let needed = w * h * 4;
+    let needed = w.checked_mul(h)?.checked_mul(4)?;
 
     // Allocate buffer and decode into it
     let mut buf = vec![0u8; needed as usize];

@@ -128,6 +128,15 @@ impl FemtoVgRenderer {
     }
 }
 
+impl Drop for FemtoVgRenderer {
+    fn drop(&mut self) {
+        if let Some(sphere) = self.sphere.take() {
+            sphere.destroy(&self.gl, &mut self.canvas);
+        }
+        self.bitmap_registry.clear(&mut self.canvas);
+    }
+}
+
 // ── Renderer trait implementation ───────────────────────────────────
 
 impl Renderer for FemtoVgRenderer {

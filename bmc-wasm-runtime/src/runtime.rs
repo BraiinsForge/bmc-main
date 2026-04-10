@@ -6,5 +6,6 @@
 mod backend;
 
 pub use backend::{
-    FetchInterceptor, FetchObserver, RenderStatus, RuntimeConfig, WasmWidgetRuntime,
+    FetchInterceptor, FetchObserver, RenderStatus, RuntimeConfig, RuntimeResourceLimits,
+    WasmWidgetRuntime,
 };

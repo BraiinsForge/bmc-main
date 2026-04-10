@@ -33,6 +33,7 @@ rustls.workspace = true
 serde_json.workspace = true
 tungstenite.workspace = true
 ureq.workspace = true
+webpki-roots.workspace = true
 
 # Host binaries (GL windowing)
 glutin = { workspace = true, optional = true }

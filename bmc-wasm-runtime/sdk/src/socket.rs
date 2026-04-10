@@ -2,9 +2,10 @@
 
 //! TLS socket support for WASM widgets.
 //!
-//! Provides `tls_connect()` for establishing TLS connections. The host manages
-//! the TCP+TLS I/O in a background thread and delivers events by calling the
-//! `__on_socket_event` export.
+//! Provides `tls_connect()` for verified TLS connections and
+//! `tls_connect_insecure()` for trusted self-signed LAN devices. The host
+//! manages the TCP+TLS I/O in a background thread and delivers events by
+//! calling the `__on_socket_event` export.
 //!
 //! # Example
 //!
@@ -38,6 +39,7 @@ use std::collections::HashMap;
 // Host function imports
 unsafe extern "C" {
     fn host_tls_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
+    fn host_tls_connect_insecure(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
     fn host_tcp_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
     fn host_socket_write(socket_id: u32, data_ptr: *const u8, data_len: u32) -> u32;
     fn host_socket_close(socket_id: u32);
@@ -97,10 +99,22 @@ fn register_callback(cb: Callback) -> usize {
 
 /// Connect to a TLS socket. The host performs the TCP+TLS handshake in the
 /// background. When events arrive (connected, data, closed), `callback` is
-/// called.
+/// called. Certificate verification is enabled.
 pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Socket {
     let cb_idx = register_callback(callback);
     let socket_id = unsafe { host_tls_connect(host.as_ptr(), host.len() as u32, u32::from(port)) };
+    CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
+    Socket(socket_id)
+}
+
+/// Connect to a TLS socket while skipping certificate verification.
+///
+/// Use this only for trusted LAN devices with self-signed certificates such as
+/// Chromecast receivers.
+pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Socket {
+    let cb_idx = register_callback(callback);
+    let socket_id =
+        unsafe { host_tls_connect_insecure(host.as_ptr(), host.len() as u32, u32::from(port)) };
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
     Socket(socket_id)
 }

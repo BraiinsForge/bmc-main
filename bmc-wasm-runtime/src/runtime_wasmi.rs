@@ -108,6 +108,9 @@ pub type FetchInterceptor = Box<dyn Fn(&str, &str) -> Option<(u32, Vec<u8>)>>;
 /// Called with `(method_and_url, status, body)`.
 pub type FetchObserver = Box<dyn Fn(&str, u32, &[u8])>;
 
+/// Host-side limits for resources spawned on behalf of a widget.
+pub use crate::runtime_limits::RuntimeResourceLimits;
+
 /// Configuration for creating a [`WasmWidgetRuntime`].
 ///
 /// All optional fields are applied **before** the WASM `init()` export runs,
@@ -130,6 +133,8 @@ pub struct RuntimeConfig {
     pub record_events: bool,
     /// Pre-recorded event timeline for deterministic replay.
     pub event_fixtures: Vec<FixtureEvent>,
+    /// Per-runtime caps for host-side resources such as fetches and sockets.
+    pub resource_limits: RuntimeResourceLimits,
 }
 
 impl Default for RuntimeConfig {
@@ -142,6 +147,7 @@ impl Default for RuntimeConfig {
             fetch_observer: None,
             record_events: false,
             event_fixtures: Vec::new(),
+            resource_limits: RuntimeResourceLimits::default(),
         }
     }
 }
@@ -204,7 +210,7 @@ impl WasmWidgetRuntime {
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
         let renderer = unsafe { FemtoVgRenderer::new(load_fn, width, height, fbo_id) }?;
-        let host_state = HostState::new(renderer, config.prefs);
+        let host_state = HostState::new(renderer, config.prefs, config.resource_limits);
 
         let mut store = wasmi::Store::new(&engine, host_state);
         store.set_fuel(config.fuel_per_frame)?;
@@ -541,19 +547,10 @@ impl WasmWidgetRuntime {
                     return -1;
                 };
 
-                let rgba = match std::panic::catch_unwind(|| {
-                    image::ImageReader::new(std::io::Cursor::new(&image_data))
-                        .with_guessed_format()
-                        .map_err(image::ImageError::IoError)
-                        .and_then(image::ImageReader::decode)
-                }) {
-                    Ok(Ok(img)) => img.to_rgba8(),
-                    Ok(Err(e)) => {
+                let rgba = match decode_image_rgba_limited(&image_data) {
+                    Ok(rgba) => rgba,
+                    Err(e) => {
                         tracing::error!("host_decode_image: {e}");
-                        return -1;
-                    }
-                    Err(_) => {
-                        tracing::error!("host_decode_image: decoder panicked");
                         return -1;
                     }
                 };
@@ -752,6 +749,13 @@ impl WasmWidgetRuntime {
                 let body = read_optional_bytes(&caller, body_ptr, body_len);
 
                 let state = caller.data_mut();
+                if state.fetch_slots_used() >= state.resource_limits.max_fetches {
+                    tracing::warn!(
+                        max_fetches = state.resource_limits.max_fetches,
+                        "host_fetch rejected: runtime fetch limit reached"
+                    );
+                    return 0;
+                }
                 let request_id = state.next_request_id;
                 state.next_request_id += 1;
                 state.in_flight_fetches += 1;
@@ -809,6 +813,13 @@ impl WasmWidgetRuntime {
                 let body = read_optional_bytes(&caller, body_ptr, body_len);
 
                 let state = caller.data_mut();
+                if state.fetch_slots_used() >= state.resource_limits.max_fetches {
+                    tracing::warn!(
+                        max_fetches = state.resource_limits.max_fetches,
+                        "host_fetch_after rejected: runtime fetch limit reached"
+                    );
+                    return 0;
+                }
                 let request_id = state.next_request_id;
                 state.next_request_id += 1;
 
@@ -842,6 +853,13 @@ impl WasmWidgetRuntime {
                 let headers = parse_headers(&caller, headers_ptr, headers_len);
 
                 let state = caller.data_mut();
+                if state.websockets.len() >= state.resource_limits.max_websockets {
+                    tracing::warn!(
+                        max_websockets = state.resource_limits.max_websockets,
+                        "host_ws_connect rejected: runtime websocket limit reached"
+                    );
+                    return 0;
+                }
                 let ws_id = state.next_ws_id;
                 state.next_ws_id += 1;
 
@@ -905,6 +923,13 @@ impl WasmWidgetRuntime {
                 let Some(host) = host else { return 0 };
 
                 let state = caller.data_mut();
+                if state.sockets.len() >= state.resource_limits.max_sockets {
+                    tracing::warn!(
+                        max_sockets = state.resource_limits.max_sockets,
+                        "host_tcp_connect rejected: runtime socket limit reached"
+                    );
+                    return 0;
+                }
                 let socket_id = state.next_socket_id;
                 state.next_socket_id += 1;
 
@@ -938,36 +963,31 @@ impl WasmWidgetRuntime {
             "env",
             "host_tls_connect",
             |mut caller: Caller<'_, HostState>, host_ptr: u32, host_len: u32, port: u32| -> u32 {
-                let host = read_string(&caller, host_ptr, host_len);
-                let Some(host) = host else { return 0 };
-
-                let state = caller.data_mut();
-                let socket_id = state.next_socket_id;
-                state.next_socket_id += 1;
-
-                let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
-
-                if let Some(fixtures) = &mut state.event_fixtures {
-                    // Stub mode: no background thread, fixture replay injects events
-                    let (write_tx, _write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
-                    state
-                        .sockets
-                        .insert(socket_id, ActiveSocket { write_tx, event_rx });
-                    fixtures.socket_event_txs.insert(socket_id, event_tx);
-                } else {
-                    let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
-                    state
-                        .sockets
-                        .insert(socket_id, ActiveSocket { write_tx, event_rx });
-                    let port = port as u16;
-                    std::thread::spawn(move || {
-                        tls_background_thread(socket_id, &host, port, event_tx, write_rx);
-                    });
-                }
-
-                socket_id
+                host_tls_connect_impl(
+                    &mut caller,
+                    host_ptr,
+                    host_len,
+                    port,
+                    TlsVerificationMode::Full,
+                )
             },
         )?;
+
+        linker.func_wrap(
+            "env",
+            "host_tls_connect_insecure",
+            |mut caller: Caller<'_, HostState>, host_ptr: u32, host_len: u32, port: u32| -> u32 {
+                host_tls_connect_impl(
+                    &mut caller,
+                    host_ptr,
+                    host_len,
+                    port,
+                    TlsVerificationMode::Insecure,
+                )
+            },
+        )?;
+
+        // ── Socket write/close ─────────────────────────────────────
 
         linker.func_wrap(
             "env",
@@ -1026,6 +1046,13 @@ impl WasmWidgetRuntime {
                 }
 
                 let state = caller.data_mut();
+                if state.mdns_browses.len() >= state.resource_limits.max_mdns_browses {
+                    tracing::warn!(
+                        max_mdns_browses = state.resource_limits.max_mdns_browses,
+                        "host_mdns_browse rejected: runtime mDNS browse limit reached"
+                    );
+                    return 0;
+                }
                 let browse_id = state.next_mdns_browse_id;
                 state.next_mdns_browse_id += 1;
 
@@ -1083,6 +1110,17 @@ impl WasmWidgetRuntime {
                 let (Some(svc_type), Some(name), Some(txt_raw)) = (svc_type, name, txt_raw) else {
                     return 0;
                 };
+
+                if caller.data().mdns_registrations.len()
+                    >= caller.data().resource_limits.max_mdns_registrations
+                {
+                    tracing::warn!(
+                        max_mdns_registrations =
+                            caller.data().resource_limits.max_mdns_registrations,
+                        "host_mdns_register rejected: runtime mDNS registration limit reached"
+                    );
+                    return 0;
+                }
 
                 // mdns-sd requires ".local." suffix
                 let svc_type = if svc_type.ends_with(".local.") {
@@ -1166,6 +1204,13 @@ impl WasmWidgetRuntime {
                 }
 
                 let state = caller.data_mut();
+                if state.ssdp_searches.len() >= state.resource_limits.max_ssdp_searches {
+                    tracing::warn!(
+                        max_ssdp_searches = state.resource_limits.max_ssdp_searches,
+                        "host_ssdp_search rejected: runtime SSDP search limit reached"
+                    );
+                    return 0;
+                }
                 let search_id = state.next_ssdp_search_id;
                 state.next_ssdp_search_id += 1;
 
@@ -1219,6 +1264,13 @@ impl WasmWidgetRuntime {
                 }
 
                 let state = caller.data_mut();
+                if state.udp_broadcasts.len() >= state.resource_limits.max_udp_broadcasts {
+                    tracing::warn!(
+                        max_udp_broadcasts = state.resource_limits.max_udp_broadcasts,
+                        "host_udp_broadcast rejected: runtime UDP broadcast limit reached"
+                    );
+                    return 0;
+                }
                 let broadcast_id = state.next_udp_broadcast_id;
                 state.next_udp_broadcast_id += 1;
 
@@ -1269,6 +1321,10 @@ impl WasmWidgetRuntime {
                 let (Some(key), Some(val)) = (key, val) else {
                     return;
                 };
+                if let Err(e) = validate_kv_key(&key) {
+                    tracing::warn!("kv_set rejected key: {e}");
+                    return;
+                }
 
                 let state = caller.data_mut();
                 state.kv_cache.insert(key.clone(), val.clone());
@@ -1280,7 +1336,13 @@ impl WasmWidgetRuntime {
                         tracing::warn!("kv_set: failed to create dir: {e}");
                         return;
                     }
-                    let path = dir.join(&key);
+                    let path = match kv_disk_path(&dir, &key) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            tracing::warn!("kv_set rejected key: {e}");
+                            return;
+                        }
+                    };
                     if let Err(e) = std::fs::write(&path, &val) {
                         tracing::warn!("kv_set: failed to write {}: {e}", path.display());
                     }
@@ -1299,6 +1361,10 @@ impl WasmWidgetRuntime {
              -> i32 {
                 let key = read_string(&caller, key_ptr, key_len);
                 let Some(key) = key else { return -1 };
+                if let Err(e) = validate_kv_key(&key) {
+                    tracing::warn!("kv_get rejected key: {e}");
+                    return -1;
+                }
 
                 let state = caller.data_mut();
 
@@ -1323,7 +1389,13 @@ impl WasmWidgetRuntime {
 
                 // Try loading from disk
                 if let Some(ref base) = state.kv_store_path.clone() {
-                    let path = base.join(&key);
+                    let path = match kv_disk_path(base, &key) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            tracing::warn!("kv_get rejected key: {e}");
+                            return -1;
+                        }
+                    };
                     if let Ok(val) = std::fs::read(&path) {
                         let val_len = i32::try_from(val.len()).unwrap_or(i32::MAX);
                         state.kv_cache.insert(key, val.clone());
@@ -1352,12 +1424,22 @@ impl WasmWidgetRuntime {
             |mut caller: Caller<'_, HostState>, key_ptr: u32, key_len: u32| {
                 let key = read_string(&caller, key_ptr, key_len);
                 let Some(key) = key else { return };
+                if let Err(e) = validate_kv_key(&key) {
+                    tracing::warn!("kv_delete rejected key: {e}");
+                    return;
+                }
 
                 let state = caller.data_mut();
                 state.kv_cache.remove(&key);
 
                 if let Some(ref base) = state.kv_store_path {
-                    let path = base.join(&key);
+                    let path = match kv_disk_path(base, &key) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            tracing::warn!("kv_delete rejected key: {e}");
+                            return;
+                        }
+                    };
                     let _ = std::fs::remove_file(&path);
                 }
             },
@@ -1372,6 +1454,13 @@ impl WasmWidgetRuntime {
                 let port = port as u16;
 
                 let state = caller.data_mut();
+                if state.http_listeners.len() >= state.resource_limits.max_http_listeners {
+                    tracing::warn!(
+                        max_http_listeners = state.resource_limits.max_http_listeners,
+                        "host_http_listen rejected: runtime HTTP listener limit reached"
+                    );
+                    return 0;
+                }
                 let listener_id = state.next_http_listener_id;
                 state.next_http_listener_id += 1;
 
@@ -1700,7 +1789,10 @@ impl WasmWidgetRuntime {
                     }
                 };
 
-                caller.data_mut().xml_query_cache.insert(cache_key, result.clone());
+                caller
+                    .data_mut()
+                    .xml_query_cache
+                    .insert(cache_key, result.clone());
                 let Some(text) = result else { return -1 };
                 write_to_wasm(&mut caller, &text, out_ptr, out_len)
             },
@@ -1729,7 +1821,10 @@ impl WasmWidgetRuntime {
                     }
                 };
 
-                caller.data_mut().xml_query_cache.insert(cache_key, result.clone());
+                caller
+                    .data_mut()
+                    .xml_query_cache
+                    .insert(cache_key, result.clone());
                 result
                     .and_then(|s| s.parse::<f64>().ok())
                     .unwrap_or(f64::NAN)
@@ -3305,6 +3400,141 @@ fn xml_query_text(doc: &roxmltree::Document<'_>, path: &str) -> Option<String> {
     None
 }
 
+/// Maximum decoded image size accepted by `host_decode_image` (RGBA pixels).
+const MAX_DECODE_IMAGE_PIXELS: u64 = 4_194_304;
+
+fn validate_kv_key(key: &str) -> Result<()> {
+    if key.is_empty() || key.contains('/') || key.contains('\\') || key.contains("..") {
+        bail!("invalid KV key");
+    }
+    Ok(())
+}
+
+fn kv_disk_path(base: &std::path::Path, key: &str) -> Result<std::path::PathBuf> {
+    validate_kv_key(key)?;
+    Ok(base.join(key))
+}
+
+fn rgba_byte_len_limited(width: u32, height: u32) -> Result<usize> {
+    let pixels = u64::from(width) * u64::from(height);
+    anyhow::ensure!(
+        pixels <= MAX_DECODE_IMAGE_PIXELS,
+        "decoded image exceeds pixel budget ({pixels} > {MAX_DECODE_IMAGE_PIXELS})"
+    );
+    let bytes = pixels
+        .checked_mul(4)
+        .expect("BUG: RGBA byte count overflow after pixel budget check");
+    usize::try_from(bytes).map_err(Into::into)
+}
+
+fn probe_image_dimensions(data: &[u8]) -> Result<(u32, u32)> {
+    match std::panic::catch_unwind(|| {
+        image::ImageReader::new(std::io::Cursor::new(data))
+            .with_guessed_format()
+            .map_err(image::ImageError::IoError)
+            .and_then(image::ImageReader::into_dimensions)
+    }) {
+        Ok(Ok(dimensions)) => Ok(dimensions),
+        Ok(Err(e)) => Err(anyhow::anyhow!("{e}")),
+        Err(_) => bail!("decoder panicked while probing dimensions"),
+    }
+}
+
+fn decode_image_rgba_limited(data: &[u8]) -> Result<image::RgbaImage> {
+    let (width, height) = probe_image_dimensions(data)?;
+    let _ = rgba_byte_len_limited(width, height)?;
+
+    match std::panic::catch_unwind(|| {
+        image::ImageReader::new(std::io::Cursor::new(data))
+            .with_guessed_format()
+            .map_err(image::ImageError::IoError)
+            .and_then(image::ImageReader::decode)
+    }) {
+        Ok(Ok(img)) => Ok(img.to_rgba8()),
+        Ok(Err(e)) => Err(anyhow::anyhow!("{e}")),
+        Err(_) => bail!("decoder panicked"),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TlsVerificationMode {
+    Full,
+    Insecure,
+}
+
+fn host_tls_connect_impl(
+    caller: &mut Caller<'_, HostState>,
+    host_ptr: u32,
+    host_len: u32,
+    port: u32,
+    verification_mode: TlsVerificationMode,
+) -> u32 {
+    let host = read_string(caller, host_ptr, host_len);
+    let Some(host) = host else { return 0 };
+
+    let state = caller.data_mut();
+    if state.sockets.len() >= state.resource_limits.max_sockets {
+        tracing::warn!(
+            max_sockets = state.resource_limits.max_sockets,
+            "TLS connect rejected: runtime socket limit reached"
+        );
+        return 0;
+    }
+    let socket_id = state.next_socket_id;
+    state.next_socket_id += 1;
+
+    let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
+
+    if let Some(fixtures) = &mut state.event_fixtures {
+        // Stub mode: no background thread, fixture replay injects events
+        let (write_tx, _write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
+        state
+            .sockets
+            .insert(socket_id, ActiveSocket { write_tx, event_rx });
+        fixtures.socket_event_txs.insert(socket_id, event_tx);
+    } else {
+        let (write_tx, write_rx) = std::sync::mpsc::channel::<SocketOutbound>();
+        state
+            .sockets
+            .insert(socket_id, ActiveSocket { write_tx, event_rx });
+        let port = port as u16;
+        std::thread::spawn(move || {
+            tls_background_thread(
+                socket_id,
+                &host,
+                port,
+                verification_mode,
+                event_tx,
+                write_rx,
+            );
+        });
+    }
+
+    socket_id
+}
+
+fn build_tls_client_config(verification_mode: TlsVerificationMode) -> Result<rustls::ClientConfig> {
+    use std::sync::Arc;
+
+    let crypto_provider = rustls::crypto::ring::default_provider();
+    let builder = rustls::ClientConfig::builder_with_provider(Arc::new(crypto_provider))
+        .with_safe_default_protocol_versions()?;
+
+    let config = match verification_mode {
+        TlsVerificationMode::Full => {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            builder.with_root_certificates(roots).with_no_client_auth()
+        }
+        TlsVerificationMode::Insecure => builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+            .with_no_client_auth(),
+    };
+
+    Ok(config)
+}
+
 /// Background thread for a single WebSocket connection.
 ///
 /// Connects to `url` with optional extra headers, then runs a loop that
@@ -3532,30 +3762,22 @@ fn tcp_background_thread(
 
 /// Background thread for a single TLS socket connection.
 ///
-/// Connects to `host:port` with TLS (skipping certificate verification for
-/// self-signed certs like Chromecast), then loops: drain outbound writes from
+/// Connects to `host:port` with TLS, then loops: drain outbound writes from
 /// `write_rx`, read inbound data with a 50 ms timeout.
 #[expect(clippy::needless_pass_by_value)] // ownership needed: moved into spawned thread
 fn tls_background_thread(
     socket_id: u32,
     host: &str,
     port: u16,
+    verification_mode: TlsVerificationMode,
     event_tx: std::sync::mpsc::Sender<SocketEvent>,
     write_rx: std::sync::mpsc::Receiver<SocketOutbound>,
 ) {
     use std::io::{Read as _, Write as _};
     use std::sync::Arc;
 
-    // Build a rustls ClientConfig that skips certificate verification
-    // (needed for Chromecast self-signed certs)
-    let crypto_provider = rustls::crypto::ring::default_provider();
-    let config = match rustls::ClientConfig::builder_with_provider(Arc::new(crypto_provider))
-        .with_safe_default_protocol_versions()
-    {
-        Ok(builder) => builder
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
-            .with_no_client_auth(),
+    let config = match build_tls_client_config(verification_mode) {
+        Ok(config) => config,
         Err(e) => {
             tracing::error!(socket_id, "TLS config error: {e}");
             let _ = event_tx.send(SocketEvent::Closed(1));
@@ -3662,8 +3884,9 @@ fn tls_background_thread(
     }
 }
 
-/// Certificate verifier that accepts all certificates (for self-signed
-/// Chromecast devices and similar LAN services).
+/// Certificate verifier that accepts all certificates.
+///
+/// Only used by the explicit insecure TLS socket path for trusted LAN devices.
 #[derive(Debug)]
 struct NoCertVerifier;
 
@@ -4488,4 +4711,65 @@ fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]> {
     buf[19] = weekday as u8;
 
     Some(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+    use std::path::Path;
+
+    use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+
+    use super::{
+        MAX_DECODE_IMAGE_PIXELS, TlsVerificationMode, build_tls_client_config,
+        decode_image_rgba_limited, kv_disk_path, rgba_byte_len_limited, validate_kv_key,
+    };
+
+    #[test]
+    fn kv_key_validation_rejects_path_traversal_sequences() {
+        assert!(validate_kv_key("../secret").is_err());
+        assert!(validate_kv_key("subdir/key").is_err());
+        assert!(validate_kv_key(r"subdir\key").is_err());
+        assert!(validate_kv_key("").is_err());
+        assert!(validate_kv_key("plain_key").is_ok());
+    }
+
+    #[test]
+    fn kv_path_for_valid_key_stays_under_base_dir() {
+        let base = Path::new("/tmp/widget-kv");
+        let path = kv_disk_path(base, "pairing_guid").expect("BUG: valid key should resolve");
+
+        assert_eq!(path, base.join("pairing_guid"));
+    }
+
+    #[test]
+    fn rgba_budget_rejects_images_over_limit() {
+        let mut side = 1_u32;
+        while u64::from(side) * u64::from(side) <= MAX_DECODE_IMAGE_PIXELS {
+            side += 1;
+        }
+
+        assert!(rgba_byte_len_limited(side, side).is_err());
+    }
+
+    #[test]
+    fn decode_image_limited_accepts_small_png() {
+        let img = RgbaImage::from_pixel(2, 2, Rgba([0x12, 0x34, 0x56, 0xFF]));
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(img)
+            .write_to(&mut encoded, ImageFormat::Png)
+            .expect("BUG: test PNG encoding should succeed");
+
+        let rgba = decode_image_rgba_limited(&encoded.into_inner())
+            .expect("BUG: small PNG should decode within budget");
+
+        assert_eq!((rgba.width(), rgba.height()), (2, 2));
+        assert_eq!(rgba.as_raw().len(), 16);
+    }
+
+    #[test]
+    fn tls_client_config_builds_for_both_modes() {
+        assert!(build_tls_client_config(TlsVerificationMode::Full).is_ok());
+        assert!(build_tls_client_config(TlsVerificationMode::Insecure).is_ok());
+    }
 }

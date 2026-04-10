@@ -96,6 +96,13 @@ impl BitmapRegistry {
             .map(|b| (b.image_id, b.width, b.height))
     }
 
+    /// Delete all registered FemtoVG images.
+    pub fn clear(&mut self, canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>) {
+        for bitmap in self.bitmaps.drain().map(|(_, bitmap)| bitmap) {
+            canvas.delete_image(bitmap.image_id);
+        }
+    }
+
     /// Sample the average RGBA color of a rectangular region within a registered bitmap.
     ///
     /// Coordinates are clamped to the bitmap dimensions. Returns `None` if the bitmap ID

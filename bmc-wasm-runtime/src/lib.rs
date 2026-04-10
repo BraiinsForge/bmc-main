@@ -90,6 +90,7 @@
 mod animation;
 pub mod gpu;
 pub mod renderer;
+mod runtime_limits;
 
 // Re-export colors and color macro from protocol crate
 pub mod colors {
@@ -113,4 +114,4 @@ pub mod fixtures;
 pub mod unified_fixture;
 
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState, FrameTimings};
-pub use runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
+pub use runtime::{RenderStatus, RuntimeConfig, RuntimeResourceLimits, WasmWidgetRuntime};

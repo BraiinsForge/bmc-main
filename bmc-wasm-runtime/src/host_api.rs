@@ -13,6 +13,7 @@ use bmc_wasm_protocol::FormatPreferences;
 
 use crate::gpu::FemtoVgRenderer;
 use crate::interaction::InteractionState;
+use crate::runtime_limits::RuntimeResourceLimits;
 use crate::tree::NodeContext;
 
 /// State for a single running animation instance.
@@ -503,11 +504,18 @@ pub(crate) struct HostState {
 
     /// Reusable Taffy layout tree (cleared each frame, keeps allocations).
     pub taffy: TaffyTree<NodeContext>,
+
+    /// Per-runtime caps for host-side resources.
+    pub resource_limits: RuntimeResourceLimits,
 }
 
 impl HostState {
     /// Create new host state with the given renderer and formatting preferences.
-    pub fn new(renderer: FemtoVgRenderer, prefs: FormatPreferences) -> Self {
+    pub fn new(
+        renderer: FemtoVgRenderer,
+        prefs: FormatPreferences,
+        resource_limits: RuntimeResourceLimits,
+    ) -> Self {
         let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
             renderer,
@@ -564,6 +572,7 @@ impl HostState {
             prefs,
             last_timings: FrameTimings::default(),
             taffy: TaffyTree::with_capacity(64),
+            resource_limits,
         }
     }
 
@@ -571,5 +580,12 @@ impl HostState {
     pub fn begin_render_frame(&mut self) {
         self.frame_requested = false;
         self.frame_delay_ms = None;
+    }
+
+    #[must_use]
+    pub fn fetch_slots_used(&self) -> usize {
+        self.delayed_fetches
+            .len()
+            .saturating_add(self.in_flight_fetches as usize)
     }
 }

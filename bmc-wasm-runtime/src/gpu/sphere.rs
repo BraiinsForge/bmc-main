@@ -125,7 +125,6 @@ pub struct SphereRenderer {
     vao: Option<glow::VertexArray>,
     vbo: glow::Buffer,
     fbo: glow::Framebuffer,
-    #[expect(dead_code)] // kept for potential cleanup
     fbo_texture: glow::Texture,
     texture: Option<glow::Texture>,
     image_id: ImageId,
@@ -342,6 +341,21 @@ impl SphereRenderer {
     /// The femtovg image backed by the offscreen FBO texture.
     pub fn image_id(&self) -> ImageId {
         self.image_id
+    }
+
+    /// Release FemtoVG bookkeeping and GL resources owned by the sphere renderer.
+    pub fn destroy(self, gl: &glow::Context, canvas: &mut Canvas<OpenGl>) {
+        canvas.delete_image(self.image_id);
+
+        unsafe {
+            if let Some(vao) = self.vao {
+                gl.delete_vertex_array(vao);
+            }
+            gl.delete_buffer(self.vbo);
+            gl.delete_framebuffer(self.fbo);
+            gl.delete_texture(self.fbo_texture);
+            gl.delete_program(self.program);
+        }
     }
 }
 
