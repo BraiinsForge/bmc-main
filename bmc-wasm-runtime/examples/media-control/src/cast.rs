@@ -11,7 +11,7 @@
 
 use std::cell::RefCell;
 
-use bmc_wasm_sdk::socket::{Socket, SocketEvent, tls_connect};
+use bmc_wasm_sdk::socket::{Socket, SocketEvent, tls_connect_insecure};
 #[allow(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 use prost::Message;
@@ -157,7 +157,7 @@ thread_local! {
 
 /// Connect to a Google Cast device.
 pub fn connect(host: &str, port: u16, on_status: StatusCallback) {
-    let socket = tls_connect(host, port, on_socket_event);
+    let socket = tls_connect_insecure(host, port, on_socket_event);
     CAST.with(|c| {
         *c.borrow_mut() = Some(CastState {
             socket,
@@ -270,7 +270,7 @@ pub fn tick(delta_ms: u32) {
                 if state.ms_since_heartbeat >= delay {
                     log_info!("cast: reconnecting to {}:{}", state.host, state.port);
                     // New socket but preserve accumulated media status
-                    state.socket = tls_connect(&state.host, state.port, on_socket_event);
+                    state.socket = tls_connect_insecure(&state.host, state.port, on_socket_event);
                     state.phase = Phase::Connecting;
                     state.recv_buf.clear();
                     state.next_request_id = 1;
