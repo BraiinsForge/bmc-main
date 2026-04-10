@@ -12,4 +12,9 @@ pub struct Args {
     /// Path to widget directories (can be specified multiple times)
     #[clap(long = "widgets-path")]
     pub widgets_paths: Option<Vec<PathBuf>>,
+
+    /// Run compositor without EGL/DRM — Wayland protocol loop only.
+    /// Required for rr time-travel debugging (rr hides /dev/dri devices).
+    #[clap(long)]
+    pub headless_compositor: bool,
 }

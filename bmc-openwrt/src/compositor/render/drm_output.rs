@@ -16,6 +16,9 @@ pub struct DrmOutput {
     primary_plane: plane::Handle,
     width: u32,
     height: u32,
+    /// Refresh rate of the selected mode, in mHz (matches `wl_output::mode`
+    /// units so it can be forwarded directly to Wayland clients).
+    refresh_mhz: i32,
     frame_count: u32,
     flip_pending: bool,
 }
@@ -56,6 +59,13 @@ impl DrmOutput {
         let width = if mode_width == 600 { 480 } else { mode_width };
         let height = mode_height;
 
+        // `mode.vrefresh()` reports Hz; `wl_output::mode` expects mHz.
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "vrefresh is small (tens of Hz); * 1000 fits in i32"
+        )]
+        let refresh_mhz = (mode.vrefresh() * 1_000) as i32;
+
         tracing::info!(
             "Buffer dimensions: {}x{} (mode {}x{})",
             width,
@@ -70,6 +80,7 @@ impl DrmOutput {
             primary_plane,
             width,
             height,
+            refresh_mhz,
             frame_count: 0,
             flip_pending: false,
         })
@@ -127,6 +138,11 @@ impl DrmOutput {
 
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    /// Refresh rate of the selected DRM mode, in mHz.
+    pub fn refresh_mhz(&self) -> i32 {
+        self.refresh_mhz
     }
 
     /// Logical size (rotated for landscape orientation)

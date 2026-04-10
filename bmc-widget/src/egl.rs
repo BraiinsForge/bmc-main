@@ -174,6 +174,7 @@ impl EglContext {
     /// The returned [`ExportBuffer`] can be used as a render target and then
     /// exported as a DMA-BUF via [`Self::export_dmabuf`].
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    #[expect(clippy::too_many_lines, reason = "linear GL resource setup")]
     pub fn allocate_export_buffer(&self, width: u32, height: u32) -> Result<ExportBuffer> {
         use smithay::reexports::gbm::Format;
 
@@ -249,7 +250,9 @@ impl EglContext {
             tex
         };
 
-        // Create FBO with texture as color attachment
+        // Create FBO with color + depth attachments.
+        // Depth is needed by widgets that use GL_DEPTH_TEST (e.g. 3D flip-clock).
+        #[expect(clippy::cast_possible_wrap, reason = "dimensions fit in i32")]
         let fbo = unsafe {
             let fbo = self
                 .gl
@@ -262,6 +265,25 @@ impl EglContext {
                 glow::TEXTURE_2D,
                 Some(texture),
                 0,
+            );
+
+            let depth_rb = self
+                .gl
+                .create_renderbuffer()
+                .map_err(|e| anyhow::anyhow!("Failed to create depth renderbuffer: {e}"))?;
+            self.gl
+                .bind_renderbuffer(glow::RENDERBUFFER, Some(depth_rb));
+            self.gl.renderbuffer_storage(
+                glow::RENDERBUFFER,
+                glow::DEPTH_COMPONENT16,
+                width as i32,
+                height as i32,
+            );
+            self.gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::DEPTH_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(depth_rb),
             );
 
             let status = self.gl.check_framebuffer_status(glow::FRAMEBUFFER);

@@ -106,7 +106,7 @@ impl UbootEnvManager {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             warn!(stderr = %stderr, "fw_setenv --script failed");
-            anyhow::bail!("fw_setenv --script failed: {}", stderr);
+            anyhow::bail!("fw_setenv --script failed: {stderr}");
         }
 
         Ok(())

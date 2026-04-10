@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
     }
 
     // Initialize and start the EGL compositor
-    let compositor = Arc::new(EglCompositor::new());
+    let compositor = Arc::new(EglCompositor::new(args.headless_compositor));
     let wayland_display = compositor
         .start()
         .expect("BUG: failed to start EGL compositor");

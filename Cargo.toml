@@ -238,7 +238,7 @@ sha2 = "0.10.9"
 slint = { version = "=1.13.1", default-features = false, features = ["compat-1-2", "image-default-formats", "log", "serde", "std"] }
 slint-build = "=1.13.1"
 smart-leds-trait = { version = "0.3.1" }
-smithay = { version = "0.7.0", default-features = false, features = [
+smithay = { git = "https://github.com/Smithay/smithay.git", rev = "c114b88eb54c6ecc1be16997ca39628363600101", default-features = false, features = [
     "backend_drm",
     "backend_gbm",
     "backend_libinput",
@@ -247,7 +247,7 @@ smithay = { version = "0.7.0", default-features = false, features = [
     "use_system_lib",
     "wayland_frontend",
 ] }
-smithay-drm-extras = { version = "0.1.0", default-features = false }
+smithay-drm-extras = { git = "https://github.com/Smithay/smithay.git", rev = "c114b88eb54c6ecc1be16997ca39628363600101", default-features = false }
 spidev = { version = "0.7.0" }
 strum = { version = "0.27", default-features = false }
 strum_macros = "0.27"

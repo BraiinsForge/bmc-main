@@ -35,6 +35,17 @@ use tokio::sync::mpsc;
 const DEFAULT_GPU_PATH: &str = "/dev/dri/renderD128";
 const DEFAULT_DISPLAY_PATH: &str = "/dev/dri/card1";
 
+/// Physical display dimensions (panel reports 600x1280 but only 480x1280 is visible).
+const PHYSICAL_WIDTH: u32 = 480;
+const PHYSICAL_HEIGHT: u32 = 1_280;
+
+/// Synthetic refresh (mHz) advertised for headless mode; matches the
+/// `HEADLESS_FRAME_INTERVAL` timer that paces frame callbacks.
+const HEADLESS_REFRESH_MHZ: i32 = 60_000;
+
+/// Headless frame-callback pacing (~60 Hz).
+const HEADLESS_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+
 pub struct EglCompositor {
     wayland_display: Mutex<Option<String>>,
     command_tx: calloop_channel::Sender<CompositorCommand>,
@@ -46,6 +57,7 @@ pub struct EglCompositor {
     thread_handle: Mutex<Option<JoinHandle<()>>>,
     gpu_path: String,
     display_path: String,
+    headless: bool,
 }
 
 impl std::fmt::Debug for EglCompositor {
@@ -59,12 +71,12 @@ impl std::fmt::Debug for EglCompositor {
 
 impl EglCompositor {
     #[must_use]
-    pub fn new() -> Self {
-        Self::with_device_paths(DEFAULT_GPU_PATH, DEFAULT_DISPLAY_PATH)
+    pub fn new(headless: bool) -> Self {
+        Self::with_device_paths(DEFAULT_GPU_PATH, DEFAULT_DISPLAY_PATH, headless)
     }
 
     #[must_use]
-    pub fn with_device_paths(gpu_path: &str, display_path: &str) -> Self {
+    pub fn with_device_paths(gpu_path: &str, display_path: &str, headless: bool) -> Self {
         let (command_tx, command_channel) = calloop_channel::channel();
         let (action_tx, action_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -80,6 +92,7 @@ impl EglCompositor {
             thread_handle: Mutex::new(None),
             gpu_path: gpu_path.to_owned(),
             display_path: display_path.to_owned(),
+            headless,
         }
     }
 
@@ -87,12 +100,13 @@ impl EglCompositor {
     fn run_compositor_loop(
         gpu_path: &str,
         display_path: &str,
+        headless: bool,
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: mpsc::UnboundedSender<CompositorEvent>,
         ready_tx: &flume::Sender<Result<String, String>>,
     ) {
-        tracing::info!("Compositor thread starting...");
+        tracing::info!("Compositor thread starting (headless={})...", headless,);
 
         macro_rules! try_init {
             ($expr:expr, $msg:literal) => {
@@ -108,28 +122,64 @@ impl EglCompositor {
             };
         }
 
-        let egl = try_init!(
-            EglContext::new(Path::new(&gpu_path)),
-            "Failed to initialize EGL context"
-        );
-        let output = try_init!(
-            DrmOutput::new(Path::new(&display_path)),
-            "Failed to initialize DRM output"
-        );
-
-        let scene_renderer = SceneRenderer::new(egl, output);
-        let (logical_width, logical_height) = scene_renderer.logical_size();
-        tracing::info!(
-            "Display configured: {}x{} logical (rotated)",
+        let (
+            scene_renderer,
             logical_width,
-            logical_height
+            logical_height,
+            physical_width,
+            physical_height,
+            refresh_mhz,
+        ) = if headless {
+            // Headless: skip EGL/DRM, use hardcoded panel dimensions.
+            // 90° rotation: logical = height x width.
+            // No real display mode exists, fall back to 60 Hz pacing to match
+            // the synthetic frame-callback timer below.
+            (
+                None,
+                PHYSICAL_HEIGHT,
+                PHYSICAL_WIDTH,
+                PHYSICAL_WIDTH,
+                PHYSICAL_HEIGHT,
+                HEADLESS_REFRESH_MHZ,
+            )
+        } else {
+            let egl = try_init!(
+                EglContext::new(Path::new(&gpu_path)),
+                "Failed to initialize EGL context"
+            );
+            let output = try_init!(
+                DrmOutput::new(Path::new(&display_path)),
+                "Failed to initialize DRM output"
+            );
+            let renderer = SceneRenderer::new(egl, output);
+            let (lw, lh) = renderer.logical_size();
+            let pw = renderer.output().width();
+            let ph = renderer.output().height();
+            let refresh = renderer.output().refresh_mhz();
+            (Some(renderer), lw, lh, pw, ph, refresh)
+        };
+
+        tracing::info!(
+            "Display configured: {}x{} logical (rotated), {}x{} physical{}",
+            logical_width,
+            logical_height,
+            physical_width,
+            physical_height,
+            if headless { " [headless]" } else { "" },
         );
 
         let mut event_loop: EventLoop<'_, AppState> =
             try_init!(EventLoop::try_new(), "Failed to create event loop");
         let mut display: Display<CompositorState> =
             try_init!(Display::new(), "Failed to create Wayland display");
-        let compositor_state = CompositorState::new(&display, logical_width, logical_height);
+        let compositor_state = CompositorState::new(
+            &display,
+            logical_width,
+            logical_height,
+            physical_width,
+            physical_height,
+            refresh_mhz,
+        );
         let listening_socket = try_init!(
             ListeningSocket::bind_auto("wayland", 0..33),
             "Failed to create Wayland socket"
@@ -215,36 +265,60 @@ impl EglCompositor {
             Err(e) => tracing::error!("Failed to clone listener fd: {e}"),
         }
 
-        // Add DRM device fd for vblank/page-flip events
-        match app_state
-            .scene_renderer
-            .output()
-            .drm()
-            .device_fd()
-            .as_fd()
-            .try_clone_to_owned()
-        {
-            Ok(drm_fd) => {
-                if let Err(e) = loop_handle.insert_source(
-                    Generic::new(drm_fd, Interest::READ, Mode::Level),
-                    |_, _, state| {
-                        if let Ok(events) = state.scene_renderer.output().drm().receive_events() {
-                            for event in events {
-                                match event {
-                                    DrmEvent::Vblank(_) | DrmEvent::PageFlip(_) => {
-                                        state.scene_renderer.output_mut().on_vblank();
+        if let Some(renderer) = &app_state.scene_renderer {
+            // Add DRM device fd for vblank/page-flip events
+            match renderer
+                .output()
+                .drm()
+                .device_fd()
+                .as_fd()
+                .try_clone_to_owned()
+            {
+                Ok(drm_fd) => {
+                    if let Err(e) = loop_handle.insert_source(
+                        Generic::new(drm_fd, Interest::READ, Mode::Level),
+                        |_, _, state| {
+                            if let Some(r) = &mut state.scene_renderer
+                                && let Ok(events) = r.output().drm().receive_events()
+                            {
+                                for event in events {
+                                    match event {
+                                        DrmEvent::Vblank(_) | DrmEvent::PageFlip(_) => {
+                                            r.output_mut().on_vblank();
+                                        }
+                                        DrmEvent::Unknown(_) => {}
                                     }
-                                    DrmEvent::Unknown(_) => {}
                                 }
                             }
-                        }
-                        Ok(PostAction::Continue)
-                    },
-                ) {
-                    tracing::error!("Failed to add DRM fd to event loop: {e}");
+                            Ok(PostAction::Continue)
+                        },
+                    ) {
+                        tracing::error!("Failed to add DRM fd to event loop: {e}");
+                    }
                 }
+                Err(e) => tracing::error!("Failed to clone DRM device fd: {e}"),
             }
-            Err(e) => tracing::error!("Failed to clone DRM device fd: {e}"),
+        } else {
+            // Headless: synthetic ~60 Hz timer to pace frame callbacks
+            use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+            let timer = Timer::from_duration(HEADLESS_FRAME_INTERVAL);
+            if let Err(e) = loop_handle.insert_source(timer, |_, (), state| {
+                if state.compositor.needs_redraw {
+                    state.compositor.needs_redraw = false;
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        reason = "wrapping is acceptable for frame time"
+                    )]
+                    let time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u32)
+                        .unwrap_or(0);
+                    state.compositor.send_frame_callbacks(time);
+                }
+                TimeoutAction::ToDuration(HEADLESS_FRAME_INTERVAL)
+            }) {
+                tracing::error!("Failed to add headless timer to event loop: {e}");
+            }
         }
 
         tracing::info!("Compositor event loop starting");
@@ -260,7 +334,24 @@ impl EglCompositor {
         #[cfg(feature = "profiling")]
         let mut every = ii_stopwatch::Every::new(std::time::Duration::from_secs(5));
 
-        // Main event loop: process commands, accept clients, render frames
+        // Main event loop — fully event-driven via calloop.
+        //
+        // Calloop event sources (registered above):
+        //   - Wayland display fd  → client commits, protocol events
+        //   - Wayland listener fd → new client connections
+        //   - DRM device fd       → vblank / page-flip-complete
+        //   - Command channel     → scene changes, shutdown, settings
+        //   - Timer (headless)    → synthetic ~60 Hz tick (only without DRM)
+        //
+        // State machine per iteration:
+        //   1. Process protocol events (widget connect/disconnect/actions)
+        //   2. If `needs_redraw` — attempt render:
+        //      a. `is_flip_pending()` → skip, keep `needs_redraw` for next wake
+        //      b. render succeeds → clear `needs_redraw`, send frame callbacks
+        //   3. Fulfill any pending capture frames from pixel cache
+        //   4. `dispatch(timeout)` — sleep until the next event:
+        //      - `needs_redraw && !flip_pending` → ZERO (render ASAP)
+        //      - otherwise → None (block; DRM/Wayland events will wake us)
         loop {
             ii_stopwatch::stopwatch_start!(loop_w);
 
@@ -271,60 +362,129 @@ impl EglCompositor {
 
             process_protocol_events(&mut app_state);
 
-            // Invalidate texture cache for destroyed buffers — do this
-            // unconditionally so GPU resources are freed promptly even
-            // when the compositor is idle.
-            if !app_state.compositor.invalidated_buffers.is_empty() {
-                let invalidated: Vec<_> =
-                    app_state.compositor.invalidated_buffers.drain(..).collect();
-                app_state.scene_renderer.invalidate_textures(&invalidated);
-            }
-
-            // Determine if a new frame is needed
-            let needs_render = app_state.compositor.needs_redraw;
-
-            if needs_render {
-                ii_stopwatch::stopwatch_start!(render_w);
-                let rendered = app_state
-                    .scene_renderer
-                    .render_scene(
-                        &app_state.compositor.widgets,
-                        &app_state.compositor.widget_buffers,
-                    )
-                    .unwrap_or_else(|e| {
-                        tracing::error!("Render error: {}", e);
-                        false
-                    });
-                ii_stopwatch::stopwatch_stop!(render_w);
-
-                // Only clear needs_redraw and send frame callbacks when
-                // a frame was actually produced. If render was skipped
-                // (flip pending), keep needs_redraw set for the next
-                // iteration, and withhold callbacks to pace widget
-                // rendering at the actual display rate.
-                if rendered {
-                    app_state.compositor.needs_redraw = false;
-
-                    ii_stopwatch::stopwatch_start!(callbacks_w);
-                    #[expect(
-                        clippy::cast_possible_truncation,
-                        reason = "wrapping is acceptable for frame time"
-                    )]
-                    let time = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u32)
-                        .unwrap_or(0);
-                    app_state.compositor.send_frame_callbacks(time);
-                    ii_stopwatch::stopwatch_stop!(callbacks_w);
+            if let Some(renderer) = &mut app_state.scene_renderer {
+                // Invalidate texture cache for destroyed buffers — do this
+                // unconditionally so GPU resources are freed promptly even
+                // when the compositor is idle.
+                if !app_state.compositor.invalidated_buffers.is_empty() {
+                    let invalidated: Vec<_> =
+                        app_state.compositor.invalidated_buffers.drain(..).collect();
+                    renderer.invalidate_textures(&invalidated);
                 }
+
+                // Bootstrap: if a capture frame request arrived before any
+                // render has happened, force a render so `update_capture_cache`
+                // populates the cache. Otherwise the first capture would always
+                // be failed by `fulfill_from_cache` with `Unknown` (default
+                // empty cache), which the relay treats as fatal.
+                if !app_state.compositor.pending_capture_frames.is_empty()
+                    && !renderer.capture_cache_ready()
+                {
+                    app_state.compositor.needs_redraw = true;
+                }
+
+                // Gate rendering on flip_pending: if a prior page-flip has not
+                // completed yet, skip rendering this iteration. We must avoid
+                // draining `dirty_buffers` on the flip-pending path — otherwise
+                // the dirty-set for DMA-BUFs committed during the flip is lost
+                // and `import_textures` never reimports them, causing permanent
+                // "No cached texture" spam until the next client commit.
+                // The DRM fd wake will re-enter this block once the flip lands.
+                let needs_render =
+                    app_state.compositor.needs_redraw && !renderer.output().is_flip_pending();
+
+                if needs_render {
+                    ii_stopwatch::stopwatch_start!(render_w);
+                    let dirty: Vec<_> = app_state.compositor.dirty_buffers.drain(..).collect();
+                    let capture_frames: Vec<_> = app_state
+                        .compositor
+                        .pending_capture_frames
+                        .drain(..)
+                        .collect();
+                    let capture_active = !app_state.compositor.capture_sessions.is_empty();
+                    let (rendered, unconsumed_captures, capture_failed) = renderer
+                        .render_scene(
+                            &app_state.compositor.widgets,
+                            &app_state.compositor.widget_buffers,
+                            &dirty,
+                            capture_frames,
+                            capture_active,
+                        )
+                        .unwrap_or_else(|e| {
+                            tracing::error!("Render error: {}", e);
+                            (false, Vec::new(), false)
+                        });
+                    if capture_failed {
+                        tracing::warn!(
+                            "Disabling Wayland image-copy capture after fatal readback failure"
+                        );
+                        app_state.compositor.disable_capture();
+                    }
+                    // Return unconsumed captures (flip was pending) for the fallback path
+                    app_state
+                        .compositor
+                        .pending_capture_frames
+                        .extend(unconsumed_captures);
+                    ii_stopwatch::stopwatch_stop!(render_w);
+
+                    // Only clear needs_redraw and send frame callbacks
+                    // when a frame was actually produced.
+                    //
+                    // If render was skipped (flip pending), keep needs_redraw set so
+                    // the dispatch timeout (below) blocks on the DRM fd until the flip completes,
+                    // then renders on the next iteration.
+                    //
+                    // Withhold callbacks to pace widget rendering at the actual display rate.
+                    if rendered {
+                        app_state.compositor.needs_redraw = false;
+
+                        ii_stopwatch::stopwatch_start!(callbacks_w);
+                        #[expect(
+                            clippy::cast_possible_truncation,
+                            reason = "wrapping is acceptable for frame time"
+                        )]
+                        let time = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u32)
+                            .unwrap_or(0);
+                        app_state.compositor.send_frame_callbacks(time);
+                        ii_stopwatch::stopwatch_stop!(callbacks_w);
+                    }
+                }
+
+                // Fulfill pending capture frames from the pixel cache (no re-render).
+                // The cache is updated by the inline capture during each render pass.
+                if !app_state.compositor.pending_capture_frames.is_empty() {
+                    let frames: Vec<_> = app_state
+                        .compositor
+                        .pending_capture_frames
+                        .drain(..)
+                        .collect();
+                    renderer.fulfill_from_cache(frames);
+                }
+            } else {
+                // Headless: discard buffers, frame callbacks fired by the timer
+                app_state.compositor.invalidated_buffers.clear();
+                app_state.compositor.dirty_buffers.clear();
+                app_state.compositor.pending_capture_frames.clear();
             }
 
             let _ = app_state.display.flush_clients();
 
-            // Block until an event arrives when idle. Use zero timeout when
-            // a redraw is pending so the loop retries immediately after a
-            // DRM vblank wakes us (flip-pending case).
-            let timeout = if app_state.compositor.needs_redraw {
+            // Dispatch timeout: sleep until the next event unless a we can render right now
+            //
+            // IMPORTANT: do NOT use Duration::ZERO when flip is pending.
+            // The DRM fd is a calloop source — the page-flip-complete event
+            // will wake dispatch(None) the instant the flip lands.
+            // Polling with ZERO timeout while flip_pending causes a ~1600 Hz
+            // busy-spin that wastes a full CPU core and starves the widget
+            // process (measured: 25→30 fps improvement by eliminating it).
+            let timeout = if app_state.compositor.needs_redraw
+                && !app_state
+                    .scene_renderer
+                    .as_ref()
+                    .is_some_and(|r| r.output().is_flip_pending())
+            {
                 Some(Duration::ZERO)
             } else {
                 None
@@ -361,7 +521,7 @@ impl EglCompositor {
 struct AppState {
     display: Display<CompositorState>,
     compositor: CompositorState,
-    scene_renderer: SceneRenderer,
+    scene_renderer: Option<SceneRenderer>,
     listening_socket: ListeningSocket,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
@@ -451,7 +611,7 @@ fn process_protocol_events(state: &mut AppState) {
 
 impl Default for EglCompositor {
     fn default() -> Self {
-        Self::new()
+        Self::new(false)
     }
 }
 
@@ -471,6 +631,7 @@ impl Compositor for EglCompositor {
 
         let gpu_path = self.gpu_path.clone();
         let display_path = self.display_path.clone();
+        let headless = self.headless;
         let command_channel = self
             .command_channel
             .lock()
@@ -486,6 +647,7 @@ impl Compositor for EglCompositor {
                 Self::run_compositor_loop(
                     &gpu_path,
                     &display_path,
+                    headless,
                     command_channel,
                     action_tx,
                     event_tx,

@@ -12,14 +12,17 @@ use bmc_widget_protocol::server::{
 };
 use smithay::{
     backend::allocator::{Buffer, Format, Fourcc, Modifier, dmabuf::Dmabuf},
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_seat, delegate_shm,
-    delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_image_capture_source,
+    delegate_image_copy_capture, delegate_output, delegate_output_capture_source, delegate_seat,
+    delegate_shm, delegate_xdg_shell,
     input::{SeatHandler, SeatState},
+    output::{Mode as OutputMode, Output, PhysicalProperties, Subpixel},
     reexports::wayland_server::{
         Client, Display, DisplayHandle, Resource,
         backend::{ClientData, ClientId, DisconnectReason, ObjectId},
-        protocol::{wl_buffer::WlBuffer, wl_callback::WlCallback, wl_surface::WlSurface},
+        protocol::{wl_buffer::WlBuffer, wl_callback::WlCallback, wl_shm, wl_surface::WlSurface},
     },
+    utils::Size,
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -27,11 +30,18 @@ use smithay::{
             CompositorState as SmithayCompositorState, SurfaceAttributes, with_states,
         },
         dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
+        image_capture_source::{
+            ImageCaptureSource, ImageCaptureSourceHandler, OutputCaptureSourceHandler,
+            OutputCaptureSourceState,
+        },
+        image_copy_capture::{
+            BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session,
+            SessionRef,
+        },
+        output::OutputHandler,
         selection::{
             SelectionHandler,
-            data_device::{
-                ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
-            },
+            data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler},
         },
         shell::xdg::{XdgShellHandler, XdgShellState},
         shm::{ShmHandler, ShmState},
@@ -49,8 +59,15 @@ pub struct CompositorState {
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub deck_widget_state: DeckWidgetProtocolState,
+    pub output_capture_source_state: OutputCaptureSourceState,
+    pub image_copy_capture_state: ImageCopyCaptureState,
+    pub capture_sessions: Vec<Session>,
+    /// Logical display size (after rotation, used for widget layout).
     pub width: u32,
     pub height: u32,
+    /// Physical framebuffer size (before rotation, used for capture).
+    pub physical_width: u32,
+    pub physical_height: u32,
     pub widget_buffers: Vec<(WlBuffer, InstanceId)>,
     pub pending_frame_callbacks: Vec<WlCallback>,
 
@@ -60,13 +77,32 @@ pub struct CompositorState {
     /// Buffer IDs that have been destroyed and need texture cache invalidation.
     pub invalidated_buffers: Vec<ObjectId>,
 
+    /// Buffer IDs that were newly committed and need texture reimport.
+    /// Populated in the commit handler, drained by the renderer.
+    pub dirty_buffers: Vec<ObjectId>,
+
+    /// Capture frames waiting to be fulfilled after the next render pass.
+    pub pending_capture_frames: Vec<Frame>,
+
+    /// Whether image-copy capture is currently usable on this renderer.
+    /// Disabled permanently after a fatal readback failure so capture clients
+    /// fail cleanly instead of poisoning normal rendering.
+    pub capture_enabled: bool,
+
     /// Set when widget content or scene layout changes and a new frame must be rendered.
     pub needs_redraw: bool,
 }
 
 impl CompositorState {
     #[must_use]
-    pub fn new(display: &Display<Self>, width: u32, height: u32) -> Self {
+    pub fn new(
+        display: &Display<Self>,
+        width: u32,
+        height: u32,
+        physical_width: u32,
+        physical_height: u32,
+        refresh_mhz: i32,
+    ) -> Self {
         let display_handle = display.handle();
 
         let compositor_state = SmithayCompositorState::new::<Self>(&display_handle);
@@ -94,6 +130,29 @@ impl CompositorState {
         let deck_widget_state = DeckWidgetProtocolState::new();
         super::protocol::create_global::<Self>(&display_handle);
 
+        // Advertise the display as a wl_output so capture clients can reference it.
+        let output = Output::new(
+            "DRM-1".into(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "Braiins".into(),
+                model: "Deck".into(),
+                serial_number: String::new(),
+            },
+        );
+        #[expect(clippy::cast_possible_wrap, reason = "display dimensions fit in i32")]
+        let output_mode = OutputMode {
+            size: (physical_width as i32, physical_height as i32).into(),
+            refresh: refresh_mhz,
+        };
+        output.set_preferred(output_mode);
+        output.change_current_state(Some(output_mode), None, None, None);
+        output.create_global::<Self>(&display_handle);
+
+        let output_capture_source_state = OutputCaptureSourceState::new::<Self>(&display_handle);
+        let image_copy_capture_state = ImageCopyCaptureState::new::<Self>(&display_handle);
+
         Self {
             display_handle,
             compositor_state,
@@ -104,12 +163,20 @@ impl CompositorState {
             seat_state,
             data_device_state,
             deck_widget_state,
+            output_capture_source_state,
+            image_copy_capture_state,
+            capture_sessions: Vec::new(),
             width,
             height,
+            physical_width,
+            physical_height,
             widget_buffers: Vec::new(),
             pending_frame_callbacks: Vec::new(),
             widgets: WidgetTracker::new(),
             invalidated_buffers: Vec::new(),
+            dirty_buffers: Vec::new(),
+            pending_capture_frames: Vec::new(),
+            capture_enabled: true,
             needs_redraw: true,
         }
     }
@@ -140,7 +207,7 @@ impl CompositorHandler for CompositorState {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
-        tracing::debug!("Surface committed: {:?}", surface.id());
+        tracing::trace!("Surface committed: {:?}", surface.id());
 
         // First try to match by surface directly (for protocol surface)
         let mut instance_id = self
@@ -161,7 +228,7 @@ impl CompositorHandler for CompositorState {
                     .instance_id_for_surface_by_pid(Some(pid))
                     .cloned();
                 if instance_id.is_some() {
-                    tracing::debug!(
+                    tracing::trace!(
                         "Matched surface {:?} to widget by PID {}",
                         surface.id(),
                         pid
@@ -189,11 +256,12 @@ impl CompositorHandler for CompositorState {
                             }
                             self.widget_buffers
                                 .retain(|(_, existing_id)| existing_id != &id);
-                            tracing::debug!(
+                            tracing::trace!(
                                 "Buffer attached for widget {} (total buffers: {})",
                                 id,
                                 self.widget_buffers.len() + 1
                             );
+                            self.dirty_buffers.push(buffer.id());
                             self.widget_buffers.push((buffer.clone(), id));
                         } else {
                             tracing::debug!("Buffer attached to unknown surface (no instance_id)");
@@ -330,18 +398,107 @@ impl XdgShellHandler for CompositorState {
     }
 }
 
+// ---- Image capture protocol handlers ----
+
+impl OutputHandler for CompositorState {
+    fn output_bound(
+        &mut self,
+        _output: Output,
+        _wl_output: smithay::reexports::wayland_server::protocol::wl_output::WlOutput,
+    ) {
+    }
+}
+
+impl ImageCaptureSourceHandler for CompositorState {}
+
+impl OutputCaptureSourceHandler for CompositorState {
+    fn output_capture_source_state(&mut self) -> &mut OutputCaptureSourceState {
+        &mut self.output_capture_source_state
+    }
+
+    fn output_source_created(&mut self, source: ImageCaptureSource, output: &Output) {
+        source.user_data().insert_if_missing(|| output.downgrade());
+    }
+}
+
+impl ImageCopyCaptureHandler for CompositorState {
+    fn image_copy_capture_state(&mut self) -> &mut ImageCopyCaptureState {
+        &mut self.image_copy_capture_state
+    }
+
+    #[expect(clippy::cast_possible_wrap, reason = "display dimensions fit in i32")]
+    fn capture_constraints(&mut self, _source: &ImageCaptureSource) -> Option<BufferConstraints> {
+        if !self.capture_enabled {
+            return None;
+        }
+
+        Some(BufferConstraints {
+            size: Size::from((self.physical_width as i32, self.physical_height as i32)),
+            shm: vec![wl_shm::Format::Xrgb8888, wl_shm::Format::Argb8888],
+            dma: None,
+        })
+    }
+
+    fn new_session(&mut self, session: Session) {
+        if !self.capture_enabled {
+            session.stop();
+            return;
+        }
+
+        #[expect(clippy::cast_possible_wrap, reason = "display dimensions fit in i32")]
+        let constraints = BufferConstraints {
+            size: Size::from((self.physical_width as i32, self.physical_height as i32)),
+            shm: vec![wl_shm::Format::Xrgb8888, wl_shm::Format::Argb8888],
+            dma: None,
+        };
+        session.update_constraints(constraints);
+        self.capture_sessions.push(session);
+    }
+
+    fn frame(&mut self, _session: &SessionRef, frame: Frame) {
+        if !self.capture_enabled {
+            frame.fail(smithay::wayland::image_copy_capture::CaptureFailureReason::Stopped);
+            return;
+        }
+
+        // Frames are collected here and fulfilled from the last rendered content.
+        // Do NOT set needs_redraw — capture is passive, it reads whatever was
+        // last rendered without triggering additional render passes.
+        self.pending_capture_frames.push(frame);
+    }
+
+    fn session_destroyed(&mut self, session: SessionRef) {
+        self.capture_sessions.retain(|s| s.as_ref() != session);
+    }
+}
+
 impl SelectionHandler for CompositorState {
     type SelectionUserData = ();
 }
 
-impl DataDeviceHandler for CompositorState {
-    fn data_device_state(&self) -> &DataDeviceState {
-        &self.data_device_state
+impl CompositorState {
+    pub fn disable_capture(&mut self) {
+        if !self.capture_enabled {
+            return;
+        }
+
+        self.capture_enabled = false;
+
+        for frame in self.pending_capture_frames.drain(..) {
+            frame.fail(smithay::wayland::image_copy_capture::CaptureFailureReason::Stopped);
+        }
+
+        self.capture_sessions.clear();
     }
 }
 
-impl ClientDndGrabHandler for CompositorState {}
-impl ServerDndGrabHandler for CompositorState {}
+impl DataDeviceHandler for CompositorState {
+    fn data_device_state(&mut self) -> &mut DataDeviceState {
+        &mut self.data_device_state
+    }
+}
+
+impl WaylandDndGrabHandler for CompositorState {}
 
 #[derive(Debug, Default)]
 pub struct ClientState {
@@ -359,12 +516,16 @@ impl ClientData for ClientState {
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }
 
-delegate_compositor!(CompositorState);
-delegate_shm!(CompositorState);
-delegate_dmabuf!(CompositorState);
-delegate_seat!(CompositorState);
-delegate_xdg_shell!(CompositorState);
-delegate_data_device!(CompositorState);
+delegate_compositor!(self::CompositorState);
+delegate_shm!(self::CompositorState);
+delegate_dmabuf!(self::CompositorState);
+delegate_seat!(self::CompositorState);
+delegate_xdg_shell!(self::CompositorState);
+delegate_data_device!(self::CompositorState);
+delegate_output!(self::CompositorState);
+delegate_image_capture_source!(self::CompositorState);
+delegate_output_capture_source!(self::CompositorState);
+delegate_image_copy_capture!(self::CompositorState);
 
 smithay::reexports::wayland_server::delegate_global_dispatch!(
     CompositorState: [DeckWidgetManagerV1: ()] => DeckWidgetProtocolState

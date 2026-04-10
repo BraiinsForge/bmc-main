@@ -7,9 +7,8 @@ use bmc_widget_protocol::server::{
     deck_widget_manager_v1::{self, DeckWidgetManagerV1},
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
-use bmc_widget_protocol::wayland_server::Resource;
 use smithay::reexports::wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
 use super::conversions::action_from_protocol;

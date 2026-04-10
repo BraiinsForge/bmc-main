@@ -61,6 +61,4 @@ mod types;
 pub use types::{
     ActionPayload, LedEffect, Localization, RgbColor, SettingUpdate, Settings, SizeInfo, SizeType,
 };
-pub use wayland_backend;
 pub use wayland_client;
-pub use wayland_server;
