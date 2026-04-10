@@ -111,7 +111,7 @@ bmc-audio = { path = "bmc-audio" }
 bmc-button = { path = "bmc-button" }
 bmc-display = { path = "bmc-display" }
 bmc-gpio = { path = "bmc-gpio" }
-bmc-grpc = { path = "bmc-grpc" }
+bmc-grpc = { path = "bmc-grpc", default-features = false }
 bmc-ipc = { path = "bmc-ipc" }
 bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led" }

@@ -7,7 +7,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-bmc-grpc.workspace = true
+bmc-grpc = { workspace = true, features = ["server"] }
 bmc-platform.workspace = true
 bmc-scheduler.workspace = true
 bmc-shared-time.workspace = true

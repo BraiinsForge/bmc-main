@@ -3,10 +3,16 @@ name = "bmc-grpc"
 version = "0.1.0"
 edition = "2024"
 
+# Without features, this crate only exposes prost message types (no tonic dependency).
+# Enable "server" for gRPC server traits (required by bmc, bmc-upgrade).
+[features]
+default = ["server"]
+server = ["tonic"]
+
 [dependencies]
 prost.workspace = true
 prost-types.workspace = true
-tonic.workspace = true
+tonic = { workspace = true, optional = true }
 
 [build-dependencies]
 fs-err.workspace = true
