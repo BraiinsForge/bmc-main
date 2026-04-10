@@ -82,30 +82,13 @@ pub extern "C" fn __on_udp_broadcast_event(
     source_ptr: u32,
     source_len: u32,
 ) {
-    let data = if data_len > 0 && data_ptr != 0 {
-        unsafe {
-            let slice = core::slice::from_raw_parts(data_ptr as *const u8, data_len as usize);
-            core::str::from_utf8(slice).unwrap_or("")
-        }
-    } else {
-        ""
-    };
-    let source = if source_len > 0 && source_ptr != 0 {
-        unsafe {
-            let slice = core::slice::from_raw_parts(source_ptr as *const u8, source_len as usize);
-            core::str::from_utf8(slice).unwrap_or("")
-        }
-    } else {
-        ""
-    };
-
-    // Take ownership of the allocated buffers so they get freed
-    let _owned_data = if data_len > 0 && data_ptr != 0 {
+    // Take ownership first, then borrow — avoids dangling reference.
+    let owned_data = if data_len > 0 && data_ptr != 0 {
         unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
     } else {
         Vec::new()
     };
-    let _owned_source = if source_len > 0 && source_ptr != 0 {
+    let owned_source = if source_len > 0 && source_ptr != 0 {
         unsafe {
             Vec::from_raw_parts(
                 source_ptr as *mut u8,
@@ -116,6 +99,8 @@ pub extern "C" fn __on_udp_broadcast_event(
     } else {
         Vec::new()
     };
+    let data = core::str::from_utf8(&owned_data).unwrap_or("");
+    let source = core::str::from_utf8(&owned_source).unwrap_or("");
 
     let event = UdpBroadcastEvent::Response { data, source };
     let broadcast = UdpBroadcast(broadcast_id);
