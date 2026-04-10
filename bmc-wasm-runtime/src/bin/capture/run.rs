@@ -81,14 +81,8 @@ pub fn execute(args: RunArgs) -> Result<()> {
     let width: u32 = w.parse().context("invalid width")?;
     let height: u32 = h.parse().context("invalid height")?;
 
-    let size_name = match (width, height) {
-        (1280, 480) => "full",
-        (638, 480) => "large",
-        (638, 238) => "medium",
-        (317, 238) => "small",
-        _ => "custom",
-    }
-    .to_owned();
+    let size_name =
+        bmc_wasm_runtime::capture_config::size_name_from_dimensions(width, height).to_owned();
 
     // Check if this size is in the allowed list (empty = all sizes allowed)
     if !config.sizes.is_empty() && !config.sizes.contains(&size_name) {

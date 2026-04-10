@@ -30,8 +30,34 @@ impl std::error::Error for ConfigError {}
 
 // ── Constants ────────────────────────────────────────────────────────
 
+/// Standard widget capture sizes: (name, width, height).
+pub const CAPTURE_SIZES: &[(&str, u32, u32)] = &[
+    ("full", 1280, 480),
+    ("large", 638, 480),
+    ("medium", 638, 238),
+    ("small", 317, 238),
+];
+
 /// Valid size names for per-size fixture/interaction blocks.
 pub const VALID_SIZES: &[&str] = &["full", "large", "medium", "small"];
+
+/// Look up a size name from pixel dimensions.
+#[must_use]
+pub fn size_name_from_dimensions(width: u32, height: u32) -> &'static str {
+    CAPTURE_SIZES
+        .iter()
+        .find(|(_, w, h)| *w == width && *h == height)
+        .map_or("custom", |(name, _, _)| name)
+}
+
+/// Format a size as "WxH" from its name. Returns `None` for unknown names.
+#[must_use]
+pub fn size_dimensions_str(name: &str) -> Option<String> {
+    CAPTURE_SIZES
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, w, h)| format!("{w}x{h}"))
+}
 
 /// Default settlement timeout in frames (~5s virtual time).
 pub const DEFAULT_TIMEOUT: u32 = 300;

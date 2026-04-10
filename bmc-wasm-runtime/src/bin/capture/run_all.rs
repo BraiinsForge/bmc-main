@@ -20,13 +20,7 @@ use bmc_wasm_runtime::capture_config;
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
-/// Standard widget capture sizes: (name, WxH).
-const CAPTURE_SIZES: &[(&str, &str)] = &[
-    ("full", "1280x480"),
-    ("large", "638x480"),
-    ("medium", "638x238"),
-    ("small", "317x238"),
-];
+use bmc_wasm_runtime::capture_config::CAPTURE_SIZES;
 
 /// Alignment column for right-side timings.
 const COL_WIDTH: usize = 50;
@@ -260,7 +254,8 @@ fn capture_widget(
     let t0 = Instant::now();
 
     for variant in &variants {
-        for &(size_name, dimensions) in CAPTURE_SIZES {
+        for &(size_name, w, h) in CAPTURE_SIZES {
+            let dimensions = format!("{w}x{h}");
             if !fixture_sizes.contains(&size_name.to_owned()) {
                 continue;
             }
