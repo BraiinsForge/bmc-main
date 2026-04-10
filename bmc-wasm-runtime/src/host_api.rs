@@ -416,6 +416,9 @@ pub(crate) struct HostState {
     /// Parsed XML documents (stored as raw strings for roxmltree re-parsing).
     pub xml_docs: HashMap<u32, String>,
 
+    /// Cached XML query results: (doc_id, path) → text result.
+    pub xml_query_cache: HashMap<(u32, String), Option<String>>,
+
     /// Next XML document ID.
     pub next_xml_id: u32,
 
@@ -533,6 +536,7 @@ impl HostState {
             json_docs: HashMap::new(),
             next_json_id: 1,
             xml_docs: HashMap::new(),
+            xml_query_cache: HashMap::new(),
             next_xml_id: 1,
             websockets: HashMap::new(),
             next_ws_id: 1,

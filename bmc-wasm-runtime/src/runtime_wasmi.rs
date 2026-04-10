@@ -1684,17 +1684,23 @@ impl WasmWidgetRuntime {
                 let path = read_string(&caller, path_ptr, path_len);
                 let Some(path) = path else { return -1 };
 
+                let cache_key = (doc_id, path);
                 let result = {
                     let state = caller.data();
-                    let Some(xml_str) = state.xml_docs.get(&doc_id) else {
-                        return -1;
-                    };
-                    let Ok(doc) = roxmltree::Document::parse(xml_str) else {
-                        return -1;
-                    };
-                    xml_query_text(&doc, &path)
+                    if let Some(cached) = state.xml_query_cache.get(&cache_key) {
+                        cached.clone()
+                    } else {
+                        let Some(xml_str) = state.xml_docs.get(&doc_id) else {
+                            return -1;
+                        };
+                        let Ok(doc) = roxmltree::Document::parse(xml_str) else {
+                            return -1;
+                        };
+                        xml_query_text(&doc, &cache_key.1)
+                    }
                 };
 
+                caller.data_mut().xml_query_cache.insert(cache_key, result.clone());
                 let Some(text) = result else { return -1 };
                 write_to_wasm(&mut caller, &text, out_ptr, out_len)
             },
@@ -1703,17 +1709,28 @@ impl WasmWidgetRuntime {
         linker.func_wrap(
             "env",
             "host_xml_get_f64",
-            |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> f64 {
+            |mut caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> f64 {
                 let path = read_string(&caller, path_ptr, path_len);
                 let Some(path) = path else { return f64::NAN };
-                let state = caller.data();
-                let Some(xml_str) = state.xml_docs.get(&doc_id) else {
-                    return f64::NAN;
+
+                let cache_key = (doc_id, path);
+                let result = {
+                    let state = caller.data();
+                    if let Some(cached) = state.xml_query_cache.get(&cache_key) {
+                        cached.clone()
+                    } else {
+                        let Some(xml_str) = state.xml_docs.get(&doc_id) else {
+                            return f64::NAN;
+                        };
+                        let Ok(doc) = roxmltree::Document::parse(xml_str) else {
+                            return f64::NAN;
+                        };
+                        xml_query_text(&doc, &cache_key.1)
+                    }
                 };
-                let Ok(doc) = roxmltree::Document::parse(xml_str) else {
-                    return f64::NAN;
-                };
-                xml_query_text(&doc, &path)
+
+                caller.data_mut().xml_query_cache.insert(cache_key, result.clone());
+                result
                     .and_then(|s| s.parse::<f64>().ok())
                     .unwrap_or(f64::NAN)
             },
@@ -1723,7 +1740,9 @@ impl WasmWidgetRuntime {
             "env",
             "host_xml_free",
             |mut caller: Caller<'_, HostState>, doc_id: u32| {
-                caller.data_mut().xml_docs.remove(&doc_id);
+                let state = caller.data_mut();
+                state.xml_docs.remove(&doc_id);
+                state.xml_query_cache.retain(|k, _| k.0 != doc_id);
             },
         )?;
 
