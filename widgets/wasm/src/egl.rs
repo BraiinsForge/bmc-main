@@ -303,22 +303,28 @@ void main() {
             gl.compile_shader(vs);
             if !gl.get_shader_compile_status(vs) {
                 let log = gl.get_shader_info_log(vs);
+                gl.delete_shader(vs);
                 anyhow::bail!("Blit VS compile: {log}");
             }
 
-            let fs = gl
-                .create_shader(glow::FRAGMENT_SHADER)
-                .map_err(|e| anyhow::anyhow!("Blit FS create: {e}"))?;
+            let fs = gl.create_shader(glow::FRAGMENT_SHADER).map_err(|e| {
+                gl.delete_shader(vs);
+                anyhow::anyhow!("Blit FS create: {e}")
+            })?;
             gl.shader_source(fs, frag_src);
             gl.compile_shader(fs);
             if !gl.get_shader_compile_status(fs) {
                 let log = gl.get_shader_info_log(fs);
+                gl.delete_shader(vs);
+                gl.delete_shader(fs);
                 anyhow::bail!("Blit FS compile: {log}");
             }
 
-            let prog = gl
-                .create_program()
-                .map_err(|e| anyhow::anyhow!("Blit program create: {e}"))?;
+            let prog = gl.create_program().map_err(|e| {
+                gl.delete_shader(vs);
+                gl.delete_shader(fs);
+                anyhow::anyhow!("Blit program create: {e}")
+            })?;
             gl.attach_shader(prog, vs);
             gl.attach_shader(prog, fs);
             gl.link_program(prog);
@@ -326,6 +332,7 @@ void main() {
             gl.delete_shader(fs);
             if !gl.get_program_link_status(prog) {
                 let log = gl.get_program_info_log(prog);
+                gl.delete_program(prog);
                 anyhow::bail!("Blit program link: {log}");
             }
             prog
