@@ -3402,6 +3402,12 @@ fn xml_query_text(doc: &roxmltree::Document<'_>, path: &str) -> Option<String> {
 
 /// Maximum decoded image size accepted by `host_decode_image` (RGBA pixels).
 const MAX_DECODE_IMAGE_PIXELS: u64 = 4_194_304;
+/// Maximum decoder allocation budget accepted by `host_decode_image`.
+///
+/// This is intentionally slightly above the 8-bit RGBA output budget so common
+/// decoders can keep modest working buffers, while still rejecting high
+/// bit-depth images before they allocate substantially larger intermediates.
+const MAX_DECODE_IMAGE_ALLOC_BYTES: u64 = 24 * 1024 * 1024;
 
 fn validate_kv_key(key: &str) -> Result<()> {
     if key.is_empty() || key.contains('/') || key.contains('\\') || key.contains("..") {
@@ -3443,9 +3449,15 @@ fn probe_image_dimensions(data: &[u8]) -> Result<(u32, u32)> {
 fn decode_image_rgba_limited(data: &[u8]) -> Result<image::RgbaImage> {
     let (width, height) = probe_image_dimensions(data)?;
     let _ = rgba_byte_len_limited(width, height)?;
+    let mut limits = image::io::Limits::default();
+    limits.max_image_width = Some(width);
+    limits.max_image_height = Some(height);
+    limits.max_alloc = Some(MAX_DECODE_IMAGE_ALLOC_BYTES);
 
     match std::panic::catch_unwind(|| {
-        image::ImageReader::new(std::io::Cursor::new(data))
+        let mut reader = image::ImageReader::new(std::io::Cursor::new(data));
+        reader.limits(limits);
+        reader
             .with_guessed_format()
             .map_err(image::ImageError::IoError)
             .and_then(image::ImageReader::decode)
@@ -4718,7 +4730,7 @@ mod tests {
     use std::io::Cursor;
     use std::path::Path;
 
-    use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+    use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba, RgbaImage};
 
     use super::{
         MAX_DECODE_IMAGE_PIXELS, TlsVerificationMode, build_tls_client_config,
@@ -4765,6 +4777,18 @@ mod tests {
 
         assert_eq!((rgba.width(), rgba.height()), (2, 2));
         assert_eq!(rgba.as_raw().len(), 16);
+    }
+
+    #[test]
+    fn decode_image_limited_rejects_high_bit_depth_png_over_alloc_budget() {
+        let img =
+            ImageBuffer::from_pixel(2048, 2048, image::Rgba([0x1234, 0x5678, 0x9ABC, 0xFFFF]));
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba16(img)
+            .write_to(&mut encoded, ImageFormat::Png)
+            .expect("BUG: test PNG encoding should succeed");
+
+        assert!(decode_image_rgba_limited(&encoded.into_inner()).is_err());
     }
 
     #[test]

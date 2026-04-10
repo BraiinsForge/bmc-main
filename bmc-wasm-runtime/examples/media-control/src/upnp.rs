@@ -14,7 +14,7 @@
 //! Responses are XML with a SOAP envelope. Track metadata is embedded as
 //! DIDL-Lite XML inside a `<TrackMetaData>` element (double-encoded).
 
-use bmc_wasm_sdk::{FetchRequest, FetchResponse, XmlDoc, fmt, ufmt};
+use bmc_wasm_sdk::{FetchRequest, FetchResponse, XmlDoc, fmt, log_warn, ufmt};
 
 // ── Service URNs ─────────────────────────────────────────────────
 

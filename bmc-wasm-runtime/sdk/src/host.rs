@@ -368,7 +368,8 @@ pub fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
 ///
 /// If you only need the aspect ratio, use [`image_dimensions`] instead — it avoids
 /// the large RGBA allocation and is much cheaper on fuel. Returns `None` when the
-/// host rejects the image for exceeding its decoded pixel budget.
+/// host rejects the image for exceeding its decoded pixel budget or decoder
+/// allocation budget.
 pub fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let (w, h) = image_dimensions(data)?;
     let needed = w.checked_mul(h)?.checked_mul(4)?;

@@ -7,6 +7,8 @@
 //! transport. Protocol-specific status callbacks remain separate — each
 //! protocol pushes updates through its own callback registered at connect time.
 
+use bmc_wasm_sdk::{log_warn, ufmt};
+
 // ── Shared types ────────────────────────────────────────────
 
 /// Track metadata pushed by protocols to the view.
