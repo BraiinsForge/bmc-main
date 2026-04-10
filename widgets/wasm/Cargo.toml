@@ -8,23 +8,14 @@ edition = "2024"
 bmc-wasm-protocol = { workspace = true }
 bmc-wasm-runtime = { workspace = true }
 
-# Widget SDK (gpu feature provides EGL/GBM/DMA-BUF infrastructure)
+# Widget SDK (gpu feature provides EGL/GBM/DMA-BUF + Wayland surface client)
 bmc-widget = { workspace = true, features = ["gpu"] }
-
-# Wayland
-wayland-backend = { workspace = true, features = ["client_system"] }
-wayland-client = { workspace = true }
-wayland-protocols = { workspace = true, features = ["client", "staging"] }
-
-# BMC widget protocol (deck_widget_v1)
-bmc-widget-protocol = { workspace = true }
 
 # OpenGL ES (for blit shader in two-FBO pipeline)
 glow = { workspace = true }
 
 # Utilities
 anyhow = { workspace = true }
-libc = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

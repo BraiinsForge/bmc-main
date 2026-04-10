@@ -140,7 +140,9 @@ impl EglState {
     }
 
     /// End frame — `gl.flush()`, export DMA-BUF, swap buffers.
-    pub fn end_frame(&mut self) -> Result<DmaBufInfo> {
+    ///
+    /// Returns the DMA-BUF info and the slot index of the exported buffer.
+    pub fn end_frame(&mut self) -> Result<(DmaBufInfo, usize)> {
         unsafe {
             self.ctx.gl().flush();
         }
@@ -152,11 +154,14 @@ impl EglState {
 
         let info = EglContext::export_dmabuf(buf)?;
         self.current_buffer = 1 - self.current_buffer;
-        Ok(info)
+        Ok((info, idx))
     }
 
     /// Resize — deallocate buffers so they're reallocated at the new size.
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "resize support for when protocol adds resize events"
+    )]
     pub fn resize(&mut self, width: u32, height: u32) {
         if self.width == width && self.height == height {
             return;

@@ -1290,15 +1290,10 @@ dependencies = [
  "bmc-wasm-protocol",
  "bmc-wasm-runtime",
  "bmc-widget",
- "bmc-widget-protocol",
  "glow",
- "libc",
  "serde",
  "tracing",
  "tracing-subscriber",
- "wayland-backend",
- "wayland-client 0.31.10",
- "wayland-protocols 0.32.8",
 ]
 
 [[package]]
