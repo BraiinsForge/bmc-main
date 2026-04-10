@@ -36,10 +36,12 @@ pub struct DigitMesh {
     pub total_vertex_count: i32,
 }
 
-/// 3D digit meshes (0-9)
+/// 3D digit meshes (0-9) plus colon separator
 pub struct Digit3DMeshes {
     /// Meshes for digits 0-9
     meshes: [DigitMesh; 10],
+    /// Extruded colon ':' glyph
+    colon: DigitMesh,
     /// Shader program for 3D rendering
     pub program: glow::Program,
 }
@@ -61,12 +63,18 @@ impl Digit3DMeshes {
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to create mesh array"))?;
 
+        let colon = create_char_mesh(gl, &font, ':')?;
+
         // Create shader program for 3D lit rendering
         let program = create_3d_shader(gl)?;
 
-        tracing::info!("Created 10 3D digit meshes with extrusion");
+        tracing::info!("Created 10 3D digit meshes + colon with extrusion");
 
-        Ok(Self { meshes, program })
+        Ok(Self {
+            meshes,
+            colon,
+            program,
+        })
     }
 
     /// Get mesh for a digit (0-9)
@@ -84,8 +92,30 @@ impl Digit3DMeshes {
         color: [f32; 3],
         light_dir: [f32; 3],
     ) {
-        let mesh = self.get(digit);
+        self.draw_mesh(gl, self.get(digit), mvp, normal_matrix, color, light_dir);
+    }
 
+    /// Draw the extruded colon separator
+    pub fn draw_colon(
+        &self,
+        gl: &glow::Context,
+        mvp: &[f32; 16],
+        normal_matrix: &[f32; 9],
+        color: [f32; 3],
+        light_dir: [f32; 3],
+    ) {
+        self.draw_mesh(gl, &self.colon, mvp, normal_matrix, color, light_dir);
+    }
+
+    fn draw_mesh(
+        &self,
+        gl: &glow::Context,
+        mesh: &DigitMesh,
+        mvp: &[f32; 16],
+        normal_matrix: &[f32; 9],
+        color: [f32; 3],
+        light_dir: [f32; 3],
+    ) {
         unsafe {
             gl.use_program(Some(self.program));
 
@@ -210,6 +240,12 @@ fn create_3d_shader(gl: &glow::Context) -> Result<glow::Program> {
 fn create_digit_mesh(gl: &glow::Context, font: &FontRef<'_>, digit: u8) -> Result<DigitMesh> {
     // Get glyph outline
     let c = char::from_digit(u32::from(digit), 10).unwrap_or('0');
+    create_char_mesh(gl, font, c)
+}
+
+/// Create a 3D extruded mesh for an arbitrary glyph
+fn create_char_mesh(gl: &glow::Context, font: &FontRef<'_>, c: char) -> Result<DigitMesh> {
+    // Get glyph outline
     let glyph_id = font.glyph_id(c);
     let scale = PxScale::from(200.0);
 
@@ -221,7 +257,7 @@ fn create_digit_mesh(gl: &glow::Context, font: &FontRef<'_>, digit: u8) -> Resul
 
     let outlined = font
         .outline_glyph(glyph)
-        .ok_or_else(|| anyhow::anyhow!("No outline for digit {digit}"))?;
+        .ok_or_else(|| anyhow::anyhow!("No outline for '{c}'"))?;
 
     // Convert glyph outline to lyon path
     let path = glyph_to_lyon_path(&outlined, font, glyph_id, scale);
@@ -241,8 +277,8 @@ fn create_digit_mesh(gl: &glow::Context, font: &FontRef<'_>, digit: u8) -> Resul
         .map_err(|e| anyhow::anyhow!("Tessellation failed: {e:?}"))?;
 
     tracing::info!(
-        "Digit {} tessellation: {} vertices, {} indices",
-        digit,
+        "Glyph '{}' tessellation: {} vertices, {} indices",
+        c,
         geometry.vertices.len(),
         geometry.indices.len()
     );
@@ -521,28 +557,29 @@ fn add_side_quad(
     let nx = -dy / len;
     let ny = dx / len;
 
-    // Two triangles for the quad
-    // Triangle 1: front-from, back-from, front-to
+    // Two triangles for the quad — CCW winding when viewed from the
+    // outward normal so face culling keeps them visible.
+    // Triangle 1: front-from, front-to, back-from
     vertices.push(Vertex3D {
         position: [x0, y0, z_front],
         normal: [nx, ny, 0.0],
     });
     vertices.push(Vertex3D {
-        position: [x0, y0, z_back],
+        position: [x1, y1, z_front],
         normal: [nx, ny, 0.0],
     });
     vertices.push(Vertex3D {
-        position: [x1, y1, z_front],
+        position: [x0, y0, z_back],
         normal: [nx, ny, 0.0],
     });
 
-    // Triangle 2: front-to, back-from, back-to
+    // Triangle 2: back-from, front-to, back-to
     vertices.push(Vertex3D {
-        position: [x1, y1, z_front],
+        position: [x0, y0, z_back],
         normal: [nx, ny, 0.0],
     });
     vertices.push(Vertex3D {
-        position: [x0, y0, z_back],
+        position: [x1, y1, z_front],
         normal: [nx, ny, 0.0],
     });
     vertices.push(Vertex3D {

@@ -16,6 +16,98 @@ use bmc_widget::surface::{
     DeckWidgetSurfaceClient, SettingUpdate, WidgetEvent, WidgetSurface, XdgSurfaceClient,
 };
 use glow::HasContext;
+use std::time::Instant;
+
+/// Flip animation duration in seconds.
+const FLIP_DURATION: f32 = 0.35;
+
+/// Persistent animation state for the 6-digit clock (HH:MM:SS).
+///
+/// Tracks which digit value is currently displayed and, for each position,
+/// when it last changed. Animation progress is derived from monotonic
+/// [`Instant`] elapsed time, making it immune to wall-clock jitter.
+///
+/// Backward wall-clock jumps (common in QEMU VMs) are rejected entirely —
+/// digits only advance forward. The hysteresis window also prevents
+/// mid-animation resets from rapid clock oscillation.
+struct FlipState {
+    digits: [u8; 6],
+    prev_digits: [u8; 6],
+    transition_start: [Option<Instant>; 6],
+    /// Total seconds since midnight of the last accepted update.
+    /// `None` until the first update (accepts any initial time).
+    last_total_seconds: Option<u32>,
+}
+
+/// Half a day in seconds — jumps larger than this across midnight
+/// (e.g. 23:59:59 → 00:00:00) are treated as forward wraps, not
+/// backward jumps.
+const HALF_DAY: u32 = 43_200;
+
+impl FlipState {
+    fn new() -> Self {
+        Self {
+            digits: [0; 6],
+            prev_digits: [0; 6],
+            transition_start: [None; 6],
+            last_total_seconds: None,
+        }
+    }
+
+    /// Update digits from the current wall-clock time.
+    /// Rejects backward clock jumps and ignores transitions while
+    /// a flip animation is still running.
+    fn update(&mut self, hours: u8, minutes: u8, seconds: u8) {
+        let total = u32::from(hours) * 3600 + u32::from(minutes) * 60 + u32::from(seconds);
+
+        // Reject backward clock jumps. Allow midnight wrap (large negative
+        // delta means the clock crossed 00:00:00). Accept the first update
+        // unconditionally.
+        if let Some(prev) = self.last_total_seconds {
+            let delta = total.wrapping_sub(prev);
+            if delta >= HALF_DAY {
+                return;
+            }
+        }
+        self.last_total_seconds = Some(total);
+
+        #[expect(clippy::integer_division, reason = "extracting digit values 0-9")]
+        let new_digits: [u8; 6] = [
+            hours / 10,
+            hours % 10,
+            minutes / 10,
+            minutes % 10,
+            seconds / 10,
+            seconds % 10,
+        ];
+
+        let now = Instant::now();
+        for (i, &new_digit) in new_digits.iter().enumerate() {
+            let animating =
+                self.transition_start[i].is_some_and(|t| t.elapsed().as_secs_f32() < FLIP_DURATION);
+            if new_digit != self.digits[i] && !animating {
+                self.prev_digits[i] = self.digits[i];
+                self.digits[i] = new_digit;
+                self.transition_start[i] = Some(now);
+            }
+        }
+    }
+
+    /// Eased animation progress for digit position `i` (0.0 .. 1.0).
+    fn flip_progress(&self, i: usize) -> f32 {
+        let Some(start) = self.transition_start[i] else {
+            return 1.0;
+        };
+        let t = start.elapsed().as_secs_f32();
+        let linear = (t / FLIP_DURATION).min(1.0);
+        // Cubic ease-in-out
+        if linear < 0.5 {
+            4.0 * linear * linear * linear
+        } else {
+            1.0 - (-2.0 * linear + 2.0).powi(3) / 2.0
+        }
+    }
+}
 
 /// Connect in standalone mode (XDG toplevel, no compositor protocol).
 pub fn connect_standalone(
@@ -49,7 +141,6 @@ fn run_render_loop(
     initial_timezone: String,
 ) -> Result<()> {
     let mut timezone = initial_timezone;
-
     // Initialize GBM-based EGL
     let mut egl = EglState::new(surface.width(), surface.height())?;
     tracing::info!("GBM-based EGL initialized, starting render loop");
@@ -72,6 +163,7 @@ fn run_render_loop(
         tracing::info!("3D digit meshes created");
     }
 
+    let mut flip_state = FlipState::new();
     surface.request_frame();
 
     while surface.running() {
@@ -110,11 +202,7 @@ fn run_render_loop(
             let (hours, minutes, seconds) =
                 (now.hour() as u8, now.minute() as u8, now.second() as u8);
 
-            #[expect(
-                clippy::integer_division,
-                reason = "intentional truncation to milliseconds"
-            )]
-            let subsec = f32::from((now.nanosecond() / 1_000_000) as u16) / 1000.0;
+            flip_state.update(hours, minutes, seconds);
 
             egl.begin_frame()?;
             egl.clear(0.0, 0.0, 0.0, 1.0);
@@ -125,16 +213,17 @@ fn run_render_loop(
                 &digit_textures,
                 digit_meshes.as_ref(),
                 gl,
-                hours,
-                minutes,
-                seconds,
-                subsec,
-                &now,
+                &flip_state,
             );
 
             let (dmabuf_info, slot) = egl.end_frame()?;
             surface.submit_buffer(&dmabuf_info, slot, true)?;
 
+            tracing::trace!(
+                frame = surface.frame_count(),
+                time = %format_args!("{hours:02}:{minutes:02}:{seconds:02}"),
+                "rendered",
+            );
             if surface.frame_count().is_multiple_of(60) {
                 tracing::debug!("Frame {}", surface.frame_count());
             }
@@ -145,24 +234,13 @@ fn run_render_loop(
 }
 
 /// Render the HH:MM:SS clock face.
-#[expect(clippy::too_many_arguments, reason = "render state passed through")]
-#[expect(
-    clippy::too_many_lines,
-    reason = "rendering logic with animation branches"
-)]
-fn render_clock<Tz: chrono::TimeZone>(
+fn render_clock(
     renderer: &Renderer,
     digit_textures: &DigitTextures,
     digit_meshes: Option<&Digit3DMeshes>,
     gl: &glow::Context,
-    hours: u8,
-    minutes: u8,
-    seconds: u8,
-    subsec: f32,
-    now: &chrono::DateTime<Tz>,
+    state: &FlipState,
 ) {
-    use chrono::Timelike;
-
     let scale_factor = 0.85;
     let panel_height = (257.0 * scale_factor) / 480.0;
     let panel_width = (200.0 * scale_factor) / 480.0;
@@ -170,43 +248,7 @@ fn render_clock<Tz: chrono::TimeZone>(
     let gap = 0.02;
     let total_width = 6.0 * panel_width + 2.0 * colon_width + 7.0 * gap;
     let start_x = -total_width / 2.0 + panel_width / 2.0;
-    let panel_color = [0.05, 0.05, 0.1, 1.0];
-
-    #[expect(clippy::integer_division, reason = "extracting digit values 0-9")]
-    let digits: [u8; 6] = [
-        hours / 10,
-        hours % 10,
-        minutes / 10,
-        minutes % 10,
-        seconds / 10,
-        seconds % 10,
-    ];
-
-    let prev = now.clone() - chrono::Duration::seconds(1);
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "hour 0-23, minute/second 0-59 always fit in u8"
-    )]
-    let (prev_hours, prev_minutes, prev_seconds) =
-        (prev.hour() as u8, prev.minute() as u8, prev.second() as u8);
-
-    #[expect(clippy::integer_division, reason = "extracting digit values 0-9")]
-    let prev_digits: [u8; 6] = [
-        prev_hours / 10,
-        prev_hours % 10,
-        prev_minutes / 10,
-        prev_minutes % 10,
-        prev_seconds / 10,
-        prev_seconds % 10,
-    ];
-
-    let flip_duration = 0.35;
-    let flip_progress_linear = (subsec / flip_duration).min(1.0);
-    let flip_progress = if flip_progress_linear < 0.5 {
-        4.0 * flip_progress_linear * flip_progress_linear * flip_progress_linear
-    } else {
-        1.0 - (-2.0 * flip_progress_linear + 2.0).powi(3) / 2.0
-    };
+    let panel_color = [0.10, 0.10, 0.18, 1.0];
 
     unsafe {
         gl.enable(glow::BLEND);
@@ -217,35 +259,17 @@ fn render_clock<Tz: chrono::TimeZone>(
     for i in 0..6 {
         if i == 2 || i == 4 {
             let colon_x = x - panel_width / 2.0 - gap - colon_width / 2.0;
-            let pill_width = colon_width * 0.8;
-            let pill_height = pill_width * (19.74 / 19.0);
-            let pill_spacing = pill_height * 1.5;
-            let colon_color = [
-                f32::from(0xC6_u8) / 255.0,
-                f32::from(0xC6_u8) / 255.0,
-                f32::from(0xC6_u8) / 255.0,
-                1.0,
-            ];
-            renderer.draw_rounded_rect(
-                gl,
-                colon_x,
-                pill_spacing / 2.0,
-                pill_width,
-                pill_height,
-                colon_color,
-            );
-            renderer.draw_rounded_rect(
-                gl,
-                colon_x,
-                -pill_spacing / 2.0,
-                pill_width,
-                pill_height,
-                colon_color,
-            );
+
+            if let Some(digit_meshes) = digit_meshes {
+                render_3d_colon(renderer, digit_meshes, gl, colon_x, panel_height);
+            } else {
+                render_2d_colon(renderer, gl, colon_x, colon_width);
+            }
         }
 
-        let current_digit = digits[i];
-        let prev_digit = prev_digits[i];
+        let current_digit = state.digits[i];
+        let prev_digit = state.prev_digits[i];
+        let flip_progress = state.flip_progress(i);
         let digit_changed = current_digit != prev_digit;
 
         renderer.draw_rect(gl, x, 0.0, panel_width, panel_height, panel_color);
@@ -301,9 +325,13 @@ fn render_3d_digit(
 ) {
     unsafe {
         gl.enable(glow::DEPTH_TEST);
+        // Disable blending for opaque 3D geometry — inherited BLEND
+        // from render_clock causes back-face fragments to bleed through
+        // as lighter rectangles around the digits.
+        gl.disable(glow::BLEND);
     }
 
-    let digit_scale = panel_height * 1.6;
+    let digit_scale = panel_height * 0.9;
     let projection = renderer.projection();
     let light_dir = [-0.5, 0.5, 0.7];
     let digit_color = [1.0, 1.0, 1.0];
@@ -311,12 +339,15 @@ fn render_3d_digit(
     let base_tilt_y = 0.2;
 
     if digit_changed && flip_progress < 1.0 {
+        // No face culling during flip — the digit rotates past 90° so
+        // the front face points away from the camera mid-animation.
         let angle = flip_progress * std::f32::consts::PI;
         let (digit, rot_angle) = if angle < std::f32::consts::FRAC_PI_2 {
             (prev_digit, -angle - base_tilt_x)
         } else {
             (current_digit, std::f32::consts::PI - angle - base_tilt_x)
         };
+        tracing::trace!(pos = x, digit, prev_digit, current_digit, angle, "3d flip");
         let rotation = Mat4::rotate_x(rot_angle).mul(&Mat4::rotate_y(base_tilt_y));
         let model = Mat4::translate(x, 0.0, 0.01)
             .mul(&rotation)
@@ -332,6 +363,12 @@ fn render_3d_digit(
             light_dir,
         );
     } else {
+        // Static digits: cull back faces to prevent bleed-through
+        unsafe {
+            gl.enable(glow::CULL_FACE);
+            gl.cull_face(glow::BACK);
+        }
+        tracing::trace!(pos = x, digit = current_digit, "3d static");
         let rotation = Mat4::rotate_x(-base_tilt_x).mul(&Mat4::rotate_y(base_tilt_y));
         let model = Mat4::translate(x, 0.0, 0.01)
             .mul(&rotation)
@@ -346,11 +383,82 @@ fn render_3d_digit(
             digit_color,
             light_dir,
         );
+        unsafe {
+            gl.disable(glow::CULL_FACE);
+        }
     }
 
     unsafe {
         gl.disable(glow::DEPTH_TEST);
+        gl.enable(glow::BLEND);
     }
+}
+
+fn render_3d_colon(
+    renderer: &Renderer,
+    digit_meshes: &Digit3DMeshes,
+    gl: &glow::Context,
+    x: f32,
+    panel_height: f32,
+) {
+    let base_tilt_x = 0.3;
+    let base_tilt_y = 0.2;
+    let colon_scale = panel_height * 0.45;
+    let colon_color = [
+        f32::from(0xC6_u8) / 255.0,
+        f32::from(0xC6_u8) / 255.0,
+        f32::from(0xC6_u8) / 255.0,
+    ];
+    let light_dir = [-0.5, 0.5, 0.7];
+
+    unsafe {
+        gl.enable(glow::DEPTH_TEST);
+        gl.enable(glow::CULL_FACE);
+        gl.cull_face(glow::BACK);
+        gl.disable(glow::BLEND);
+    }
+
+    let rotation = Mat4::rotate_x(-base_tilt_x).mul(&Mat4::rotate_y(base_tilt_y));
+    let model = Mat4::translate(x, 0.0, 0.01)
+        .mul(&rotation)
+        .mul(&Mat4::scale(colon_scale, colon_scale, colon_scale));
+    let mvp = renderer.projection().mul(&model);
+    let normal_matrix = model.to_normal_matrix();
+    digit_meshes.draw_colon(gl, mvp.as_array(), &normal_matrix, colon_color, light_dir);
+
+    unsafe {
+        gl.disable(glow::DEPTH_TEST);
+        gl.disable(glow::CULL_FACE);
+        gl.enable(glow::BLEND);
+    }
+}
+
+fn render_2d_colon(renderer: &Renderer, gl: &glow::Context, x: f32, colon_width: f32) {
+    let pill_width = colon_width * 0.8;
+    let pill_height = pill_width * (19.74 / 19.0);
+    let pill_spacing = pill_height * 1.5;
+    let colon_color = [
+        f32::from(0xC6_u8) / 255.0,
+        f32::from(0xC6_u8) / 255.0,
+        f32::from(0xC6_u8) / 255.0,
+        1.0,
+    ];
+    renderer.draw_rounded_rect(
+        gl,
+        x,
+        pill_spacing / 2.0,
+        pill_width,
+        pill_height,
+        colon_color,
+    );
+    renderer.draw_rounded_rect(
+        gl,
+        x,
+        -pill_spacing / 2.0,
+        pill_width,
+        pill_height,
+        colon_color,
+    );
 }
 
 #[expect(clippy::too_many_arguments, reason = "render parameters")]

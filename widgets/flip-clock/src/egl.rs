@@ -43,11 +43,13 @@ impl EglState {
         Ok(())
     }
 
-    /// Clear the screen with a color.
+    /// Clear the screen with a color (and depth buffer for 3D rendering).
     pub fn clear(&self, r: f32, g: f32, b: f32, a: f32) {
         unsafe {
             self.egl.gl().clear_color(r, g, b, a);
-            self.egl.gl().clear(glow::COLOR_BUFFER_BIT);
+            self.egl
+                .gl()
+                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
         }
     }
 
