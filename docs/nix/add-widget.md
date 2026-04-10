@@ -105,30 +105,32 @@ Skip this step if the widget will only be installed on-demand.
 
 ## Deploying to a device
 
-Once the widget is registered in `workspace.nix`, you can deploy it to a device using `nix-deploy-new-widget.sh`. This
-script builds the full Nix package and copies its closure to the device store:
+Once the widget is registered in `nix/packages.nix`, you can deploy it to a device using `nix-deploy.sh`. This script
+builds the full Nix package, copies it to the device and activates a new profile generation with it.
 
 ```bash
-./scripts/nix-deploy-new-widget.sh my-widget 192.168.1.2
+./scripts/nix-deploy.sh '.#deck-packages.flip-clock' 192.168.1.2
 # or
-DEVICE_IP=192.168.1.2 ./scripts/nix-deploy-new-widget.sh my-widget
+DEVICE_IP=192.168.1.2 ./scripts/nix-deploy.sh '.#deck-packages.flip-clock'
 ```
 
 The script:
 
-1. Builds the `widget-my-widget-armv7-glibc-release` flake output
+1. Builds the `deck-packages.flip-clock.pkg` flake output
 2. Copies the Nix closure to the device via `nix copy`
-3. Symlinks the widget files into `/run/current-profile/`
+3. Builds and activates new generation of the bmc profile
 
 ### Fast iteration with `nix-cargo-deploy.sh`
 
-After the initial Nix deploy, use `nix-cargo-deploy.sh` for faster edit-compile-deploy cycles. It only uploads the
-binary without rebuilding the full Nix package:
+After the initial Nix deploy, you may use `nix-cargo-deploy.sh` for faster edit-compile-deploy cycles. It only uploads
+the binary without rebuilding the full Nix package:
 
 ```bash
 nix develop .#armv7-glibc-release
 ./scripts/nix-cargo-deploy.sh widget my-widget 192.168.1.2
 ```
 
-This requires the widget to already be present on the device (deployed at least once with `nix-deploy-new-widget.sh` or
-via the init tarball).
+This requires the widget to already be present on the device (deployed at least once with `nix-deploy.sh` or via the
+init tarball).
+
+NOTE: any subsequent `nix-deploy.sh` will override the effect of `nix-cargo-deploy.sh`

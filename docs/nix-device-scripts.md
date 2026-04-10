@@ -41,16 +41,23 @@ ssh root@192.168.1.2 'umount /nix 2>/dev/null; rm -rf /mnt/data/nix /nix'
 
 ## nix-deploy.sh — Deploy packages to an initialized device
 
-Builds a Nix flake package and copies its entire closure to the device's `/nix/store` using `nix copy`. The device must
-already be initialized with `nix-init.sh`.
+This is the primary means of deployment throughout day-to-day development. This kind of deployment always builds Nix
+packages, though. So for faster iteration on a single component, like a native widget or compositor, you might prefer
+`nix-cargo-deploy.sh`
 
-Currently only Nixpkgs packages should be deployed with nix-deploy.sh, the compositor and widgets should be deployed
-only with nix-cargo-deploy.sh during development. This is because nix-deploy.sh will deploy to user profile
-(~/.nix-profile), not the bmc profile. Compositor and widgets should be deployed to bmc profile only.
+Builds a Nix flake package and copies its entire closure to the device's `/nix/store` using `nix copy`, then installs it
+into the bmc profile via `bmc-nix-cli`. The device must already be initialized with `nix-init.sh`.
+
+The first argument is a full flake URI. Index packages (exposed under `deck-packages`) are auto-detected and their
+`.pkg` output is built. Raw nixpkgs derivations (e.g. `armv7-nixpkgs`) are built directly.
 
 ```sh
-./scripts/nix-deploy.sh armv7-pkgs.strace 192.168.1.2
-./scripts/nix-deploy.sh armv7-pkgs.patchelf 192.168.1.2
+# To deploy our Deck packages
+./scripts/nix-deploy.sh '.#deck-packages.core' 192.168.1.2
+./scripts/nix-deploy.sh '.#deck-packages.digital-clock' 192.168.1.2
+# To deploy packages from nixpkgs
+./scripts/nix-deploy.sh '.#armv7-nixpkgs.strace' 192.168.1.2
+./scripts/nix-deploy.sh '.#armv7-nixpkgs.file' 192.168.1.2
 ```
 
 The script prints the `/nix/store/...` path of the deployed package. You can then run binaries from that path on the
@@ -58,27 +65,31 @@ device.
 
 ### nixpkgs
 
-Nixpkgs is exposed as pkgs, the armv7 packages are exposed as "armv7-pkgs". So you can for example do
-`./scripts/nix-deploy armv7-pkgs.strace` to deploy the strace package.
+Nixpkgs is exposed as pkgs, the armv7 packages are exposed as "armv7-nixpkgs". So you can for example do
+`./scripts/nix-deploy.sh .#armv7-nixpkgs.strace` to deploy the strace package.
 
-The deployed packages are automatically installed to user's Nix profile. So the executables should be directly available
-when you log in through ssh.
+The deployed packages are installed into the bmc profile and activated immediately. Executables are available under
+`/run/current-profile/bin/`.
 
 ## nix-cargo-deploy.sh — Fast impure deploy of cargo-built binaries
+
+This is for fast iteration over a given component of the system. Use nix-deploy.sh unless you're just making simple
+fixes that you expect to work in the produced version. This will be faster, especially if you are doing a change in a
+leaf crate.
 
 Copies a locally cargo-built binary directly to the device, replacing the file in-place under `/run/current-profile/`.
 This skips the full Nix rebuild and is meant for fast development iteration. All the dependencies are copied over as
 well.
 
-Note that this is not suitable for deploying a new widget. It only replaces currently existing widgets. Deploying new
-widgets is currently not supported at all easily.
+NOTE: that this is not suitable for deploying a new widget. It only replaces currently existing widgets. NOTE: only
+deploys native widgets, not WASM widgets.
 
 The device must already have the packages deployed via `nix-deploy.sh` (so the target paths exist).
 
 ```sh
 # Execute in a dev shell such as nix develop ".#armv7-glibc-release"
 
-# Deploy the compositor (bmc-openwrt, built for armv7-unknown-linux-musleabihf)
+# Deploy the compositor (bmc-openwrt, built for armv7-unknown-linux-gnueabihf)
 ./scripts/nix-cargo-deploy.sh compositor 192.168.1.2
 
 # Deploy a widget by name (built for armv7-unknown-linux-gnueabihf)
@@ -86,13 +97,13 @@ The device must already have the packages deployed via `nix-deploy.sh` (so the t
 DEVICE_IP=192.168.1.2 ./scripts/nix-cargo-deploy.sh widget flip-clock
 ```
 
-In case you need to add extra cargo flags, such as a --features flag, use CARGO_EXTRA_FLAGS environment variable.
+In case you need to add extra cargo flags, such as a --features flag, use `CARGO_EXTRA_FLAGS` environment variable.
 
 The script expects binaries at the standard cargo cross-compilation output paths:
 
 | Command         | Local binary path                                                |
 | --------------- | ---------------------------------------------------------------- |
-| `compositor`    | `target/armv7-unknown-linux-musleabihf/release/bmc-openwrt`      |
+| `compositor`    | `target/armv7-unknown-linux-gnueabihf/release/bmc-openwrt`       |
 | `widget <name>` | `target/armv7-unknown-linux-gnueabihf/release/bmc-widget-<name>` |
 
 The script will build these binaries itself through `cargo build`. The script assumes you're in a dev shell, such as
