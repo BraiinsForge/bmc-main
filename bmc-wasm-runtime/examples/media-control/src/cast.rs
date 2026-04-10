@@ -157,7 +157,10 @@ thread_local! {
 
 /// Connect to a Google Cast device.
 pub fn connect(host: &str, port: u16, on_status: StatusCallback) {
-    let socket = tls_connect_insecure(host, port, on_socket_event);
+    let Some(socket) = tls_connect_insecure(host, port, on_socket_event) else {
+        log_warn!("cast: connect rejected by host runtime limits");
+        return;
+    };
     CAST.with(|c| {
         *c.borrow_mut() = Some(CastState {
             socket,
@@ -270,7 +273,16 @@ pub fn tick(delta_ms: u32) {
                 if state.ms_since_heartbeat >= delay {
                     log_info!("cast: reconnecting to {}:{}", state.host, state.port);
                     // New socket but preserve accumulated media status
-                    state.socket = tls_connect_insecure(&state.host, state.port, on_socket_event);
+                    let Some(socket) =
+                        tls_connect_insecure(&state.host, state.port, on_socket_event)
+                    else {
+                        log_warn!("cast: reconnect rejected by host runtime limits");
+                        state.reconnect_attempts = state.reconnect_attempts.saturating_add(1);
+                        state.ms_since_heartbeat = 0;
+                        request_frame_after(delay);
+                        return;
+                    };
+                    state.socket = socket;
                     state.phase = Phase::Connecting;
                     state.recv_buf.clear();
                     state.next_request_id = 1;

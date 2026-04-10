@@ -115,6 +115,8 @@ pub trait MediaController {
 
     /// Fetch album art, handling protocol-specific auth.
     fn fetch_art(&self, url: &str, callback: fn(&bmc_wasm_sdk::FetchResponse)) {
-        bmc_wasm_sdk::fetch(url, None, callback);
+        if bmc_wasm_sdk::fetch(url, None, callback).is_none() {
+            log_warn!("{}: album art fetch rejected", self.protocol_name());
+        }
     }
 }

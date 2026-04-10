@@ -82,7 +82,12 @@ fn next_msg_id() -> u32 {
 pub extern "C" fn init(width: u32, height: u32) {
     SIZE.set(WidgetSize::from_dimensions(width, height));
     let url = kv::get_string("ha_url").unwrap_or_else(|| DEFAULT_HA_URL.into());
-    ws!(&url, on_ha_event);
+    if ws!(&url, on_ha_event).is_none() {
+        let msg = "HA WebSocket rejected by host runtime limits".to_string();
+        log_error!("{}", msg);
+        STATE.with(|s| *s.borrow_mut() = HaState::Error(msg));
+        request_frame();
+    }
 }
 
 #[unsafe(no_mangle)]

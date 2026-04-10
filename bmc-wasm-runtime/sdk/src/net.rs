@@ -122,18 +122,25 @@ fn register_callback(cb: Callback) -> usize {
 /// When the response arrives, `callback` is called with the response data.
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs.
-pub fn fetch(url: &str, headers: Option<&str>, callback: Callback) {
-    FetchRequest::get(url).headers_opt(headers).send(callback);
+#[must_use]
+pub fn fetch(url: &str, headers: Option<&str>, callback: Callback) -> Option<u32> {
+    FetchRequest::get(url).headers_opt(headers).send(callback)
 }
 
 /// Fetch a URL with GET after a delay (in milliseconds).
 /// Useful for periodic re-fetching (e.g., `fetch_after(300_000, url, None, cb)` for 5-minute refresh).
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs.
-pub fn fetch_after(delay_ms: u32, url: &str, headers: Option<&str>, callback: Callback) {
+#[must_use]
+pub fn fetch_after(
+    delay_ms: u32,
+    url: &str,
+    headers: Option<&str>,
+    callback: Callback,
+) -> Option<u32> {
     FetchRequest::get(url)
         .headers_opt(headers)
-        .send_after(delay_ms, callback);
+        .send_after(delay_ms, callback)
 }
 
 /// Builder for HTTP fetch requests with method, headers, and optional body.
@@ -210,8 +217,11 @@ impl<'a> FetchRequest<'a> {
         self
     }
 
-    /// Send the request immediately. Returns the request ID for tracking.
-    pub fn send(self, callback: Callback) -> u32 {
+    /// Send the request immediately. Returns `None` if the host rejects the
+    /// request before it is queued, for example because the runtime hit its
+    /// resource limit.
+    #[must_use]
+    pub fn send(self, callback: Callback) -> Option<u32> {
         let cb_idx = register_callback(callback);
         let (m_ptr, m_len) = (self.method.as_ptr(), self.method.len() as u32);
         let (h_ptr, h_len) = optional_raw(self.headers);
@@ -228,12 +238,18 @@ impl<'a> FetchRequest<'a> {
                 b_len,
             )
         };
+        if request_id == 0 {
+            return None;
+        }
         PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
-        request_id
+        Some(request_id)
     }
 
     /// Send the request after a delay (in milliseconds).
-    pub fn send_after(self, delay_ms: u32, callback: Callback) {
+    ///
+    /// Returns `None` if the host rejects the request before it is queued.
+    #[must_use]
+    pub fn send_after(self, delay_ms: u32, callback: Callback) -> Option<u32> {
         let cb_idx = register_callback(callback);
         let (m_ptr, m_len) = (self.method.as_ptr(), self.method.len() as u32);
         let (h_ptr, h_len) = optional_raw(self.headers);
@@ -251,7 +267,11 @@ impl<'a> FetchRequest<'a> {
                 b_len,
             )
         };
+        if request_id == 0 {
+            return None;
+        }
         PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
+        Some(request_id)
     }
 }
 

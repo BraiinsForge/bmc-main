@@ -211,7 +211,11 @@ pub fn seek(fraction: f64) {
     FetchRequest::post(&url)
         .headers(&headers)
         .body(body.as_bytes())
-        .send(on_command_done);
+        .send(on_command_done)
+        .unwrap_or_else(|| {
+            log_warn!("kodi: seek command rejected by host runtime limits");
+            0
+        });
 }
 
 /// Set volume (0.0–1.0).
@@ -240,7 +244,11 @@ fn poll_active_players() {
     FetchRequest::post(&url)
         .headers(&headers)
         .body(body.as_bytes())
-        .send(on_active_players);
+        .send(on_active_players)
+        .unwrap_or_else(|| {
+            log_warn!("kodi: active player poll rejected by host runtime limits");
+            0
+        });
 }
 
 fn on_active_players(response: &FetchResponse) {
@@ -308,7 +316,11 @@ fn poll_player_properties() {
     FetchRequest::post(&url)
         .headers(&headers)
         .body(body.as_bytes())
-        .send(on_player_properties);
+        .send(on_player_properties)
+        .unwrap_or_else(|| {
+            log_warn!("kodi: player property poll rejected by host runtime limits");
+            0
+        });
 }
 
 fn on_player_properties(response: &FetchResponse) {
@@ -364,7 +376,11 @@ fn poll_player_item() {
     FetchRequest::post(&url)
         .headers(&headers)
         .body(body.as_bytes())
-        .send(on_player_item);
+        .send(on_player_item)
+        .unwrap_or_else(|| {
+            log_warn!("kodi: player item poll rejected by host runtime limits");
+            0
+        });
 }
 
 fn on_player_item(response: &FetchResponse) {
@@ -435,7 +451,11 @@ fn poll_app_properties() {
     FetchRequest::post(&url)
         .headers(&headers)
         .body(body.as_bytes())
-        .send(on_app_properties);
+        .send(on_app_properties)
+        .unwrap_or_else(|| {
+            log_warn!("kodi: application property poll rejected by host runtime limits");
+            0
+        });
 }
 
 fn on_app_properties(response: &FetchResponse) {
@@ -510,7 +530,11 @@ fn kodi_command(method: &str, params_fn: fn(&KodiState) -> String) {
     FetchRequest::post(&url)
         .headers(&headers)
         .body(body.as_bytes())
-        .send(on_command_done);
+        .send(on_command_done)
+        .unwrap_or_else(|| {
+            log_warn!("kodi: command rejected by host runtime limits");
+            0
+        });
 }
 
 /// Fire-and-forget: send command, re-poll on response. No active player required.
@@ -528,7 +552,11 @@ fn kodi_fire_and_forget(method: &str, params: &str) {
     FetchRequest::post(&url)
         .headers(&headers)
         .body(body.as_bytes())
-        .send(on_command_done);
+        .send(on_command_done)
+        .unwrap_or_else(|| {
+            log_warn!("kodi: fire-and-forget command rejected by host runtime limits");
+            0
+        });
 }
 
 /// After any command completes, re-poll for fresh state.

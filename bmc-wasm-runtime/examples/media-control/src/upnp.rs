@@ -94,9 +94,13 @@ fn soap_request_impl(
         .headers(&headers)
         .body(envelope.as_bytes());
     if let Some(ms) = delay_ms {
-        req.send_after(ms, cb);
+        if req.send_after(ms, cb).is_none() {
+            log_warn!("upnp: delayed SOAP request rejected for {}", action);
+        }
     } else {
-        req.send(cb);
+        if req.send(cb).is_none() {
+            log_warn!("upnp: SOAP request rejected for {}", action);
+        }
     }
 }
 

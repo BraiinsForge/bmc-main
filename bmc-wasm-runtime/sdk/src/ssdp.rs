@@ -82,7 +82,14 @@ fn register_callback(cb: SearchCallback) -> usize {
 ///
 /// `timeout_secs` is the MX value for the M-SEARCH (how long devices may
 /// delay their responses).
-pub fn ssdp_search(search_target: &str, timeout_secs: u32, callback: SearchCallback) -> SsdpSearch {
+///
+/// Returns `None` if the host rejects the search before it is queued.
+#[must_use]
+pub fn ssdp_search(
+    search_target: &str,
+    timeout_secs: u32,
+    callback: SearchCallback,
+) -> Option<SsdpSearch> {
     let cb_idx = register_callback(callback);
     let search_id = unsafe {
         host_ssdp_search(
@@ -91,8 +98,11 @@ pub fn ssdp_search(search_target: &str, timeout_secs: u32, callback: SearchCallb
             timeout_secs,
         )
     };
+    if search_id == 0 {
+        return None;
+    }
     SEARCHES.with(|s| s.borrow_mut().insert(search_id, cb_idx));
-    SsdpSearch(search_id)
+    Some(SsdpSearch(search_id))
 }
 
 /// Called by the host when an SSDP event is ready.

@@ -100,33 +100,51 @@ fn register_callback(cb: Callback) -> usize {
 /// Connect to a TLS socket. The host performs the TCP+TLS handshake in the
 /// background. When events arrive (connected, data, closed), `callback` is
 /// called. Certificate verification is enabled.
-pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Socket {
+///
+/// Returns `None` if the host rejects the connection before it is queued.
+#[must_use]
+pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let cb_idx = register_callback(callback);
     let socket_id = unsafe { host_tls_connect(host.as_ptr(), host.len() as u32, u32::from(port)) };
+    if socket_id == 0 {
+        return None;
+    }
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
-    Socket(socket_id)
+    Some(Socket(socket_id))
 }
 
 /// Connect to a TLS socket while skipping certificate verification.
 ///
 /// Use this only for trusted LAN devices with self-signed certificates such as
 /// Chromecast receivers.
-pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Socket {
+///
+/// Returns `None` if the host rejects the connection before it is queued.
+#[must_use]
+pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let cb_idx = register_callback(callback);
     let socket_id =
         unsafe { host_tls_connect_insecure(host.as_ptr(), host.len() as u32, u32::from(port)) };
+    if socket_id == 0 {
+        return None;
+    }
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
-    Socket(socket_id)
+    Some(Socket(socket_id))
 }
 
 /// Connect to a plain TCP socket. The host performs the TCP connect in the
 /// background. When events arrive (connected, data, closed), `callback` is
 /// called.
-pub fn tcp_connect(host: &str, port: u16, callback: Callback) -> Socket {
+///
+/// Returns `None` if the host rejects the connection before it is queued.
+#[must_use]
+pub fn tcp_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let cb_idx = register_callback(callback);
     let socket_id = unsafe { host_tcp_connect(host.as_ptr(), host.len() as u32, u32::from(port)) };
+    if socket_id == 0 {
+        return None;
+    }
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
-    Socket(socket_id)
+    Some(Socket(socket_id))
 }
 
 /// Called by the host when a socket event is ready.

@@ -99,15 +99,21 @@ fn register_callback(cb: Callback) -> usize {
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs
 /// (same format as [`fetch`](crate::fetch)).
-pub fn ws_connect(url: &str, headers: Option<&str>, on_event: Callback) -> Ws {
+///
+/// Returns `None` if the host rejects the connection before it is queued.
+#[must_use]
+pub fn ws_connect(url: &str, headers: Option<&str>, on_event: Callback) -> Option<Ws> {
     let cb_idx = register_callback(on_event);
     let (h_ptr, h_len) = match headers {
         Some(h) => (h.as_ptr(), h.len() as u32),
         None => (core::ptr::null(), 0),
     };
     let ws_id = unsafe { host_ws_connect(url.as_ptr(), url.len() as u32, h_ptr, h_len) };
+    if ws_id == 0 {
+        return None;
+    }
     CONNECTIONS.with(|c| c.borrow_mut().insert(ws_id, cb_idx));
-    Ws(ws_id)
+    Some(Ws(ws_id))
 }
 
 /// Called by the host when a WebSocket event occurs.

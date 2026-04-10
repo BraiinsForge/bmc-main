@@ -22,6 +22,20 @@ fn api_auth() -> Option<String> {
     kv::get_string("ll2_api_token").map(|token| fmt!("Authorization: Token {}", token))
 }
 
+fn schedule_launch_fetch(delay_ms: Option<u32>) -> bool {
+    let queued = if let Some(delay_ms) = delay_ms {
+        fetch_after(delay_ms, API_URL, api_auth().as_deref(), on_launch_data)
+    } else {
+        fetch(API_URL, api_auth().as_deref(), on_launch_data)
+    };
+
+    if queued.is_none() {
+        log_error!("launch data fetch rejected by host runtime limits");
+    }
+
+    queued.is_some()
+}
+
 /// Refresh interval: 5 minutes.
 const REFRESH_MS: u32 = 300_000;
 /// Retry interval on error: 30 seconds.
@@ -57,7 +71,10 @@ struct LaunchData {
 #[unsafe(no_mangle)]
 pub extern "C" fn init(width: u32, height: u32) {
     SIZE.set(WidgetSize::from_dimensions(width, height));
-    fetch(API_URL, api_auth().as_deref(), on_launch_data);
+    if !schedule_launch_fetch(None) {
+        STATE.with(|s| *s.borrow_mut() = WidgetState::Error("fetch queue full".into()));
+        request_frame();
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -121,7 +138,7 @@ fn on_launch_data(response: &FetchResponse) {
         log_error!("launch data fetch failed: {}", msg);
         STATE.with(|s| *s.borrow_mut() = WidgetState::Error(msg));
         request_frame();
-        fetch_after(RETRY_MS, API_URL, api_auth().as_deref(), on_launch_data);
+        let _ = schedule_launch_fetch(Some(RETRY_MS));
         return;
     }
 
@@ -189,7 +206,7 @@ fn on_launch_data(response: &FetchResponse) {
     });
 
     request_frame();
-    fetch_after(REFRESH_MS, API_URL, api_auth().as_deref(), on_launch_data);
+    let _ = schedule_launch_fetch(Some(REFRESH_MS));
 }
 
 // ============================================================================

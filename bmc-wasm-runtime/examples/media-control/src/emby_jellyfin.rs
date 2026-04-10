@@ -296,9 +296,13 @@ fn jellyfin_session_command(subpath: &str, body: Option<&str>) {
     };
     let req = FetchRequest::post(&url).headers(&all_headers);
     if let Some(body) = body {
-        req.body(body.as_bytes()).send(on_command_done);
+        if req.body(body.as_bytes()).send(on_command_done).is_none() {
+            log_warn!("jellyfin: command rejected by host runtime limits");
+        }
     } else {
-        req.send(on_command_done);
+        if req.send(on_command_done).is_none() {
+            log_warn!("jellyfin: command rejected by host runtime limits");
+        }
     }
 }
 
@@ -312,7 +316,9 @@ fn poll_sessions() {
     if !headers.is_empty() {
         req = req.headers(&headers);
     }
-    req.send(on_sessions_response);
+    if req.send(on_sessions_response).is_none() {
+        log_warn!("jellyfin: sessions poll rejected by host runtime limits");
+    }
 }
 
 fn on_sessions_response(response: &FetchResponse) {

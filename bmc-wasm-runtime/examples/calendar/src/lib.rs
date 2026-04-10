@@ -103,8 +103,14 @@ pub extern "C" fn init(width: u32, height: u32) {
         // Kick off initial fetch for all sources
         for (idx, source) in state.sources.iter().enumerate() {
             log_info!("fetching calendar {}: {}", idx, source.url);
-            let request_id = FetchRequest::get(&source.url).send(on_ics_response);
-            PENDING.with(|p| p.borrow_mut().insert(request_id, idx));
+            match FetchRequest::get(&source.url).send(on_ics_response) {
+                Some(request_id) => {
+                    PENDING.with(|p| p.borrow_mut().insert(request_id, idx));
+                }
+                None => {
+                    log_error!("calendar fetch rejected for source {}: {}", idx, source.url);
+                }
+            }
         }
     });
 
@@ -169,8 +175,16 @@ fn retry_failed_sources() {
                 source.error = None;
                 source.loading = true;
                 log_info!("retrying calendar {}: {}", idx, source.url);
-                let request_id = FetchRequest::get(&source.url).send(on_ics_response);
-                PENDING.with(|p| p.borrow_mut().insert(request_id, idx));
+                match FetchRequest::get(&source.url).send(on_ics_response) {
+                    Some(request_id) => {
+                        PENDING.with(|p| p.borrow_mut().insert(request_id, idx));
+                    }
+                    None => {
+                        log_error!("calendar retry rejected for source {}: {}", idx, source.url);
+                        source.error = Some("fetch queue full".into());
+                        source.loading = false;
+                    }
+                }
             }
         }
         state.any_loading = true;

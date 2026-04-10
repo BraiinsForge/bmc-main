@@ -99,12 +99,18 @@ fn register_callback(cb: BrowseCallback) -> usize {
 /// `callback` when services are found or removed.
 ///
 /// Service types should be like `"_googlecast._tcp"` (the host appends `.local.`).
-pub fn mdns_browse(service_types: &[&str], callback: BrowseCallback) -> MdnsBrowse {
+///
+/// Returns `None` if the host rejects the browse before it is queued.
+#[must_use]
+pub fn mdns_browse(service_types: &[&str], callback: BrowseCallback) -> Option<MdnsBrowse> {
     let cb_idx = register_callback(callback);
     let joined = service_types.join("\n");
     let browse_id = unsafe { host_mdns_browse(joined.as_ptr(), joined.len() as u32) };
+    if browse_id == 0 {
+        return None;
+    }
     BROWSES.with(|b| b.borrow_mut().insert(browse_id, cb_idx));
-    MdnsBrowse(browse_id)
+    Some(MdnsBrowse(browse_id))
 }
 
 /// Register an mDNS service for advertisement on the local network.
@@ -116,7 +122,7 @@ pub fn mdns_register(
     name: &str,
     port: u16,
     txt: &[(&str, &str)],
-) -> MdnsRegistration {
+) -> Option<MdnsRegistration> {
     let txt_str: String = txt
         .iter()
         .map(|(k, v)| format!("{k}={v}"))
@@ -133,7 +139,7 @@ pub fn mdns_register(
             txt_str.len() as u32,
         )
     };
-    MdnsRegistration(reg_id)
+    (reg_id != 0).then_some(MdnsRegistration(reg_id))
 }
 
 /// Called by the host when an mDNS event is ready.

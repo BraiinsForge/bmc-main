@@ -60,17 +60,23 @@ fn register_callback(cb: BroadcastCallback) -> usize {
 /// The `message` is sent as a UDP broadcast to `255.255.255.255:port`.
 /// Responses are delivered via the callback. The host thread resends
 /// periodically (every 30s) and listens for `timeout_secs` after each send.
+///
+/// Returns `None` if the host rejects the broadcast before it is queued.
+#[must_use]
 pub fn udp_broadcast(
     port: u32,
     message: &str,
     timeout_secs: u32,
     callback: BroadcastCallback,
-) -> UdpBroadcast {
+) -> Option<UdpBroadcast> {
     let cb_idx = register_callback(callback);
     let broadcast_id =
         unsafe { host_udp_broadcast(port, message.as_ptr(), message.len() as u32, timeout_secs) };
+    if broadcast_id == 0 {
+        return None;
+    }
     BROADCASTS.with(|b| b.borrow_mut().insert(broadcast_id, cb_idx));
-    UdpBroadcast(broadcast_id)
+    Some(UdpBroadcast(broadcast_id))
 }
 
 /// Called by the host when a UDP broadcast event is ready.

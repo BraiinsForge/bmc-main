@@ -338,7 +338,7 @@ pub extern "C" fn init(width: u32, height: u32) {
     set_active_skin(SKINS[SKIN_INDEX.with(Cell::get)].skin);
 
     // Start mDNS discovery for Cast, UPnP, Kodi, and MPD devices
-    mdns::mdns_browse(
+    if mdns::mdns_browse(
         &[
             "_googlecast._tcp",
             "_upnp._tcp",
@@ -346,28 +346,53 @@ pub extern "C" fn init(width: u32, height: u32) {
             "_mpd._tcp",
         ],
         on_mdns_event,
-    );
-    log_info!("media: mDNS browse started");
-    discovery_log("Browsing _googlecast._tcp".into());
-    discovery_log("Browsing _upnp._tcp".into());
-    discovery_log("Browsing _xbmc-jsonrpc-h._tcp".into());
-    discovery_log("Browsing _mpd._tcp".into());
+    )
+    .is_some()
+    {
+        log_info!("media: mDNS browse started");
+        discovery_log("Browsing _googlecast._tcp".into());
+        discovery_log("Browsing _upnp._tcp".into());
+        discovery_log("Browsing _xbmc-jsonrpc-h._tcp".into());
+        discovery_log("Browsing _mpd._tcp".into());
+    } else {
+        log_warn!("media: mDNS browse rejected by host runtime limits");
+        discovery_log("mDNS browse rejected".into());
+    }
 
     // Start SSDP discovery for native UPnP/DLNA renderers
-    ssdp::ssdp_search(
+    if ssdp::ssdp_search(
         "urn:schemas-upnp-org:device:MediaRenderer:1",
         5,
         on_ssdp_event,
-    );
-    log_info!("media: SSDP search started");
-    discovery_log("SSDP M-SEARCH MediaRenderer".into());
+    )
+    .is_some()
+    {
+        log_info!("media: SSDP search started");
+        discovery_log("SSDP M-SEARCH MediaRenderer".into());
+    } else {
+        log_warn!("media: SSDP search rejected by host runtime limits");
+        discovery_log("SSDP search rejected".into());
+    }
 
     // Start UDP broadcast discovery for Jellyfin and Emby servers
-    udp_broadcast::udp_broadcast(7359, "Who is JellyfinServer?", 5, on_jellyfin_broadcast);
-    udp_broadcast::udp_broadcast(7359, "Who is EmbyServer?", 5, on_emby_broadcast);
-    log_info!("media: Jellyfin/Emby UDP broadcast started");
-    discovery_log("UDP broadcast Jellyfin:7359".into());
-    discovery_log("UDP broadcast Emby:7359".into());
+    let jellyfin_started =
+        udp_broadcast::udp_broadcast(7359, "Who is JellyfinServer?", 5, on_jellyfin_broadcast)
+            .is_some();
+    let emby_started =
+        udp_broadcast::udp_broadcast(7359, "Who is EmbyServer?", 5, on_emby_broadcast).is_some();
+    if jellyfin_started && emby_started {
+        log_info!("media: Jellyfin/Emby UDP broadcast started");
+        discovery_log("UDP broadcast Jellyfin:7359".into());
+        discovery_log("UDP broadcast Emby:7359".into());
+    } else {
+        log_warn!("media: UDP discovery rejected by host runtime limits");
+        if !jellyfin_started {
+            discovery_log("UDP broadcast Jellyfin rejected".into());
+        }
+        if !emby_started {
+            discovery_log("UDP broadcast Emby rejected".into());
+        }
+    }
 
     request_frame();
 }
@@ -563,7 +588,12 @@ fn on_ssdp_found(json: &str) {
     // Probe for Jellyfin/Emby — fire-and-forget GET /System/Info/Public
     PROBE_QUEUE.with(|q| q.borrow_mut().push((host.to_string(), port)));
     let probe_url = fmt!("http://{}:{}/System/Info/Public", host, port);
-    FetchRequest::get(&probe_url).send(on_server_probe);
+    if FetchRequest::get(&probe_url)
+        .send(on_server_probe)
+        .is_none()
+    {
+        log_warn!("media: server probe rejected for {}", probe_url);
+    }
 
     request_frame();
 }
@@ -1204,7 +1234,9 @@ impl MediaController for KodiAdapter {
         "Kodi"
     }
     fn fetch_art(&self, url: &str, callback: fn(&FetchResponse)) {
-        fetch(url, self.art_headers.as_deref(), callback);
+        if fetch(url, self.art_headers.as_deref(), callback).is_none() {
+            log_warn!("kodi: album art fetch rejected");
+        }
     }
 }
 
@@ -1339,7 +1371,9 @@ impl MediaController for JellyfinAdapter {
         }
     }
     fn fetch_art(&self, url: &str, callback: fn(&FetchResponse)) {
-        fetch(url, self.art_headers.as_deref(), callback);
+        if fetch(url, self.art_headers.as_deref(), callback).is_none() {
+            log_warn!("{}: album art fetch rejected", self.protocol_name());
+        }
     }
 }
 

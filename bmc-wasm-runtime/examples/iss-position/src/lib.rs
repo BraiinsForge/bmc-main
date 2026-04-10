@@ -113,11 +113,42 @@ thread_local! {
     static SMOOTHED_CENTER: RefCell<Option<(f64, f64)>> = const { RefCell::new(None) };
 }
 
+fn schedule_position_fetch(delay_ms: Option<u32>) -> bool {
+    let queued = if let Some(delay_ms) = delay_ms {
+        fetch_after(delay_ms, API_URL, None, on_position_data)
+    } else {
+        fetch(API_URL, None, on_position_data)
+    };
+
+    if queued.is_none() {
+        log_error!("ISS position fetch rejected by host runtime limits");
+    }
+
+    queued.is_some()
+}
+
+fn schedule_tle_fetch(delay_ms: Option<u32>) -> bool {
+    let queued = if let Some(delay_ms) = delay_ms {
+        fetch_after(delay_ms, TLE_URL, None, on_tle_data)
+    } else {
+        fetch(TLE_URL, None, on_tle_data)
+    };
+
+    if queued.is_none() {
+        log_warn!("ISS TLE fetch rejected by host runtime limits");
+    }
+
+    queued.is_some()
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn init(width: u32, height: u32) {
     SIZE.set(WidgetSize::from_dimensions(width, height));
-    fetch(API_URL, None, on_position_data);
-    fetch(TLE_URL, None, on_tle_data);
+    if !schedule_position_fetch(None) {
+        STATE.with(|s| *s.borrow_mut() = WidgetState::Error("fetch queue full".into()));
+        request_frame();
+    }
+    let _ = schedule_tle_fetch(None);
 }
 
 // ============================================================================
@@ -134,7 +165,7 @@ fn on_position_data(response: &FetchResponse) {
         log_error!("position fetch failed: {}", msg);
         STATE.with(|s| *s.borrow_mut() = WidgetState::Error(msg));
         request_frame();
-        fetch_after(RETRY_MS, API_URL, None, on_position_data);
+        let _ = schedule_position_fetch(Some(RETRY_MS));
         return;
     }
 
@@ -166,8 +197,8 @@ fn on_position_data(response: &FetchResponse) {
     });
 
     request_frame();
-    fetch_after(REFRESH_MS, API_URL, None, on_position_data);
-    fetch_after(REFRESH_MS, TLE_URL, None, on_tle_data);
+    let _ = schedule_position_fetch(Some(REFRESH_MS));
+    let _ = schedule_tle_fetch(Some(REFRESH_MS));
 }
 
 fn on_tle_data(response: &FetchResponse) {

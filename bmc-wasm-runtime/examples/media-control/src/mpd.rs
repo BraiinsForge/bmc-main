@@ -124,7 +124,10 @@ thread_local! {
 
 pub fn connect(host: &str, port: u16, on_status: StatusCallback, on_art: ArtCallback) {
     disconnect();
-    let socket = tcp_connect(host, port, on_socket_event);
+    let Some(socket) = tcp_connect(host, port, on_socket_event) else {
+        log_warn!("mpd: connect rejected by host runtime limits");
+        return;
+    };
     MPD.with(|m| {
         *m.borrow_mut() = Some(MpdState {
             socket,
