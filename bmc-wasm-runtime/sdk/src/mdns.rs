@@ -139,21 +139,13 @@ pub fn mdns_register(
 /// Called by the host when an mDNS event is ready.
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_mdns_event(browse_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
-    let data = if data_len > 0 && data_ptr != 0 {
-        unsafe {
-            let slice = core::slice::from_raw_parts(data_ptr as *const u8, data_len as usize);
-            core::str::from_utf8(slice).unwrap_or("")
-        }
-    } else {
-        ""
-    };
-
-    // Take ownership of the allocated buffer so it gets freed
-    let _owned = if data_len > 0 && data_ptr != 0 {
+    // Take ownership first, then borrow — avoids dangling reference.
+    let owned = if data_len > 0 && data_ptr != 0 {
         unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
     } else {
         Vec::new()
     };
+    let data = core::str::from_utf8(&owned).unwrap_or("");
 
     let event = match event_type {
         0 => MdnsEvent::Found(data),
