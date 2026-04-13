@@ -20,6 +20,25 @@ impl XmlDocumentIndex {
         Ok(Self::from_document(&doc))
     }
 
+    /// Resolve a supported host XML path to an indexed string result.
+    #[must_use]
+    pub(crate) fn get_str(&self, path: &str) -> Option<&str> {
+        match parse_xml_lookup_path(path)? {
+            XmlLookupPath::Text(local_name) => self
+                .first_text_by_local_name
+                .get(local_name)
+                .map(String::as_str),
+            XmlLookupPath::Attribute {
+                local_name,
+                attr_name,
+            } => self
+                .first_attrs_by_local_name
+                .get(local_name)
+                .and_then(|attrs| attrs.get(attr_name))
+                .map(String::as_str),
+        }
+    }
+
     fn from_document(doc: &roxmltree::Document<'_>) -> Self {
         let mut first_text_by_local_name = HashMap::new();
         let mut first_attrs_by_local_name = HashMap::new();
@@ -45,6 +64,29 @@ impl XmlDocumentIndex {
             first_attrs_by_local_name,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum XmlLookupPath<'a> {
+    Text(&'a str),
+    Attribute { local_name: &'a str, attr_name: &'a str },
+}
+
+fn parse_xml_lookup_path(path: &str) -> Option<XmlLookupPath<'_>> {
+    let path = path.strip_prefix("//")?;
+
+    if let Some((element_part, attr_name)) = path.split_once("/@") {
+        return Some(XmlLookupPath::Attribute {
+            local_name: strip_namespace_prefix(element_part),
+            attr_name,
+        });
+    }
+
+    Some(XmlLookupPath::Text(strip_namespace_prefix(path)))
+}
+
+fn strip_namespace_prefix(name: &str) -> &str {
+    name.rsplit_once(':').map_or(name, |(_, local)| local)
 }
 
 fn extract_text_children(node: roxmltree::Node<'_, '_>) -> Option<String> {
@@ -99,6 +141,9 @@ mod tests {
         let index =
             XmlDocumentIndex::from_xml(FEED_XML).expect("BUG: test XML should build an index");
 
+        assert_eq!(index.get_str("//title"), Some("Launch"));
+        assert_eq!(index.get_str("//dc:title"), Some("Launch"));
+        assert_eq!(index.get_str("//missing"), None);
         assert_eq!(lookup_text(&index, "title"), Some("Launch"));
         assert_eq!(lookup_text(&index, "ttl"), Some("15"));
     }
@@ -108,11 +153,13 @@ mod tests {
         let index =
             XmlDocumentIndex::from_xml(FEED_XML).expect("BUG: test XML should build an index");
 
+        assert_eq!(index.get_str("//res/@duration"), Some("00:01:02"));
         assert_eq!(lookup_attr(&index, "res", "duration"), Some("00:01:02"));
         assert_eq!(
             lookup_attr(&index, "res", "protocolInfo"),
             Some("http-get:*:audio/mpeg:*")
         );
+        assert_eq!(index.get_str("//res/@missing"), None);
         assert_eq!(lookup_attr(&index, "res", "missing"), None);
     }
 
@@ -127,6 +174,7 @@ mod tests {
 
         let index = XmlDocumentIndex::from_xml(xml).expect("BUG: test XML should build an index");
 
+        assert_eq!(index.get_str("//entry/@duration"), None);
         assert_eq!(lookup_attr(&index, "entry", "duration"), None);
     }
 

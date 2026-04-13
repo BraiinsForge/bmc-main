@@ -1780,13 +1780,7 @@ impl WasmWidgetRuntime {
                     if let Some(cached) = state.xml_query_cache.get(&cache_key) {
                         cached.clone()
                     } else {
-                        let Some(xml_str) = state.xml_docs.get(&doc_id) else {
-                            return -1;
-                        };
-                        let Ok(doc) = roxmltree::Document::parse(xml_str) else {
-                            return -1;
-                        };
-                        xml_query_text(&doc, &cache_key.1)
+                        xml_lookup_text(&state.xml_indices, doc_id, &cache_key.1)
                     }
                 };
 
@@ -1812,13 +1806,7 @@ impl WasmWidgetRuntime {
                     if let Some(cached) = state.xml_query_cache.get(&cache_key) {
                         cached.clone()
                     } else {
-                        let Some(xml_str) = state.xml_docs.get(&doc_id) else {
-                            return f64::NAN;
-                        };
-                        let Ok(doc) = roxmltree::Document::parse(xml_str) else {
-                            return f64::NAN;
-                        };
-                        xml_query_text(&doc, &cache_key.1)
+                        xml_lookup_text(&state.xml_indices, doc_id, &cache_key.1)
                     }
                 };
 
@@ -3363,43 +3351,12 @@ fn write_to_wasm(caller: &mut Caller<'_, HostState>, s: &str, out_ptr: u32, out_
     actual_len as i32
 }
 
-/// Query an XML document for a text value using a simplified path syntax.
-///
-/// Supported patterns:
-/// - `//local_name` — text content of the first element with that local name
-///   (namespace-agnostic, e.g. `//title` matches `<dc:title>`)
-/// - `//local_name/@attr` — attribute value on the first matching element
-///   (e.g. `//res/@duration`)
-fn xml_query_text(doc: &roxmltree::Document<'_>, path: &str) -> Option<String> {
-    let path = path.strip_prefix("//")?;
-
-    // Check for attribute query: "element/@attr"
-    if let Some((elem_part, attr_name)) = path.split_once("/@") {
-        let local = elem_part.rsplit_once(':').map_or(elem_part, |(_, l)| l);
-        for node in doc.descendants() {
-            if node.is_element() && node.tag_name().name() == local {
-                return node.attribute(attr_name).map(String::from);
-            }
-        }
-        return None;
-    }
-
-    // Text content query
-    let local = path.rsplit_once(':').map_or(path, |(_, l)| l);
-    for node in doc.descendants() {
-        if node.is_element() && node.tag_name().name() == local {
-            // Collect all text children
-            let text: String = node
-                .children()
-                .filter(roxmltree::Node::is_text)
-                .filter_map(|n| n.text())
-                .collect();
-            if !text.is_empty() {
-                return Some(text);
-            }
-        }
-    }
-    None
+fn xml_lookup_text(
+    xml_docs: &HashMap<u32, XmlDocumentIndex>,
+    doc_id: u32,
+    path: &str,
+) -> Option<String> {
+    xml_docs.get(&doc_id)?.get_str(path).map(str::to_owned)
 }
 
 /// Maximum decoded image size accepted by `host_decode_image` (RGBA pixels).
@@ -4729,15 +4686,32 @@ fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::io::Cursor;
     use std::path::Path;
 
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba, RgbaImage};
 
+    use crate::xml::XmlDocumentIndex;
+
     use super::{
         MAX_DECODE_IMAGE_PIXELS, TlsVerificationMode, build_tls_client_config,
         decode_image_rgba_limited, kv_disk_path, rgba_byte_len_limited, validate_kv_key,
+        xml_lookup_text,
     };
+
+    const XML_WIDGET_FEED: &str = r#"
+        <rss>
+            <channel>
+                <item>
+                    <title>Launch</title>
+                    <pubDate>Sat, 12 Apr 2026 18:00:00 GMT</pubDate>
+                    <ttl>15</ttl>
+                    <res duration="00:01:02" />
+                </item>
+            </channel>
+        </rss>
+    "#;
 
     #[test]
     fn kv_key_validation_rejects_path_traversal_sequences() {
@@ -4797,5 +4771,53 @@ mod tests {
     fn tls_client_config_builds_for_both_modes() {
         assert!(build_tls_client_config(TlsVerificationMode::Full).is_ok());
         assert!(build_tls_client_config(TlsVerificationMode::Insecure).is_ok());
+    }
+
+    #[test]
+    fn xml_lookup_reads_multiple_fields_from_one_indexed_document() {
+        let mut xml_docs = HashMap::new();
+        let doc_id = 1;
+        xml_docs.insert(
+            doc_id,
+            XmlDocumentIndex::from_xml(XML_WIDGET_FEED)
+                .expect("BUG: test XML should build an index"),
+        );
+
+        assert_eq!(xml_lookup_text(&xml_docs, doc_id, "//title"), Some("Launch".to_owned()));
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//pubDate"),
+            Some("Sat, 12 Apr 2026 18:00:00 GMT".to_owned())
+        );
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//ttl")
+                .and_then(|value| value.parse::<f64>().ok()),
+            Some(15.0)
+        );
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//res/@duration"),
+            Some("00:01:02".to_owned())
+        );
+        assert_eq!(xml_lookup_text(&xml_docs, doc_id, "//title"), Some("Launch".to_owned()));
+
+        xml_docs.remove(&doc_id);
+
+        assert_eq!(xml_lookup_text(&xml_docs, doc_id, "//title"), None);
+    }
+
+    #[test]
+    fn xml_lookup_f64_rejects_non_numeric_fields() {
+        let mut xml_docs = HashMap::new();
+        let doc_id = 1;
+        xml_docs.insert(
+            doc_id,
+            XmlDocumentIndex::from_xml(XML_WIDGET_FEED)
+                .expect("BUG: test XML should build an index"),
+        );
+
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//title")
+                .and_then(|value| value.parse::<f64>().ok()),
+            None
+        );
     }
 }
