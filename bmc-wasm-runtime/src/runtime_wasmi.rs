@@ -1755,7 +1755,6 @@ impl WasmWidgetRuntime {
                 let state = caller.data_mut();
                 let doc_id = state.next_xml_id;
                 state.next_xml_id += 1;
-                state.xml_docs.insert(doc_id, xml_str);
                 state.xml_indices.insert(doc_id, xml_index);
                 doc_id
             },
@@ -1774,20 +1773,11 @@ impl WasmWidgetRuntime {
                 let path = read_string(&caller, path_ptr, path_len);
                 let Some(path) = path else { return -1 };
 
-                let cache_key = (doc_id, path);
                 let result = {
                     let state = caller.data();
-                    if let Some(cached) = state.xml_query_cache.get(&cache_key) {
-                        cached.clone()
-                    } else {
-                        xml_lookup_text(&state.xml_indices, doc_id, &cache_key.1)
-                    }
+                    xml_lookup_text(&state.xml_indices, doc_id, &path)
                 };
 
-                caller
-                    .data_mut()
-                    .xml_query_cache
-                    .insert(cache_key, result.clone());
                 let Some(text) = result else { return -1 };
                 write_to_wasm(&mut caller, &text, out_ptr, out_len)
             },
@@ -1796,25 +1786,12 @@ impl WasmWidgetRuntime {
         linker.func_wrap(
             "env",
             "host_xml_get_f64",
-            |mut caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> f64 {
+            |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> f64 {
                 let path = read_string(&caller, path_ptr, path_len);
                 let Some(path) = path else { return f64::NAN };
 
-                let cache_key = (doc_id, path);
-                let result = {
-                    let state = caller.data();
-                    if let Some(cached) = state.xml_query_cache.get(&cache_key) {
-                        cached.clone()
-                    } else {
-                        xml_lookup_text(&state.xml_indices, doc_id, &cache_key.1)
-                    }
-                };
-
-                caller
-                    .data_mut()
-                    .xml_query_cache
-                    .insert(cache_key, result.clone());
-                result
+                let state = caller.data();
+                xml_lookup_text(&state.xml_indices, doc_id, &path)
                     .and_then(|s| s.parse::<f64>().ok())
                     .unwrap_or(f64::NAN)
             },
@@ -1824,10 +1801,7 @@ impl WasmWidgetRuntime {
             "env",
             "host_xml_free",
             |mut caller: Caller<'_, HostState>, doc_id: u32| {
-                let state = caller.data_mut();
-                state.xml_docs.remove(&doc_id);
-                state.xml_indices.remove(&doc_id);
-                state.xml_query_cache.retain(|k, _| k.0 != doc_id);
+                caller.data_mut().xml_indices.remove(&doc_id);
             },
         )?;
 
@@ -4783,21 +4757,26 @@ mod tests {
                 .expect("BUG: test XML should build an index"),
         );
 
-        assert_eq!(xml_lookup_text(&xml_docs, doc_id, "//title"), Some("Launch".to_owned()));
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//title"),
+            Some("Launch".to_owned())
+        );
         assert_eq!(
             xml_lookup_text(&xml_docs, doc_id, "//pubDate"),
             Some("Sat, 12 Apr 2026 18:00:00 GMT".to_owned())
         );
         assert_eq!(
-            xml_lookup_text(&xml_docs, doc_id, "//ttl")
-                .and_then(|value| value.parse::<f64>().ok()),
+            xml_lookup_text(&xml_docs, doc_id, "//ttl").and_then(|value| value.parse::<f64>().ok()),
             Some(15.0)
         );
         assert_eq!(
             xml_lookup_text(&xml_docs, doc_id, "//res/@duration"),
             Some("00:01:02".to_owned())
         );
-        assert_eq!(xml_lookup_text(&xml_docs, doc_id, "//title"), Some("Launch".to_owned()));
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//title"),
+            Some("Launch".to_owned())
+        );
 
         xml_docs.remove(&doc_id);
 

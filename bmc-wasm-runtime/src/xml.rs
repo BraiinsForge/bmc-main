@@ -46,16 +46,16 @@ impl XmlDocumentIndex {
         for node in doc.descendants().filter(roxmltree::Node::is_element) {
             let local_name = node.tag_name().name().to_owned();
 
-            first_attrs_by_local_name.entry(local_name.clone()).or_insert_with(|| {
-                node.attributes()
-                    .map(|attr| (attr.name().to_owned(), attr.value().to_owned()))
-                    .collect()
-            });
+            first_attrs_by_local_name
+                .entry(local_name.clone())
+                .or_insert_with(|| {
+                    node.attributes()
+                        .map(|attr| (attr.name().to_owned(), attr.value().to_owned()))
+                        .collect()
+                });
 
             if let Some(text) = extract_text_children(node) {
-                first_text_by_local_name
-                    .entry(local_name)
-                    .or_insert(text);
+                first_text_by_local_name.entry(local_name).or_insert(text);
             }
         }
 
@@ -69,7 +69,10 @@ impl XmlDocumentIndex {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum XmlLookupPath<'a> {
     Text(&'a str),
-    Attribute { local_name: &'a str, attr_name: &'a str },
+    Attribute {
+        local_name: &'a str,
+        attr_name: &'a str,
+    },
 }
 
 fn parse_xml_lookup_path(path: &str) -> Option<XmlLookupPath<'_>> {
