@@ -3,6 +3,7 @@
 //! WASM runtime — delegates to the wasmi backend.
 
 mod backend;
+mod delivery;
 mod imports;
 mod memory;
 mod time;

@@ -1,0 +1,795 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Host-to-guest event delivery and fixture replay helpers.
+
+#![expect(clippy::too_many_lines)]
+
+use crate::host_api::{
+    CompletedFetch, FixtureEvent, FixtureEventKind, HttpInboundRequest, MdnsEvent, SocketEvent,
+    SsdpEvent, UdpBroadcastEvent, WsEvent,
+};
+
+use super::backend::{WasmWidgetRuntime, do_fetch};
+use super::memory::alloc_and_copy_to_guest;
+
+type DelayedFetchRequest = (String, String, Vec<(String, String)>, Option<Vec<u8>>, u32);
+
+impl WasmWidgetRuntime {
+    /// Take all recorded events (drains the buffer). Used by the capture binary
+    /// to write the combined fixture file after the capture loop finishes.
+    pub fn take_recorded_events(&mut self) -> Vec<FixtureEvent> {
+        std::mem::take(&mut self.store.data_mut().recorded_events)
+    }
+
+    /// Inject fixture events whose `at_ms` <= `monotonic_ms` into stub channels.
+    ///
+    /// Must be called each frame before `deliver_*` methods. Events are injected
+    /// in order; the cursor advances so each event fires exactly once.
+    pub fn inject_fixture_events(&mut self, monotonic_ms: u64) {
+        let state = self.store.data_mut();
+        let Some(ref mut ef) = state.event_fixtures else {
+            return;
+        };
+
+        while ef.cursor < ef.events.len() && ef.events[ef.cursor].at_ms <= monotonic_ms {
+            let event = &ef.events[ef.cursor];
+
+            let delivered = match &event.kind {
+                FixtureEventKind::WsOpen { ws_id } => {
+                    if let Some(tx) = ef.ws_event_txs.get(ws_id) {
+                        let _ = tx.send(WsEvent::Open);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                FixtureEventKind::WsMessage { ws_id, data } => {
+                    if let Some(tx) = ef.ws_event_txs.get(ws_id) {
+                        let _ = tx.send(WsEvent::Message(data.clone()));
+                        true
+                    } else {
+                        false
+                    }
+                }
+                FixtureEventKind::WsClose { ws_id, code } => {
+                    if let Some(tx) = ef.ws_event_txs.get(ws_id) {
+                        let _ = tx.send(WsEvent::Close(*code));
+                        true
+                    } else {
+                        false
+                    }
+                }
+                FixtureEventKind::SocketConnected { socket_id } => {
+                    if let Some(tx) = ef.socket_event_txs.get(socket_id) {
+                        let _ = tx.send(SocketEvent::Connected);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                FixtureEventKind::SocketData { socket_id, data } => {
+                    if let Some(tx) = ef.socket_event_txs.get(socket_id) {
+                        let _ = tx.send(SocketEvent::Data(data.clone()));
+                        true
+                    } else {
+                        false
+                    }
+                }
+                FixtureEventKind::SocketClosed { socket_id, code } => {
+                    if let Some(tx) = ef.socket_event_txs.get(socket_id) {
+                        let _ = tx.send(SocketEvent::Closed(*code));
+                        true
+                    } else {
+                        false
+                    }
+                }
+                FixtureEventKind::SsdpFound { search_id, data } => {
+                    if let Some(tx) = ef.ssdp_event_txs.get(search_id) {
+                        let _ = tx.send(SsdpEvent::Found(data.clone()));
+                    }
+                    true
+                }
+                FixtureEventKind::SsdpRemoved { search_id, data } => {
+                    if let Some(tx) = ef.ssdp_event_txs.get(search_id) {
+                        let _ = tx.send(SsdpEvent::Removed(data.clone()));
+                    }
+                    true
+                }
+                FixtureEventKind::MdnsFound { browse_id, data } => {
+                    if let Some(tx) = ef.mdns_event_txs.get(browse_id) {
+                        let _ = tx.send(MdnsEvent::Found(data.clone()));
+                    }
+                    true
+                }
+                FixtureEventKind::MdnsRemoved { browse_id, data } => {
+                    if let Some(tx) = ef.mdns_event_txs.get(browse_id) {
+                        let _ = tx.send(MdnsEvent::Removed(data.clone()));
+                    }
+                    true
+                }
+                FixtureEventKind::UdpResponse {
+                    broadcast_id,
+                    data,
+                    source,
+                } => {
+                    if let Some(tx) = ef.udp_event_txs.get(broadcast_id) {
+                        let _ = tx.send(UdpBroadcastEvent::Response(data.clone(), source.clone()));
+                    }
+                    true
+                }
+            };
+
+            if !delivered {
+                tracing::debug!(
+                    cursor = ef.cursor,
+                    at_ms = event.at_ms,
+                    kind = ?event.kind,
+                    "fixture event deferred — channel not yet registered"
+                );
+                break;
+            }
+            ef.cursor += 1;
+        }
+    }
+
+    /// Whether all fixture events up to the current virtual time have been injected.
+    ///
+    /// Returns `true` when there are no fixtures loaded, or when the cursor has
+    /// advanced past all events whose `at_ms <= monotonic_ms`. Used by interaction
+    /// settlement to avoid waiting for persistent browse/search sessions to close.
+    #[must_use]
+    pub fn fixture_events_caught_up(&self) -> bool {
+        let state = self.store.data();
+        let Some(ref ef) = state.event_fixtures else {
+            return true;
+        };
+        ef.cursor >= ef.events.len() || ef.events[ef.cursor].at_ms > state.monotonic_ms
+    }
+
+    /// Check for completed fetch responses and delayed fetches, then deliver
+    /// them to WASM by calling `__on_fetch_response`.
+    ///
+    /// Call this before `render()` each frame.
+    pub fn deliver_fetch_responses(&mut self) {
+        self.fire_ready_delayed_fetches();
+
+        let mut responses = Vec::new();
+        let state = self.store.data_mut();
+        while let Ok(resp) = state.fetch_rx.try_recv() {
+            state.in_flight_fetches = state.in_flight_fetches.saturating_sub(1);
+            responses.push(resp);
+        }
+
+        if responses.is_empty() {
+            return;
+        }
+
+        {
+            let state = self.store.data_mut();
+            for resp in &responses {
+                if let Some(key) = state.fetch_keys.remove(&resp.request_id)
+                    && let Some(ref observer) = state.fetch_observer
+                {
+                    observer(&key, resp.status, &resp.body);
+                }
+            }
+        }
+
+        tracing::debug!("delivering {} fetch response(s)", responses.len());
+
+        let on_response = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_fetch_response");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_response), Ok(alloc_func)) = (on_response, alloc_func) else {
+            tracing::warn!("widget missing __on_fetch_response or __alloc export");
+            return;
+        };
+
+        for resp in responses {
+            tracing::debug!(
+                id = resp.request_id,
+                status = resp.status,
+                body_len = resp.body.len(),
+                "delivering fetch response"
+            );
+
+            let Some((body_ptr, body_len)) =
+                self.alloc_guest_bytes(&alloc_func, &resp.body, "fetch response body")
+            else {
+                continue;
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) = on_response.call(
+                &mut self.store,
+                (resp.request_id, resp.status, body_ptr, body_len),
+            ) {
+                tracing::error!("__on_fetch_response failed: {e}");
+            }
+        }
+    }
+
+    /// Whether there are pending or in-flight fetches that need polling.
+    #[must_use]
+    pub fn has_pending_fetches(&self) -> bool {
+        let state = self.store.data();
+        !state.delayed_fetches.is_empty() || state.in_flight_fetches > 0
+    }
+
+    /// Drain WebSocket events from all active connections and deliver them
+    /// to WASM by calling `__on_ws_event(ws_id, event_type, data_ptr, data_len)`.
+    ///
+    /// Event types: 0 = Open, 1 = Message, 2 = Close (data_ptr/data_len carry
+    /// the close code as two little-endian bytes).
+    pub fn deliver_ws_messages(&mut self) -> bool {
+        let mut events: Vec<(u32, WsEvent)> = Vec::new();
+        let mut closed_ids: Vec<u32> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&ws_id, ws) in &state.websockets {
+            while let Ok(event) = ws.event_rx.try_recv() {
+                let is_close = matches!(event, WsEvent::Close(_));
+                events.push((ws_id, event));
+                if is_close {
+                    closed_ids.push(ws_id);
+                }
+            }
+        }
+        for id in &closed_ids {
+            state.websockets.remove(id);
+        }
+
+        if state.record_events {
+            let at_ms = state.monotonic_ms;
+            for (ws_id, event) in &events {
+                let kind = match event {
+                    WsEvent::Open => FixtureEventKind::WsOpen { ws_id: *ws_id },
+                    WsEvent::Message(data) => FixtureEventKind::WsMessage {
+                        ws_id: *ws_id,
+                        data: data.clone(),
+                    },
+                    WsEvent::Close(code) => FixtureEventKind::WsClose {
+                        ws_id: *ws_id,
+                        code: *code,
+                    },
+                };
+                state.recorded_events.push(FixtureEvent { at_ms, kind });
+            }
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        tracing::debug!("delivering {} WS event(s)", events.len());
+
+        let on_ws_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_ws_event");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_ws_event), Ok(alloc_func)) = (on_ws_event, alloc_func) else {
+            tracing::warn!("widget missing __on_ws_event or __alloc export");
+            return false;
+        };
+
+        for (ws_id, event) in events {
+            let (event_type, data): (u32, &[u8]) = match &event {
+                WsEvent::Open => (0, &[]),
+                WsEvent::Message(bytes) => (1, bytes),
+                WsEvent::Close(code) => (2, &code.to_le_bytes()),
+            };
+
+            let Some((data_ptr, data_len)) =
+                self.alloc_guest_bytes(&alloc_func, data, "websocket event payload")
+            else {
+                continue;
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) =
+                on_ws_event.call(&mut self.store, (ws_id, event_type, data_ptr, data_len))
+            {
+                tracing::error!("__on_ws_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active WebSocket connections.
+    #[must_use]
+    pub fn has_active_websockets(&self) -> bool {
+        !self.store.data().websockets.is_empty()
+    }
+
+    /// Drain socket events from all active connections and deliver them
+    /// to WASM by calling `__on_socket_event(socket_id, event_type, data_ptr, data_len)`.
+    ///
+    /// Event types: 0 = Connected, 1 = Data, 2 = Closed.
+    pub fn deliver_socket_events(&mut self) -> bool {
+        let mut events: Vec<(u32, SocketEvent)> = Vec::new();
+        let mut closed_ids: Vec<u32> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&socket_id, sock) in &state.sockets {
+            while let Ok(event) = sock.event_rx.try_recv() {
+                let is_close = matches!(event, SocketEvent::Closed(_));
+                events.push((socket_id, event));
+                if is_close {
+                    closed_ids.push(socket_id);
+                }
+            }
+        }
+        for id in &closed_ids {
+            state.sockets.remove(id);
+        }
+
+        if state.record_events {
+            let at_ms = state.monotonic_ms;
+            for (socket_id, event) in &events {
+                let kind = match event {
+                    SocketEvent::Connected => FixtureEventKind::SocketConnected {
+                        socket_id: *socket_id,
+                    },
+                    SocketEvent::Data(data) => FixtureEventKind::SocketData {
+                        socket_id: *socket_id,
+                        data: data.clone(),
+                    },
+                    SocketEvent::Closed(code) => FixtureEventKind::SocketClosed {
+                        socket_id: *socket_id,
+                        code: *code,
+                    },
+                };
+                state.recorded_events.push(FixtureEvent { at_ms, kind });
+            }
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        let on_socket_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_socket_event");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_socket_event), Ok(alloc_func)) = (on_socket_event, alloc_func) else {
+            tracing::warn!("widget missing __on_socket_event or __alloc export");
+            return false;
+        };
+
+        for (socket_id, event) in events {
+            let (event_type, data): (u32, &[u8]) = match &event {
+                SocketEvent::Connected => (0, &[]),
+                SocketEvent::Data(bytes) => (1, bytes),
+                SocketEvent::Closed(code) => (2, &code.to_le_bytes()),
+            };
+
+            let Some((data_ptr, data_len)) =
+                self.alloc_guest_bytes(&alloc_func, data, "socket event payload")
+            else {
+                continue;
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) =
+                on_socket_event.call(&mut self.store, (socket_id, event_type, data_ptr, data_len))
+            {
+                tracing::error!("__on_socket_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active socket connections.
+    #[must_use]
+    pub fn has_active_sockets(&self) -> bool {
+        !self.store.data().sockets.is_empty()
+    }
+
+    /// Drain mDNS events from all active browse sessions and deliver them
+    /// to WASM by calling `__on_mdns_event(browse_id, event_type, data_ptr, data_len)`.
+    pub fn deliver_mdns_events(&mut self) -> bool {
+        let mut events: Vec<(u32, MdnsEvent)> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&browse_id, browse) in &state.mdns_browses {
+            while let Ok(event) = browse.event_rx.try_recv() {
+                events.push((browse_id, event));
+            }
+        }
+
+        if state.record_events {
+            let at_ms = state.monotonic_ms;
+            for (browse_id, event) in &events {
+                let kind = match event {
+                    MdnsEvent::Found(data) => FixtureEventKind::MdnsFound {
+                        browse_id: *browse_id,
+                        data: data.clone(),
+                    },
+                    MdnsEvent::Removed(data) => FixtureEventKind::MdnsRemoved {
+                        browse_id: *browse_id,
+                        data: data.clone(),
+                    },
+                };
+                state.recorded_events.push(FixtureEvent { at_ms, kind });
+            }
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        let on_mdns_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_mdns_event");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_mdns_event), Ok(alloc_func)) = (on_mdns_event, alloc_func) else {
+            tracing::warn!("widget missing __on_mdns_event or __alloc export");
+            return false;
+        };
+
+        for (browse_id, event) in events {
+            let (event_type, data): (u32, &[u8]) = match &event {
+                MdnsEvent::Found(json) => (0, json.as_bytes()),
+                MdnsEvent::Removed(name) => (1, name.as_bytes()),
+            };
+
+            let Some((data_ptr, data_len)) =
+                self.alloc_guest_bytes(&alloc_func, data, "mDNS event payload")
+            else {
+                continue;
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) =
+                on_mdns_event.call(&mut self.store, (browse_id, event_type, data_ptr, data_len))
+            {
+                tracing::error!("__on_mdns_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active mDNS browse sessions.
+    #[must_use]
+    pub fn has_active_mdns_browses(&self) -> bool {
+        !self.store.data().mdns_browses.is_empty()
+    }
+
+    /// Drain SSDP events from all active search sessions and deliver them
+    /// to WASM by calling `__on_ssdp_event(search_id, event_type, data_ptr, data_len)`.
+    pub fn deliver_ssdp_events(&mut self) -> bool {
+        let mut events: Vec<(u32, SsdpEvent)> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&search_id, search) in &state.ssdp_searches {
+            while let Ok(event) = search.event_rx.try_recv() {
+                events.push((search_id, event));
+            }
+        }
+
+        if state.record_events {
+            let at_ms = state.monotonic_ms;
+            for (search_id, event) in &events {
+                let kind = match event {
+                    SsdpEvent::Found(data) => FixtureEventKind::SsdpFound {
+                        search_id: *search_id,
+                        data: data.clone(),
+                    },
+                    SsdpEvent::Removed(data) => FixtureEventKind::SsdpRemoved {
+                        search_id: *search_id,
+                        data: data.clone(),
+                    },
+                };
+                state.recorded_events.push(FixtureEvent { at_ms, kind });
+            }
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        let on_ssdp_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_ssdp_event");
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_ssdp_event), Ok(alloc_func)) = (on_ssdp_event, alloc_func) else {
+            tracing::warn!("widget missing __on_ssdp_event or __alloc export");
+            return false;
+        };
+
+        for (search_id, event) in events {
+            let (event_type, data): (u32, &[u8]) = match &event {
+                SsdpEvent::Found(json) => (0, json.as_bytes()),
+                SsdpEvent::Removed(usn) => (1, usn.as_bytes()),
+            };
+
+            let Some((data_ptr, data_len)) =
+                self.alloc_guest_bytes(&alloc_func, data, "SSDP event payload")
+            else {
+                continue;
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) =
+                on_ssdp_event.call(&mut self.store, (search_id, event_type, data_ptr, data_len))
+            {
+                tracing::error!("__on_ssdp_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active SSDP search sessions.
+    #[must_use]
+    pub fn has_active_ssdp_searches(&self) -> bool {
+        !self.store.data().ssdp_searches.is_empty()
+    }
+
+    /// Drain UDP broadcast events from all active sessions and deliver them
+    /// to WASM by calling `__on_udp_broadcast_event`.
+    pub fn deliver_udp_broadcast_events(&mut self) -> bool {
+        let mut events: Vec<(u32, UdpBroadcastEvent)> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&broadcast_id, broadcast) in &state.udp_broadcasts {
+            while let Ok(event) = broadcast.event_rx.try_recv() {
+                events.push((broadcast_id, event));
+            }
+        }
+
+        if state.record_events {
+            let at_ms = state.monotonic_ms;
+            for (broadcast_id, event) in &events {
+                let UdpBroadcastEvent::Response(data, source) = event;
+                state.recorded_events.push(FixtureEvent {
+                    at_ms,
+                    kind: FixtureEventKind::UdpResponse {
+                        broadcast_id: *broadcast_id,
+                        data: data.clone(),
+                        source: source.clone(),
+                    },
+                });
+            }
+        }
+
+        if events.is_empty() {
+            return false;
+        }
+
+        let on_udp_broadcast_event = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32, u32), ()>(
+                &self.store,
+                "__on_udp_broadcast_event",
+            );
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_udp_broadcast_event), Ok(alloc_func)) = (on_udp_broadcast_event, alloc_func)
+        else {
+            tracing::warn!("widget missing __on_udp_broadcast_event or __alloc export");
+            return false;
+        };
+
+        for (broadcast_id, event) in events {
+            let UdpBroadcastEvent::Response(ref data, ref source) = event;
+
+            let Some((data_ptr, data_len)) =
+                self.alloc_guest_bytes(&alloc_func, data.as_bytes(), "UDP broadcast payload")
+            else {
+                continue;
+            };
+            let Some((source_ptr, source_len)) =
+                self.alloc_guest_bytes(&alloc_func, source.as_bytes(), "UDP broadcast source")
+            else {
+                continue;
+            };
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) = on_udp_broadcast_event.call(
+                &mut self.store,
+                (broadcast_id, data_ptr, data_len, source_ptr, source_len),
+            ) {
+                tracing::error!("__on_udp_broadcast_event failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active UDP broadcast sessions.
+    #[must_use]
+    pub fn has_active_udp_broadcasts(&self) -> bool {
+        !self.store.data().udp_broadcasts.is_empty()
+    }
+
+    /// Drain inbound HTTP requests from all active listeners and deliver them
+    /// to WASM by calling `__on_http_request(...)`.
+    pub fn deliver_http_requests(&mut self) -> bool {
+        let mut requests: Vec<(u32, HttpInboundRequest)> = Vec::new();
+
+        let state = self.store.data_mut();
+        for (&listener_id, listener) in &state.http_listeners {
+            while let Ok(req) = listener.request_rx.try_recv() {
+                requests.push((listener_id, req));
+            }
+        }
+
+        if requests.is_empty() {
+            return false;
+        }
+
+        let on_http_request = self
+            .instance
+            .get_typed_func::<(u32, u32, u32, u32, u32, u32, u32, u32, u32, u32), ()>(
+                &self.store,
+                "__on_http_request",
+            );
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc");
+
+        let (Ok(on_http_request), Ok(alloc_func)) = (on_http_request, alloc_func) else {
+            tracing::warn!("widget missing __on_http_request or __alloc export");
+            return false;
+        };
+
+        for (listener_id, req) in requests {
+            self.store
+                .data_mut()
+                .http_response_txs
+                .insert(req.request_id, req.response_tx);
+
+            let (method_ptr, method_len) = self
+                .alloc_guest_bytes(&alloc_func, req.method.as_bytes(), "HTTP request method")
+                .unwrap_or((0, 0));
+            let (path_ptr, path_len) = self
+                .alloc_guest_bytes(&alloc_func, req.path.as_bytes(), "HTTP request path")
+                .unwrap_or((0, 0));
+            let (headers_ptr, headers_len) = self
+                .alloc_guest_bytes(&alloc_func, req.headers.as_bytes(), "HTTP request headers")
+                .unwrap_or((0, 0));
+            let (body_ptr, body_len) = self
+                .alloc_guest_bytes(&alloc_func, &req.body, "HTTP request body")
+                .unwrap_or((0, 0));
+
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            let request_id = req.request_id;
+            if let Err(e) = on_http_request.call(
+                &mut self.store,
+                (
+                    listener_id,
+                    request_id,
+                    method_ptr,
+                    method_len,
+                    path_ptr,
+                    path_len,
+                    headers_ptr,
+                    headers_len,
+                    body_ptr,
+                    body_len,
+                ),
+            ) {
+                tracing::error!("__on_http_request failed: {e}");
+            }
+        }
+        true
+    }
+
+    /// Whether there are any active HTTP listeners.
+    #[must_use]
+    pub fn has_active_http_listeners(&self) -> bool {
+        !self.store.data().http_listeners.is_empty()
+    }
+
+    fn alloc_guest_bytes(
+        &mut self,
+        alloc_func: &wasmi::TypedFunc<u32, u32>,
+        bytes: &[u8],
+        context: &str,
+    ) -> Option<(u32, u32)> {
+        alloc_and_copy_to_guest(
+            &self.instance,
+            &mut self.store,
+            alloc_func,
+            self.fuel_per_frame,
+            bytes,
+            context,
+        )
+    }
+
+    fn fire_ready_delayed_fetches(&mut self) {
+        let state = self.store.data_mut();
+        let now_ms = state.monotonic_ms;
+        let mut ready: Vec<DelayedFetchRequest> = Vec::new();
+        state.delayed_fetches.retain(|df| {
+            if now_ms >= df.fire_at_ms {
+                ready.push((
+                    df.method.clone(),
+                    df.url.clone(),
+                    df.headers.clone(),
+                    df.body.clone(),
+                    df.request_id,
+                ));
+                false
+            } else {
+                true
+            }
+        });
+
+        for (method, url, headers, body, request_id) in ready {
+            tracing::info!(request_id, %method, %url, "firing HTTP fetch");
+            state
+                .fetch_keys
+                .insert(request_id, format!("{method} {url}"));
+            state.in_flight_fetches += 1;
+
+            let intercepted = state
+                .fetch_interceptor
+                .as_ref()
+                .and_then(|f| f(&method, &url));
+            if let Some((status, body)) = intercepted {
+                let _ = state.fetch_tx.send(CompletedFetch {
+                    request_id,
+                    status,
+                    body,
+                });
+                continue;
+            }
+
+            let tx = state.fetch_tx.clone();
+            std::thread::spawn(move || {
+                let (status, resp_body) = do_fetch(&method, &url, &headers, body.as_deref());
+                tracing::info!(
+                    request_id,
+                    status,
+                    body_len = resp_body.len(),
+                    %url,
+                    "fetch completed"
+                );
+                let _ = tx.send(CompletedFetch {
+                    request_id,
+                    status,
+                    body: resp_body,
+                });
+            });
+        }
+    }
+}

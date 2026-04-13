@@ -90,3 +90,54 @@ pub(super) fn write_to_wasm(
 
     actual_len as i32
 }
+
+/// Allocate guest memory for `bytes` and copy them into the guest heap.
+pub(super) fn alloc_and_copy_to_guest(
+    instance: &wasmi::Instance,
+    store: &mut wasmi::Store<HostState>,
+    alloc_func: &wasmi::TypedFunc<u32, u32>,
+    fuel_per_frame: u64,
+    bytes: &[u8],
+    context: &str,
+) -> Option<(u32, u32)> {
+    let len = u32::try_from(bytes.len()).ok()?;
+    if len == 0 {
+        return Some((0, 0));
+    }
+
+    if let Err(e) = store.set_fuel(fuel_per_frame) {
+        tracing::error!("set_fuel failed for {context}: {e}");
+        return None;
+    }
+
+    let ptr = match alloc_func.call(&mut *store, len) {
+        Ok(ptr) => ptr,
+        Err(e) => {
+            tracing::error!("__alloc failed for {context}: {e}");
+            return None;
+        }
+    };
+
+    let memory = instance
+        .get_export(&*store, "memory")
+        .and_then(Extern::into_memory);
+    let Some(memory) = memory else {
+        tracing::error!("memory export missing for {context}");
+        return None;
+    };
+
+    let mem_data = memory.data_mut(store);
+    let start = ptr as usize;
+    let end = start + len as usize;
+    if end > mem_data.len() {
+        tracing::error!(
+            ptr,
+            len,
+            mem_len = mem_data.len(),
+            "guest memory too small for {context}"
+        );
+        return None;
+    }
+    mem_data[start..end].copy_from_slice(bytes);
+    Some((ptr, len))
+}
