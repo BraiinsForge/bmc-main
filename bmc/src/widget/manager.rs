@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::process::Child;
 use tokio::sync::RwLock;
@@ -14,6 +15,11 @@ use super::coordinator::WidgetEnv;
 use super::{PathDiscovery, SpawnError, WaylandSpawner, WidgetDiscovery, WidgetRegistry};
 
 const DEFAULT_XDG_RUNTIME_DIR: &str = "/tmp/run";
+
+/// Grace period for widget processes to clean up after SIGTERM before
+/// resorting to SIGKILL. Widgets that hold GPU resources (GEM/DMA-BUF)
+/// need time to run destructors so the kernel can reclaim CMA memory.
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub struct WidgetManager {
@@ -83,12 +89,8 @@ impl WidgetManager {
 
     pub async fn stop_widget(&self, instance_id: &str) {
         let mut children = self.children.write().await;
-        if let Some(mut child) = children.remove(instance_id) {
-            // Try graceful termination first via SIGTERM, then force kill
-            if let Err(e) = child.kill().await {
-                warn!("failed to kill widget {}: {}", instance_id, e);
-            }
-            info!("stopped widget instance {}", instance_id);
+        if let Some(child) = children.remove(instance_id) {
+            graceful_stop(instance_id.to_owned(), child).await;
         } else {
             warn!("attempted to stop unknown widget instance {}", instance_id);
         }
@@ -96,11 +98,49 @@ impl WidgetManager {
 
     pub async fn stop_all(&self) {
         let mut children = self.children.write().await;
-        for (instance_id, mut child) in children.drain() {
+        let futures: Vec<_> = children
+            .drain()
+            .map(|(id, child)| graceful_stop(id, child))
+            .collect();
+        futures::future::join_all(futures).await;
+        info!("all widgets stopped");
+    }
+}
+
+/// Send SIGTERM and wait for graceful exit; fall back to SIGKILL after
+/// [`GRACEFUL_SHUTDOWN_TIMEOUT`]. This gives widget processes time to
+/// run destructors and free GPU resources (GEM handles, DMA-BUFs)
+/// that would otherwise leak CMA memory.
+async fn graceful_stop(instance_id: String, mut child: Child) {
+    let Some(pid) = child.id() else {
+        info!("widget {instance_id} already exited");
+        return;
+    };
+
+    // SAFETY: pid is a valid child process id obtained from `child.id()`.
+    let term_result = unsafe { libc::kill(pid.cast_signed(), libc::SIGTERM) };
+    if term_result != 0 {
+        warn!("failed to send SIGTERM to widget {instance_id} (pid {pid})");
+        let _ = child.kill().await;
+        return;
+    }
+
+    info!("sent SIGTERM to widget {instance_id} (pid {pid}), waiting for exit");
+    match tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, child.wait()).await {
+        Ok(Ok(status)) => {
+            info!("widget {instance_id} exited: {status}");
+        }
+        Ok(Err(e)) => {
+            warn!("error waiting for widget {instance_id}: {e}");
+        }
+        Err(_) => {
+            warn!(
+                "widget {instance_id} did not exit within {}s, sending SIGKILL",
+                GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
+            );
             if let Err(e) = child.kill().await {
-                warn!("failed to kill widget {}: {}", instance_id, e);
+                warn!("failed to SIGKILL widget {instance_id}: {e}");
             }
         }
-        info!("all widgets stopped");
     }
 }

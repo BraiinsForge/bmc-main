@@ -885,6 +885,7 @@ dependencies = [
  "image",
  "indexmap",
  "itertools 0.12.1",
+ "libc",
  "mime_guess",
  "prost-types 0.13.5",
  "reqwest",

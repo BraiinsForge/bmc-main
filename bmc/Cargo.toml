@@ -38,6 +38,7 @@ hyper.workspace = true
 image.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
+libc.workspace = true
 mime_guess.workspace = true
 prost-types.workspace = true
 reqwest.workspace = true
