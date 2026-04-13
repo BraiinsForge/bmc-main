@@ -9,7 +9,8 @@ use crate::host_api::{
     SsdpEvent, UdpBroadcastEvent, WsEvent,
 };
 
-use super::backend::{WasmWidgetRuntime, do_fetch};
+use super::backend::WasmWidgetRuntime;
+use super::background::do_fetch;
 use super::memory::alloc_and_copy_to_guest;
 
 type DelayedFetchRequest = (String, String, Vec<(String, String)>, Option<Vec<u8>>, u32);

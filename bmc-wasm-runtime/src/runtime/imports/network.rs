@@ -17,7 +17,7 @@ use crate::host_api::{
     UdpBroadcastEvent, WsEvent, WsOutbound,
 };
 
-use super::super::backend::{
+use super::super::background::{
     TlsVerificationMode, do_fetch, host_tls_connect_impl, http_listener_thread, mdns_browse_thread,
     ssdp_search_thread, tcp_background_thread, udp_broadcast_thread, ws_background_thread,
 };
