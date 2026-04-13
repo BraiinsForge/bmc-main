@@ -1,0 +1,85 @@
+{
+  "scenes": [
+    {
+      "id": "a418d38d-a506-489d-9627-0c7909374ef1",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "3c32f8c7-e678-466d-a331-39b5c8f89153",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "clock",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "ed9e4e4d-c386-4ca5-83a0-78a56d7cef29",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "8521767f-5659-4b2a-8790-75d5b2f154cf",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "ticker_btc",
+          "params": {
+            "time_frame": "day1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2bb916d7-9210-47e7-a4b3-6fae740597a9",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "1beff3bb-0afa-4bb4-9477-d0a292d266f6",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "6e5994a9-011a-4f6b-a7b7-6cfe05a402a8",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "block_height",
+          "params": {
+            "show_timestamp": true,
+            "numbers_font_style": "bold"
+          }
+        },
+        {
+          "id": "ced9bc7f-a4a5-4bbf-a2d5-94a14c2e6de8",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "ticker_btc",
+          "params": {
+            "time_frame": "day1"
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": []
+}

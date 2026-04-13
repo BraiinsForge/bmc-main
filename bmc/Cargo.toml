@@ -15,6 +15,10 @@ include = [
     "../widgets-wasm/weather/manifest.json",
 ]
 
+[[bin]]
+name = "bmc-migrate-config"
+path = "src/bin/migrate_config.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

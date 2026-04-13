@@ -7,6 +7,7 @@ mod button_manager;
 pub mod compositor;
 mod config;
 mod data;
+pub mod config_migration;
 pub mod entry;
 pub mod firmware;
 mod initial_setup;
