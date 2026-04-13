@@ -2,8 +2,9 @@
 
 //! WASM runtime — delegates to the wasmi backend.
 
-#[path = "runtime_wasmi.rs"]
 mod backend;
+mod memory;
+mod time;
 
 pub use backend::{
     FetchInterceptor, FetchObserver, RenderStatus, RuntimeConfig, RuntimeResourceLimits,

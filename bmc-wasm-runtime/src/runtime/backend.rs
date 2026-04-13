@@ -14,11 +14,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::{
-    FormatPreferences, NumberFormat, SDK_VERSION, SDK_VERSION_EXPORT, TemperatureUnit, UnitSystem,
-    version_unpack,
+    FormatPreferences, SDK_VERSION, SDK_VERSION_EXPORT, TemperatureUnit, UnitSystem, version_unpack,
 };
-use chrono::{DateTime, Datelike, FixedOffset, Local, Timelike, Utc};
-use formato::{FormatOptions, Formato};
+use chrono::{DateTime, Datelike, FixedOffset, Timelike, Utc};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
@@ -32,6 +30,9 @@ use crate::host_api::{
 use crate::renderer::Renderer;
 use crate::tree::{self, TouchHit};
 use crate::xml::XmlDocumentIndex;
+
+use super::memory::{parse_headers, read_bytes, read_optional_bytes, read_string, write_to_wasm};
+use super::time::{expand_rrule_impl, format_number_with_prefs, tz_convert_impl};
 
 /// Write a `TouchHit` (4×f32 LE = 16 bytes) to WASM memory at `out_ptr`.
 fn write_touch_hit(caller: &mut Caller<'_, HostState>, out_ptr: u32, hit: &TouchHit) {
@@ -3233,98 +3234,6 @@ impl WasmWidgetRuntime {
     }
 }
 
-/// Read a UTF-8 string from WASM memory.
-fn read_string(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<String> {
-    let memory = caller.get_export("memory").and_then(Extern::into_memory)?;
-    let data = memory.data(caller);
-    let start = ptr as usize;
-    let end = start + len as usize;
-    if end > data.len() {
-        return None;
-    }
-    String::from_utf8(data[start..end].to_vec()).ok()
-}
-
-/// Read raw bytes from WASM memory.
-fn read_bytes(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<Vec<u8>> {
-    let memory = caller.get_export("memory").and_then(Extern::into_memory)?;
-    let data = memory.data(caller);
-    let start = ptr as usize;
-    let end = start + len as usize;
-    if end > data.len() {
-        return None;
-    }
-    Some(data[start..end].to_vec())
-}
-
-/// Read optional bytes from WASM memory (returns `None` if ptr is null / len is 0).
-fn read_optional_bytes(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<Vec<u8>> {
-    if ptr == 0 || len == 0 {
-        return None;
-    }
-    read_bytes(caller, ptr, len)
-}
-
-/// Parse newline-separated "Key: Value" headers from WASM memory.
-fn parse_headers(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Vec<(String, String)> {
-    if len == 0 {
-        return Vec::new();
-    }
-    let Some(raw) = read_string(caller, ptr, len) else {
-        return Vec::new();
-    };
-    raw.lines()
-        .filter_map(|line| {
-            let (k, v) = line.split_once(':')?;
-            Some((k.trim().to_owned(), v.trim().to_owned()))
-        })
-        .collect()
-}
-
-/// Format a number using the given number format preference and `formato` crate.
-fn format_number_with_prefs(nf: NumberFormat, value: f64, decimals: u32) -> String {
-    let (group_sep, decimal_sep) = match nf {
-        NumberFormat::SpaceComma => ("\u{00a0}", ","),
-        NumberFormat::CommaDot => (",", "."),
-        NumberFormat::DotComma => (".", ","),
-        NumberFormat::SpaceDot => ("\u{00a0}", "."),
-    };
-
-    let options = FormatOptions::new()
-        .with_thousands(group_sep)
-        .with_decimal(decimal_sep);
-
-    let pattern = if decimals == 0 {
-        "#,##0".to_owned()
-    } else {
-        format!("#,##0.{}", "0".repeat(decimals as usize))
-    };
-
-    value.formato_ops(&pattern, &options)
-}
-
-/// Write a UTF-8 string into WASM memory at `out_ptr`, returning actual byte length.
-/// Negative return on error (no memory export).
-#[expect(clippy::cast_possible_wrap)]
-fn write_to_wasm(caller: &mut Caller<'_, HostState>, s: &str, out_ptr: u32, out_len: u32) -> i32 {
-    let bytes = s.as_bytes();
-    let actual_len = bytes.len();
-    let copy_len = actual_len.min(out_len as usize);
-
-    if copy_len > 0 {
-        let memory = caller.get_export("memory").and_then(Extern::into_memory);
-        if let Some(memory) = memory {
-            let data = memory.data_mut(caller);
-            let start = out_ptr as usize;
-            if start + copy_len <= data.len() {
-                data[start..start + copy_len].copy_from_slice(&bytes[..copy_len]);
-            }
-        }
-    }
-
-    actual_len as i32
-}
-
 fn xml_lookup_text(
     xml_docs: &HashMap<u32, XmlDocumentIndex>,
     doc_id: u32,
@@ -4507,157 +4416,6 @@ fn do_fetch(
         Err(_) => (0, Vec::new()),
     }
 }
-
-// ── Calendar host functions ─────────────────────────────────────────
-
-/// Expand an RRULE string into concrete UTC timestamps.
-///
-/// Input is a binary-packed buffer (see `sdk/src/calendar.rs` for wire format):
-/// ```text
-/// window_start: i64 LE, window_end: i64 LE, max_count: u16 LE,
-/// tzid_len: u16 LE, tzid: [u8], dtstart_len: u16 LE, dtstart: [u8],
-/// rrule_len: u16 LE, rrule: [u8]
-/// ```
-fn expand_rrule_impl(input: &[u8]) -> Vec<i64> {
-    use rrule::RRuleSet;
-    use std::fmt::Write;
-
-    if input.len() < 18 {
-        tracing::warn!("expand_rrule: input too short ({} bytes)", input.len());
-        return Vec::new();
-    }
-
-    let window_start = i64::from_le_bytes(input[0..8].try_into().unwrap_or_default());
-    let window_end = i64::from_le_bytes(input[8..16].try_into().unwrap_or_default());
-    let max_count = u16::from_le_bytes(input[16..18].try_into().unwrap_or_default());
-
-    let mut pos = 18;
-    let read_str = |pos: &mut usize| -> Option<&str> {
-        if *pos + 2 > input.len() {
-            return None;
-        }
-        let len = u16::from_le_bytes(input[*pos..*pos + 2].try_into().ok()?) as usize;
-        *pos += 2;
-        if *pos + len > input.len() {
-            return None;
-        }
-        let s = core::str::from_utf8(&input[*pos..*pos + len]).ok()?;
-        *pos += len;
-        Some(s)
-    };
-
-    let Some(tzid_raw) = read_str(&mut pos) else {
-        tracing::warn!("expand_rrule: failed to read tzid");
-        return Vec::new();
-    };
-    let tzid = if tzid_raw.is_empty() {
-        None
-    } else {
-        Some(tzid_raw)
-    };
-    let Some(dtstart_str) = read_str(&mut pos) else {
-        tracing::warn!("expand_rrule: failed to read dtstart");
-        return Vec::new();
-    };
-    let Some(rrule_str) = read_str(&mut pos) else {
-        tracing::warn!("expand_rrule: failed to read rrule");
-        return Vec::new();
-    };
-
-    // Build an RFC-style RRULE string that the rrule crate can parse
-    let mut rrule_input = String::with_capacity(256);
-
-    // DTSTART line
-    if let Some(tz) = tzid {
-        let _ = writeln!(rrule_input, "DTSTART;TZID={tz}:{dtstart_str}");
-    } else if dtstart_str.ends_with('Z') {
-        let _ = writeln!(rrule_input, "DTSTART:{dtstart_str}");
-    } else {
-        // Assume UTC if no timezone
-        let _ = writeln!(rrule_input, "DTSTART:{dtstart_str}Z");
-    }
-
-    // RRULE line
-    let _ = write!(rrule_input, "RRULE:{rrule_str}");
-
-    let rrule_set: RRuleSet = match rrule_input.parse() {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!("expand_rrule: failed to parse RRULE: {e}");
-            return Vec::new();
-        }
-    };
-
-    // Constrain to the window so the iterator skips directly past
-    // occurrences before window_start instead of expanding from DTSTART
-    // forward (which could be years of weekly events).
-    let Some(after) = DateTime::from_timestamp(window_start, 0) else {
-        return Vec::new();
-    };
-    let Some(before) = DateTime::from_timestamp(window_end, 0) else {
-        return Vec::new();
-    };
-    let after = after.with_timezone(&rrule::Tz::UTC);
-    let before = before.with_timezone(&rrule::Tz::UTC);
-
-    let result = rrule_set.after(after).before(before).all(max_count);
-
-    result.dates.into_iter().map(|dt| dt.timestamp()).collect()
-}
-
-/// Convert a UTC unix timestamp to wall-clock time in a named IANA timezone.
-/// Returns the 20-byte SystemTime wire format, or `None` on error.
-fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]> {
-    use chrono::{Datelike, TimeZone, Timelike};
-
-    use chrono::Offset;
-
-    let dt_utc = DateTime::from_timestamp(unix_secs, 0)?;
-
-    // "Local" is a special case — use the system's local timezone
-    let (year, month, day, hour, minute, second, weekday, utc_offset) = if tz_name == "Local" {
-        let local = dt_utc.with_timezone(&Local);
-        (
-            local.year(),
-            local.month(),
-            local.day(),
-            local.hour(),
-            local.minute(),
-            local.second(),
-            local.weekday().num_days_from_monday(),
-            local.offset().local_minus_utc(),
-        )
-    } else {
-        let tz: chrono_tz::Tz = tz_name.parse().ok()?;
-        let local = tz.from_utc_datetime(&dt_utc.naive_utc());
-        (
-            local.year(),
-            local.month(),
-            local.day(),
-            local.hour(),
-            local.minute(),
-            local.second(),
-            local.weekday().num_days_from_monday(),
-            local.offset().fix().local_minus_utc(),
-        )
-    };
-
-    let mut buf = [0_u8; 20];
-    buf[0..8].copy_from_slice(&unix_secs.to_le_bytes());
-    buf[8..12].copy_from_slice(&utc_offset.to_le_bytes());
-    #[expect(clippy::cast_sign_loss)]
-    let y = year as u16;
-    buf[12..14].copy_from_slice(&y.to_le_bytes());
-    buf[14] = month as u8;
-    buf[15] = day as u8;
-    buf[16] = hour as u8;
-    buf[17] = minute as u8;
-    buf[18] = second as u8;
-    buf[19] = weekday as u8;
-
-    Some(buf)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
