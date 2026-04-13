@@ -1,0 +1,589 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Data-, persistence-, and formatting-focused guest imports.
+
+use anyhow::Result;
+use bmc_wasm_protocol::{TemperatureUnit, UnitSystem};
+use chrono::{DateTime, Utc};
+use wasmi::{Caller, Extern, Linker};
+
+use crate::host_api::HostState;
+use crate::xml::XmlDocumentIndex;
+
+use super::super::backend::{kv_disk_path, validate_kv_key, xml_lookup_text};
+use super::super::memory::{read_bytes, read_string, write_to_wasm};
+use super::super::time::{expand_rrule_impl, format_number_with_prefs, tz_convert_impl};
+
+pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
+    register_kv_write_imports(linker)?;
+    register_kv_get_import(linker)?;
+    register_log_import(linker)?;
+    register_json_parse_import(linker)?;
+    register_json_string_import(linker)?;
+    register_json_numeric_imports(linker)?;
+    register_json_bool_import(linker)?;
+    register_date_imports(linker)?;
+    register_xml_imports(linker)?;
+    register_number_format_import(linker)?;
+    register_speed_format_import(linker)?;
+    register_temperature_format_import(linker)?;
+    register_rrule_import(linker)?;
+    register_timezone_import(linker)?;
+    Ok(())
+}
+
+fn register_kv_write_imports(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_kv_set",
+        |mut caller: Caller<'_, HostState>,
+         key_ptr: u32,
+         key_len: u32,
+         val_ptr: u32,
+         val_len: u32| {
+            let key = read_string(&caller, key_ptr, key_len);
+            let val = read_bytes(&caller, val_ptr, val_len);
+            let (Some(key), Some(val)) = (key, val) else {
+                return;
+            };
+            if let Err(e) = validate_kv_key(&key) {
+                tracing::warn!("kv_set rejected key: {e}");
+                return;
+            }
+
+            let state = caller.data_mut();
+            state.kv_cache.insert(key.clone(), val.clone());
+
+            if let Some(ref base) = state.kv_store_path {
+                let dir = base.clone();
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    tracing::warn!("kv_set: failed to create dir: {e}");
+                    return;
+                }
+                let path = match kv_disk_path(&dir, &key) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        tracing::warn!("kv_set rejected key: {e}");
+                        return;
+                    }
+                };
+                if let Err(e) = std::fs::write(&path, &val) {
+                    tracing::warn!("kv_set: failed to write {}: {e}", path.display());
+                }
+            }
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_kv_delete",
+        |mut caller: Caller<'_, HostState>, key_ptr: u32, key_len: u32| {
+            let Some(key) = read_string(&caller, key_ptr, key_len) else {
+                return;
+            };
+            if let Err(e) = validate_kv_key(&key) {
+                tracing::warn!("kv_delete rejected key: {e}");
+                return;
+            }
+
+            let state = caller.data_mut();
+            state.kv_cache.remove(&key);
+
+            if let Some(ref base) = state.kv_store_path {
+                let path = match kv_disk_path(base, &key) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        tracing::warn!("kv_delete rejected key: {e}");
+                        return;
+                    }
+                };
+                let _ = std::fs::remove_file(&path);
+            }
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_kv_get_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_kv_get",
+        |mut caller: Caller<'_, HostState>,
+         key_ptr: u32,
+         key_len: u32,
+         out_ptr: u32,
+         out_cap: u32|
+         -> i32 {
+            let Some(key) = read_string(&caller, key_ptr, key_len) else {
+                return -1;
+            };
+            if let Err(e) = validate_kv_key(&key) {
+                tracing::warn!("kv_get rejected key: {e}");
+                return -1;
+            }
+
+            let state = caller.data_mut();
+
+            if let Some(val) = state.kv_cache.get(&key) {
+                let val_len = i32::try_from(val.len()).unwrap_or(i32::MAX);
+                if out_cap > 0 && out_cap as usize >= val.len() {
+                    let val = val.clone();
+                    let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                    if let Some(memory) = memory {
+                        let mem = memory.data_mut(&mut caller);
+                        let start = out_ptr as usize;
+                        let end = start + val.len();
+                        if end <= mem.len() {
+                            mem[start..end].copy_from_slice(&val);
+                        }
+                    }
+                }
+                return val_len;
+            }
+
+            if let Some(ref base) = state.kv_store_path.clone() {
+                let path = match kv_disk_path(base, &key) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        tracing::warn!("kv_get rejected key: {e}");
+                        return -1;
+                    }
+                };
+                if let Ok(val) = std::fs::read(&path) {
+                    let val_len = i32::try_from(val.len()).unwrap_or(i32::MAX);
+                    state.kv_cache.insert(key, val.clone());
+                    if out_cap > 0 && out_cap as usize >= val.len() {
+                        let memory = caller.get_export("memory").and_then(Extern::into_memory);
+                        if let Some(memory) = memory {
+                            let mem = memory.data_mut(&mut caller);
+                            let start = out_ptr as usize;
+                            let end = start + val.len();
+                            if end <= mem.len() {
+                                mem[start..end].copy_from_slice(&val);
+                            }
+                        }
+                    }
+                    return val_len;
+                }
+            }
+
+            -1
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_log_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_log",
+        |caller: Caller<'_, HostState>, ptr: u32, len: u32, level: u32| {
+            let Some(msg) = read_string(&caller, ptr, len) else {
+                return;
+            };
+            match level {
+                0 => tracing::debug!("{msg}"),
+                1 => tracing::info!("{msg}"),
+                2 => tracing::warn!("{msg}"),
+                _ => tracing::error!("{msg}"),
+            }
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_json_parse_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_json_parse",
+        |mut caller: Caller<'_, HostState>, body_ptr: u32, body_len: u32| -> u32 {
+            let Some(bytes) = read_bytes(&caller, body_ptr, body_len) else {
+                return 0;
+            };
+
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                return 0;
+            };
+
+            let state = caller.data_mut();
+            let doc_id = state.next_json_id;
+            state.next_json_id += 1;
+            state.json_docs.insert(doc_id, value);
+            doc_id
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_json_free",
+        |mut caller: Caller<'_, HostState>, doc_id: u32| {
+            caller.data_mut().json_docs.remove(&doc_id);
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_json_string_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_json_get_str",
+        |mut caller: Caller<'_, HostState>,
+         doc_id: u32,
+         path_ptr: u32,
+         path_len: u32,
+         out_ptr: u32,
+         out_len: u32|
+         -> i32 {
+            let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return -1;
+            };
+
+            let result = {
+                let state = caller.data();
+                let Some(doc) = state.json_docs.get(&doc_id) else {
+                    return -1;
+                };
+                let Some(val) = doc.pointer(&path) else {
+                    return -1;
+                };
+                let Some(s) = val.as_str() else {
+                    return -2;
+                };
+                s.to_owned()
+            };
+
+            write_to_wasm(&mut caller, &result, out_ptr, out_len)
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_json_numeric_imports(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_json_get_i64",
+        |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> i64 {
+            let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return i64::MIN;
+            };
+            let state = caller.data();
+            let Some(doc) = state.json_docs.get(&doc_id) else {
+                return i64::MIN;
+            };
+            let Some(val) = doc.pointer(&path) else {
+                return i64::MIN;
+            };
+            val.as_i64().unwrap_or(i64::MIN)
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_json_get_f64",
+        |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> f64 {
+            let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return f64::NAN;
+            };
+            let state = caller.data();
+            let Some(doc) = state.json_docs.get(&doc_id) else {
+                return f64::NAN;
+            };
+            let Some(val) = doc.pointer(&path) else {
+                return f64::NAN;
+            };
+            val.as_f64().unwrap_or(f64::NAN)
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_json_bool_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_json_get_bool",
+        |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> i32 {
+            let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return -1;
+            };
+            let state = caller.data();
+            let Some(doc) = state.json_docs.get(&doc_id) else {
+                return -1;
+            };
+            let Some(val) = doc.pointer(&path) else {
+                return -1;
+            };
+            match val.as_bool() {
+                Some(true) => 1,
+                Some(false) => 0,
+                None => -1,
+            }
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_date_imports(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_parse_date",
+        |caller: Caller<'_, HostState>, str_ptr: u32, str_len: u32| -> i64 {
+            let Some(s) = read_string(&caller, str_ptr, str_len) else {
+                return i64::MIN;
+            };
+            s.parse::<DateTime<Utc>>()
+                .map(|dt| dt.timestamp())
+                .unwrap_or(i64::MIN)
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_format_date",
+        |mut caller: Caller<'_, HostState>,
+         timestamp: i64,
+         fmt_ptr: u32,
+         fmt_len: u32,
+         out_ptr: u32,
+         out_len: u32|
+         -> i32 {
+            let Some(fmt) = read_string(&caller, fmt_ptr, fmt_len) else {
+                return -1;
+            };
+            let Some(dt) = DateTime::<Utc>::from_timestamp(timestamp, 0) else {
+                return -1;
+            };
+            let formatted = dt.format(&fmt).to_string();
+            write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_xml_imports(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_xml_parse",
+        |mut caller: Caller<'_, HostState>, body_ptr: u32, body_len: u32| -> u32 {
+            let Some(bytes) = read_bytes(&caller, body_ptr, body_len) else {
+                return 0;
+            };
+
+            let Ok(xml_str) = String::from_utf8(bytes) else {
+                return 0;
+            };
+
+            let Ok(xml_index) = XmlDocumentIndex::from_xml(&xml_str) else {
+                return 0;
+            };
+
+            let state = caller.data_mut();
+            let doc_id = state.next_xml_id;
+            state.next_xml_id += 1;
+            state.xml_indices.insert(doc_id, xml_index);
+            doc_id
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_xml_get_str",
+        |mut caller: Caller<'_, HostState>,
+         doc_id: u32,
+         path_ptr: u32,
+         path_len: u32,
+         out_ptr: u32,
+         out_len: u32|
+         -> i32 {
+            let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return -1;
+            };
+
+            let result = {
+                let state = caller.data();
+                xml_lookup_text(&state.xml_indices, doc_id, &path)
+            };
+
+            let Some(text) = result else {
+                return -1;
+            };
+            write_to_wasm(&mut caller, &text, out_ptr, out_len)
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_xml_get_f64",
+        |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> f64 {
+            let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return f64::NAN;
+            };
+
+            let state = caller.data();
+            xml_lookup_text(&state.xml_indices, doc_id, &path)
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(f64::NAN)
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_xml_free",
+        |mut caller: Caller<'_, HostState>, doc_id: u32| {
+            caller.data_mut().xml_indices.remove(&doc_id);
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_number_format_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_format_number",
+        |mut caller: Caller<'_, HostState>,
+         value: f64,
+         decimals: u32,
+         out_ptr: u32,
+         out_len: u32|
+         -> i32 {
+            let formatted =
+                format_number_with_prefs(caller.data().prefs.number_format, value, decimals);
+            write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_speed_format_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_format_speed",
+        |mut caller: Caller<'_, HostState>,
+         value: f64,
+         decimals: u32,
+         out_ptr: u32,
+         out_len: u32|
+         -> i32 {
+            let prefs = caller.data().prefs;
+            let (converted, suffix) = match prefs.unit_system {
+                UnitSystem::Metric => (value, " km/h"),
+                UnitSystem::Imperial => (value * 0.621_371_192, " mph"),
+            };
+            let num = format_number_with_prefs(prefs.number_format, converted, decimals);
+            let formatted = format!("{num}{suffix}");
+            write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_temperature_format_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_format_temperature",
+        |mut caller: Caller<'_, HostState>,
+         value: f64,
+         decimals: u32,
+         out_ptr: u32,
+         out_len: u32|
+         -> i32 {
+            let prefs = caller.data().prefs;
+            let (converted, suffix) = match prefs.temperature_unit {
+                TemperatureUnit::Celsius => (value, " \u{00b0}C"),
+                TemperatureUnit::Fahrenheit => (value * 9.0 / 5.0 + 32.0, " \u{00b0}F"),
+            };
+            let num = format_number_with_prefs(prefs.number_format, converted, decimals);
+            let formatted = format!("{num}{suffix}");
+            write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_rrule_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_expand_rrule",
+        |mut caller: Caller<'_, HostState>,
+         input_ptr: u32,
+         input_len: u32,
+         out_ptr: u32,
+         out_cap: u32|
+         -> i32 {
+            let Some(input_bytes) = read_bytes(&caller, input_ptr, input_len) else {
+                return -1;
+            };
+
+            let timestamps = expand_rrule_impl(&input_bytes);
+            let needed = timestamps.len() * 8;
+            let needed_i32 = i32::try_from(needed).unwrap_or(i32::MAX);
+
+            if out_cap == 0 {
+                return needed_i32;
+            }
+
+            if (out_cap as usize) < needed {
+                return needed_i32;
+            }
+
+            let memory = caller.get_export("memory").and_then(Extern::into_memory);
+            if let Some(memory) = memory {
+                let data = memory.data_mut(&mut caller);
+                let start = out_ptr as usize;
+                for (i, &ts) in timestamps.iter().enumerate() {
+                    let offset = start + i * 8;
+                    if offset + 8 <= data.len() {
+                        data[offset..offset + 8].copy_from_slice(&ts.to_le_bytes());
+                    }
+                }
+            }
+            needed_i32
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_timezone_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_tz_convert",
+        |mut caller: Caller<'_, HostState>,
+         unix_secs: i64,
+         tz_ptr: u32,
+         tz_len: u32,
+         out_ptr: u32|
+         -> i32 {
+            let Some(tz_name) = read_string(&caller, tz_ptr, tz_len) else {
+                return -1;
+            };
+
+            let Some(buf) = tz_convert_impl(unix_secs, &tz_name) else {
+                return -1;
+            };
+
+            let memory = caller.get_export("memory").and_then(Extern::into_memory);
+            if let Some(memory) = memory {
+                let data = memory.data_mut(&mut caller);
+                let start = out_ptr as usize;
+                if start + 20 <= data.len() {
+                    data[start..start + 20].copy_from_slice(&buf);
+                }
+            }
+            0
+        },
+    )?;
+
+    Ok(())
+}
