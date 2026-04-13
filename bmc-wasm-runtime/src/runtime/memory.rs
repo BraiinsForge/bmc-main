@@ -93,9 +93,9 @@ pub(super) fn write_to_wasm(
 
 /// Allocate guest memory for `bytes` and copy them into the guest heap.
 pub(super) fn alloc_and_copy_to_guest(
-    instance: &wasmi::Instance,
+    instance: wasmi::Instance,
     store: &mut wasmi::Store<HostState>,
-    alloc_func: &wasmi::TypedFunc<u32, u32>,
+    alloc_func: wasmi::TypedFunc<u32, u32>,
     fuel_per_frame: u64,
     bytes: &[u8],
     context: &str,

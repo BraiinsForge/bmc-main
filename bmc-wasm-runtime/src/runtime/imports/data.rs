@@ -2,7 +2,7 @@
 
 //! Data-, persistence-, and formatting-focused guest imports.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use bmc_wasm_protocol::{TemperatureUnit, UnitSystem};
 use chrono::{DateTime, Utc};
 use wasmi::{Caller, Extern, Linker};
@@ -10,7 +10,6 @@ use wasmi::{Caller, Extern, Linker};
 use crate::host_api::HostState;
 use crate::xml::XmlDocumentIndex;
 
-use super::super::backend::{kv_disk_path, validate_kv_key, xml_lookup_text};
 use super::super::memory::{read_bytes, read_string, write_to_wasm};
 use super::super::time::{expand_rrule_impl, format_number_with_prefs, tz_convert_impl};
 
@@ -586,4 +585,117 @@ fn register_timezone_import(linker: &mut Linker<HostState>) -> Result<()> {
     )?;
 
     Ok(())
+}
+
+fn xml_lookup_text(
+    xml_docs: &std::collections::HashMap<u32, XmlDocumentIndex>,
+    doc_id: u32,
+    path: &str,
+) -> Option<String> {
+    xml_docs.get(&doc_id)?.get_str(path).map(str::to_owned)
+}
+
+fn validate_kv_key(key: &str) -> Result<()> {
+    if key.is_empty() || key.contains('/') || key.contains('\\') || key.contains("..") {
+        bail!("invalid KV key");
+    }
+    Ok(())
+}
+
+fn kv_disk_path(base: &std::path::Path, key: &str) -> Result<std::path::PathBuf> {
+    validate_kv_key(key)?;
+    Ok(base.join(key))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    use crate::xml::XmlDocumentIndex;
+
+    use super::{kv_disk_path, validate_kv_key, xml_lookup_text};
+
+    const XML_WIDGET_FEED: &str = r#"
+        <rss>
+            <channel>
+                <item>
+                    <title>Launch</title>
+                    <pubDate>Sat, 12 Apr 2026 18:00:00 GMT</pubDate>
+                    <ttl>15</ttl>
+                    <res duration="00:01:02" />
+                </item>
+            </channel>
+        </rss>
+    "#;
+
+    #[test]
+    fn kv_key_validation_rejects_path_traversal_sequences() {
+        assert!(validate_kv_key("../secret").is_err());
+        assert!(validate_kv_key("subdir/key").is_err());
+        assert!(validate_kv_key(r"subdir\key").is_err());
+        assert!(validate_kv_key("").is_err());
+        assert!(validate_kv_key("plain_key").is_ok());
+    }
+
+    #[test]
+    fn kv_path_for_valid_key_stays_under_base_dir() {
+        let base = Path::new("/tmp/widget-kv");
+        let path = kv_disk_path(base, "pairing_guid").expect("BUG: valid key should resolve");
+
+        assert_eq!(path, base.join("pairing_guid"));
+    }
+
+    #[test]
+    fn xml_lookup_reads_multiple_fields_from_one_indexed_document() {
+        let mut xml_docs = HashMap::new();
+        let doc_id = 1;
+        xml_docs.insert(
+            doc_id,
+            XmlDocumentIndex::from_xml(XML_WIDGET_FEED)
+                .expect("BUG: test XML should build an index"),
+        );
+
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//title"),
+            Some("Launch".to_owned())
+        );
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//pubDate"),
+            Some("Sat, 12 Apr 2026 18:00:00 GMT".to_owned())
+        );
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//ttl").and_then(|value| value.parse::<f64>().ok()),
+            Some(15.0)
+        );
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//res/@duration"),
+            Some("00:01:02".to_owned())
+        );
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//title"),
+            Some("Launch".to_owned())
+        );
+
+        xml_docs.remove(&doc_id);
+
+        assert_eq!(xml_lookup_text(&xml_docs, doc_id, "//title"), None);
+    }
+
+    #[test]
+    fn xml_lookup_f64_rejects_non_numeric_fields() {
+        let mut xml_docs = HashMap::new();
+        let doc_id = 1;
+        xml_docs.insert(
+            doc_id,
+            XmlDocumentIndex::from_xml(XML_WIDGET_FEED)
+                .expect("BUG: test XML should build an index"),
+        );
+
+        assert_eq!(
+            xml_lookup_text(&xml_docs, doc_id, "//title")
+                .and_then(|value| value.parse::<f64>().ok()),
+            None
+        );
+    }
 }

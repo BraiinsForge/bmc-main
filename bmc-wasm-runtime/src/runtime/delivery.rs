@@ -199,7 +199,7 @@ impl WasmWidgetRuntime {
             );
 
             let Some((body_ptr, body_len)) =
-                self.alloc_guest_bytes(&alloc_func, &resp.body, "fetch response body")
+                self.alloc_guest_bytes(alloc_func, &resp.body, "fetch response body")
             else {
                 continue;
             };
@@ -291,7 +291,7 @@ impl WasmWidgetRuntime {
             };
 
             let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(&alloc_func, data, "websocket event payload")
+                self.alloc_guest_bytes(alloc_func, data, "websocket event payload")
             else {
                 continue;
             };
@@ -381,7 +381,7 @@ impl WasmWidgetRuntime {
             };
 
             let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(&alloc_func, data, "socket event payload")
+                self.alloc_guest_bytes(alloc_func, data, "socket event payload")
             else {
                 continue;
             };
@@ -457,7 +457,7 @@ impl WasmWidgetRuntime {
             };
 
             let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(&alloc_func, data, "mDNS event payload")
+                self.alloc_guest_bytes(alloc_func, data, "mDNS event payload")
             else {
                 continue;
             };
@@ -533,7 +533,7 @@ impl WasmWidgetRuntime {
             };
 
             let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(&alloc_func, data, "SSDP event payload")
+                self.alloc_guest_bytes(alloc_func, data, "SSDP event payload")
             else {
                 continue;
             };
@@ -608,12 +608,12 @@ impl WasmWidgetRuntime {
             let UdpBroadcastEvent::Response(ref data, ref source) = event;
 
             let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(&alloc_func, data.as_bytes(), "UDP broadcast payload")
+                self.alloc_guest_bytes(alloc_func, data.as_bytes(), "UDP broadcast payload")
             else {
                 continue;
             };
             let Some((source_ptr, source_len)) =
-                self.alloc_guest_bytes(&alloc_func, source.as_bytes(), "UDP broadcast source")
+                self.alloc_guest_bytes(alloc_func, source.as_bytes(), "UDP broadcast source")
             else {
                 continue;
             };
@@ -676,16 +676,16 @@ impl WasmWidgetRuntime {
                 .insert(req.request_id, req.response_tx);
 
             let (method_ptr, method_len) = self
-                .alloc_guest_bytes(&alloc_func, req.method.as_bytes(), "HTTP request method")
+                .alloc_guest_bytes(alloc_func, req.method.as_bytes(), "HTTP request method")
                 .unwrap_or((0, 0));
             let (path_ptr, path_len) = self
-                .alloc_guest_bytes(&alloc_func, req.path.as_bytes(), "HTTP request path")
+                .alloc_guest_bytes(alloc_func, req.path.as_bytes(), "HTTP request path")
                 .unwrap_or((0, 0));
             let (headers_ptr, headers_len) = self
-                .alloc_guest_bytes(&alloc_func, req.headers.as_bytes(), "HTTP request headers")
+                .alloc_guest_bytes(alloc_func, req.headers.as_bytes(), "HTTP request headers")
                 .unwrap_or((0, 0));
             let (body_ptr, body_len) = self
-                .alloc_guest_bytes(&alloc_func, &req.body, "HTTP request body")
+                .alloc_guest_bytes(alloc_func, &req.body, "HTTP request body")
                 .unwrap_or((0, 0));
 
             if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
@@ -722,12 +722,12 @@ impl WasmWidgetRuntime {
 
     fn alloc_guest_bytes(
         &mut self,
-        alloc_func: &wasmi::TypedFunc<u32, u32>,
+        alloc_func: wasmi::TypedFunc<u32, u32>,
         bytes: &[u8],
         context: &str,
     ) -> Option<(u32, u32)> {
         alloc_and_copy_to_guest(
-            &self.instance,
+            self.instance,
             &mut self.store,
             alloc_func,
             self.fuel_per_frame,

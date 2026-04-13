@@ -456,3 +456,14 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
             .supported_schemes()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{TlsVerificationMode, build_tls_client_config};
+
+    #[test]
+    fn tls_client_config_builds_for_both_modes() {
+        assert!(build_tls_client_config(TlsVerificationMode::Full).is_ok());
+        assert!(build_tls_client_config(TlsVerificationMode::Insecure).is_ok());
+    }
+}
