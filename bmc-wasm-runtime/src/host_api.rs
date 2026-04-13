@@ -15,6 +15,7 @@ use crate::gpu::FemtoVgRenderer;
 use crate::interaction::InteractionState;
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::tree::NodeContext;
+use crate::xml::XmlDocumentIndex;
 
 /// State for a single running animation instance.
 #[derive(Debug, Clone)]
@@ -417,6 +418,9 @@ pub(crate) struct HostState {
     /// Parsed XML documents (stored as raw strings for roxmltree re-parsing).
     pub xml_docs: HashMap<u32, String>,
 
+    /// Owned XML lookup indices built once at `host_xml_parse` time.
+    pub xml_indices: HashMap<u32, XmlDocumentIndex>,
+
     /// Cached XML query results: (doc_id, path) → text result.
     pub xml_query_cache: HashMap<(u32, String), Option<String>>,
 
@@ -544,6 +548,7 @@ impl HostState {
             json_docs: HashMap::new(),
             next_json_id: 1,
             xml_docs: HashMap::new(),
+            xml_indices: HashMap::new(),
             xml_query_cache: HashMap::new(),
             next_xml_id: 1,
             websockets: HashMap::new(),

@@ -91,6 +91,7 @@ mod animation;
 pub mod gpu;
 pub mod renderer;
 mod runtime_limits;
+mod xml;
 
 // Re-export colors and color macro from protocol crate
 pub mod colors {

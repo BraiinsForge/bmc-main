@@ -31,6 +31,7 @@ use crate::host_api::{
 };
 use crate::renderer::Renderer;
 use crate::tree::{self, TouchHit};
+use crate::xml::XmlDocumentIndex;
 
 /// Write a `TouchHit` (4×f32 LE = 16 bytes) to WASM memory at `out_ptr`.
 fn write_touch_hit(caller: &mut Caller<'_, HostState>, out_ptr: u32, hit: &TouchHit) {
@@ -1747,15 +1748,15 @@ impl WasmWidgetRuntime {
                     return 0;
                 };
 
-                // Validate that it parses as XML
-                if roxmltree::Document::parse(&xml_str).is_err() {
+                let Ok(xml_index) = XmlDocumentIndex::from_xml(&xml_str) else {
                     return 0;
-                }
+                };
 
                 let state = caller.data_mut();
                 let doc_id = state.next_xml_id;
                 state.next_xml_id += 1;
                 state.xml_docs.insert(doc_id, xml_str);
+                state.xml_indices.insert(doc_id, xml_index);
                 doc_id
             },
         )?;
@@ -1837,6 +1838,7 @@ impl WasmWidgetRuntime {
             |mut caller: Caller<'_, HostState>, doc_id: u32| {
                 let state = caller.data_mut();
                 state.xml_docs.remove(&doc_id);
+                state.xml_indices.remove(&doc_id);
                 state.xml_query_cache.retain(|k, _| k.0 != doc_id);
             },
         )?;
