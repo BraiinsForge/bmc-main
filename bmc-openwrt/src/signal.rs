@@ -3,7 +3,11 @@
 use futures::{FutureExt, future::select_all};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
-pub const SHUTDOWN_SIGNALS: &[SignalKind] = &[SignalKind::terminate(), SignalKind::quit()];
+pub const SHUTDOWN_SIGNALS: &[SignalKind] = &[
+    SignalKind::interrupt(),
+    SignalKind::terminate(),
+    SignalKind::quit(),
+];
 
 pub async fn wait_for_first_signal(signals: &[SignalKind]) -> SignalKind {
     let mut signal_streams: Vec<Signal> = signals
