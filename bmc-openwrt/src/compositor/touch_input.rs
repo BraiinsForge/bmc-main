@@ -50,6 +50,10 @@ pub enum RawTouchEvent {
 ///
 /// All coordinates (`start_x/y`, `current_x/y`) are in **logical** display
 /// pixels after calibration and 270° rotation.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "touch input state is easier to maintain as flat flags than as nested enums"
+)]
 #[derive(Debug)]
 struct TouchState {
     start_x: i32,
@@ -65,6 +69,9 @@ struct TouchState {
     /// position data. Replaces the timing-based `TOUCH_START_WINDOW_MS`
     /// heuristic with deterministic first-sample detection.
     needs_down: bool,
+    /// Set on BTN_TOUCH release and finalized on the next SYN_REPORT so
+    /// the final coordinate sample is applied before gesture classification.
+    pending_release: bool,
     /// Whether the drag dead zone has been exceeded.
     drag_active: bool,
     /// Recent (logical_x, timestamp) samples for velocity estimation.
@@ -83,6 +90,7 @@ impl Default for TouchState {
             start_time: Instant::now(),
             is_touching: false,
             needs_down: false,
+            pending_release: false,
             drag_active: false,
             velocity_samples: VecDeque::with_capacity(VELOCITY_SAMPLE_COUNT),
         }
@@ -143,6 +151,127 @@ impl AxisCalibration {
             logical_y.clamp(0, self.logical_height - 1),
         )
     }
+}
+
+fn handle_touch_key_event(state: &mut TouchState, pressed: bool) {
+    if pressed && !state.is_touching {
+        state.is_touching = true;
+        state.needs_down = true;
+        state.pending_release = false;
+        state.drag_active = false;
+        state.start_time = Instant::now();
+        state.velocity_samples.clear();
+    } else if !pressed && state.is_touching {
+        state.pending_release = true;
+    }
+}
+
+fn flush_syn_report(
+    calibration: &AxisCalibration,
+    state: &mut TouchState,
+    pending_x: &mut Option<i32>,
+    pending_y: &mut Option<i32>,
+    raw_events: &mut Vec<RawTouchEvent>,
+    drag_seen_this_poll: &mut bool,
+) -> Option<TouchGesture> {
+    let mut pos_updated = false;
+    if let Some(raw_x) = pending_x.take() {
+        state.pending_raw_x = raw_x;
+        pos_updated = true;
+    }
+    if let Some(raw_y) = pending_y.take() {
+        state.pending_raw_y = raw_y;
+        pos_updated = true;
+    }
+
+    if (state.is_touching || state.pending_release) && pos_updated {
+        let (lx, ly) = calibration.to_logical(state.pending_raw_x, state.pending_raw_y);
+
+        state.current_x = lx;
+        state.current_y = ly;
+
+        if state.needs_down {
+            // First position sample after BTN_TOUCH — treat as start.
+            state.needs_down = false;
+            state.start_x = lx;
+            state.start_y = ly;
+            raw_events.push(RawTouchEvent::Down {
+                id: 0,
+                x: lx,
+                y: ly,
+            });
+        } else {
+            raw_events.push(RawTouchEvent::Motion {
+                id: 0,
+                x: lx,
+                y: ly,
+            });
+        }
+        update_drag_tracking(state, drag_seen_this_poll);
+    }
+
+    if state.pending_release {
+        state.pending_release = false;
+        state.is_touching = false;
+        raw_events.push(RawTouchEvent::Up { id: 0 });
+        let gesture = detect_gesture(state);
+        state.drag_active = false;
+        return gesture;
+    }
+
+    None
+}
+
+fn update_drag_tracking(state: &mut TouchState, drag_seen_this_poll: &mut bool) {
+    let now = Instant::now();
+    let samples = &mut state.velocity_samples;
+
+    samples.push_back((state.current_x, now));
+    if samples.len() > VELOCITY_SAMPLE_COUNT {
+        samples.pop_front();
+    }
+
+    if !state.drag_active {
+        let dx = (state.current_x - state.start_x).abs();
+        let dy = (state.current_y - state.start_y).abs();
+        if dx > DRAG_DEAD_ZONE && dy <= DRAG_MAX_Y_DEVIATION {
+            state.drag_active = true;
+            *drag_seen_this_poll = true;
+            tracing::debug!("Drag activated: dx={}", dx);
+        }
+    }
+
+    if state.drag_active {
+        *drag_seen_this_poll = true;
+    }
+}
+
+fn detect_gesture(state: &TouchState) -> Option<TouchGesture> {
+    let duration = state.start_time.elapsed().as_millis();
+    let dx = state.current_x - state.start_x;
+    let dy = (state.current_y - state.start_y).abs();
+
+    tracing::debug!(
+        "Touch ended: dx={}, dy={}, duration={}ms, drag_active={}",
+        dx,
+        dy,
+        duration,
+        state.drag_active
+    );
+
+    if state.drag_active {
+        let velocity_x = TouchInput::compute_velocity(&state.velocity_samples);
+        tracing::info!("DragEnd: dx={}, velocity={:.0} px/s", dx, velocity_x);
+        return Some(TouchGesture::DragEnd { dx, velocity_x });
+    }
+
+    if duration <= TAP_MAX_DURATION_MS && dx.abs() <= TAP_MAX_MOVEMENT && dy <= TAP_MAX_MOVEMENT {
+        tracing::info!("Tap detected at ({}, {})", state.current_x, state.current_y);
+        return Some(TouchGesture::Tap);
+    }
+
+    tracing::debug!("No gesture detected");
+    None
 }
 
 /// Touch input handler with drag gesture detection.
@@ -298,56 +427,18 @@ impl TouchInput {
                 }
                 EventSummary::Key(_, KeyCode::BTN_TOUCH, value) => {
                     let pressed = value == 1;
-                    if pressed && !self.state.is_touching {
-                        self.state.is_touching = true;
-                        self.state.needs_down = true;
-                        self.state.drag_active = false;
-                        self.state.start_time = Instant::now();
-                        self.state.velocity_samples.clear();
-                    } else if !pressed && self.state.is_touching {
-                        self.state.is_touching = false;
-                        self.raw_events.push(RawTouchEvent::Up { id: 0 });
-                        gesture_result = self.detect_gesture();
-                        self.state.drag_active = false;
-                    }
+                    handle_touch_key_event(&mut self.state, pressed);
                 }
                 EventSummary::Synchronization(_, SynchronizationCode::SYN_REPORT, _) => {
-                    let mut pos_updated = false;
-                    if let Some(raw_x) = self.pending_x.take() {
-                        self.state.pending_raw_x = raw_x;
-                        pos_updated = true;
-                    }
-                    if let Some(raw_y) = self.pending_y.take() {
-                        self.state.pending_raw_y = raw_y;
-                        pos_updated = true;
-                    }
-
-                    if self.state.is_touching && pos_updated {
-                        let (lx, ly) = self
-                            .calibration
-                            .to_logical(self.state.pending_raw_x, self.state.pending_raw_y);
-
-                        self.state.current_x = lx;
-                        self.state.current_y = ly;
-
-                        if self.state.needs_down {
-                            // First position sample after BTN_TOUCH — treat as start.
-                            self.state.needs_down = false;
-                            self.state.start_x = lx;
-                            self.state.start_y = ly;
-                            self.raw_events.push(RawTouchEvent::Down {
-                                id: 0,
-                                x: lx,
-                                y: ly,
-                            });
-                        } else {
-                            self.raw_events.push(RawTouchEvent::Motion {
-                                id: 0,
-                                x: lx,
-                                y: ly,
-                            });
-                        }
-                        self.update_drag_tracking();
+                    if let Some(gesture) = flush_syn_report(
+                        &self.calibration,
+                        &mut self.state,
+                        &mut self.pending_x,
+                        &mut self.pending_y,
+                        &mut self.raw_events,
+                        &mut self.drag_seen_this_poll,
+                    ) {
+                        gesture_result = Some(gesture);
                     }
                 }
                 _ => {}
@@ -356,63 +447,91 @@ impl TouchInput {
 
         gesture_result
     }
+}
 
-    /// Update drag tracking: push velocity sample, activate drag if past dead zone.
-    fn update_drag_tracking(&mut self) {
-        let now = Instant::now();
-        let samples = &mut self.state.velocity_samples;
+#[cfg(test)]
+mod tests {
+    use super::{
+        AxisCalibration, RawTouchEvent, TouchGesture, TouchState, flush_syn_report,
+        handle_touch_key_event,
+    };
 
-        samples.push_back((self.state.current_x, now));
-        if samples.len() > VELOCITY_SAMPLE_COUNT {
-            samples.pop_front();
-        }
-
-        if !self.state.drag_active {
-            let dx = (self.state.current_x - self.state.start_x).abs();
-            let dy = (self.state.current_y - self.state.start_y).abs();
-            if dx > DRAG_DEAD_ZONE && dy <= DRAG_MAX_Y_DEVIATION {
-                self.state.drag_active = true;
-                self.drag_seen_this_poll = true;
-                tracing::debug!("Drag activated: dx={}", dx);
-            }
-        }
-
-        if self.state.drag_active {
-            self.drag_seen_this_poll = true;
-        }
+    fn calibration() -> AxisCalibration {
+        AxisCalibration::new(None, None, 480, 1280)
     }
 
-    /// Determine what gesture occurred when the finger is lifted.
-    fn detect_gesture(&self) -> Option<TouchGesture> {
-        let duration = self.state.start_time.elapsed().as_millis();
-        let dx = self.state.current_x - self.state.start_x;
-        let dy = (self.state.current_y - self.state.start_y).abs();
+    #[test]
+    fn release_waits_for_syn_report_before_emitting_up() {
+        let mut state = TouchState::default();
+        let calibration = calibration();
+        let mut pending_x = Some(100);
+        let mut pending_y = Some(200);
+        let mut raw_events = Vec::new();
+        let mut drag_seen_this_poll = false;
 
-        tracing::debug!(
-            "Touch ended: dx={}, dy={}, duration={}ms, drag_active={}",
-            dx,
-            dy,
-            duration,
-            self.state.drag_active
+        handle_touch_key_event(&mut state, true);
+        let down = flush_syn_report(
+            &calibration,
+            &mut state,
+            &mut pending_x,
+            &mut pending_y,
+            &mut raw_events,
+            &mut drag_seen_this_poll,
+        );
+        assert!(down.is_none());
+
+        handle_touch_key_event(&mut state, false);
+        assert!(state.pending_release);
+        assert!(matches!(
+            raw_events.as_slice(),
+            [RawTouchEvent::Down { x: 100, y: 200, .. }]
+        ));
+    }
+
+    #[test]
+    fn final_syn_report_updates_motion_before_release_gesture() {
+        let mut state = TouchState::default();
+        let calibration = calibration();
+        let mut raw_events = Vec::new();
+        let mut drag_seen_this_poll = false;
+
+        handle_touch_key_event(&mut state, true);
+        let mut pending_x = Some(100);
+        let mut pending_y = Some(200);
+        let first_gesture = flush_syn_report(
+            &calibration,
+            &mut state,
+            &mut pending_x,
+            &mut pending_y,
+            &mut raw_events,
+            &mut drag_seen_this_poll,
+        );
+        assert!(first_gesture.is_none());
+
+        let mut release_x = Some(140);
+        let mut release_y = Some(200);
+        handle_touch_key_event(&mut state, false);
+        let release_gesture = flush_syn_report(
+            &calibration,
+            &mut state,
+            &mut release_x,
+            &mut release_y,
+            &mut raw_events,
+            &mut drag_seen_this_poll,
         );
 
-        if self.state.drag_active {
-            let velocity_x = Self::compute_velocity(&self.state.velocity_samples);
-            tracing::info!("DragEnd: dx={}, velocity={:.0} px/s", dx, velocity_x);
-            return Some(TouchGesture::DragEnd { dx, velocity_x });
-        }
-
-        if duration <= TAP_MAX_DURATION_MS && dx.abs() <= TAP_MAX_MOVEMENT && dy <= TAP_MAX_MOVEMENT
-        {
-            tracing::info!(
-                "Tap detected at ({}, {})",
-                self.state.current_x,
-                self.state.current_y
-            );
-            return Some(TouchGesture::Tap);
-        }
-
-        tracing::debug!("No gesture detected");
-        None
+        assert!(matches!(
+            release_gesture,
+            Some(TouchGesture::DragEnd { dx: 40, .. })
+        ));
+        assert!(matches!(
+            raw_events.as_slice(),
+            [
+                RawTouchEvent::Down { x: 100, y: 200, .. },
+                RawTouchEvent::Motion { x: 140, y: 200, .. },
+                RawTouchEvent::Up { .. }
+            ]
+        ));
+        assert!(drag_seen_this_poll);
     }
 }
