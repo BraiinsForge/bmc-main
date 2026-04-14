@@ -73,6 +73,42 @@ pub struct DeckWidgetSurfaceState {
     pending_events: Vec<DeckWidgetEvent>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TouchCapabilityChange {
+    None,
+    Acquire,
+    Release,
+}
+
+/// Abstracts the `wl_touch.release` destructor so `sync_touch_capability`
+/// can finalize a proxy without importing the real `WlTouch` type (which
+/// keeps the helper unit-testable with a mock).
+trait ReleasableTouch {
+    fn release(&self);
+}
+
+impl ReleasableTouch for wl_touch::WlTouch {
+    fn release(&self) {
+        wl_touch::WlTouch::release(self);
+    }
+}
+
+fn sync_touch_capability<T: ReleasableTouch>(
+    touch: &mut Option<T>,
+    has_touch_capability: bool,
+) -> TouchCapabilityChange {
+    match (has_touch_capability, touch.is_some()) {
+        (true, false) => TouchCapabilityChange::Acquire,
+        (true, true) | (false, false) => TouchCapabilityChange::None,
+        (false, true) => {
+            if let Some(t) = touch.take() {
+                t.release();
+            }
+            TouchCapabilityChange::Release
+        }
+    }
+}
+
 impl DeckWidgetSurfaceState {
     /// Drain all pending protocol events.
     pub fn drain_events(&mut self) -> std::vec::Drain<'_, DeckWidgetEvent> {
@@ -508,12 +544,19 @@ impl Dispatch<wl_seat::WlSeat, ()> for DeckWidgetSurfaceState {
         if let wl_seat::Event::Capabilities {
             capabilities: wayland_client::WEnum::Value(caps),
         } = event
-            && caps.contains(wl_seat::Capability::Touch)
-            && state.touch.is_none()
         {
-            let touch = seat.get_touch(qh, ());
-            tracing::debug!("Acquired wl_touch from seat");
-            state.touch = Some(touch);
+            match sync_touch_capability(&mut state.touch, caps.contains(wl_seat::Capability::Touch))
+            {
+                TouchCapabilityChange::Acquire => {
+                    let touch = seat.get_touch(qh, ());
+                    tracing::debug!("Acquired wl_touch from seat");
+                    state.touch = Some(touch);
+                }
+                TouchCapabilityChange::Release => {
+                    tracing::debug!("Dropped wl_touch after seat capability removal");
+                }
+                TouchCapabilityChange::None => {}
+            }
         }
     }
 }
@@ -548,10 +591,63 @@ impl Dispatch<wl_touch::WlTouch, ()> for DeckWidgetSurfaceState {
                 state.pending_events.push(DeckWidgetEvent::TouchCancel);
                 state.needs_render = true;
             }
-            wl_touch::Event::Frame
-            | wl_touch::Event::Shape { .. }
-            | wl_touch::Event::Orientation { .. }
-            | _ => {}
+            wl_touch::Event::Frame => {
+                tracing::trace!("wl_touch::Frame");
+            }
+            wl_touch::Event::Shape { .. } => {
+                tracing::trace!("wl_touch::Shape (ignored)");
+            }
+            wl_touch::Event::Orientation { .. } => {
+                tracing::trace!("wl_touch::Orientation (ignored)");
+            }
+            other => {
+                tracing::debug!(?other, "unhandled wl_touch event");
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use super::{ReleasableTouch, TouchCapabilityChange, sync_touch_capability};
+
+    struct MockTouch {
+        released: Rc<Cell<bool>>,
+    }
+
+    impl ReleasableTouch for MockTouch {
+        fn release(&self) {
+            self.released.set(true);
+        }
+    }
+
+    #[test]
+    fn touch_capability_drop_releases_and_clears_existing_touch_handle() {
+        let released = Rc::new(Cell::new(false));
+        let mut touch = Some(MockTouch {
+            released: Rc::clone(&released),
+        });
+
+        let change = sync_touch_capability(&mut touch, false);
+
+        assert_eq!(change, TouchCapabilityChange::Release);
+        assert!(touch.is_none());
+        assert!(
+            released.get(),
+            "wl_touch.release() must be called before dropping"
+        );
+    }
+
+    #[test]
+    fn touch_capability_return_requests_reacquire() {
+        let mut touch = None::<MockTouch>;
+
+        let change = sync_touch_capability(&mut touch, true);
+
+        assert_eq!(change, TouchCapabilityChange::Acquire);
+        assert!(touch.is_none());
     }
 }
