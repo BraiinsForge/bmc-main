@@ -179,6 +179,20 @@ impl Coordinator {
         }
     }
 
+    /// Stop all widget processes and shut down the compositor.
+    ///
+    /// Widgets are stopped first (SIGTERM → 10s timeout → SIGKILL) because they
+    /// need the Wayland display socket to clean up GPU resources (GEM/DMA-BUF).
+    /// The compositor is shut down second.
+    pub async fn stop_all(&self) {
+        info!("stopping all widgets and compositor");
+        self.widget_manager.stop_all().await;
+        if let Err(e) = self.compositor.shutdown() {
+            warn!(error = %e, "failed to shut down compositor");
+        }
+        info!("shutdown complete");
+    }
+
     /// Sets the active scene layout on the compositor.
     pub fn set_active_scene(&self, scene: &Scene) {
         let layout = Self::scene_to_layout(scene);
