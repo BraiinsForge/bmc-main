@@ -30,6 +30,7 @@ use bmc_led::led_driver::LedDriver;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::FirmwareIndex;
 use tokio::net::TcpListener;
+use tokio::signal::unix::SignalKind;
 use tokio::sync::Mutex;
 use tokio::sync::{RwLock, watch};
 use tracing::info;
@@ -55,7 +56,6 @@ where
     initial_setup: InitialSetup<T, V>,
     button_manager: ButtonManager<T>,
     led_controller: LedController<T>,
-    #[expect(dead_code)]
     widget_coordinator: Coordinator,
 }
 
@@ -259,10 +259,19 @@ where
         // .run(self.listener)
         // .await?;
 
-        // For now, just keep running
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        let mut sigterm = tokio::signal::unix::signal(SignalKind::terminate())
+            .expect("BUG: failed to register SIGTERM handler");
+        let mut sigquit = tokio::signal::unix::signal(SignalKind::quit())
+            .expect("BUG: failed to register SIGQUIT handler");
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => info!("SIGINT received, shutting down"),
+            _ = sigterm.recv() => info!("SIGTERM received, shutting down"),
+            _ = sigquit.recv() => info!("SIGQUIT received, shutting down"),
         }
+
+        self.widget_coordinator.stop_all().await;
+        Ok(())
     }
 
     pub fn port(&self) -> Result<u16> {
