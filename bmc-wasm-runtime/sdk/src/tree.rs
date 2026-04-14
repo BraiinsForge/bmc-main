@@ -35,6 +35,8 @@ pub use bmc_wasm_skin::{
 
 use crate::host::{ButtonSize, ButtonStyle};
 
+const INVALID_RESOURCE_ID: u16 = 0;
+
 /// Compiled icon data (output of `include_icon!` proc macro).
 ///
 /// The `data` field contains the compact binary representation of SVG paths
@@ -56,15 +58,9 @@ thread_local! {
 pub fn ensure_registered(icon: &Icon) -> u16 {
     ICON_IDS.with(|ids| {
         let mut ids = ids.borrow_mut();
-        let key = icon.data.as_ptr() as usize;
-        for &(k, id) in ids.iter() {
-            if k == key {
-                return id;
-            }
-        }
-        let id = host::register_icon(icon.data);
-        ids.push((key, id));
-        id
+        cache_successful_resource_id(&mut ids, icon.data.as_ptr() as usize, || {
+            host::register_icon(icon.data)
+        })
     })
 }
 
@@ -87,15 +83,9 @@ thread_local! {
 pub fn ensure_bitmap_registered(bmp: &Bitmap) -> u16 {
     BITMAP_IDS.with(|ids| {
         let mut ids = ids.borrow_mut();
-        let key = bmp.data.as_ptr() as usize;
-        for &(k, id) in ids.iter() {
-            if k == key {
-                return id;
-            }
-        }
-        let id = host::register_bitmap(bmp.data);
-        ids.push((key, id));
-        id
+        cache_successful_resource_id(&mut ids, bmp.data.as_ptr() as usize, || {
+            host::register_bitmap(bmp.data)
+        })
     })
 }
 
@@ -109,16 +99,28 @@ thread_local! {
 pub fn ensure_mesh_registered(mesh: &Mesh) -> u16 {
     MESH_IDS.with(|ids| {
         let mut ids = ids.borrow_mut();
-        let key = mesh.data.as_ptr() as usize;
-        for &(k, id) in ids.iter() {
-            if k == key {
-                return id;
-            }
-        }
-        let id = host::register_mesh(mesh.data);
-        ids.push((key, id));
-        id
+        cache_successful_resource_id(&mut ids, mesh.data.as_ptr() as usize, || {
+            host::register_mesh(mesh.data)
+        })
     })
+}
+
+fn cache_successful_resource_id(
+    ids: &mut Vec<(usize, u16)>,
+    key: usize,
+    register: impl FnOnce() -> u16,
+) -> u16 {
+    for &(known_key, id) in ids.iter() {
+        if known_key == key {
+            return id;
+        }
+    }
+
+    let id = register();
+    if id != INVALID_RESOURCE_ID {
+        ids.push((key, id));
+    }
+    id
 }
 
 /// Definition of a single animation (serialized to host).
@@ -2002,4 +2004,44 @@ pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{INVALID_RESOURCE_ID, cache_successful_resource_id};
+
+    #[test]
+    fn successful_registrations_are_cached() {
+        let mut ids = Vec::new();
+        let mut calls = 0;
+
+        let first = cache_successful_resource_id(&mut ids, 7, || {
+            calls += 1;
+            11
+        });
+        let second = cache_successful_resource_id(&mut ids, 7, || {
+            calls += 1;
+            12
+        });
+
+        assert_eq!(first, 11);
+        assert_eq!(second, 11);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn failed_registrations_are_not_cached() {
+        let mut ids = Vec::new();
+        let mut responses = [INVALID_RESOURCE_ID, 9].into_iter();
+
+        let first = cache_successful_resource_id(&mut ids, 42, || {
+            responses.next().expect("BUG: missing first test response")
+        });
+        let second = cache_successful_resource_id(&mut ids, 42, || {
+            responses.next().expect("BUG: missing second test response")
+        });
+
+        assert_eq!(first, INVALID_RESOURCE_ID);
+        assert_eq!(second, 9);
+    }
 }

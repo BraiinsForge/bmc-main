@@ -128,6 +128,8 @@ const ATLAS_W: u32 = ATLAS_COLS * SLOT_SIZE;
 const ATLAS_H: u32 = ATLAS_ROWS * SLOT_SIZE;
 /// Maximum number of atlas slots.
 const MAX_SLOTS: u32 = ATLAS_COLS * ATLAS_ROWS;
+/// Sentinel returned when mesh registration fails.
+const INVALID_MESH_ID: u16 = 0;
 
 // ── Per-slot dirty state ────────────────────────────────────────────
 
@@ -399,26 +401,26 @@ impl MeshRenderer {
     }
 
     /// Upload mesh binary data to GPU (VBO + IBO + optional texture).
-    /// Returns the mesh ID (index into the meshes vec).
+    /// Returns an opaque non-zero mesh ID.
     pub fn register_mesh(&mut self, gl: &glow::Context, data: &[u8]) -> u16 {
         let mesh = match parse_and_upload(gl, data) {
             Ok(m) => m,
             Err(e) => {
                 tracing::error!("mesh upload failed: {e}");
-                return 0;
+                return INVALID_MESH_ID;
             }
         };
 
-        let id = self.meshes.len();
+        let Some(id) = mesh_id_from_storage_index(self.meshes.len()) else {
+            tracing::error!("mesh registration failed: id space exhausted");
+            return INVALID_MESH_ID;
+        };
         self.meshes.push(Some(mesh));
         // Force re-render on all slots
         for slot in &mut self.slots {
             slot.prev_qx = f32::NAN;
         }
-        #[expect(clippy::cast_possible_truncation)]
-        {
-            id as u16
-        }
+        id
     }
 
     /// Render a mesh into an atlas slot. Returns the atlas image ID and sub-rect
@@ -467,7 +469,9 @@ impl MeshRenderer {
             SLOT_SIZE as f32,
         );
 
-        let mesh_idx = mesh_id as usize;
+        let Some(mesh_idx) = mesh_id_to_storage_index(mesh_id) else {
+            return subrect;
+        };
         if mesh_idx >= self.meshes.len() || self.meshes[mesh_idx].is_none() {
             return subrect;
         }
@@ -1255,6 +1259,15 @@ fn is_dirty(old: f32, new: f32) -> bool {
     old.is_nan() || (old - new).abs() > DIRTY_EPSILON
 }
 
+fn mesh_id_from_storage_index(index: usize) -> Option<u16> {
+    let one_based = index.checked_add(1)?;
+    u16::try_from(one_based).ok()
+}
+
+fn mesh_id_to_storage_index(mesh_id: u16) -> Option<usize> {
+    mesh_id.checked_sub(1).map(usize::from)
+}
+
 fn dequantize_position(q: i16, min: f32, max: f32) -> f32 {
     let range = max - min;
     if range < 1e-8 {
@@ -1304,4 +1317,20 @@ fn read_f32(data: &[u8], offset: usize) -> f32 {
         data[offset + 2],
         data[offset + 3],
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{INVALID_MESH_ID, mesh_id_from_storage_index, mesh_id_to_storage_index};
+
+    #[test]
+    fn mesh_ids_are_one_based() {
+        assert_eq!(mesh_id_from_storage_index(0), Some(1));
+        assert_eq!(mesh_id_to_storage_index(1), Some(0));
+    }
+
+    #[test]
+    fn invalid_mesh_id_does_not_map_to_storage() {
+        assert_eq!(mesh_id_to_storage_index(INVALID_MESH_ID), None);
+    }
 }
