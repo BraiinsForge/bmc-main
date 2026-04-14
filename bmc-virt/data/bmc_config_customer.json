@@ -1,0 +1,5543 @@
+{
+  "scenes": [
+    {
+      "id": "035cd02f-a451-4c10-8284-2c1aaa586c2d",
+      "enabled": true,
+      "cycle_duration": "30s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "9e1855ad-fe9e-4bec-b867-a7145815f965",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "e7d9466e-9892-4d81-bdc0-ca38b141cddb",
+      "enabled": true,
+      "cycle_duration": "30s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "5371573e-f3b3-4221-abcf-e03202898e59",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "1c30f353-d088-4e79-bb55-9cead6417961",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "ac417542-68dd-41bb-9aea-9fe89a5b7d21",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "68826044-7d43-4a61-a01f-349e84ec1e6c",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "57435b3d-09c7-4bc3-b078-58978bab1c25",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "7ff6c5d0-08dc-457e-b236-1a7bbe61226b",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "braiins_pool",
+          "params": {
+            "pool_style": "overview",
+            "chart_frame": "hours24",
+            "account_id": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c"
+          }
+        },
+        {
+          "id": "268a0e9a-8baf-4467-835d-4813a58179d5",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "ticker_btc",
+          "params": {
+            "time_frame": "day1"
+          }
+        },
+        {
+          "id": "707d032d-7be6-4c58-a1c6-708988c5a1f0",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "blockchain_data"
+        },
+        {
+          "id": "d9de2913-f795-4de6-b79f-d2a9469e204e",
+          "row": 1,
+          "col": 0,
+          "size": "small",
+          "kind": "clock",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "03d56da9-11ba-47a7-9eef-38da0a301607",
+          "row": 1,
+          "col": 1,
+          "size": "small",
+          "kind": "block_height",
+          "params": {
+            "show_timestamp": true,
+            "numbers_font_style": "light"
+          }
+        }
+      ]
+    },
+    {
+      "id": "98a20fc5-9eb7-4854-b08b-b7f996c7a8f1",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "34092f35-11f6-4e5b-8251-72619cba57a4",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "braiins_pool",
+          "params": {
+            "pool_style": "overview",
+            "chart_frame": "hours24",
+            "account_id": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f4185838-3f8d-4ab0-bd16-8915f8b619b7",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "8ba461f6-ec4a-4864-85a4-c1532b4ac71f",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "blockchain_data"
+        }
+      ]
+    },
+    {
+      "id": "1e1f255a-8905-4335-bc75-481c55e76bf6",
+      "enabled": true,
+      "cycle_duration": "10s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "3c863803-5fa4-4617-b00c-5494afdbb9da",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "ticker_btc",
+          "params": {
+            "time_frame": "month1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7439b489-7124-471b-b535-8938fe3de1b3",
+      "enabled": true,
+      "cycle_duration": "10s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "5b8cc0e9-5586-4bb7-af4d-a3a72f4e06e2",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "block_height",
+          "params": {
+            "show_timestamp": true,
+            "numbers_font_style": "light"
+          }
+        }
+      ]
+    },
+    {
+      "id": "4364b64e-34e1-4c6a-b4f0-dd12cfe9cf9c",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "ffb182a5-9012-48ea-ae3f-ec153582633e",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "261a92e8-b999-4e2b-a2dd-4f80be34d83d",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "7fdb5e8b-2e17-481f-9a9e-a70ea9c6e5de",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "9835d44c-87be-4572-91f5-5b6dffee24f7",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AMP",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "3f7aaf51-010c-443d-929f-a2dc7dd874e7",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "c93ffab8-bf33-4df9-b2d6-1e39fb098aee",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BCH",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "d7a397b3-13f8-4343-a1e9-5c363edbdf53",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "4f177457-ea57-4502-a935-8500cf500559",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BTC",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "c8e35a5a-649d-4679-9be5-11577545f506",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "fa168a8b-1a80-4c15-b9f9-884c92c0f5f4",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CGLD",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "dac037ec-d21c-4603-b5b0-81939eb3e28f",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "de0d1d60-1462-4002-b3c4-f161ab1293e7",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "COMP",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "a6fc0bf6-7973-4c89-bd40-5721de9a8528",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "247b4a34-b221-4974-a8b9-d225df58c274",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "EOS",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "01b6ec56-e748-41ba-87cf-5d6540d9dbb3",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "81a4d07a-8882-48e9-913d-afda542ed742",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "ETH",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "c90537ba-3f3d-431a-8c21-f07e42c125a1",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "407d5630-05d9-40c1-9a49-732ed715ff46",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "FET",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "4bf9fd7f-75a8-4f96-a603-43f5f0209966",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "20881b49-6d55-46d5-a6c6-ce59315b82b3",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "LTC",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "987e2ebc-e992-4e59-945b-40d20f8c34f4",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "96f065df-3b8f-4bc8-886c-08c211434cb8",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "NEAR",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "0099040e-5037-499b-b16d-a3edfb7c968f",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "6c36b54f-980c-4ee6-9362-349ba00c5728",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "NU",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "34618601-3018-4e2e-8bd0-d68c818ea08a",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "8cd1805c-b98e-4377-bb3b-d329126e31c2",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "USD",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "8223241a-1d01-4760-9c49-340802568266",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "b29c2382-12ca-40d6-98ad-730cd14fad32",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "USDC",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "162558cd-8b44-41ff-a9aa-7719ace58084",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "29f55c08-53ba-4d9f-a807-1115cfac652b",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "XRP",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "ebaf2590-3f09-499f-9e01-bf778ddd8869",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "a2729feb-d5d3-459d-bf20-6ce09fe2efb3",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "0decc29c-d6fe-456c-895c-fa935062167e",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "238000d7-672a-4807-9d08-ac3cd9466086",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "943db812-eb65-4018-b015-7acfbe938434",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "AUD",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "003a42c9-38be-4edf-bda2-e8a8db7b4f58",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "dae3f95f-a250-4f66-a595-c508315edec6",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "AUD",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "24b9df5b-1101-4c64-92ed-55854bdb82a6",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "fa4a7ed3-1720-45a3-a40d-31d6d626edf9",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "CHF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "1d8abca2-24f6-4b4d-b7cb-b5cdf22e3e71",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "67f9f71d-0201-46ba-bfe1-21f6a1e609cc",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "GBP"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "514989fe-7e57-4656-bd10-b3228cdb70f1",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "50d76d91-3641-488a-a36d-f1a06ef93b41",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "5e23b207-bcae-4748-ba6b-0bdc71d5c353",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "3c09260f-3e25-4232-9771-579cdf430b1d",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "d84e4ca2-bf9a-480d-ae96-1ee9b7e57ccb",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "80c1f4f8-dd9d-42a9-bc78-eb9e761c83e5",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "GBP",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "cabe570d-5435-4ea0-989a-54ca70cd3431",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "4391c23e-ef5a-4fec-921f-039c65455cc1",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "GBP",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "968137cd-5e6b-4c18-b054-6351558e32c0",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "b0456025-b87b-4b18-b15f-71f0a9809764",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "NZD",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "d5feba58-e8ff-4d22-a8fe-d4ea6778bf5c",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "76292748-5719-4539-9ecd-4ca273d99876",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "CAD"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "3bc905cd-91cc-40b3-88f1-06a2ce5351aa",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "e3ebfe60-7648-4b89-a530-695d647f0c60",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "CHF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "a5eb2cc2-c8f5-40fb-bf88-cd79ade2481e",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "b00b17b3-4896-4aea-90bc-3e858a251ce6",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "17e69d5f-7391-4cf5-985e-80c7ff8a2c1b",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "2ad4b78a-9cb8-45ea-8a67-8fbc91c4c3de",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "MXN"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "e0d2a1b2-5fe5-4675-9209-9b04b430d3ce",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "6cd4d903-319e-45e1-b9b4-25a0d018f05c",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "CNY"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "4079ca57-f588-45b2-9fed-8d26b700c917",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "b1a69c6e-e1a9-4e28-ab3a-cf05c385bd64",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "CZK"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "f0cfa9de-ebd9-4500-ad6d-c31d626fdc8e",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "34f4183c-9770-444f-a7ae-2ae70f8f4c2e",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "a2a3433a-4ce2-4d90-9ea6-761da1b59878",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "aed8b5a1-5b11-4172-ab94-aa17667738d1",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "8dc9d694-dba9-473f-a6d1-d3991c4446c9",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "AUD",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        },
+        {
+          "id": "f3d883ba-4d34-4c79-830b-a9451cecc9b6",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "AUD",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "2cfeeebe-ea31-4beb-97a0-4879d1170203",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "CHF"
+            }
+          }
+        },
+        {
+          "id": "161b4291-7e0f-420c-89eb-2eb78af97ef7",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "GBP"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9382d8e5-f5ac-460b-bd8b-75e312980da6",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "e332eaa6-ce55-4042-9cc2-3c3990ee811f",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        },
+        {
+          "id": "3de7fe5f-b179-4e44-9024-27804521242a",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "2e37144e-732f-46f1-8368-15eaf850b80b",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "GBP",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        },
+        {
+          "id": "6fa88a70-0cc8-44ee-9c9c-a63de1214e41",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "GBP",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "108ebc7e-b691-414d-a75f-0ca54012b6b7",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "1ad01e06-fa69-4f23-91f1-4f6f0c991861",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "NZD",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "a9d5a5cb-1487-40a2-bc8e-292a88020e07",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "CAD"
+            }
+          }
+        },
+        {
+          "id": "c8268c77-dc6c-49fd-9c18-314970a63458",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "CHF"
+            }
+          }
+        },
+        {
+          "id": "72c07f62-e4c0-425c-b03d-03b4db41c4ad",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "aaf2359e-db43-44d4-8636-6f15931e79b9",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "2a55b76f-0be6-460f-95ea-6e2ad20fa366",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "24a53f2a-b0be-438c-a7ac-300d2b3a6bde",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "bb29caf3-961b-414b-b5b3-c49f8f8517e7",
+      "enabled": false,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "d58a14da-fb61-4e7e-962d-2ec332d7bda8",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "AUD",
+              "period": "1h",
+              "quote": "JPY"
+            }
+          }
+        },
+        {
+          "id": "82903a3a-275d-4194-a2a5-e0f5f0a6332b",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "AUD",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "0d05297f-0421-4aca-91c0-b80a5b98196f",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "AUD",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "5f3f5e7e-25a2-476f-82be-f822e520703a",
+      "enabled": false,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "8115ca4a-14e8-4ee0-aa2b-70c98a470de8",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "1h",
+              "quote": "CHF"
+            }
+          }
+        },
+        {
+          "id": "6deb3502-7c9f-4cb3-b0b3-42d8d350bcf4",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "792bf7dd-f18b-40c9-8d57-8ee9805c6d50",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "CHF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "bc3a4b24-725a-49f2-813b-5e20d2be1a86",
+      "enabled": false,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "ba0a7af2-7d9b-414a-99d3-a2668fc2f258",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "1h",
+              "quote": "GBP"
+            }
+          }
+        },
+        {
+          "id": "3c9a9d8b-c95e-446d-966c-70eced40753c",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "71491844-c5c1-4b62-b0d5-a8596f7692bf",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "GBP",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9c523c31-91d6-4007-8db4-a52a1fd375ff",
+      "enabled": false,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "5e1f00f5-54e4-49e7-93ff-952a2b405dd2",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "1h",
+              "quote": "JPY"
+            }
+          }
+        },
+        {
+          "id": "2c44298e-0e96-45f9-b250-e0cd2804ca80",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "434e2b26-bf0f-4e63-b491-49180c285829",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "13fd67a5-e89b-44cb-91f3-d81355e6b31d",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "738da349-81bd-4de6-aba2-83b1c51495a8",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "1h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "998fc996-7193-4c98-a155-5e4e672f55d0",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "GBP",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "2a904c87-5cb6-4174-ac22-9826582133c9",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "EUR",
+              "period": "24h",
+              "quote": "GBP"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "49c4a2fb-8c07-4728-b8bf-bdc52bf863d6",
+      "enabled": false,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "e21ee435-b20b-49b3-9ef3-7faeb443c610",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "GBP",
+              "period": "1h",
+              "quote": "JPY"
+            }
+          }
+        },
+        {
+          "id": "555be780-9da2-4d10-9ce3-49a286330cf8",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "GBP",
+              "period": "24h",
+              "quote": "USD"
+            }
+          }
+        },
+        {
+          "id": "ce3b347c-575b-4a15-beec-6ca6f1c46df9",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display exchange rates with history for currency pairs.",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": {
+              "base": "USD",
+              "period": "24h",
+              "quote": "JPY"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "4cf31a34-c73b-4f5c-9c29-8704735e9587",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "fd6dd496-a187-439d-a266-4b55afbe986c",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "c1935254-bf78-4c2f-8fa6-1d1939a42ff8",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "45fbad4e-c4ba-40c9-9944-f6c778f781ff",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "e96e567f-bb68-4d02-8607-22cfae3fdf31",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Financial Ticker List",
+            "description": "Display multiple financial symbols with their prices, changes, and sparkline charts.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-list/icon?rev=265c6ed448a7c013",
+            "params": {
+              "period": "7d",
+              "symbols": [
+                "^GSPC",
+                "^IXIC",
+                "^DJI",
+                "^RUT",
+                "^VIX",
+                "QQQ",
+                "SPY",
+                "GLD"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "958b6cad-d308-4bd9-9e32-aae07098a2c4",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "1926ca50-21f4-438a-a294-ef229a784454",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "^GSPC",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "759d439f-85ae-4a30-85ca-6ab5146defd0",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "62714504-bed8-4bf4-837b-08cd23094abf",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "94deb651-4c01-4f22-9358-13e76f779783",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "^IXIC",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "60c932d1-800e-4cb5-94e4-0d5720857acf",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "70e917a9-0017-49c2-82c9-129c0c7ad0ac",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "1699fc2c-562d-4297-a7cd-b7242b9ae85f",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "^DJI",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "c4ffa52a-3639-4baa-ac42-689ab29bd3a9",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "33ad5950-4c84-4ddb-965c-80ff595da5c8",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "f6a19e88-46eb-48df-bbe7-1f89121c01da",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "^RUT",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "c09522df-f744-4485-9257-fb784e86eb4d",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "68ca7dd7-6128-40b8-a93a-20d22815bc99",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "146afaf6-40ad-4289-b380-bb704dc646f9",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "^VIX",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "d2d31b4d-84ef-4dae-a543-574a195cf6f3",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "5767c0f3-48d4-4ee4-bb43-4b443a5d3e0f",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "fe2610f7-be4e-40d2-b24e-14004ca4c887",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "a0f8391f-9034-421d-8af4-4b3e82b40156",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "23109260-f4f7-4b08-93a4-692067e3ae0b",
+      "enabled": true,
+      "cycle_duration": "5s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "66cc651d-540f-4cae-a35a-dd5c54fbd8af",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_image",
+          "params": {
+            "url": "http://www.yancy.org/images/braiins/fullscreen/A_FullScreen.png",
+            "refresh_duration": "1day",
+            "image_scale_mode": "fit"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2afb3059-1dc7-4e28-9a6c-2d5f1860e8b2",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "cd642e94-a052-446e-83a4-9eaa720e5946",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AAPL",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "3853d6c5-2a18-41a1-9062-b5d2f4028370",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "AAPL",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "0096d0e9-49ab-4c94-84a4-cfb801d3dc39",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "fefbbbed-c4ab-44b3-8349-09ea6713fb01",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "f580907b-1757-4f6f-8648-67b0be64351d",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AAPL",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "1ae33a19-fe51-4c06-aeb1-0eab2bdd2e76",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "b7e8b6b4-e4e0-4229-8f47-0c7e509059f9",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "ABBV",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "7ebf25e4-056e-4a40-8177-ddd0a474222d",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "ABBV",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "75904ddc-8af3-4d9d-bab4-6016754d670c",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "59ae93be-aab6-46ef-bdf0-74ccaeae9640",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "ba8b0219-eb31-4445-978e-d211f76f5d2a",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "ABBV",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "e67b7354-31e4-4b2a-b1a4-7abe38024ff6",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "8f978331-8e10-4db2-8ab2-c641bb62e96b",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "ADBE",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "8da12dfa-e994-4dee-8cfd-5d7646211fc0",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "ADBE",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "d2ac7851-8d98-42b7-b148-09879ac3e669",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "caebe769-f843-4a41-a24d-09f0fb119f26",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "0a647434-c7cf-4a2c-a4bc-9c5150586d6d",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "ADBE",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "0f5c3291-5f84-4ebc-bc2e-6ca94cc86a44",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "fd233b17-5f50-4128-9cf8-b933db223d78",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "ADT",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "486af993-3856-4166-993f-10b8e6f399bc",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "ADT",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "84d29359-db7c-4712-9ed7-82bb097a0aee",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "15e1ec0f-326c-4c24-8c33-b808dd2d0e0a",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "1c3a0898-cd3e-4bc5-979d-6e47919585cc",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "ADT",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "f416016e-315d-49b7-a95f-01a78fd7f11c",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "d81edafe-7285-4618-8b37-97de40130833",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AGNC",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "2e4737c2-5691-4659-b443-63b86112e982",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "AGNC",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "561111f5-7802-4bca-aca2-03071fc930bb",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "40c623eb-a1dc-4a5f-8d2a-f87382ffa5d5",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "ffa80002-bc98-48ee-ae1a-63a635fd2719",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AGNC",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "203c7aa4-7334-4074-afcc-a1571e4e7c9c",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "dcc1aef2-6fab-4522-b72f-2aec9000730e",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AJG",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "fac94a95-671d-445c-8c31-9e47e6fa8319",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "AJG",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "782977a5-fa05-40ef-8336-802ea86071b1",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "5404294d-b9fe-4050-8810-97395ca5d275",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "fa7cd859-c413-4ce5-bdc3-1aec75eba05c",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AJG",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "8250fc39-0525-4968-ae07-b9818ef55f19",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "55cbef5e-2aff-49fb-9a75-430bd2a4f194",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AM",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "fb28f31d-78ca-49e5-a11c-32be01597591",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "AM",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "4a41e2eb-58f4-4928-8810-c5a3ca98efed",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "d0dd85f8-8d90-4f83-8330-7741005e9a11",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "60368c4a-d852-4d11-9d29-b36bed2d6fc0",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AM",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "68e87e95-fdfc-420e-aa07-649582f1b7b5",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "c1f99ccb-2851-445e-8b63-e08cb3dcbfb9",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AMD",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "d337a514-9af1-4bf4-947a-d6f5bf06bda3",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "AMD",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "d541e160-ff40-4e55-a125-081cebcc33f0",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "050f6a77-b73c-47e6-aabf-4200046ea65a",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "6fa82014-41e5-4389-973a-344ef0fd7915",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AMD",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "f0890708-64d4-433d-af03-76b3e043e6ca",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "a54f34bf-4a7f-4740-9504-c4278d949403",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AVGO",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "0becf77e-2d14-46c5-a057-237992c8c30f",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "AVGO",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "d0ee9e34-38c3-4a58-b50b-5817f9bf9cfa",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "b8c1d4ca-2f3c-4ff7-b9c9-7a94911573aa",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "729c218b-ca57-4efb-8b92-45fea33b96a1",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "AVGO",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "727d641a-647c-49c2-8312-816dcdc13b17",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "2701d13f-5542-4e00-a534-4390563240e0",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "0c68f035-5cb5-4cdf-995d-269a0d8b4366",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "Show local weather conditions with your choice of display style.",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "https://widgets.braiinsforge.com/weather/icon?rev=1f494d0a8e5c98d7",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "d111bc6c-61b7-4f19-844d-1327f01a2b98",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "7628792c-777b-4e34-a0df-29f036a72eeb",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BA",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "f5f4d08f-6e46-4609-8faf-4c4870979af2",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "BA",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "0862d8ac-709f-42fc-b6c9-e513cf71d8c8",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "d8379e1d-06e0-40d0-bae8-82351d6bf80f",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "a2d63944-036f-446f-adbd-c361e8013e42",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BA",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "3990694f-5239-4a4c-91ae-f6f92e9010cc",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "b34de898-a0d7-4af5-bf2d-e167d8f308a7",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BABA",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "bfdccb09-1d2d-4ec1-83be-7f293134466c",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "BABA",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "843368c6-a8ff-4d49-b9c2-3a476e2cca6a",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "f6db7439-af4e-441b-95ce-c52f4c3d2dc1",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "7dce061a-90f2-479f-8bad-6e8a8f2d38c4",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BABA",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "733befbb-ead5-4c94-8de2-381855e0932f",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "1b4e75d3-e1c5-49b2-8758-d3cca2f97061",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BABO",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "3c3e808c-0627-49b5-a7ad-b3cda2e34b33",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "BABO",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "650deb6a-7bfd-41c7-b056-10ce37dd4fa2",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "2b0fa046-07f2-48a6-98a8-81184fd1729a",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "d26b78a7-143a-493e-aab9-d89a63226879",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BABO",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "4358f18d-69b3-4317-8f47-1a66ab1194a5",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "4571706f-af64-469c-ae6f-6791dad76af2",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BAC",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "80961535-adf9-4a29-9946-373dfa4d6258",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "BAC",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "bee2cbf8-beea-4ac7-9891-0ba95a0016ed",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "fdaf3160-48df-4587-aab0-893ad8a943ca",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "cf01c90d-a26b-4dad-b8ca-965c792326ea",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BAC",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "752348dc-7f25-4917-80e5-e945fec02d1b",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "b6e9d10c-87a6-4b08-b372-e4180c640017",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BB",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "225e321e-9a93-432e-ad45-d20765849820",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "BB",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "c29b8807-c9f5-4142-a3d8-77c6559a93a4",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "65f76ee0-d240-4f83-8e8d-a49c575e9d4b",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "541160fd-977c-47d2-8a44-0c076389ba4c",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BB",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "b9990541-0db7-441d-a2ef-0f81ff251a50",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "cfb3f289-52bb-444e-bee6-83a4922e50f5",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BSX",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "3bec6bff-3493-4534-85c1-9d3aafe2a778",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "BSX",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "0e0faa58-e806-4f4a-aa87-37c11cc0dcc6",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "0862d5ac-c0a5-48d9-866b-fb358367a3a6",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "89024e30-d3b1-4342-8547-ff118621dacc",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BSX",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "13559037-5697-4c56-bf51-0d5fe075ddf3",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "1839766e-3d67-4044-adce-2c9cb9dbc33f",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BYDDF",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "5333db06-c74e-444a-9855-781802237251",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "BYDDF",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "c523e4be-f78b-4ed6-9983-463353f9c6ab",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "3d63db20-1d00-4d4a-8a3a-51acf3f7784c",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "91ede9ec-fb50-4f32-854d-2a80acdcce49",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BYFC",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "82960d1f-a721-458f-89ce-b7ec894c65fb",
+      "enabled": true,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "8631fe1b-4f94-4b1c-a70b-513bda6df454",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BYFC",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "e618a7c0-169c-4b92-9417-4737e056dd8e",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "BYFC",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "51ab1382-159b-4821-9380-26f175c109df",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "7e9f8c56-82f9-4ada-a37f-352bded96d22",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "b2c93797-af3f-47c1-b9ad-d0d7ba015a92",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "BYDDF",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "dd1e0ea6-ac6c-4ce8-9b02-b2ba7280e64f",
+      "enabled": false,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "e5c86fd9-bb92-43a6-aefb-339b0d505aa9",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "97c2bccb-7bc5-4f0f-bbbc-fae45d108596",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "Show local weather conditions with your choice of display style.",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "https://widgets.braiinsforge.com/weather/icon?rev=1f494d0a8e5c98d7",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "6ffe2f04-ed89-4257-a160-2229278d57bb",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "b1fca9db-3068-436d-8b11-6a7e62901826",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "C",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "52f4c09b-8cca-4d0d-9055-1d5c7dc94f58",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "C",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "78bd2f7e-31d5-44e6-b4e1-b3b1daa5b944",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "34eed790-3a90-4df3-b696-0565b372a8e0",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "2ffd3e97-6c6b-4cce-a971-97b9b67a524c",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "C",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "e0cec0c2-aede-481b-9af5-f92351f968c7",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "a6af4d1b-98d0-4a09-8314-da3d978df342",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CHTR",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "3d212585-bd46-4b60-87f1-013ca66733eb",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "CHTR",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "7772a929-99bd-4ca0-8b8d-dffb03b1f582",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "250ff427-a615-48fe-b67e-8b6c05610c4c",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "30f82606-f33e-4ced-8113-0cdfe84ad402",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CHTR",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "76556a17-731c-40bd-a7ac-0a96f9ad1d1a",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "21118c20-73c7-45d6-a1ed-91e6cde7dae7",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CI",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "742aa8cc-031d-4cb2-be35-a926025d8399",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "CI",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "8eb4d792-b484-4991-af89-ae937a650538",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "c37c7eb5-1613-4012-91a7-05bcdbdefd99",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "4480889d-e517-44f8-99ba-5b33fd696526",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CI",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "74c20afc-209b-423c-bbb6-a64e002ca5cd",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "a7b59ad9-1268-4fb7-aa2b-b8785066f36a",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CMCSA",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "1bb5714f-e4b2-48db-a492-faa9a6d81f11",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "CMCSA",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "74403b52-d480-49fa-809b-9d42625720ea",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "58c5072d-f9c4-442c-adcc-cbbeadd37424",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "548abb57-5c84-4e70-a251-5bd5e9581388",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CMCSA",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "129e272f-7dcb-461c-925d-9db5a91368dc",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "28269a7e-44ab-4c8e-be63-fbe0bfbd3fed",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CMG",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "66f344d6-d98c-47b4-9067-bf87c6e50c3e",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "CMG",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "2ff5d062-84c1-49e7-af31-d6ae3e51d02f",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "59a97228-918d-4236-80fa-c705934b43b3",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "a606a700-0ff4-4585-a2ec-a444537ec636",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CMG",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "0aca16fd-3ce5-42b8-8ee4-3be6a7a23519",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "336aeecf-bd2a-4741-8c84-b58e83e3d958",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "COF",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "f15bfe1f-47d6-45db-b368-764dbd6690ee",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "COF",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "85500697-2854-4714-8266-bd96f615fd1f",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "edd6c014-a382-4042-aae5-a267fd49062b",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "872f81f6-9309-4bea-8075-41e3803a8846",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "COF",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "5ef981ff-f60c-422d-ace5-81dd3b166a2d",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "6ef325ec-6513-4b2d-9d21-3ef9639e4e4b",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "COIN",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "51bc95cd-f2af-44a4-84ea-207a4a6a22af",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "COIN",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "f4ed739e-9e73-4edd-9646-17661499ecfa",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "c298a4f8-5230-42e4-851d-12858b1dd575",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "951818b6-63dc-4224-8f1b-2170a992993b",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CMCSA",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "42e52fb5-6900-444a-8e0c-a4df9cc41695",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "14745556-58d3-44ef-aa88-8948643930c5",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CPNG",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "aac7a356-8614-4e87-ac3b-ac1af55d1b63",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "CPNG",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "82a17119-f02c-4aa5-b356-ab4ab518fe0d",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "87feccd2-9816-4822-9307-cb24c28dfecf",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "9772e79e-5693-48a9-8a41-10597f06a9ee",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CPNG",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "df1ac4a4-637a-4351-91f8-230db62b57a2",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "1c7caace-d49e-4b74-aed7-42906b0f540e",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CRM",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "5a3e1f1e-f04e-4030-bf63-7000da035e17",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "CRM",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "a2517df3-87a1-4097-b0ec-9e857bcb1b06",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "c43fdec5-5925-4217-97b3-003892e5a8a7",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "1b6f1353-131a-441b-8995-ef00ced6d43b",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CMCSA",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "ebe4394b-ab51-4f00-8d98-bc84cb0435eb",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "8598b556-eda6-436b-8b35-ba74f701bf06",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CVX",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "9fde560a-966e-49d9-8673-9359296abdfe",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "CVX",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "d4046a4a-287d-448e-a4f3-f076ddb26d4c",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "bd174949-5beb-4f71-9b23-87e64d52aaf0",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "44e78bae-2b5e-42c3-a5f1-4a091dda6dea",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CMCSA",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "49a5fe2c-c847-48a4-8f8e-132b3f015e03",
+      "enabled": false,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "90cb25e8-8d52-44a6-8ac4-66f590952387",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "4dcec5a1-e346-4915-8580-d34afe7bfe35",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "Show local weather conditions with your choice of display style.",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "https://widgets.braiinsforge.com/weather/icon?rev=1f494d0a8e5c98d7",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "86705eb4-5159-494f-a814-9c87e644f029",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "1ac36d1c-361f-459a-a8f9-7c7f93ce2ecf",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "DIA",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "9ade2d35-3359-469d-a7b9-286e5eac6970",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "DIA",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "dac1e516-9121-48ee-ba2b-9b3eb265ee7b",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "378307f2-d3f1-4620-a3df-ed6b40a02c30",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "3074bcd7-e67d-48e5-a0d5-1f8063a54cef",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "DIA",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "704bbff6-dcc2-4845-a3c9-d477ac6492df",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "1f7f38f1-1151-4455-9c7b-d0d09f73cea2",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "DIS",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "a5d1ad9f-b7d7-4eac-a18a-facd5e2bc352",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "DIS",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "c03f836a-8e58-4cff-9717-4957eb7bb53c",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "5a3d10a3-b58c-470f-b709-da964542f3e0",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "942a971b-7a3b-4065-ac78-16e759b4ddf3",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "DIS",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "81d90a47-023f-42c6-8f0c-7032a6784088",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "5b083d70-276b-474c-b255-402481c866d8",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "DIVO",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "c8c03103-150b-4077-ac52-04adfad78164",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "DIVO",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "99de35f5-93a7-42b1-82cb-134c58314935",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "6c70a1c1-8261-41b4-840a-4b9a9a14aafa",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "f71b910d-508f-426c-a363-7c464a5ee08f",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "CMCSA",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "c5cb4c7b-fae5-4615-8d91-c9afbcf949dc",
+      "enabled": false,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "fbafa586-1053-408a-ab28-afd7da2692f9",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "4c6d5bdf-8775-485b-84b5-30075baec2f8",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "Show local weather conditions with your choice of display style.",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "https://widgets.braiinsforge.com/weather/icon?rev=1f494d0a8e5c98d7",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "7d7a1028-f1f9-42ac-94ef-6c9823676687",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "7926692a-55ce-4c64-b468-a48e6f744854",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "EEM",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "3ce77c0b-10f3-46bf-803c-173fbd923653",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "EEM",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "57602580-9505-467f-9526-2569f6db3932",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "4d763b06-8037-4e1d-8286-90b405f6b2db",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "31d0308b-c1ea-417c-827b-f8bff854919d",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "EEM",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "fd21a912-3306-47c7-b565-a9d44c26819a",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "22d1a0fc-e38a-418b-b464-9c9a5855b0e2",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "EFZ",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "4ea8a1a5-eaab-4d05-8952-e30e41feacf2",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "EFZ",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "750b07fa-48bb-4bf6-9e57-5f3f8278fc8b",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "6b8921ed-ccd5-4c3f-9a9d-c741dabef01d",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "f43f387d-1eb6-49f3-a740-e3bdfeb6d43e",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "EFZ",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "4a424f5e-06e4-4aef-8343-a6d0d0c055fd",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "840fb5ec-1d12-4406-bfab-20b5c21d1f48",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "EW",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "819e2b22-fd0e-424a-965c-b6f80256b74a",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": {
+              "pair": "EW",
+              "period": "30d"
+            }
+          }
+        },
+        {
+          "id": "90f5fe42-fb34-441b-9fa8-4d1c49b9a1af",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "864c3836-7d26-4633-b893-3955d167dbf6",
+      "enabled": false,
+      "cycle_duration": "15s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "c88c9d17-3115-44f2-8ab0-4bb9b984730e",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": {
+              "pair": "EW",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "666f1d8b-5fa3-45f0-8a6a-a5bb0752b4bc",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "692c3e17-d842-49a6-8cb3-48be019d8e16",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "0b2bb1f5-5b0c-4b93-b7d0-d0ec57e27a72",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "1e426b34-46f0-49eb-85a4-d4c04180159c",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "77634305-ffe9-4ecb-86bd-cb67f7636e51",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Financial Ticker List",
+            "description": "Display multiple financial symbols with their prices, changes, and sparkline charts.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-list/icon?rev=265c6ed448a7c013",
+            "params": {
+              "period": "7d",
+              "symbols": [
+                "^GSPC",
+                "^DJI",
+                "^IXIC",
+                "^VIX",
+                "^RUT",
+                "QQQ",
+                "SPY",
+                "GLD"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "b8f71a2f-ad65-436b-9fd2-7fb114bc4ac2",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "0ef2ed22-e241-467a-8550-72aa2031b318",
+          "row": 0,
+          "col": 0,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "Display today’s nameday for the selected country.",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
+            "params": {
+              "country": "hu",
+              "showDate": true
+            }
+          }
+        },
+        {
+          "id": "b971a26e-a3cc-4274-8771-15c83220675a",
+          "row": 0,
+          "col": 1,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "Display today’s nameday for the selected country.",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
+            "params": {
+              "country": "cz",
+              "showDate": true
+            }
+          }
+        },
+        {
+          "id": "e3aaa12a-c93b-4c58-8dce-94fe81ad50df",
+          "row": 0,
+          "col": 2,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "Display today’s nameday for the selected country.",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
+            "params": {
+              "country": "sk",
+              "showDate": true
+            }
+          }
+        },
+        {
+          "id": "7f90211a-eae6-4eba-a135-bde88c31ceb1",
+          "row": 0,
+          "col": 3,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "Display today’s nameday for the selected country.",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
+            "params": {
+              "country": "lv",
+              "showDate": true
+            }
+          }
+        },
+        {
+          "id": "89aa88a4-0e9f-4018-bbaa-bdd3769e8c76",
+          "row": 1,
+          "col": 0,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "Display today’s nameday for the selected country.",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
+            "params": {
+              "country": "us",
+              "showDate": true
+            }
+          }
+        },
+        {
+          "id": "a648caff-5977-47aa-8d66-7f550f6ead6e",
+          "row": 1,
+          "col": 1,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "Display today’s nameday for the selected country.",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
+            "params": {
+              "country": "fr",
+              "showDate": true
+            }
+          }
+        },
+        {
+          "id": "995e5311-aefe-4eea-af29-739f09292878",
+          "row": 1,
+          "col": 2,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "Display today’s nameday for the selected country.",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
+            "params": {
+              "country": "de",
+              "showDate": true
+            }
+          }
+        },
+        {
+          "id": "ea3adfdd-3106-4402-8718-06e22e4a69b9",
+          "row": 1,
+          "col": 3,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "Display today’s nameday for the selected country.",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
+            "params": {
+              "country": "es",
+              "showDate": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "85f1255b-f5d0-494c-b755-0048eb777ecd",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "95de0de6-668c-4628-9ffd-3fa05cb405fa",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "SpaceX Launch",
+            "description": "Display the next upcoming SpaceX launch.",
+            "widget_url": "https://widgets.braiinsforge.com/spacex-launch",
+            "icon_url": "https://widgets.braiinsforge.com/spacex-launch/icon?rev=b88a1d604aeec046",
+            "params": {
+              "showSeconds": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "182e24f0-e915-47e4-9656-bb5d226e0022",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "b64be75c-b91f-4252-b35c-e9a6ccbdcbdb",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "ISS Position",
+            "description": "Track the International Space Station in real-time.",
+            "widget_url": "https://widgets.braiinsforge.com/iss-position",
+            "icon_url": "https://widgets.braiinsforge.com/iss-position/icon?rev=edce1145fe28cd9b",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "id": "fa8bb79e-f26a-485b-816e-c27dfc301a22",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "1f38de15-b155-42e9-862b-d4d091c93ff4",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Random Facts",
+            "description": "Get a random factoid.",
+            "widget_url": "https://widgets.braiinsforge.com/random-facts",
+            "icon_url": "https://widgets.braiinsforge.com/random-facts/icon?rev=33380228634b0a49",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "id": "ed5a8004-615b-409b-9d7a-6c7f584a3fd5",
+      "enabled": true,
+      "cycle_duration": "30s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "606ca53e-c11d-47b9-8d7b-f5b01e2f13c3",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "NASA Picture of the Day",
+            "description": "NASA Picture of the Day",
+            "widget_url": "https://widgets.braiinsforge.com/nasa-picture-of-the-day",
+            "icon_url": "https://widgets.braiinsforge.com/nasa-picture-of-the-day/icon?rev=149156e2668710cd",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "id": "f93798d2-f2eb-4b09-8f76-cb75d9141359",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "569ed7b0-8cd5-4500-abdf-f3ad8c886cbd",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "1a052d85-c757-474c-95ad-80d701f292b9",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "NASA Picture of the Day",
+            "description": "NASA Picture of the Day",
+            "widget_url": "https://widgets.braiinsforge.com/nasa-picture-of-the-day",
+            "icon_url": "https://widgets.braiinsforge.com/nasa-picture-of-the-day/icon?rev=149156e2668710cd",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "id": "f8b721ab-8d2f-44fa-9fe0-1ea633dab47e",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "df966091-6697-4d3c-9af7-85b9a7b971ed",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Formula 1 — 2026 Season",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/formula-1",
+            "icon_url": "",
+            "params": {
+              "driver": "37920803",
+              "localTime": false,
+              "view": "live"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "0b2fb94e-4534-4f51-8c83-1a54be3815d3",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "e5348cd7-f409-48c5-8460-f2e18a709daa",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "1cb0a772-8a80-47b0-b0fb-a53579c0b76c",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Formula 1 — 2026 Season",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/formula-1",
+            "icon_url": "",
+            "params": {
+              "driver": "37920803",
+              "localTime": false,
+              "view": "live"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "scene_cycling": {
+    "automatic_cycling_enabled": true,
+    "automatic_cycling_default_duration": "1m",
+    "transition": "fade"
+  },
+  "localization": {
+    "time_system": "Hour12",
+    "number_format": "CommaGroupDotDecimal",
+    "date_format": "DdMmYyyyDot",
+    "first_day_of_week": "Sunday",
+    "show_seconds_in_status_bar": false,
+    "temperature_unit": "Fahrenheit",
+    "unit_system": "Imperial"
+  },
+  "data_collection": false,
+  "brightness_pct": 45,
+  "night_mode": {
+    "enabled": false,
+    "from": "22:30:00",
+    "to": "06:30:00",
+    "sound_volume_pct": 25
+  },
+  "sound_volume_pct": 25,
+  "alarms": [
+    {
+      "id": "fc37b6eb-3a24-4102-8935-58e4ff0b35f9",
+      "enabled": true,
+      "name": "FOCUS - 08",
+      "time": "08:00:00",
+      "repeat": [
+        "Saturday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Sunday",
+        "Friday",
+        "Thursday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "91c85f3c-a872-4358-a01c-026a821cc014",
+      "enabled": true,
+      "name": "FOCUS - 09",
+      "time": "09:00:00",
+      "repeat": [
+        "Wednesday",
+        "Sunday",
+        "Saturday",
+        "Thursday",
+        "Friday",
+        "Tuesday",
+        "Monday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "df3d9207-3e45-4d03-8241-a239fd91d1b7",
+      "enabled": true,
+      "name": "FOCUS - 10",
+      "time": "10:00:00",
+      "repeat": [
+        "Tuesday",
+        "Friday",
+        "Wednesday",
+        "Thursday",
+        "Saturday",
+        "Monday",
+        "Sunday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "243c41c5-5bb8-4779-9079-a6485e78721c",
+      "enabled": true,
+      "name": "FOCUS - 11",
+      "time": "11:00:00",
+      "repeat": [
+        "Thursday",
+        "Monday",
+        "Friday",
+        "Wednesday",
+        "Tuesday",
+        "Saturday",
+        "Sunday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "c626e4a4-30bd-4960-9fd7-4b2f350ccb2d",
+      "enabled": true,
+      "name": "FOCUS - 12",
+      "time": "12:00:00",
+      "repeat": [
+        "Sunday",
+        "Friday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Monday",
+        "Saturday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "522f6180-9141-4bb6-a262-fd5be9312068",
+      "enabled": true,
+      "name": "FOCUS - 13",
+      "time": "13:00:00",
+      "repeat": [
+        "Monday",
+        "Friday",
+        "Wednesday",
+        "Saturday",
+        "Sunday",
+        "Tuesday",
+        "Thursday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "e0b5ef38-0acb-4e4a-90ab-a43c237120a9",
+      "enabled": true,
+      "name": "FOCUS - 14",
+      "time": "14:00:00",
+      "repeat": [
+        "Sunday",
+        "Saturday",
+        "Wednesday",
+        "Thursday",
+        "Tuesday",
+        "Monday",
+        "Friday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "bcc27546-8ae4-4dee-a062-f61978d81a15",
+      "enabled": true,
+      "name": "FOCUS - 15",
+      "time": "15:00:00",
+      "repeat": [
+        "Thursday",
+        "Monday",
+        "Saturday",
+        "Friday",
+        "Sunday",
+        "Tuesday",
+        "Wednesday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "6b45cd32-8bd0-41e5-b362-7465113d9eba",
+      "enabled": true,
+      "name": "FOCUS - 16",
+      "time": "16:00:00",
+      "repeat": [
+        "Saturday",
+        "Friday",
+        "Wednesday",
+        "Thursday",
+        "Monday",
+        "Sunday",
+        "Tuesday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "3712986d-5071-4711-8d42-d4aafee4cde1",
+      "enabled": true,
+      "name": "FOCUS - 17",
+      "time": "17:00:00",
+      "repeat": [
+        "Monday",
+        "Sunday",
+        "Friday",
+        "Thursday",
+        "Saturday",
+        "Tuesday",
+        "Wednesday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "df9011f0-1d3e-4339-9a57-11c879fa8d58",
+      "enabled": true,
+      "name": "FOCUS - 18",
+      "time": "18:00:00",
+      "repeat": [
+        "Monday",
+        "Wednesday",
+        "Friday",
+        "Saturday",
+        "Tuesday",
+        "Thursday",
+        "Sunday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "126e849c-60e2-43ec-8ae4-9a40aa47c7a3",
+      "enabled": true,
+      "name": "FOCUS - 19",
+      "time": "19:00:00",
+      "repeat": [
+        "Tuesday",
+        "Saturday",
+        "Friday",
+        "Sunday",
+        "Wednesday",
+        "Monday",
+        "Thursday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    },
+    {
+      "id": "0bb23c09-f3e4-49b5-947c-656076147c0e",
+      "enabled": true,
+      "name": "FOCUS - 20",
+      "time": "20:00:00",
+      "repeat": [
+        "Wednesday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+        "Thursday",
+        "Tuesday",
+        "Monday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    }
+  ],
+  "autoupgrade": {
+    "enabled": true,
+    "cron": "39 10 1 * * 2"
+  },
+  "accounts": [
+    {
+      "id": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c",
+      "type": "braiins_pool",
+      "name": "DeckProfile",
+      "authentication": {
+        "api_key": "xxxxxxxxxxxxxxxx"
+      },
+      "created_at": "2025-12-23T06:38:09.329985975Z"
+    }
+  ]
+}

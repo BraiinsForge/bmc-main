@@ -1,0 +1,54 @@
+graph TD
+
+    subgraph frontend["Web Browser — React frontend at :80"]
+        FE["React SPA\n/www/bmc/"]
+    end
+
+    subgraph api["gRPC API :50051"]
+        GRPC["bmc-grpc"]
+    end
+
+    subgraph core["bmc — core logic"]
+        DT["display_tasks\nwidget_tasks\nstartup / entry"]
+        DC["DisplayController\ninvoke_from_event_loop"]
+        SCHED["bmc-scheduler\nbmc-upgrade\nbmc-support"]
+    end
+
+    subgraph display["bmc-display — Slint UI"]
+        SA["ScreenAdapter\nMainWindow\n.slint files"]
+        PROXY["Proxy\nflume channel"]
+        MODELS["Scene / Widget\ndata models"]
+    end
+
+    subgraph drivers["Hardware Drivers"]
+        LED["bmc-led\nSPI APA102"]
+        DRM["LinuxDrmPlatform\nevent loop + DRM"]
+        BTN["bmc-button\nuevent"]
+        WIFI["bmc-shared\nii-net-drv\nWiFi/uci"]
+    end
+
+    subgraph platform["bmc-openwrt — main binary, platform glue"]
+        PLAT["WiFi detect, backlight, CLI, logging"]
+    end
+
+    subgraph os["OpenWrt Linux musl"]
+        OS["DRM / evdev / SPI / mac80211 / uci"]
+    end
+
+    subgraph hw["STM32MP157C Hardware"]
+        HW["display 480x1280 / touch / LED / WiFi"]
+    end
+
+    FE --> GRPC
+    GRPC --> DT
+    DT --> DC
+    DC --> PROXY
+    PROXY --> SA
+    DT --> SCHED
+    SA --> DRM
+    DRM --> PLAT
+    LED --> PLAT
+    BTN --> PLAT
+    WIFI --> PLAT
+    PLAT --> OS
+    OS --> HW

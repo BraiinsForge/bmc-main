@@ -1,13 +1,15 @@
 /** @type {import('svgo').Config} */
 export default {
     multipass: true,
-    js2svg: { pretty: true, indent: 2 },
+    js2svg: { pretty: true, indent: 4 },
     plugins: [
         {
             name: 'preset-default',
         },
         // Explicitly remove <title> elements (not in preset-default in this svgo version).
         'removeTitle',
+        // Prefix IDs to avoid collisions when multiple SVGs are inlined in the same page.
+        'prefixIds',
         // Drop elements that are invisible: fill:none (or no fill) and no stroke.
         // Catches leftover bounding-box rects from design tools.
         {

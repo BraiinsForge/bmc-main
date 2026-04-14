@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+# Re-apply WiFi config after bmc-openwrt's wifi-detect wipes
+# /etc/config/wireless on startup.
+# Credentials come from /etc/bmc-virt/uplink.conf (templated at deploy time).
+START=90
+
+boot() {
+    [ -f /etc/bmc-virt/uplink.conf ] || return 0
+    . /etc/bmc-virt/uplink.conf
+    [ -n "$UPLINK_SSID" ] || return 0
+
+    # Wait for bmc-openwrt to finish its wifi-detect
+    for i in $(seq 1 15); do
+        pgrep -x bmc-openwrt >/dev/null 2>&1 && break
+        sleep 1
+    done
+    sleep 3
+
+    # Radio1: fake upstream AP
+    uci set wireless.radio1.channel="6"
+    uci set wireless.radio1.htmode="NOHT"
+    uci set wireless.radio1.disabled="0"
+    uci delete wireless.radio1.band 2>/dev/null || true
+    uci set wireless.default_radio1.network="wifinet"
+    uci set wireless.default_radio1.mode="ap"
+    uci set wireless.default_radio1.ssid="$UPLINK_SSID"
+    uci set wireless.default_radio1.encryption="psk2"
+    uci set wireless.default_radio1.key="$UPLINK_KEY"
+
+    # Radio0: STA connecting to the fake upstream (only if provisioned)
+    . /lib/functions/bos-defaults.sh
+    if ! is_factory_default && ! is_setup_pending; then
+        uci set wireless.default_radio0.mode="sta"
+        uci set wireless.default_radio0.network="wifi_sta"
+        uci set wireless.default_radio0.ssid="$UPLINK_SSID"
+        uci set wireless.default_radio0.encryption="psk2"
+        uci set wireless.default_radio0.key="$UPLINK_KEY"
+        uci set wireless.default_radio0.disabled="0"
+    fi
+
+    uci commit wireless
+    wifi reload
+}

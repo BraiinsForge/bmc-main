@@ -1,0 +1,22 @@
+[package]
+name = "bmc-virt-console"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anstyle-parse.workspace = true
+bmc-virt-ipc.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-notify.workspace = true
+egui_virtual_list.workspace = true
+resvg.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5.2"
+raw-window-handle = "0.6"

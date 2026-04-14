@@ -23,8 +23,8 @@ fn main() -> anyhow::Result<()> {
             .to_str()
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "activation script filename is not valid UTF-8: {:?}",
-                    entry.file_name()
+                    "activation script filename is not valid UTF-8: {}",
+                    entry.file_name().to_string_lossy()
                 )
             })?
             .to_owned();

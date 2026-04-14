@@ -1,0 +1,103 @@
+#!/bin/sh /etc/rc.common
+# Boot-time device setup for the bmc-virt VM environment.
+# Creates device nodes, symlinks, and pseudo-sysfs entries that the
+# deploy script previously did imperatively over SSH.
+#
+# !! This is the earliest bmc-virt init script — it mounts /nix/store
+# via 9p which all subsequent scripts depend on (eventd=81, bmc-openwrt=85,
+# relay=95 all use nix store binaries/libraries).
+START=80
+
+boot() {
+    # Mount host /nix/store via 9p so glibc-linked binaries can resolve their dependencies
+    if ! grep -q '/nix/store' /proc/mounts 2>/dev/null; then
+        mkdir -p /nix/store
+        mount -t 9p -o trans=virtio,ro nixstore /nix/store || \
+            echo "WARNING: could not mount /nix/store from host (9p)" >&2
+    fi
+
+    # NixOS convention: mesa expects DRI drivers under /run/opengl-driver.
+    # Find the full mesa (not mesa-libgbm) via its gbm/ driver subdir.
+    MESA_GBM=$(ls -d /nix/store/*mesa*/lib/gbm 2>/dev/null | head -1)
+    if [ -n "$MESA_GBM" ]; then
+        mkdir -p /run/opengl-driver
+        ln -sfn "$(dirname "$MESA_GBM")" /run/opengl-driver/lib
+    fi
+
+    # Unbind fbcon so the app can take DRM master
+    for vtc in /sys/class/vtconsole/vtcon*/bind; do
+        echo 0 > "$vtc" 2>/dev/null || true
+    done
+
+    # The app expects touch at /dev/input/event0. On the VM the ACPI
+    # power button grabs event0 at boot, pushing virtio-tablet to event1.
+    for f in /sys/class/input/event*/device/name; do
+        if grep -q "Virtio Tablet" "$f" 2>/dev/null; then
+            TABLET_DEV="/dev/input/$(basename $(dirname $(dirname "$f")))"
+            if [ "$TABLET_DEV" != "/dev/input/event0" ] && [ -c "$TABLET_DEV" ]; then
+                mv /dev/input/event0 /dev/input/event_power 2>/dev/null || true
+                ln -sf "$TABLET_DEV" /dev/input/event0
+            fi
+            break
+        fi
+    done
+
+    # DRM: ensure card1 device node exists (compositor expects /dev/dri/card1).
+    # With the EGL compositor, card1 must be virtio-gpu (not VKMS) so that
+    # the render GPU and display device are the same — avoiding cross-device
+    # DMA-BUF imports which virgl does not support.
+    mkdir -p /dev/dri
+    if [ ! -c /dev/dri/card1 ] && [ -e /sys/class/drm/card1/dev ]; then
+        IFS=: read -r major minor < /sys/class/drm/card1/dev
+        mknod /dev/dri/card1 c "$major" "$minor"
+    fi
+
+    # SPI: bind spidev driver and create device node
+    for i in $(seq 1 10); do
+        [ -e /sys/bus/spi/devices/spi0.0 ] && break
+        sleep 1
+    done
+    if [ -e /sys/bus/spi/devices/spi0.0 ] \
+      && [ ! -L /sys/bus/spi/devices/spi0.0/driver ] \
+      && [ -e /sys/bus/spi/drivers/spidev/bind ]; then
+        echo spidev > /sys/bus/spi/devices/spi0.0/driver_override 2>/dev/null || true
+        echo spi0.0 > /sys/bus/spi/drivers/spidev/bind 2>/dev/null || true
+    fi
+    if [ ! -c /dev/spidev0.0 ] && [ -e /sys/class/spidev/spidev0.0/dev ]; then
+        IFS=: read -r major minor < /sys/class/spidev/spidev0.0/dev
+        mknod /dev/spidev0.0 c "$major" "$minor" 2>/dev/null || true
+    fi
+
+    # Fake backlight sysfs (read/write, no real hardware)
+    if ! mountpoint -q /sys/class/backlight 2>/dev/null; then
+        mkdir -p /tmp/fake-backlight/display-bl
+        echo 255 > /tmp/fake-backlight/display-bl/max_brightness
+        echo 0   > /tmp/fake-backlight/display-bl/bl_power
+        echo 128 > /tmp/fake-backlight/display-bl/brightness
+        echo 128 > /tmp/fake-backlight/display-bl/actual_brightness
+        mount --bind /tmp/fake-backlight /sys/class/backlight
+    fi
+
+    # If uplink.conf exists, this VM was provisioned — clear factory flags
+    # so bmc-openwrt doesn't show the onboarding screen on boot.
+    # Must happen BEFORE bmc-openwrt starts (START=85).
+    if [ -f /etc/bmc-virt/uplink.conf ]; then
+        . /lib/functions/bos-defaults.sh
+        unset_factory_default
+        unset_setup_pending
+        unset_wifi_reconfig
+    fi
+
+    # Sound: create /dev/snd/* nodes and unmute
+    if [ -d /sys/class/sound ]; then
+        mkdir -p /dev/snd
+        for dev in /sys/class/sound/*/dev; do
+            [ -e "$dev" ] || continue
+            NAME=$(basename "$(dirname "$dev")")
+            IFS=: read -r major minor < "$dev"
+            [ -c "/dev/snd/$NAME" ] || mknod "/dev/snd/$NAME" c "$major" "$minor" 2>/dev/null || true
+        done
+        amixer sset Master unmute 100% 2>/dev/null || true
+        amixer sset PCM unmute 100% 2>/dev/null || true
+    fi
+}

@@ -1,0 +1,28 @@
+graph LR
+
+    subgraph "Thread 1: tokio async runtime"
+        INIT["startup / entry"]
+        DT["display_tasks\n(screen transitions)"]
+        WT["widget_tasks\n(data fetching)"]
+        WEB["web server\n(:80)"]
+        GRPC["gRPC server\n(:50051)"]
+        LED["led_controller"]
+        WIFI["WiFi manager"]
+    end
+
+    subgraph "Thread 2: Slint event loop"
+        TIMERS["update_timers\n_and_animations()"]
+        PROXY["drain proxy\nevents (flume)"]
+        REDRAW["request_redraw()"]
+        TOUCH["touch input\n(evdev)"]
+        RENDER["draw_if_needed()\nSoftwareRenderer"]
+        DRM["DRM framebuffer\n(mmap write)"]
+    end
+
+    DT -->|"invoke_from\n_event_loop"| PROXY
+    WT -->|"invoke_from\n_event_loop"| PROXY
+    PROXY --> REDRAW
+    REDRAW --> RENDER
+    RENDER --> DRM
+    TIMERS --> PROXY
+    TOUCH --> RENDER

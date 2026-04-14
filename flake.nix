@@ -7,13 +7,9 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib";
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, nixlib, fenix, ... }:
+  outputs = { self, nixpkgs, flake-utils, nixlib, ... }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (localSystem:
       let
         pkgs = import nixpkgs {
@@ -22,7 +18,6 @@
             "corefonts"
           ];
           overlays = [
-            fenix.overlays.default
             nixlib.overlays.default
             (nixlib.mkRustOverlayFromToolchainFile {
               file = ./rust-toolchain.toml;
@@ -81,10 +76,11 @@
           name = "fmt-svg";
           runtimeInputs = with pkgs; [ findutils svgo coreutils ];
           text = ''
-            find bmc-wasm-runtime -name '*.svg' \
+            find bmc-virt bmc-wasm-runtime -name '*.svg' \
               -not -path '*/target/*' \
               -not -path '*/.venv/*' \
-              -print0 | xargs -0 -P "$(nproc)" -I {} svgo --config bmc-wasm-runtime/svgo.config.js -i {} -o {}
+              -not -path '*/node_modules/*' \
+              -print0 | xargs -0 -P "$(nproc)" -I {} svgo --config svgo.config.js -i {} -o {}
           '';
         };
       in
@@ -103,25 +99,36 @@
           # Documents
           html = false;
           markdown = true;
+          mermaid = true;
           copyright = true;
 
           config.exclude = [
             # Frontend specifies it's own formatting rules
             "frontend/*"
-            # Markdown Files can be distorted when formatted
-            "docs/*"
+            # Exclude pre-existing docs from formatter; new docs will be formatted
+            "docs/release.md"
+            "docs/nix-device-scripts.md"
+            "docs/deployment.md"
+            "docs/CrateVerificationGuide.md"
+            "docs/stories/*"
+            "docs/nix/*"
+            "docs/devlogs/*"
             # Upstream crates shall be formatted upstream
             "bmc-shared/ii-net-drv/*"
+            # Harness has its own formatter config (bmc-virt/harness/pyproject.toml)
+            "bmc-virt/harness/**/*.py"
           ];
         };
-
 
         legacyPackages = {
           inherit pkgs;
           inherit (workspace.bmc) armv7-pkgs;
         };
 
-        checks = self.packages.${localSystem} // frontend.checks // checks;
+        checks = self.packages.${localSystem} // frontend.checks // checks // {
+          mermaid = nixlib.braiinschk.${localSystem} { mermaid = true; };
+        };
+
         packages = workspace.packages // {
           wasm-capture = capture.package;
           frontend = frontend.build;

@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant Task as tokio task
+    participant DC as DisplayController
+    participant Proxy as Proxy (flume)
+    participant EL as Slint Event Loop
+    participant SW as SoftwareRenderer
+    participant FB as DRM Framebuffer
+
+    Task ->> DC: set_init_screen(SetupStart)
+    DC ->> DC: upgrade_in_event_loop(closure)
+    DC ->> Proxy: send(ProxyEvent Event)
+    Proxy ->> EL: recv_timeout wakes up
+    EL ->> EL: execute closure — ScreenAdapter.set_init(...)
+    EL ->> EL: request_redraw()
+    EL ->> SW: draw_if_needed(callback)
+    SW ->> SW: render Rgb565 buffer (1280x480 logical)
+    SW ->> SW: apply Rotate270 to 480x1280 physical
+    SW ->> FB: copy rows (Rgb565 or XRGB8888) — display updates

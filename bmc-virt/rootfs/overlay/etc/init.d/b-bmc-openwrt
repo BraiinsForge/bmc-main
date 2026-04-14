@@ -1,0 +1,62 @@
+#!/bin/sh /etc/rc.common
+# procd service for bmc-openwrt (the main Deck app).
+# Binary is deployed to /root/bmc-openwrt by the overlay.
+#
+# Optional /etc/bmc-virt/bmc-openwrt.env selects rr record mode:
+#   RR_ENABLED=1
+#   RR_BUNDLE=/root/rr
+#   RR_TRACE_DIR=/root/rr-traces
+#   XDG_RUNTIME_DIR_OVERRIDE=/run/user/0
+START=85
+USE_PROCD=1
+
+LOGFILE="/root/bmc.log"
+ENV_FILE="/etc/bmc-virt/bmc-openwrt.env"
+
+start_service() {
+    [ -x /root/bmc-openwrt ] || return 0
+
+    # Mode defaults (non-rr)
+    RR_ENABLED=
+    RR_BUNDLE=
+    RR_TRACE_DIR=
+    XDG_RUNTIME_DIR_OVERRIDE=
+    # shellcheck disable=SC1090
+    [ -f "$ENV_FILE" ] && . "$ENV_FILE"
+
+    # XDG_RUNTIME_DIR: required by the Wayland compositor.
+    # See nix/pkgs/core/scripts/start-compositor for the Deck equivalent.
+    XDG_RUNTIME_DIR_EFF="${XDG_RUNTIME_DIR_OVERRIDE:-/tmp/bmc-runtime}"
+    mkdir -p "$XDG_RUNTIME_DIR_EFF"
+    # Widget log directory (widgets write to /var/log/bmc/)
+    mkdir -p /var/log/bmc
+
+    # Widgets path: written by deploy script, points to nix store (via 9p mount)
+    WIDGETS_ARGS=""
+    if [ -f /etc/bmc-virt/widgets-path ]; then
+        WIDGETS_PATH=$(cat /etc/bmc-virt/widgets-path)
+        [ -d "$WIDGETS_PATH" ] && WIDGETS_ARGS="--widgets-path $WIDGETS_PATH"
+    fi
+
+    # rr mode prepends a record wrapper and forces the headless compositor
+    # (rr hides /dev/dri from recorded processes).
+    LAUNCHER=""
+    EXTRA_ARGS=""
+    if [ -n "$RR_ENABLED" ]; then
+        rm -rf "$RR_TRACE_DIR"
+        LAUNCHER="$RR_BUNDLE/bin/run-rr.sh record -n --output-trace-dir=$RR_TRACE_DIR --resource-path=$RR_BUNDLE"
+        EXTRA_ARGS="--headless-compositor"
+    fi
+
+    procd_open_instance
+    procd_set_param command /bin/sh -c \
+        "exec $LAUNCHER /root/bmc-openwrt $WIDGETS_ARGS $EXTRA_ARGS >>$LOGFILE 2>&1"
+    procd_set_param env \
+        RUST_BACKTRACE=full \
+        RUST_LOG=debug \
+        BMC_WIFI_SYSPATH=/sys/devices/virtual/mac80211_hwsim/hwsim0/ \
+        XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR_EFF"
+    procd_set_param file /etc/bmc_config.json
+    procd_set_param pidfile /var/run/bmc-openwrt.pid
+    procd_close_instance
+}

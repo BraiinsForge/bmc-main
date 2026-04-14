@@ -1,0 +1,17 @@
+[package]
+name = "bmc-virt-relay"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Messages only, no tonic server traits — keeps the relay binary small
+bmc-grpc = { workspace = true, default-features = false }
+bmc-virt-ipc.workspace = true
+bmc-virt-leds.workspace = true
+libc.workspace = true
+prost.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true

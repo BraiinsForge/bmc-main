@@ -1,0 +1,32 @@
+#!/bin/sh
+# Stub for bmc-virt — mimics the real bos utility from bos-main.
+# Real hardware wipes the overlay fs_state; here we restore factory flags,
+# remove config, and reboot to simulate a fresh device.
+
+. /lib/functions/bos-defaults.sh
+set -e
+
+factory_reset() {
+    echo "Purging overlay (VM stub)"
+    # Real bos does: rm /overlay/.fs_state && sync && reboot
+    # VM equivalent: restore factory state
+    touch /etc/factory-default
+    touch /etc/setup-pending
+    rm -f /etc/bmc_config.json
+    # Remove uplink.conf so the boot-time WiFi init script doesn't
+    # clear factory flags and re-provision on next boot.
+    rm -f /etc/bmc-virt/uplink.conf
+    sync
+    reboot
+}
+
+case "$1" in
+    factory_reset)
+        shift
+        factory_reset "$@"
+        ;;
+    *)
+        echo "bos: unknown command '$1' (VM stub)" >&2
+        exit 1
+        ;;
+esac

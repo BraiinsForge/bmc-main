@@ -1,16 +1,25 @@
 # profiles: Build profile definitions for all target platforms.
-{ workspaces, pkgs, armv7Pkgs }:
+{ workspaces, pkgs, armv7Pkgs, x86Pkgs, aarch64Pkgs }:
+let
+  # On x86_64 native, libgbm is a separate package (not part of mesa).
+  x86NativeTargetDeps = pkgs: with pkgs; [ libgbm ];
+
+  mkX86 = attrs: workspaces.full.mkBuildProfile ({
+    targetDeps = x86NativeTargetDeps;
+    pkgs = x86Pkgs;
+  } // attrs);
+
+  mkAarch64 = attrs: workspaces.full.mkBuildProfile ({
+    pkgs = aarch64Pkgs;
+  } // attrs);
+in
 {
-  # fast profile (no cross compilation, non-portable binaries)
+  # fast profile (no cross compilation, non-portable native binaries)
   fast = workspaces.full.mkBuildProfile {
+    inherit pkgs;
+    targetDeps = x86NativeTargetDeps;
     minimalDeps = false;
     rustProfile = "fast";
-    targetDeps = pkgs: with pkgs; [
-      # NOTE: for native compilation, mesa does not have
-      # gbm, while for armv7 libgbm is kept in mesa.
-      libgbm
-    ];
-    inherit pkgs;
   };
   # musl profiles for bmc-openwrt (statically linked)
   armv7-musl-release = workspaces.minimal.mkBuildProfile {
@@ -46,4 +55,11 @@
     rustCrossTargetOverride = "wasm32-unknown-unknown";
     inherit pkgs;
   };
+  # glibc profiles for bmc-virt (x86_64, dynamically linked)
+  x86_64-release = mkX86 { minimalDeps = true; rustProfile = "release"; };
+  x86_64-debug = mkX86 { minimalDeps = false; rustProfile = "dev"; };
+  x86_64-rr = mkX86 { minimalDeps = false; rustProfile = "rr"; };
+  # glibc profiles for aarch64 (dynamically linked)
+  aarch64-release = mkAarch64 { minimalDeps = true; rustProfile = "release"; };
+  aarch64-debug = mkAarch64 { minimalDeps = false; rustProfile = "dev"; };
 }

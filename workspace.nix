@@ -14,35 +14,57 @@ let
   armv7Pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.extend (final: prev:
     # Guard: only apply to cross-compiled (ARM target) packages, not to
     # build-host packages that share this overlay via splicing.
-    lib.optionalAttrs (prev.stdenv.hostPlatform != prev.stdenv.buildPlatform) {
-      linux-pam = prev.linux-pam.overrideAttrs (old: {
-        outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
-      });
-      mesa = prev.callPackage ./nix/pkgs/mesa/package.nix { };
-      libinput = prev.libinput.override {
-        wacomSupport = false;
-      };
-      # These libraries use mesa.driverLink for driverdir/moduledir, but our
-      # custom mesa disables glvnd so driverLink throws. Point directly at
-      # mesa output instead.
-      # NOTE: currently there are no drivers or modules compiled.
-      libva = prev.libva.overrideAttrs {
-        mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
-          "-Ddriverdir=${final.mesa}/lib/dri"
-        ];
-      };
-      libva-minimal = prev.libva-minimal.overrideAttrs {
-        mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
-          "-Ddriverdir=${final.mesa}/lib/dri"
-        ];
-      };
-      # libvdpau uses mesa.driverLink for -Dmoduledir (gallium-vdpau is off).
-      libvdpau = prev.libvdpau.overrideAttrs {
-        mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
-          "-Dmoduledir=${final.mesa}/lib/vdpau"
-        ];
-      };
-    });
+    lib.optionalAttrs (prev.stdenv.hostPlatform != prev.stdenv.buildPlatform) (
+      (mesaOverlay { }) final prev // {
+        linux-pam = prev.linux-pam.overrideAttrs (old: {
+          outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
+        });
+        libinput = prev.libinput.override {
+          wacomSupport = false;
+        };
+      }
+    ));
+
+  # Custom mesa overlay (glvnd disabled) so EGL works without NixOS's
+  # /run/opengl-driver. galliumDrivers selects which GPU backends to build:
+  #   armv7 (Deck hardware):   [ "etnaviv" ]
+  #   x86/aarch64 (VM / dev):  [ "etnaviv" "virgl" "softpipe" ]
+  mesaOverlay = { galliumDrivers ? [ "etnaviv" ] }: final: prev: {
+    mesa = prev.callPackage ./nix/pkgs/mesa/package.nix {
+      inherit galliumDrivers;
+    };
+    # dri-pkgconfig-stub references mesa.driverLink which our mesa disables (no glvnd).
+    # Point it at mesa directly.
+    dri-pkgconfig-stub = prev.writeTextFile {
+      name = "dri-pkgconfig-stub";
+      destination = "/lib/pkgconfig/dri.pc";
+      text = ''
+        dridriverdir=${final.mesa}/lib/dri
+
+        Name: dri
+        Version: ${final.mesa.version}
+        Description: Graphics driver path stub (custom mesa, no glvnd)
+      '';
+    };
+    libva = prev.libva.overrideAttrs {
+      mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
+        "-Ddriverdir=${final.mesa}/lib/dri"
+      ];
+    };
+    libva-minimal = prev.libva-minimal.overrideAttrs {
+      mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
+        "-Ddriverdir=${final.mesa}/lib/dri"
+      ];
+    };
+    libvdpau = prev.libvdpau.overrideAttrs {
+      mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
+        "-Dmoduledir=${final.mesa}/lib/vdpau"
+      ];
+    };
+  };
+  vmGalliumDrivers = [ "etnaviv" "virgl" "softpipe" ];
+  x86Pkgs = pkgs.extend (mesaOverlay { galliumDrivers = vmGalliumDrivers; });
+  aarch64Pkgs = pkgs.pkgsCross.aarch64-multiplatform.extend (mesaOverlay { galliumDrivers = vmGalliumDrivers; });
 
   # Shared deps used by both package builds and devShells.
   # Single source of truth to keep build derivations and dev environments in sync.
@@ -134,7 +156,7 @@ let
     };
     profiles = import ./nix/profiles.nix {
       inherit (bmc) workspaces;
-      inherit pkgs armv7Pkgs;
+      inherit pkgs armv7Pkgs x86Pkgs aarch64Pkgs;
     };
   };
 
@@ -238,7 +260,53 @@ let
   specialPackages = {
     workspace-deps = bmc.profiles.fast.deps;
     inherit (bmc.profiles.fast) build clippy test nextest;
-  };
+  } // (
+    # bmc-openwrt + bmc-virt helper packages for x86_64 and aarch64.
+    # bmc-openwrt needs autopatchelf for compositor runtime deps (dlopen'd).
+    let
+      archConfigs = {
+        x86_64 = { runtimePkgs = x86Pkgs; profiles = [ "release" "debug" "rr" ]; };
+        aarch64 = { runtimePkgs = aarch64Pkgs; profiles = [ "release" "debug" ]; };
+      };
+      mkOpenwrt = arch: profile: cfg: {
+        name = "bmc-openwrt-${arch}-${profile}";
+        value = bmc.lib.autopatchelfBinaries {
+          drv = bmc.profiles."${arch}-${profile}".buildCrate bmc.crates.bmc-openwrt {
+            features = [ "bmc-display/slint-embed-files" ];
+          };
+          runtimeDeps = deps.compositorRuntimeDeps cfg.runtimePkgs;
+        };
+      };
+      mkVirtCrate = arch: profile: crate: {
+        name = "${crate}-${arch}-${profile}";
+        value = bmc.profiles."${arch}-${profile}".buildCrate bmc.crates.${crate} { };
+      };
+    in
+    builtins.listToAttrs (lib.concatLists (lib.mapAttrsToList
+      (arch: cfg:
+        (map (p: mkOpenwrt arch p cfg) cfg.profiles)
+          ++ [
+          (mkVirtCrate arch "debug" "bmc-virt-leds")
+          {
+            name = "bmc-virt-relay-${arch}-debug";
+            value = bmc.lib.autopatchelfBinaries {
+              drv = bmc.profiles."${arch}-debug".buildCrate bmc.crates.bmc-virt-relay { };
+              runtimeDeps = [ cfg.runtimePkgs.wayland ];
+            };
+          }
+          # Combined widget package for the VM
+          {
+            name = "widgets-${arch}";
+            value = bmc.lib.mkAllWidgets {
+              inherit widgets;
+              runtimeDeps = deps.widgetRuntimeDeps.native;
+              profile = bmc.profiles."${arch}-debug";
+            };
+          }
+        ]
+      )
+      archConfigs))
+  );
 
   armv7lPkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
   bmc-video-play-armv7 = armv7lPkgs.callPackage ./bmc-video/package.nix { };

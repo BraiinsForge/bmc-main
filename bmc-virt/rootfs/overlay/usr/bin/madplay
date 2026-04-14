@@ -1,0 +1,63 @@
+#!/bin/sh
+# madplay shim — translates madplay args to mpg123.
+#
+# bmc-audio invokes:  madplay <file> -A <decibels>
+# We translate to:    mpg123 -q -f <scalefactor> <file>
+#
+# Volume override:
+#   If /root/bmc_volume_override exists and contains a number (0–100),
+#   that value is used instead of the app's -A argument. This lets the
+#   console app control volume independently. An empty file means "use
+#   the app's own volume setting".
+#
+# Why -f and not --gain:
+#   mpg123's --gain controls the output mixer level, which has no effect
+#   through QEMU's virtio-sound (the virtual card exposes zero mixer
+#   controls). The -f flag instead scales the raw PCM samples before they
+#   reach the sound card — this always works.
+#
+# Scalefactor (mpg123 -f):
+#   Full-scale value for signed 16-bit PCM is 2^15 = 32768.
+#   mpg123 multiplies each decoded sample by (scalefactor / 32768),
+#   so 32768 = unity (0 dB), 0 = silence.
+
+OVERRIDE_FILE="/root/bmc_volume_override"
+FULL_SCALE=32768
+
+# Convert dB attenuation to mpg123 scalefactor.
+# Input: dB value (-40..0 typically)
+# Output: integer scalefactor (0..32768)
+#   0 dB  → 32768 (full volume)
+# -20 dB  →  3277 (~10%)
+# -40 dB  →   328 (~1%, near silent)
+db_to_scale() {
+  awk "BEGIN { v = 10 ^ ($1 / 20) * $FULL_SCALE; if (v > $FULL_SCALE) v = $FULL_SCALE; if (v < 0) v = 0; printf \"%d\", v }"
+}
+
+# Convert volume percentage (0–100) to dB attenuation (-40..0).
+# Matches bmc-audio's Volume::to_decibels(): value * 0.4 - 40
+pct_to_db() {
+  awk "BEGIN { printf \"%.0f\", $1 * 0.4 - 40 }"
+}
+
+file=""
+db=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -A) db="$2"; shift 2 ;;
+    -*) shift ;;
+    *)  file="$1"; shift ;;
+  esac
+done
+
+[ -z "$file" ] && exit 1
+
+# Check for console volume override (0–100 percentage)
+if [ -f "$OVERRIDE_FILE" ]; then
+  override=$(cat "$OVERRIDE_FILE" 2>/dev/null)
+  if [ -n "$override" ]; then
+    db=$(pct_to_db "$override")
+  fi
+fi
+
+exec mpg123 -q -f "$(db_to_scale "$db")" "$file"

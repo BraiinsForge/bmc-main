@@ -19,8 +19,11 @@ in
             (lib.fileset.fileFilter (f: f.hasExt "py") ../.)
             ../ruff.toml
           ])
-          # examples have their own venv/deps and separate lint setup
-          ../bmc-wasm-runtime/examples;
+          # subprojects with their own nix dev shell, deps, and lint setup
+          (lib.fileset.unions [
+            ../bmc-wasm-runtime/examples
+            ../bmc-virt/harness
+          ]);
       };
     } ''
     cd $src

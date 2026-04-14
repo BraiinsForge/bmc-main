@@ -34,6 +34,14 @@
     packageName = "bmc-nix";
     binName = "bmc-activation-copy-files";
   };
+  bmc-virt-leds = defineCrate {
+    path = "./bmc-virt/leds";
+    packageName = "bmc-virt-leds";
+  };
+  bmc-virt-relay = defineCrate {
+    path = "./bmc-virt/relay";
+    packageName = "bmc-virt-relay";
+  };
   widget-digital-clock = defineCrate {
     path = "./widgets/digital-clock";
     packageName = "bmc-widget-digital-clock";

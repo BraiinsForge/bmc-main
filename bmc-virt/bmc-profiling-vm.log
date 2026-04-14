@@ -1,0 +1,105 @@
+ 2026-04-13T16:21:42.325835Z INFO bmc_openwrt :Detecting WiFi: /sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/idVendor = 0bda
+ 2026-04-13T16:21:42.326016Z INFO bmc_openwrt :Hubless board detected, WiFi at /sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1:1.0/
+ 2026-04-13T16:21:42.326077Z INFO bmc_openwrt :Using WiFi device path: /sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1:1.0/
+ 2026-04-13T16:21:42.403664Z INFO bmc_openwrt::compositor::egl_compositor :Compositor thread starting (headless=false)...
+ 2026-04-13T16:21:42.403832Z INFO bmc_openwrt::compositor::render::egl_context :Opening GPU device: "/dev/dri/renderD128"
+ 2026-04-13T16:21:42.405342Z WARN smithay::backend::drm::device::fd :Unable to become drm master, assuming unprivileged mode
+ 2026-04-13T16:21:42.557599Z INFO smithay::backend::egl::display :Successfully selected EGL platform: PLATFORM_GBM_KHR
+ 2026-04-13T16:21:42.570836Z INFO smithay::backend::egl::display :EGL Initialized
+ 2026-04-13T16:21:42.570979Z INFO smithay::backend::egl::display :EGL Version: (1, 4)
+ 2026-04-13T16:21:42.571180Z INFO smithay::backend::egl::display :Supported EGL display extensions: EGLExtensions { extensions: ["EGL_ANDROID_blob_cache", "EGL_ANDROID_native_fence_sync", "EGL_EXT_buffer_age", "EGL_EXT_config_select_group", "EGL_EXT_image_dma_buf_import", "EGL_EXT_image_dma_buf_import_modifiers", "EGL_EXT_surface_compression", "EGL_KHR_cl_event2", "EGL_KHR_config_attribs", "EGL_KHR_context_flush_control", "EGL_KHR_create_context", "EGL_KHR_create_context_no_error", "EGL_KHR_fence_sync", "EGL_KHR_get_all_proc_addresses", "EGL_KHR_gl_renderbuffer_image", "EGL_KHR_gl_texture_2D_image", "EGL_KHR_gl_texture_cubemap_image", "EGL_KHR_image", "EGL_KHR_image_base", "EGL_KHR_image_pixmap", "EGL_KHR_no_config_context", "EGL_KHR_partial_update", "EGL_KHR_reusable_sync", "EGL_KHR_surfaceless_context", "EGL_EXT_pixel_format_float", "EGL_KHR_wait_sync", "EGL_MESA_configless_context", "EGL_MESA_drm_image", "EGL_MESA_gl_interop", "EGL_MESA_image_dma_buf_export", "EGL_MESA_query_driver", "EGL_MESA_x11_native_visual_id", "EGL_WL_bind_wayland_display", ""], has_fences: true, has_native_fences: true, has_image_base: true, has_import_dmabuf: true, has_import_dmabuf_modifiers: true, has_export_dmabuf: true }
+ 2026-04-13T16:21:42.599864Z INFOegl { native = "/dev/dri/renderD128" platform = "PLATFORM_GBM_KHR" version = (1, 4)} : egl_context { ptr = 19168560} : smithay::backend::egl::context :EGL context created priority = None
+ 2026-04-13T16:21:42.610145Z INFOegl { native = "/dev/dri/renderD128" platform = "PLATFORM_GBM_KHR" version = (1, 4)} : egl_context { ptr = 19168560} : renderer_gles2 : smithay::backend::renderer::gles :Initializing OpenGL ES Renderer
+ 2026-04-13T16:21:42.610337Z INFOegl { native = "/dev/dri/renderD128" platform = "PLATFORM_GBM_KHR" version = (1, 4)} : egl_context { ptr = 19168560} : renderer_gles2 : smithay::backend::renderer::gles :GL Version: "OpenGL ES 2.0 Mesa 25.1.1"
+ 2026-04-13T16:21:42.610441Z INFOegl { native = "/dev/dri/renderD128" platform = "PLATFORM_GBM_KHR" version = (1, 4)} : egl_context { ptr = 19168560} : renderer_gles2 : smithay::backend::renderer::gles :GL Vendor: "Mesa"
+ 2026-04-13T16:21:42.610536Z INFOegl { native = "/dev/dri/renderD128" platform = "PLATFORM_GBM_KHR" version = (1, 4)} : egl_context { ptr = 19168560} : renderer_gles2 : smithay::backend::renderer::gles :GL Renderer: "Vivante GC400 rev 4652"
+ 2026-04-13T16:21:42.610627Z INFOegl { native = "/dev/dri/renderD128" platform = "PLATFORM_GBM_KHR" version = (1, 4)} : egl_context { ptr = 19168560} : renderer_gles2 : smithay::backend::renderer::gles :Supported GL Extensions: ["GL_EXT_blend_minmax", "GL_EXT_multi_draw_arrays", "GL_EXT_texture_compression_s3tc", "GL_EXT_texture_compression_dxt1", "GL_EXT_texture_format_BGRA8888", "GL_OES_compressed_ETC1_RGB8_texture", "GL_OES_depth24", "GL_OES_element_index_uint", "GL_OES_fbo_render_mipmap", "GL_OES_mapbuffer", "GL_OES_rgb8_rgba8", "GL_OES_standard_derivatives", "GL_OES_stencil8", "GL_OES_texture_npot", "GL_OES_vertex_half_float", "GL_OES_EGL_image", "GL_OES_depth_texture", "GL_AMD_performance_monitor", "GL_OES_packed_depth_stencil", "GL_OES_get_program_binary", "GL_APPLE_texture_max_level", "GL_EXT_discard_framebuffer", "GL_EXT_read_format_bgra", "GL_EXT_texture_storage", "GL_NV_pack_subimage", "GL_NV_texture_barrier", "GL_EXT_frag_depth", "GL_NV_fbo_color_attachments", "GL_OES_EGL_image_external", "GL_OES_EGL_sync", "GL_OES_vertex_array_object", "GL_ANGLE_pack_reverse_row_order", "GL_ANGLE_texture_compression_dxt3", "GL_ANGLE_texture_compression_dxt5", "GL_EXT_unpack_subimage", "GL_NV_draw_buffers", "GL_NV_read_buffer", "GL_NV_read_depth", "GL_NV_read_depth_stencil", "GL_NV_read_stencil", "GL_APPLE_sync", "GL_EXT_draw_buffers", "GL_EXT_map_buffer_range", "GL_EXT_shadow_samplers", "GL_KHR_debug", "GL_NV_pixel_buffer_object", "GL_OES_required_internalformat", "GL_OES_surfaceless_context", "GL_EXT_debug_label", "GL_EXT_separate_shader_objects", "GL_EXT_compressed_ETC1_RGB8_sub_texture", "GL_EXT_draw_elements_base_vertex", "GL_EXT_texture_border_clamp", "GL_KHR_context_flush_control", "GL_OES_draw_elements_base_vertex", "GL_OES_texture_border_clamp", "GL_KHR_no_error", "GL_KHR_parallel_shader_compile", "GL_INTEL_blackhole_render", "GL_MESA_sampler_objects", "GL_MESA_bgra", ""]
+ 2026-04-13T16:21:42.795013Z INFO bmc_openwrt::compositor::render::egl_context :EGL context initialized
+ 2026-04-13T16:21:42.795212Z INFO bmc_openwrt::compositor::render::drm_output :Opening display device: "/dev/dri/card1"
+ 2026-04-13T16:21:42.795401Z INFO smithay::backend::drm::device :DrmDevice initializing
+ 2026-04-13T16:21:42.797018Z INFO bmc_openwrt::compositor::render::drm_output :Found display: connector::Handle(33) (DSI)
+ 2026-04-13T16:21:42.797200Z INFO bmc_openwrt::compositor::render::drm_output :Display: 600x1280 @ 63Hz
+ 2026-04-13T16:21:42.799259Z INFOdrm_atomic : create_surface { crtc = crtc::Handle(38) mode = Mode { name: "600x1280", clock: 54483, size: (600, 1280), hsync: (620, 640, 660), vsync: (1296, 1300, 1310), hskew: 0, vscan: 0, vrefresh: 63, mode_type: ModeTypeFlags(PREFERRED | DRIVER) } connectors = [connector::Handle(33)]} : drm_atomic { crtc = crtc::Handle(38)} : smithay::backend::drm::surface::atomic :Initializing drm surface (crtc::Handle(38):plane::Handle(34)) with mode Mode { name: "600x1280", clock: 54483, size: (600, 1280), hsync: (620, 640, 660), vsync: (1296, 1300, 1310), hskew: 0, vscan: 0, vrefresh: 63, mode_type: ModeTypeFlags(PREFERRED | DRIVER) } and connectors [connector::Handle(33)]
+ 2026-04-13T16:21:42.800076Z INFO bmc_openwrt::compositor::render::drm_output :Buffer dimensions: 480x1280 (mode 600x1280)
+ 2026-04-13T16:21:42.800238Z INFO bmc_openwrt::compositor::scene_renderer :SceneRenderer: physical 480x1280, logical 1280x480
+ 2026-04-13T16:21:42.800334Z INFO bmc_openwrt::compositor::egl_compositor :Display configured: 1280x480 logical (rotated), 480x1280 physical
+ 2026-04-13T16:21:42.801287Z INFOnew { name = "DRM-1" physical = PhysicalProperties { size: Size<smithay::utils::geometry::Raw> { w: 0, h: 0 }, subpixel: Unknown, make: "Braiins", model: "Deck", serial_number: "" }} : smithay::output :Creating new Output name = "DRM-1"
+ 2026-04-13T16:21:42.801995Z INFO smithay::wayland::output :Creating new wl_output output = "DRM-1"
+ 2026-04-13T16:21:42.803173Z INFO bmc_openwrt::compositor::egl_compositor :Wayland socket created: wayland-0
+ 2026-04-13T16:21:42.803577Z INFO bmc_openwrt :Compositor started on wayland-0
+ 2026-04-13T16:21:42.804345Z INFO bmc_openwrt::compositor::egl_compositor :Compositor event loop starting
+ 2026-04-13T16:21:42.813979Z INFO smithay::backend::drm::surface::atomic :Adding connector: DSI
+ 2026-04-13T16:21:42.826856Z INFO bmc_openwrt::compositor::render::drm_output :Initial frame committed
+ 2026-04-13T16:21:42.868646Z INFO bmc::widget::manager :initializing widget manager
+ 2026-04-13T16:21:42.868788Z INFO bmc::widget::manager :scanning widget directory path = /run/current-profile/lib/bmc-widgets
+ 2026-04-13T16:21:42.883972Z INFO bmc::widget::manager :widget discovery complete count = 2
+ 2026-04-13T16:21:42.884111Z INFO bmc::widget::manager :registered widget name = Flip Clock version = 1.0.0 uid = 550e8400-e29b-41d4-a716-446655440002
+ 2026-04-13T16:21:42.884186Z INFO bmc::widget::manager :registered widget name = Digital Clock version = 1.0.0 uid = 550e8400-e29b-41d4-a716-446655440001
+ 2026-04-13T16:21:42.884269Z INFO bmc::widget::coordinator :spawning widgets for enabled scenes count = 2
+ 2026-04-13T16:21:42.884325Z INFO bmc::widget::coordinator :spawning scene widgets scene_id = fcc23f00-8580-4089-ba87-596dd7910d22 widget_count = 1
+ 2026-04-13T16:21:42.884486Z INFO bmc::widget::coordinator :spawning widget scene_id = fcc23f00-8580-4089-ba87-596dd7910d22 widget_id = b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b widget_type = 550e8400-e29b-41d4-a716-446655440001 size = full
+ 2026-04-13T16:21:42.884595Z INFO bmc::widget::manager :spawning widget 'Digital Clock' instance b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b
+ 2026-04-13T16:21:42.891074Z INFO bmc::widget::spawner :widget process spawned: instance=b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b pid=Some(11632)
+ 2026-04-13T16:21:42.891988Z INFO bmc::widget::manager :widget instance b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b spawned
+ 2026-04-13T16:21:42.892112Z INFO bmc::widget::coordinator :setting active scene on compositor scene_id = fcc23f00-8580-4089-ba87-596dd7910d22 widget_count = 1
+ 2026-04-13T16:21:42.892175Z INFO bmc::widget::coordinator :scene widget placement instance_id = b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b x = 0 y = 0 width = 1280 height = 480 visible = true
+ 2026-04-13T16:21:42.892315Z INFO bmc::widget::coordinator :spawning scene widgets scene_id = dd1f670c-b849-452b-b55f-7700da7d408f widget_count = 1
+ 2026-04-13T16:21:42.892410Z INFO bmc::widget::coordinator :spawning widget scene_id = dd1f670c-b849-452b-b55f-7700da7d408f widget_id = ab900846-86ba-4c10-90b5-8ccd8d9cc3a0 widget_type = 550e8400-e29b-41d4-a716-446655440002 size = full
+ 2026-04-13T16:21:42.892803Z INFO bmc::widget::manager :spawning widget 'Flip Clock' instance ab900846-86ba-4c10-90b5-8ccd8d9cc3a0
+ 2026-04-13T16:21:42.893532Z INFO bmc_openwrt::compositor::egl_compositor :Setting active scene with 1 widgets
+ 2026-04-13T16:21:42.893631Z INFO bmc_openwrt::compositor::egl_compositor : Scene widget: b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b at (0, 0) size 1280x480 visible=true
+ 2026-04-13T16:21:42.899782Z INFO bmc::widget::spawner :widget process spawned: instance=ab900846-86ba-4c10-90b5-8ccd8d9cc3a0 pid=Some(11633)
+ 2026-04-13T16:21:42.901361Z INFO bmc::widget::manager :widget instance ab900846-86ba-4c10-90b5-8ccd8d9cc3a0 spawned
+ 2026-04-13T16:21:42.903399Z INFO bmc::widget::coordinator :setting active scene on compositor scene_id = dd1f670c-b849-452b-b55f-7700da7d408f widget_count = 1
+ 2026-04-13T16:21:42.904413Z INFO bmc::widget::coordinator :scene widget placement instance_id = ab900846-86ba-4c10-90b5-8ccd8d9cc3a0 x = 0 y = 0 width = 1280 height = 480 visible = true
+ 2026-04-13T16:21:42.904627Z INFO bmc::widget::coordinator :all scene widgets spawned
+ 2026-04-13T16:21:42.904715Z INFO bmc_openwrt::compositor::egl_compositor :Setting active scene with 1 widgets
+ 2026-04-13T16:21:42.904783Z INFO bmc_openwrt::compositor::egl_compositor : Scene widget: ab900846-86ba-4c10-90b5-8ccd8d9cc3a0 at (0, 0) size 1280x480 visible=true
+ 2026-04-13T16:21:42.906275Z INFO bmc::startup :Starting server on http://0.0.0.0:80
+ 2026-04-13T16:21:42.950541Z INFO bmc_openwrt::compositor::egl_compositor :New Wayland client connected
+ 2026-04-13T16:21:42.954318Z INFO bmc_openwrt::compositor::protocol::dispatch :GetWidgetSurface: instance=ab900846-86ba-4c10-90b5-8ccd8d9cc3a0 surface=ObjectId(wl_surface@6) pid=Some(11633)
+ 2026-04-13T16:21:42.954519Z INFO bmc_openwrt::compositor::protocol::state :Registering widget ab900846-86ba-4c10-90b5-8ccd8d9cc3a0 with pid=Some(11633)
+ 2026-04-13T16:21:42.954637Z INFO bmc_openwrt::compositor::protocol::dispatch :Widget surface created for instance: ab900846-86ba-4c10-90b5-8ccd8d9cc3a0
+ 2026-04-13T16:21:42.954934Z INFO bmc_openwrt::compositor::egl_compositor :Widget connected: ab900846-86ba-4c10-90b5-8ccd8d9cc3a0
+ 2026-04-13T16:21:42.957457Z INFO bmc_openwrt::compositor::egl_compositor :New Wayland client connected
+ 2026-04-13T16:21:42.981946Z INFO bmc_openwrt::compositor::egl_compositor :New Wayland client connected
+ 2026-04-13T16:21:42.984692Z INFO bmc_openwrt::compositor::protocol::dispatch :GetWidgetSurface: instance=b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b surface=ObjectId(wl_surface@5) pid=Some(11632)
+ 2026-04-13T16:21:42.984919Z INFO bmc_openwrt::compositor::protocol::state :Registering widget b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b with pid=Some(11632)
+ 2026-04-13T16:21:42.985022Z INFO bmc_openwrt::compositor::protocol::dispatch :Widget surface created for instance: b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b
+ 2026-04-13T16:21:42.985110Z INFO bmc_openwrt::compositor::egl_compositor :Widget connected: b8ecf9c5-7d41-46ca-ba02-8c92f7e4788b
+ 2026-04-13T16:21:42.987916Z INFO bmc_openwrt::compositor::state :New toplevel surface created
+ 2026-04-13T16:21:47.822345Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=6186:809.736µs/126.810559ms render=5979:133.744µs/48.754458ms callbacks=114:134.508µs/420.46µs dispatch=6186:665.542µs/126.791392ms
+ 2026-04-13T16:21:47.834879Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=115:16.582µs/670.377µs compose=115:475.053µs/6.849065ms finish=115:1.012546ms/20.495653ms flip=115:603.761µs/13.101628ms
+ 2026-04-13T16:21:52.849114Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=8775:571.442µs/33.757448ms render=8556:84.523µs/7.706568ms callbacks=125:137.559µs/355.543µs dispatch=8775:479.63µs/33.730574ms
+ 2026-04-13T16:21:52.855385Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:5.608µs/6.75µs compose=125:450.934µs/1.67913ms finish=125:564.087µs/1.036086ms flip=125:455.959µs/717.544µs
+ 2026-04-13T16:21:57.859809Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=10575:472.431µs/33.751281ms render=10365:69.881µs/8.587988ms callbacks=126:138.475µs/279.876µs dispatch=10575:394.184µs/33.57799ms
+ 2026-04-13T16:21:57.867105Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=126:5.551µs/6.917µs compose=126:438.821µs/717.127µs finish=126:569.881µs/1.695214ms flip=126:468.097µs/1.690755ms
+ 2026-04-13T16:22:02.888979Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=6523:769.54µs/33.980699ms render=6287:115.271µs/8.129069ms callbacks=125:144.037µs/402.376µs dispatch=6523:645.986µs/33.959241ms
+ 2026-04-13T16:22:02.897126Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:5.627µs/11.625µs compose=125:451.552µs/858.753µs finish=125:549.42µs/993.087µs flip=125:476.709µs/2.027299ms
+ 2026-04-13T16:22:07.900333Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=7998:625.152µs/33.898532ms render=7767:92.732µs/8.442404ms callbacks=125:150.85µs/1.522339ms dispatch=7998:525.72µs/33.873532ms
+ 2026-04-13T16:22:07.918535Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:5.616µs/11.208µs compose=125:449.601µs/1.043295ms finish=125:568.634µs/1.023712ms flip=125:480.362µs/1.03217ms
+ 2026-04-13T16:22:12.911841Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=9075:550.826µs/34.485118ms render=8846:83.018µs/8.868447ms callbacks=125:137.762µs/295.835µs dispatch=9075:460.52µs/34.467534ms
+ 2026-04-13T16:22:12.925149Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:7.459µs/235.21µs compose=125:452.493µs/849.087µs finish=125:616.814µs/1.705756ms flip=125:467.763µs/1.724881ms
+ 2026-04-13T16:22:17.914379Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=7670:650.68µs/33.477864ms render=7453:96.917µs/8.529446ms callbacks=125:141.988µs/426.043µs dispatch=7670:545.167µs/33.457531ms
+ 2026-04-13T16:22:17.960440Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=126:5.63µs/10.583µs compose=126:452.596µs/861.128µs finish=126:509.913µs/909.712µs flip=126:495.856µs/1.740131ms
+ 2026-04-13T16:22:22.916495Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=6720:742.952µs/33.365197ms render=6491:110.362µs/8.780363ms callbacks=125:157.912µs/845.003µs dispatch=6720:623.876µs/33.343406ms
+ 2026-04-13T16:22:22.962411Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:5.527µs/6.375µs compose=125:443.868µs/809.295µs finish=125:509.688µs/926.545µs flip=125:502.206µs/1.745339ms
+ 2026-04-13T16:22:27.946681Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=5780:868.834µs/33.732281ms render=5541:131.548µs/8.608196ms callbacks=126:138.339µs/420.918µs dispatch=5780:731.574µs/33.709782ms
+ 2026-04-13T16:22:27.992768Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=126:5.637µs/12µs compose=126:454.039µs/1.043962ms finish=126:617.026µs/1.713172ms flip=126:454.681µs/679.544µs
+ 2026-04-13T16:22:32.973884Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=9605:522.028µs/33.353654ms render=9375:77.39µs/7.39015ms callbacks=125:137.884µs/275.376µs dispatch=9605:437.533µs/33.328405ms
+ 2026-04-13T16:22:33.024926Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:6.944µs/178.959µs compose=125:453.333µs/809.502µs finish=125:577.13µs/1.02992ms flip=125:465.038µs/1.119004ms
+ 2026-04-13T16:22:37.984211Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=9197:543.371µs/33.596698ms render=8973:81.867µs/8.200611ms callbacks=125:145.833µs/527.585µs dispatch=9197:454.714µs/33.574906ms
+ 2026-04-13T16:22:38.030098Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:5.675µs/11.375µs compose=125:471.663µs/951.212µs finish=125:568.319µs/989.962µs flip=125:466.926µs/1.710797ms
+ 2026-04-13T16:22:42.996828Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=6565:762.079µs/33.613947ms render=6334:112.811µs/8.735696ms callbacks=125:134.862µs/221.668µs dispatch=6565:641.848µs/33.588781ms
+ 2026-04-13T16:22:43.053185Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:6.16µs/81.876µs compose=125:450.983µs/658.96µs finish=125:593.688µs/937.42µs flip=125:448.393µs/659.044µs
+ 2026-04-13T16:22:48.008316Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=8007:624.463µs/33.637156ms render=7790:93.075µs/7.976527ms callbacks=126:143.595µs/530.376µs dispatch=8007:524.063µs/33.616239ms
+ 2026-04-13T16:22:48.062034Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=126:5.608µs/6.292µs compose=126:444.068µs/719.377µs finish=126:526.876µs/933.67µs flip=126:459.888µs/778.003µs
+ 2026-04-13T16:22:53.035833Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=8943:560.741µs/33.370738ms render=8718:83.562µs/9.056614ms callbacks=125:142.305µs/370.71µs dispatch=8943:470.354µs/33.346654ms
+ 2026-04-13T16:22:53.073720Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:5.636µs/11.416µs compose=125:452.133µs/896.628µs finish=125:560.056µs/2.096465ms flip=125:470.919µs/814.336µs
+ 2026-04-13T16:22:58.040471Z INFO bmc_openwrt::compositor::egl_compositor :compositor: loop=7936:629.2µs/32.93132ms render=7702:92.833µs/7.577359ms callbacks=125:136.258µs/523.086µs dispatch=7936:529.092µs/32.909236ms
+ 2026-04-13T16:22:58.086150Z INFO bmc_openwrt::compositor::scene_renderer :render_scene: bind=125:5.602µs/6.5µs compose=125:462.289µs/1.010629ms finish=125:506.378µs/1.591463ms flip=125:464.482µs/1.830215ms
+Io error: Io error: Broken pipeConnection reset by peer (os error (os error 32)104
+)
+Io error: Broken pipe (os error 32)
+Io error: Broken pipe (os error 32)
+Error: Error running winit event loop: Exit Failure: 1

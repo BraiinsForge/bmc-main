@@ -1,0 +1,16 @@
+validate: format check test
+
+run script:
+    nix develop --command uv run python "{{absolute_path(script)}}"
+
+format:
+    ruff check --fix .
+    ruff format .
+
+check:
+    ty check .
+    ruff check .
+    ruff format --check .
+
+test *args:
+    uv run pytest {{args}}

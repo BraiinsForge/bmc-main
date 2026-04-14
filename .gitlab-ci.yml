@@ -69,6 +69,16 @@ python-lint:
   script:
     - nix build -L .#checks.x86_64-linux.python-lint
 
+###################################
+########## bmc-virt Checks ########
+###################################
+
+bmc-virt-harness-check:
+  extends: .nix
+  stage: check
+  script:
+    - cd bmc-virt/harness && nix develop --command just validate
+
 ######################################
 ######## Regression Stage ############
 ######################################

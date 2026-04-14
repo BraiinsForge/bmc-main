@@ -19,6 +19,10 @@ members = [
     "bmc-shared/*",
     "bmc-support",
     "bmc-upgrade",
+    "bmc-virt/console",
+    "bmc-virt/ipc",
+    "bmc-virt/leds",
+    "bmc-virt/relay",
     "bmc-wasm-runtime",
     "bmc-widget",
     "bmc-widget-protocol",
@@ -38,6 +42,14 @@ lto = true
 
 [profile.profiling]
 inherits = "release"
+debug = true
+strip = false
+
+# Full debug info for time-travel debugging with rr.
+# Build: cargo build --profile rr
+# Or via nix: BMC_PROFILE=x86_64-rr make -C bmc-virt run
+[profile.rr]
+inherits = "dev"
 debug = true
 strip = false
 
@@ -94,6 +106,7 @@ wildcard_enum_match_arm = "warn"
 [workspace.dependencies]
 ab_glyph = "0.2"
 aes = "0.8.4"
+anstyle-parse = "0.2.6"
 anyhow = "1.0.98"
 apa102-spi = "0.5.1"
 askama = "0.14"
@@ -127,6 +140,8 @@ bmc-shared-time = { path = "bmc-shared/time" }
 bmc-shared-utils = { path = "bmc-shared/utils" }
 bmc-support = { path = "bmc-support" }
 bmc-upgrade = { path = "bmc-upgrade" }
+bmc-virt-ipc = { path = "bmc-virt/ipc" }
+bmc-virt-leds = { path = "bmc-virt/leds" }
 bmc-wasm-protocol = { path = "bmc-wasm-runtime/protocol" }
 bmc-wasm-runtime = { path = "bmc-wasm-runtime" }
 bmc-widget = { path = "bmc-widget" }
@@ -148,6 +163,10 @@ dialoguer = "0.11.0"
 dirs = "6.0.0"
 drm = "0.14.1"
 drm-fourcc = "2.2.0"
+eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
+egui = "0.34"
+egui-notify = "0.22"
+egui_virtual_list = "0.10"
 embedded-hal = { version = "1.0.0" }
 embedded-hal-async = { version = "1.0.0" }
 enum-assoc = "1.2.4"
@@ -164,7 +183,7 @@ futures-util = "0.3.31"
 gbm = { version = "0.17.0", default-features = false, features = ["drm-support"] }
 get_if_addrs = "0.5.3"
 glob = "0.3.2"
-glow = "0.16"
+glow = "0.16.0"
 glutin = "0.32"
 glutin-winit = "0.5"
 governor = "0.8.1"
@@ -183,8 +202,8 @@ index-bmc = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868
 index-common = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0be4df5d443f959a66ad8d9c15031b177c" }
 indexmap = { version = "2.10.0", default-features = false, features = ["serde", "std"] }
 infer = "0.19.0"
-input = "0.9.1"
-itertools = "0.14.0"
+input = "0.10.0"
+itertools = "0.12.1"
 keyframe = { version = "1.1", default-features = false }
 libc = "0.2"
 libm = "0.2"
@@ -211,12 +230,12 @@ pin-project = "1.1.10"
 ping = "0.4.0"
 pnet = "0.35.0"
 proc-macro2 = "1.0.94"
-prost = "0.13"
-prost-types = "0.13"
+prost = "0.13.5"
+prost-types = "0.13.5"
 pw_hash = "0.1.1"
 qrcode-generator = { version = "5.0.0", default-features = false }
 quote = "1.0.39"
-rand = "0.9.0"
+rand = "0.9.1"
 raw-window-handle = "0.6"
 rayon = "1"
 regex = "1.11.1"
@@ -224,7 +243,7 @@ reqwest = { version = "0.11", default-features = false }
 resvg = "0.45.1"
 rgb = "0.8"
 ring = { version = "0.17.8", default-features = false }
-roxmltree = "0.21.1"
+roxmltree = "0.20.0"
 rrule = "0.14.0"
 rtnetlink = { git = "https://github.com/rust-netlink/rtnetlink.git", rev = "d6e8b4c" } # FIXME: change to a crates.io version after they update netlink-packet-route
 rustls = { version = "0.23.37", default-features = false, features = ["logging", "ring", "std", "tls12"] }
@@ -259,7 +278,7 @@ sysinfo = "0.35.0"
 taffy = "0.9"
 tap = "1.0.1"
 tempfile = "3.21.0"
-thiserror = "2.0.12"
+thiserror = "1.0.69"
 time = { version = "0.3.41", default-features = false }
 tokio = { version = "1.47.0", features = ["full"] }
 tokio-cron-scheduler = { version = "0.19.0", registry = "braiins" }
@@ -292,9 +311,9 @@ ux = { version = "0.1.6" }
 walkdir = "2.5.0"
 wasmi = "1.0"
 wayland-backend = { version = "0.3", features = ["client_system"] }
-wayland-client = "0.31"
+wayland-client = "0.31.14"
 wayland-protocols = { version = "0.32", features = ["client", "server", "staging"] }
-wayland-scanner = "0.31"
+wayland-scanner = "0.31.10"
 wayland-server = "0.31"
 webpki-roots = "1.0.6"
 winit = "0.30"

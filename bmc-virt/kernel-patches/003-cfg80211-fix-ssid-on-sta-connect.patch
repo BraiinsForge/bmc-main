@@ -1,0 +1,36 @@
+From: Josef Kubicek <josef.kubicek@braiins.cz>
+Subject: [PATCH] cfg80211: populate SSID on STA connect before country IE handling
+
+When a mac80211-based driver (hwsim, ath9k, iwlwifi, etc.) connects as STA
+using the authenticate+associate path (via wpa_supplicant), the SSID is never
+stored in wdev->u.client.ssid. A fallback exists in __cfg80211_connect_result()
+to extract it from the BSS IEs, but it's unreachable: it's placed after the
+country IE lookup which returns early when no country IE is present.
+
+Fix by moving the SSID extraction before the country IE handling.
+
+--- a/net/wireless/sme.c	2026-04-04 19:02:32.655576000 +0300
++++ b/net/wireless/sme.c	2026-04-04 19:03:09.741977434 +0300
+@@ -887,6 +887,22 @@ void __cfg80211_connect_result(struct ne
+ 
+ 	cfg80211_upload_connect_keys(wdev);
+ 
++	if (!wdev->u.client.ssid_len) {
++		const struct element *ssid;
++
++		rcu_read_lock();
++		for_each_valid_link(cr, link) {
++			ssid = ieee80211_bss_get_elem(cr->links[link].bss,
++						      WLAN_EID_SSID);
++			if (ssid && ssid->datalen) {
++				memcpy(wdev->u.client.ssid, ssid->data, ssid->datalen);
++				wdev->u.client.ssid_len = ssid->datalen;
++				break;
++			}
++		}
++		rcu_read_unlock();
++	}
++
+ 	rcu_read_lock();
+ 	for_each_valid_link(cr, link) {
+ 		country_elem =

@@ -1,0 +1,35 @@
+graph TB
+
+    subgraph "Developer Host"
+        MAKE["make -C bmc-virt run"]
+        NIX_BIN["nix build\nbmc-openwrt-x86_64"]
+        NIX_FE["nix build\nfrontend"]
+        NIX_IMG["nix build\nvmImage (OpenWrt)"]
+        QEMU["QEMU x86_64\n-enable-kvm -cpu host"]
+        XVFB["Xvfb :19\n480x1280"]
+        FFPLAY["ffplay\ntranspose=1\n→ 1280x480"]
+        RR["rr record\n(time-travel debug)"]
+    end
+
+    subgraph "QEMU VM (OpenWrt x86/64)"
+        KERNEL["Linux 5.15\nCONFIG_PROC_PAGE_MONITOR=y"]
+        VIRTIO_GPU["virtio-gpu\nDRM card0"]
+        HWSIM["mac80211_hwsim\nWiFi AP"]
+        BMC["bmc-openwrt\n(same static binary as ARM)"]
+        RR_BUNDLE["rr bundle\n(glibc + rr 5.9.0)"]
+    end
+
+    MAKE --> NIX_BIN
+    MAKE --> NIX_FE
+    MAKE --> NIX_IMG
+    NIX_IMG --> QEMU
+    QEMU --> XVFB
+    XVFB --> FFPLAY
+    QEMU -. -> |"SSH: 2222"| BMC
+    QEMU -. -> |"HTTP: 50080"| BMC
+    BMC --> VIRTIO_GPU
+    BMC --> HWSIM
+    RR --> BMC
+    RR_BUNDLE --> RR
+    KERNEL --> VIRTIO_GPU
+    KERNEL --> HWSIM

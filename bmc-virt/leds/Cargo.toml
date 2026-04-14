@@ -1,0 +1,10 @@
+[package]
+name = "bmc-virt-leds"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+libc.workspace = true

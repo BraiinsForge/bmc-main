@@ -1,0 +1,19 @@
+mod harness 'harness/justfile'
+
+logs:
+    ./scripts/get-logs.sh
+
+clean:
+    ./scripts/clean.sh
+
+display:
+    ./scripts/display.sh
+
+run:
+    ./scripts/run.sh --customer
+
+ssh:
+    ./scripts/ssh.sh
+
+stop:
+    ./scripts/stop.sh

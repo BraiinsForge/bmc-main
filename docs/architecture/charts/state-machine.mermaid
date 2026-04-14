@@ -1,0 +1,34 @@
+stateDiagram-v2
+    state "Check device_state()" as CheckState
+    state "Factory Default" as FactoryDefault
+    state "Setup Pending" as SetupPending
+    state "Operational" as Operational
+    state "WiFi Reconfig" as WifiReconfig
+    state "Wait for SSID (15 retries)" as WaitSSID
+    state "Setup Start Screen" as SetupStart
+    state "Setup Error" as SetupError
+    state "WiFi Connecting" as WifiConnecting
+    state "Setup Connect Info" as SetupConnectInfo
+    state "Connect Info (10s)" as ConnectInfo
+    state "Scene Cycler (widgets)" as SceneCycler
+
+    [*] --> CheckState
+    CheckState --> FactoryDefault: is_factory_default()
+    CheckState --> SetupPending: is_setup_pending()
+    CheckState --> Operational: else
+    CheckState --> WifiReconfig: is_wifi_reconfig()
+
+    FactoryDefault --> WaitSSID
+    WaitSSID --> SetupStart: SSID found
+    WaitSSID --> SetupError: timeout then reboot
+
+    SetupPending --> WifiConnecting
+    WifiConnecting --> SetupConnectInfo: IP found
+    WifiConnecting --> SetupError: no IP
+
+    Operational --> ConnectInfo
+    ConnectInfo --> SceneCycler: set_scene_cycler(true)
+
+    WifiReconfig --> WaitSSID
+
+    SetupStart --> SceneCycler: via run_initial_setup_listener

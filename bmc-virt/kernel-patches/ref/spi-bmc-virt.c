@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * VM-only synthetic SPI controller for bmc-virt.
+ *
+ * Exposes a regular spidev device at /dev/spidev0.0 for the production app
+ * and mirrors TX bytes into /proc/bmc_virt_spi0 for the LED visualizer.
+ */
+
+#include <linux/init.h>
+#include <linux/kfifo.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/platform_device.h>
+#include <linux/poll.h>
+#include <linux/proc_fs.h>
+#include <linux/spi/spi.h>
+#include <linux/uaccess.h>
+#include <linux/wait.h>
+
+#define BMC_VIRT_SPI_FIFO_SIZE 65536
+
+struct bmc_virt_spi {
+	struct platform_device *pdev;
+	struct spi_controller *ctlr;
+	struct spi_device *spi;
+	DECLARE_KFIFO(fifo, u8, BMC_VIRT_SPI_FIFO_SIZE);
+	wait_queue_head_t readq;
+	struct mutex fifo_lock;
+	struct proc_dir_entry *proc_entry;
+};
+
+static struct bmc_virt_spi bmc_virt_spi0;
+
+static void bmc_virt_spi_capture(const u8 *buf, size_t len)
+{
+	u8 discard[256];
+	unsigned int dropped;
+
+	if (!len)
+		return;
+
+	if (len > BMC_VIRT_SPI_FIFO_SIZE) {
+		buf += len - BMC_VIRT_SPI_FIFO_SIZE;
+		len = BMC_VIRT_SPI_FIFO_SIZE;
+	}
+
+	mutex_lock(&bmc_virt_spi0.fifo_lock);
+	while (len > kfifo_avail(&bmc_virt_spi0.fifo)) {
+		unsigned int chunk = min_t(unsigned int, sizeof(discard),
+					   kfifo_len(&bmc_virt_spi0.fifo));
+
+		if (!chunk)
+			break;
+
+		dropped = kfifo_out(&bmc_virt_spi0.fifo, discard, chunk);
+		if (!dropped)
+			break;
+	}
+
+	kfifo_in(&bmc_virt_spi0.fifo, buf, len);
+	mutex_unlock(&bmc_virt_spi0.fifo_lock);
+
+	wake_up_interruptible(&bmc_virt_spi0.readq);
+}
+
+static int bmc_virt_spi_setup(struct spi_device *spi)
+{
+	if (spi->bits_per_word && spi->bits_per_word != 8)
+		return -EINVAL;
+
+	if (spi->chip_select != 0)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int bmc_virt_spi_transfer_one_message(struct spi_controller *ctlr,
+					     struct spi_message *msg)
+{
+	struct spi_transfer *xfer;
+
+	msg->actual_length = 0;
+	list_for_each_entry(xfer, &msg->transfers, transfer_list) {
+		if (xfer->tx_buf && xfer->len)
+			bmc_virt_spi_capture(xfer->tx_buf, xfer->len);
+		if (xfer->rx_buf && xfer->len)
+			memset(xfer->rx_buf, 0, xfer->len);
+		msg->actual_length += xfer->len;
+	}
+
+	msg->status = 0;
+	spi_finalize_current_message(ctlr);
+	return 0;
+}
+
+static ssize_t bmc_virt_spi_proc_read(struct file *file, char __user *buf,
+				      size_t len, loff_t *ppos)
+{
+	unsigned int copied = 0;
+	int ret;
+
+	if (!len)
+		return 0;
+
+	if (file->f_flags & O_NONBLOCK) {
+		if (kfifo_is_empty(&bmc_virt_spi0.fifo))
+			return -EAGAIN;
+	} else {
+		ret = wait_event_interruptible(bmc_virt_spi0.readq,
+					       !kfifo_is_empty(&bmc_virt_spi0.fifo));
+		if (ret)
+			return ret;
+	}
+
+	ret = mutex_lock_interruptible(&bmc_virt_spi0.fifo_lock);
+	if (ret)
+		return ret;
+	ret = kfifo_to_user(&bmc_virt_spi0.fifo, buf, len, &copied);
+	mutex_unlock(&bmc_virt_spi0.fifo_lock);
+
+	return ret ? ret : copied;
+}
+
+static __poll_t bmc_virt_spi_proc_poll(struct file *file, poll_table *wait)
+{
+	poll_wait(file, &bmc_virt_spi0.readq, wait);
+	if (!kfifo_is_empty(&bmc_virt_spi0.fifo))
+		return POLLIN | POLLRDNORM;
+	return 0;
+}
+
+static const struct proc_ops bmc_virt_spi_proc_ops = {
+	.proc_read = bmc_virt_spi_proc_read,
+	.proc_poll = bmc_virt_spi_proc_poll,
+};
+
+static int __init bmc_virt_spi_init(void)
+{
+	struct spi_board_info board_info = {
+		.modalias = "spidev",
+		.max_speed_hz = 4000000,
+		.bus_num = 0,
+		.chip_select = 0,
+		.mode = SPI_MODE_0,
+	};
+	struct spi_controller *ctlr;
+	int ret;
+
+	bmc_virt_spi0.pdev = platform_device_register_simple("bmc-virt-spi", -1,
+						     NULL, 0);
+	if (IS_ERR(bmc_virt_spi0.pdev))
+		return PTR_ERR(bmc_virt_spi0.pdev);
+
+	ctlr = spi_alloc_master(&bmc_virt_spi0.pdev->dev, 0);
+	if (!ctlr) {
+		ret = -ENOMEM;
+		goto err_platform;
+	}
+
+	bmc_virt_spi0.ctlr = ctlr;
+	INIT_KFIFO(bmc_virt_spi0.fifo);
+	mutex_init(&bmc_virt_spi0.fifo_lock);
+	init_waitqueue_head(&bmc_virt_spi0.readq);
+
+	ctlr->bus_num = 0;
+	ctlr->num_chipselect = 1;
+	ctlr->mode_bits = SPI_CPOL | SPI_CPHA;
+	ctlr->bits_per_word_mask = SPI_BPW_MASK(8);
+	ctlr->min_speed_hz = 1;
+	ctlr->max_speed_hz = board_info.max_speed_hz;
+	ctlr->setup = bmc_virt_spi_setup;
+	ctlr->transfer_one_message = bmc_virt_spi_transfer_one_message;
+
+	ret = spi_register_controller(ctlr);
+	if (ret)
+		goto err_put_ctlr;
+
+	bmc_virt_spi0.spi = spi_new_device(ctlr, &board_info);
+	if (!bmc_virt_spi0.spi) {
+		ret = -ENODEV;
+		goto err_unregister_ctlr;
+	}
+
+	bmc_virt_spi0.proc_entry = proc_create("bmc_virt_spi0", 0444, NULL,
+					       &bmc_virt_spi_proc_ops);
+	if (!bmc_virt_spi0.proc_entry) {
+		ret = -ENOMEM;
+		goto err_unregister_spi;
+	}
+
+	pr_info("bmc-virt-spi: registered spi0.0 capture device\n");
+	return 0;
+
+err_unregister_spi:
+	spi_unregister_device(bmc_virt_spi0.spi);
+	bmc_virt_spi0.spi = NULL;
+err_unregister_ctlr:
+	spi_unregister_controller(ctlr);
+	bmc_virt_spi0.ctlr = NULL;
+	return ret;
+err_put_ctlr:
+	spi_controller_put(ctlr);
+	bmc_virt_spi0.ctlr = NULL;
+err_platform:
+	platform_device_unregister(bmc_virt_spi0.pdev);
+	bmc_virt_spi0.pdev = NULL;
+	return ret;
+}
+
+device_initcall(bmc_virt_spi_init);
+
+MODULE_AUTHOR("Braiins Systems s.r.o.");
+MODULE_DESCRIPTION("VM-only synthetic SPI controller for bmc-virt");
+MODULE_LICENSE("GPL");
