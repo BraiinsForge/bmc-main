@@ -153,6 +153,8 @@
           };
         };
 
+        bmc = workspace.bmc;
+
         packages = workspace.packages // {
           wasm-capture = capture.package;
           frontend = frontend.build;
