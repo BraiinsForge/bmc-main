@@ -5,6 +5,7 @@
 mod data;
 mod network;
 mod render;
+mod system;
 
 use anyhow::Result;
 use wasmi::Linker;
@@ -15,5 +16,6 @@ pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<
     render::register(linker)?;
     network::register(linker)?;
     data::register(linker)?;
+    system::register(linker)?;
     Ok(())
 }
