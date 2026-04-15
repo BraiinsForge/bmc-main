@@ -72,17 +72,37 @@
           '';
         };
 
+        # Format SVGs under bmc-virt and bmc-wasm-runtime using the shared svgo
+        # config. fd honors .gitignore so node_modules/target/.venv are skipped.
         fmt-svg = pkgs.writeShellApplication {
           name = "fmt-svg";
-          runtimeInputs = with pkgs; [ findutils svgo coreutils ];
+          runtimeInputs = with pkgs; [ fd svgo ];
           text = ''
-            find bmc-virt bmc-wasm-runtime -name '*.svg' \
-              -not -path '*/target/*' \
-              -not -path '*/.venv/*' \
-              -not -path '*/node_modules/*' \
-              -print0 | xargs -0 -P "$(nproc)" -I {} svgo --config svgo.config.js -i {} -o {}
+            fd --extension svg --type f \
+               '.' 'bmc-virt' 'bmc-wasm-runtime' \
+               --exec-batch svgo --quiet --config svgo.config.js {}
           '';
         };
+
+        # Generic image compression under the given paths (default: cwd). Uses
+        # oxipng for PNGs, jpegoptim for JPGs. fd honors .gitignore.
+        fmt-images = pkgs.writeShellApplication {
+          name = "fmt-images";
+          runtimeInputs = with pkgs; [ fd oxipng jpegoptim ];
+          text = ''
+            paths=("$@")
+            [ "''${#paths[@]}" -eq 0 ] && paths=('.')
+
+            fd --extension png --type f \
+               '.' "''${paths[@]}" \
+               --exec-batch oxipng --zopfli --fast --alpha --strip=safe --opt=max --preserve {}
+
+            fd --extension jpg --extension jpeg --type f \
+               '.' "''${paths[@]}" \
+               --exec-batch jpegoptim --max=70 --strip-all --threshold=5 {}
+          '';
+        };
+
       in
       {
         formatter = nixlib.braiinsfmt.${localSystem} {
@@ -93,6 +113,7 @@
           protobuf = true;
           # Scripts
           shell = true;
+          justfile = true;
           # Configs
           toml = true;
           yaml = true;
@@ -126,7 +147,10 @@
         };
 
         checks = self.packages.${localSystem} // frontend.checks // checks // {
-          mermaid = nixlib.braiinschk.${localSystem} { mermaid = true; };
+          mermaid = nixlib.braiinschk.${localSystem} {
+            mermaid = true;
+            justfile = true;
+          };
         };
 
         packages = workspace.packages // {
@@ -141,6 +165,11 @@
         apps.fmt-svg = {
           type = "app";
           program = pkgs.lib.getExe fmt-svg;
+        };
+
+        apps.fmt-images = {
+          type = "app";
+          program = pkgs.lib.getExe fmt-images;
         };
 
         apps.wasm-capture = {

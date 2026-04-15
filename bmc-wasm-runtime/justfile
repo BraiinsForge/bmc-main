@@ -1,0 +1,105 @@
+# bmc-wasm-runtime dev tasks. Source of truth for builds is the nix flake
+# (`nix build .#wasm-capture`); these recipes are local-iteration shortcuts.
+#
+# Each recipe is a dumb delegation to a proper tool (cargo, python, mprocs).
+# Keep it that way — if a target needs real logic, write a script under
+# tools/ and call it from here.
+
+dir := justfile_directory()
+wasm_target := "wasm32-unknown-unknown"
+cargo_features := "--features testbed"
+
+# Built wasm artifact paths for a given example (rust converts hyphens to
+# underscores in generated binary names — use `replace(EXAMPLE, '-', '_')`).
+
+wasm_file := dir + "/examples/target/" + wasm_target + "/release"
+wasm_file_debug := dir + "/examples/target/" + wasm_target + "/debug"
+
+# Visual regression paths.
+
+widgets_dir := dir + "/examples"
+output_dir := dir + "/captures"
+
+# === Build / clean ===
+
+# Remove cargo build artifacts for both the host and examples workspaces.
+clean:
+    cargo clean --manifest-path {{ dir }}/Cargo.toml
+    cargo clean --manifest-path {{ dir }}/examples/Cargo.toml
+
+# === Dev / run ===
+
+# Hot-reload dev: build testbed + example + run in an mprocs split.
+dev EXAMPLE ARGS="":
+    cargo build {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml
+    cargo build --manifest-path {{ dir }}/examples/Cargo.toml -p {{ EXAMPLE }} --target {{ wasm_target }}
+    RUST_LOG=bmc_wasm_runtime=debug mprocs \
+        --names "watch,testbed" \
+        "cd {{ dir }}/examples && cargo watch -x 'build -p {{ EXAMPLE }} --target {{ wasm_target }}'" \
+        "cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- {{ wasm_file_debug }}/{{ replace(EXAMPLE, '-', '_') }}.wasm {{ ARGS }}"
+
+# Run a release-built example once in the testbed.
+run EXAMPLE ARGS="":
+    cargo build --manifest-path {{ dir }}/examples/Cargo.toml -p {{ EXAMPLE }} --release --target {{ wasm_target }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- {{ wasm_file }}/{{ replace(EXAMPLE, '-', '_') }}.wasm {{ ARGS }}
+
+# === Profiling / size ===
+
+# Record a perf profile of EXAMPLE. Extra args go to perf_record.py.
+profile EXAMPLE ARGS="":
+    {{ dir }}/tools/perf_record.py -e {{ EXAMPLE }} {{ ARGS }}
+
+# Report the built wasm binary size for EXAMPLE.
+size EXAMPLE:
+    {{ dir }}/tools/wasm_size.py -e {{ EXAMPLE }}
+
+# Fail if EXAMPLE's wasm binary exceeds the configured size limit.
+size-check EXAMPLE:
+    {{ dir }}/tools/wasm_size.py -e {{ EXAMPLE }} --check
+
+# === Docs ===
+
+# SDK API docs (opens in browser).
+docs:
+    cargo doc --manifest-path {{ dir }}/sdk/Cargo.toml --target {{ wasm_target }} --no-deps --open
+
+# === Recording ===
+
+# Record an interactive session. SIZE = full | small | etc.
+record EXAMPLE SIZE="full":
+    cargo build --manifest-path {{ dir }}/examples/Cargo.toml -p {{ EXAMPLE }} --release --target {{ wasm_target }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- {{ wasm_file }}/{{ replace(EXAMPLE, '-', '_') }}.wasm --record={{ SIZE }}
+
+# === Visual regression ===
+
+# Capture a single example. Extra args go to the capture binary.
+capture EXAMPLE ARGS="":
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all -e {{ EXAMPLE }} \
+        --widgets-dir {{ widgets_dir }} --output-dir {{ output_dir }} {{ ARGS }}
+
+# Capture every example.
+capture-all ARGS="":
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all \
+        --widgets-dir {{ widgets_dir }} --output-dir {{ output_dir }} {{ ARGS }}
+
+# Re-capture then update baselines for an example.
+update-baselines EXAMPLE: (capture EXAMPLE)
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- set-baseline \
+        --capture-dir={{ widgets_dir }}/{{ EXAMPLE }}/capture \
+        --output={{ output_dir }}/{{ EXAMPLE }}
+
+# Verify one example against baselines.
+verify EXAMPLE:
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify -e {{ EXAMPLE }} \
+        --widgets-dir {{ widgets_dir }} --output-dir {{ output_dir }}
+
+# Verify all examples in parallel.
+verify-all:
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify --parallel \
+        --widgets-dir {{ widgets_dir }} --output-dir {{ output_dir }}
+
+# Preview a capture. Pass SIZE=small etc. to filter, or omit for all sizes.
+preview EXAMPLE SIZE="" ARGS="":
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- preview \
+        --output={{ output_dir }}/{{ EXAMPLE }} \
+        {{ if SIZE != "" { "-s " + SIZE } else { "" } }} {{ ARGS }}

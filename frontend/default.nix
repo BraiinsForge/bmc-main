@@ -8,12 +8,12 @@ in {
       name = "bmc-frontend";
       inherit src;
 
-      buildInputs = [ pkgs.yarn ];
+      buildInputs = [ pkgs.yarn pkgs.just ];
 
       buildPhase = ''
         cp -r ${yarnFiles}/. -t .
         export HOME=$(pwd)
-        make build
+        just build
       '';
 
       installPhase = ''

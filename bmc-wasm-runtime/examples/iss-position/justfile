@@ -1,0 +1,29 @@
+# iss-position example dev tasks. Texture generation / download / preview
+# scripts live in ./tools as a uv project.
+
+# Import the repo-root justfile so `preview` can re-run `format` afterwards.
+mod root "../../.."
+
+dir := justfile_directory()
+tools_dir := dir + "/tools"
+
+# Render the Natural Earth dark texture (1024x512).
+render:
+    uv run --project {{ tools_dir }} {{ tools_dir }}/texture_render.py
+
+# Download all reference textures from the catalog.
+download:
+    uv run --project {{ tools_dir }} {{ tools_dir }}/texture_download.py
+
+# Force re-download all reference textures.
+redownload:
+    uv run --project {{ tools_dir }} {{ tools_dir }}/texture_download.py --force
+
+# Start local texture comparison viewer, then reformat the repo.
+preview:
+    uv run --project {{ tools_dir }} {{ tools_dir }}/texture_preview.py
+    @just root::format
+
+# Type-check tool scripts with their local venv.
+lint:
+    uvx ty check --project {{ tools_dir }} --python "$(uv run --project {{ tools_dir }} python -c 'import sys; print(sys.prefix)')"

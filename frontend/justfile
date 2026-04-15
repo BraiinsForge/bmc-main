@@ -1,0 +1,89 @@
+# Frontend dev tasks (yarn-driven). Source of truth for builds is the nix
+# flake (`nix build .#frontend`); these recipes mirror what runs in CI and
+# what's useful during local iteration.
+
+# Enable Slint live-preview across all recipes that spawn the mock backend.
+export SLINT_LIVE_PREVIEW := "1"
+
+dir := justfile_directory()
+
+# === QA ===
+
+# Auto-format JS/TS/SCSS sources.
+format:
+    yarn run biome migrate --write
+    yarn run biome format --write .
+    yarn run prettier './**/*.scss' --log-level=warn --write
+
+# Static analysis (biome + stylelint).
+lint:
+    yarn run biome check --max-diagnostics=100 .
+    yarn run stylelint '**/*.scss' --color --quiet --formatter string --allow-empty-input --config stylelint.config.cjs
+
+# Type-check + run unit tests.
+test:
+    yarn run tsc --diagnostics --pretty --project ./tsconfig.json
+    yarn run rstest run
+
+# Full validation: format + lint + test.
+validate: format lint test
+
+# === Build ===
+
+# Production build (dist/).
+build:
+    yarn run rsbuild build
+
+# === Dev ===
+
+# Frontend dev server (rsbuild watch).
+dev:
+    yarn run rsbuild dev
+
+# Run mock backend against this frontend's built dist (`build` first).
+serve EXTRA_ARGS="":
+    cd {{dir}}/.. && cargo run \
+        --features="winit-skia live-preview" \
+        --package bmc-mock -- \
+        --address="0.0.0.0:6070" \
+        --system-password="root" \
+        --www-path="{{dir}}/dist" \
+        --sounds-dir="{{dir}}/@data/sounds" \
+        --mockfs-path="{{dir}}/@data/mockfs" {{EXTRA_ARGS}}
+
+# Same as `serve`, but force factory defaults on boot.
+serve-factory:
+    @just serve --factory-default
+
+# Storybook (component sandbox).
+storybook-start:
+    yarn run storybook dev \
+        --no-open \
+        --port=6005 \
+        --exact-port \
+        --disable-telemetry
+
+# === Codegen ===
+
+# Regenerate protobuf bindings, then format.
+gen:
+    yarn run buf generate --verbose
+    @just format
+
+# Extract i18n strings from sources.
+intl-extract:
+    yarn run formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json
+
+# === Image optimization ===
+
+# Minify SVG files under ./src using yarn-installed svgo defaults.
+minify-svg:
+    yarn run svgo --recursive --folder ./src
+
+# === Nix integration ===
+
+# Refresh yarn-files hash (current platform; also darwin if building elsewhere).
+nix-update-hash:
+    ./bin/nix-update-hash.ts
+    @if [ "$(uname -s)" != "Darwin" ]; then ./bin/nix-update-hash.ts --darwin; fi
+

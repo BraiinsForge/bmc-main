@@ -149,11 +149,11 @@
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
-        "lastModified": 1775045335,
-        "narHash": "sha256-Qe70Xy46odDoMbisONhR4mIXjEVj09qBuo8PNeJKha8=",
+        "lastModified": 1776258065,
+        "narHash": "sha256-z5GIp+yNKyf0r1lVq0p9o0sLt9Z4Y2QkU2vCSm6rcjA=",
         "ref": "refs/heads/master",
-        "rev": "24410bce27f7d49461e6b3f9aa3d40c69bd0fb3c",
-        "revCount": 141,
+        "rev": "620c0f41a82878a75bbc0be1eaec8e0694450eac",
+        "revCount": 142,
         "type": "git",
         "url": "ssh://git@gitlab.ii.zone/nix/lib"
       },

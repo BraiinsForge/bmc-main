@@ -1,19 +1,19 @@
 [doc("Show available VM helper commands")]
 help:
-  @just --justfile /root/justfile --list --unsorted --color always
+    @just --justfile /root/justfile --list --unsorted --color always
 
 [doc("Follow bmc.log with ANSI intact")]
 logs-bmc:
-  tail -n 200 -f /root/bmc.log
+    tail -n 200 -f /root/bmc.log
 
 [doc("Follow syslog")]
 logs-syslog:
-  logread -f
+    logread -f
 
 [doc("Dump kernel messages")]
 logs-dmesg:
-  dmesg
+    dmesg
 
 [doc("Interactive process viewer")]
 ps:
-  htop
+    htop

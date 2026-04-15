@@ -1,7 +1,7 @@
 validate: format check test
 
 run script:
-    nix develop --command uv run python "{{absolute_path(script)}}"
+    nix develop --command uv run python "{{ absolute_path(script) }}"
 
 format:
     ruff check --fix .
@@ -13,4 +13,4 @@ check:
     ruff format --check .
 
 test *args:
-    uv run pytest {{args}}
+    uv run pytest {{ args }}

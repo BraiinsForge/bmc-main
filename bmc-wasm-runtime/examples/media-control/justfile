@@ -1,0 +1,39 @@
+# media-control example: control a DLNA renderer via dlna-push.py.
+
+dir := justfile_directory()
+tools := dir + "/tools/dlna-push.py"
+port := "49494"
+name := "Deck Test"
+host := "127.0.0.1:" + port
+
+# Spawn renderer and play built-in example 0 (default video).
+serve:
+    {{ tools }} --port {{ port }} --name "{{ name }}" --example 0
+
+# Example 1 (music).
+serve-music:
+    {{ tools }} --port {{ port }} --name "{{ name }}" --example 1
+
+# Example 2 (classical).
+serve-classical:
+    {{ tools }} --port {{ port }} --name "{{ name }}" --example 2
+
+# Example 3 (radio).
+serve-radio:
+    {{ tools }} --port {{ port }} --name "{{ name }}" --example 3
+
+# Spawn renderer and serve an arbitrary URL.
+serve-url URL:
+    {{ tools }} --port {{ port }} --name "{{ name }}" "{{ URL }}"
+
+# Spawn the renderer without playback.
+spawn:
+    {{ tools }} --port {{ port }} --name "{{ name }}"
+
+# Push a URL to an already-running renderer.
+push URL HOST=host:
+    {{ tools }} "{{ HOST }}" "{{ URL }}"
+
+# Query status of the running renderer.
+status HOST=host:
+    {{ tools }} "{{ HOST }}" --status
