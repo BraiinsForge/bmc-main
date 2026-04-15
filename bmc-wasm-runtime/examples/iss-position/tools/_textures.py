@@ -28,6 +28,7 @@ class TextureEntry(TypedDict):
     native_res: str
     note: str
     projection: str
+    ext: str
 
 
 TOOLS_DIR: Path = Path(__file__).resolve().parent
@@ -82,6 +83,7 @@ TEXTURES: list[TextureEntry] = [
         'native_res': '2048\u00d71024',
         'note': 'Custom dark render. Neutral gray palette similar to Mapbox dark-v11.',
         'projection': 'equirectangular',
+        'ext': 'jpg',
     },
     {
         'id': 'natural-earth-gmaps',
@@ -91,6 +93,7 @@ TEXTURES: list[TextureEntry] = [
         'native_res': '2048\u00d71024',
         'note': 'Custom dark render. Blue-tinted palette similar to Google Maps dark mode.',
         'projection': 'equirectangular',
+        'ext': 'jpg',
     },
     {
         'id': 'black-marble-nasa',
@@ -100,6 +103,7 @@ TEXTURES: list[TextureEntry] = [
         'native_res': '3600\u00d71800',
         'note': 'Genuine night lights composite. Best dark theme candidate.',
         'projection': 'equirectangular',
+        'ext': 'jpg',
     },
     {
         'id': 'earth-night-2012',
@@ -109,6 +113,7 @@ TEXTURES: list[TextureEntry] = [
         'native_res': '3600\u00d71800',
         'note': 'Older night lights with ocean/ice detail.',
         'projection': 'equirectangular',
+        'ext': 'jpg',
     },
     {
         'id': 'blue-marble-topo',
@@ -118,6 +123,7 @@ TEXTURES: list[TextureEntry] = [
         'native_res': '2048\u00d71024',
         'note': 'Classic daytime composite. Reference for continent outlines.',
         'projection': 'equirectangular',
+        'ext': 'jpg',
     },
     {
         'id': 'blue-marble-clouds',
@@ -127,6 +133,7 @@ TEXTURES: list[TextureEntry] = [
         'native_res': '2048\u00d71024',
         'note': 'Photorealistic with clouds.',
         'projection': 'equirectangular',
+        'ext': 'jpg',
     },
     {
         'id': 'sss-day',
@@ -136,6 +143,7 @@ TEXTURES: list[TextureEntry] = [
         'native_res': '2048\u00d71024',
         'note': 'Clean daytime composite for reference.',
         'projection': 'equirectangular',
+        'ext': 'jpg',
     },
     {
         'id': 'mapbox-dark',
@@ -148,5 +156,7 @@ TEXTURES: list[TextureEntry] = [
         'native_res': '2048\u00d72048',
         'note': 'Reference: current Mapbox tile. Web Mercator \u2014 distorted on globe.',
         'projection': 'mercator',
+        # Mapbox returns PNG for this endpoint, not JPEG.
+        'ext': 'png',
     },
 ]

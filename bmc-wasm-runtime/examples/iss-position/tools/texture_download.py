@@ -29,7 +29,7 @@ def main() -> None:
         if not tex['url']:
             continue
 
-        dest: Path = TEXTURE_DIR / f'{tex["id"]}.jpg'
+        dest: Path = TEXTURE_DIR / f'{tex["id"]}.{tex["ext"]}'
 
         if dest.exists() and not args.force:
             print(f'  {tex["name"]}: already downloaded')

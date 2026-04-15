@@ -220,6 +220,7 @@
                 note: 'Custom dark render. Neutral gray palette similar to Mapbox dark-v11.',
                 native_res: '2048\u00d71024',
                 projection: 'equirectangular',
+                ext: 'jpg',
             },
             {
                 id: 'natural-earth-gmaps',
@@ -228,6 +229,7 @@
                 note: 'Custom dark render. Blue-tinted palette similar to Google Maps dark mode.',
                 native_res: '2048\u00d71024',
                 projection: 'equirectangular',
+                ext: 'jpg',
             },
             {
                 id: 'black-marble-nasa',
@@ -236,6 +238,7 @@
                 note: 'Genuine night lights composite. Best dark theme candidate.',
                 native_res: '3600\u00d71800',
                 projection: 'equirectangular',
+                ext: 'jpg',
             },
             {
                 id: 'earth-night-2012',
@@ -244,6 +247,7 @@
                 note: 'Older night lights with ocean/ice detail.',
                 native_res: '3600\u00d71800',
                 projection: 'equirectangular',
+                ext: 'jpg',
             },
             {
                 id: 'blue-marble-topo',
@@ -252,6 +256,7 @@
                 note: 'Classic daytime composite. Reference for continent outlines.',
                 native_res: '2048\u00d71024',
                 projection: 'equirectangular',
+                ext: 'jpg',
             },
             {
                 id: 'blue-marble-clouds',
@@ -260,6 +265,7 @@
                 note: 'Photorealistic with clouds.',
                 native_res: '2048\u00d71024',
                 projection: 'equirectangular',
+                ext: 'jpg',
             },
             {
                 id: 'sss-day',
@@ -268,6 +274,7 @@
                 note: 'Clean daytime composite for reference.',
                 native_res: '2048\u00d71024',
                 projection: 'equirectangular',
+                ext: 'jpg',
             },
             {
                 id: 'mapbox-dark',
@@ -276,6 +283,7 @@
                 note: 'Reference: current Mapbox tile. Web Mercator \u2014 distorted on globe.',
                 native_res: '2048\u00d72048',
                 projection: 'mercator',
+                ext: 'png',
             },
         ];
         const TARGET_W = 1536;
@@ -288,7 +296,7 @@
             label.className = 'tex-card';
             label.innerHTML = `
     <input type="radio" name="texture" value="${t.id}" ${i === 0 ? 'checked' : ''}>
-    <img src="${t.id}.jpg" alt="${t.name}" loading="lazy">
+    <img src="${t.id}.${t.ext}" alt="${t.name}" loading="lazy">
     <span class="tex-name">${t.name}</span>
   `;
             texGrid.appendChild(label);
@@ -407,7 +415,7 @@
             const meta = TEXTURES.find(t => t.id === id);
             currentProj = meta.projection;
             const isMerc = currentProj === 'mercator';
-            const src = id + '.jpg';
+            const src = `${id}.${meta.ext}`;
 
             document.getElementById('tex-note').textContent = meta.note;
             document.getElementById('tex-license').textContent = meta.license;
