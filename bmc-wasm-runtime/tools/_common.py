@@ -89,18 +89,23 @@ def build_example_wasm(example: str) -> Path:
         )
         sys.exit(1)
 
-    # --message-format=json emits one compiler-artifact message per built target;
-    # parse it so we get the exact .wasm path even with a custom CARGO_TARGET_DIR.
+    # Examples share a workspace at examples/Cargo.toml — build from there
+    # so cargo uses the shared target dir. --message-format=json emits one
+    # compiler-artifact message per built target; parse it so we get the
+    # exact .wasm path even with a custom CARGO_TARGET_DIR.
+    workspace_dir = example_dir.parent
     result = subprocess.run(
         [
             'cargo',
             'build',
+            '-p',
+            example,
             '--release',
             '--target',
             WASM_TARGET,
             '--message-format=json-render-diagnostics',
         ],
-        cwd=example_dir,
+        cwd=workspace_dir,
         check=True,
         capture_output=True,
         text=True,

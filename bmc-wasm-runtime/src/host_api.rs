@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+pub use glam::{Quat, Vec3};
 use std::sync::mpsc;
 
 use serde_json::Value;
@@ -48,6 +50,25 @@ pub struct PrevDrawValues {
     pub light_lat: f32,
     /// Light direction longitude (degrees).
     pub light_lon: f32,
+    // -- Mesh fields (for 3D mesh transitions) --
+    /// Orientation quaternion [x, y, z, w].
+    pub orientation: Quat,
+    /// Camera field of view (degrees).
+    pub fov: f32,
+    /// Camera distance from origin.
+    pub distance: f32,
+    /// Uniform scale factor.
+    pub mesh_scale: f32,
+    /// Position offset [x, y, z].
+    pub position: Vec3,
+    /// Light direction pitch (degrees).
+    pub light_pitch: f32,
+    /// Light direction yaw (degrees).
+    pub light_yaw: f32,
+    /// Ambient light level (0.0–1.0).
+    pub ambient: f32,
+    /// Specular highlight strength (0.0–1.0).
+    pub specular: f32,
 }
 
 /// State for a single transition instance.
@@ -505,6 +526,9 @@ pub(crate) struct HostState {
 
     /// Per-runtime caps for host-side resources.
     pub resource_limits: RuntimeResourceLimits,
+    /// xorshift64 PRNG state.
+    /// Defaults to a time-derived seed and may be overridden by the runtime.
+    pub rng_state: u64,
 }
 
 impl HostState {
@@ -570,6 +594,7 @@ impl HostState {
             last_timings: FrameTimings::default(),
             taffy: TaffyTree::with_capacity(64),
             resource_limits,
+            rng_state: 0, // 0 = auto-seed on first use (from monotonic_ms)
         }
     }
 

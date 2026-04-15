@@ -126,6 +126,47 @@ pub trait Renderer {
     /// bitmap ID is invalid or the region is empty.
     fn bitmap_sample(&self, bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u32>;
 
+    // -- Meshes --
+
+    /// Register mesh binary data, upload VBO/IBO/texture to GPU. Returns opaque ID.
+    fn register_mesh(&mut self, data: &[u8]) -> u16;
+
+    /// Draw a 3D mesh with quaternion-based orientation and optional directional light.
+    ///
+    /// `slot_index` selects which atlas slot to render into (0..8 for 3×3 grid).
+    /// When `light_pitch` is `f32::NAN`, lighting is disabled.
+    #[expect(clippy::too_many_arguments)]
+    fn draw_mesh(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        slot_index: u8,
+        mesh_id: u16,
+        fov: f32,
+        distance: f32,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+        qw: f32,
+        px: f32,
+        py: f32,
+        pz: f32,
+        scale: f32,
+        light_pitch: f32,
+        light_yaw: f32,
+        ambient: f32,
+        specular: f32,
+        hl_u_min: f32,
+        hl_v_min: f32,
+        hl_u_max: f32,
+        hl_v_max: f32,
+        hl_r: f32,
+        hl_g: f32,
+        hl_b: f32,
+    );
+
     // -- Sphere --
 
     /// Draw an equirectangular texture mapped onto a 3D sphere with optional light shading.

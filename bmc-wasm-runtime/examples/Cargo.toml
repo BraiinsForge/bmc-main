@@ -17,6 +17,7 @@ members = [
     "home-assistant",
     "iss-position",
     "media-control",
+    "mesh-demo",
     "spacex-launch",
     "stress-test",
 ]

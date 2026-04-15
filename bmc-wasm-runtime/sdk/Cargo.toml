@@ -6,10 +6,16 @@ edition = "2024"
 [lib]
 crate-type = ["rlib"]
 
+[features]
+## Enable 3D math utilities (glam re-export, Orientation↔Quat conversion).
+## Adds ~6KB to WASM binary. Only needed for widgets doing 3D math beyond basic Orientation use.
+math-3d = ["glam"]
+
 [dependencies]
 bmc-wasm-protocol = { path = "../protocol" }
 bmc-wasm-sdk-macros = { path = "../sdk-macros" }
 bmc-wasm-skin = { path = "../skin" }
+glam = { workspace = true, default-features = false, features = ["libm"], optional = true }
 ufmt = { workspace = true }
 
 [lints.rust]
@@ -26,4 +32,5 @@ module_name_repetitions = "allow"
 [workspace]
 
 [workspace.dependencies]
+glam = { version = "0.32", default-features = false }
 ufmt = { version = "0.2", features = ["std"] }

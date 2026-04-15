@@ -37,6 +37,55 @@ pub fn apply_easing(easing: Easing, t: f32) -> f32 {
                 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
             }
         }
+        // Overshoot: goes past 1.0 then settles back
+        Easing::EaseOutBack => {
+            let c1 = 1.701_58;
+            let c3 = c1 + 1.0;
+            let t1 = t - 1.0;
+            1.0 + c3 * t1 * t1 * t1 + c1 * t1 * t1
+        }
+        Easing::EaseInOutBack => {
+            let c1 = 1.701_58;
+            let c2 = c1 * 1.525;
+            if t < 0.5 {
+                let t2 = 2.0 * t;
+                (t2 * t2 * ((c2 + 1.0) * t2 - c2)) / 2.0
+            } else {
+                let t2 = 2.0 * t - 2.0;
+                t2.mul_add(t2 * ((c2 + 1.0) * t2 + c2), 2.0) / 2.0
+            }
+        }
+        // Bounce: multiple decreasing bounces (like a ball landing)
+        Easing::EaseOutBounce => ease_out_bounce(t),
+        // Elastic: damped spring oscillation
+        Easing::EaseOutElastic => {
+            if t <= 0.0 {
+                0.0
+            } else if t >= 1.0 {
+                1.0
+            } else {
+                let c4 = core::f32::consts::TAU / 3.0;
+                2.0_f32.powf(-10.0 * t) * ((t * 10.0 - 0.75) * c4).sin() + 1.0
+            }
+        }
+    }
+}
+
+/// Standard bounce-out curve: ball drop with 4 decreasing bounces.
+fn ease_out_bounce(t: f32) -> f32 {
+    let n1 = 7.5625;
+    let d1 = 2.75;
+    if t < 1.0 / d1 {
+        n1 * t * t
+    } else if t < 2.0 / d1 {
+        let t = t - 1.5 / d1;
+        n1 * t * t + 0.75
+    } else if t < 2.5 / d1 {
+        let t = t - 2.25 / d1;
+        n1 * t * t + 0.9375
+    } else {
+        let t = t - 2.625 / d1;
+        n1 * t * t + 0.984_375
     }
 }
 

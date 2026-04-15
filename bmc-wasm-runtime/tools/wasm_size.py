@@ -38,13 +38,21 @@ def build_and_optimize(example: str) -> tuple[Path, Path]:
     return release, optimized
 
 
+def human_size(n: int) -> str:
+    if n >= 1_048_576:
+        return f'{n / 1_048_576:.1f} MB'
+    if n >= 1_024:
+        return f'{n / 1_024:.1f} KB'
+    return f'{n} B'
+
+
 def print_sizes(example: str, release: Path, optimized: Path) -> None:
     rel_size = release.stat().st_size
     opt_size = optimized.stat().st_size
 
     print(f'=== WASM Binary Size: {example} ===')
-    print(f'Release:   {rel_size:,} bytes ({rel_size / 1024:.1f} KB)')
-    print(f'Optimized: {opt_size:,} bytes ({opt_size / 1024:.1f} KB)')
+    print(f'Release:   {rel_size:,} bytes ({human_size(rel_size)})')
+    print(f'Optimized: {opt_size:,} bytes ({human_size(opt_size)})')
     print()
 
     result = subprocess.run(

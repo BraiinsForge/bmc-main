@@ -16,11 +16,14 @@ use std::vec::Vec;
 use std::cell::RefCell;
 
 use bmc_wasm_protocol::{
-    AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MODIFIED,
-    DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE, DRAW_TEXT,
-    Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
-    NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER,
+    AnimProperty, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON, DRAW_MESH,
+    DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SPHERE,
+    DRAW_TEXT, Easing, GRAY_10, LoopMode, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN,
+    NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL,
+    NODE_SPACER,
 };
+
+use crate::mesh::{Mesh, MeshView};
 
 // Re-export for macro paths
 pub use bmc_wasm_protocol::{PropsData, TextStyle};
@@ -91,6 +94,28 @@ pub fn ensure_bitmap_registered(bmp: &Bitmap) -> u16 {
             }
         }
         let id = host::register_bitmap(bmp.data);
+        ids.push((key, id));
+        id
+    })
+}
+
+// Mesh registration — lazy, once per mesh per runtime lifetime.
+thread_local! {
+    static MESH_IDS: RefCell<Vec<(usize, u16)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Register a mesh with the host (if not already registered) and return its ID.
+#[must_use]
+pub fn ensure_mesh_registered(mesh: &Mesh) -> u16 {
+    MESH_IDS.with(|ids| {
+        let mut ids = ids.borrow_mut();
+        let key = mesh.data.as_ptr() as usize;
+        for &(k, id) in ids.iter() {
+            if k == key {
+                return id;
+            }
+        }
+        let id = host::register_mesh(mesh.data);
         ids.push((key, id));
         id
     })
@@ -602,6 +627,36 @@ pub enum Draw {
         light_lat: f32,
         light_lon: f32,
     },
+    /// 3D mesh rendered via GPU with quaternion-based orientation.
+    Mesh {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        mesh_id: u16,
+        fov: f32,
+        distance: f32,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+        qw: f32,
+        px: f32,
+        py: f32,
+        pz: f32,
+        scale: f32,
+        light_pitch: f32,
+        light_yaw: f32,
+        ambient: f32,
+        specular: f32,
+        // UV-rect highlight (NaN = disabled)
+        hl_u_min: f32,
+        hl_v_min: f32,
+        hl_u_max: f32,
+        hl_v_max: f32,
+        hl_r: f32,
+        hl_g: f32,
+        hl_b: f32,
+    },
 }
 
 impl Draw {
@@ -809,6 +864,60 @@ impl Draw {
             zoom,
             light_lat,
             light_lon,
+        }
+    }
+
+    /// 3D mesh at local position within canvas.
+    ///
+    /// Renders an arbitrary mesh with quaternion-based orientation, perspective
+    /// camera, and optional directional lighting. The mesh is rendered to an
+    /// offscreen FBO on the GPU and composited into the 2D scene by femtovg.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// Draw::mesh(0.0, 0.0, 200.0, 200.0, &SUZANNE, MeshView {
+    ///     orientation: Orientation::from_euler(30.0, 45.0, 0.0),
+    ///     ..Default::default()
+    /// })
+    /// ```
+    #[must_use]
+    pub fn mesh(x: f32, y: f32, w: f32, h: f32, mdl: &Mesh, view: MeshView) -> Self {
+        let mesh_id = ensure_mesh_registered(mdl);
+        let light = view.light.unwrap_or(crate::mesh::LightAngles {
+            pitch: f32::NAN,
+            yaw: f32::NAN,
+        });
+        let highlight = view.highlight.unwrap_or(crate::mesh::Highlight {
+            uv_rect: [f32::NAN, 0.0, 0.0, 0.0],
+            color: [0.0, 0.0, 0.0],
+        });
+        Self::Mesh {
+            x,
+            y,
+            w,
+            h,
+            mesh_id,
+            fov: view.fov,
+            distance: view.distance,
+            qx: view.orientation.x,
+            qy: view.orientation.y,
+            qz: view.orientation.z,
+            qw: view.orientation.w,
+            px: view.position[0],
+            py: view.position[1],
+            pz: view.position[2],
+            scale: view.scale,
+            light_pitch: light.pitch,
+            light_yaw: light.yaw,
+            ambient: view.ambient,
+            specular: view.specular,
+            hl_u_min: highlight.uv_rect[0],
+            hl_v_min: highlight.uv_rect[1],
+            hl_u_max: highlight.uv_rect[2],
+            hl_v_max: highlight.uv_rect[3],
+            hl_r: highlight.color[0],
+            hl_g: highlight.color[1],
+            hl_b: highlight.color[2],
         }
     }
 
@@ -1121,6 +1230,7 @@ pub fn paragraph(style: StyleResult, spans: impl IntoIterator<Item = Span>) -> N
 }
 
 /// Create a button node (used by the `button!` macro).
+#[must_use]
 pub fn make_button(
     id: String,
     label: String,
@@ -1207,6 +1317,7 @@ pub fn touchable(key: &str, props: PropsData, draws: impl IntoIterator<Item = Dr
 /// - `track_color`: background track color.
 /// - `bg_color`: used to clip squiggle past the playhead. Pass `0` when not active.
 #[expect(clippy::too_many_arguments)]
+#[must_use]
 pub fn progress_bar(
     touch_key: &str,
     track_h: f32,
@@ -1425,6 +1536,10 @@ macro_rules! path {
 }
 
 /// Serialize a node tree to the buffer
+#[expect(
+    clippy::too_many_lines,
+    reason = "tree serialization keeps the wire format in one linear encoder"
+)]
 fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
     match node {
         Node::Column(props, children) => {
@@ -1572,6 +1687,10 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
 }
 
 /// Serialize a draw command to the buffer
+#[expect(
+    clippy::too_many_lines,
+    reason = "draw serialization keeps the wire format in one linear encoder"
+)]
 fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
     match draw {
         Draw::Rect { x, y, w, h, color } => {
@@ -1737,6 +1856,62 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*zoom);
             buf.write_f32(*light_lat);
             buf.write_f32(*light_lon);
+        }
+        Draw::Mesh {
+            x,
+            y,
+            w,
+            h,
+            mesh_id,
+            fov,
+            distance,
+            qx,
+            qy,
+            qz,
+            qw,
+            px,
+            py,
+            pz,
+            scale,
+            light_pitch,
+            light_yaw,
+            ambient,
+            specular,
+            hl_u_min,
+            hl_v_min,
+            hl_u_max,
+            hl_v_max,
+            hl_r,
+            hl_g,
+            hl_b,
+        } => {
+            buf.write_u8(DRAW_MESH);
+            buf.write_f32(*x);
+            buf.write_f32(*y);
+            buf.write_f32(*w);
+            buf.write_f32(*h);
+            buf.write_u16(*mesh_id);
+            buf.write_f32(*fov);
+            buf.write_f32(*distance);
+            buf.write_f32(*qx);
+            buf.write_f32(*qy);
+            buf.write_f32(*qz);
+            buf.write_f32(*qw);
+            buf.write_f32(*px);
+            buf.write_f32(*py);
+            buf.write_f32(*pz);
+            buf.write_f32(*scale);
+            buf.write_f32(*light_pitch);
+            buf.write_f32(*light_yaw);
+            buf.write_f32(*ambient);
+            buf.write_f32(*specular);
+            buf.write_f32(*hl_u_min);
+            buf.write_f32(*hl_v_min);
+            buf.write_f32(*hl_u_max);
+            buf.write_f32(*hl_v_max);
+            buf.write_f32(*hl_r);
+            buf.write_f32(*hl_g);
+            buf.write_f32(*hl_b);
         }
         Draw::NinePatch {
             x,

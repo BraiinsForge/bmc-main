@@ -26,6 +26,14 @@ pub enum Easing {
     EaseInCubic = 4,
     EaseOutCubic = 5,
     EaseInOutCubic = 6,
+    /// Overshoot then settle — good for snappy UI transitions.
+    EaseOutBack = 7,
+    /// Anticipation + overshoot — dramatic entrance/exit.
+    EaseInOutBack = 8,
+    /// Natural settle with multiple bounces — dice landing, ball drop.
+    EaseOutBounce = 9,
+    /// Spring-like damped oscillation — wobbly settle.
+    EaseOutElastic = 10,
 }
 
 /// Loop mode for repeating animations.
@@ -75,6 +83,10 @@ impl Easing {
             4 => Some(Self::EaseInCubic),
             5 => Some(Self::EaseOutCubic),
             6 => Some(Self::EaseInOutCubic),
+            7 => Some(Self::EaseOutBack),
+            8 => Some(Self::EaseInOutBack),
+            9 => Some(Self::EaseOutBounce),
+            10 => Some(Self::EaseOutElastic),
             _ => None,
         }
     }

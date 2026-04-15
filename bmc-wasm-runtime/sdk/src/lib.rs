@@ -9,7 +9,8 @@
 #![expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_lossless
+    clippy::cast_lossless,
+    clippy::same_length_and_capacity
 )]
 
 // Embed protocol version as a WASM export.
@@ -27,8 +28,12 @@ pub mod http_listener;
 pub mod json;
 pub mod kv;
 pub mod log;
+#[cfg(feature = "math-3d")]
+pub mod math;
 pub mod mdns;
+pub mod mesh;
 pub mod net;
+pub mod orientation;
 pub mod socket;
 pub mod ssdp;
 pub mod tree;
@@ -38,15 +43,17 @@ pub mod xml;
 
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::{
-    include_bitmap, include_icon, include_nine_patch, include_skin, json,
+    include_bitmap, include_icon, include_mesh, include_nine_patch, include_skin, json,
 };
 pub use format::{format_date, format_duration};
 pub use host::{
     ButtonSize, ButtonStyle, SizeVariant, SystemTime, TouchHit, WidgetSize, draw_text, fill_rect,
-    parse_date, request_frame, request_frame_after,
+    parse_date, random_u32, request_frame, request_frame_after,
 };
 pub use json::JsonDoc;
+pub use mesh::{Highlight, LightAngles, Mesh, MeshView};
 pub use net::{FetchRequest, FetchResponse, fetch, fetch_after};
+pub use orientation::Orientation;
 pub use tree::{
     AnimationDef, Bitmap, ButtonSkin, Draw, Icon, Interpolation, ModalProps, NinePatch,
     NinePatchAsset, Node, NotificationKind, ProgressMode, PropsData, Skin, SkinAsset, SkinEntry,

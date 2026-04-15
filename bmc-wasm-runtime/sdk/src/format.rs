@@ -33,6 +33,7 @@ fn read_host_buf(buf: &[u8; 64], len: i32) -> String {
 
 /// Format a number using host-side preferences. Called by [`format_number!`].
 #[doc(hidden)]
+#[must_use]
 pub fn _host_format_number(value: f64, decimals: u32) -> String {
     let mut buf = [0_u8; 64];
     let len = unsafe { host_format_number(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
@@ -41,6 +42,7 @@ pub fn _host_format_number(value: f64, decimals: u32) -> String {
 
 /// Format a speed using host-side preferences. Called by [`format_speed!`].
 #[doc(hidden)]
+#[must_use]
 pub fn _host_format_speed(value: f64, decimals: u32) -> String {
     let mut buf = [0_u8; 64];
     let len = unsafe { host_format_speed(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
@@ -49,6 +51,7 @@ pub fn _host_format_speed(value: f64, decimals: u32) -> String {
 
 /// Format a temperature using host-side preferences. Called by [`format_temperature!`].
 #[doc(hidden)]
+#[must_use]
 pub fn _host_format_temperature(value: f64, decimals: u32) -> String {
     let mut buf = [0_u8; 64];
     let len =

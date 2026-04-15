@@ -28,6 +28,7 @@ pub const DRAW_BITMAP: u8 = 0x43;
 pub const DRAW_PATH: u8 = 0x44;
 pub const DRAW_SPHERE: u8 = 0x45;
 pub const DRAW_TEXT: u8 = 0x46;
+pub const DRAW_MESH: u8 = 0x47;
 pub const DRAW_NINE_PATCH: u8 = 0x48;
 
 // Draw commands — transforms (0x60–0x7F)

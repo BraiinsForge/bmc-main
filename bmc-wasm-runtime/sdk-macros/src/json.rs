@@ -106,9 +106,10 @@ fn parse_object(
         match &inner[ipos] {
             TokenTree::Literal(lit) => {
                 let repr = lit.to_string();
-                if !repr.starts_with('"') {
-                    panic!("json!: object key must be a string, got `{repr}`");
-                }
+                assert!(
+                    repr.starts_with('"'),
+                    "json!: object key must be a string, got `{repr}`"
+                );
                 fmt.push_str(&repr);
                 ipos += 1;
             }
@@ -125,10 +126,10 @@ fn parse_object(
         parse_value(&inner, &mut ipos, fmt, args);
 
         // Optional comma
-        if let Some(TokenTree::Punct(p)) = inner.get(ipos) {
-            if p.as_char() == ',' {
-                ipos += 1;
-            }
+        if let Some(TokenTree::Punct(p)) = inner.get(ipos)
+            && p.as_char() == ','
+        {
+            ipos += 1;
         }
     }
     fmt.push_str("}}");
@@ -157,10 +158,10 @@ fn parse_array(
         parse_value(&inner, &mut ipos, fmt, args);
 
         // Optional comma
-        if let Some(TokenTree::Punct(p)) = inner.get(ipos) {
-            if p.as_char() == ',' {
-                ipos += 1;
-            }
+        if let Some(TokenTree::Punct(p)) = inner.get(ipos)
+            && p.as_char() == ','
+        {
+            ipos += 1;
         }
     }
     fmt.push(']');
@@ -186,6 +187,10 @@ fn parse_interpolation(
 
     // Check for `s` (string interpolation) before the group
     let is_string = match tokens.get(*pos) {
+        #[expect(
+            clippy::cmp_owned,
+            reason = "proc_macro2::Ident does not expose a borrowed string comparator"
+        )]
         Some(TokenTree::Ident(id)) if id.to_string() == "s" => {
             *pos += 1;
             true

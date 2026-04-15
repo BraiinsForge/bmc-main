@@ -39,6 +39,15 @@ fmt-images *PATHS:
 validate-full:
     scripts/mem-box.sh nix flake check -L --option max-jobs 4
 
+# === WASM Runtime ===
+
+# Validate the bmc-wasm-runtime crate (format, lint, clippy, test, build examples).
+validate-wasm: format
+    cargo clippy -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
+    cargo clippy -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
+    cargo nextest run -p bmc-wasm-runtime
+    cd bmc-wasm-runtime/examples && cargo build --target wasm32-unknown-unknown --workspace
+
 # === Tooling ===
 
 # Find unused workspace dependencies declared in Cargo.toml.

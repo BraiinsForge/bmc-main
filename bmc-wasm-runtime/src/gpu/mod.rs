@@ -4,6 +4,7 @@
 
 pub mod bitmap;
 pub mod icons;
+pub mod mesh;
 mod renderer;
 mod sphere;
 pub mod text;

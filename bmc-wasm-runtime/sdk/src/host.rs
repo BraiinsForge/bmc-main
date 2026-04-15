@@ -59,6 +59,9 @@ unsafe extern "C" {
     fn host_register_bitmap(data_ptr: *const u8, data_len: u32) -> u32;
     fn host_register_bitmap_nearest(data_ptr: *const u8, data_len: u32) -> u32;
 
+    // Mesh registration
+    fn host_register_mesh(data_ptr: *const u8, data_len: u32) -> u32;
+
     // Image decoding (returns RGBA pixels)
     fn host_decode_image(
         data_ptr: *const u8,
@@ -69,6 +72,9 @@ unsafe extern "C" {
 
     // Bitmap sampling (average color of a region)
     fn host_bitmap_sample(bitmap_id: u32, x: u32, y: u32, w: u32, h: u32) -> u32;
+
+    // Random number generation (host-seeded for deterministic replay)
+    fn host_random_u32() -> u32;
 }
 
 /// Fill a rectangle with a solid color.
@@ -305,6 +311,15 @@ pub fn parse_date(s: &str) -> Option<i64> {
     if val == i64::MIN { None } else { Some(val) }
 }
 
+/// Register mesh data (optimized binary format) with the host, returns an opaque mesh ID.
+///
+/// The host uploads VBO, IBO, and texture to GPU. One-time cost.
+#[expect(clippy::cast_possible_truncation)]
+#[must_use]
+pub fn register_mesh(data: &[u8]) -> u16 {
+    unsafe { host_register_mesh(data.as_ptr(), data.len() as u32) as u16 }
+}
+
 /// Register bitmap data (PNG bytes) with the host, returns an opaque bitmap ID.
 ///
 /// The host decodes the image and uploads it to the GPU as a texture.
@@ -344,6 +359,7 @@ pub fn bitmap_sample(bitmap_id: u16, x: u32, y: u32, w: u32, h: u32) -> Option<u
 /// This is much cheaper than [`decode_image`] as it only probes the header — no RGBA
 /// buffer is allocated. The host also rejects images whose decoded size exceeds
 /// its configured pixel budget.
+#[must_use]
 pub fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     let packed =
         unsafe { host_decode_image(data.as_ptr(), data.len() as u32, core::ptr::null_mut(), 0) };
@@ -370,6 +386,7 @@ pub fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
 /// the large RGBA allocation and is much cheaper on fuel. Returns `None` when the
 /// host rejects the image for exceeding its decoded pixel budget or decoder
 /// allocation budget.
+#[must_use]
 pub fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let (w, h) = image_dimensions(data)?;
     let needed = w.checked_mul(h)?.checked_mul(4)?;
@@ -382,4 +399,13 @@ pub fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
         return None;
     }
     Some((buf, w, h))
+}
+
+/// Get a random `u32` from the host.
+///
+/// The host controls the RNG seed, so this is deterministic in capture/replay mode.
+/// Each call advances the host's internal PRNG state.
+#[must_use]
+pub fn random_u32() -> u32 {
+    unsafe { host_random_u32() }
 }

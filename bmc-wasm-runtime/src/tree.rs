@@ -165,6 +165,34 @@ pub enum DrawCommand {
         light_lat: f32,
         light_lon: f32,
     },
+    Mesh {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        mesh_id: u16,
+        fov: f32,
+        distance: f32,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+        qw: f32,
+        px: f32,
+        py: f32,
+        pz: f32,
+        scale: f32,
+        light_pitch: f32,
+        light_yaw: f32,
+        ambient: f32,
+        specular: f32,
+        hl_u_min: f32,
+        hl_v_min: f32,
+        hl_u_max: f32,
+        hl_v_max: f32,
+        hl_r: f32,
+        hl_g: f32,
+        hl_b: f32,
+    },
     Text {
         x: f32,
         y: f32,
@@ -182,6 +210,32 @@ pub enum DrawCommand {
         right: u16,
         bottom: u16,
     },
+}
+
+/// Interpolated mesh parameters for transition override.
+#[derive(Debug, Clone, Copy)]
+struct MeshOverride {
+    qx: f32,
+    qy: f32,
+    qz: f32,
+    qw: f32,
+    fov: f32,
+    distance: f32,
+    scale: f32,
+    px: f32,
+    py: f32,
+    pz: f32,
+    light_pitch: f32,
+    light_yaw: f32,
+    ambient: f32,
+    specular: f32,
+    hl_u_min: f32,
+    hl_v_min: f32,
+    hl_u_max: f32,
+    hl_v_max: f32,
+    hl_r: f32,
+    hl_g: f32,
+    hl_b: f32,
 }
 
 /// 9-patch inset data (deserialized from wire format).
@@ -785,6 +839,62 @@ impl<'a> TreeReader<'a> {
                     light_lon,
                 })
             }
+            DRAW_MESH => {
+                let x = self.read_f32()?;
+                let y = self.read_f32()?;
+                let w = self.read_f32()?;
+                let h = self.read_f32()?;
+                let mesh_id = self.read_u16()?;
+                let fov = self.read_f32()?;
+                let distance = self.read_f32()?;
+                let qx = self.read_f32()?;
+                let qy = self.read_f32()?;
+                let qz = self.read_f32()?;
+                let qw = self.read_f32()?;
+                let px = self.read_f32()?;
+                let py = self.read_f32()?;
+                let pz = self.read_f32()?;
+                let scale = self.read_f32()?;
+                let light_pitch = self.read_f32()?;
+                let light_yaw = self.read_f32()?;
+                let ambient = self.read_f32()?;
+                let specular = self.read_f32()?;
+                let hl_u_min = self.read_f32()?;
+                let hl_v_min = self.read_f32()?;
+                let hl_u_max = self.read_f32()?;
+                let hl_v_max = self.read_f32()?;
+                let hl_r = self.read_f32()?;
+                let hl_g = self.read_f32()?;
+                let hl_b = self.read_f32()?;
+                Ok(DrawCommand::Mesh {
+                    x,
+                    y,
+                    w,
+                    h,
+                    mesh_id,
+                    fov,
+                    distance,
+                    qx,
+                    qy,
+                    qz,
+                    qw,
+                    px,
+                    py,
+                    pz,
+                    scale,
+                    light_pitch,
+                    light_yaw,
+                    ambient,
+                    specular,
+                    hl_u_min,
+                    hl_v_min,
+                    hl_u_max,
+                    hl_v_max,
+                    hl_r,
+                    hl_g,
+                    hl_b,
+                })
+            }
             DRAW_TEXT => {
                 let x = self.read_f32()?;
                 let y = self.read_f32()?;
@@ -846,7 +956,8 @@ use taffy::{Overflow, Point};
 use crate::animation::{apply_easing, compute_animation_value, interpolate_color, multiply_alpha};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::host_api::{
-    AnimationState, FrameTimings, ModalState, PrevDrawValues, ScrollState, TransitionState,
+    AnimationState, FrameTimings, ModalState, PrevDrawValues, Quat, ScrollState, TransitionState,
+    Vec3,
 };
 use crate::interaction::InteractionState;
 use crate::renderer::Renderer;
@@ -860,6 +971,8 @@ struct AnimationContext<'a> {
     draw_counter: u32,
     canvas_index: u16,
     draw_in_canvas: u16,
+    /// Monotonic counter for mesh atlas slot allocation (one per `draw_mesh` call).
+    mesh_slot_counter: u8,
     /// Set to true when any animation or transition is in progress.
     has_active: bool,
 }
@@ -1081,6 +1194,7 @@ pub(crate) fn layout_and_render(
         draw_counter: 0,
         canvas_index: 0,
         draw_in_canvas: 0,
+        mesh_slot_counter: 0,
         has_active: false,
     };
 
@@ -1169,7 +1283,12 @@ fn build_taffy_node(
                     taffy::Rect::auto()
                 },
                 flex_direction: flex_dir,
-                justify_content: if is_center {
+                flex_wrap: if props.wrap {
+                    FlexWrap::Wrap
+                } else {
+                    FlexWrap::NoWrap
+                },
+                justify_content: if is_center || props.wrap {
                     Some(JustifyContent::Center)
                 } else {
                     None
@@ -1185,6 +1304,11 @@ fn build_taffy_node(
                             None
                         }
                     }
+                },
+                align_content: if props.wrap {
+                    Some(AlignContent::Center)
+                } else {
+                    None
                 },
                 gap: Size {
                     width: length(props.gap),
@@ -2024,6 +2148,7 @@ fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
         | DrawCommand::Icon { w, h, .. }
         | DrawCommand::Bitmap { w, h, .. }
         | DrawCommand::Sphere { w, h, .. }
+        | DrawCommand::Mesh { w, h, .. }
         | DrawCommand::NinePatch { w, h, .. } => (*w, *h),
         DrawCommand::Circle { r, .. } => (*r * 2.0, *r * 2.0),
         DrawCommand::Centered { inner }
@@ -2295,6 +2420,7 @@ fn render_draw_inner(
             let mut acc_orbit_angle = orbit_angle_offset;
             let mut acc_color: Option<u32> = color_override;
             let mut sphere_override: Option<(f32, f32, f32, f32, f32)> = None;
+            let mut mesh_override: Option<MeshOverride> = None;
 
             // Process animations
             for anim_def in animations {
@@ -2395,6 +2521,41 @@ fn render_draw_inner(
                             interp.light_lon,
                         ));
                     }
+                    if let DrawCommand::Mesh {
+                        hl_u_min,
+                        hl_v_min,
+                        hl_u_max,
+                        hl_v_max,
+                        hl_r,
+                        hl_g,
+                        hl_b,
+                        ..
+                    } = inner.as_ref()
+                    {
+                        mesh_override = Some(MeshOverride {
+                            qx: interp.orientation.x,
+                            qy: interp.orientation.y,
+                            qz: interp.orientation.z,
+                            qw: interp.orientation.w,
+                            fov: interp.fov,
+                            distance: interp.distance,
+                            scale: interp.mesh_scale,
+                            px: interp.position.x,
+                            py: interp.position.y,
+                            pz: interp.position.z,
+                            light_pitch: interp.light_pitch,
+                            light_yaw: interp.light_yaw,
+                            ambient: interp.ambient,
+                            specular: interp.specular,
+                            hl_u_min: *hl_u_min,
+                            hl_v_min: *hl_v_min,
+                            hl_u_max: *hl_u_max,
+                            hl_v_max: *hl_v_max,
+                            hl_r: *hl_r,
+                            hl_g: *hl_g,
+                            hl_b: *hl_b,
+                        });
+                    }
                 }
             }
 
@@ -2425,6 +2586,62 @@ fn render_draw_inner(
                     zoom,
                     light_lat,
                     light_lon,
+                };
+                render_draw_inner(
+                    renderer,
+                    &overridden,
+                    cx,
+                    cy,
+                    cw,
+                    ch,
+                    acc_offset_x,
+                    acc_offset_y,
+                    acc_rotation,
+                    acc_scale,
+                    acc_alpha,
+                    acc_orbit_angle,
+                    acc_color,
+                    anim_ctx,
+                );
+            } else if let (
+                Some(mo),
+                DrawCommand::Mesh {
+                    x,
+                    y,
+                    w,
+                    h,
+                    mesh_id,
+                    ..
+                },
+            ) = (mesh_override, inner.as_ref())
+            {
+                let overridden = DrawCommand::Mesh {
+                    x: *x,
+                    y: *y,
+                    w: *w,
+                    h: *h,
+                    mesh_id: *mesh_id,
+                    fov: mo.fov,
+                    distance: mo.distance,
+                    qx: mo.qx,
+                    qy: mo.qy,
+                    qz: mo.qz,
+                    qw: mo.qw,
+                    px: mo.px,
+                    py: mo.py,
+                    pz: mo.pz,
+                    scale: mo.scale,
+                    light_pitch: mo.light_pitch,
+                    light_yaw: mo.light_yaw,
+                    ambient: mo.ambient,
+                    specular: mo.specular,
+                    hl_u_min: mo.hl_u_min,
+                    hl_v_min: mo.hl_v_min,
+                    hl_u_max: mo.hl_u_max,
+                    hl_v_max: mo.hl_v_max,
+                    hl_r: mo.hl_r,
+                    hl_g: mo.hl_g,
+                    hl_b: mo.hl_b,
                 };
                 render_draw_inner(
                     renderer,
@@ -2596,6 +2813,110 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
+        DrawCommand::Mesh {
+            x,
+            y,
+            w,
+            h,
+            mesh_id,
+            fov,
+            distance,
+            qx,
+            qy,
+            qz,
+            qw,
+            px,
+            py,
+            pz,
+            scale: mesh_scale,
+            light_pitch,
+            light_yaw,
+            ambient,
+            specular,
+            hl_u_min,
+            hl_v_min,
+            hl_u_max,
+            hl_v_max,
+            hl_r,
+            hl_g,
+            hl_b,
+        } => {
+            let ew = *w * scale;
+            let eh = *h * scale;
+            let sx = *x + offset_x + (*w - ew) / 2.0;
+            let sy = *y + offset_y + (*h - eh) / 2.0;
+            let rx = cx + sx;
+            let ry = cy + sy;
+            let slot = anim_ctx.mesh_slot_counter;
+            anim_ctx.mesh_slot_counter = slot.saturating_add(1);
+            if rotation == 0.0 {
+                renderer.draw_mesh(
+                    rx,
+                    ry,
+                    ew,
+                    eh,
+                    slot,
+                    *mesh_id,
+                    *fov,
+                    *distance,
+                    *qx,
+                    *qy,
+                    *qz,
+                    *qw,
+                    *px,
+                    *py,
+                    *pz,
+                    *mesh_scale,
+                    *light_pitch,
+                    *light_yaw,
+                    *ambient,
+                    *specular,
+                    *hl_u_min,
+                    *hl_v_min,
+                    *hl_u_max,
+                    *hl_v_max,
+                    *hl_r,
+                    *hl_g,
+                    *hl_b,
+                );
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.draw_mesh(
+                    rx - pivot_x,
+                    ry - pivot_y,
+                    ew,
+                    eh,
+                    slot,
+                    *mesh_id,
+                    *fov,
+                    *distance,
+                    *qx,
+                    *qy,
+                    *qz,
+                    *qw,
+                    *px,
+                    *py,
+                    *pz,
+                    *mesh_scale,
+                    *light_pitch,
+                    *light_yaw,
+                    *ambient,
+                    *specular,
+                    *hl_u_min,
+                    *hl_v_min,
+                    *hl_u_max,
+                    *hl_v_max,
+                    *hl_r,
+                    *hl_g,
+                    *hl_b,
+                );
+                renderer.restore();
+            }
+        }
     }
 }
 
@@ -2621,6 +2942,7 @@ fn animation_key(def: &HostAnimationDef, draw_counter: u32) -> u64 {
 }
 
 /// Extract the static values from a draw command's innermost content for transition tracking.
+#[expect(clippy::too_many_lines)]
 fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
     match draw {
         DrawCommand::Bitmap { x, y, w, h, .. } | DrawCommand::NinePatch { x, y, w, h, .. } => {
@@ -2653,6 +2975,42 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             zoom: *zoom,
             light_lat: *light_lat,
             light_lon: *light_lon,
+            ..Default::default()
+        },
+        DrawCommand::Mesh {
+            x,
+            y,
+            w,
+            h,
+            fov,
+            distance,
+            qx,
+            qy,
+            qz,
+            qw,
+            px,
+            py,
+            pz,
+            scale,
+            light_pitch,
+            light_yaw,
+            ambient,
+            specular,
+            ..
+        } => PrevDrawValues {
+            x: *x,
+            y: *y,
+            w: *w,
+            h: *h,
+            orientation: Quat::from_xyzw(*qx, *qy, *qz, *qw),
+            fov: *fov,
+            distance: *distance,
+            mesh_scale: *scale,
+            position: Vec3::new(*px, *py, *pz),
+            light_pitch: *light_pitch,
+            light_yaw: *light_yaw,
+            ambient: *ambient,
+            specular: *specular,
             ..Default::default()
         },
         DrawCommand::Rect { x, y, w, h, color }
@@ -2755,7 +3113,25 @@ fn interpolate_draw_values(
         zoom: a.zoom + (b.zoom - a.zoom) * t,
         light_lat: a.light_lat + (b.light_lat - a.light_lat) * t,
         light_lon: a.light_lon + shortest_angle_delta_deg(a.light_lon, b.light_lon) * t,
+        // Mesh fields — nlerp for quaternion, linear for the rest
+        orientation: nlerp(a.orientation, b.orientation, t),
+        fov: a.fov + (b.fov - a.fov) * t,
+        distance: a.distance + (b.distance - a.distance) * t,
+        mesh_scale: a.mesh_scale + (b.mesh_scale - a.mesh_scale) * t,
+        position: a.position.lerp(b.position, t),
+        light_pitch: a.light_pitch + (b.light_pitch - a.light_pitch) * t,
+        light_yaw: a.light_yaw + (b.light_yaw - a.light_yaw) * t,
+        ambient: a.ambient + (b.ambient - a.ambient) * t,
+        specular: a.specular + (b.specular - a.specular) * t,
     }
+}
+
+/// Normalized linear interpolation for quaternions.
+///
+/// Delegates to `glam::Quat::slerp` which handles short-path selection
+/// and is SIMD-accelerated when available.
+fn nlerp(a: Quat, b: Quat, t: f32) -> Quat {
+    a.slerp(b, t)
 }
 
 // Modal rendering constants

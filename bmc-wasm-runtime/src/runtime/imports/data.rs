@@ -28,6 +28,7 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_temperature_format_import(linker)?;
     register_rrule_import(linker)?;
     register_timezone_import(linker)?;
+    register_random_import(linker)?;
     Ok(())
 }
 
@@ -581,6 +582,34 @@ fn register_timezone_import(linker: &mut Linker<HostState>) -> Result<()> {
                 }
             }
             0
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_random_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_random_u32",
+        |mut caller: Caller<'_, HostState>| -> u32 {
+            let state = caller.data_mut();
+            if state.rng_state == 0 {
+                state.rng_state = state.monotonic_ms | 1;
+            }
+
+            let mut s = state.rng_state;
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            state.rng_state = s;
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "host_random_u32 intentionally returns the low 32 bits of the xorshift state"
+            )]
+            {
+                s as u32
+            }
         },
     )?;
 

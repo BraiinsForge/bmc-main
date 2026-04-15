@@ -181,6 +181,18 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
 
     linker.func_wrap(
         "env",
+        "host_register_mesh",
+        |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
+            let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
+                return 0;
+            };
+            let state = caller.data_mut();
+            u32::from(state.renderer.register_mesh(&data))
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
         "host_register_bitmap_nearest",
         |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {

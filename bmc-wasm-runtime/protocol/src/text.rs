@@ -33,14 +33,54 @@ pub enum CrossAlign {
     End = 3,
 }
 
-impl From<u32> for CrossAlign {
-    fn from(v: u32) -> Self {
-        match v {
-            1 => Self::Center,
-            2 => Self::Start,
-            3 => Self::End,
-            _ => Self::Stretch,
+/// Packed layout flags occupying 4 bytes (offset 36–40) in `PropsData` wire
+/// format. Bit allocation is documented here so future flags add a named
+/// constant + accessor instead of reaching into the bits ad-hoc.
+///
+/// | bits      | meaning                              |
+/// |-----------|--------------------------------------|
+/// | `0..8`    | `CrossAlign` discriminant            |
+/// | `8`       | `wrap` (bool)                        |
+/// | `9..32`   | reserved — must remain zero          |
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayoutFlags(u32);
+
+impl LayoutFlags {
+    const CROSS_ALIGN_MASK: u32 = 0xFF;
+    const FLAG_WRAP: u32 = 1 << 8;
+
+    #[must_use]
+    pub fn new(cross_align: CrossAlign, wrap: bool) -> Self {
+        let mut bits = (cross_align as u32) & Self::CROSS_ALIGN_MASK;
+        if wrap {
+            bits |= Self::FLAG_WRAP;
         }
+        Self(bits)
+    }
+
+    #[must_use]
+    pub fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    #[must_use]
+    pub fn bits(self) -> u32 {
+        self.0
+    }
+
+    #[must_use]
+    pub fn cross_align(self) -> CrossAlign {
+        match self.0 & Self::CROSS_ALIGN_MASK {
+            1 => CrossAlign::Center,
+            2 => CrossAlign::Start,
+            3 => CrossAlign::End,
+            _ => CrossAlign::Stretch,
+        }
+    }
+
+    #[must_use]
+    pub fn wrap(self) -> bool {
+        self.0 & Self::FLAG_WRAP != 0
     }
 }
 
@@ -198,6 +238,9 @@ pub struct PropsData {
     pub max_width: f32,
     pub max_height: f32,
     pub cross_align: CrossAlign,
+    /// Enable flex wrapping: children wrap to the next line when they exceed
+    /// the container's main-axis size. Equivalent to CSS `flex-wrap: wrap`.
+    pub wrap: bool,
     /// Nine-patch background image. `bitmap_id == 0` means none.
     pub bg_np_id: u16,
     pub bg_np_left: u16,
@@ -225,6 +268,7 @@ impl Default for PropsData {
             max_width: 0.0,
             max_height: 0.0,
             cross_align: CrossAlign::Stretch,
+            wrap: false,
             bg_np_id: 0,
             bg_np_left: 0,
             bg_np_top: 0,
@@ -262,7 +306,8 @@ impl PropsData {
         buf[24..28].copy_from_slice(&self.flex.to_le_bytes());
         buf[28..32].copy_from_slice(&self.max_width.to_le_bytes());
         buf[32..36].copy_from_slice(&self.max_height.to_le_bytes());
-        buf[36..40].copy_from_slice(&(self.cross_align as u32).to_le_bytes());
+        let layout_flags = LayoutFlags::new(self.cross_align, self.wrap);
+        buf[36..40].copy_from_slice(&layout_flags.bits().to_le_bytes());
         buf[40..42].copy_from_slice(&self.bg_np_id.to_le_bytes());
         buf[42..44].copy_from_slice(&self.bg_np_left.to_le_bytes());
         buf[44..46].copy_from_slice(&self.bg_np_top.to_le_bytes());
@@ -287,9 +332,14 @@ impl PropsData {
             flex: f32::from_le_bytes([data[24], data[25], data[26], data[27]]),
             max_width: f32::from_le_bytes([data[28], data[29], data[30], data[31]]),
             max_height: f32::from_le_bytes([data[32], data[33], data[34], data[35]]),
-            cross_align: CrossAlign::from(u32::from_le_bytes([
+            cross_align: LayoutFlags::from_bits(u32::from_le_bytes([
                 data[36], data[37], data[38], data[39],
-            ])),
+            ]))
+            .cross_align(),
+            wrap: LayoutFlags::from_bits(u32::from_le_bytes([
+                data[36], data[37], data[38], data[39],
+            ]))
+            .wrap(),
             bg_np_id: u16::from_le_bytes([data[40], data[41]]),
             bg_np_left: u16::from_le_bytes([data[42], data[43]]),
             bg_np_top: u16::from_le_bytes([data[44], data[45]]),

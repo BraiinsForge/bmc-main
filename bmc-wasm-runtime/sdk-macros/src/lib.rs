@@ -5,7 +5,18 @@
 //! Provides `include_icon!` which compiles SVG files into compact binary path
 //! data at build time using usvg.
 
+#![expect(
+    clippy::manual_assert,
+    clippy::too_many_lines,
+    clippy::map_unwrap_or,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::redundant_closure_for_method_calls,
+    clippy::cast_possible_truncation,
+    reason = "proc-macro input validation and literal emission are intentionally explicit"
+)]
+
 mod json;
+mod mesh;
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -39,6 +50,63 @@ pub fn include_bitmap(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         bmc_wasm_sdk::Bitmap {
             data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #rel_path))
+        }
+    };
+
+    expanded.into()
+}
+
+/// Embed a glTF 2.0 binary (.glb) mesh at compile time.
+///
+/// Parses the mesh, validates it against hardware constraints (triangle count,
+/// vertex count, texture size), quantizes vertices, and packs everything into
+/// an optimized binary format. The host uploads VBO/IBO/texture to GPU on
+/// first registration.
+///
+/// # Compile-time validation
+///
+/// Produces clear `compile_error!` if:
+/// - Triangle count > 5,000
+/// - Vertex count > 65,535
+/// - Missing normals
+/// - Texture dimensions not power-of-2
+/// - Texture > 1024x1024
+/// - Non-triangulated faces
+///
+/// # Usage
+///
+/// ```ignore
+/// static SUZANNE: Mesh = include_mesh!("assets/suzanne.glb");
+/// ```
+///
+/// The path is relative to the crate's `CARGO_MANIFEST_DIR`.
+#[proc_macro]
+pub fn include_mesh(input: TokenStream) -> TokenStream {
+    let path_lit = parse_macro_input!(input as LitStr);
+    let rel_path = path_lit.value();
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .unwrap_or_else(|_| panic!("CARGO_MANIFEST_DIR not set"));
+    let full_path = std::path::Path::new(&manifest_dir).join(&rel_path);
+
+    if !full_path.exists() {
+        panic!("mesh file not found: {}", full_path.display());
+    }
+
+    let (packed, face_normals) = mesh::pack_mesh(&full_path);
+
+    // Generate face_normals as &[[f32; 3]] literal
+    let normal_arrays = face_normals.iter().map(|[x, y, z]| {
+        quote! { [#x, #y, #z] }
+    });
+
+    let expanded = quote! {
+        {
+            const _TRACK: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #rel_path));
+            bmc_wasm_sdk::Mesh {
+                data: &[#(#packed),*],
+                face_normals: &[#(#normal_arrays),*],
+            }
         }
     };
 

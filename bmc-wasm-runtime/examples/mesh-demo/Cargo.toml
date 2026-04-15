@@ -1,0 +1,13 @@
+[package]
+name = "mesh-demo"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../sdk", features = ["math-3d"] }
+
+[lints]
+workspace = true
