@@ -76,7 +76,13 @@ impl FemtoVgRenderer {
     ///
     /// # Safety
     /// `load_fn` must return valid OpenGL function pointers for the current GL context.
-    pub unsafe fn new<F>(mut load_fn: F, width: u32, height: u32, fbo_id: u32) -> Result<Self>
+    pub unsafe fn new<F>(
+        mut load_fn: F,
+        width: u32,
+        height: u32,
+        fbo_id: u32,
+        mesh_msaa_samples: u32,
+    ) -> Result<Self>
     where
         F: FnMut(&str) -> *const c_void,
     {
@@ -125,7 +131,7 @@ impl FemtoVgRenderer {
             bitmap_registry: BitmapRegistry::new(),
             sphere: None,
             mesh_renderer: None,
-            mesh_msaa_samples: 0,
+            mesh_msaa_samples,
             width: width as f32,
             height: height as f32,
             frame_counter: 0,

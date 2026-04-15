@@ -121,6 +121,10 @@ pub struct RuntimeConfig {
     pub event_fixtures: Vec<FixtureEvent>,
     /// Per-runtime caps for host-side resources such as fetches and sockets.
     pub resource_limits: RuntimeResourceLimits,
+    /// MSAA samples used by the mesh atlas renderer. `0` disables mesh MSAA.
+    pub mesh_msaa_samples: u32,
+    /// Seed for the host RNG. `0` keeps time-derived auto-seeding.
+    pub rng_seed: u64,
 }
 
 impl Default for RuntimeConfig {
@@ -134,6 +138,8 @@ impl Default for RuntimeConfig {
             record_events: false,
             event_fixtures: Vec::new(),
             resource_limits: RuntimeResourceLimits::default(),
+            mesh_msaa_samples: 0,
+            rng_seed: 0,
         }
     }
 }
@@ -181,6 +187,19 @@ impl WasmWidgetRuntime {
     where
         F: FnMut(&str) -> *const c_void,
     {
+        let RuntimeConfig {
+            fuel_per_frame,
+            prefs,
+            kv_store_path,
+            fetch_interceptor,
+            fetch_observer,
+            record_events,
+            event_fixtures,
+            resource_limits,
+            mesh_msaa_samples,
+            rng_seed,
+        } = config;
+
         let mut engine_config = wasmi::Config::default();
         engine_config.consume_fuel(true);
         engine_config.set_max_cached_stacks(4);
@@ -195,11 +214,12 @@ impl WasmWidgetRuntime {
         let engine = wasmi::Engine::new(&engine_config);
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
-        let renderer = unsafe { FemtoVgRenderer::new(load_fn, width, height, fbo_id) }?;
-        let host_state = HostState::new(renderer, config.prefs, config.resource_limits);
+        let renderer =
+            unsafe { FemtoVgRenderer::new(load_fn, width, height, fbo_id, mesh_msaa_samples) }?;
+        let host_state = HostState::new(renderer, prefs, resource_limits);
 
         let mut store = wasmi::Store::new(&engine, host_state);
-        store.set_fuel(config.fuel_per_frame)?;
+        store.set_fuel(fuel_per_frame)?;
 
         let mut linker = Linker::new(&engine);
         Self::register_host_functions(&mut linker)?;
@@ -210,13 +230,14 @@ impl WasmWidgetRuntime {
 
         // Apply config before init() so interceptors/KV are available immediately.
         let state = store.data_mut();
-        state.kv_store_path = config.kv_store_path;
-        state.fetch_interceptor = config.fetch_interceptor;
-        state.fetch_observer = config.fetch_observer;
-        state.record_events = config.record_events;
-        if !config.event_fixtures.is_empty() {
+        state.kv_store_path = kv_store_path;
+        state.fetch_interceptor = fetch_interceptor;
+        state.fetch_observer = fetch_observer;
+        state.record_events = record_events;
+        state.rng_state = rng_seed;
+        if !event_fixtures.is_empty() {
             state.event_fixtures = Some(crate::host_api::FixtureEventState {
-                events: config.event_fixtures,
+                events: event_fixtures,
                 cursor: 0,
                 ws_event_txs: HashMap::new(),
                 socket_event_txs: HashMap::new(),
@@ -236,7 +257,7 @@ impl WasmWidgetRuntime {
             instance,
             render_func,
             sdk_version,
-            fuel_per_frame: config.fuel_per_frame,
+            fuel_per_frame,
             fuel_strikes: 0,
             fuel_dead: false,
             max_fuel_strikes: 5,

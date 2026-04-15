@@ -405,7 +405,7 @@ impl App {
             seed_kv_from_secrets(&self.wasm_path, &kv_path);
 
             // Active recording tile gets fixture-recording RuntimeConfig with unified observer
-            let rt_config = if record_active_idx == Some(tile_idx) {
+            let mut rt_config = if record_active_idx == Some(tile_idx) {
                 fixtures::build_unified_recording_config(
                     kv_path.clone(),
                     record_fetch_events.clone(),
@@ -417,6 +417,7 @@ impl App {
                     ..RuntimeConfig::default()
                 }
             };
+            rt_config.mesh_msaa_samples = 4;
 
             let runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, rt_config)
                 .context("Failed to create runtime")?;
@@ -447,6 +448,7 @@ impl App {
                 STATS_W,
                 STATS_H,
                 stats_fbo.0.get(),
+                0,
             )
             .context("Failed to create stats renderer")?
         };
@@ -828,6 +830,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             let fbo_id = fbo.0.get();
             let rt_config = RuntimeConfig {
                 kv_store_path: Some(tile.kv_path.clone()),
+                mesh_msaa_samples: 4,
                 ..RuntimeConfig::default()
             };
             match create_runtime(
