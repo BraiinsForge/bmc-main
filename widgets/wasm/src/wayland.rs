@@ -89,7 +89,8 @@ impl WaylandClient {
                     }
                     WidgetEvent::TouchDown { .. }
                     | WidgetEvent::TouchMotion { .. }
-                    | WidgetEvent::TouchUp { .. } => todo!(),
+                    | WidgetEvent::TouchUp { .. }
+                    | WidgetEvent::TouchCancel => todo!(),
                 }
             }
 

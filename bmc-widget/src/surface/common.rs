@@ -189,6 +189,8 @@ pub enum WidgetEvent {
     TouchMotion { id: i32, x: f64, y: f64 },
     /// Touch point lifted (standard Wayland `wl_touch`).
     TouchUp { id: i32 },
+    /// Touch sequence cancelled (standard Wayland `wl_touch`).
+    TouchCancel,
 }
 
 /// Common interface for widget surface clients.

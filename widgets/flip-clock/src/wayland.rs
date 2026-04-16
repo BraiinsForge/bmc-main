@@ -242,7 +242,8 @@ fn run_render_loop(
                 | WidgetEvent::Shutdown
                 | WidgetEvent::TouchDown { .. }
                 | WidgetEvent::TouchMotion { .. }
-                | WidgetEvent::TouchUp { .. } => {}
+                | WidgetEvent::TouchUp { .. }
+                | WidgetEvent::TouchCancel => {}
             }
         }
 
