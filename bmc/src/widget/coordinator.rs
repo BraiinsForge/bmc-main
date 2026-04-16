@@ -499,6 +499,21 @@ impl Coordinator {
 
     pub async fn spawn_widget(&self, scene_id: &crate::scene::SceneId, widget: &Widget) {
         let instance_id = widget.id.as_uuid().to_string();
+
+        // Migration placeholders (BDK-346) carry `Uuid::nil()` as their
+        // widget_type_id because the legacy kind has no matching
+        // manifest. They are not runnable — skip silently so the grid
+        // cell stays empty and the boot log isn't flooded with
+        // not-found errors for every placeholder on every scene.
+        if widget.widget_type_id.is_nil() {
+            info!(
+                scene_id = %scene_id,
+                widget_id = %instance_id,
+                "skipping migration placeholder widget (no manifest installed for its legacy kind)"
+            );
+            return;
+        }
+
         let position = Self::widget_to_position(widget);
         let fullscreen_descriptor =
             fullscreen_descriptor_for_widget(widget, &self.hardware_capabilities);
