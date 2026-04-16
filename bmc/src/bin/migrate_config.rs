@@ -51,8 +51,12 @@ async fn run() -> Result<()> {
     let report = bmc::config_migration::migrate_raw(&raw, &dst).await?;
 
     println!(
-        "scenes={} translated={} unavailable={} was_legacy={}",
-        report.scenes, report.translated_widgets, report.unavailable_widgets, report.was_legacy
+        "scenes={} translated={} legacy_remote={} unavailable={} was_legacy={}",
+        report.scenes,
+        report.translated_widgets,
+        report.legacy_remote_widgets,
+        report.unavailable_widgets,
+        report.was_legacy
     );
     Ok(())
 }

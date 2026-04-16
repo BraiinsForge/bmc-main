@@ -20,10 +20,28 @@ const DIGITAL_CLOCK_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_
 pub enum MigrationOutcome {
     /// A matching manifest was found and params were mapped.
     Translated { widget_type_id: Uuid, params: Value },
-    /// No matching manifest. The original data is preserved under
-    /// `params._legacy` on a placeholder widget with `Uuid::nil()`
-    /// as the type id.
+    /// Legacy `remote_widget` kind — closer to manifest shape than
+    /// other legacy widgets, so we preserve its full metadata
+    /// (`name`, `description`, `widget_url`, `icon_url`, `params`)
+    /// under `params._legacy_remote`. A future WASM remote-widget
+    /// host can adopt these placeholders without asking the user to
+    /// re-enter URLs.
+    LegacyRemote(LegacyRemoteData),
+    /// No matching manifest. Kind + original params are preserved
+    /// under `params._legacy` on a placeholder with `Uuid::nil()`
+    /// as the type id so a future translator can promote them.
     Unavailable,
+}
+
+/// Data carried alongside a `MigrationOutcome::LegacyRemote` so the
+/// JSON writer can emit the `_legacy_remote` placeholder.
+#[derive(Debug)]
+pub struct LegacyRemoteData {
+    pub name: String,
+    pub description: String,
+    pub widget_url: String,
+    pub icon_url: String,
+    pub params: Value,
 }
 
 /// Aggregate counts returned alongside the translated config.
@@ -32,6 +50,7 @@ pub struct Report {
     pub was_legacy: bool,
     pub scenes: usize,
     pub translated_widgets: usize,
+    pub legacy_remote_widgets: usize,
     pub unavailable_widgets: usize,
 }
 
@@ -89,6 +108,11 @@ fn translate_scene(scene: legacy::Scene, report: &mut Report) -> Value {
     })
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "widget.kind and widget.params are moved into the _legacy payload in the \
+              Unavailable arm; taking by reference would force a clone"
+)]
 fn translate_widget_into_json(widget: legacy::Widget, report: &mut Report) -> Value {
     let outcome = translate_widget(&widget);
     let (widget_type_id, params) = match outcome {
@@ -98,6 +122,25 @@ fn translate_widget_into_json(widget: legacy::Widget, report: &mut Report) -> Va
         } => {
             report.translated_widgets += 1;
             (widget_type_id, params)
+        }
+        MigrationOutcome::LegacyRemote(data) => {
+            report.legacy_remote_widgets += 1;
+            warn!(
+                id = %widget.id,
+                name = %data.name,
+                url = %data.widget_url,
+                "remote widget has no matching manifest; preserving as legacy-remote placeholder",
+            );
+            let legacy_payload = json!({
+                "_legacy_remote": {
+                    "name": data.name,
+                    "description": data.description,
+                    "widget_url": data.widget_url,
+                    "icon_url": data.icon_url,
+                    "params": data.params,
+                }
+            });
+            (Uuid::nil(), legacy_payload)
         }
         MigrationOutcome::Unavailable => {
             report.unavailable_widgets += 1;
@@ -132,9 +175,37 @@ fn translate_widget_into_json(widget: legacy::Widget, report: &mut Report) -> Va
 pub fn translate_widget(widget: &legacy::Widget) -> MigrationOutcome {
     match widget.kind.as_str() {
         "clock" => translate_clock(widget),
+        "remote_widget" => translate_remote_widget(widget),
         // ticker_btc, block_height, and friends have no manifest yet.
         _ => MigrationOutcome::Unavailable,
     }
+}
+
+/// Translate a legacy `remote_widget` into a `LegacyRemote` placeholder.
+///
+/// The old proto carried `name`, `description`, `widget_url`, `icon_url`,
+/// and free-form `params` — essentially a remote-manifest snapshot. We
+/// preserve all of it verbatim so a future WASM-hosted remote widget
+/// can adopt the placeholders without user re-entry.
+fn translate_remote_widget(widget: &legacy::Widget) -> MigrationOutcome {
+    let pick_string = |key: &str| -> String {
+        widget
+            .params
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+
+    let inner_params = widget.params.get("params").cloned().unwrap_or(Value::Null);
+
+    MigrationOutcome::LegacyRemote(LegacyRemoteData {
+        name: pick_string("name"),
+        description: pick_string("description"),
+        widget_url: pick_string("widget_url"),
+        icon_url: pick_string("icon_url"),
+        params: inner_params,
+    })
 }
 
 /// Translate a legacy `clock` widget.
@@ -265,5 +336,53 @@ mod tests {
             panic!("expected Translated");
         };
         assert_eq!(params["fontStyle"], "medium");
+    }
+
+    #[test]
+    fn remote_widget_preserves_full_metadata() {
+        let w = mk_widget(
+            "remote_widget",
+            json!({
+                "name": "Mempool Fees",
+                "description": "Current sat/vB",
+                "widget_url": "https://example.com/mempool.wasm",
+                "icon_url": "https://example.com/mempool.png",
+                "params": { "theme": "dark" },
+            }),
+        );
+        let outcome = translate_widget(&w);
+        let MigrationOutcome::LegacyRemote(data) = outcome else {
+            panic!("expected LegacyRemote, got {outcome:?}");
+        };
+        assert_eq!(data.name, "Mempool Fees");
+        assert_eq!(data.description, "Current sat/vB");
+        assert_eq!(data.widget_url, "https://example.com/mempool.wasm");
+        assert_eq!(data.icon_url, "https://example.com/mempool.png");
+        assert_eq!(data.params["theme"], "dark");
+    }
+
+    #[test]
+    fn remote_widget_tolerates_missing_fields() {
+        let w = mk_widget("remote_widget", json!({ "name": "Partial" }));
+        let MigrationOutcome::LegacyRemote(data) = translate_widget(&w) else {
+            panic!("expected LegacyRemote");
+        };
+        assert_eq!(data.name, "Partial");
+        assert_eq!(data.description, "");
+        assert_eq!(data.widget_url, "");
+        assert_eq!(data.icon_url, "");
+        assert!(data.params.is_null());
+    }
+
+    #[test]
+    fn translate_config_emits_current_version_field() {
+        let cfg = legacy::Config {
+            scenes: vec![],
+            accounts: vec![],
+        };
+        let (json, report) = translate_config(cfg);
+        assert_eq!(json["version"], CONFIG_VERSION);
+        assert!(report.was_legacy);
+        assert_eq!(report.scenes, 0);
     }
 }

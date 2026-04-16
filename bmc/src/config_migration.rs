@@ -95,6 +95,7 @@ async fn migrate_v0_to_current(raw: &str, dest: &Path) -> Result<Report> {
 
     info!(
         translated = report.translated_widgets,
+        legacy_remote = report.legacy_remote_widgets,
         unavailable = report.unavailable_widgets,
         scenes = report.scenes,
         "config migration complete",

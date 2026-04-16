@@ -69,14 +69,24 @@ async fn migrates_device_sample_without_losing_scenes() {
                 .as_str()
                 .expect("BUG: widget_type_id must be a string");
             if type_id == "00000000-0000-0000-0000-000000000000" {
-                // Unavailable placeholders must keep the original data
-                // around so a later migration pass can promote them.
-                let legacy = &widget["params"]["_legacy"];
+                // Placeholders must preserve enough legacy data for a
+                // later migration pass to promote them. Two accepted
+                // shapes: `_legacy` (kind + params) for native widgets,
+                // `_legacy_remote` (name, url, icon, ...) for the old
+                // remote widget.
+                let params = &widget["params"];
+                let has_legacy = params["_legacy"].is_object();
+                let has_legacy_remote = params["_legacy_remote"].is_object();
                 assert!(
-                    legacy.is_object(),
-                    "unavailable placeholder missing _legacy payload: {widget}",
+                    has_legacy || has_legacy_remote,
+                    "placeholder missing _legacy or _legacy_remote payload: {widget}",
                 );
-                assert!(legacy["kind"].is_string());
+                if has_legacy {
+                    assert!(params["_legacy"]["kind"].is_string());
+                }
+                if has_legacy_remote {
+                    assert!(params["_legacy_remote"]["widget_url"].is_string());
+                }
             }
         }
     }
@@ -117,6 +127,7 @@ async fn current_version_config_is_a_noop() {
     );
     assert_eq!(report.scenes, 0);
     assert_eq!(report.translated_widgets, 0);
+    assert_eq!(report.legacy_remote_widgets, 0);
     assert_eq!(report.unavailable_widgets, 0);
 
     // Backup must NOT be written on a no-op.
