@@ -24,13 +24,16 @@
 # Prerequisites on device:
 #   - /nix bind mount exists (e.g. /mnt/data/nix -> /nix)
 #   - SSH access as root
-#   - bmc-nix-cli available at /run/current-profile/bin/bmc-nix-cli
 #   - nix-store available at /run/current-profile/bin/nix-store
 set -euxo pipefail
 
 attr="${1:?Usage: nix-deploy.sh <flake-uri> [device-ip]}"
 device="${2:-${DEVICE_IP:?Set DEVICE_IP or pass as second argument}}"
 output="${NIX_OUTPUT:-out}"
+
+# Ensure bmc-nix-cli is available on the device (bootstraps if needed)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bmc_nix_cli=$("${SCRIPT_DIR}/ensure-bmc-nix-cli.sh" "${device}")
 
 # Auto-detect: index package (.pkg exists) vs raw nixpkgs derivation
 if nix eval "${attr}.pkg.name" &>/dev/null; then
@@ -53,7 +56,7 @@ nix copy --to "ssh://root@${device}?remote-program=/run/current-profile/bin/nix-
 # shellcheck disable=SC2029 # Intentional client-side expansion
 ssh "root@${device}" \
     "PATH=/run/current-profile/bin:\$PATH \
-     bmc-nix-cli add-packages \
+     ${bmc_nix_cli} add-packages \
         --profile-dir /nix/var/nix/gcroots/profiles/bmc \
         --name '${deploy_name}' --version '${version}' --store-path '${store_path}' \
         --activate"
