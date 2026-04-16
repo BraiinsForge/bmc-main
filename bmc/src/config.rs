@@ -125,8 +125,18 @@ impl ConfigNotify {
     }
 }
 
+/// Current on-disk config schema version. Bump on every breaking shape
+/// change and wire a new migration arm in `crate::config_migration`.
+pub const CONFIG_VERSION: u32 = 1;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
+    /// Schema version of the on-disk config. `0` (or missing) means a
+    /// legacy slint-monolith config that needs migration; `1` is the
+    /// current manifest-driven format. Unknown values abort boot —
+    /// see `crate::config_migration::migrate_in_place`.
+    #[serde(default)]
+    pub version: u32,
     #[serde(
         serialize_with = "serialize_scenes",
         deserialize_with = "deserialize_scenes",
@@ -351,6 +361,10 @@ impl Config {
     }
 
     async fn save(&mut self, path: impl AsRef<Path>) -> Result<()> {
+        // Belt-and-braces: every on-disk config carries the current
+        // schema version. `Default::default()` already sets it, but a
+        // caller could mutate `self.version` directly — pin it here.
+        self.version = CONFIG_VERSION;
         let config_data =
             serde_json::to_string_pretty(&self).context("Failed to serialize config")?;
 
@@ -366,6 +380,7 @@ impl Config {
     #[must_use]
     pub fn platform_default(product: bmc_platform::Product) -> Self {
         Self {
+            version: CONFIG_VERSION,
             scenes: defaults::scenes_for(product),
             scene_cycling: Some(SceneCycling::default()),
             localization: None,
