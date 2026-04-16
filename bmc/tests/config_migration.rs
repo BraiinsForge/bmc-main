@@ -50,6 +50,11 @@ async fn migrates_device_sample_without_losing_scenes() {
     let v: serde_json::Value =
         serde_json::from_str(&migrated).expect("BUG: migrated output must be valid JSON");
 
+    assert_eq!(
+        v["version"], 1,
+        "migrated config must carry the current schema version",
+    );
+
     let scenes = v["scenes"]
         .as_array()
         .expect("BUG: migrated config must have a scenes array");
@@ -95,12 +100,10 @@ async fn migrates_device_sample_without_losing_scenes() {
 }
 
 #[tokio::test]
-async fn already_new_config_is_a_noop() {
+async fn current_version_config_is_a_noop() {
     let tmp = tempdir();
     let dest = tmp.join("bmc_config.json");
-    // A minimal new-shape config: top-level keys that serde-default
-    // into Config with empty scenes.
-    fs::write(&dest, r#"{"scenes":[]}"#)
+    fs::write(&dest, r#"{"version":1,"scenes":{},"accounts":{}}"#)
         .await
         .expect("BUG: seed write should succeed");
 
@@ -108,7 +111,10 @@ async fn already_new_config_is_a_noop() {
         .await
         .expect("BUG: no-op migration should succeed");
 
-    assert!(!report.was_legacy, "new-format config must be detected");
+    assert!(
+        !report.was_legacy,
+        "already-versioned config must be a no-op"
+    );
     assert_eq!(report.scenes, 0);
     assert_eq!(report.translated_widgets, 0);
     assert_eq!(report.unavailable_widgets, 0);
@@ -127,6 +133,30 @@ async fn already_new_config_is_a_noop() {
             "no-op must not create a backup (got {name})",
         );
     }
+}
+
+#[tokio::test]
+async fn unknown_future_version_is_rejected() {
+    let tmp = tempdir();
+    let dest = tmp.join("bmc_config.json");
+    fs::write(&dest, r#"{"version":999,"scenes":{}}"#)
+        .await
+        .expect("BUG: seed write should succeed");
+
+    let err = config_migration::migrate_in_place(&dest)
+        .await
+        .expect_err("future version must be refused rather than overwritten");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("unsupported config version"),
+        "error should name the failure mode (got: {msg})",
+    );
+
+    // File must not have been modified.
+    let on_disk = fs::read_to_string(&dest)
+        .await
+        .expect("BUG: original file should still be readable");
+    assert!(on_disk.contains("999"), "file must be untouched");
 }
 
 /// Small helper producing a unique tmp dir for each test.

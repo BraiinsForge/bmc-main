@@ -9,6 +9,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use super::legacy;
+use crate::config::CONFIG_VERSION;
 
 /// Manifest UID of the digital-clock widget.
 /// Mirrors `widgets/digital-clock/manifest.json`.
@@ -34,6 +35,15 @@ pub struct Report {
     pub unavailable_widgets: usize,
 }
 
+impl Report {
+    /// Report produced by a no-op migration (file already at
+    /// `CONFIG_VERSION`, nothing translated).
+    #[must_use]
+    pub fn noop() -> Self {
+        Self::default()
+    }
+}
+
 /// Translate the whole legacy config into a JSON value ready to be
 /// deserialized into `crate::config::Config`.
 ///
@@ -53,6 +63,7 @@ pub fn translate_config(legacy: legacy::Config) -> (Value, Report) {
         .collect();
 
     let config = json!({
+        "version": CONFIG_VERSION,
         "scenes": scenes,
         "accounts": legacy.accounts,
     });
