@@ -261,10 +261,17 @@ impl StrategySummary {
 }
 
 /// Result of an install/upgrade run.
+///
+/// `generation` is `None` only in the edge case where the request was a
+/// no-op (empty added/removed/changed) AND no prior profile existed, so
+/// there is nothing to point at.
 #[derive(Debug)]
 pub struct InstallResult {
-    pub generation: ProfileGeneration,
+    pub generation: Option<ProfileGeneration>,
     pub strategies: StrategySummary,
+    pub added: Vec<PackageVersion>,
+    pub removed: Vec<PackageVersion>,
+    pub changed: Vec<PackageChange>,
 }
 
 #[cfg(test)]
