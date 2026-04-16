@@ -389,3 +389,104 @@ async fn reset_profile_ignores_existing_manifest() {
         std::fs::read_link(profile_dir.join("current")).expect("BUG: read current symlink");
     assert_eq!(current_target.to_str().expect("BUG: valid UTF-8"), "2-link");
 }
+
+/// Running add-packages twice with the same package does not create a new
+/// generation: the plan diff is empty, so `apply_profile_change` skips the
+/// rebuild entirely.
+#[tokio::test]
+async fn add_packages_noop_skips_generation() {
+    let tmp = TempDir::new().expect("BUG: create temp dir");
+    let profile_dir = tmp.path().join("profiles/bmc");
+
+    // Seed gen 1 using the test-friendly path.
+    let store_a = tmp.path().join("store-a-1.0.0");
+    create_fake_store(&store_a, &["bin/app-a"]);
+    create_activation_entrypoint(&store_a);
+
+    let packages = vec![test_resolved_package(
+        "a",
+        "1.0.0",
+        store_a.to_str().expect("BUG: valid UTF-8"),
+    )];
+    let plan_gen1 = bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &packages, &[])
+        .expect("BUG: plan should succeed");
+    apply_plan(&profile_dir, &plan_gen1).await;
+
+    assert!(profile_dir.join("1-link").exists(), "gen 1 should exist");
+    assert!(
+        !profile_dir.join("2-link").exists(),
+        "gen 2 should NOT exist yet"
+    );
+
+    // Re-apply the identical set through apply_profile_change. This exercises
+    // the no-op short-circuit: empty diff, no store verification, no build.
+    let result = bmc_nix::upgrade::apply_profile_change(
+        &profile_dir,
+        &packages,
+        &[],
+        false,
+        /* activate = */ false,
+        "hooks",
+        None,
+    )
+    .await
+    .expect("BUG: no-op apply_profile_change should succeed");
+
+    assert!(result.added.is_empty(), "no adds on a no-op");
+    assert!(result.removed.is_empty(), "no removes on a no-op");
+    assert!(result.changed.is_empty(), "no changes on a no-op");
+    assert!(
+        !profile_dir.join("2-link").exists(),
+        "gen 2 must NOT be created on a no-op"
+    );
+    let generation = result.generation.expect("BUG: current exists");
+    assert_eq!(generation.number, 1, "should point at gen 1");
+    assert!(
+        generation.path.ends_with("1-link"),
+        "should resolve to 1-link, got {:?}",
+        generation.path
+    );
+}
+
+/// `add-packages` with the same name in both add and remove lists is rejected
+/// at plan-computation time.
+#[tokio::test]
+async fn compute_plan_rejects_add_and_remove_same_name() {
+    let tmp = TempDir::new().expect("BUG: create temp dir");
+    let profile_dir = tmp.path().join("profiles/bmc");
+
+    // Seed a profile with package "a".
+    let store_a = tmp.path().join("store-a-1.0.0");
+    create_fake_store(&store_a, &["bin/app-a"]);
+    create_activation_entrypoint(&store_a);
+    let seed = vec![test_resolved_package(
+        "a",
+        "1.0.0",
+        store_a.to_str().expect("BUG: valid UTF-8"),
+    )];
+    let plan_gen1 = bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &seed, &[])
+        .expect("BUG: plan should succeed");
+    apply_plan(&profile_dir, &plan_gen1).await;
+
+    // Request "a" be added AND removed — must error.
+    let store_a_v2 = tmp.path().join("store-a-2.0.0");
+    create_fake_store(&store_a_v2, &["bin/app-a"]);
+    let adds = vec![test_resolved_package(
+        "a",
+        "2.0.0",
+        store_a_v2.to_str().expect("BUG: valid UTF-8"),
+    )];
+    let removes = vec!["a".into()];
+
+    let current_manifest =
+        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read manifest");
+    let err = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &adds, &removes)
+        .expect_err("add+remove of same name should error");
+    assert!(
+        matches!(
+            err,
+            bmc_nix::manifest::PlanConflict::AddAndRemove(ref name) if name == "a"
+        ),
+        "got unexpected error: {err:?}"
+    );
+}
