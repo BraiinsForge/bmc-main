@@ -157,6 +157,10 @@ pub struct TouchInput {
     pending_y: Option<i32>,
     /// Raw touch events collected during poll (for forwarding to widgets).
     raw_events: Vec<RawTouchEvent>,
+    /// Whether a drag was active at any point during the last `poll()` call.
+    /// Prevents leaking raw touch events to widgets when a complete swipe
+    /// (down→move→up) arrives in one evdev batch.
+    drag_seen_this_poll: bool,
 }
 
 impl std::fmt::Debug for TouchInput {
@@ -214,6 +218,7 @@ impl TouchInput {
             pending_x: None,
             pending_y: None,
             raw_events: Vec::new(),
+            drag_seen_this_poll: false,
         })
     }
 
@@ -226,6 +231,17 @@ impl TouchInput {
     /// Drain collected raw touch events (for forwarding to widgets).
     pub fn drain_raw_events(&mut self) -> Vec<RawTouchEvent> {
         std::mem::take(&mut self.raw_events)
+    }
+
+    /// Whether a scene drag was active at any point during the last `poll()`.
+    ///
+    /// Use this instead of `drag_info().is_some()` to decide whether raw touch
+    /// events should be forwarded to widgets. When a complete swipe arrives in
+    /// one evdev batch, `drag_active` is already cleared by the time `poll()`
+    /// returns, but this flag remains set.
+    #[must_use]
+    pub fn drag_seen_this_poll(&self) -> bool {
+        self.drag_seen_this_poll
     }
 
     /// Returns drag info while a drag is active (finger down, past dead zone).
@@ -266,6 +282,9 @@ impl TouchInput {
                 return None;
             }
         };
+
+        // Reset per-poll tracking. Updated below whenever drag_active transitions on.
+        self.drag_seen_this_poll = false;
 
         let mut gesture_result = None;
 
@@ -355,8 +374,13 @@ impl TouchInput {
             let dy = (self.state.current_y - self.state.start_y).abs();
             if dx > DRAG_DEAD_ZONE && dy <= DRAG_MAX_Y_DEVIATION {
                 self.state.drag_active = true;
+                self.drag_seen_this_poll = true;
                 tracing::debug!("Drag activated: dx={}", dx);
             }
+        }
+
+        if self.state.drag_active {
+            self.drag_seen_this_poll = true;
         }
     }
 

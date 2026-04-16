@@ -765,9 +765,12 @@ fn process_touch(state: &mut AppState) {
     let drag_info = touch.drag_info();
     let was_scene_dragging = state.compositor.widgets.drag_offset().is_some();
 
-    // Forward raw touch events to widgets via wl_touch (only when NOT navigating scenes)
+    // Forward raw touch events to widgets via wl_touch (only when NOT navigating scenes).
+    // Use drag_seen_this_poll() instead of drag_info.is_some() to handle the case where
+    // a complete swipe (down→move→up) arrives in one evdev batch — drag_active is cleared
+    // by the time poll() returns, but drag_seen_this_poll remains true.
     let raw_events = touch.drain_raw_events();
-    let is_scene_dragging = drag_info.is_some();
+    let is_scene_dragging = drag_info.is_some() || touch.drag_seen_this_poll();
 
     if !raw_events.is_empty() {
         #[expect(
