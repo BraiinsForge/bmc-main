@@ -19,7 +19,8 @@
       let
         pkgs = import nixpkgs { inherit system; config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [ "corefonts" ]; };
 
-        openwrtVersion = "24.10.6";
+        owrtCfg = import ./dl-cache/openwrt-config.nix;
+        openwrtVersion = owrtCfg.openwrtVersion;
         linuxVersion = "6.6.127";
 
         overlayDir = ./rootfs/overlay;
@@ -102,118 +103,48 @@
         # ── Step 1: Prebuilt OpenWrt image via ImageBuilder ─────────────────
         imageBuilder = pkgs.fetchurl {
           url = "https://downloads.openwrt.org/releases/${openwrtVersion}/targets/${openwrtTarget}/openwrt-imagebuilder-${openwrtVersion}-${openwrtTargetDash}.Linux-x86_64.tar.zst";
-          hash =
-            if isAarch64
-            then "sha256-1e2DR6eqCTpKBgn+4ROJ4nDlOoH4E4xtU0CwrM1pKf0="
-            else "sha256-sxSFdaYvuwelIvVeDb/5oM7OHmk/KSqE8kWvx8EeNUA=";
+          hash = owrtCfg.imageBuilderHash.${guestArch};
         };
 
-        packageList = builtins.concatStringsSep " " [
-          "kmod-mac80211-hwsim"
-          "hostapd-openssl"
-          "wpa-supplicant-openssl"
-          "iw"
-          "iwinfo"
-          "rpcd-mod-iwinfo"
-          "rpcd-mod-ucode"
-          "kmod-drm"
-          "kmod-drm-kms-helper"
-          "kmod-input-evdev"
-          "kmod-input-uinput"
-          "bash"
-          "htop"
-          "coreutils"
-          "strace"
-          "ip-full"
-          "kmod-sound-core"
-          "alsa-utils"
-          "mpg123"
-          "xxd"
-          "wget-ssl"
-          "ca-certificates"
-          "-uhttpd"
-          "-luci"
-        ];
+        packageList = builtins.concatStringsSep " " owrtCfg.packageList;
 
-        # ── Step 1a: Download cache (FOD — keyed by output hash) ─────────────
-        # Runs `make image` with network access to download .ipk packages
-        # and feed indexes from OpenWrt feeds.
+        # ── Step 1a: Vendored download cache (Git LFS) ──────────────────────
+        # Contains .ipk packages and feed indexes for the ImageBuilder.
+        # Committed as 7z archives in Git LFS — OpenWrt release feeds are NOT
+        # immutable (packages get security updates and rebuilds upstream).
         #
-        # The output is just the dl/ cache directory.
-        # Only rebuilds when outputHash changes (i.e. package list or OpenWrt version bump).
-        openwrtFeedCache = x86Pkgs.stdenv.mkDerivation {
-          pname = "openwrt-feed-cache-${guestArch}";
-          version = openwrtVersion;
-
-          dontUnpack = true;
-          dontConfigure = true;
-          dontFixup = true;
-
-          nativeBuildInputs = with x86Pkgs; [
-            # Build system
-            gnumake
-            bash
-            perl
-            python311
-            # Shell utilities (ImageBuilder prereq checks)
-            gawk
-            getopt
-            coreutils
-            ncurses
-            findutils
-            which
-            file
-            # Archive / compression
-            unzip
-            bzip2
-            xz
-            zstd
-            zlib
-            # File sync
-            rsync
-            # Network (FOD needs HTTPS access to download feeds)
-            wget
-            cacert
-          ];
-
-          buildPhase = ''
-            tar xf ${imageBuilder}
-            cd openwrt-imagebuilder-*
-            patchShebangs .
-            find . \( -name "Makefile" -o -name "GNUmakefile" -o -name "*.mk" \) \
-              -exec sed -i 's|/usr/bin/env|${x86Pkgs.coreutils}/bin/env|g' {} +
-
-            export SSL_CERT_FILE=${x86Pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
-            export NIX_SSL_CERT_FILE=$SSL_CERT_FILE
-
-            DUMMY_FILES=$(mktemp -d)
-            DUMMY_BIN=$(mktemp -d)
-
-            make image \
-              SHELL="${x86Pkgs.bash}/bin/bash" \
-              PROFILE="generic" \
-              PACKAGES="${packageList}" \
-              FILES="$DUMMY_FILES" \
-              BIN_DIR="$DUMMY_BIN" \
-              ROOTFS_PARTSIZE=1024 \
-              2>&1
+        # To refresh after changing packageList or openwrtVersion:
+        #   `just update-cache` from `bmc-virt`
+        openwrtFeedCache =
+          let
+            archiveRel = "dl-cache/data/${guestArch}.tar";
+            manifestRel = "dl-cache/data/${guestArch}.sha256";
+            archivePath = ./. + "/${archiveRel}";
+            manifestPath = ./. + "/${manifestRel}";
+            expectedManifest = owrtCfg.mkManifest owrtCfg.packageList;
+            # Fail fast at eval time with a clear message.
+            archive =
+              if !builtins.pathExists manifestPath || !builtins.pathExists archivePath then
+                builtins.throw ''
+                  OpenWrt feed cache not found (${archiveRel}).
+                  Run: `just update-cache` from `bmc-virt`
+                ''
+              else if builtins.readFile manifestPath != expectedManifest then
+                builtins.throw ''
+                  OpenWrt feed cache is stale — packageList or openwrtVersion
+                  in dl-cache/openwrt-config.nix changed but the cache was not rebuilt.
+                  Run: `just update-cache` from `bmc-virt`
+                ''
+              else archivePath;
+          in
+          x86Pkgs.runCommand "openwrt-feed-cache-${guestArch}-${openwrtVersion}" { } ''
+            mkdir -p $out
+            tar xf ${archive} -C $out
           '';
-
-          installPhase = ''
-            cp -a dl $out
-          '';
-
-          outputHashMode = "recursive";
-          outputHash =
-            # To update: set to pkgs.lib.fakeHash, build, paste the real hash.
-            if isAarch64
-            then "sha256-/2XGZ79doBCXp10fBf1H9BHr0Lq12JckrFZAUORm7Ao="
-            else "sha256-bhS5Uu1Ob7IM8C0iaLwQsEAkBPG6YTTemji1UcPQasM=";
-        };
 
         # ── Step 1b: Prebuilt OpenWrt image (pure — no network) ──────────────
-        # Uses the FOD cache to build fully offline.
-        # Overlay or flake.nix changes only rebuild this derivation — no network downloads.
+        # Uses the vendored feed cache to build fully offline.
+        # Overlay or flake.nix changes only rebuild this derivation — no downloads.
         vmImageBase = x86Pkgs.runCommand "openwrt-${guestArch}-base-${openwrtVersion}"
           {
             nativeBuildInputs = with x86Pkgs; [
@@ -247,17 +178,17 @@
           find . \( -name "Makefile" -o -name "GNUmakefile" -o -name "*.mk" \) \
             -exec sed -i 's|/usr/bin/env|${x86Pkgs.coreutils}/bin/env|g' {} +
 
-          # Pre-populate opkg download cache from FOD → offline build.
-          # The `dl` directory contains both feed indexes (used by opkg as --lists-dir)
-          # and cached .ipk files (used by opkg as --cache).
-          #
-          # `opkg update` will fail (no network in sandbox),
-          # but the `|| true` in the `ImageBuilder` `Makefile` swallows the error
-          # and the pre-populated files survive (opkg writes to temp files first, only renames on success).
-          #
+          # Pre-populate opkg download cache from vendored archive → offline build.
+          # The cache contains feed indexes and .ipk files.  `opkg update` fails
+          # (no network) but `|| true` in the ImageBuilder Makefile swallows it;
           # opkg install then finds everything it needs in the cache.
           cp -a ${openwrtFeedCache}/. dl/
           chmod -R u+w dl
+
+          # Disable signature verification — the vendored cache doesn't carry
+          # .sig files (upstream re-signs feeds, so signatures drift from the
+          # ImageBuilder's keys).
+          sed -i '/^option check_signature/d' repositories.conf
 
           MERGED_OVERLAY=$(mktemp -d)
           mkdir -p "$MERGED_OVERLAY/usr/share/fonts/truetype"
@@ -580,28 +511,12 @@
           CONSOLE_BINARY="$WORKSPACE/target/debug/bmc-virt-console"
 
           header "Building OpenWrt image (rootfs + kernel)"
-          BUILD_LOG=$(mktemp)
           if ! IMAGE=$(${pkgs.nix}/bin/nix build -L \
             "path:$WORKSPACE/bmc-virt#vmImage" \
             --option sandbox false \
-            --no-link --print-out-paths 2> >(${pkgs.coreutils}/bin/tee "$BUILD_LOG" >&2)); then
-            if grep -q "hash mismatch" "$BUILD_LOG"; then
-              echo ""
-              echo "================================================================"
-              echo "  FEED CACHE HASH MISMATCH"
-              echo "  The packageList in flake.nix changed but the outputHash"
-              echo "  for openwrtFeedCache was not updated."
-              echo ""
-              grep -E "specified:|got:" "$BUILD_LOG" | sed 's/^/  /'
-              echo ""
-              echo "  Fix: paste the 'got' hash into flake.nix outputHash"
-              echo "================================================================"
-              echo ""
-            fi
-            rm -f "$BUILD_LOG"
+            --no-link --print-out-paths); then
             exit 1
           fi
-          rm -f "$BUILD_LOG"
 
           BASE_IMAGE=$(find "$IMAGE" -maxdepth 1 -name '*ext4-combined.img*' ! -name '*efi*' -print -quit)
           if [[ -z "$BASE_IMAGE" ]]; then

@@ -1,5 +1,22 @@
 mod harness 'harness/justfile'
 
+# Rebuild the OpenWrt feed cache after changing packageList or openwrtVersion in dl-cache/openwrt-config.nix.
+update-cache:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd dl-cache
+    for arch in x86_64 aarch64; do
+      echo "=== Building feed cache for $arch ==="
+      result=$(nix build -L ".#$arch" --option sandbox false --no-link --print-out-paths)
+      install -m644 "$result/$arch.tar"    data/
+      install -m644 "$result/$arch.sha256" data/
+      echo "  → data/$arch.tar + data/$arch.sha256"
+    done
+    echo ""
+    echo "Feed cache updated.  Commit the changes:"
+    echo "  git add bmc-virt/dl-cache/data/"
+    echo "  git commit -m 'bmc-virt: dl-cache: Refresh OpenWrt feed cache'"
+
 logs:
     ./scripts/get-logs.sh
 

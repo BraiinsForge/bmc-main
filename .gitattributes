@@ -32,3 +32,4 @@ frontend/src/styles/fonts/braiins/BraiinsSans-SemiBold-Italic.otf filter=lfs dif
 *.mp3 filter=lfs diff=lfs merge=lfs -text
 *.mp4 filter=lfs diff=lfs merge=lfs -text
 *.jpg filter=lfs diff=lfs merge=lfs -text
+*.tar filter=lfs diff=lfs merge=lfs -text
