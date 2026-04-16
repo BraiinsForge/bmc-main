@@ -87,10 +87,48 @@ impl WaylandClient {
                     WidgetEvent::Shutdown => {
                         // Already handled by the client (sets running=false)
                     }
-                    WidgetEvent::TouchDown { .. }
-                    | WidgetEvent::TouchMotion { .. }
-                    | WidgetEvent::TouchUp { .. }
-                    | WidgetEvent::TouchCancel => todo!(),
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        reason = "wl_touch f64 → f32 is lossless for pixel coordinates"
+                    )]
+                    WidgetEvent::TouchDown { x, y, .. } => {
+                        if let Some(rs) = render.as_mut() {
+                            use bmc_wasm_runtime::interaction::TouchEvent;
+                            rs.runtime.push_touch_event(TouchEvent::Down {
+                                x: x as f32,
+                                y: y as f32,
+                            });
+                            self.surface.mark_needs_render();
+                        }
+                    }
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        reason = "wl_touch f64 → f32 is lossless for pixel coordinates"
+                    )]
+                    WidgetEvent::TouchMotion { x, y, .. } => {
+                        if let Some(rs) = render.as_mut() {
+                            use bmc_wasm_runtime::interaction::TouchEvent;
+                            rs.runtime.push_touch_event(TouchEvent::Move {
+                                x: x as f32,
+                                y: y as f32,
+                            });
+                            self.surface.mark_needs_render();
+                        }
+                    }
+                    WidgetEvent::TouchUp { .. } => {
+                        if let Some(rs) = render.as_mut() {
+                            use bmc_wasm_runtime::interaction::TouchEvent;
+                            rs.runtime.push_touch_event(TouchEvent::Up);
+                            self.surface.mark_needs_render();
+                        }
+                    }
+                    WidgetEvent::TouchCancel => {
+                        if let Some(rs) = render.as_mut() {
+                            use bmc_wasm_runtime::interaction::TouchEvent;
+                            rs.runtime.push_touch_event(TouchEvent::Cancel);
+                            self.surface.mark_needs_render();
+                        }
+                    }
                 }
             }
 

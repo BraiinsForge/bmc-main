@@ -14,6 +14,8 @@ pub enum TouchEvent {
     /// the last known position from the preceding `Move` or `Down` for
     /// hit-testing the release.
     Up,
+    /// Current touch stream was canceled by the host compositor.
+    Cancel,
     Move {
         x: f32,
         y: f32,

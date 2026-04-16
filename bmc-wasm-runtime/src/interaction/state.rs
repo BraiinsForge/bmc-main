@@ -72,6 +72,10 @@ impl InteractionState {
                     self.touch_down_key = None;
                     self.last_touch_pos = None;
                 }
+                TouchEvent::Cancel => {
+                    self.touch_down_key = None;
+                    self.last_touch_pos = None;
+                }
                 TouchEvent::Move { x, y } => {
                     // Track drag delta for scrolling
                     if let Some((_last_x, last_y)) = self.last_touch_pos {
