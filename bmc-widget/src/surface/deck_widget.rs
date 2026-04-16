@@ -41,6 +41,8 @@ pub enum DeckWidgetEvent {
     TouchMotion { id: i32, x: f64, y: f64 },
     /// Touch up from standard `wl_touch`.
     TouchUp { id: i32 },
+    /// Touch cancelled from standard `wl_touch`.
+    TouchCancel,
 }
 
 /// Surface state for a `deck_widget_v1` widget with DMA-BUF support.
@@ -375,6 +377,7 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
                     Some(WidgetEvent::TouchMotion { id, x, y })
                 }
                 DeckWidgetEvent::TouchUp { id } => Some(WidgetEvent::TouchUp { id }),
+                DeckWidgetEvent::TouchCancel => Some(WidgetEvent::TouchCancel),
             })
             .collect()
     }
@@ -541,8 +544,11 @@ impl Dispatch<wl_touch::WlTouch, ()> for DeckWidgetSurfaceState {
                 state.pending_events.push(DeckWidgetEvent::TouchUp { id });
                 state.needs_render = true;
             }
+            wl_touch::Event::Cancel => {
+                state.pending_events.push(DeckWidgetEvent::TouchCancel);
+                state.needs_render = true;
+            }
             wl_touch::Event::Frame
-            | wl_touch::Event::Cancel
             | wl_touch::Event::Shape { .. }
             | wl_touch::Event::Orientation { .. }
             | _ => {}
