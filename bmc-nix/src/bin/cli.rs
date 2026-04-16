@@ -2,7 +2,59 @@
 
 use std::path::PathBuf;
 
+use bmc_nix::types::{InstallResult, PackageChange, PackageVersion};
 use clap::{Parser, Subcommand};
+
+/// Print a human-readable diff of an `InstallResult` on stderr.
+///
+/// Format (matches spec §4):
+///
+/// ```text
+/// Profile change: +N added, -M removed, K changed
+///   + pkg version
+///   - pkg version
+///   ~ pkg: from -> to
+/// ```
+///
+/// When only a store path changed (same version), the change line is
+/// rendered as `~ pkg: version (store path changed)`.
+///
+/// Prints `Profile unchanged.` when the diff is empty.
+fn print_profile_diff(result: &InstallResult) {
+    if result.added.is_empty() && result.removed.is_empty() && result.changed.is_empty() {
+        eprintln!("Profile unchanged.");
+        return;
+    }
+
+    eprintln!(
+        "Profile change: +{} added, -{} removed, {} changed",
+        result.added.len(),
+        result.removed.len(),
+        result.changed.len(),
+    );
+
+    let mut added: Vec<&PackageVersion> = result.added.iter().collect();
+    added.sort_by(|a, b| a.name.cmp(&b.name));
+    for pv in added {
+        eprintln!("  + {} {}", pv.name, pv.version);
+    }
+
+    let mut removed: Vec<&PackageVersion> = result.removed.iter().collect();
+    removed.sort_by(|a, b| a.name.cmp(&b.name));
+    for pv in removed {
+        eprintln!("  - {} {}", pv.name, pv.version);
+    }
+
+    let mut changed: Vec<&PackageChange> = result.changed.iter().collect();
+    changed.sort_by(|a, b| a.name.cmp(&b.name));
+    for ch in changed {
+        if ch.from_version == ch.to_version {
+            eprintln!("  ~ {}: {} (store path changed)", ch.name, ch.from_version);
+        } else {
+            eprintln!("  ~ {}: {} -> {}", ch.name, ch.from_version, ch.to_version);
+        }
+    }
+}
 
 /// Top-level CLI for bmc-nix profile management.
 #[derive(Parser)]
@@ -206,7 +258,10 @@ async fn cmd_add_packages(
     )
     .await?;
 
-    println!("{}", result.generation.path.display());
+    print_profile_diff(&result);
+    if let Some(generation) = result.generation {
+        println!("{}", generation.path.display());
+    }
     Ok(())
 }
 
@@ -230,7 +285,10 @@ async fn cmd_remove_packages(
     )
     .await?;
 
-    println!("{}", result.generation.path.display());
+    print_profile_diff(&result);
+    if let Some(generation) = result.generation {
+        println!("{}", generation.path.display());
+    }
     Ok(())
 }
 
@@ -258,7 +316,10 @@ async fn cmd_reset_profile(
     )
     .await?;
 
-    println!("{}", result.generation.path.display());
+    let generation = result
+        .generation
+        .expect("BUG: reset-profile always produces a generation");
+    println!("{}", generation.path.display());
     Ok(())
 }
 
