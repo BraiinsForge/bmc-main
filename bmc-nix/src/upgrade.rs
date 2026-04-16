@@ -18,6 +18,8 @@ pub enum InstallError {
     BuildProfile(#[from] profile::BuildProfileError),
     #[error("activation failed: {0}")]
     Activation(#[from] activation::ActivationError),
+    #[error(transparent)]
+    Plan(#[from] manifest::PlanConflict),
 }
 
 /// Apply an add/remove change to the current profile.
@@ -48,7 +50,7 @@ pub async fn apply_profile_change(
     } else {
         manifest::read_current_manifest(profile_dir)?
     };
-    let plan = manifest::compute_upgrade_plan(&base_manifest, add_packages, remove_packages);
+    let plan = manifest::compute_upgrade_plan(&base_manifest, add_packages, remove_packages)?;
 
     // 3. Verify all store paths exist
     store::verify_store_paths(&store::TokioCommandRunner, &plan.packages).await?;
