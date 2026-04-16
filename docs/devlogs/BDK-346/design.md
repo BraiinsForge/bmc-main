@@ -1,168 +1,123 @@
-# BDK-346: Config Migrations (PoC)
+# BDK-346: Config Migration
 
 ## Goal
 
-When a device running the old slint-monolith firmware upgrades to the new
-manifest-driven widget system, its existing `/etc/bmc_config.json` must be
-automatically converted to the new schema. No user action required;
-scene layouts, widget positions, and params are preserved where a
-matching manifest exists, and anything untranslatable is retained as a
-placeholder so a later migration pass can promote it.
+Convert `/etc/bmc_config.json` from the slint-monolith shape to the
+manifest-driven shape on first boot of the new firmware, with no user
+action. Scene layouts and per-widget data are preserved as completely
+as possible; widgets without a destination today leave placeholders
+that a future firmware can promote.
 
-## Status
+The user-facing behaviour is in
+[`docs/stories/config-migration.md`](../../stories/config-migration.md).
+This document captures the design decisions.
 
-**PoC.** Scope limited to the one widget we can translate today
-(`clock` + `clock_style: "digital"` → `digital-clock` manifest). Every
-other old widget kind lands as an "unavailable" placeholder. As new
-manifests are written, add entries to the translation registry and
-they'll migrate automatically.
+## Versioning
 
-## Non-goals
+Inspired by `bos-main/open/bosminer/bosminer-config`, which has
+handled config migrations across four major versions and survived
+without major rework. Two patterns adopted:
 
-- Schema-versioning the new config (future improvement).
-- Migrating alarm / account / global settings (only `scenes` are
-  structurally different; other fields pass through or have no old-side
-  equivalent to migrate).
-- Rollback. The backup is the only escape hatch; we do not keep the
-  device dual-booted between formats.
+- **Lazy header peek.** A tiny `FormatHeader { version: u32 }` is
+  parsed first to decide which arm to dispatch to. Avoids a full
+  parse of an unknown schema.
+- **Explicit rejection of unknown future versions.** A v999 config on
+  a v1 binary errors out rather than silently overwriting. Prevents
+  data loss on accidental downgrade.
 
-## Architecture
+Two patterns deliberately not adopted:
 
-```
-bmc::config_migration
-├── legacy::*      — serde-Deserialize structs for the old format
-├── translate::*   — pure fns: old kind+params → MigrationOutcome
-└── migrate()      — orchestrator: detect → backup → translate → write
-```
+- **Trait chain (`Upgrade`/`Downgrade` with associated types).**
+  Overkill for one migration step; introduce when v2 lands.
+- **`#[serde(deny_unknown_fields)]`.** The current `Config` has many
+  optional fields used by deployed devices; turning this on would
+  break real configs.
 
-Entry points:
+`Config` gains a top-level `version: u32` field
+(`#[serde(default)]`, so legacy configs deserialise as 0).
+`Default::default()` and `Config::save()` pin it to `CONFIG_VERSION`
+(currently 1).
 
-1. `bmc::config_migration::migrate_in_place(path)` — called from
-   `ConfigHandle::init()` before load. Idempotent: if the file is
-   already in the new format, the function is a no-op.
-2. `bmc-migrate-config <src> <dst>` — a new `[[bin]]` in the `bmc`
-   crate (or `bmc-openwrt`, TBD). Reads `<src>`, writes `<dst>`, never
-   touches `/etc/`. Lets reviewers and CI exercise the translator
-   against captured samples without flashing a device.
-
-## Detection
-
-Shape-based. `migrate_in_place` reads the file, tries
-`serde_json::from_str::<NewConfig>(…)`. If it succeeds, config is
-already new — return immediately. If it fails, tries
-`serde_json::from_str::<LegacyConfig>(…)`. If that succeeds, it's old
-— migrate. If both fail, the file is malformed; fall back per the
-error-handling section.
-
-No schema version field is added to the new `Config`; we may add one
-later if we do a second migration.
-
-## Translation registry
-
-A function table keyed by the old `kind` string:
-
-```rust
-fn translate_widget(legacy: &LegacyWidget) -> MigrationOutcome {
-    match legacy.kind.as_str() {
-        "clock" => translate_clock(legacy),
-        // ticker_btc, block_height, etc. -> Unavailable for now
-        _ => MigrationOutcome::Unavailable(legacy.snapshot()),
-    }
-}
-```
-
-Each translator is a pure function — easy to unit-test in isolation
-with real param fixtures from the captured device sample.
-
-### `translate_clock`
-
-- `clock_style == "digital"` → `digital-clock` manifest
-  (`550e8400-e29b-41d4-a716-446655440001`).
-  - `show_seconds: bool` → `showSeconds: bool`
-  - `show_timezone: bool` → `showTimezone: bool`
-  - `numbers_font_style: "light"|"medium"|"bold"` → `fontStyle` (direct)
-  - `show_date` → dropped (new digital-clock has no date; logged at
-    `warn` level)
-- `clock_style != "digital"` → `Unavailable` (analog_rect, analog_round,
-  etc. have no matching manifest yet).
-
-## Unavailable placeholder
-
-A widget marked "unavailable" is written to the new config with:
-
-- `widget_type_id: Uuid::nil()` (sentinel `00000000-…`).
-- `params: { "_legacy": { "kind": "...", "params": { ... } } }` —
-  original data preserved verbatim.
-- `position` and `size` kept as-is.
-
-The compositor sees `Uuid::nil()` and must not spawn a widget process
-for it (renders nothing). The frontend scene editor can eventually
-detect the sentinel and show a "widget no longer available" card.
-Neither of those touches is in this PoC's scope.
-
-## Data flow
+Dispatch:
 
 ```
-┌─────────────────────────┐
-│ /etc/bmc_config.json    │  (old shape on disk)
-└───────────┬─────────────┘
-            │
-            ▼
-  ┌──────────────────┐     read + try-new → fail
-  │ migrate_in_place │     try-legacy → ok
-  └────────┬─────────┘
-           │
-           ▼
-  ┌─────────────────────────────────────┐
-  │ /etc/bmc_config.json.backup.<unix>  │  copy, never moved
-  └─────────────────────────────────────┘
-           │
-           ▼
-  ┌──────────────────┐
-  │  translate(cfg)  │  per-scene, per-widget
-  └────────┬─────────┘
-           │
-           ▼  (NewConfig value)
-  ┌─────────────────────────┐
-  │ utils::replace_file     │  atomic rename: .tmp → /etc/bmc_config.json
-  └─────────────────────────┘
+read /etc/bmc_config.json
+parse FormatHeader (version only)
+match version:
+  0 (or missing) → backup → translate → write new config (version: 1)
+  1              → no-op
+  other          → bail with explicit error, do not overwrite
 ```
 
-## Error handling
+## Per-widget outcomes
 
-**Total failure** (neither new nor legacy shape parses): log error,
-keep the original file untouched on disk, write a default `NewConfig`
-to `/etc/bmc_config.json`. Device boots functional but with empty
-scenes; the unparseable original remains on disk (also copied to
-`.backup.<ts>` so multiple attempts don't overwrite each other). User
-can ship the file to support for forensic recovery.
+Each legacy widget falls into one of three buckets. `position`,
+`size`, scene assignment are preserved in every case.
 
-**Partial failure** (old file parses, but some scenes or widgets
-error during translation): the failing scene or widget lands as a
-placeholder (`Uuid::nil()` with `_legacy` payload for widgets; empty
-scene with `_legacy_error` annotation for scenes). Migration continues;
-the final write succeeds.
+| Bucket          | Trigger                          | New `widget_type_id` | New `params`                                                            |
+|-----------------|----------------------------------|----------------------|-------------------------------------------------------------------------|
+| `Translated`    | Native manifest exists today     | manifest UID         | re-shaped to match the new manifest                                     |
+| `LegacyRemote`  | Legacy `kind == "remote_widget"` | `Uuid::nil()`        | `{"_legacy_remote": {name, description, widget_url, icon_url, params}}` |
+| `Unavailable`   | Any other kind without a target  | `Uuid::nil()`        | `{"_legacy": {kind, params}}`                                           |
 
-All errors logged at `warn` or `error` with the affected scene/widget
-ID and the original kind.
+### Why two placeholder shapes
 
-## Backup filename
+Old `remote_widget` entries already carried name + description + URL
++ icon — essentially a remote-manifest snapshot. A future WASM
+remote-widget host wants exactly that shape. Squashing both into a
+single `_legacy` would drop metadata and force users to re-enter URLs.
 
-`{original_path}.backup.{unix_seconds}` — e.g.
-`/etc/bmc_config.json.backup.1745002245`. Plain integer so sorting is
-trivial and no locale/timezone surprises.
+### Today's translators
+
+- `clock` + `clock_style: "digital"` → `digital-clock` manifest.
+  Param mapping: `show_seconds → showSeconds`,
+  `show_timezone → showTimezone`,
+  `numbers_font_style → fontStyle`. `show_date` is dropped (no
+  equivalent on the new manifest); a warning is logged.
+- `remote_widget` → `LegacyRemote` (preservation, no native target).
+- everything else → `Unavailable`.
+
+Adding a translator = one match arm + one pure function.
+
+## Safety
+
+- **Backup first.** `/etc/bmc_config.json.backup.<unix_secs>` is
+  written before the new config. Plain integer suffix sorts naturally,
+  no locale surprises.
+- **Atomic write** via `crate::utils::replace_file` (tmp + rename).
+- **Per-widget failure is local.** A widget that errors during
+  translation lands in `Unavailable`; the rest of the scene is
+  unaffected.
+- **Total parse failure** still produces a backup; the device boots
+  with an empty config so support can recover from the backup.
+
+## Compositor coordination
+
+`Coordinator::spawn_widget` short-circuits with an `info!` log when
+`widget.widget_type_id.is_nil()`. Without this, every placeholder
+would log a "widget not found" error every boot.
 
 ## Testing
 
-- **Unit**: per-translator tests with inline JSON fixtures covering
-  each branch (digital clock with full params; digital clock with
-  missing optional params; non-digital clock → unavailable; unknown
-  kind → unavailable).
-- **Integration**: round-trip test that reads
-  `bmc/tests/fixtures/legacy_config_sample.json` (the file we pulled
-  from the live device), runs the migrator, and asserts the output
-  deserializes as a valid new `Config` with the expected placeholder
-  count and the one translated widget.
-- **CLI smoke**: the `bmc-migrate-config` binary runs against the
-  fixture, exits 0, and produces the same output as the integration
-  test.
+- **Unit:** per-translator inline JSON fixtures + version detection
+  edge cases (missing field, explicit 1 / 2, malformed input).
+- **Integration:** round-trips a captured device config
+  (`bmc/tests/fixtures/legacy_config_sample.json`) through
+  `migrate_in_place` and asserts version, scene count, placeholder
+  payloads. Plus current-version no-op and unknown-future-version
+  rejection.
+- **CLI smoke:** `bmc-migrate-config` against the fixture exits 0
+  and emits a counts report. Catches translator coverage regressions.
+
+## Files
+
+- `bmc/src/config.rs` — `version` field, `CONFIG_VERSION` constant.
+- `bmc/src/config_migration.rs` — `FormatHeader` peek, dispatch,
+  backup, atomic write.
+- `bmc/src/config_migration/legacy.rs` — deserialise-only legacy types.
+- `bmc/src/config_migration/translate.rs` — outcome enum, per-kind
+  translators, report.
+- `bmc/src/widget/coordinator.rs` — placeholder skip.
+- `bmc/src/bin/migrate_config.rs` — offline CLI.
+- `bmc/tests/config_migration.rs` — integration tests.
+- `bmc/tests/fixtures/legacy_config_sample.json` — captured sample.

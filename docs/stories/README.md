@@ -91,6 +91,13 @@ The frontend picker integration and interactive installation experience will be 
 
 Information about all implemented official widgets.
 
+### [Config Migration on Firmware Upgrade](config-migration.md)
+
+When upgrading from the slint-monolith firmware to the manifest-driven widget
+system, the existing config is converted automatically.  Scenes and widget
+positions survive; widgets without a manifest yet leave placeholders that a
+future firmware can restore without user re-entry.
+
 ### Audio & Alarms
 
 See [Clock Alarm](alarm.md) for the whole alarm feature — configuring alarms from the web app (time, repeat days, label,
