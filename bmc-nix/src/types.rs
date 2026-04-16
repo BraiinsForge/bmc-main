@@ -207,12 +207,18 @@ pub struct UpgradePlan {
     pub changed: Vec<PackageChange>,
 }
 
-/// A package name+version pair used in upgrade plan summaries.
+/// A package that changes between the current and target profile.
+///
+/// "Change" covers both a version bump and a store-path change at the same
+/// version (rebuild or re-derivation), so callers can distinguish a rebuild
+/// from a version upgrade.
 #[derive(Debug, Clone)]
 pub struct PackageChange {
     pub name: String,
     pub from_version: String,
     pub to_version: String,
+    pub from_store_path: String,
+    pub to_store_path: String,
 }
 
 /// A package name+version pair.

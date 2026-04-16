@@ -151,11 +151,13 @@ pub fn compute_upgrade_plan(
 
         // Check if being replaced by an explicit add
         if let Some(&new_pkg) = add_by_name.get(name.as_str()) {
-            if new_pkg.version != pkg.version {
+            if new_pkg.version != pkg.version || new_pkg.store_path != pkg.store_path {
                 changed.push(PackageChange {
                     name: name.clone(),
                     from_version: pkg.version.clone(),
                     to_version: new_pkg.version.clone(),
+                    from_store_path: pkg.store_path.clone(),
+                    to_store_path: new_pkg.store_path.clone(),
                 });
             }
             packages.push(new_pkg.clone());
@@ -429,5 +431,45 @@ mod tests {
         let plan = compute_upgrade_plan(&current, &[], &["nonexistent".into()]);
         assert!(plan.removed.is_empty());
         assert_eq!(plan.packages.len(), 1);
+    }
+
+    #[test]
+    fn upgrade_plan_detects_store_path_only_change() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "widget".into(),
+                ManifestPackage {
+                    version: "1.0.0".into(),
+                    cache: "default".into(),
+                    store_path: "/nix/store/aaa-widget-1.0.0".into(),
+                    category: None,
+                    description: None,
+                    upgrade_strategy: None,
+                    install_strategy: None,
+                    installed_by: InstalledBy::System,
+                    installed_from: "server_a".into(),
+                    pinned: PinStrategy::None,
+                },
+            )]),
+        };
+        // Same name, same version, DIFFERENT store path.
+        let mut new_pkg = test_package("widget", "/nix/store/bbb-widget-1.0.0");
+        new_pkg.version = "1.0.0".into();
+
+        let plan = compute_upgrade_plan(&current, &[new_pkg], &[]);
+
+        assert_eq!(
+            plan.changed.len(),
+            1,
+            "store-path-only change must be flagged"
+        );
+        assert_eq!(plan.changed[0].name, "widget");
+        assert_eq!(plan.changed[0].from_version, "1.0.0");
+        assert_eq!(plan.changed[0].to_version, "1.0.0");
+        assert_eq!(
+            plan.changed[0].from_store_path,
+            "/nix/store/aaa-widget-1.0.0"
+        );
+        assert_eq!(plan.changed[0].to_store_path, "/nix/store/bbb-widget-1.0.0");
     }
 }
