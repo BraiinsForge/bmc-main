@@ -166,8 +166,6 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
-    pub const WWW_ROOT_PATH: &str = "/www/bmc";
-
     #[must_use]
     pub fn set_www_root_path(mut self, www_root_path: PathBuf) -> Self {
         self.www_root_path = www_root_path;
@@ -195,10 +193,14 @@ impl ServerConfig {
 
 impl Default for ServerConfig {
     fn default() -> Self {
+        const DEFAULT_ROOT: &str = match option_env!("BMC_WEB_FRONTEND_DIR") {
+            Some(p) => p,
+            None => "/run/current-profile/www/bmc",
+        };
         Self {
-            www_root_path: Self::WWW_ROOT_PATH.into(),
-            www_assets_path: PathBuf::from(Self::WWW_ROOT_PATH).join("assets"),
-            www_var_path: PathBuf::from(Self::WWW_ROOT_PATH).join("var"),
+            www_root_path: PathBuf::from(DEFAULT_ROOT),
+            www_assets_path: PathBuf::from(DEFAULT_ROOT).join("assets"),
+            www_var_path: PathBuf::from(DEFAULT_ROOT).join("var"),
             grpc_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 50051),
         }
     }

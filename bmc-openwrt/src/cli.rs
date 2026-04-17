@@ -23,7 +23,7 @@ pub struct Args {
     #[clap(long)]
     pub address: Option<SocketAddr>,
 
-    /// Path to frontend web files (default: /www/bmc)
+    /// Path to frontend web files (default: build-time BMC_WEB_FRONTEND_DIR or /run/current-profile/www/bmc)
     #[clap(long = "www-path")]
     pub www_path: Option<PathBuf>,
 }
