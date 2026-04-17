@@ -27,6 +27,15 @@ pub enum ReadManifestError {
     Read(#[source] std::io::Error),
     #[error("manifest parse failed: {0}")]
     Parse(#[source] serde_json::Error),
+    /// The `current` symlink is missing, dangling, or otherwise
+    /// unreadable. Emitted by `read_current_manifest`; callers that
+    /// want graceful degradation (e.g. `apply_profile_change`) catch
+    /// this variant and fall back to `read_latest_manifest`.
+    #[error("current generation not found at `{path}`")]
+    CurrentNotFound { path: String },
+    /// Requested generation `N` has no `<N>-link` directory.
+    #[error("generation {generation} not found at `{path}`")]
+    GenerationNotFound { generation: usize, path: String },
 }
 
 /// Error returned when `compute_upgrade_plan` is given inputs that conflict
@@ -108,16 +117,20 @@ pub fn read_manifest(profile_path: &Path) -> Result<Manifest, ReadManifestError>
     serde_json::from_str(&contents).map_err(ReadManifestError::Parse)
 }
 
-/// Read the manifest from the `current` symlink in `profile_dir`, or return
-/// an empty manifest when no profile exists yet.
+/// Read the manifest from the `current` symlink in `profile_dir`.
 ///
-/// Returns an error if the manifest file exists but cannot be parsed.
+/// Returns [`ReadManifestError::CurrentNotFound`] when the symlink is
+/// missing. Prior versions returned an empty manifest in this case;
+/// callers that want that behavior should use
+/// [`read_current_or_latest_manifest`] (added in a follow-up commit).
 pub fn read_current_manifest(profile_dir: &Path) -> Result<Manifest, ReadManifestError> {
     let current_link = profile_dir.join("current");
     if current_link.exists() {
         read_manifest(&current_link)
     } else {
-        Ok(Manifest::default())
+        Err(ReadManifestError::CurrentNotFound {
+            path: current_link.display().to_string(),
+        })
     }
 }
 
@@ -599,6 +612,20 @@ mod tests {
         assert!(
             matches!(err, PlanConflict::DuplicateRemove(ref name) if name == "widget"),
             "got unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn read_current_manifest_missing_symlink_errors_with_current_not_found() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        let err = read_current_manifest(&profile_dir)
+            .expect_err("missing `current` symlink must now error");
+        assert!(
+            matches!(err, ReadManifestError::CurrentNotFound { .. }),
+            "expected CurrentNotFound, got {err:?}"
         );
     }
 
