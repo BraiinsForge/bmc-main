@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::manifest::PlanConflict;
 use crate::types::{InstallResult, Manifest, ProfileGeneration, ResolvedPackage, StrategySummary};
 use crate::{activation, manifest, profile, store};
+use tracing::warn;
 
 /// Errors that can occur during an install/upgrade operation.
 #[derive(Debug, thiserror::Error)]
@@ -25,23 +26,32 @@ pub enum InstallError {
     ResolveCurrent(#[source] std::io::Error),
 }
 
-/// Apply an add/remove change to the current profile.
+/// Apply an add/remove change to a profile.
 ///
-/// Acquires the profile lock, reads the current manifest, computes the
-/// upgrade plan, verifies store paths, builds a new generation, and
-/// optionally activates it.
+/// Acquires the profile lock, resolves the base manifest, computes
+/// the upgrade plan, verifies store paths, builds a new generation,
+/// and optionally activates it.
 ///
-/// When `reset` is true the current manifest is ignored and all
-/// `add_packages` are treated as fresh installs (used by reset-profile).
+/// `base_manifest`:
+/// - `None` — default path: read the current manifest under the
+///   lock via [`manifest::read_current_manifest`]. If the `current`
+///   symlink is missing ([`manifest::ReadManifestError::CurrentNotFound`]),
+///   log a warning and fall back to [`manifest::read_latest_manifest`]
+///   so a broken-symlink profile is not silently treated as empty.
+/// - `Some(m)` — use `m` directly (resolved by the caller, possibly
+///   before taking the lock). This is the path used by explicit
+///   `--base` selections and by `reset-profile` (which passes an
+///   empty manifest).
 ///
-/// When the computed plan has no adds, removes, or changes, the rebuild
-/// is skipped entirely and the returned [`InstallResult`] points at the
-/// existing `current` generation (or `None` if no prior profile exists).
+/// The no-op short-circuit (empty plan → skip rebuild, return the
+/// resolved current generation) applies ONLY when `base_manifest`
+/// is `None`. With an explicit base, a new generation is always
+/// built even if the plan is empty against that base.
 pub async fn apply_profile_change(
     profile_dir: &Path,
+    base_manifest: Option<Manifest>,
     add_packages: &[ResolvedPackage],
     remove_packages: &[String],
-    reset: bool,
     activate: bool,
     hooks_dir: &str,
     hooks_override_path: Option<&Path>,
@@ -51,16 +61,30 @@ pub async fn apply_profile_change(
         .await
         .map_err(InstallError::Lock)?;
 
-    // 2. Read manifest under lock (or use empty for reset)
-    let base_manifest = if reset {
-        Manifest::default()
-    } else {
-        manifest::read_current_manifest(profile_dir)?
+    // 2. Resolve the base manifest. Track whether the caller passed
+    //    one so we can scope the no-op short-circuit correctly.
+    let explicit_base = base_manifest.is_some();
+    let base = match base_manifest {
+        Some(m) => m,
+        None => match manifest::read_current_manifest(profile_dir) {
+            Ok(m) => m,
+            Err(manifest::ReadManifestError::CurrentNotFound { path }) => {
+                warn!(
+                    %path,
+                    "`current` symlink missing; falling back to latest generation"
+                );
+                manifest::read_latest_manifest(profile_dir)?
+            }
+            Err(other) => return Err(other.into()),
+        },
     };
-    let plan = manifest::compute_upgrade_plan(&base_manifest, add_packages, remove_packages)?;
 
-    // 2a. Short-circuit on no-op: nothing to build.
-    if plan.added.is_empty() && plan.removed.is_empty() && plan.changed.is_empty() {
+    let plan = manifest::compute_upgrade_plan(&base, add_packages, remove_packages)?;
+
+    // 3. No-op short-circuit — only applies on the default (None) base
+    //    path. Explicit bases always build a new generation.
+    if !explicit_base && plan.added.is_empty() && plan.removed.is_empty() && plan.changed.is_empty()
+    {
         let generation = resolve_current_generation(profile_dir)?;
         return Ok(InstallResult {
             strategies: StrategySummary::from_packages(&plan.packages),
@@ -71,10 +95,10 @@ pub async fn apply_profile_change(
         });
     }
 
-    // 3. Verify all store paths exist
+    // 4. Verify store paths
     store::verify_store_paths(&store::TokioCommandRunner, &plan.packages).await?;
 
-    // 4. Build new profile generation
+    // 5. Build new profile generation
     let gen_number = profile::next_generation_number(profile_dir)?;
     let generation = profile::build_profile(
         profile_dir,
@@ -85,7 +109,7 @@ pub async fn apply_profile_change(
     )
     .await?;
 
-    // 5. Optionally activate
+    // 6. Optionally activate
     if activate {
         profile::activate_profile(
             profile_dir,
