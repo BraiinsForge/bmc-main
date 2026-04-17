@@ -18,6 +18,7 @@ use smithay::reexports::{
         EventLoop, Interest, Mode, PostAction,
         channel::{self as calloop_channel, Event as ChannelEvent},
         generic::Generic,
+        timer::{TimeoutAction, Timer},
     },
     drm::control::{Device as DrmControlDevice, Event as DrmEvent},
     wayland_server::{Display, ListeningSocket},
@@ -39,12 +40,23 @@ const DEFAULT_DISPLAY_PATH: &str = "/dev/dri/card1";
 const PHYSICAL_WIDTH: u32 = 480;
 const PHYSICAL_HEIGHT: u32 = 1_280;
 
-/// Synthetic refresh (mHz) advertised for headless mode; matches the
-/// `HEADLESS_FRAME_INTERVAL` timer that paces frame callbacks.
+/// Synthetic refresh (mHz) advertised to clients in headless mode.
+/// Picked to be close to the 16 ms `FRAME_CALLBACK_TICK` cadence so
+/// clients that rely on the advertised rate (e.g. timing-sensitive
+/// animations) don't skew against the actual callback delivery rate.
 const HEADLESS_REFRESH_MHZ: i32 = 60_000;
 
-/// Headless frame-callback pacing (~60 Hz).
-const HEADLESS_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+/// Cadence at which the compositor evaluates pending frame callbacks.
+///
+/// The widget rate cap in `CompositorState::send_frame_callbacks_for_presented_widgets`
+/// decides which callbacks are eligible to fire based on the per-widget
+/// minimum interval; this timer just gives the evaluator regular turns.
+/// 16 ms ≈ one vblank on a 63 Hz panel — callbacks land within at most
+/// one vblank of the moment the rate cap would allow them.
+///
+/// In headless mode the same timer also synthesises vblank-like state
+/// transitions, since there is no DRM device to emit real ones.
+const FRAME_CALLBACK_TICK: Duration = Duration::from_millis(16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RedrawState {
@@ -314,8 +326,10 @@ impl EglCompositor {
             Err(e) => tracing::error!("Failed to clone listener fd: {e}"),
         }
 
+        // Add DRM device fd for real vblank/page-flip events — HW only.
+        // In headless mode the callback tick below also synthesises vblank-
+        // like redraw-state transitions.
         if let Some(renderer) = &app_state.scene_renderer {
-            // Add DRM device fd for vblank/page-flip events
             match renderer
                 .output()
                 .drm()
@@ -347,30 +361,39 @@ impl EglCompositor {
                 }
                 Err(e) => tracing::error!("Failed to clone DRM device fd: {e}"),
             }
-        } else {
-            // Headless: synthetic ~60 Hz timer to pace frame callbacks
-            use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-            let timer = Timer::from_duration(HEADLESS_FRAME_INTERVAL);
-            if let Err(e) = loop_handle.insert_source(timer, |_, (), state| {
+        }
+
+        // Single always-on tick that evaluates pending frame callbacks and,
+        // in headless mode, also drives the redraw state machine in place
+        // of real DRM vblank events. Keeping a single chokepoint here —
+        // rather than one timer per mode plus post-render firing — avoids
+        // compounding call sites competing to fire the same callbacks.
+        let callback_tick = Timer::from_duration(FRAME_CALLBACK_TICK);
+        if let Err(e) = loop_handle.insert_source(callback_tick, |_, (), state| {
+            if state.scene_renderer.is_none() {
+                // Headless: synthesise a vblank by advancing the redraw
+                // machine so Queued commits transition to Idle.
                 state.refresh_redraw_state();
                 if matches!(state.redraw_state, RedrawState::Queued) {
                     state.redraw_state = RedrawState::Idle;
-                    #[expect(
-                        clippy::cast_possible_truncation,
-                        reason = "wrapping is acceptable for frame time"
-                    )]
-                    let time = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u32)
-                        .unwrap_or(0);
-                    state
-                        .compositor
-                        .send_frame_callbacks_for_presented_widgets(time);
                 }
-                TimeoutAction::ToDuration(HEADLESS_FRAME_INTERVAL)
-            }) {
-                tracing::error!("Failed to add headless timer to event loop: {e}");
             }
+
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "wrapping is acceptable for frame time"
+            )]
+            let time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u32)
+                .unwrap_or(0);
+            state
+                .compositor
+                .send_frame_callbacks_for_presented_widgets(time);
+
+            TimeoutAction::ToDuration(FRAME_CALLBACK_TICK)
+        }) {
+            tracing::error!("Failed to add frame-callback tick timer to event loop: {e}");
         }
 
         tracing::info!("Compositor event loop starting");
@@ -379,8 +402,6 @@ impl EglCompositor {
         let mut loop_w = ii_stopwatch::StopWatch::default();
         #[cfg(feature = "profiling")]
         let mut render_w = ii_stopwatch::StopWatch::default();
-        #[cfg(feature = "profiling")]
-        let mut callbacks_w = ii_stopwatch::StopWatch::default();
         #[cfg(feature = "profiling")]
         let mut dispatch_w = ii_stopwatch::StopWatch::default();
         #[cfg(feature = "profiling")]
@@ -391,9 +412,11 @@ impl EglCompositor {
         // Calloop event sources (registered above):
         //   - Wayland display fd  → client commits, protocol events
         //   - Wayland listener fd → new client connections
-        //   - DRM device fd       → vblank / page-flip-complete
+        //   - DRM device fd       → vblank / page-flip-complete (HW only)
         //   - Command channel     → scene changes, shutdown, settings
-        //   - Timer (headless)    → synthetic ~60 Hz tick (only without DRM)
+        //   - Callback tick timer → fire pending frame callbacks at 16 ms
+        //                           cadence; in headless mode also
+        //                           synthesises vblank-like state transitions
         //
         // State machine per iteration:
         //   1. Process protocol events (widget connect/disconnect/actions)
@@ -482,31 +505,13 @@ impl EglCompositor {
                         .extend(unconsumed_captures);
                     ii_stopwatch::stopwatch_stop!(render_w);
 
-                    // Only clear redraw state and send frame callbacks
-                    // when a frame was actually produced.
-                    //
-                    // If render was skipped (flip pending), keep redraw queued so
-                    // the dispatch timeout (below) blocks on the DRM fd until the flip completes,
-                    // then renders on the next iteration.
-                    //
-                    // Withhold callbacks to pace widget rendering at the actual display rate.
+                    // Frame callbacks are fired from the always-on callback
+                    // tick — not from here — so pending callbacks are paced
+                    // by a single code path regardless of whether a render
+                    // just happened. Here we only advance the redraw state.
                     if rendered {
                         app_state.compositor.clear_output_damage();
                         app_state.redraw_state = RedrawState::on_frame_submitted();
-
-                        ii_stopwatch::stopwatch_start!(callbacks_w);
-                        #[expect(
-                            clippy::cast_possible_truncation,
-                            reason = "wrapping is acceptable for frame time"
-                        )]
-                        let time = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u32)
-                            .unwrap_or(0);
-                        app_state
-                            .compositor
-                            .send_frame_callbacks_for_presented_widgets(time);
-                        ii_stopwatch::stopwatch_stop!(callbacks_w);
                     } else {
                         app_state.redraw_state = RedrawState::WaitingForVblank {
                             redraw_queued: true,
@@ -552,15 +557,13 @@ impl EglCompositor {
             #[cfg(feature = "profiling")]
             if ii_stopwatch::every_expired!(every) {
                 tracing::info!(
-                    "compositor: loop={} render={} callbacks={} dispatch={}",
+                    "compositor: loop={} render={} dispatch={}",
                     loop_w,
                     render_w,
-                    callbacks_w,
                     dispatch_w
                 );
                 ii_stopwatch::stopwatch_reset!(loop_w);
                 ii_stopwatch::stopwatch_reset!(render_w);
-                ii_stopwatch::stopwatch_reset!(callbacks_w);
                 ii_stopwatch::stopwatch_reset!(dispatch_w);
             }
         }

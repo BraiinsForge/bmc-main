@@ -15,14 +15,17 @@ use smithay::{
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_image_capture_source,
     delegate_image_copy_capture, delegate_output, delegate_output_capture_source, delegate_seat,
     delegate_shm, delegate_xdg_shell,
-    input::{SeatHandler, SeatState},
+    input::{Seat, SeatHandler, SeatState, pointer::CursorImageStatus},
     output::{Mode as OutputMode, Output, PhysicalProperties, Subpixel},
     reexports::wayland_server::{
-        Client, Display, DisplayHandle, Resource,
+        self as wl, Client, Display, DisplayHandle, Resource,
         backend::{ClientData, ClientId, DisconnectReason, ObjectId},
-        protocol::{wl_buffer::WlBuffer, wl_callback::WlCallback, wl_shm, wl_surface::WlSurface},
+        protocol::{
+            wl_buffer::WlBuffer, wl_callback::WlCallback, wl_output::WlOutput, wl_seat::WlSeat,
+            wl_shm, wl_surface::WlSurface,
+        },
     },
-    utils::Size,
+    utils::{Serial, Size},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -43,10 +46,35 @@ use smithay::{
             SelectionHandler,
             data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler},
         },
-        shell::xdg::{XdgShellHandler, XdgShellState},
+        shell::xdg::{
+            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+        },
         shm::{ShmHandler, ShmState},
     },
 };
+use std::time::{Duration, Instant};
+
+/// Minimum interval between consecutive frame callbacks for a single widget.
+/// Compositor-side pacing: caps each widget's submission rate regardless of
+/// how fast the display page-flips or how the widget behaves client-side.
+///
+/// 32 ms ≈ every second vblank on a 63 Hz display → ~31 Hz effective cap.
+///
+/// Rationale for ~30 Hz as the ceiling (not the display refresh rate):
+/// - It's a hard ceiling, not a target. Widgets render in response to their
+///   own content rate (e.g. flip-clock peaks at ~12 Hz during a digit flip),
+///   and the cap only kicks in when something would otherwise submit every
+///   vblank — which for embedded UI content is pure waste.
+/// - 30 Hz is the accepted "smooth enough" threshold for UI animation across
+///   Android/iOS/browser conventions; no widget we expect to run here needs
+///   to animate faster.
+/// - Halving the display rate (rather than thirding/quartering) leaves
+///   enough headroom for a widget that genuinely wants 30 Hz motion; any
+///   more aggressive cap would visibly stutter such content.
+/// - Picking 32 ms rather than exactly 1/30 s makes the cap phase-lock to
+///   every other vblank on the 63 Hz panel, so submissions land on a
+///   page-flip boundary instead of drifting across frames.
+const FRAME_CALLBACK_MIN_INTERVAL: Duration = Duration::from_millis(32);
 
 #[expect(clippy::struct_field_names)]
 pub struct CompositorState {
@@ -107,10 +135,22 @@ pub struct PendingFrameCallback {
     pub generation: u64,
 }
 
+/// Per-widget bookkeeping for the frame-callback delivery path.
+///
+/// - `latest_generation` advances on every widget commit (new content
+///   published).
+/// - `last_presented_generation` advances only at the fire site in
+///   [`CompositorState::send_frame_callbacks_for_presented_widgets`],
+///   so a callback deferred by the rate cap stays eligible on the
+///   next tick rather than being dropped from eligibility.
+/// - `last_callback_fired_at` drives the 32 ms per-widget rate cap.
+///   A value of `None` means "never fired yet" — the first callback
+///   for a widget fires immediately.
 #[derive(Debug, Default, Clone, Copy)]
 struct WidgetFrameClockState {
     latest_generation: u64,
     last_presented_generation: u64,
+    last_callback_fired_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -308,7 +348,7 @@ impl CompositorState {
             .any(|(_buffer, existing_id)| existing_id == instance_id)
     }
 
-    fn eligible_callback_generations(&mut self) -> std::collections::HashMap<InstanceId, u64> {
+    fn eligible_callback_generations(&self) -> std::collections::HashMap<InstanceId, u64> {
         let visible_widgets: std::collections::HashSet<_> = self
             .widgets
             .active_scene()
@@ -324,12 +364,11 @@ impl CompositorState {
                 continue;
             }
 
-            let Some(state) = self.widget_frame_clocks.get_mut(instance_id) else {
+            let Some(state) = self.widget_frame_clocks.get(instance_id) else {
                 continue;
             };
 
             if state.latest_generation > state.last_presented_generation {
-                state.last_presented_generation = state.latest_generation;
                 eligible.insert(instance_id.clone(), state.latest_generation);
             }
         }
@@ -353,18 +392,41 @@ impl CompositorState {
         let eligible_generations = self.eligible_callback_generations();
         let pending_callbacks = std::mem::take(&mut self.pending_frame_callbacks);
         let mut deferred = Vec::with_capacity(pending_callbacks.len());
+        let now = Instant::now();
 
         for pending in pending_callbacks {
             let resolved_instance_id = self.resolve_pending_callback_instance_id(&pending);
-            if should_complete_frame_callback(
+            if !should_complete_frame_callback(
                 resolved_instance_id.as_ref(),
                 pending.generation,
                 &eligible_generations,
             ) {
-                pending.callback.done(time);
-            } else {
                 deferred.push(pending);
+                continue;
             }
+
+            // Per-widget minimum-interval pacing. Callbacks for widgets whose
+            // previous callback fired within the interval are deferred and
+            // re-evaluated on the next render pass.
+            if let Some(id) = resolved_instance_id.as_ref()
+                && let Some(state) = self.widget_frame_clocks.get(id)
+                && let Some(last) = state.last_callback_fired_at
+                && now.duration_since(last) < FRAME_CALLBACK_MIN_INTERVAL
+            {
+                deferred.push(pending);
+                continue;
+            }
+
+            if let Some(id) = resolved_instance_id.as_ref()
+                && let Some(state) = self.widget_frame_clocks.get_mut(id)
+            {
+                state.last_callback_fired_at = Some(now);
+                if pending.generation > state.last_presented_generation {
+                    state.last_presented_generation = pending.generation;
+                }
+            }
+
+            pending.callback.done(time);
         }
 
         self.pending_frame_callbacks = deferred;
@@ -557,12 +619,7 @@ impl DmabufHandler for CompositorState {
         &mut self.dmabuf_state
     }
 
-    fn dmabuf_imported(
-        &mut self,
-        _global: &DmabufGlobal,
-        dmabuf: Dmabuf,
-        notifier: ImportNotifier,
-    ) {
+    fn dmabuf_imported(&mut self, _: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
         tracing::debug!(
             "DMA-BUF imported: {}x{}, format={:?}",
             dmabuf.width(),
@@ -582,19 +639,9 @@ impl SeatHandler for CompositorState {
         &mut self.seat_state
     }
 
-    fn focus_changed(
-        &mut self,
-        _seat: &smithay::input::Seat<Self>,
-        _focused: Option<&Self::KeyboardFocus>,
-    ) {
-    }
+    fn focus_changed(&mut self, _: &Seat<Self>, _: Option<&Self::KeyboardFocus>) {}
 
-    fn cursor_image(
-        &mut self,
-        _seat: &smithay::input::Seat<Self>,
-        _image: smithay::input::pointer::CursorImageStatus,
-    ) {
-    }
+    fn cursor_image(&mut self, _: &Seat<Self>, _: CursorImageStatus) {}
 }
 
 impl XdgShellHandler for CompositorState {
@@ -602,7 +649,7 @@ impl XdgShellHandler for CompositorState {
         &mut self.xdg_shell_state
     }
 
-    fn new_toplevel(&mut self, surface: smithay::wayland::shell::xdg::ToplevelSurface) {
+    fn new_toplevel(&mut self, surface: ToplevelSurface) {
         tracing::info!("New toplevel surface created");
         #[expect(
             clippy::cast_possible_wrap,
@@ -614,39 +661,17 @@ impl XdgShellHandler for CompositorState {
         surface.send_configure();
     }
 
-    fn new_popup(
-        &mut self,
-        _surface: smithay::wayland::shell::xdg::PopupSurface,
-        _positioner: smithay::wayland::shell::xdg::PositionerState,
-    ) {
-    }
+    fn new_popup(&mut self, _: PopupSurface, _: PositionerState) {}
 
-    fn grab(
-        &mut self,
-        _surface: smithay::wayland::shell::xdg::PopupSurface,
-        _seat: smithay::reexports::wayland_server::protocol::wl_seat::WlSeat,
-        _serial: smithay::utils::Serial,
-    ) {
-    }
+    fn grab(&mut self, _: PopupSurface, _: WlSeat, _: Serial) {}
 
-    fn reposition_request(
-        &mut self,
-        _surface: smithay::wayland::shell::xdg::PopupSurface,
-        _positioner: smithay::wayland::shell::xdg::PositionerState,
-        _token: u32,
-    ) {
-    }
+    fn reposition_request(&mut self, _: PopupSurface, _: PositionerState, _: u32) {}
 }
 
 // ---- Image capture protocol handlers ----
 
 impl OutputHandler for CompositorState {
-    fn output_bound(
-        &mut self,
-        _output: Output,
-        _wl_output: smithay::reexports::wayland_server::protocol::wl_output::WlOutput,
-    ) {
-    }
+    fn output_bound(&mut self, _: Output, _: WlOutput) {}
 }
 
 impl ImageCaptureSourceHandler for CompositorState {}
@@ -667,7 +692,7 @@ impl ImageCopyCaptureHandler for CompositorState {
     }
 
     #[expect(clippy::cast_possible_wrap, reason = "display dimensions fit in i32")]
-    fn capture_constraints(&mut self, _source: &ImageCaptureSource) -> Option<BufferConstraints> {
+    fn capture_constraints(&mut self, _: &ImageCaptureSource) -> Option<BufferConstraints> {
         if !self.capture_enabled {
             return None;
         }
@@ -695,7 +720,7 @@ impl ImageCopyCaptureHandler for CompositorState {
         self.capture_sessions.push(session);
     }
 
-    fn frame(&mut self, _session: &SessionRef, frame: Frame) {
+    fn frame(&mut self, _: &SessionRef, frame: Frame) {
         if !self.capture_enabled {
             frame.fail(smithay::wayland::image_copy_capture::CaptureFailureReason::Stopped);
             return;
@@ -753,7 +778,7 @@ impl ClientState {
 
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+    fn disconnected(&self, _: ClientId, _: DisconnectReason) {}
 }
 
 delegate_compositor!(self::CompositorState);
@@ -767,13 +792,13 @@ delegate_image_capture_source!(self::CompositorState);
 delegate_output_capture_source!(self::CompositorState);
 delegate_image_copy_capture!(self::CompositorState);
 
-smithay::reexports::wayland_server::delegate_global_dispatch!(
+wl::delegate_global_dispatch!(
     CompositorState: [DeckWidgetManagerV1: ()] => DeckWidgetProtocolState
 );
-smithay::reexports::wayland_server::delegate_dispatch!(
+wl::delegate_dispatch!(
     CompositorState: [DeckWidgetManagerV1: WidgetManagerUserData] => DeckWidgetProtocolState
 );
-smithay::reexports::wayland_server::delegate_dispatch!(
+wl::delegate_dispatch!(
     CompositorState: [DeckWidgetSurfaceV1: WidgetSurfaceUserData] => DeckWidgetProtocolState
 );
 
