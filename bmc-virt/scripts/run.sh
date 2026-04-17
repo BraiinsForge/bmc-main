@@ -9,8 +9,9 @@
 #   --host-path <dirs> Colon-separated dirs to add to VM PATH
 #
 # Shorthand configs:
-#   --customer        Use data/bmc_config_customer.json
-#   --frantisek       Use data/bmc_config_frantisek.json
+#   --customer             Use data/bmc_config_customer.json
+#   --frantisek            Use data/bmc_config_frantisek.json
+#   --combined-flip-clocks      Use data/bmc_config_combined_flip_clocks.json
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -49,6 +50,11 @@ while [[ $# -gt 0 ]]; do
         ;;
     --frantisek)
         CONFIG="$(realpath data/bmc_config_frantisek.json)"
+        export CONFIG
+        shift
+        ;;
+    --combined-flip-clocks)
+        CONFIG="$(realpath data/bmc_config_combined_flip_clocks.json)"
         export CONFIG
         shift
         ;;

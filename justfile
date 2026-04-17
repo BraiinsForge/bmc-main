@@ -1,3 +1,5 @@
+mod virt 'bmc-virt/justfile'
+
 CI_TOOLS_REV := "c75e453c0e3fd5fe167a9437b86e48b54c2aa81c"
 
 # === Quick local validation (default; LLM-friendly) ===
