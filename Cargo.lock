@@ -1525,9 +1525,8 @@ dependencies = [
  "bmc-wasm-protocol",
  "bmc-wasm-runtime",
  "bmc-widget",
+ "clap",
  "glow 0.16.0",
- "serde",
- "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

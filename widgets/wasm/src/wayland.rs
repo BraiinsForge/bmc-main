@@ -11,8 +11,7 @@ use anyhow::{Context, Result};
 use bmc_wasm_runtime::renderer::Renderer;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
-use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::Instant;
 
 /// Rendering state — created lazily, kept alive forever.
@@ -23,17 +22,9 @@ struct RenderState {
     frame_count: u64,
 }
 
-/// Manifest-declared parameters for the WASM widget.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct ManifestParams {
-    wasm_path: Option<String>,
-}
-
 /// Wayland client for the WASM widget.
 pub struct WaylandClient {
     surface: DeckWidgetSurfaceClient,
-    wasm_path: PathBuf,
 }
 
 impl WaylandClient {
@@ -41,21 +32,13 @@ impl WaylandClient {
     pub fn connect() -> Result<Self> {
         let (surface, initial) = DeckWidgetSurfaceClient::connect()?;
 
-        let params: ManifestParams =
-            serde_json::from_value(initial.params).context("failed to decode widget params")?;
-        let wasm_path: PathBuf = params
-            .wasm_path
-            .context("wasmPath not set in widget params")?
-            .into();
-
         tracing::info!(
-            "Widget config: {}x{}, wasm_path={}",
+            "Widget config: {}x{}",
             initial.width,
-            initial.height,
-            wasm_path.display(),
+            initial.height
         );
 
-        Ok(Self { surface, wasm_path })
+        Ok(Self { surface })
     }
 
     /// Run the event loop with poll(2)-based frame scheduling.
@@ -63,11 +46,7 @@ impl WaylandClient {
         clippy::too_many_lines,
         reason = "render loop is a single sequential flow"
     )]
-    pub fn run(&mut self) -> Result<()> {
-        let wasm_path = self.wasm_path.clone();
-
-        tracing::info!("WASM path: {}", wasm_path.display());
-
+    pub fn run(&mut self, wasm_path: &Path) -> Result<()> {
         let mut render: Option<RenderState> = None;
 
         while self.surface.running() {
@@ -137,7 +116,7 @@ impl WaylandClient {
             if render.is_none() {
                 tracing::info!("Initializing GPU resources");
 
-                let wasm_bytes = std::fs::read(&wasm_path).with_context(|| {
+                let wasm_bytes = std::fs::read(wasm_path).with_context(|| {
                     format!("Failed to read WASM file: {}", wasm_path.display())
                 })?;
                 tracing::info!("WASM loaded: {} bytes", wasm_bytes.len());

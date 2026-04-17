@@ -13,9 +13,20 @@ use std::fs::OpenOptions;
 use std::sync::Mutex;
 
 use anyhow::Result;
+use clap::Parser;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter, fmt, prelude::*};
 
 const WIDGET_LOG_PATH: &str = "/var/log/bmc/wasm-widget.log";
+
+/// WASM widget host — runs a `.wasm` file on a Wayland surface.
+///
+/// Invoked by the widget package wrapper which always supplies `--wasm`.
+#[derive(Parser)]
+struct Args {
+    /// Path to the `.wasm` file to execute.
+    #[arg(long)]
+    wasm: std::path::PathBuf,
+}
 
 fn main() -> Result<()> {
     // Initialize logging to a dedicated file.
@@ -41,13 +52,18 @@ fn main() -> Result<()> {
 
     tracing::info!("Starting WASM widget {}", env!("GIT_VERSION"),);
 
+    // Parse --wasm <path> out of argv (no DECK_PARAMS fallback — the
+    // packaged wrapper always supplies this flag).
+    let args = Args::parse();
+    tracing::info!("WASM path: {}", args.wasm.display());
+
     // Connect to Wayland and run
     let mut client = wayland::WaylandClient::connect()?;
 
     tracing::info!("Connected to Wayland display");
 
     // Run the event loop
-    client.run()?;
+    client.run(&args.wasm)?;
 
     Ok(())
 }
