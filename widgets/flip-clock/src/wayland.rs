@@ -312,8 +312,6 @@ fn render_clock(
     gl: &glow::Context,
     state: &FlipState,
 ) {
-    let panel_color = [0.10, 0.10, 0.18, 1.0];
-
     unsafe {
         gl.enable(glow::BLEND);
         gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
@@ -335,15 +333,6 @@ fn render_clock(
         let prev_digit = state.prev_digits[i];
         let flip_progress = state.flip_progress(i);
         let digit_changed = current_digit != prev_digit;
-
-        renderer.draw_rect(
-            gl,
-            x,
-            0.0,
-            layout.panel_width,
-            layout.panel_height,
-            panel_color,
-        );
 
         if let Some(digit_meshes) = digit_meshes {
             render_3d_digit(
@@ -396,6 +385,16 @@ fn render_3d_digit(
 ) {
     unsafe {
         gl.enable(glow::DEPTH_TEST);
+        // Cull the face pointing away from the camera across both static
+        // and flip paths. GL culling is decided in screen-space winding,
+        // which tracks the mesh through rotation — the back-face triangles
+        // are built with reversed winding so they become screen-CCW once
+        // the digit flips past edge-on, keeping the currently-visible face
+        // rendered and the hidden one occluded. Without this, the back
+        // face's unoccluded silhouette sliver rasterised as bright-white
+        // wedges at the start of each flip.
+        gl.enable(glow::CULL_FACE);
+        gl.cull_face(glow::BACK);
         // Disable blending for opaque 3D geometry — inherited BLEND
         // from render_clock causes back-face fragments to bleed through
         // as lighter rectangles around the digits.
@@ -409,58 +408,35 @@ fn render_3d_digit(
     let base_tilt_x = 0.3;
     let base_tilt_y = 0.2;
 
-    if digit_changed && flip_progress < 1.0 {
-        // No face culling during flip — the digit rotates past 90° so
-        // the front face points away from the camera mid-animation.
+    let (digit, rot_angle) = if digit_changed && flip_progress < 1.0 {
         let angle = flip_progress * std::f32::consts::PI;
-        let (digit, rot_angle) = if angle < std::f32::consts::FRAC_PI_2 {
+        if angle < std::f32::consts::FRAC_PI_2 {
             (prev_digit, -angle - base_tilt_x)
         } else {
             (current_digit, std::f32::consts::PI - angle - base_tilt_x)
-        };
-        tracing::trace!(pos = x, digit, prev_digit, current_digit, angle, "3d flip");
-        let rotation = Mat4::rotate_x(rot_angle).mul(&Mat4::rotate_y(base_tilt_y));
-        let model = Mat4::translate(x, 0.0, 0.01)
-            .mul(&rotation)
-            .mul(&Mat4::scale(digit_scale, digit_scale, digit_scale));
-        let mvp = projection.mul(&model);
-        let normal_matrix = model.to_normal_matrix();
-        digit_meshes.draw_digit(
-            gl,
-            digit,
-            mvp.as_array(),
-            &normal_matrix,
-            digit_color,
-            light_dir,
-        );
+        }
     } else {
-        // Static digits: cull back faces to prevent bleed-through
-        unsafe {
-            gl.enable(glow::CULL_FACE);
-            gl.cull_face(glow::BACK);
-        }
-        tracing::trace!(pos = x, digit = current_digit, "3d static");
-        let rotation = Mat4::rotate_x(-base_tilt_x).mul(&Mat4::rotate_y(base_tilt_y));
-        let model = Mat4::translate(x, 0.0, 0.01)
-            .mul(&rotation)
-            .mul(&Mat4::scale(digit_scale, digit_scale, digit_scale));
-        let mvp = projection.mul(&model);
-        let normal_matrix = model.to_normal_matrix();
-        digit_meshes.draw_digit(
-            gl,
-            current_digit,
-            mvp.as_array(),
-            &normal_matrix,
-            digit_color,
-            light_dir,
-        );
-        unsafe {
-            gl.disable(glow::CULL_FACE);
-        }
-    }
+        (current_digit, -base_tilt_x)
+    };
+
+    let rotation = Mat4::rotate_x(rot_angle).mul(&Mat4::rotate_y(base_tilt_y));
+    let model = Mat4::translate(x, 0.0, 0.01)
+        .mul(&rotation)
+        .mul(&Mat4::scale(digit_scale, digit_scale, digit_scale));
+    let mvp = projection.mul(&model);
+    let normal_matrix = model.to_normal_matrix();
+    digit_meshes.draw_digit(
+        gl,
+        digit,
+        mvp.as_array(),
+        &normal_matrix,
+        digit_color,
+        light_dir,
+    );
 
     unsafe {
         gl.disable(glow::DEPTH_TEST);
+        gl.disable(glow::CULL_FACE);
         gl.enable(glow::BLEND);
     }
 }

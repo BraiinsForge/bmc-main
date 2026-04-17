@@ -8,12 +8,19 @@ use ab_glyph::{Font, FontRef, GlyphId, OutlinedGlyph, PxScale};
 use anyhow::Result;
 use glow::HasContext;
 use lyon::geom::point;
-use lyon::path::Path;
+use lyon::path::iterator::PathIterator;
+use lyon::path::{Path, PathEvent};
 use lyon::tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers};
 
 /// Extrusion depth for 3D digits (in normalized coordinates)
 /// Larger value = thicker digits visible from the side
 const EXTRUSION_DEPTH: f32 = 0.35;
+
+/// Curve-flattening tolerance (glyph units, px). Shared by front/back
+/// tessellation and side-face generation so both produce the same
+/// silhouette polygon — otherwise edges flicker white during rotation
+/// where the two meshes disagree by sub-pixel amounts.
+const FLATTEN_TOLERANCE: f32 = 0.1;
 
 /// Embedded font - Braiins Deck Sans Regular (weight 400)
 /// Note: OpenType features (ss04, liga) are not applied via ab_glyph
@@ -262,14 +269,18 @@ fn create_char_mesh(gl: &glow::Context, font: &FontRef<'_>, c: char) -> Result<D
     // Convert glyph outline to lyon path
     let path = glyph_to_lyon_path(&outlined, font, glyph_id, scale);
 
-    // Tessellate the path
+    // Flatten once with a fixed tolerance and feed the same line-only event
+    // stream to both the tessellator and the side-face builder so the
+    // front/back polygon and the side strip share an identical silhouette.
+    let flat_events: Vec<PathEvent> = path.iter().flattened(FLATTEN_TOLERANCE).collect();
+
     let mut geometry: VertexBuffers<[f32; 2], u16> = VertexBuffers::new();
     let mut tessellator = FillTessellator::new();
 
     tessellator
-        .tessellate_path(
-            &path,
-            &FillOptions::default(),
+        .tessellate(
+            flat_events.iter().copied(),
+            &FillOptions::tolerance(FLATTEN_TOLERANCE),
             &mut BuffersBuilder::new(&mut geometry, |vertex: FillVertex<'_>| {
                 vertex.position().to_array()
             }),
@@ -322,8 +333,8 @@ fn create_char_mesh(gl: &glow::Context, font: &FontRef<'_>, c: char) -> Result<D
         }
     }
 
-    // Side faces - connect front and back edges
-    add_side_faces(&mut vertices, &path, center_x, center_y, max_dim);
+    // Side faces - connect front and back edges along the same flattened polygon
+    add_side_faces(&mut vertices, &flat_events, center_x, center_y, max_dim);
 
     // Create VBO
     let vbo = unsafe {
@@ -466,20 +477,19 @@ fn calculate_bounds(vertices: &[[f32; 2]]) -> (f32, f32, f32, f32) {
     (min_x, max_x, min_y, max_y)
 }
 
-/// Add side faces by extruding path edges
+/// Add side faces by extruding path edges. Expects a pre-flattened event
+/// stream (Begin/Line/End only); any residual curve events are ignored.
 fn add_side_faces(
     vertices: &mut Vec<Vertex3D>,
-    path: &Path,
+    events: &[PathEvent],
     center_x: f32,
     center_y: f32,
     max_dim: f32,
 ) {
-    use lyon::path::PathEvent;
-
     let mut last_point: Option<lyon::geom::Point<f32>> = None;
     let mut first_point: Option<lyon::geom::Point<f32>> = None;
 
-    for event in path {
+    for event in events.iter().copied() {
         match event {
             PathEvent::Begin { at } => {
                 first_point = Some(at);
@@ -491,42 +501,16 @@ fn add_side_faces(
                 }
                 last_point = Some(to);
             }
-            PathEvent::Quadratic { ctrl, to, .. } => {
-                // Approximate curve with line segments
-                if let Some(from) = last_point {
-                    let steps: u8 = 8;
-                    let mut prev = from;
-                    for i in 1..=steps {
-                        let t = f32::from(i) / f32::from(steps);
-                        let p = quadratic_bezier(from, ctrl, to, t);
-                        add_side_quad(vertices, prev, p, center_x, center_y, max_dim);
-                        prev = p;
-                    }
-                }
-                last_point = Some(to);
-            }
-            PathEvent::Cubic {
-                ctrl1, ctrl2, to, ..
-            } => {
-                // Approximate curve with line segments
-                if let Some(from) = last_point {
-                    let steps: u8 = 12;
-                    let mut prev = from;
-                    for i in 1..=steps {
-                        let t = f32::from(i) / f32::from(steps);
-                        let p = cubic_bezier(from, ctrl1, ctrl2, to, t);
-                        add_side_quad(vertices, prev, p, center_x, center_y, max_dim);
-                        prev = p;
-                    }
-                }
-                last_point = Some(to);
-            }
             PathEvent::End { close, .. } => {
                 if close && let (Some(from), Some(to)) = (last_point, first_point) {
                     add_side_quad(vertices, from, to, center_x, center_y, max_dim);
                 }
                 last_point = None;
                 first_point = None;
+            }
+            PathEvent::Quadratic { .. } | PathEvent::Cubic { .. } => {
+                // Not expected after flattening; skip to keep the silhouette
+                // in lockstep with the tessellated polygon.
             }
         }
     }
@@ -550,10 +534,16 @@ fn add_side_quad(
     let z_front = EXTRUSION_DEPTH / 2.0;
     let z_back = -EXTRUSION_DEPTH / 2.0;
 
-    // Calculate normal (perpendicular to edge, pointing outward)
+    // Calculate normal (perpendicular to edge, pointing outward). Skip
+    // degenerate edges — dividing by ~0 yields NaN normals that the shader
+    // rasterizes as white specks on curved silhouettes.
     let dx = x1 - x0;
     let dy = y1 - y0;
-    let len = (dx * dx + dy * dy).sqrt();
+    let len_sq = dx * dx + dy * dy;
+    if len_sq < 1e-12 {
+        return;
+    }
+    let len = len_sq.sqrt();
     let nx = -dy / len;
     let ny = dx / len;
 
@@ -586,37 +576,4 @@ fn add_side_quad(
         position: [x1, y1, z_back],
         normal: [nx, ny, 0.0],
     });
-}
-
-/// Evaluate quadratic bezier at t
-fn quadratic_bezier(
-    p0: lyon::geom::Point<f32>,
-    p1: lyon::geom::Point<f32>,
-    p2: lyon::geom::Point<f32>,
-    t: f32,
-) -> lyon::geom::Point<f32> {
-    let mt = 1.0 - t;
-    point(
-        mt * mt * p0.x + 2.0 * mt * t * p1.x + t * t * p2.x,
-        mt * mt * p0.y + 2.0 * mt * t * p1.y + t * t * p2.y,
-    )
-}
-
-/// Evaluate cubic bezier at t
-fn cubic_bezier(
-    p0: lyon::geom::Point<f32>,
-    p1: lyon::geom::Point<f32>,
-    p2: lyon::geom::Point<f32>,
-    p3: lyon::geom::Point<f32>,
-    t: f32,
-) -> lyon::geom::Point<f32> {
-    let mt = 1.0 - t;
-    let mt2 = mt * mt;
-    let mt3 = mt2 * mt;
-    let t2 = t * t;
-    let t3 = t2 * t;
-    point(
-        mt3 * p0.x + 3.0 * mt2 * t * p1.x + 3.0 * mt * t2 * p2.x + t3 * p3.x,
-        mt3 * p0.y + 3.0 * mt2 * t * p1.y + 3.0 * mt * t2 * p2.y + t3 * p3.y,
-    )
 }
