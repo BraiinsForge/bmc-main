@@ -73,6 +73,20 @@ if ! ssh "root@${device}" "[ -e ${profile_path} ]"; then
     exit 1
 fi
 
+# For the compositor, warn if the baked frontend path is missing.
+if [ "$cmd" = "compositor" ]; then
+    # shellcheck disable=SC2029 # Intentional client-side expansion
+    if ! ssh "root@${device}" "[ -e ${profile}/www/bmc ]"; then
+        printf '\n\033[1;33m*** WARNING ******************************************************\n'
+        echo "  ${profile}/www/bmc not found on ${device}."
+        echo "  The compositor's default frontend path (baked via"
+        echo "  BMC_WEB_FRONTEND_DIR) will be missing and the UI will not load."
+        echo "  Deploy the frontend assets via the .#deck-packages.bmc-frontend"
+        echo "  package through nix-deploy.sh."
+        printf '******************************************************************\033[0m\n\n'
+    fi
+fi
+
 echo "Deploying ${label} to ${device}..."
 
 # Copy nix store paths (dynamic linker + rpath libraries) to the device

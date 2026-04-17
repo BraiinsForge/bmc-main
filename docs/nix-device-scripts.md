@@ -113,6 +113,16 @@ The script will build these binaries itself through `cargo build`. The script as
 ".#armv7-glibc-release". As a one-liner, use
 `nix develop ".#armv7-glibc-release" -c ./scripts/nix-cargo-deploy.sh compositor 192.168.1.2` for example.
 
+### Frontend assets for the compositor
+
+The compositor binary (`bmc-openwrt`) has `/run/current-profile/www/bmc` baked in as the default frontend path (via
+`BMC_WEB_FRONTEND_DIR` at build time). For the compositor to serve the UI, that path must exist on the device; otherwise
+`nix-cargo-deploy.sh compositor` will warn.
+
+The dev-only `.#deck-packages.bmc-frontend` package wraps the frontend build so that its contents end up under
+`<profile>/www/bmc/`. It is marked `category = "dev"` and is NOT included in the init tarball. Use `nix-deploy.sh` for
+deployment.
+
 ## Example: Running bmc-openwrt on the device
 
 After deploying, use the `start-compositor` wrapper to launch `bmc-openwrt`. This wrapper (deployed as part of the core
