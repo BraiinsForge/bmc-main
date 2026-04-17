@@ -2,7 +2,7 @@
 #
 # Source-filtered to avoid recompilation when unrelated workspace crates change.
 # Wrapped with runtime deps (odiff, ffmpeg, mesa llvmpipe) for headless CI use.
-{ self, pkgs, commonDeps, profiles }:
+{ self, pkgs, commonDeps, profiles, wasmExamples }:
 let
   lib = pkgs.lib;
   inherit (pkgs) ii;
@@ -16,18 +16,6 @@ let
   unwrapped = profiles.fast.buildCrate crate {
     features = [ "capture" ];
   };
-
-  # Build all WASM example crates in a single `cargo build --workspace`.
-  wasmExamples =
-    let
-      wasmBuild = profiles.wasm-release.build.overrideAttrs (old: {
-        installPhase = ''
-          mkdir -p $out
-          find target -name '*.wasm' -exec cp {} $out/ \;
-        '';
-      });
-    in
-    wasmBuild;
 
   # Shell wrapper that bundles runtime dependencies and forces software
   # rendering via Mesa llvmpipe (CI runners have no GPU).

@@ -191,10 +191,34 @@ let
     ];
   };
 
+  # Build a --remap-path-prefix flag for a ${storeDir}/<hash>-<name>
+  # path. The target replaces the 32-char hash with a fixed filler,
+  # preserving path length/shape so debuginfo layout stays predictable
+  # while stripping the runtime dependency on the volatile hash.
+  #
+  # Hash is always 32 chars (base32 cryptographic digest); its offset
+  # is storeDir + the "/" separator.
+  mkStorePathRemapFlag = storePath:
+    let
+      hashOffset = builtins.stringLength builtins.storeDir + 1;
+      hash = builtins.substring hashOffset 32 storePath;
+      remapped = builtins.replaceStrings [ hash ] [ "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" ] storePath;
+    in
+    "--remap-path-prefix=${storePath}=${remapped}";
+
+  # Hide the fenix-generated toolchain's volatile hash from produced
+  # .wasm blobs. Apply to every wasm workspace — currently only
+  # workspaceWasmExamples consumes it, but any new wasm target should
+  # reuse this so the remap isn't silently lost.
+  wasmRemapFlags = mkStorePathRemapFlag "${pkgs.ii.rust.toolchain}";
+
   workspaceWasmExamples = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
     workspacePath = "bmc-wasm-runtime/examples";
     nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs);
+    env = {
+      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS = wasmRemapFlags;
+    };
   };
 
   bmc = {
@@ -294,14 +318,20 @@ let
     };
   }));
 
-  # Combined widget packages per arch/profile
+  # Combined widget packages per arch/profile: native widgets joined
+  # with wasm widgets so both land under lib/bmc-widgets/<name>/.
   combinedWidgetPackages = builtins.listToAttrs (lib.forEach glibcArchProfiles ({ arch, profile }: {
     name = "widgets-${arch}-${profile}";
-    value = bmc.lib.mkAllWidgets {
-      inherit widgets;
-      runtimeDeps = deps.widgetRuntimeDeps.native;
-
-      profile = bmc.profiles."${arch}-${profile}";
+    value = pkgs.symlinkJoin {
+      name = "bmc-widgets-${arch}-${profile}";
+      paths = [
+        (bmc.lib.mkAllWidgets {
+          inherit widgets;
+          runtimeDeps = deps.widgetRuntimeDeps.native;
+          profile = bmc.profiles."${arch}-${profile}";
+        })
+        (mkAllWasmWidgets bmc.profiles."${arch}-${profile}")
+      ];
     };
   }));
 
@@ -343,13 +373,20 @@ let
               runtimeDeps = [ cfg.runtimePkgs.wayland ];
             };
           }
-          # Combined widget package for the VM
+          # Combined widget package for the VM: native widgets joined
+          # with wasm widgets, cross-compiled for the guest arch.
           {
             name = "widgets-${arch}";
-            value = bmc.lib.mkAllWidgets {
-              inherit widgets;
-              runtimeDeps = deps.widgetRuntimeDeps.native;
-              profile = bmc.profiles."${arch}-debug";
+            value = pkgs.symlinkJoin {
+              name = "bmc-widgets-${arch}";
+              paths = [
+                (bmc.lib.mkAllWidgets {
+                  inherit widgets;
+                  runtimeDeps = deps.widgetRuntimeDeps.native;
+                  profile = bmc.profiles."${arch}-debug";
+                })
+                (mkAllWasmWidgets bmc.profiles."${arch}-debug")
+              ];
             };
           }
         ]
@@ -383,8 +420,68 @@ let
     ];
   };
 
+  # wasm-widgets.nix is parametric in the host profile: re-import it per
+  # profile to cross-compile the bmc-widget-wasm host for every consumer
+  # arch (armv7 deck + x86_64/aarch64 VM).
+  wasmWidgetsFor = profile: import ./nix/wasm-widgets.nix {
+    inherit pkgs profile;
+    wasmReleaseProfile = bmc.profiles.wasm-release;
+    crates = bmc.crates;
+    autopatchelfBinaries = bmc.lib.autopatchelfBinaries;
+    inherit (deps) widgetRuntimeDeps;
+  };
+
+  wasmWidgetsModule = wasmWidgetsFor bmc.profiles.armv7-glibc-release;
+
+  # Shared wasm widget catalog: name → { wasmFile, manifest }. Mirrors
+  # the per-widget entries in nix/packages.nix; both consumers (deck
+  # release tarball and combined widgets tree below) iterate it.
+  wasmWidgets = {
+    hello-widget = {
+      wasmFile = "hello_widget.wasm";
+      manifest = ./bmc-wasm-runtime/examples/hello-widget/manifest.json;
+    };
+    calendar = {
+      wasmFile = "calendar.wasm";
+      manifest = ./bmc-wasm-runtime/examples/calendar/manifest.json;
+    };
+    spacex-launch = {
+      wasmFile = "spacex_launch.wasm";
+      manifest = ./bmc-wasm-runtime/examples/spacex-launch/manifest.json;
+    };
+    iss-position = {
+      wasmFile = "iss_position.wasm";
+      manifest = ./bmc-wasm-runtime/examples/iss-position/manifest.json;
+    };
+    home-assistant = {
+      wasmFile = "home_assistant.wasm";
+      manifest = ./bmc-wasm-runtime/examples/home-assistant/manifest.json;
+    };
+    media-control = {
+      wasmFile = "media_control.wasm";
+      manifest = ./bmc-wasm-runtime/examples/media-control/manifest.json;
+    };
+  };
+
+  # Build all wasm widgets against `profile`'s host binary, joined into
+  # a single lib/bmc-widgets/<name>/ tree (same shape as mkAllWidgets).
+  mkAllWasmWidgets = profile:
+    let m = wasmWidgetsFor profile; in
+    pkgs.symlinkJoin {
+      name = "bmc-wasm-widgets";
+      paths = lib.mapAttrsToList
+        (name: w: m.mkWasmWidget {
+          inherit name;
+          inherit (w) wasmFile manifest;
+          wasmDir = m.wasmExamples;
+          host = m.host;
+        })
+        wasmWidgets;
+    };
+
   armv7PackageDefs = import ./nix/packages.nix {
     inherit bmc armv7Pkgs deps;
+    inherit (wasmWidgetsModule) wasmExamples host mkWasmWidget;
   };
 
   initArtifacts = import ./nix/init-artifacts.nix {
@@ -398,6 +495,7 @@ let
 in
 {
   inherit commonDeps bmc deps makeRustflagsEnv;
+  inherit (wasmWidgetsModule) wasmExamples;
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
     deck-packages = armv7PackageDefs;
     armv7-nixpkgs = armv7Pkgs;

@@ -38,6 +38,7 @@
         capture = import ./bmc-wasm-runtime/capture.nix {
           inherit self pkgs commonDeps;
           inherit (workspace.bmc) profiles;
+          inherit (workspace) wasmExamples;
         };
         checks = import ./nix/checks.nix {
           inherit pkgs ty-bin;

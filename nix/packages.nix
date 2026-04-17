@@ -3,7 +3,7 @@
 # Single source of truth for what packages exist. Each entry pairs
 # build logic with release metadata. Consumers (e.g. init-artifacts)
 # select the subset they need.
-{ bmc, armv7Pkgs, deps }:
+{ bmc, armv7Pkgs, deps, wasmExamples, host, mkWasmWidget }:
 let
   inherit (bmc.lib) mkWidgetPackage;
   inherit (bmc) crates;
