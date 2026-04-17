@@ -360,6 +360,31 @@ pub fn next_generation_number(profile_dir: &Path) -> Result<usize, BuildProfileE
     Ok(max_gen + 1)
 }
 
+/// Highest existing generation number, or `None` when no generations
+/// exist.
+///
+/// Symmetric with `next_generation_number` (which returns `max + 1`).
+/// Returns `None` when the profile directory does not exist or when
+/// no `N-link` subdirectories are present. Returns `None` on read
+/// errors — callers that need to distinguish "no generations" from
+/// "can't read the profile dir" should use `read_dir` directly.
+#[must_use]
+pub fn latest_generation_number(profile_dir: &Path) -> Option<usize> {
+    if !profile_dir.exists() {
+        return None;
+    }
+    let entries = std::fs::read_dir(profile_dir).ok()?;
+    let mut max_gen: Option<usize> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if let Some(num) = parse_generation_number(&name_str) {
+            max_gen = Some(max_gen.map_or(num, |m| m.max(num)));
+        }
+    }
+    max_gen
+}
+
 /// Parse a generation number from a directory name matching `N-link`.
 fn parse_generation_number(name: &str) -> Option<usize> {
     let stripped = name.strip_suffix("-link")?;
@@ -1014,5 +1039,30 @@ mod tests {
             second.is_none(),
             "timed lock should time out while another lock is held"
         );
+    }
+
+    #[test]
+    fn latest_generation_number_returns_none_for_empty_profile() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: create dir");
+        assert!(latest_generation_number(&profile_dir).is_none());
+    }
+
+    #[test]
+    fn latest_generation_number_returns_none_for_nonexistent_dir() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("nonexistent");
+        assert!(latest_generation_number(&profile_dir).is_none());
+    }
+
+    #[test]
+    fn latest_generation_number_returns_max_existing() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(profile_dir.join("1-link")).expect("BUG: mk 1-link");
+        std::fs::create_dir_all(profile_dir.join("3-link")).expect("BUG: mk 3-link");
+        std::fs::create_dir_all(profile_dir.join("2-link")).expect("BUG: mk 2-link");
+        assert_eq!(latest_generation_number(&profile_dir), Some(3));
     }
 }
