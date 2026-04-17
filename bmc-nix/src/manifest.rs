@@ -36,6 +36,11 @@ pub enum ReadManifestError {
     /// Requested generation `N` has no `<N>-link` directory.
     #[error("generation {generation} not found at `{path}`")]
     GenerationNotFound { generation: usize, path: String },
+    /// A scan of `profile_dir` (to locate the latest generation) failed
+    /// with an I/O error — permission denied, ENOTDIR, or a mid-scan
+    /// `DirEntry` failure.
+    #[error("failed to scan generations: {0}")]
+    ScanGenerations(#[from] crate::profile::BuildProfileError),
 }
 
 /// Error returned when `compute_upgrade_plan` is given inputs that conflict
@@ -120,11 +125,9 @@ pub fn read_manifest(profile_path: &Path) -> Result<Manifest, ReadManifestError>
 /// Read the manifest from the `current` symlink in `profile_dir`.
 ///
 /// Returns [`ReadManifestError::CurrentNotFound`] when the symlink is
-/// missing. Prior versions returned an empty manifest in this case;
-/// callers that want that behavior should use
-/// [`read_current_or_latest_manifest`] (added in a follow-up commit).
+/// missing. Prior versions returned an empty manifest in this case.
 pub fn read_current_manifest(profile_dir: &Path) -> Result<Manifest, ReadManifestError> {
-    let current_link = profile_dir.join("current");
+    let current_link = profile_dir.join(crate::profile::CURRENT_LINK_NAME);
     if current_link.exists() {
         read_manifest(&current_link)
     } else {
@@ -142,7 +145,7 @@ pub fn read_generation_manifest(
     profile_dir: &Path,
     generation: usize,
 ) -> Result<Manifest, ReadManifestError> {
-    let gen_path = profile_dir.join(format!("{generation}-link"));
+    let gen_path = profile_dir.join(crate::profile::generation_link_name(generation));
     if !gen_path.exists() {
         return Err(ReadManifestError::GenerationNotFound {
             generation,
@@ -158,7 +161,7 @@ pub fn read_generation_manifest(
 /// the "empty starting state" semantics that existed pre-change on
 /// `read_current_manifest`.
 pub fn read_latest_manifest(profile_dir: &Path) -> Result<Manifest, ReadManifestError> {
-    match crate::profile::latest_generation_number(profile_dir) {
+    match crate::profile::max_generation(profile_dir)? {
         Some(n) => read_generation_manifest(profile_dir, n),
         None => Ok(Manifest::default()),
     }
@@ -176,21 +179,6 @@ pub fn read_manifest_by_selector(
         crate::types::BaseSelector::Current => read_current_manifest(profile_dir),
         crate::types::BaseSelector::Latest => read_latest_manifest(profile_dir),
         crate::types::BaseSelector::Generation(n) => read_generation_manifest(profile_dir, *n),
-    }
-}
-
-/// Read the default base manifest used by `apply_profile_change`
-/// when the caller passes `None`: try `current`, fall back to
-/// `latest` on [`ReadManifestError::CurrentNotFound`]. Propagates
-/// any other error (including parse errors on an existing-but-broken
-/// manifest file).
-///
-/// On a truly fresh profile both reads yield `Manifest::default()`.
-pub fn read_current_or_latest_manifest(profile_dir: &Path) -> Result<Manifest, ReadManifestError> {
-    match read_current_manifest(profile_dir) {
-        Ok(m) => Ok(m),
-        Err(ReadManifestError::CurrentNotFound { .. }) => read_latest_manifest(profile_dir),
-        Err(other) => Err(other),
     }
 }
 
@@ -533,6 +521,35 @@ mod tests {
     }
 
     #[test]
+    fn read_latest_manifest_propagates_scan_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        let mut perms = std::fs::metadata(&profile_dir)
+            .expect("BUG: stat")
+            .permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&profile_dir, perms).expect("BUG: chmod");
+
+        let result = read_latest_manifest(&profile_dir);
+
+        // Restore perms before assert so cleanup works even if we panic below.
+        let mut restore = std::fs::metadata(&profile_dir)
+            .expect("BUG: stat")
+            .permissions();
+        restore.set_mode(0o755);
+        std::fs::set_permissions(&profile_dir, restore).expect("BUG: chmod");
+
+        assert!(
+            matches!(result, Err(ReadManifestError::ScanGenerations(_))),
+            "expected ScanGenerations error, got {result:?}"
+        );
+    }
+
+    #[test]
     fn read_latest_manifest_empty_dir_returns_default() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let profile_dir = dir.path().join("bmc");
@@ -573,53 +590,6 @@ mod tests {
         let g2 = read_manifest_by_selector(&profile_dir, &BaseSelector::Generation(2))
             .expect("BUG: gen 2 read");
         assert!(g2.packages.contains_key("pkg-two"));
-    }
-
-    // ---- read_current_or_latest_manifest tests ----
-
-    #[test]
-    fn read_current_or_latest_manifest_uses_current_when_present() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = dir.path().join("bmc");
-
-        let gen1 = profile_dir.join("1-link");
-        std::fs::create_dir_all(&gen1).expect("BUG: mkdir gen");
-        let manifest = build_manifest(&[test_package("pkg-one", "/nix/store/one")]);
-        write_manifest(&gen1, &manifest).expect("BUG: write manifest");
-        std::os::unix::fs::symlink("1-link", profile_dir.join("current"))
-            .expect("BUG: symlink current");
-
-        let read = read_current_or_latest_manifest(&profile_dir).expect("BUG: read");
-        assert!(read.packages.contains_key("pkg-one"));
-    }
-
-    #[test]
-    fn read_current_or_latest_manifest_falls_back_to_latest_when_current_missing() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = dir.path().join("bmc");
-
-        // gen 1 and gen 2 exist, but NO `current` symlink.
-        for (n, pkg_name) in [(1, "pkg-old"), (2, "pkg-new")] {
-            let gen_dir = profile_dir.join(format!("{n}-link"));
-            std::fs::create_dir_all(&gen_dir).expect("BUG: mkdir gen");
-            let manifest =
-                build_manifest(&[test_package(pkg_name, &format!("/nix/store/{pkg_name}"))]);
-            write_manifest(&gen_dir, &manifest).expect("BUG: write manifest");
-        }
-
-        let read = read_current_or_latest_manifest(&profile_dir).expect("BUG: read with fallback");
-        assert!(read.packages.contains_key("pkg-new"));
-        assert!(!read.packages.contains_key("pkg-old"));
-    }
-
-    #[test]
-    fn read_current_or_latest_manifest_returns_default_on_empty_profile() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = dir.path().join("bmc");
-        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
-
-        let read = read_current_or_latest_manifest(&profile_dir).expect("BUG: empty profile read");
-        assert!(read.packages.is_empty());
     }
 
     // ---- compute_upgrade_plan tests ----

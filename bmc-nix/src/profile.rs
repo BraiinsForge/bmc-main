@@ -52,6 +52,25 @@ pub enum BuildProfileError {
     Lock { source: std::io::Error },
 }
 
+/// Name of the symlink in a profile directory that points to the
+/// active generation.
+pub(crate) const CURRENT_LINK_NAME: &str = "current";
+
+/// Name of the generation subdirectory for generation `n`.
+#[must_use]
+pub(crate) fn generation_link_name(n: usize) -> String {
+    format!("{n}-link")
+}
+
+/// Parse a generation number out of a directory name matching `<N>-link`.
+///
+/// `pub(crate)` so `upgrade::resolve_current_generation` can reuse it
+/// instead of duplicating the strip/parse dance inline.
+#[must_use]
+pub(crate) fn parse_generation_link_name(name: &str) -> Option<usize> {
+    name.strip_suffix("-link")?.parse::<usize>().ok()
+}
+
 /// RAII guard that holds an exclusive `flock` on a profile directory.
 ///
 /// The lock is explicitly released via `LOCK_UN` on drop, then the file
@@ -282,7 +301,7 @@ pub async fn build_profile(
     hooks_dir_name: &str,
     hooks_override_path: Option<&Path>,
 ) -> Result<ProfileGeneration, BuildProfileError> {
-    let gen_name = format!("{generation}-link");
+    let gen_name = generation_link_name(generation);
     let tmp_path = profile_dir.join(format!("{gen_name}.tmp"));
     let gen_path = profile_dir.join(&gen_name);
 
@@ -329,79 +348,50 @@ pub async fn build_profile(
     })
 }
 
-/// Determine the next generation number for a profile directory.
+/// Highest existing generation number in `profile_dir`, or `None`
+/// when the directory is absent or contains no `<N>-link` entries.
 ///
-/// Scans existing directories matching the pattern `N-link` (where N is
-/// a number) and returns `max(N) + 1`. Returns `1` if no generations exist
-/// or if the profile directory does not exist.
-pub fn next_generation_number(profile_dir: &Path) -> Result<usize, BuildProfileError> {
+/// Scans `profile_dir` for entries named `<N>-link` and returns `max(N)`.
+/// Propagates I/O errors (permission denied, ENOTDIR, mid-scan
+/// `DirEntry` failures); callers that want "+1" math or a default
+/// apply it at the call site.
+pub fn max_generation(profile_dir: &Path) -> Result<Option<usize>, BuildProfileError> {
     if !profile_dir.exists() {
-        return Ok(1);
+        return Ok(None);
     }
-
     let entries =
         std::fs::read_dir(profile_dir).map_err(|source| BuildProfileError::ReadDir { source })?;
-
-    let mut max_gen: usize = 0;
-
+    let mut max_gen: Option<usize> = None;
     for entry in entries {
         let entry = entry.map_err(|source| BuildProfileError::ReadDir { source })?;
-
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-
-        if let Some(num) = parse_generation_number(&name_str)
-            && num > max_gen
-        {
-            max_gen = num;
-        }
-    }
-
-    Ok(max_gen + 1)
-}
-
-/// Highest existing generation number, or `None` when no generations
-/// exist.
-///
-/// Symmetric with `next_generation_number` (which returns `max + 1`).
-/// Returns `None` when the profile directory does not exist or when
-/// no `N-link` subdirectories are present. Returns `None` on read
-/// errors — callers that need to distinguish "no generations" from
-/// "can't read the profile dir" should use `read_dir` directly.
-#[must_use]
-pub fn latest_generation_number(profile_dir: &Path) -> Option<usize> {
-    if !profile_dir.exists() {
-        return None;
-    }
-    let entries = std::fs::read_dir(profile_dir).ok()?;
-    let mut max_gen: Option<usize> = None;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if let Some(num) = parse_generation_number(&name_str) {
+        if let Some(num) = parse_generation_link_name(&name_str) {
             max_gen = Some(max_gen.map_or(num, |m| m.max(num)));
         }
     }
-    max_gen
+    Ok(max_gen)
 }
 
-/// Parse a generation number from a directory name matching `N-link`.
-fn parse_generation_number(name: &str) -> Option<usize> {
-    let stripped = name.strip_suffix("-link")?;
-    stripped.parse::<usize>().ok()
-}
-
-/// Resolve the path to the current generation, if one exists.
+/// Resolve `profile_dir/current` into its (absolute) target path.
 ///
-/// Reads the `current` symlink in `profile_dir` and returns its target.
-fn current_generation_path(profile_dir: &Path) -> Option<PathBuf> {
-    let current_link = profile_dir.join("current");
-    if current_link.is_symlink() {
-        // Resolve relative to profile_dir
-        let target = std::fs::read_link(&current_link).ok()?;
-        Some(profile_dir.join(target))
-    } else {
-        None
+/// Returns `Ok(None)` when the `current` symlink does not exist yet
+/// (fresh profile). Propagates all other I/O errors — permission
+/// denied, ENOTDIR on a non-symlink `current`, etc. Relative targets
+/// are rebased onto `profile_dir`.
+pub fn current_generation_link(profile_dir: &Path) -> Result<Option<PathBuf>, std::io::Error> {
+    let current = profile_dir.join(CURRENT_LINK_NAME);
+    match std::fs::read_link(&current) {
+        Ok(target) => {
+            let resolved = if target.is_absolute() {
+                target
+            } else {
+                profile_dir.join(target)
+            };
+            Ok(Some(resolved))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
@@ -432,7 +422,14 @@ pub async fn activate_profile(
         .into());
     }
 
-    let old_gen = current_generation_path(profile_dir).unwrap_or_default();
+    // Deliberately swallow I/O errors: this feeds PROFILE_OLD_GENERATION,
+    // where an empty path is the sentinel for "no previous generation".
+    // A transient read_link failure should not block activation of the
+    // new generation.
+    let old_gen = current_generation_link(profile_dir)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 
     info!(
         entrypoint = %entrypoint.display(),
@@ -664,44 +661,106 @@ mod tests {
     }
 
     #[test]
-    fn next_generation_number_starts_at_1() {
-        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
-        let profile_dir = tmp.path().join("bmc");
-        std::fs::create_dir_all(&profile_dir).expect("BUG: should create dir");
-
-        let num =
-            next_generation_number(&profile_dir).expect("BUG: should compute generation number");
-        assert_eq!(num, 1, "empty profile dir should start at generation 1");
-    }
-
-    #[test]
-    fn next_generation_number_increments() {
-        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
-        let profile_dir = tmp.path().join("bmc");
-        std::fs::create_dir_all(&profile_dir).expect("BUG: should create dir");
-
-        // Create existing generation directories
-        std::fs::create_dir_all(profile_dir.join("1-link")).expect("BUG: should create gen dir");
-        std::fs::create_dir_all(profile_dir.join("3-link")).expect("BUG: should create gen dir");
-
-        let num =
-            next_generation_number(&profile_dir).expect("BUG: should compute generation number");
-        assert_eq!(
-            num, 4,
-            "should return max(existing) + 1 = 4 when generations 1 and 3 exist"
-        );
-    }
-
-    #[test]
-    fn next_generation_number_nonexistent_dir() {
-        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+    fn max_generation_returns_none_for_nonexistent_dir() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let profile_dir = tmp.path().join("nonexistent");
+        let result = max_generation(&profile_dir).expect("BUG: scan should succeed");
+        assert_eq!(result, None);
+    }
 
-        let num =
-            next_generation_number(&profile_dir).expect("BUG: should compute generation number");
-        assert_eq!(
-            num, 1,
-            "nonexistent profile dir should start at generation 1"
+    #[test]
+    fn max_generation_returns_none_for_empty_dir() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+        let result = max_generation(&profile_dir).expect("BUG: scan should succeed");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn max_generation_returns_highest_existing() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(profile_dir.join("1-link")).expect("BUG: mk 1-link");
+        std::fs::create_dir_all(profile_dir.join("3-link")).expect("BUG: mk 3-link");
+        std::fs::create_dir_all(profile_dir.join("2-link")).expect("BUG: mk 2-link");
+        let result = max_generation(&profile_dir).expect("BUG: scan should succeed");
+        assert_eq!(result, Some(3));
+    }
+
+    #[test]
+    fn max_generation_ignores_non_link_entries() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(profile_dir.join("1-link")).expect("BUG: mk 1-link");
+        std::fs::create_dir_all(profile_dir.join("not-a-gen")).expect("BUG: mk junk");
+        std::fs::write(profile_dir.join(".lock"), "").expect("BUG: write .lock");
+        std::os::unix::fs::symlink("1-link", profile_dir.join("current"))
+            .expect("BUG: symlink current");
+        let result = max_generation(&profile_dir).expect("BUG: scan should succeed");
+        assert_eq!(result, Some(1));
+    }
+
+    #[test]
+    fn current_generation_link_missing() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        let result =
+            current_generation_link(&profile_dir).expect("BUG: missing symlink should not error");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn current_generation_link_relative_target() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+        std::os::unix::fs::symlink("1-link", profile_dir.join("current"))
+            .expect("BUG: symlink current");
+
+        let result = current_generation_link(&profile_dir).expect("BUG: should read symlink");
+        assert_eq!(result, Some(profile_dir.join("1-link")));
+    }
+
+    #[test]
+    fn current_generation_link_absolute_target() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+        let abs_target = tmp.path().join("elsewhere/5-link");
+        std::os::unix::fs::symlink(&abs_target, profile_dir.join("current"))
+            .expect("BUG: symlink current");
+
+        let result = current_generation_link(&profile_dir).expect("BUG: should read symlink");
+        assert_eq!(result, Some(abs_target));
+    }
+
+    #[test]
+    fn max_generation_propagates_read_dir_error() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+        // Revoke read+execute perms so `read_dir` fails with EACCES.
+        let mut perms = std::fs::metadata(&profile_dir)
+            .expect("BUG: stat")
+            .permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&profile_dir, perms).expect("BUG: chmod");
+
+        let result = max_generation(&profile_dir);
+
+        // Restore perms so tempdir cleanup works.
+        let mut restore = std::fs::metadata(&profile_dir)
+            .expect("BUG: stat")
+            .permissions();
+        restore.set_mode(0o755);
+        std::fs::set_permissions(&profile_dir, restore).expect("BUG: chmod");
+
+        assert!(
+            matches!(result, Err(BuildProfileError::ReadDir { .. })),
+            "expected ReadDir error, got {result:?}"
         );
     }
 
@@ -895,19 +954,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_generation_number_valid() {
-        assert_eq!(parse_generation_number("1-link"), Some(1));
-        assert_eq!(parse_generation_number("42-link"), Some(42));
-        assert_eq!(parse_generation_number("100-link"), Some(100));
+    fn parse_generation_link_name_valid() {
+        assert_eq!(parse_generation_link_name("1-link"), Some(1));
+        assert_eq!(parse_generation_link_name("42-link"), Some(42));
+        assert_eq!(parse_generation_link_name("100-link"), Some(100));
     }
 
     #[test]
-    fn parse_generation_number_invalid() {
-        assert_eq!(parse_generation_number("not-a-gen"), None);
-        assert_eq!(parse_generation_number("bmc-1-link"), None);
-        assert_eq!(parse_generation_number("abc-link"), None);
-        assert_eq!(parse_generation_number(""), None);
-        assert_eq!(parse_generation_number("current"), None);
+    fn parse_generation_link_name_invalid() {
+        assert_eq!(parse_generation_link_name("not-a-gen"), None);
+        assert_eq!(parse_generation_link_name("bmc-1-link"), None);
+        assert_eq!(parse_generation_link_name("abc-link"), None);
+        assert_eq!(parse_generation_link_name(""), None);
+        assert_eq!(parse_generation_link_name("current"), None);
     }
 
     #[tokio::test]
@@ -1039,30 +1098,5 @@ mod tests {
             second.is_none(),
             "timed lock should time out while another lock is held"
         );
-    }
-
-    #[test]
-    fn latest_generation_number_returns_none_for_empty_profile() {
-        let tmp = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = tmp.path().join("bmc");
-        std::fs::create_dir_all(&profile_dir).expect("BUG: create dir");
-        assert!(latest_generation_number(&profile_dir).is_none());
-    }
-
-    #[test]
-    fn latest_generation_number_returns_none_for_nonexistent_dir() {
-        let tmp = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = tmp.path().join("nonexistent");
-        assert!(latest_generation_number(&profile_dir).is_none());
-    }
-
-    #[test]
-    fn latest_generation_number_returns_max_existing() {
-        let tmp = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = tmp.path().join("bmc");
-        std::fs::create_dir_all(profile_dir.join("1-link")).expect("BUG: mk 1-link");
-        std::fs::create_dir_all(profile_dir.join("3-link")).expect("BUG: mk 3-link");
-        std::fs::create_dir_all(profile_dir.join("2-link")).expect("BUG: mk 2-link");
-        assert_eq!(latest_generation_number(&profile_dir), Some(3));
     }
 }

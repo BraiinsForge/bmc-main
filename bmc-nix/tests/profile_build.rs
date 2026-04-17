@@ -126,8 +126,10 @@ async fn full_profile_build() {
     std::fs::create_dir_all(&profile_dir).expect("BUG: create profile dir");
 
     // Generation 1
-    let gen_num = bmc_nix::profile::next_generation_number(&profile_dir)
-        .expect("BUG: next_generation_number should succeed");
+    let gen_num = bmc_nix::profile::max_generation(&profile_dir)
+        .expect("BUG: scan generations should succeed")
+        .unwrap_or(0)
+        + 1;
     assert_eq!(gen_num, 1);
 
     let gen1 = bmc_nix::profile::build_profile(&profile_dir, gen_num, &packages, "hooks", None)
@@ -167,8 +169,10 @@ async fn full_profile_build() {
     assert!(current.is_symlink());
 
     // Generation 2
-    let gen2_num = bmc_nix::profile::next_generation_number(&profile_dir)
-        .expect("BUG: next_generation_number for gen 2 should succeed");
+    let gen2_num = bmc_nix::profile::max_generation(&profile_dir)
+        .expect("BUG: scan generations for gen 2 should succeed")
+        .unwrap_or(0)
+        + 1;
     assert_eq!(gen2_num, 2);
 
     let gen2 = bmc_nix::profile::build_profile(&profile_dir, gen2_num, &packages, "hooks", None)

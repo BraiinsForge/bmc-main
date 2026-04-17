@@ -370,13 +370,8 @@ impl InitPlatform for OpenwrtPlatform {
 }
 
 fn find_latest_generation(profile_dir: &Path) -> Result<(usize, std::path::PathBuf), InitError> {
-    let next = profile::next_generation_number(profile_dir)
-        .map_err(|e| InitError::activation(format!("failed to scan generations: {e}")))?;
-    let latest = next.saturating_sub(1);
-    if latest == 0 {
-        return Err(InitError::activation(
-            "no generations found in profile directory",
-        ));
-    }
+    let latest = profile::max_generation(profile_dir)
+        .map_err(|e| InitError::activation(format!("failed to scan generations: {e}")))?
+        .ok_or_else(|| InitError::activation("no generations found in profile directory"))?;
     Ok((latest, profile_dir.join(format!("{latest}-link"))))
 }

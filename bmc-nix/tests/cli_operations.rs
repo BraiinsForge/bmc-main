@@ -22,8 +22,10 @@ use tempfile::TempDir;
 /// store-path verification so tests can use arbitrary filesystem paths.
 async fn apply_plan(profile_dir: &Path, plan: &UpgradePlan) -> ProfileGeneration {
     std::fs::create_dir_all(profile_dir).expect("BUG: create profile dir");
-    let gen_number =
-        bmc_nix::profile::next_generation_number(profile_dir).expect("BUG: next gen number");
+    let gen_number = bmc_nix::profile::max_generation(profile_dir)
+        .expect("BUG: scan generations")
+        .unwrap_or(0)
+        + 1;
     let generation =
         bmc_nix::profile::build_profile(profile_dir, gen_number, &plan.packages, "hooks", None)
             .await
@@ -56,8 +58,7 @@ async fn add_packages_to_empty_profile() {
     )];
 
     // Replicate CLI: read current manifest (empty), compute plan, apply
-    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
-        .expect("BUG: read manifest");
+    let current_manifest = Manifest::default();
     let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &add_packages, &[])
         .expect("BUG: plan should succeed");
 
@@ -125,8 +126,8 @@ async fn add_packages_to_existing_profile() {
         store_b.to_str().expect("BUG: valid UTF-8"),
     )];
 
-    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
-        .expect("BUG: read manifest");
+    let current_manifest =
+        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
     let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &add_packages, &[])
         .expect("BUG: plan should succeed");
 
@@ -187,8 +188,8 @@ async fn add_packages_replaces_existing() {
         store_a_v2.to_str().expect("BUG: valid UTF-8"),
     )];
 
-    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
-        .expect("BUG: read manifest");
+    let current_manifest =
+        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
     let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &add_packages, &[])
         .expect("BUG: plan should succeed");
 
@@ -248,8 +249,8 @@ async fn remove_packages_from_profile() {
     // Remove package "b"
     let names_to_remove = vec!["b".into()];
 
-    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
-        .expect("BUG: read manifest");
+    let current_manifest =
+        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
     let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &[], &names_to_remove)
         .expect("BUG: plan should succeed");
 
@@ -305,8 +306,8 @@ async fn remove_nonexistent_package_errors() {
     // Try to remove "nonexistent" — should now error.
     let names_to_remove = vec!["nonexistent".into()];
 
-    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
-        .expect("BUG: read manifest");
+    let current_manifest =
+        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
     let err = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &[], &names_to_remove)
         .expect_err("removing a missing package should error");
     assert!(
@@ -478,8 +479,8 @@ async fn compute_plan_rejects_add_and_remove_same_name() {
     )];
     let removes = vec!["a".into()];
 
-    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
-        .expect("BUG: read manifest");
+    let current_manifest =
+        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
     let err = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &adds, &removes)
         .expect_err("add+remove of same name should error");
     assert!(
@@ -673,7 +674,8 @@ async fn add_packages_default_base_falls_back_to_latest_when_current_missing() {
     // No entrypoint — pkg-a (carried from latest) supplies it.
     let pkg_b = test_resolved_package("b", "1.0.0", store_b.to_str().expect("BUG: utf-8"));
 
-    let base = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir).expect("BUG: read");
+    let base =
+        bmc_nix::manifest::read_latest_manifest(&profile_dir).expect("BUG: read latest manifest");
     let plan = bmc_nix::manifest::compute_upgrade_plan(&base, &[pkg_b], &[]).expect("BUG: plan");
     let gen2 = apply_plan(&profile_dir, &plan).await;
 

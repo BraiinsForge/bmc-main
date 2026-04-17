@@ -24,6 +24,8 @@ pub enum InstallError {
     Plan(#[from] PlanConflict),
     #[error("failed to resolve current profile symlink: {0}")]
     ResolveCurrent(#[source] std::io::Error),
+    #[error("`current` symlink target does not follow the `<N>-link` convention: {}", target.display())]
+    MalformedCurrent { target: PathBuf },
 }
 
 /// Apply an add/remove change to a profile.
@@ -99,7 +101,7 @@ pub async fn apply_profile_change(
     store::verify_store_paths(&store::TokioCommandRunner, &plan.packages).await?;
 
     // 5. Build new profile generation
-    let gen_number = profile::next_generation_number(profile_dir)?;
+    let gen_number = profile::max_generation(profile_dir)?.unwrap_or(0) + 1;
     let generation = profile::build_profile(
         profile_dir,
         gen_number,
@@ -134,28 +136,24 @@ pub async fn apply_profile_change(
 /// Returns `Ok(None)` if no `current` symlink exists yet (fresh profile).
 /// `ProfileGeneration.number` is reconstructed from the symlink target
 /// (`<N>-link`); `manifest` is read from the generation directory.
+/// Returns [`InstallError::MalformedCurrent`] when the target does not
+/// follow the `<N>-link` convention.
 fn resolve_current_generation(
     profile_dir: &Path,
 ) -> Result<Option<ProfileGeneration>, InstallError> {
-    let current = profile_dir.join("current");
-    let target = match std::fs::read_link(&current) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(InstallError::ResolveCurrent(e)),
-    };
-
-    let gen_path: PathBuf = if target.is_absolute() {
-        target
-    } else {
-        profile_dir.join(target)
+    let Some(gen_path) =
+        profile::current_generation_link(profile_dir).map_err(InstallError::ResolveCurrent)?
+    else {
+        return Ok(None);
     };
 
     let number = gen_path
         .file_name()
         .and_then(|n| n.to_str())
-        .and_then(|n| n.strip_suffix("-link"))
-        .and_then(|n| n.parse::<usize>().ok())
-        .unwrap_or(0);
+        .and_then(profile::parse_generation_link_name)
+        .ok_or_else(|| InstallError::MalformedCurrent {
+            target: gen_path.clone(),
+        })?;
 
     let manifest = manifest::read_manifest(&gen_path)?;
 
@@ -164,4 +162,29 @@ fn resolve_current_generation(
         path: gen_path,
         manifest,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_current_generation_rejects_malformed_target() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        // Target that does NOT follow the `<N>-link` convention.
+        let bogus_target = profile_dir.join("42-nope");
+        std::fs::create_dir_all(&bogus_target).expect("BUG: mkdir target");
+        std::os::unix::fs::symlink("42-nope", profile_dir.join("current"))
+            .expect("BUG: symlink current");
+
+        let result = resolve_current_generation(&profile_dir);
+
+        assert!(
+            matches!(result, Err(InstallError::MalformedCurrent { .. })),
+            "expected MalformedCurrent, got {result:?}"
+        );
+    }
 }

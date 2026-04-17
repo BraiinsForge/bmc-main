@@ -219,7 +219,7 @@ async fn cmd_build_profile(
 
     // Hold lock to prevent TOCTOU race on generation number
     let lock = bmc_nix::profile::lock_profile(&profile_dir).await?;
-    let generation_number = bmc_nix::profile::next_generation_number(&profile_dir)?;
+    let generation_number = bmc_nix::profile::max_generation(&profile_dir)?.unwrap_or(0) + 1;
     let generation = bmc_nix::profile::build_profile(
         &profile_dir,
         generation_number,
