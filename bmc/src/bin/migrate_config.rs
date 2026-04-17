@@ -2,10 +2,11 @@
 
 //! Offline config migration tool.
 //!
-//! Reads a legacy `/etc/bmc_config.json` from `<src>`, translates it
-//! to the current schema, and writes the result to `<dst>`. Lets us
-//! exercise the translator against captured device samples without
-//! flashing firmware.
+//! Reads any-version `/etc/bmc_config.json` from `<src>`, upgrades
+//! it in memory to the current schema, and writes the result to
+//! `<dst>` (creating a `.backup.<ts>` of `<dst>` if it already
+//! existed). Lets us exercise the upgrade path against captured
+//! device samples without flashing firmware.
 //!
 //! Usage: `bmc-migrate-config <src> <dst>`
 
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
+use bmc::config_migration::{self, LoadedConfig};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -48,15 +50,22 @@ async fn run() -> Result<()> {
     let raw = tokio::fs::read_to_string(&src)
         .await
         .with_context(|| format!("read {}", src.display()))?;
-    let report = bmc::config_migration::migrate_raw(&raw, &dst).await?;
+    let loaded: LoadedConfig = raw.parse()?;
+    config_migration::save_with_backup(loaded.current(), &dst).await?;
 
-    println!(
-        "scenes={} translated={} legacy_remote={} unavailable={} was_legacy={}",
-        report.scenes,
-        report.translated_widgets,
-        report.legacy_remote_widgets,
-        report.unavailable_widgets,
-        report.was_legacy
-    );
+    if let Some(report) = loaded.report() {
+        println!(
+            "scenes={} translated={} legacy_remote={} unavailable={} was_migrated=true",
+            report.scenes,
+            report.translated_widgets,
+            report.legacy_remote_widgets,
+            report.unavailable_widgets,
+        );
+    } else {
+        println!(
+            "scenes={} translated=0 legacy_remote=0 unavailable=0 was_migrated=false",
+            loaded.current().scenes.len(),
+        );
+    }
     Ok(())
 }

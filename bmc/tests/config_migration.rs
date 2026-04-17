@@ -8,8 +8,9 @@
 //! and must only be modified when we capture a new device snapshot.
 
 use std::path::PathBuf;
+use std::str::FromStr;
 
-use bmc::config_migration::{self, Report};
+use bmc::config_migration::{self, LoadedConfig};
 use tokio::fs;
 
 const FIXTURE: &str = include_str!("fixtures/legacy_config_sample.json");
@@ -22,14 +23,18 @@ async fn migrates_device_sample_without_losing_scenes() {
         .await
         .expect("BUG: seed fixture write should succeed");
 
-    let report = config_migration::migrate_in_place(&dest)
+    let loaded = config_migration::migrate_on_disk(&dest)
         .await
         .expect("BUG: migration of captured device sample should succeed");
 
     assert!(
-        report.was_legacy,
+        loaded.was_migrated(),
         "device sample must trigger the legacy path"
     );
+
+    let report = loaded
+        .report()
+        .expect("BUG: migrated load must carry a report");
     assert_eq!(
         report.scenes, 3,
         "fixture has 3 scenes and they must all survive",
@@ -44,12 +49,22 @@ async fn migrates_device_sample_without_losing_scenes() {
         "fixture contains widgets with no manifest (ticker_btc, block_height)",
     );
 
+    // The preserved v0 struct must still be available after the
+    // upgrade. This is the core "in-memory migration" property —
+    // nothing else needs to touch the disk to see what the config
+    // looked like before the rewrite.
+    let original = loaded
+        .original_v0()
+        .expect("BUG: migrated load must preserve the v0 struct");
+    assert_eq!(original.scenes.len(), 3);
+
+    // And the upgrade must have been serialised back to disk with
+    // the current schema version.
     let migrated = fs::read_to_string(&dest)
         .await
         .expect("BUG: migrated file should be readable");
     let v: serde_json::Value =
         serde_json::from_str(&migrated).expect("BUG: migrated output must be valid JSON");
-
     assert_eq!(
         v["version"], 1,
         "migrated config must carry the current schema version",
@@ -113,22 +128,20 @@ async fn migrates_device_sample_without_losing_scenes() {
 async fn current_version_config_is_a_noop() {
     let tmp = tempdir();
     let dest = tmp.join("bmc_config.json");
-    fs::write(&dest, r#"{"version":1,"scenes":{},"accounts":{}}"#)
+    fs::write(&dest, r#"{"version":1,"scenes":[],"accounts":[]}"#)
         .await
         .expect("BUG: seed write should succeed");
 
-    let report: Report = config_migration::migrate_in_place(&dest)
+    let loaded = config_migration::migrate_on_disk(&dest)
         .await
         .expect("BUG: no-op migration should succeed");
 
     assert!(
-        !report.was_legacy,
+        !loaded.was_migrated(),
         "already-versioned config must be a no-op"
     );
-    assert_eq!(report.scenes, 0);
-    assert_eq!(report.translated_widgets, 0);
-    assert_eq!(report.legacy_remote_widgets, 0);
-    assert_eq!(report.unavailable_widgets, 0);
+    assert!(loaded.original_v0().is_none());
+    assert!(loaded.report().is_none());
 
     // Backup must NOT be written on a no-op.
     let parent = dest
@@ -150,11 +163,11 @@ async fn current_version_config_is_a_noop() {
 async fn unknown_future_version_is_rejected() {
     let tmp = tempdir();
     let dest = tmp.join("bmc_config.json");
-    fs::write(&dest, r#"{"version":999,"scenes":{}}"#)
+    fs::write(&dest, r#"{"version":999,"scenes":[]}"#)
         .await
         .expect("BUG: seed write should succeed");
 
-    let err = config_migration::migrate_in_place(&dest)
+    let err = config_migration::migrate_on_disk(&dest)
         .await
         .expect_err("future version must be refused rather than overwritten");
     let msg = format!("{err:#}");
@@ -168,6 +181,20 @@ async fn unknown_future_version_is_rejected() {
         .await
         .expect("BUG: original file should still be readable");
     assert!(on_disk.contains("999"), "file must be untouched");
+}
+
+#[tokio::test]
+async fn load_is_pure_without_persist() {
+    // `LoadedConfig::from_str` is the pure, in-memory path. No
+    // filesystem side effects; the caller is free to inspect the
+    // result and discard it.
+    let loaded =
+        LoadedConfig::from_str(FIXTURE).expect("BUG: fixture must parse via the pure FromStr path");
+    assert!(loaded.was_migrated());
+    assert!(
+        loaded.original_v0().is_some(),
+        "FromStr path must also preserve the v0 original"
+    );
 }
 
 /// Small helper producing a unique tmp dir for each test.

@@ -1,107 +1,269 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-//! Migrate `/etc/bmc_config.json` from the slint-monolith shape to
-//! the manifest-driven shape introduced by BDK-141 / BDK-385.
+//! Config migration, typed-per-version style.
 //!
-//! Version-based detection: a top-level `version` field drives the
-//! migration path. Missing or `0` means a legacy slint-monolith
-//! config that needs translation; `1` means the current schema and
-//! the migrator is a no-op; any other value aborts with an explicit
-//! error rather than silently overwriting what might be a
-//! newer-format config.
+//! Adapted from `bos-main/open/bosminer/bosminer-config`, which
+//! handled four major schema versions by representing each as its
+//! own Rust type linked through an `Upgrade` trait chain. Parsing
+//! any version and walking to the latest becomes a sequence of
+//! trait method calls the compiler enforces.
 //!
-//! See `docs/devlogs/BDK-346/design.md` for the full design.
+//! Key properties:
+//!
+//! - **Pure, in-memory upgrades.** `LoadedConfig::from_str` never
+//!   touches the filesystem. The caller decides whether and when
+//!   to persist the result.
+//! - **The original parse survives.** When a load walks through
+//!   [`v0::Config`], the parsed v0 struct is preserved inside
+//!   [`LoadedConfig::MigratedFromV0`] — callers can inspect it for
+//!   debug views, rollback UIs, or CI snapshot checks without
+//!   re-reading the disk (which by then may have been rewritten).
+//! - **Downgrade-safe.** A config that names a schema version this
+//!   binary does not understand is refused rather than rewritten,
+//!   so an accidental firmware downgrade cannot silently clobber a
+//!   newer config.
+//!
+//! See `docs/stories/config-migration.md` for user-facing behaviour
+//! and `docs/devlogs/BDK-346/design.md` for design notes.
 
-mod legacy;
-mod translate;
+mod upgrade_v0;
+pub mod v0;
 
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::info;
 
-use crate::config::CONFIG_VERSION;
+use crate::config::{CONFIG_VERSION, Config};
 
-pub use translate::{MigrationOutcome, Report};
+/// Tag a schema type with its numeric version.
+pub trait Version {
+    const VERSION: u32;
+}
 
-/// Minimal view of the on-disk config used only for detecting which
-/// migration arm to dispatch to. Parses fast and never fails on fields
-/// added in later schema versions.
+/// Total, in-memory upgrade from one schema version to the next.
+///
+/// The chain is linear: each older type points to exactly one
+/// newer type via the `NextVersion` associated type. The latest
+/// type does not implement [`Upgrade`].
+pub trait Upgrade: Version + Sized {
+    type NextVersion: Version;
+    fn upgrade_to_next_version(self) -> Self::NextVersion;
+}
+
+impl Version for Config {
+    const VERSION: u32 = CONFIG_VERSION;
+}
+
+/// Minimal view of an on-disk config used to dispatch to the
+/// matching parse arm. Deserializes fast and tolerates unknown
+/// fields so we never choke on a schema we haven't seen.
 #[derive(Deserialize)]
 struct FormatHeader {
     #[serde(default)]
     version: u32,
 }
 
-/// Detect and migrate a legacy config in place. Returns a `Report`
-/// summarizing what happened (zero-valued if the file was already
-/// at the current version).
-pub async fn migrate_in_place(path: &Path) -> Result<Report> {
+/// Counts derived from an upgraded config. Zero-valued when the
+/// file was already at the current version.
+#[derive(Debug, Clone, Default)]
+pub struct Report {
+    /// Scenes in the source (unchanged by the upgrade).
+    pub scenes: usize,
+    /// Widgets mapped to a native current-schema manifest.
+    pub translated_widgets: usize,
+    /// v0 `remote_widget` entries preserved as `_legacy_remote`
+    /// placeholders.
+    pub legacy_remote_widgets: usize,
+    /// v0 widgets without a current manifest, preserved as
+    /// `_legacy` placeholders for a future firmware.
+    pub unavailable_widgets: usize,
+}
+
+impl Report {
+    /// Derive a [`Report`] by walking an upgraded config and
+    /// counting placeholder widgets. Placeholders are identified
+    /// by `widget_type_id == Uuid::nil()` plus a reserved key in
+    /// `params` (`_legacy` or `_legacy_remote`).
+    fn from_current(config: &Config) -> Self {
+        let mut out = Self {
+            scenes: config.scenes.len(),
+            ..Self::default()
+        };
+        for scene in config.scenes.values() {
+            for widget in scene.widgets.values() {
+                if widget.widget_type_id.is_nil() {
+                    if widget
+                        .params
+                        .get("_legacy_remote")
+                        .is_some_and(serde_json::Value::is_object)
+                    {
+                        out.legacy_remote_widgets += 1;
+                    } else {
+                        out.unavailable_widgets += 1;
+                    }
+                } else {
+                    out.translated_widgets += 1;
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Result of parsing a raw config of unknown version.
+///
+/// Either the file was already at the current schema, or it was a
+/// v0 config whose parse and upgrade both succeeded — in which
+/// case both the pre-upgrade `v0::Config` and the upgraded
+/// `Config` remain in memory.
+#[derive(Debug)]
+pub enum LoadedConfig {
+    /// File already carried `version = CONFIG_VERSION`.
+    AlreadyCurrent(Config),
+    /// File was a v0 (legacy) config; the upgrade has been applied.
+    MigratedFromV0 {
+        current: Config,
+        /// The original v0 struct, preserved for debug views,
+        /// rollback, or CI snapshot checks without disk re-reads.
+        original: Box<v0::Config>,
+        report: Report,
+    },
+}
+
+impl LoadedConfig {
+    /// Borrow the effective current config, regardless of origin.
+    #[must_use]
+    pub fn current(&self) -> &Config {
+        match self {
+            Self::AlreadyCurrent(c) => c,
+            Self::MigratedFromV0 { current, .. } => current,
+        }
+    }
+
+    /// Take ownership of the current config, dropping the
+    /// preserved original if any.
+    #[must_use]
+    pub fn into_current(self) -> Config {
+        match self {
+            Self::AlreadyCurrent(c) => c,
+            Self::MigratedFromV0 { current, .. } => current,
+        }
+    }
+
+    /// The pre-upgrade v0 struct, available iff the load walked
+    /// through a v0 parse. `None` when the file was already
+    /// current.
+    #[must_use]
+    pub fn original_v0(&self) -> Option<&v0::Config> {
+        match self {
+            Self::AlreadyCurrent(_) => None,
+            Self::MigratedFromV0 { original, .. } => Some(original),
+        }
+    }
+
+    #[must_use]
+    pub fn was_migrated(&self) -> bool {
+        matches!(self, Self::MigratedFromV0 { .. })
+    }
+
+    #[must_use]
+    pub fn report(&self) -> Option<&Report> {
+        match self {
+            Self::AlreadyCurrent(_) => None,
+            Self::MigratedFromV0 { report, .. } => Some(report),
+        }
+    }
+}
+
+impl FromStr for LoadedConfig {
+    type Err = anyhow::Error;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let header: FormatHeader = serde_json::from_str(raw)
+            .context("config header could not be parsed; file is not valid JSON")?;
+        match header.version {
+            v if v == Config::VERSION => {
+                let current: Config = serde_json::from_str(raw).context(
+                    "config header names current schema but body failed to parse as current",
+                )?;
+                Ok(Self::AlreadyCurrent(current))
+            }
+            0 => {
+                let legacy: v0::Config = serde_json::from_str(raw).context(
+                    "config parses as neither the current schema nor a recognized legacy schema",
+                )?;
+                let original = Box::new(legacy.clone());
+                let current = legacy.upgrade_to_next_version();
+                let report = Report::from_current(&current);
+                Ok(Self::MigratedFromV0 {
+                    current,
+                    original,
+                    report,
+                })
+            }
+            other => bail!(
+                "unsupported config version: {other}. Refusing to read; a newer firmware may \
+                 have written this file. Restore a `.backup.<ts>` copy or update the firmware."
+            ),
+        }
+    }
+}
+
+/// Read a config from disk and upgrade it to the current schema in
+/// memory. No disk writes. Pair with [`save_with_backup`] to
+/// persist the upgrade.
+pub async fn load_any_version(path: &Path) -> Result<LoadedConfig> {
     let raw = tokio::fs::read_to_string(path)
         .await
         .with_context(|| format!("read config: {}", path.display()))?;
-    migrate_raw(&raw, path).await
+    raw.parse()
 }
 
-/// Migrate a raw config string. Used by `migrate_in_place` and the
-/// `bmc-migrate-config` CLI; exposed separately so tests can drive
-/// the full flow without setting up a filesystem fixture.
-pub async fn migrate_raw(raw: &str, dest: &Path) -> Result<Report> {
-    let version =
-        detect_version(raw).context("config header could not be parsed; file is not valid JSON")?;
-
-    match version {
-        0 => migrate_v0_to_current(raw, dest).await,
-        CONFIG_VERSION => Ok(Report::noop()),
-        other => bail!(
-            "unsupported config version: {other}. Refusing to overwrite; a newer firmware may \
-             have written this file. Restore a `.backup.<ts>` copy or update the firmware."
-        ),
-    }
-}
-
-fn detect_version(raw: &str) -> Result<u32> {
-    let header: FormatHeader = serde_json::from_str(raw)?;
-    Ok(header.version)
-}
-
-async fn migrate_v0_to_current(raw: &str, dest: &Path) -> Result<Report> {
-    let legacy: legacy::Config = serde_json::from_str(raw)
-        .context("config parses as neither the current schema nor a recognized legacy schema")?;
-
-    // Always copy the original before touching it. Best-effort: if the
-    // dest doesn't exist yet (CLI against an arbitrary path), skip.
-    if tokio::fs::try_exists(dest).await.unwrap_or(false) {
-        let backup = backup_path_for(dest);
-        tokio::fs::copy(dest, &backup)
+/// Write `config` to `path`, first copying any existing file at
+/// that path to a timestamped backup. Safe to call on every save:
+/// the backup is only written when there is a file to back up.
+pub async fn save_with_backup(config: &Config, path: &Path) -> Result<()> {
+    if tokio::fs::try_exists(path).await.unwrap_or(false) {
+        let backup = backup_path_for(path);
+        tokio::fs::copy(path, &backup)
             .await
             .with_context(|| format!("backup to {}", backup.display()))?;
-        info!(backup = %backup.display(), "legacy config detected; backed up original");
-    } else {
-        warn!(
-            dest = %dest.display(),
-            "destination did not exist; skipping backup (CLI or first-time flow)"
-        );
+        info!(backup = %backup.display(), "backed up existing config before save");
     }
 
-    let (migrated_json, report) = translate::translate_config(legacy);
-    let rewritten =
-        serde_json::to_vec_pretty(&migrated_json).context("serialize migrated config")?;
-    crate::utils::replace_file(dest, &rewritten)
+    let bytes = serde_json::to_vec_pretty(config).context("serialize config")?;
+    crate::utils::replace_file(path, &bytes)
         .await
-        .with_context(|| format!("write migrated config to {}", dest.display()))?;
+        .with_context(|| format!("write config to {}", path.display()))?;
+    Ok(())
+}
 
-    info!(
-        translated = report.translated_widgets,
-        legacy_remote = report.legacy_remote_widgets,
-        unavailable = report.unavailable_widgets,
-        scenes = report.scenes,
-        "config migration complete",
-    );
-
-    Ok(report)
+/// Convenience: load, upgrade if needed, persist if upgraded.
+///
+/// Used by the boot sequence and by `bmc-migrate-config`. The
+/// returned [`LoadedConfig`] lets the caller inspect the original
+/// parse after persistence has happened; nothing else re-reads the
+/// file.
+pub async fn migrate_on_disk(path: &Path) -> Result<LoadedConfig> {
+    let loaded = load_any_version(path).await?;
+    if let LoadedConfig::MigratedFromV0 {
+        current, report, ..
+    } = &loaded
+    {
+        info!(
+            translated = report.translated_widgets,
+            legacy_remote = report.legacy_remote_widgets,
+            unavailable = report.unavailable_widgets,
+            scenes = report.scenes,
+            "upgrading legacy config on disk",
+        );
+        save_with_backup(current, path).await?;
+    }
+    Ok(loaded)
 }
 
 fn backup_path_for(path: &Path) -> PathBuf {
@@ -119,27 +281,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detect_version_missing_defaults_to_zero() {
-        assert_eq!(
-            detect_version(r#"{"scenes": []}"#).expect("BUG: header should parse"),
-            0
+    fn current_version_parses_as_already_current() {
+        // Scenes and accounts serialize as JSON arrays; see
+        // `crate::scene::deserialize_scenes` and
+        // `bmc_display::data::deserialize_accounts`.
+        let raw = format!(
+            r#"{{"version":{},"scenes":[],"accounts":[]}}"#,
+            Config::VERSION
+        );
+        let loaded: LoadedConfig = raw
+            .parse()
+            .expect("BUG: current-version parse must succeed");
+        assert!(!loaded.was_migrated());
+        assert!(loaded.original_v0().is_none());
+        assert!(loaded.report().is_none());
+    }
+
+    #[test]
+    fn unknown_future_version_is_rejected() {
+        let err = r#"{"version":999,"scenes":{}}"#
+            .parse::<LoadedConfig>()
+            .expect_err("future version must be refused");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unsupported config version"),
+            "error should name the failure mode (got: {msg})",
         );
     }
 
     #[test]
-    fn detect_version_explicit() {
-        assert_eq!(
-            detect_version(r#"{"version": 1}"#).expect("BUG: header should parse"),
-            1
-        );
-        assert_eq!(
-            detect_version(r#"{"version": 2}"#).expect("BUG: header should parse"),
-            2
-        );
+    fn empty_legacy_parses_and_upgrades() {
+        let raw = r#"{"scenes":[],"accounts":[]}"#;
+        let loaded: LoadedConfig = raw.parse().expect("BUG: legacy parse must succeed");
+        assert!(loaded.was_migrated());
+        assert_eq!(loaded.current().version, Config::VERSION);
+        assert!(loaded.original_v0().is_some());
+        let report = loaded
+            .report()
+            .expect("BUG: migrated load must carry a report");
+        assert_eq!(report.scenes, 0);
     }
 
     #[test]
-    fn detect_version_rejects_non_json() {
-        assert!(detect_version("not json at all").is_err());
+    fn missing_version_field_is_treated_as_v0() {
+        let raw = r#"{"scenes":[]}"#;
+        let loaded: LoadedConfig = raw.parse().expect("BUG: missing version must parse as v0");
+        assert!(loaded.was_migrated());
     }
 }

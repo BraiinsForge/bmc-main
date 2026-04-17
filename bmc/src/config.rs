@@ -134,7 +134,7 @@ pub struct Config {
     /// Schema version of the on-disk config. `0` (or missing) means a
     /// legacy slint-monolith config that needs migration; `1` is the
     /// current manifest-driven format. Unknown values abort boot —
-    /// see `crate::config_migration::migrate_in_place`.
+    /// see `crate::config_migration::migrate_on_disk`.
     #[serde(default)]
     pub version: u32,
     #[serde(
