@@ -56,8 +56,8 @@ async fn add_packages_to_empty_profile() {
     )];
 
     // Replicate CLI: read current manifest (empty), compute plan, apply
-    let current_manifest =
-        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read manifest");
+    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
+        .expect("BUG: read manifest");
     let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &add_packages, &[])
         .expect("BUG: plan should succeed");
 
@@ -125,8 +125,8 @@ async fn add_packages_to_existing_profile() {
         store_b.to_str().expect("BUG: valid UTF-8"),
     )];
 
-    let current_manifest =
-        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read manifest");
+    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
+        .expect("BUG: read manifest");
     let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &add_packages, &[])
         .expect("BUG: plan should succeed");
 
@@ -187,8 +187,8 @@ async fn add_packages_replaces_existing() {
         store_a_v2.to_str().expect("BUG: valid UTF-8"),
     )];
 
-    let current_manifest =
-        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read manifest");
+    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
+        .expect("BUG: read manifest");
     let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &add_packages, &[])
         .expect("BUG: plan should succeed");
 
@@ -248,8 +248,8 @@ async fn remove_packages_from_profile() {
     // Remove package "b"
     let names_to_remove = vec!["b".into()];
 
-    let current_manifest =
-        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read manifest");
+    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
+        .expect("BUG: read manifest");
     let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &[], &names_to_remove)
         .expect("BUG: plan should succeed");
 
@@ -305,8 +305,8 @@ async fn remove_nonexistent_package_errors() {
     // Try to remove "nonexistent" — should now error.
     let names_to_remove = vec!["nonexistent".into()];
 
-    let current_manifest =
-        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read manifest");
+    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
+        .expect("BUG: read manifest");
     let err = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &[], &names_to_remove)
         .expect_err("removing a missing package should error");
     assert!(
@@ -422,9 +422,9 @@ async fn add_packages_noop_skips_generation() {
     // the no-op short-circuit: empty diff, no store verification, no build.
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
+        None, // default base: try current, fall back to latest
         &packages,
         &[],
-        false,
         /* activate = */ false,
         "hooks",
         None,
@@ -478,8 +478,8 @@ async fn compute_plan_rejects_add_and_remove_same_name() {
     )];
     let removes = vec!["a".into()];
 
-    let current_manifest =
-        bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read manifest");
+    let current_manifest = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir)
+        .expect("BUG: read manifest");
     let err = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &adds, &removes)
         .expect_err("add+remove of same name should error");
     assert!(
@@ -490,3 +490,203 @@ async fn compute_plan_rejects_add_and_remove_same_name() {
         "got unexpected error: {err:?}"
     );
 }
+
+// ── base selector + activation default tests ────────────────────────────────
+
+/// Build two generations and activate gen 1. With `--base latest` (gen 2),
+/// a new gen is built diffed against gen 2's manifest — not gen 1's.
+#[tokio::test]
+async fn add_packages_with_base_latest_uses_latest_not_current() {
+    let tmp = TempDir::new().expect("BUG: create temp dir");
+    let profile_dir = tmp.path().join("profiles/bmc");
+
+    // Seed: gen 1 with pkg-one, gen 2 with pkg-two. Activate gen 1.
+    let store_one = tmp.path().join("store-one-1.0.0");
+    create_fake_store(&store_one, &["bin/one"]);
+    create_activation_entrypoint(&store_one);
+    let store_two = tmp.path().join("store-two-1.0.0");
+    create_fake_store(&store_two, &["bin/two"]);
+    // Only the first package in a merged generation provides the
+    // activation entrypoint — pkg-one already supplies it for gen 2.
+
+    let pkg_one =
+        test_resolved_package("pkg-one", "1.0.0", store_one.to_str().expect("BUG: utf-8"));
+    let pkg_two =
+        test_resolved_package("pkg-two", "1.0.0", store_two.to_str().expect("BUG: utf-8"));
+
+    let plan1 = bmc_nix::manifest::compute_upgrade_plan(
+        &Manifest::default(),
+        std::slice::from_ref(&pkg_one),
+        &[],
+    )
+    .expect("BUG: plan1");
+    apply_plan(&profile_dir, &plan1).await;
+
+    let plan2 = bmc_nix::manifest::compute_upgrade_plan(
+        &bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current"),
+        std::slice::from_ref(&pkg_two),
+        &[],
+    )
+    .expect("BUG: plan2");
+    apply_plan(&profile_dir, &plan2).await;
+    // Now: gen 1 (pkg-one), gen 2 (pkg-one + pkg-two), `current` -> gen 2.
+
+    // Re-point `current` at gen 1 to create a drift: latest (gen 2) has
+    // pkg-two, current (gen 1) does not.
+    std::fs::remove_file(profile_dir.join("current")).expect("BUG: rm current");
+    std::os::unix::fs::symlink("1-link", profile_dir.join("current"))
+        .expect("BUG: symlink -> 1-link");
+
+    // Simulate `add-packages --base latest --name pkg-three`.
+    let store_three = tmp.path().join("store-three-1.0.0");
+    create_fake_store(&store_three, &["bin/three"]);
+    // No entrypoint — the merged base already carries one from pkg-one.
+    let pkg_three = test_resolved_package(
+        "pkg-three",
+        "1.0.0",
+        store_three.to_str().expect("BUG: utf-8"),
+    );
+
+    let base_manifest = bmc_nix::manifest::read_manifest_by_selector(
+        &profile_dir,
+        &bmc_nix::types::BaseSelector::Latest,
+    )
+    .expect("BUG: read latest");
+    let plan3 = bmc_nix::manifest::compute_upgrade_plan(&base_manifest, &[pkg_three], &[])
+        .expect("BUG: plan3");
+    let gen3 = apply_plan(&profile_dir, &plan3).await;
+
+    // Gen 3 must contain pkg-one, pkg-two, pkg-three (diffed against gen 2).
+    let m = read_manifest(&gen3.path).expect("BUG: read gen3 manifest");
+    assert!(m.packages.contains_key("pkg-one"), "gen3 has pkg-one");
+    assert!(m.packages.contains_key("pkg-two"), "gen3 has pkg-two");
+    assert!(m.packages.contains_key("pkg-three"), "gen3 has pkg-three");
+}
+
+/// `--base 1` (explicit N) diffs against that specific generation.
+#[tokio::test]
+async fn add_packages_with_base_generation_n_uses_specific_generation() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let profile_dir = tmp.path().join("profiles/bmc");
+
+    let store_a = tmp.path().join("store-a-1.0.0");
+    create_fake_store(&store_a, &["bin/a"]);
+    create_activation_entrypoint(&store_a);
+    let pkg_a = test_resolved_package("a", "1.0.0", store_a.to_str().expect("BUG: utf-8"));
+
+    // gen 1: pkg-a; gen 2: pkg-noise — distinct gen-2 content lets us
+    // assert !contains_key("noise") below, strengthening the
+    // "base 1 ≠ latest" invariant.
+    let store_noise = tmp.path().join("store-noise-1.0.0");
+    create_fake_store(&store_noise, &["bin/noise"]);
+    create_activation_entrypoint(&store_noise);
+    let pkg_noise =
+        test_resolved_package("noise", "1.0.0", store_noise.to_str().expect("BUG: utf-8"));
+
+    let plan1 = bmc_nix::manifest::compute_upgrade_plan(
+        &Manifest::default(),
+        std::slice::from_ref(&pkg_a),
+        &[],
+    )
+    .expect("BUG: plan1");
+    apply_plan(&profile_dir, &plan1).await;
+    let plan2 = bmc_nix::manifest::compute_upgrade_plan(
+        &Manifest::default(),
+        std::slice::from_ref(&pkg_noise),
+        &[],
+    )
+    .expect("BUG: plan2");
+    apply_plan(&profile_dir, &plan2).await;
+
+    // `add-packages --base 1 --name b` should diff against gen 1 (which has
+    // pkg-a) — and must NOT carry pkg-noise from gen 2.
+    let store_b = tmp.path().join("store-b-1.0.0");
+    create_fake_store(&store_b, &["bin/b"]);
+    // No entrypoint — pkg-a (already in the base) supplies it.
+    let pkg_b = test_resolved_package("b", "1.0.0", store_b.to_str().expect("BUG: utf-8"));
+
+    let base = bmc_nix::manifest::read_manifest_by_selector(
+        &profile_dir,
+        &bmc_nix::types::BaseSelector::Generation(1),
+    )
+    .expect("BUG: read gen 1");
+    let plan3 = bmc_nix::manifest::compute_upgrade_plan(&base, &[pkg_b], &[]).expect("BUG: plan3");
+    let gen3 = apply_plan(&profile_dir, &plan3).await;
+
+    let m = read_manifest(&gen3.path).expect("BUG: read gen3 manifest");
+    assert!(m.packages.contains_key("a"), "gen3 carries a from gen 1");
+    assert!(m.packages.contains_key("b"), "gen3 adds b");
+    assert!(
+        !m.packages.contains_key("noise"),
+        "gen3 does NOT carry pkg-noise from gen 2"
+    );
+}
+
+/// `--base 42` when generation 42 doesn't exist errors explicitly.
+#[tokio::test]
+async fn base_with_nonexistent_generation_errors() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let profile_dir = tmp.path().join("profiles/bmc");
+    std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+    let err = bmc_nix::manifest::read_manifest_by_selector(
+        &profile_dir,
+        &bmc_nix::types::BaseSelector::Generation(42),
+    )
+    .expect_err("missing gen 42 must error");
+    assert!(
+        matches!(
+            err,
+            bmc_nix::manifest::ReadManifestError::GenerationNotFound { generation: 42, .. }
+        ),
+        "expected GenerationNotFound, got {err:?}"
+    );
+}
+
+/// Default base path with a broken `current` symlink falls back to latest —
+/// the new generation must diff against latest, not against an empty base.
+#[tokio::test]
+async fn add_packages_default_base_falls_back_to_latest_when_current_missing() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let profile_dir = tmp.path().join("profiles/bmc");
+
+    let store_a = tmp.path().join("store-a-1.0.0");
+    create_fake_store(&store_a, &["bin/a"]);
+    create_activation_entrypoint(&store_a);
+    let pkg_a = test_resolved_package("a", "1.0.0", store_a.to_str().expect("BUG: utf-8"));
+
+    // Seed gen 1 with pkg-a.
+    let plan1 = bmc_nix::manifest::compute_upgrade_plan(
+        &Manifest::default(),
+        std::slice::from_ref(&pkg_a),
+        &[],
+    )
+    .expect("BUG: plan1");
+    apply_plan(&profile_dir, &plan1).await;
+
+    // Break the `current` symlink — gen 1 still exists, but current is gone.
+    std::fs::remove_file(profile_dir.join("current")).expect("BUG: rm current");
+
+    // Add pkg-b through the default-base path.
+    let store_b = tmp.path().join("store-b-1.0.0");
+    create_fake_store(&store_b, &["bin/b"]);
+    // No entrypoint — pkg-a (carried from latest) supplies it.
+    let pkg_b = test_resolved_package("b", "1.0.0", store_b.to_str().expect("BUG: utf-8"));
+
+    let base = bmc_nix::manifest::read_current_or_latest_manifest(&profile_dir).expect("BUG: read");
+    let plan = bmc_nix::manifest::compute_upgrade_plan(&base, &[pkg_b], &[]).expect("BUG: plan");
+    let gen2 = apply_plan(&profile_dir, &plan).await;
+
+    // Gen 2 must carry pkg-a (from latest = gen 1) AND pkg-b.
+    let m = read_manifest(&gen2.path).expect("BUG: read gen2 manifest");
+    assert!(m.packages.contains_key("a"), "gen2 keeps pkg-a from latest");
+    assert!(m.packages.contains_key("b"), "gen2 adds pkg-b");
+}
+
+// NOTE: `apply_profile_change_explicit_base_always_builds_new_generation_on_noop`
+// was removed — `apply_profile_change` calls `store::verify_store_paths` against
+// the live Nix store for explicit-base calls (the short-circuit is gated to the
+// `None` path), and the test infrastructure uses ad-hoc temp-dir paths. Covering
+// the "explicit base always builds, even on no-op" invariant belongs in a unit
+// test in `upgrade.rs` with an injected `CommandRunner`, tracked as follow-up
+// under #BDK-363.
