@@ -134,6 +134,66 @@ pub fn read_current_manifest(profile_dir: &Path) -> Result<Manifest, ReadManifes
     }
 }
 
+/// Read the manifest from generation `N` at `<profile_dir>/<N>-link/manifest`.
+///
+/// Errors with [`ReadManifestError::GenerationNotFound`] when the
+/// generation directory does not exist.
+pub fn read_generation_manifest(
+    profile_dir: &Path,
+    generation: usize,
+) -> Result<Manifest, ReadManifestError> {
+    let gen_path = profile_dir.join(format!("{generation}-link"));
+    if !gen_path.exists() {
+        return Err(ReadManifestError::GenerationNotFound {
+            generation,
+            path: gen_path.display().to_string(),
+        });
+    }
+    read_manifest(&gen_path)
+}
+
+/// Read the manifest from the highest-numbered generation.
+///
+/// Returns [`Manifest::default`] when no generations exist — matches
+/// the "empty starting state" semantics that existed pre-change on
+/// `read_current_manifest`.
+pub fn read_latest_manifest(profile_dir: &Path) -> Result<Manifest, ReadManifestError> {
+    match crate::profile::latest_generation_number(profile_dir) {
+        Some(n) => read_generation_manifest(profile_dir, n),
+        None => Ok(Manifest::default()),
+    }
+}
+
+/// Dispatch by selector. `BaseSelector::Current` uses
+/// [`read_current_manifest`] (surfaces `CurrentNotFound`); the CLI
+/// wrapper does NOT fall back — the fallback lives in
+/// `apply_profile_change` where it runs under the profile lock.
+pub fn read_manifest_by_selector(
+    profile_dir: &Path,
+    selector: &crate::types::BaseSelector,
+) -> Result<Manifest, ReadManifestError> {
+    match selector {
+        crate::types::BaseSelector::Current => read_current_manifest(profile_dir),
+        crate::types::BaseSelector::Latest => read_latest_manifest(profile_dir),
+        crate::types::BaseSelector::Generation(n) => read_generation_manifest(profile_dir, *n),
+    }
+}
+
+/// Read the default base manifest used by `apply_profile_change`
+/// when the caller passes `None`: try `current`, fall back to
+/// `latest` on [`ReadManifestError::CurrentNotFound`]. Propagates
+/// any other error (including parse errors on an existing-but-broken
+/// manifest file).
+///
+/// On a truly fresh profile both reads yield `Manifest::default()`.
+pub fn read_current_or_latest_manifest(profile_dir: &Path) -> Result<Manifest, ReadManifestError> {
+    match read_current_manifest(profile_dir) {
+        Ok(m) => Ok(m),
+        Err(ReadManifestError::CurrentNotFound { .. }) => read_latest_manifest(profile_dir),
+        Err(other) => Err(other),
+    }
+}
+
 /// Convert a manifest package back to a resolved package.
 ///
 /// This is lossy — `ManifestPackage` does not store `cache_url`, only
@@ -416,6 +476,150 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: temp dir");
         let result = read_manifest(dir.path());
         assert!(result.is_err());
+    }
+
+    // ---- read_generation_manifest tests ----
+
+    #[test]
+    fn read_generation_manifest_returns_manifest() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+        let gen_dir = profile_dir.join("2-link");
+        std::fs::create_dir_all(&gen_dir).expect("BUG: mkdir gen");
+
+        let packages = vec![test_package("pkg-a", "/nix/store/aaa")];
+        let manifest = build_manifest(&packages);
+        write_manifest(&gen_dir, &manifest).expect("BUG: write manifest");
+
+        let read_back = read_generation_manifest(&profile_dir, 2).expect("BUG: read generation 2");
+        assert!(read_back.packages.contains_key("pkg-a"));
+    }
+
+    #[test]
+    fn read_generation_manifest_missing_errors_with_generation_not_found() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        let err =
+            read_generation_manifest(&profile_dir, 7).expect_err("missing generation must error");
+        assert!(
+            matches!(
+                err,
+                ReadManifestError::GenerationNotFound { generation: 7, .. }
+            ),
+            "expected GenerationNotFound, got {err:?}"
+        );
+    }
+
+    // ---- read_latest_manifest tests ----
+
+    #[test]
+    fn read_latest_manifest_returns_highest_generation() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+
+        for (n, pkg_name) in [(1, "pkg-old"), (2, "pkg-mid"), (3, "pkg-new")] {
+            let gen_dir = profile_dir.join(format!("{n}-link"));
+            std::fs::create_dir_all(&gen_dir).expect("BUG: mkdir gen");
+            let manifest =
+                build_manifest(&[test_package(pkg_name, &format!("/nix/store/{pkg_name}"))]);
+            write_manifest(&gen_dir, &manifest).expect("BUG: write manifest");
+        }
+
+        let latest = read_latest_manifest(&profile_dir).expect("BUG: latest should read");
+        assert!(latest.packages.contains_key("pkg-new"));
+        assert!(!latest.packages.contains_key("pkg-mid"));
+    }
+
+    #[test]
+    fn read_latest_manifest_empty_dir_returns_default() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        let latest = read_latest_manifest(&profile_dir).expect("BUG: empty latest");
+        assert!(latest.packages.is_empty());
+    }
+
+    // ---- read_manifest_by_selector tests ----
+
+    #[test]
+    fn read_manifest_by_selector_current_latest_and_generation() {
+        use crate::types::BaseSelector;
+
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+
+        // Build gen 1 (pkg-one) and gen 2 (pkg-two); activate gen 1.
+        for (n, pkg_name) in [(1, "pkg-one"), (2, "pkg-two")] {
+            let gen_dir = profile_dir.join(format!("{n}-link"));
+            std::fs::create_dir_all(&gen_dir).expect("BUG: mkdir gen");
+            let manifest =
+                build_manifest(&[test_package(pkg_name, &format!("/nix/store/{pkg_name}"))]);
+            write_manifest(&gen_dir, &manifest).expect("BUG: write manifest");
+        }
+        std::os::unix::fs::symlink("1-link", profile_dir.join("current"))
+            .expect("BUG: symlink current -> 1-link");
+
+        let cur = read_manifest_by_selector(&profile_dir, &BaseSelector::Current)
+            .expect("BUG: current read");
+        assert!(cur.packages.contains_key("pkg-one"));
+
+        let latest = read_manifest_by_selector(&profile_dir, &BaseSelector::Latest)
+            .expect("BUG: latest read");
+        assert!(latest.packages.contains_key("pkg-two"));
+
+        let g2 = read_manifest_by_selector(&profile_dir, &BaseSelector::Generation(2))
+            .expect("BUG: gen 2 read");
+        assert!(g2.packages.contains_key("pkg-two"));
+    }
+
+    // ---- read_current_or_latest_manifest tests ----
+
+    #[test]
+    fn read_current_or_latest_manifest_uses_current_when_present() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+
+        let gen1 = profile_dir.join("1-link");
+        std::fs::create_dir_all(&gen1).expect("BUG: mkdir gen");
+        let manifest = build_manifest(&[test_package("pkg-one", "/nix/store/one")]);
+        write_manifest(&gen1, &manifest).expect("BUG: write manifest");
+        std::os::unix::fs::symlink("1-link", profile_dir.join("current"))
+            .expect("BUG: symlink current");
+
+        let read = read_current_or_latest_manifest(&profile_dir).expect("BUG: read");
+        assert!(read.packages.contains_key("pkg-one"));
+    }
+
+    #[test]
+    fn read_current_or_latest_manifest_falls_back_to_latest_when_current_missing() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+
+        // gen 1 and gen 2 exist, but NO `current` symlink.
+        for (n, pkg_name) in [(1, "pkg-old"), (2, "pkg-new")] {
+            let gen_dir = profile_dir.join(format!("{n}-link"));
+            std::fs::create_dir_all(&gen_dir).expect("BUG: mkdir gen");
+            let manifest =
+                build_manifest(&[test_package(pkg_name, &format!("/nix/store/{pkg_name}"))]);
+            write_manifest(&gen_dir, &manifest).expect("BUG: write manifest");
+        }
+
+        let read = read_current_or_latest_manifest(&profile_dir).expect("BUG: read with fallback");
+        assert!(read.packages.contains_key("pkg-new"));
+        assert!(!read.packages.contains_key("pkg-old"));
+    }
+
+    #[test]
+    fn read_current_or_latest_manifest_returns_default_on_empty_profile() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = dir.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        let read = read_current_or_latest_manifest(&profile_dir).expect("BUG: empty profile read");
+        assert!(read.packages.is_empty());
     }
 
     // ---- compute_upgrade_plan tests ----
