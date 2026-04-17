@@ -22,6 +22,45 @@ fn default_cache_name() -> String {
     "local".into()
 }
 
+/// Which existing generation the caller wants to diff the new
+/// generation against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaseSelector {
+    /// Use the manifest of the `current` symlink; fall back to
+    /// `latest` when `current` is missing (applied by
+    /// `apply_profile_change`, not by parsing).
+    Current,
+    /// Use the manifest of the highest-numbered generation.
+    Latest,
+    /// Use the manifest of a specific generation number.
+    Generation(usize),
+}
+
+/// Error returned when a `BaseSelector` fails to parse from a string.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid base selector `{0}` (expected `current`, `latest`, or a positive integer)")]
+pub struct BaseSelectorParseError(String);
+
+impl std::str::FromStr for BaseSelector {
+    type Err = BaseSelectorParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "current" => Ok(Self::Current),
+            "latest" => Ok(Self::Latest),
+            _ => {
+                let n: usize = s
+                    .parse()
+                    .map_err(|_| BaseSelectorParseError(s.to_owned()))?;
+                if n == 0 {
+                    return Err(BaseSelectorParseError(s.to_owned()));
+                }
+                Ok(Self::Generation(n))
+            }
+        }
+    }
+}
+
 /// Remote package index (miniminer-index.json)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageIndex {
@@ -463,6 +502,33 @@ mod tests {
         assert_eq!(factory.version, 1);
         assert_eq!(factory.tarballs.len(), 1);
         assert_eq!(factory.tarballs[0].bos_version, "1.0.0");
+    }
+
+    #[test]
+    fn base_selector_parses_current_latest_and_integer() {
+        use std::str::FromStr as _;
+        assert!(matches!(
+            BaseSelector::from_str("current").expect("BUG: parse current"),
+            BaseSelector::Current
+        ));
+        assert!(matches!(
+            BaseSelector::from_str("latest").expect("BUG: parse latest"),
+            BaseSelector::Latest
+        ));
+        assert!(matches!(
+            BaseSelector::from_str("3").expect("BUG: parse 3"),
+            BaseSelector::Generation(3)
+        ));
+    }
+
+    #[test]
+    fn base_selector_rejects_invalid_input() {
+        use std::str::FromStr as _;
+        assert!(BaseSelector::from_str("").is_err());
+        assert!(BaseSelector::from_str("0").is_err());
+        assert!(BaseSelector::from_str("-3").is_err());
+        assert!(BaseSelector::from_str("abc").is_err());
+        assert!(BaseSelector::from_str("latests").is_err());
     }
 
     #[test]
