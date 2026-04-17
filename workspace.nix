@@ -277,7 +277,8 @@ let
         name = "bmc-openwrt-${arch}-${profile}";
         value = bmc.lib.autopatchelfBinaries {
           drv = bmc.profiles."${arch}-${profile}".buildCrate bmc.crates.bmc-openwrt {
-            features = [ "bmc-display/slint-embed-files" ];
+            features = [ "bmc-display/slint-embed-files" ]
+              ++ lib.optionals (profile != "release") [ "profiling" ];
           };
           runtimeDeps = deps.compositorRuntimeDeps cfg.runtimePkgs;
         };
