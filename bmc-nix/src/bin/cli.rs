@@ -1,8 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use bmc_nix::types::{InstallResult, PackageChange, PackageVersion};
+use bmc_nix::manifest;
+use bmc_nix::types::{BaseSelector, InstallResult, Manifest, PackageChange, PackageVersion};
 use clap::{Parser, Subcommand};
 
 /// Print a human-readable diff of an `InstallResult` on stderr.
@@ -85,12 +86,13 @@ enum Commands {
         #[arg(long)]
         hooks_override_path: Option<PathBuf>,
 
-        /// Activate the profile after building (create 'current' symlink)
-        #[arg(long)]
-        activate: bool,
+        /// Build the generation but do not create/update the `current`
+        /// symlink. Activation is the default.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_activate: bool,
     },
 
-    /// Add one or more local packages to the current profile
+    /// Add one or more local packages to a profile
     AddPackages {
         /// Package name (repeatable, positionally paired with --version and --store-path)
         #[arg(long)]
@@ -116,12 +118,18 @@ enum Commands {
         #[arg(long)]
         hooks_override_path: Option<PathBuf>,
 
-        /// Activate the profile after building (create 'current' symlink)
-        #[arg(long)]
-        activate: bool,
+        /// Base generation to diff against: `current` (default),
+        /// `latest`, or a positive integer generation number.
+        #[arg(long, default_value = "current")]
+        base: BaseSelector,
+
+        /// Build the generation but do not create/update the `current`
+        /// symlink. Activation is the default.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_activate: bool,
     },
 
-    /// Remove packages from the current profile
+    /// Remove packages from a profile
     RemovePackages {
         /// Directory for the profile generations
         #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
@@ -139,9 +147,15 @@ enum Commands {
         #[arg(long)]
         hooks_override_path: Option<PathBuf>,
 
-        /// Activate the profile after building
-        #[arg(long)]
-        activate: bool,
+        /// Base generation to diff against: `current` (default),
+        /// `latest`, or a positive integer generation number.
+        #[arg(long, default_value = "current")]
+        base: BaseSelector,
+
+        /// Build the generation but do not create/update the `current`
+        /// symlink. Activation is the default.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_activate: bool,
     },
 
     /// Reset profile from an index JSON (no manifest merging)
@@ -162,10 +176,30 @@ enum Commands {
         #[arg(long)]
         hooks_override_path: Option<PathBuf>,
 
-        /// Activate the profile after building
-        #[arg(long)]
-        activate: bool,
+        /// Build the generation but do not create/update the `current`
+        /// symlink. Activation is the default.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_activate: bool,
     },
+}
+
+/// Resolve a `BaseSelector` into the optional `base_manifest` argument
+/// for `apply_profile_change`.
+///
+/// Returns `Ok(None)` for `BaseSelector::Current` — the default path
+/// reads the manifest under the profile lock in `apply_profile_change`.
+/// For `Latest` / `Generation(N)` the manifest is read now and passed
+/// as `Some(_)`.
+fn resolve_base(
+    profile_dir: &Path,
+    selector: &BaseSelector,
+) -> Result<Option<Manifest>, manifest::ReadManifestError> {
+    match selector {
+        BaseSelector::Current => Ok(None),
+        BaseSelector::Latest | BaseSelector::Generation(_) => Ok(Some(
+            manifest::read_manifest_by_selector(profile_dir, selector)?,
+        )),
+    }
 }
 
 async fn cmd_build_profile(
@@ -173,8 +207,10 @@ async fn cmd_build_profile(
     profile_dir: PathBuf,
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
-    activate: bool,
+    no_activate: bool,
 ) -> anyhow::Result<()> {
+    let activate = !no_activate;
+
     let index_content = std::fs::read_to_string(&index)?;
     let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
     let packages = bmc_nix::index::resolve_all_from_index(&package_index)?;
@@ -207,6 +243,10 @@ async fn cmd_build_profile(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "CLI dispatch — all args are required"
+)]
 async fn cmd_add_packages(
     name: Vec<String>,
     version: Vec<String>,
@@ -214,8 +254,11 @@ async fn cmd_add_packages(
     profile_dir: PathBuf,
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
-    activate: bool,
+    base: BaseSelector,
+    no_activate: bool,
 ) -> anyhow::Result<()> {
+    let activate = !no_activate;
+
     anyhow::ensure!(
         name.len() == version.len() && name.len() == store_path.len(),
         "--name, --version, and --store-path must each be provided the same number of times \
@@ -247,11 +290,13 @@ async fn cmd_add_packages(
 
     std::fs::create_dir_all(&profile_dir)?;
 
+    let base_manifest = resolve_base(&profile_dir, &base)?;
+
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
+        base_manifest,
         &add_packages,
         &[],
-        false,
         activate,
         &hooks_dir,
         hooks_override_path.as_deref(),
@@ -270,15 +315,20 @@ async fn cmd_remove_packages(
     names: Vec<String>,
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
-    activate: bool,
+    base: BaseSelector,
+    no_activate: bool,
 ) -> anyhow::Result<()> {
+    let activate = !no_activate;
+
     std::fs::create_dir_all(&profile_dir)?;
+
+    let base_manifest = resolve_base(&profile_dir, &base)?;
 
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
+        base_manifest,
         &[],
         &names,
-        false,
         activate,
         &hooks_dir,
         hooks_override_path.as_deref(),
@@ -297,8 +347,10 @@ async fn cmd_reset_profile(
     profile_dir: PathBuf,
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
-    activate: bool,
+    no_activate: bool,
 ) -> anyhow::Result<()> {
+    let activate = !no_activate;
+
     let index_content = std::fs::read_to_string(&index)?;
     let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
     let packages = bmc_nix::index::resolve_all_from_index(&package_index)?;
@@ -307,9 +359,9 @@ async fn cmd_reset_profile(
 
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
+        Some(Manifest::default()),
         &packages,
         &[],
-        true,
         activate,
         &hooks_dir,
         hooks_override_path.as_deref(),
@@ -333,8 +385,17 @@ async fn main() -> anyhow::Result<()> {
             profile_dir,
             hooks_dir,
             hooks_override_path,
-            activate,
-        } => cmd_build_profile(index, profile_dir, hooks_dir, hooks_override_path, activate).await,
+            no_activate,
+        } => {
+            cmd_build_profile(
+                index,
+                profile_dir,
+                hooks_dir,
+                hooks_override_path,
+                no_activate,
+            )
+            .await
+        }
 
         Commands::AddPackages {
             name,
@@ -343,7 +404,8 @@ async fn main() -> anyhow::Result<()> {
             profile_dir,
             hooks_dir,
             hooks_override_path,
-            activate,
+            base,
+            no_activate,
         } => {
             cmd_add_packages(
                 name,
@@ -352,7 +414,8 @@ async fn main() -> anyhow::Result<()> {
                 profile_dir,
                 hooks_dir,
                 hooks_override_path,
-                activate,
+                base,
+                no_activate,
             )
             .await
         }
@@ -362,9 +425,18 @@ async fn main() -> anyhow::Result<()> {
             names,
             hooks_dir,
             hooks_override_path,
-            activate,
+            base,
+            no_activate,
         } => {
-            cmd_remove_packages(profile_dir, names, hooks_dir, hooks_override_path, activate).await
+            cmd_remove_packages(
+                profile_dir,
+                names,
+                hooks_dir,
+                hooks_override_path,
+                base,
+                no_activate,
+            )
+            .await
         }
 
         Commands::ResetProfile {
@@ -372,7 +444,16 @@ async fn main() -> anyhow::Result<()> {
             profile_dir,
             hooks_dir,
             hooks_override_path,
-            activate,
-        } => cmd_reset_profile(index, profile_dir, hooks_dir, hooks_override_path, activate).await,
+            no_activate,
+        } => {
+            cmd_reset_profile(
+                index,
+                profile_dir,
+                hooks_dir,
+                hooks_override_path,
+                no_activate,
+            )
+            .await
+        }
     }
 }
