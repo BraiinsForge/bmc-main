@@ -58,7 +58,6 @@ ssh "root@${device}" \
     "PATH=/run/current-profile/bin:\$PATH \
      ${bmc_nix_cli} add-packages \
         --profile-dir /nix/var/nix/gcroots/profiles/bmc \
-        --name '${deploy_name}' --version '${version}' --store-path '${store_path}' \
-        --activate"
+        --name '${deploy_name}' --version '${version}' --store-path '${store_path}'"
 
 echo "Done. Package '${deploy_name}' v${version} deployed at: ${store_path}"
