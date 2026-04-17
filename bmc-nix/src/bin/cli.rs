@@ -65,9 +65,41 @@ struct Cli {
     command: Commands,
 }
 
+/// Flags shared by the three profile-mutating subcommands that operate
+/// on an existing profile (`AddPackages`, `RemovePackages`,
+/// `ResetProfile`).
+///
+/// `BuildProfile` does NOT flatten this struct — its `--profile-dir`
+/// is required (no default), and flattening would either change the
+/// CLI surface or require splitting the struct.
+#[derive(clap::Args, Debug)]
+struct ProfileCommonArgs {
+    /// Directory for the profile generations.
+    #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
+    profile_dir: PathBuf,
+
+    /// Name of the hooks directory inside the profile (default: "hooks").
+    #[arg(long, default_value = "hooks")]
+    hooks_dir: String,
+
+    /// Override path for hook executables (for cross-compilation bootstrap).
+    #[arg(long)]
+    hooks_override_path: Option<PathBuf>,
+
+    /// Build the generation but do not create/update the `current`
+    /// symlink. Activation is the default.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    no_activate: bool,
+}
+
 /// Available subcommands.
 #[derive(Subcommand)]
 enum Commands {
+    // `BuildProfile` keeps its args inline: its `--profile-dir` is
+    // required (no default), so it cannot share `ProfileCommonArgs`
+    // without either changing the CLI surface (accepting the default)
+    // or splitting the struct. Neither is worth the trade for a
+    // single outlier.
     /// Build a profile from an index JSON file
     BuildProfile {
         /// Path to miniminer-index.json
@@ -106,56 +138,28 @@ enum Commands {
         #[arg(long)]
         store_path: Vec<String>,
 
-        /// Directory for the profile generations
-        #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
-        profile_dir: PathBuf,
-
-        /// Name of the hooks directory inside the profile (default: "hooks")
-        #[arg(long, default_value = "hooks")]
-        hooks_dir: String,
-
-        /// Override path for hook executables (for cross-compilation bootstrap)
-        #[arg(long)]
-        hooks_override_path: Option<PathBuf>,
-
         /// Base generation to diff against: `current` (default),
         /// `latest`, or a positive integer generation number.
         #[arg(long, default_value = "current")]
         base: BaseSelector,
 
-        /// Build the generation but do not create/update the `current`
-        /// symlink. Activation is the default.
-        #[arg(long, action = clap::ArgAction::SetTrue)]
-        no_activate: bool,
+        #[command(flatten)]
+        common: ProfileCommonArgs,
     },
 
     /// Remove packages from a profile
     RemovePackages {
-        /// Directory for the profile generations
-        #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
-        profile_dir: PathBuf,
-
         /// Package names to remove
         #[arg(long = "name", required = true)]
         names: Vec<String>,
-
-        /// Name of the hooks directory inside the profile (default: "hooks")
-        #[arg(long, default_value = "hooks")]
-        hooks_dir: String,
-
-        /// Override path for hook executables (for cross-compilation bootstrap)
-        #[arg(long)]
-        hooks_override_path: Option<PathBuf>,
 
         /// Base generation to diff against: `current` (default),
         /// `latest`, or a positive integer generation number.
         #[arg(long, default_value = "current")]
         base: BaseSelector,
 
-        /// Build the generation but do not create/update the `current`
-        /// symlink. Activation is the default.
-        #[arg(long, action = clap::ArgAction::SetTrue)]
-        no_activate: bool,
+        #[command(flatten)]
+        common: ProfileCommonArgs,
     },
 
     /// Reset profile from an index JSON (no manifest merging)
@@ -164,22 +168,8 @@ enum Commands {
         #[arg(long)]
         index: PathBuf,
 
-        /// Directory for the profile generations
-        #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
-        profile_dir: PathBuf,
-
-        /// Name of the hooks directory inside the profile (default: "hooks")
-        #[arg(long, default_value = "hooks")]
-        hooks_dir: String,
-
-        /// Override path for hook executables (for cross-compilation bootstrap)
-        #[arg(long)]
-        hooks_override_path: Option<PathBuf>,
-
-        /// Build the generation but do not create/update the `current`
-        /// symlink. Activation is the default.
-        #[arg(long, action = clap::ArgAction::SetTrue)]
-        no_activate: bool,
+        #[command(flatten)]
+        common: ProfileCommonArgs,
     },
 }
 
@@ -401,57 +391,45 @@ async fn main() -> anyhow::Result<()> {
             name,
             version,
             store_path,
-            profile_dir,
-            hooks_dir,
-            hooks_override_path,
             base,
-            no_activate,
+            common,
         } => {
             cmd_add_packages(
                 name,
                 version,
                 store_path,
-                profile_dir,
-                hooks_dir,
-                hooks_override_path,
+                common.profile_dir,
+                common.hooks_dir,
+                common.hooks_override_path,
                 base,
-                no_activate,
+                common.no_activate,
             )
             .await
         }
 
         Commands::RemovePackages {
-            profile_dir,
             names,
-            hooks_dir,
-            hooks_override_path,
             base,
-            no_activate,
+            common,
         } => {
             cmd_remove_packages(
-                profile_dir,
+                common.profile_dir,
                 names,
-                hooks_dir,
-                hooks_override_path,
+                common.hooks_dir,
+                common.hooks_override_path,
                 base,
-                no_activate,
+                common.no_activate,
             )
             .await
         }
 
-        Commands::ResetProfile {
-            index,
-            profile_dir,
-            hooks_dir,
-            hooks_override_path,
-            no_activate,
-        } => {
+        Commands::ResetProfile { index, common } => {
             cmd_reset_profile(
                 index,
-                profile_dir,
-                hooks_dir,
-                hooks_override_path,
-                no_activate,
+                common.profile_dir,
+                common.hooks_dir,
+                common.hooks_override_path,
+                common.no_activate,
             )
             .await
         }
