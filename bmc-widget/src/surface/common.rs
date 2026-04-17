@@ -31,13 +31,30 @@ pub(crate) fn blocking_dispatch_impl<S: 'static>(
     Ok(())
 }
 
+/// Outcome of a `poll_dispatch` call.
+///
+/// Distinguishes between `poll(2)` returning because an event arrived vs
+/// the specified timeout expiring. Callers that drive their render loop
+/// off a timer (e.g. rendering at the next wall-clock-second boundary)
+/// need to distinguish these — a non-callback event wake (`wl_buffer.release`,
+/// output reconfigure, etc.) must not be mistaken for a timeout expiry or
+/// the loop feedbacks into busy-rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PollOutcome {
+    /// Events arrived and were dispatched (or events were already queued).
+    /// Also covers benign `EAGAIN`/`EWOULDBLOCK` races where pending events
+    /// were still dispatched.
+    Events,
+    /// `poll(2)` returned 0 — the requested timeout expired without any
+    /// event arriving on the Wayland fd.
+    Timeout,
+}
+
 /// Poll for Wayland events with a timeout, then dispatch pending events.
 ///
-/// Returns `Ok(true)` on all normal paths (events read, timeout, or
-/// already-queued events dispatched). Returns `Ok(false)` only if a
-/// non-fatal `EAGAIN`/`EWOULDBLOCK` occurs in `poll(2)` or
-/// `ReadEventsGuard::read()`; pending events are still dispatched. A
-/// timeout of `-1` blocks indefinitely; `0` is non-blocking.
+/// Returns a [`PollOutcome`] distinguishing event vs timeout vs EAGAIN
+/// so callers can tell a real timeout expiry from an event-driven wake.
+/// A timeout of `-1` blocks indefinitely; `0` is non-blocking.
 ///
 /// This follows the `prepare_read -> poll -> read/cancel -> dispatch_pending`
 /// pattern required by `wayland-client`.
@@ -46,11 +63,11 @@ pub(crate) fn poll_dispatch<S: 'static>(
     queue: &mut EventQueue<S>,
     state: &mut S,
     timeout_ms: i32,
-) -> Result<bool> {
+) -> Result<PollOutcome> {
     conn.flush()?;
 
     let read_guard = queue.prepare_read();
-    let mut read_would_block = false;
+    let mut outcome = PollOutcome::Events;
 
     match read_guard {
         None => {
@@ -58,7 +75,7 @@ pub(crate) fn poll_dispatch<S: 'static>(
             queue
                 .dispatch_pending(state)
                 .context("Wayland dispatch failed")?;
-            return Ok(true);
+            return Ok(PollOutcome::Events);
         }
         Some(guard) => {
             let fd = conn.as_fd();
@@ -77,14 +94,15 @@ pub(crate) fn poll_dispatch<S: 'static>(
                         if err.kind() == std::io::ErrorKind::WouldBlock =>
                     {
                         // Non-fatal race: poll reported readability but no
-                        // event was available by the time we read.
-                        read_would_block = true;
+                        // event was available by the time we read. Fall
+                        // through to dispatch_pending.
                     }
                     Err(err) => return Err(err).context("Wayland socket read failed"),
                 },
                 std::cmp::Ordering::Equal => {
                     // Timeout -- cancel read
                     drop(guard);
+                    outcome = PollOutcome::Timeout;
                 }
                 std::cmp::Ordering::Less => {
                     // Error
@@ -95,16 +113,8 @@ pub(crate) fn poll_dispatch<S: 'static>(
                         reason = "all other io::ErrorKind variants are fatal"
                     )]
                     match err.kind() {
-                        std::io::ErrorKind::Interrupted => {
-                            // EINTR -- not fatal, just dispatch pending
-                        }
-                        std::io::ErrorKind::WouldBlock => {
-                            // EAGAIN -- non-fatal, dispatch pending and
-                            // signal caller via Ok(false)
-                            queue
-                                .dispatch_pending(state)
-                                .context("Wayland dispatch failed")?;
-                            return Ok(false);
+                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock => {
+                            // EINTR / EAGAIN -- not fatal, just dispatch pending
                         }
                         _ => {
                             return Err(err).context("poll(2) on Wayland fd failed");
@@ -119,11 +129,7 @@ pub(crate) fn poll_dispatch<S: 'static>(
         .dispatch_pending(state)
         .context("Wayland dispatch failed")?;
 
-    if read_would_block {
-        return Ok(false);
-    }
-
-    Ok(true)
+    Ok(outcome)
 }
 
 /// Destroy all cached `wl_buffer`s and return the number destroyed.
@@ -208,7 +214,7 @@ pub trait WidgetSurface {
     /// Block until a Wayland event arrives, then dispatch.
     fn blocking_dispatch(&mut self) -> anyhow::Result<()>;
     /// Poll for events with timeout, then dispatch. -1 blocks, 0 non-blocking.
-    fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<bool>;
+    fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<PollOutcome>;
     /// Request the first frame callback (call once before the event loop).
     fn request_frame(&self);
     /// Submit a DMA-BUF frame for a reusable buffer slot.

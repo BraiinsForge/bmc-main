@@ -18,7 +18,7 @@ use crate::egl::DmaBufInfo;
 use crate::wayland::setting_from_protocol;
 
 use super::common::{
-    blocking_dispatch_impl, create_buffer_from_dmabuf, impl_common_dispatch,
+    PollOutcome, blocking_dispatch_impl, create_buffer_from_dmabuf, impl_common_dispatch,
     invalidate_cached_wl_buffers, poll_dispatch, submit_buffer_to_surface,
 };
 use super::{WidgetEvent, WidgetSurface};
@@ -279,7 +279,7 @@ impl DeckWidgetSurfaceClient {
     ///
     /// This follows the `prepare_read -> poll -> read/cancel -> dispatch_pending`
     /// pattern required by `wayland-client`.
-    pub fn poll_dispatch(&mut self, timeout_ms: i32) -> Result<bool> {
+    pub fn poll_dispatch(&mut self, timeout_ms: i32) -> Result<PollOutcome> {
         poll_dispatch(&self.conn, &mut self.queue, &mut self.state, timeout_ms)
     }
 }
@@ -327,7 +327,7 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
         DeckWidgetSurfaceClient::blocking_dispatch(self)
     }
 
-    fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<bool> {
+    fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<PollOutcome> {
         DeckWidgetSurfaceClient::poll_dispatch(self, timeout_ms)
     }
 

@@ -11,6 +11,6 @@ mod common;
 mod deck_widget;
 mod xdg;
 
-pub use common::{SettingUpdate, WidgetEvent, WidgetSurface};
+pub use common::{PollOutcome, SettingUpdate, WidgetEvent, WidgetSurface};
 pub use deck_widget::{DeckWidgetEvent, DeckWidgetSurfaceClient, DeckWidgetSurfaceState};
 pub use xdg::{XdgSurfaceClient, XdgSurfaceState};

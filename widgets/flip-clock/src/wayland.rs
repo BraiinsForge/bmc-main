@@ -14,8 +14,10 @@ use crate::layout::ClockLayout;
 use crate::renderer::{Mat4, Renderer};
 use anyhow::Result;
 use bmc_widget::surface::{
-    DeckWidgetSurfaceClient, SettingUpdate, WidgetEvent, WidgetSurface, XdgSurfaceClient,
+    DeckWidgetSurfaceClient, PollOutcome, SettingUpdate, WidgetEvent, WidgetSurface,
+    XdgSurfaceClient,
 };
+use chrono::Timelike;
 use glow::HasContext;
 use std::time::Instant;
 
@@ -94,6 +96,13 @@ impl FlipState {
         }
     }
 
+    /// Returns `true` while any digit is mid-flip animation.
+    fn is_animating(&self) -> bool {
+        self.transition_start
+            .iter()
+            .any(|t| t.is_some_and(|start| start.elapsed().as_secs_f32() < FLIP_DURATION))
+    }
+
     /// Eased animation progress for digit position `i` (0.0 .. 1.0).
     fn flip_progress(&self, i: usize) -> f32 {
         let Some(start) = self.transition_start[i] else {
@@ -108,6 +117,46 @@ impl FlipState {
             1.0 - (-2.0 * linear + 2.0).powi(3) / 2.0
         }
     }
+}
+
+/// Render-loop phase. One enum replaces a pile of `needs_render` / `animating`
+/// / `mark_needs_render` / `take_render_requested` conditionals.
+///
+/// Transitions:
+/// - start → `RenderPending`
+/// - after render: → `WaitingForCallback` if animating, else `WaitingForIdleTimeout`
+/// - in `WaitingForCallback`: `wl_callback.done` arrival → `RenderPending`
+/// - in `WaitingForIdleTimeout`: poll timeout expiry → `RenderPending`
+/// - any state: timezone update event → `RenderPending`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopPhase {
+    /// A render is due now.
+    RenderPending,
+    /// Waiting indefinitely for the compositor's next frame callback.
+    WaitingForCallback,
+    /// Idle — waiting for the next wall-clock-second boundary.
+    WaitingForIdleTimeout,
+}
+
+impl LoopPhase {
+    fn poll_timeout_ms(self) -> i32 {
+        match self {
+            Self::RenderPending => 0,
+            Self::WaitingForCallback => -1,
+            Self::WaitingForIdleTimeout => ms_to_next_second_boundary(),
+        }
+    }
+}
+
+fn ms_to_next_second_boundary() -> i32 {
+    let now = std::time::SystemTime::now();
+    let millis_into_second = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_millis())
+        .unwrap_or(0);
+    #[expect(clippy::cast_possible_wrap, reason = "millis < 1000, fits i32")]
+    let remaining = (1_000 - millis_into_second) as i32;
+    remaining.max(1)
 }
 
 /// Connect in standalone mode (XDG toplevel, no compositor protocol).
@@ -165,23 +214,35 @@ fn run_render_loop(
     }
 
     let mut flip_state = FlipState::new();
-    surface.request_frame();
+    let mut phase = LoopPhase::RenderPending;
 
     while surface.running() {
-        surface.blocking_dispatch()?;
+        let outcome = surface.poll_dispatch(phase.poll_timeout_ms())?;
 
-        // Process protocol events (timezone updates, shutdown)
+        // A frame callback arrived (the Dispatch impl for wl_callback.done
+        // sets needs_render). Consume the flag and arm the next render.
+        if surface.take_render_requested() {
+            phase = LoopPhase::RenderPending;
+        }
+
+        // Idle-timeout expiry — roll into the next second's render.
+        if phase == LoopPhase::WaitingForIdleTimeout && outcome == PollOutcome::Timeout {
+            phase = LoopPhase::RenderPending;
+        }
+
+        // Protocol events (timezone, shutdown).
         for event in surface.drain_events() {
             match event {
                 WidgetEvent::Setting(SettingUpdate::Timezone(new_tz)) => {
                     tracing::info!("Timezone updated: {new_tz}");
                     timezone = new_tz;
+                    phase = LoopPhase::RenderPending;
                 }
                 WidgetEvent::Setting(_) | WidgetEvent::Shutdown => {}
             }
         }
 
-        // Handle resize
+        // Resize (independent of phase).
         if surface.take_size_changed() {
             let (w, h) = (surface.width(), surface.height());
             surface.invalidate_cached_buffers();
@@ -189,47 +250,53 @@ fn run_render_loop(
             renderer.resize(w, h);
         }
 
-        if surface.take_render_requested() {
-            use chrono::Timelike;
+        if phase != LoopPhase::RenderPending {
+            continue;
+        }
 
-            // Get current time in the configured timezone
-            let tz: chrono_tz::Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
-            let now = chrono::Utc::now().with_timezone(&tz);
+        let tz: chrono_tz::Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
+        let now = chrono::Utc::now().with_timezone(&tz);
 
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "hour 0-23, minute/second 0-59 always fit in u8"
-            )]
-            let (hours, minutes, seconds) =
-                (now.hour() as u8, now.minute() as u8, now.second() as u8);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "hour 0-23, minute/second 0-59 always fit in u8"
+        )]
+        let (hours, minutes, seconds) = (now.hour() as u8, now.minute() as u8, now.second() as u8);
 
-            flip_state.update(hours, minutes, seconds);
-            let layout = ClockLayout::for_viewport(surface.width(), surface.height());
+        flip_state.update(hours, minutes, seconds);
+        let layout = ClockLayout::for_viewport(surface.width(), surface.height());
 
-            egl.begin_frame()?;
-            egl.clear(0.0, 0.0, 0.0, 1.0);
-            let gl = egl.gl();
+        egl.begin_frame()?;
+        egl.clear(0.0, 0.0, 0.0, 1.0);
+        let gl = egl.gl();
 
-            render_clock(
-                &layout,
-                &renderer,
-                &digit_textures,
-                digit_meshes.as_ref(),
-                gl,
-                &flip_state,
-            );
+        render_clock(
+            &layout,
+            &renderer,
+            &digit_textures,
+            digit_meshes.as_ref(),
+            gl,
+            &flip_state,
+        );
 
-            let (dmabuf_info, slot) = egl.end_frame()?;
-            surface.submit_buffer(&dmabuf_info, slot, true)?;
+        let animating = flip_state.is_animating();
+        let (dmabuf_info, slot) = egl.end_frame()?;
+        surface.submit_buffer(&dmabuf_info, slot, animating)?;
 
-            tracing::trace!(
-                frame = surface.frame_count(),
-                time = %format_args!("{hours:02}:{minutes:02}:{seconds:02}"),
-                "rendered",
-            );
-            if surface.frame_count().is_multiple_of(60) {
-                tracing::debug!("Frame {}", surface.frame_count());
-            }
+        phase = if animating {
+            LoopPhase::WaitingForCallback
+        } else {
+            LoopPhase::WaitingForIdleTimeout
+        };
+
+        tracing::trace!(
+            frame = surface.frame_count(),
+            time = %format_args!("{hours:02}:{minutes:02}:{seconds:02}"),
+            animating,
+            "rendered",
+        );
+        if surface.frame_count().is_multiple_of(60) {
+            tracing::debug!("Frame {}", surface.frame_count());
         }
     }
 

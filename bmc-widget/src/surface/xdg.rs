@@ -13,7 +13,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use crate::egl::DmaBufInfo;
 
 use super::common::{
-    blocking_dispatch_impl, create_buffer_from_dmabuf, impl_common_dispatch,
+    PollOutcome, blocking_dispatch_impl, create_buffer_from_dmabuf, impl_common_dispatch,
     invalidate_cached_wl_buffers, poll_dispatch, submit_buffer_to_surface,
 };
 use super::{WidgetEvent, WidgetSurface};
@@ -253,7 +253,7 @@ impl XdgSurfaceClient {
     ///
     /// This follows the `prepare_read -> poll -> read/cancel -> dispatch_pending`
     /// pattern required by `wayland-client`.
-    pub fn poll_dispatch(&mut self, timeout_ms: i32) -> Result<bool> {
+    pub fn poll_dispatch(&mut self, timeout_ms: i32) -> Result<PollOutcome> {
         poll_dispatch(&self.conn, &mut self.queue, &mut self.state, timeout_ms)
     }
 }
@@ -303,7 +303,7 @@ impl WidgetSurface for XdgSurfaceClient {
         XdgSurfaceClient::blocking_dispatch(self)
     }
 
-    fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<bool> {
+    fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<PollOutcome> {
         XdgSurfaceClient::poll_dispatch(self, timeout_ms)
     }
 
