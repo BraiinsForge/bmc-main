@@ -58,17 +58,4 @@ in
     upgrade_strategy = null;
     install_strategy = null;
   };
-  wasm = {
-    pkg = mkWidgetPackage {
-      name = "wasm";
-      crate = crates.widget-wasm;
-      inherit profile;
-      runtimeDeps = widgetRuntimeDeps.native;
-    };
-    version = "0.1.0";
-    category = "widget";
-    description = "WASM widget runtime";
-    upgrade_strategy = null;
-    install_strategy = null;
-  };
 }
