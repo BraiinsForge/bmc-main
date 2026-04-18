@@ -1,0 +1,19 @@
+{
+  "uid": "550e8400-e29b-41d4-a716-446655440200",
+  "version": "0.1.0",
+  "name": "Hello",
+  "description": "Minimal WASM widget",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/hello-widget",
+  "settings": [],
+  "sizes": [
+    "small",
+    "medium",
+    "large",
+    "full"
+  ],
+  "params": {}
+}

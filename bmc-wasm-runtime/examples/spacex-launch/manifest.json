@@ -1,0 +1,19 @@
+{
+  "uid": "550e8400-e29b-41d4-a716-446655440202",
+  "version": "0.1.0",
+  "name": "SpaceX Launch",
+  "description": "Next SpaceX launch countdown and mission details",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/spacex-launch",
+  "settings": [],
+  "sizes": [
+    "small",
+    "medium",
+    "large",
+    "full"
+  ],
+  "params": {}
+}

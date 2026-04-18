@@ -1,0 +1,19 @@
+{
+  "uid": "550e8400-e29b-41d4-a716-446655440203",
+  "version": "0.1.0",
+  "name": "ISS Position",
+  "description": "Live ISS position on a world map with orbital track",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/iss-position",
+  "settings": [],
+  "sizes": [
+    "small",
+    "medium",
+    "large",
+    "full"
+  ],
+  "params": {}
+}

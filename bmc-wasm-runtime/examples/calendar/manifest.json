@@ -1,0 +1,19 @@
+{
+  "uid": "550e8400-e29b-41d4-a716-446655440201",
+  "version": "0.1.0",
+  "name": "Calendar",
+  "description": "iCal agenda view of upcoming events",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/calendar",
+  "settings": [],
+  "sizes": [
+    "small",
+    "medium",
+    "large",
+    "full"
+  ],
+  "params": {}
+}
