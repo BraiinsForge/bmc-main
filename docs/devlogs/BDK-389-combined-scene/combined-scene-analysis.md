@@ -47,9 +47,9 @@ Architecture lives in two landed commits:
   three previously-competing call sites (post-render firing, HW-only retry timer, headless-only timer) into one
   always-on 16 ms calloop tick.
 
-A new `PollOutcome { Events, Timeout }` on the `WidgetSurface::poll_dispatch` trait carries out the
-event-vs-timeout distinction the widget needs. Before, the `Result<bool>` return (true on normal, false on EAGAIN)
-couldn't tell "the idle timeout expired" from "an unrelated event arrived" — that ambiguity was the entire widget bug.
+A new `PollOutcome { Events, Timeout }` on the `WidgetSurface::poll_dispatch` trait carries out the event-vs-timeout
+distinction the widget needs. Before, the `Result<bool>` return (true on normal, false on EAGAIN) couldn't tell "the
+idle timeout expired" from "an unrelated event arrived" — that ambiguity was the entire widget bug.
 
 ## Results
 

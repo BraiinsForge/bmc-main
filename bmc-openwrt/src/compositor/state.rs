@@ -315,6 +315,18 @@ impl CompositorState {
         let pending_instance_id = instance_id.cloned();
         let pending_generation = generation.unwrap_or(0);
 
+        // Protocol-compliant clients wait for `done` before requesting another
+        // frame, so the queue stays at most one deep per widget. Misbehaving or
+        // hidden-widget clients can keep requesting frames indefinitely; bound
+        // the queue to one pending callback per widget to prevent unbounded
+        // growth. Earlier pending callbacks are dropped silently — firing
+        // `done` on them would drive an even-faster submission loop for hidden
+        // widgets, which is worse than the client's missing event.
+        if let Some(id) = pending_instance_id.as_ref() {
+            self.pending_frame_callbacks
+                .retain(|pending| pending.instance_id.as_ref() != Some(id));
+        }
+
         self.pending_frame_callbacks
             .extend(callbacks.drain(..).map(|callback| PendingFrameCallback {
                 callback,
