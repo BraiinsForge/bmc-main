@@ -44,10 +44,6 @@ async fn migrates_device_sample_without_losing_scenes() {
         "at least the digital clock must translate (got {})",
         report.translated_widgets,
     );
-    assert!(
-        report.unavailable_widgets >= 1,
-        "fixture contains widgets with no manifest (ticker_btc, block_height)",
-    );
 
     // The preserved v0 struct must still be available after the
     // upgrade. This is the core "in-memory migration" property —
@@ -58,8 +54,8 @@ async fn migrates_device_sample_without_losing_scenes() {
         .expect("BUG: migrated load must preserve the v0 struct");
     assert_eq!(original.scenes.len(), 3);
 
-    // And the upgrade must have been serialised back to disk with
-    // the current schema version.
+    // The number of widgets on disk equals translated (dropped
+    // widgets do not appear in the output).
     let migrated = fs::read_to_string(&dest)
         .await
         .expect("BUG: migrated file should be readable");
@@ -75,36 +71,35 @@ async fn migrates_device_sample_without_losing_scenes() {
         .expect("BUG: migrated config must have a scenes array");
     assert_eq!(scenes.len(), 3);
 
+    // Post-upgrade invariant: every widget carries a reserved
+    // (non-nil) UID. No placeholder widgets are allowed.
+    let mut on_disk_widget_count = 0_usize;
     for scene in scenes {
         for widget in scene["widgets"]
             .as_array()
             .expect("BUG: each scene must have a widgets array")
         {
+            on_disk_widget_count += 1;
             let type_id = widget["widget_type_id"]
                 .as_str()
                 .expect("BUG: widget_type_id must be a string");
-            if type_id == "00000000-0000-0000-0000-000000000000" {
-                // Placeholders must preserve enough legacy data for a
-                // later migration pass to promote them. Two accepted
-                // shapes: `_legacy` (kind + params) for native widgets,
-                // `_legacy_remote` (name, url, icon, ...) for the old
-                // remote widget.
-                let params = &widget["params"];
-                let has_legacy = params["_legacy"].is_object();
-                let has_legacy_remote = params["_legacy_remote"].is_object();
-                assert!(
-                    has_legacy || has_legacy_remote,
-                    "placeholder missing _legacy or _legacy_remote payload: {widget}",
-                );
-                if has_legacy {
-                    assert!(params["_legacy"]["kind"].is_string());
-                }
-                if has_legacy_remote {
-                    assert!(params["_legacy_remote"]["widget_url"].is_string());
-                }
-            }
+            assert_ne!(
+                type_id, "00000000-0000-0000-0000-000000000000",
+                "post-upgrade widgets must never have a nil widget_type_id: {widget}",
+            );
+            // Upgraded widgets must not carry the retired `_legacy` /
+            // `_legacy_remote` placeholder shape either.
+            let params = &widget["params"];
+            assert!(
+                params.get("_legacy").is_none() && params.get("_legacy_remote").is_none(),
+                "retired placeholder shape leaked into an upgraded widget: {widget}",
+            );
         }
     }
+    assert_eq!(
+        on_disk_widget_count, report.translated_widgets,
+        "on-disk widget count must match the translated counter"
+    );
 
     // Backup must exist next to dest.
     let parent = dest

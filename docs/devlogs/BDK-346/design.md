@@ -4,9 +4,9 @@
 
 Convert `/etc/bmc_config.json` from the slint-monolith shape to the
 manifest-driven shape on first boot of the new firmware, with no user
-action. Scene layouts and per-widget data are preserved as completely
-as possible; widgets without a destination today leave placeholders
-that a future firmware can promote.
+action. Scene layouts and per-widget data for widgets we recognise
+survive the upgrade; widgets we do not recognise are dropped with a
+warning rather than preserved in a placeholder shape.
 
 The user-facing behaviour is in
 [`docs/stories/config-migration.md`](../../stories/config-migration.md).
@@ -27,20 +27,17 @@ three ways:
 1. **In-memory upgrades.** `LoadedConfig::from_str` never touches the
    filesystem. Parsing any version produces both the upgraded
    `Config` and the preserved pre-upgrade struct; the caller decides
-   whether, when, and how to persist. This decouples the "read and
-   understand a config" concern from the "back up + rewrite the
-   file" concern.
+   whether, when, and how to persist.
 2. **The original parse survives.** `LoadedConfig::original_v0()`
    gives callers (debug endpoints, rollback UIs, CI snapshot tests)
    the parsed `v0::Config` without re-reading disk. After persistence
    the on-disk file is already rewritten; boser-style keeps the
    original value live in memory.
 3. **Adding v2 is mechanical.** Define `ConfigV2`, `impl Upgrade for
-   ConfigV1 { type NextVersion = ConfigV2; fn upgrade_to_next_version
-   ... }`, extend the `FromStr` match arm. No dispatcher rework, no
-   reshuffling of the ingest path.
+   ConfigV1 { type NextVersion = ConfigV2; … }`, extend the `FromStr`
+   match arm.
 
-`Config` gains a top-level `version: u32` field (`#[serde(default)]`,
+`Config` carries a top-level `version: u32` field (`#[serde(default)]`,
 so v0 configs deserialise as 0). `Default::default()` and saves pin
 it to `CONFIG_VERSION` (currently 1) via the `Version` trait.
 
@@ -61,60 +58,108 @@ the current shape and creates a timestamped `.backup.<ts>` of the
 previous file. `migrate_on_disk(path)` composes the two — load, and
 persist if the load was a migration.
 
-### Patterns deliberately not adopted
+## Per-widget upgrade policy
 
-- **`#[serde(deny_unknown_fields)]`.** The current `Config` has many
-  optional fields used by deployed devices; turning this on would
-  break real configs.
-- **`Downgrade` trait.** bos-main ships it as a symmetric counterpart
-  to `Upgrade` for backward-compatible writes. BDK's product stance
-  is "newer schema on disk = refuse, never touch" — we don't
-  downgrade configs. If that stance changes the trait can be added
-  without reshaping the upgrade chain.
+The upgrade is a **total function from known v0 widgets to current
+widgets**. Every v0 widget either maps to a reserved
+`widget_type_id` (with a real UUID) or drops out of the upgraded
+config entirely. There is no intermediate "placeholder" shape —
+the review conclusion was that users migrate all their widgets at
+once, so an unmappable widget is an edge case, not a state to
+preserve.
 
-## Per-widget outcomes
+Two flavours of reserved UID:
 
-Each v0 widget falls into one of three buckets. `position`, `size`,
-scene assignment are preserved in every case. The upgrade function
-produces a fully-typed `Config`; the on-disk shape of placeholders
-remains a reserved-key convention so a future firmware can promote
-placeholders without schema churn.
+- **Sequential UIDs for native widget kinds** (`clock`,
+  `ticker_btc`, `block_height`, …). These continue the
+  `550e8400-e29b-41d4-a716-44665544000N` pattern already used by
+  shipped manifests (digital-clock = `…0001`, flip-clock = `…0002`).
+- **Deterministic UUID v5 for Braiinsforge remote widgets**,
+  derived from the URL slug under a dedicated namespace. Adding a
+  new remote widget to the catalog is one line in
+  `REMOTE_WIDGET_SLUGS`; the UUID falls out of the derivation.
 
-| Bucket          | Trigger                          | New `widget_type_id` | New `params`                                                            |
-|-----------------|----------------------------------|----------------------|-------------------------------------------------------------------------|
-| `Translated`    | Native manifest exists today     | manifest UID         | re-shaped to match the new manifest                                     |
-| `LegacyRemote`  | v0 `kind == "remote_widget"`     | `Uuid::nil()`        | `{"_legacy_remote": {name, description, widget_url, icon_url, params}}` |
-| `Unavailable`   | Any other kind without a target  | `Uuid::nil()`        | `{"_legacy": {kind, params}}`                                           |
+### Reserved native UIDs
 
-### Why two placeholder shapes
+Continuing the manifest numbering convention. Widgets already
+shipped use the UID from their `manifest.json`; reserved dummies
+are allocated in advance so the eventual manifest can adopt the
+same value without migrating again.
 
-Old `remote_widget` entries already carried name + description + URL
-+ icon — essentially a remote-manifest snapshot. A future WASM
-remote-widget host wants exactly that shape. Squashing both into a
-single `_legacy` would drop metadata and force users to re-enter
-URLs.
+| v0 `kind` (+ variant)         | UID suffix | Status                        |
+|-------------------------------|------------|-------------------------------|
+| `clock` + `clock_style:digital` | `0001`    | shipped (digital-clock)       |
+| flip-clock                    | `0002`    | shipped                       |
+| `clock` + `clock_style:analog_round` | `0003` | reserved dummy            |
+| `clock` + `clock_style:analog_rect`  | `0004` | reserved dummy            |
+| `ticker_btc`                  | `0005`     | reserved dummy                |
+| `block_height`                | `0006`     | reserved dummy                |
+| `braiins_pool`                | `0007`     | reserved dummy                |
+| `remote_image`                | `0008`     | reserved dummy                |
+| `blockchain_data`             | `0009`     | reserved dummy                |
+| `halving_countdown`           | `000a`     | reserved dummy                |
 
-### Today's translators
+### Reserved Braiinsforge remote UIDs
 
-- `clock` + `clock_style: "digital"` → `digital-clock` manifest.
-  Param mapping: `show_seconds → showSeconds`,
-  `show_timezone → showTimezone`,
-  `numbers_font_style → fontStyle`. `show_date` is dropped (no
-  equivalent on the new manifest); a warning is logged.
-- `remote_widget` → `LegacyRemote` (preservation, no native target).
-- everything else → `Unavailable`.
+URL slug under `https://widgets.braiinsforge.com/<slug>`. UID is
+`Uuid::new_v5(&BRAIINSFORGE_WIDGETS_NS, slug.as_bytes())`.
 
-Adding a translator = one match arm + one pure function.
+| Slug                           |
+|--------------------------------|
+| `exchange-rate`                |
+| `formula-1`                    |
+| `iss-position`                 |
+| `nameday`                      |
+| `nasa-picture-of-the-day`      |
+| `random-facts`                 |
+| `spacex-launch`                |
+| `ticker-list`                  |
+| `ticker-single-candlestick`    |
+| `ticker-single-sparkline`      |
+| `weather`                      |
+
+Any remote widget outside this catalog (third-party URL, or a
+future Braiinsforge slug we haven't added yet) is dropped with a
+`warn!` that includes the URL.
+
+### Deep vs shallow translation
+
+The param translators are split by whether the target manifest is
+already shipped:
+
+- **Deep** (rewrite param names to the new manifest's schema) —
+  used today only for `clock + clock_style:digital`, which maps
+  to the shipped digital-clock manifest (`show_seconds → showSeconds`,
+  `show_timezone → showTimezone`, `numbers_font_style → fontStyle`,
+  `show_date` dropped with a warning).
+- **Shallow** (pass `params` through unchanged) — used for
+  everything else. The future widget's manifest is authoritative
+  over its own param schema and can migrate internally when it
+  loads; we don't guess at schemas that don't exist yet.
+
+Adding a deep translator = ship a manifest widget + add a match arm
+next to the reserved UID line. The translator list is a living
+index of what's shipped.
+
+### Drop policy (no placeholders)
+
+- Unknown top-level `kind` → drop with `warn!`.
+- `clock` with an unknown `clock_style` → drop with `warn!`.
+- `remote_widget` missing `widget_url` → drop with `warn!`.
+- `remote_widget` with a host outside `widgets.braiinsforge.com` →
+  drop with `warn!`.
+- `remote_widget` whose slug is not in `REMOTE_WIDGET_SLUGS` →
+  drop with `warn!`.
+
+Drops are counted in `Report.dropped_widgets`. The scene itself
+always survives; only the individual widget entry disappears.
 
 ## Safety
 
-- **Backup first.** `/etc/bmc_config.json.backup.<unix_secs>` is
-  written before the new config, by `save_with_backup`. Plain integer
-  suffix sorts naturally, no locale surprises.
+- **Backup first.** `<path>.backup.<unix_secs>` is written before
+  the new config, by `save_with_backup`. Plain integer suffix sorts
+  naturally, no locale surprises.
 - **Atomic write** via `crate::utils::replace_file` (tmp + rename).
-- **Per-widget failure is local.** A widget that errors during
-  translation lands in `Unavailable`; the rest of the scene is
-  unaffected.
 - **Total parse failure** surfaces as an explicit `anyhow::Error`
   from `LoadedConfig::from_str`; the existing file is left untouched
   (no partial rewrite).
@@ -122,35 +167,49 @@ Adding a translator = one match arm + one pure function.
 ## Compositor coordination
 
 `Coordinator::spawn_widget` short-circuits with an `info!` log when
-`widget.widget_type_id.is_nil()`. Without this, every placeholder
-would log a "widget not found" error every boot.
+`widget.widget_type_id` has no matching entry in the widget
+registry. With placeholders gone, nil UIDs cannot leak; a reserved
+UID for a not-yet-shipped widget produces a "no registered widget
+with this UID" log until that widget lands.
+
+## Open items / follow-ups
+
+- **Backups under `/etc/bmc/`.** Per review, backups (and ideally
+  the main config too) should live under a dedicated directory to
+  interoperate cleanly with OpenWRT conffile semantics across
+  firmware updates. Not done in this commit; tracked as a follow-up.
+- **Cap kept backups.** Keep at most N (≈10) `.backup.<ts>` files,
+  rotating the oldest out. Filed as technical debt.
 
 ## Testing
 
-- **Unit:** per-translator inline JSON fixtures exercising the typed
-  upgrade directly (`upgrade_widget`), plus header-dispatch edge
-  cases (missing field, current version, unknown future version,
-  empty v0 input).
-- **Integration:** round-trips a captured device config
-  (`bmc/tests/fixtures/legacy_config_sample.json`) through
-  `migrate_on_disk` and asserts version, scene count, placeholder
-  payloads, backup file presence, plus a test for the pure
+- **Unit:** per-widget upgrade tests (native kinds, every remote
+  slug resolves, deterministic v5 derivation is stable, unknown
+  kinds / URLs / slugs drop), plus header-dispatch edge cases
+  (missing version, current version, unknown future version, empty
+  v0 input).
+- **Integration:** round-trips a captured device config through
+  `migrate_on_disk` and asserts: version header, scene count,
+  every post-upgrade widget carries a reserved UID, no placeholder
+  shapes leak, backup file exists, `translated` counter matches the
+  on-disk widget count. Plus a test for the pure
   `LoadedConfig::from_str` path verifying `original_v0()` survives
   the upgrade.
 - **CLI smoke:** `bmc-migrate-config <src> <dst>` exits 0 and emits
-  a counts report. Catches translator coverage regressions.
+  a counts report.
 
 ## Files
 
 - `bmc/src/config.rs` — `version` field, `CONFIG_VERSION` constant.
 - `bmc/src/config_migration.rs` — `Version`/`Upgrade` traits,
   `LoadedConfig`, `FromStr`, `load_any_version`, `save_with_backup`,
-  `migrate_on_disk`.
+  `migrate_on_disk`, `Report`.
 - `bmc/src/config_migration/v0.rs` — deserialize-only v0 types +
   `impl Version`.
-- `bmc/src/config_migration/upgrade_v0.rs` — `impl Upgrade for
-  v0::Config` producing a typed current `Config` directly.
-- `bmc/src/widget/coordinator.rs` — placeholder skip.
+- `bmc/src/config_migration/upgrade_v0.rs` — reserved UID tables,
+  remote-widget slug dispatch, per-widget translators.
+- `bmc/src/widget/coordinator.rs` — placeholder skip (legacy;
+  nil UIDs no longer produced but the guard is harmless).
 - `bmc/src/bin/migrate_config.rs` — offline CLI.
 - `bmc/tests/config_migration.rs` — integration tests.
 - `bmc/tests/fixtures/legacy_config_sample.json` — captured sample.

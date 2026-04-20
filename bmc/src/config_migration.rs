@@ -67,51 +67,28 @@ struct FormatHeader {
     version: u32,
 }
 
-/// Counts derived from an upgraded config. Zero-valued when the
-/// file was already at the current version.
+/// Counts derived from an upgrade run. Zero-valued when the file
+/// was already at the current version.
+///
+/// Populated inside [`upgrade_v0::upgrade_with_report`] as each v0
+/// widget is dispatched; the distinction between "survived" and
+/// "dropped" is not recoverable from the upgraded [`Config`] alone
+/// (all surviving widgets carry real UIDs indistinguishable from
+/// the `Default::default()` ones), so we build the counts while
+/// the v0 → current mapping is still in scope.
 #[derive(Debug, Clone, Default)]
 pub struct Report {
     /// Scenes in the source (unchanged by the upgrade).
     pub scenes: usize,
-    /// Widgets mapped to a native current-schema manifest.
+    /// Widgets that survived the upgrade with a reserved
+    /// `widget_type_id`. Includes both deep-translated widgets
+    /// (e.g. digital-clock) and pass-through widgets whose params
+    /// are handed unchanged to a future manifest.
     pub translated_widgets: usize,
-    /// v0 `remote_widget` entries preserved as `_legacy_remote`
-    /// placeholders.
-    pub legacy_remote_widgets: usize,
-    /// v0 widgets without a current manifest, preserved as
-    /// `_legacy` placeholders for a future firmware.
-    pub unavailable_widgets: usize,
-}
-
-impl Report {
-    /// Derive a [`Report`] by walking an upgraded config and
-    /// counting placeholder widgets. Placeholders are identified
-    /// by `widget_type_id == Uuid::nil()` plus a reserved key in
-    /// `params` (`_legacy` or `_legacy_remote`).
-    fn from_current(config: &Config) -> Self {
-        let mut out = Self {
-            scenes: config.scenes.len(),
-            ..Self::default()
-        };
-        for scene in config.scenes.values() {
-            for widget in scene.widgets.values() {
-                if widget.widget_type_id.is_nil() {
-                    if widget
-                        .params
-                        .get("_legacy_remote")
-                        .is_some_and(serde_json::Value::is_object)
-                    {
-                        out.legacy_remote_widgets += 1;
-                    } else {
-                        out.unavailable_widgets += 1;
-                    }
-                } else {
-                    out.translated_widgets += 1;
-                }
-            }
-        }
-        out
-    }
+    /// Widgets dropped because their v0 `kind` or `remote_widget`
+    /// URL did not match any reserved UID in the current schema.
+    /// A `warn!` is emitted per drop.
+    pub dropped_widgets: usize,
 }
 
 /// Result of parsing a raw config of unknown version.
@@ -197,8 +174,7 @@ impl FromStr for LoadedConfig {
                     "config parses as neither the current schema nor a recognized legacy schema",
                 )?;
                 let original = Box::new(legacy.clone());
-                let current = legacy.upgrade_to_next_version();
-                let report = Report::from_current(&current);
+                let (current, report) = upgrade_v0::upgrade_with_report(legacy);
                 Ok(Self::MigratedFromV0 {
                     current,
                     original,
@@ -255,10 +231,9 @@ pub async fn migrate_on_disk(path: &Path) -> Result<LoadedConfig> {
     } = &loaded
     {
         info!(
-            translated = report.translated_widgets,
-            legacy_remote = report.legacy_remote_widgets,
-            unavailable = report.unavailable_widgets,
             scenes = report.scenes,
+            translated = report.translated_widgets,
+            dropped = report.dropped_widgets,
             "upgrading legacy config on disk",
         );
         save_with_backup(current, path).await?;

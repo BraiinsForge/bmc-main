@@ -16,24 +16,26 @@ schema changed.
   prompt, no manual step.
 - Scene IDs, scene names, widget positions, and widget sizes are
   preserved exactly. The grid the user built still looks the same.
-- Where a legacy widget has a matching new widget today (the digital
-  clock), it keeps working with the same settings.
+- Widgets known to this firmware keep their settings. Where the new
+  firmware has a matching widget that's already shipped (the
+  digital clock today), the widget keeps working immediately with
+  the same settings.
+- Widgets whose new firmware implementation is still in preparation
+  (the rest) keep their slot in the scene layout and their user-
+  configured params; the cell stays empty on screen until the
+  implementation lands, after which the widget starts working
+  without further user action.
 
-### No silent data loss
+### Backup before any change
 
-> As a user, I want to be sure that nothing important is thrown away
-> if the new firmware can't run an old widget yet.
+> As a user, I want a copy of the original config kept around in
+> case something goes wrong with the upgrade.
 
 - The original config is copied to
   `/etc/bmc_config.json.backup.<timestamp>` before any change. The
   backup is never overwritten or deleted by the migration.
-- If a widget can't be translated yet (because its WASM replacement
-  hasn't shipped), it leaves a placeholder in the same grid cell.
-  The placeholder carries the original widget's data so a future
-  firmware can restore it without asking the user to re-enter
-  anything.
-- A placeholder widget renders nothing on the display — the cell is
-  visibly empty rather than showing a stale widget.
+- If a migration pass produces an unreadable result, the original
+  is still on disk next to the rewritten file.
 
 ### Safe downgrade refusal
 
@@ -47,16 +49,36 @@ schema changed.
   message. Other device subsystems (web UI, network) stay
   reachable so the user can recover over the network.
 
+### Recovering from a bad migration
+
+> As a user, I want a way back if the migration loses a widget I
+> cared about or the new config misbehaves.
+
+- Every migration leaves a timestamped backup. To restore, SSH into
+  the device, copy the most recent
+  `/etc/bmc_config.json.backup.<timestamp>` over
+  `/etc/bmc_config.json`, and reboot. The device will re-migrate
+  the restored file on the next boot; the backup of that rerun
+  becomes the next snapshot.
+- If a widget you expected to survive the upgrade is missing from
+  your scene after migration, its old `kind` (or `widget_url` for
+  remote widgets) was not in the current firmware's migration
+  catalog. The system log records a `warn!` line for each dropped
+  widget, naming the unsupported kind or URL. Either your firmware
+  is older than the widget, or the widget comes from a custom
+  deckfeeder the stock firmware doesn't know about.
+
 ## Behaviour at boot
 
-| Config version on disk | What happens                                 |
-|------------------------|----------------------------------------------|
-| missing or `0` (legacy)| backup → translate → write new config        |
-| `1` (current)          | no-op                                        |
-| anything else          | error, do not overwrite                      |
+| Config version on disk | What happens                                |
+|------------------------|---------------------------------------------|
+| missing or `0` (legacy)| backup → upgrade in memory → write new file |
+| `1` (current)          | no-op                                       |
+| anything else          | error, do not overwrite                     |
 
 ## Tools
 
-- `bmc-migrate-config <src> <dst>` runs the translator offline
-  against a captured device config — useful for QA and CI without
-  flashing firmware.
+- `bmc-migrate-config <src> <dst>` runs the upgrade offline against
+  a captured device config — useful for QA and CI without flashing
+  firmware. Emits `scenes / translated / dropped` counts so a
+  coverage regression is easy to spot in CI logs.

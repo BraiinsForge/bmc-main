@@ -55,15 +55,12 @@ async fn run() -> Result<()> {
 
     if let Some(report) = loaded.report() {
         println!(
-            "scenes={} translated={} legacy_remote={} unavailable={} was_migrated=true",
-            report.scenes,
-            report.translated_widgets,
-            report.legacy_remote_widgets,
-            report.unavailable_widgets,
+            "scenes={} translated={} dropped={} was_migrated=true",
+            report.scenes, report.translated_widgets, report.dropped_widgets,
         );
     } else {
         println!(
-            "scenes={} translated=0 legacy_remote=0 unavailable=0 was_migrated=false",
+            "scenes={} translated=0 dropped=0 was_migrated=false",
             loaded.current().scenes.len(),
         );
     }
