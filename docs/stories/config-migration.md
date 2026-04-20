@@ -1,9 +1,19 @@
 # Config Migration on Firmware Upgrade
 
 When a device upgrades from the slint-monolith firmware to the
-manifest-driven widget system, its existing `/etc/bmc_config.json`
-is converted automatically. The user does not need to know that the
-schema changed.
+manifest-driven widget system, its existing config is converted
+automatically. The user does not need to know that the schema
+changed, or that the file moved.
+
+On first boot of the new firmware the config file is copied
+from the legacy `/etc/bmc_config.json` to `/etc/bmc/config.json`
+(and future backups, `config.json.backup.<timestamp>`, live
+next to it in the new directory). The legacy file is left
+intact so a forced boot into the older firmware can still find
+its config. The directory-based layout lets OpenWRT's
+`sysupgrade` preserve every file under `/etc/bmc/` as a
+conffile across firmware updates without needing an
+entry-per-file.
 
 ## User stories
 
@@ -32,7 +42,7 @@ schema changed.
 > case something goes wrong with the upgrade.
 
 - The original config is copied to
-  `/etc/bmc_config.json.backup.<timestamp>` before any change. The
+  `/etc/bmc/config.json.backup.<timestamp>` before any change. The
   backup is never overwritten or deleted by the migration.
 - If a migration pass produces an unreadable result, the original
   is still on disk next to the rewritten file.
@@ -56,8 +66,8 @@ schema changed.
 
 - Every migration leaves a timestamped backup. To restore, SSH into
   the device, copy the most recent
-  `/etc/bmc_config.json.backup.<timestamp>` over
-  `/etc/bmc_config.json`, and reboot. The device will re-migrate
+  `/etc/bmc/config.json.backup.<timestamp>` over
+  `/etc/bmc/config.json`, and reboot. The device will re-migrate
   the restored file on the next boot; the backup of that rerun
   becomes the next snapshot.
 - If a widget you expected to survive the upgrade is missing from

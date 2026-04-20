@@ -190,13 +190,71 @@ impl FromStr for LoadedConfig {
 }
 
 /// Read a config from disk and upgrade it to the current schema in
-/// memory. No disk writes. Pair with [`save_with_backup`] to
-/// persist the upgrade.
+/// memory. No disk writes other than the one-time legacy-path move
+/// from `/etc/bmc_config.json` → `/etc/bmc/config.json` (see
+/// [`relocate_legacy_config_if_present`]). Pair with
+/// [`save_with_backup`] to persist the upgrade.
 pub async fn load_any_version(path: &Path) -> Result<LoadedConfig> {
+    relocate_legacy_config_if_present(path).await?;
     let raw = tokio::fs::read_to_string(path)
         .await
         .with_context(|| format!("read config: {}", path.display()))?;
     raw.parse()
+}
+
+/// If `path` points at the canonical `/etc/bmc/<something>` layout
+/// but does not yet exist, check for a legacy sibling at
+/// `/etc/<something>` and copy it in. Silently no-op in any other
+/// case (tests with tmp paths, fresh installs, devices that already
+/// have the new path).
+///
+/// **Copy, not move** — the legacy file is left intact so a device
+/// that boots older firmware (for debugging or a forced rollback)
+/// still finds its config at the legacy path. That snapshot goes
+/// stale the moment the new firmware writes an edit, but "boot old
+/// firmware with the config it had at upgrade time" stays possible
+/// indefinitely at the cost of one redundant on-disk copy.
+///
+/// Matches a pattern, not a hardcoded path: any `<parent>/bmc/<name>`
+/// target looks for `<parent>/bmc_<name>` as its legacy sibling. This
+/// keeps the function useful in tests using tmp dirs while avoiding
+/// false positives on unrelated paths.
+async fn relocate_legacy_config_if_present(path: &Path) -> Result<()> {
+    let Some(legacy) = legacy_sibling_for(path) else {
+        return Ok(());
+    };
+    if tokio::fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(());
+    }
+    if !tokio::fs::try_exists(&legacy).await.unwrap_or(false) {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create parent dir {}", parent.display()))?;
+    }
+    tokio::fs::copy(&legacy, path)
+        .await
+        .with_context(|| format!("copy {} → {}", legacy.display(), path.display()))?;
+    info!(
+        from = %legacy.display(),
+        to = %path.display(),
+        "copied legacy config to /etc/bmc/ layout (legacy file kept for downgrade safety)"
+    );
+    Ok(())
+}
+
+/// Given a target path shaped like `<parent>/bmc/<name>`, return the
+/// legacy sibling `<parent>/bmc_<name>`. None for any other shape.
+fn legacy_sibling_for(path: &Path) -> Option<PathBuf> {
+    let file_name = path.file_name()?.to_str()?;
+    let bmc_dir = path.parent()?;
+    if bmc_dir.file_name()?.to_str()? != "bmc" {
+        return None;
+    }
+    let grandparent = bmc_dir.parent()?;
+    Some(grandparent.join(format!("bmc_{file_name}")))
 }
 
 /// Write `config` to `path`, first copying any existing file at

@@ -1,6 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-//! v0 schema — the slint-monolith era shape of `/etc/bmc_config.json`.
+//! v0 schema — the slint-monolith era shape of the BMC config
+//! (lived at `/etc/bmc_config.json` before the `/etc/bmc/` folder
+//! move; see [`super::relocate_legacy_config_if_present`]).
 //!
 //! Deserialize-only: we never write this shape back out. A parsed
 //! v0 config is fed into the [`Upgrade`](super::Upgrade) chain that
@@ -11,8 +13,9 @@ use uuid::Uuid;
 
 use super::Version;
 
-/// Top-level v0 config. Mirrors `/etc/bmc_config.json` from a
-/// device running the old firmware.
+/// Top-level v0 config. Mirrors the on-disk shape written by the
+/// old firmware (legacy path `/etc/bmc_config.json`, now relocated
+/// to `/etc/bmc/config.json` on first boot of the new firmware).
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default)]

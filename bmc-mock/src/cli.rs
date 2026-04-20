@@ -58,7 +58,7 @@ pub struct Config {
     #[clap(long, default_value = "bmc-d00627")]
     pub hostname: String,
     /// BMC config file
-    #[clap(long, default_value = "etc/bmc_config.json")]
+    #[clap(long, default_value = "etc/bmc/config.json")]
     pub config_path: PathBuf,
     /// Run bmc with a setup-pending flag
     #[clap(long)]

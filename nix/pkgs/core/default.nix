@@ -225,6 +225,7 @@ let
     ];
     conffiles = [
       "/root/.profile"
+      "/etc/bmc"
       "/var/log/bmc/bmc.log"
       "/var/log/bmc/widgets.log"
       "/var/log/bmc/bmc-nix-cli.log"

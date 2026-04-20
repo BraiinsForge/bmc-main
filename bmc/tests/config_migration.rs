@@ -192,6 +192,70 @@ async fn load_is_pure_without_persist() {
     );
 }
 
+#[tokio::test]
+async fn legacy_path_is_relocated_on_first_load() {
+    // On upgrade, the config used to live at
+    // `<parent>/bmc_config.json` and is now expected at
+    // `<parent>/bmc/config.json` so it can be a conffile under a
+    // preserved directory. `load_any_version` triggers the copy
+    // automatically when it sees the new path missing but the
+    // legacy sibling present. The legacy file stays around so a
+    // forced boot into old firmware still finds its config.
+    let tmp = tempdir();
+    let new_dir = tmp.join("bmc");
+    let new_path = new_dir.join("config.json");
+    let legacy_path = tmp.join("bmc_config.json");
+
+    // Seed the legacy path, current schema body.
+    fs::write(&legacy_path, r#"{"version":1,"scenes":[],"accounts":[]}"#)
+        .await
+        .expect("BUG: seed legacy file");
+
+    let loaded = config_migration::load_any_version(&new_path)
+        .await
+        .expect("BUG: load must succeed after relocation");
+
+    assert!(!loaded.was_migrated(), "current-version file is a no-op");
+    assert!(
+        fs::try_exists(&new_path).await.unwrap_or(false),
+        "new path must exist after load_any_version"
+    );
+    assert!(
+        fs::try_exists(&legacy_path).await.unwrap_or(false),
+        "legacy path must remain intact after the copy — downgrade safety"
+    );
+}
+
+#[tokio::test]
+async fn legacy_path_ignored_when_new_path_already_exists() {
+    // If both the new and legacy paths exist, the new path wins and
+    // the legacy file is left alone — relocation must never overwrite
+    // a real config.
+    let tmp = tempdir();
+    let new_dir = tmp.join("bmc");
+    fs::create_dir_all(&new_dir)
+        .await
+        .expect("BUG: mkdir new dir");
+    let new_path = new_dir.join("config.json");
+    let legacy_path = tmp.join("bmc_config.json");
+
+    fs::write(&new_path, r#"{"version":1,"scenes":[],"accounts":[]}"#)
+        .await
+        .expect("BUG: seed new file");
+    fs::write(&legacy_path, r#"{"ignored":true}"#)
+        .await
+        .expect("BUG: seed legacy file");
+
+    config_migration::load_any_version(&new_path)
+        .await
+        .expect("BUG: load must succeed");
+
+    assert!(
+        fs::try_exists(&legacy_path).await.unwrap_or(false),
+        "legacy path must remain untouched when new exists"
+    );
+}
+
 /// Small helper producing a unique tmp dir for each test.
 fn tempdir() -> PathBuf {
     let base = std::env::temp_dir().join(format!(

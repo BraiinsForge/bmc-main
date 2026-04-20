@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn apply_filters_bmc_config() {
         let content = br#"{"api_key":"secret"}"#.to_vec();
-        let result = apply(Path::new("/etc/bmc_config.json"), content);
+        let result = apply(Path::new("/etc/bmc/config.json"), content);
         assert_eq!(
             std::str::from_utf8(&result).expect("BUG: result should be UTF-8"),
             r#"{"api_key":"<CENSORED>"}"#
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn apply_invalid_utf8_returns_original() {
         let content = vec![0xFF, 0xFE, 0xFD];
-        let result = apply(Path::new("/etc/bmc_config.json"), content.clone());
+        let result = apply(Path::new("/etc/bmc/config.json"), content.clone());
         assert_eq!(result, content);
     }
 

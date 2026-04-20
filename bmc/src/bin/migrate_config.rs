@@ -2,11 +2,16 @@
 
 //! Offline config migration tool.
 //!
-//! Reads any-version `/etc/bmc_config.json` from `<src>`, upgrades
-//! it in memory to the current schema, and writes the result to
-//! `<dst>` (creating a `.backup.<ts>` of `<dst>` if it already
-//! existed). Lets us exercise the upgrade path against captured
-//! device samples without flashing firmware.
+//! Reads any-version BMC config from `<src>`, upgrades it in memory
+//! to the current schema, and writes the result to `<dst>` (creating
+//! a `.backup.<ts>` of `<dst>` if it already existed). Lets us
+//! exercise the upgrade path against captured device samples without
+//! flashing firmware.
+//!
+//! Runtime path on the device is `/etc/bmc/config.json` (moved from
+//! the legacy `/etc/bmc_config.json` on first boot of the new
+//! firmware); this CLI operates on arbitrary paths so captured
+//! samples can live anywhere.
 //!
 //! Usage: `bmc-migrate-config <src> <dst>`
 

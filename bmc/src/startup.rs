@@ -501,7 +501,7 @@ pub struct Configuration {
 
 impl Configuration {
     const UPGRADE_IMAGE_PATH: &str = "/tmp/firmware.tar";
-    const CONFIG_PATH: &str = "/etc/bmc_config.json";
+    const CONFIG_PATH: &str = "/etc/bmc/config.json";
     const DEFAULT_BRIGHTNESS_PCT: u8 = 60;
     const DEFAULT_NIGHT_MODE_BRIGHTNESS_PCT: u8 = 25;
     const DEFAULT_VOLUME_PCT: u8 = 60;

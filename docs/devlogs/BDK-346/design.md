@@ -2,7 +2,8 @@
 
 ## Goal
 
-Convert `/etc/bmc_config.json` from the slint-monolith shape to the
+Convert the BMC config (legacy `/etc/bmc_config.json`, new
+`/etc/bmc/config.json`) from the slint-monolith shape to the
 manifest-driven shape on first boot of the new firmware, with no user
 action. Scene layouts and per-widget data for widgets we recognise
 survive the upgrade; widgets we do not recognise are dropped with a
@@ -172,14 +173,53 @@ registry. With placeholders gone, nil UIDs cannot leak; a reserved
 UID for a not-yet-shipped widget produces a "no registered widget
 with this UID" log until that widget lands.
 
+## Config path layout
+
+The runtime config and its timestamped backups live under
+`/etc/bmc/`:
+
+```
+/etc/bmc/config.json
+/etc/bmc/config.json.backup.<unix_secs>
+```
+
+This is a directory-based layout so OpenWRT's `sysupgrade` can
+preserve everything under `/etc/bmc/` with a single conffile rule
+(the sibling change in the bos-main packaging layer adds
+`/etc/bmc` to the conffile set).
+
+### Legacy path relocation
+
+On first boot of the new firmware the old file at
+`/etc/bmc_config.json` is **copied** (not moved) to
+`/etc/bmc/config.json` (see `relocate_legacy_config_if_present`
+in `bmc/src/config_migration.rs`). Triggered implicitly by
+`load_any_version`:
+
+- new path exists → leave everything alone
+- new path missing, legacy present → create `/etc/bmc/`, copy
+  the legacy file in, leave the original untouched; the version
+  dispatch then runs against the new path as normal
+- neither present → fresh install, nothing to relocate
+
+**Copy, not move.** The legacy path is preserved deliberately so
+a forced boot into the older firmware (debugging, emergency
+rollback) still finds its config at the path it expects. That
+snapshot goes stale the moment the new firmware writes an edit,
+but the "boot old firmware at pre-upgrade state" fallback stays
+available indefinitely at the cost of a few KB of on-disk
+redundancy. Aligns with the rest of the migration's "never
+silently destroy user data" stance.
+
+The pattern is path-shape based (`<parent>/bmc/<name>` looks
+for `<parent>/bmc_<name>`) so tests using tmp dirs exercise
+the same code path.
+
 ## Open items / follow-ups
 
-- **Backups under `/etc/bmc/`.** Per review, backups (and ideally
-  the main config too) should live under a dedicated directory to
-  interoperate cleanly with OpenWRT conffile semantics across
-  firmware updates. Not done in this commit; tracked as a follow-up.
-- **Cap kept backups.** Keep at most N (≈10) `.backup.<ts>` files,
-  rotating the oldest out. Filed as technical debt.
+- **Cap kept backups.** Keep at most N (≈10)
+  `config.json.backup.<ts>` files, rotating the oldest out.
+  Filed as technical debt.
 
 ## Testing
 
