@@ -123,9 +123,6 @@ pub struct CompositorState {
     pub capture_enabled: bool,
 
     output_damage: OutputDamageTracker,
-
-    /// Set when widget content or scene layout changes and a new frame must be rendered.
-    pub needs_redraw: bool,
 }
 
 #[derive(Debug)]
@@ -192,6 +189,10 @@ impl OutputDamageTracker {
         } else {
             OutputDamage::Widgets(self.widgets.clone())
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        !self.full_damage && self.widgets.is_empty()
     }
 
     fn clear(&mut self) {
@@ -301,7 +302,6 @@ impl CompositorState {
                 full_damage: true,
                 widgets: std::collections::HashSet::new(),
             },
-            needs_redraw: true,
         }
     }
 
@@ -501,6 +501,14 @@ impl CompositorState {
         self.output_damage.snapshot()
     }
 
+    /// Derived from output damage — any pending damage means the next
+    /// iteration must render. Collapsing the two flags into one source of
+    /// truth removes a class of "marked damage but forgot to flag redraw"
+    /// bugs.
+    pub fn needs_redraw(&self) -> bool {
+        !self.output_damage.is_empty()
+    }
+
     pub fn clear_output_damage(&mut self) {
         self.output_damage.clear();
     }
@@ -575,7 +583,6 @@ impl CompositorHandler for CompositorState {
             if let Some(assignment) = attributes.buffer.take() {
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
-                        self.needs_redraw = true;
                         if let Some(id) = instance_id.as_ref() {
                             self.mark_widget_output_damage(id);
                             // Release previous buffer so the client can reuse or
@@ -617,10 +624,10 @@ impl CompositorHandler for CompositorState {
             }
 
             // Any commit with frame callbacks indicates the client rendered
-            // and expects display feedback — trigger a redraw. This covers
-            // Slint widgets that render to the same buffer without re-attaching.
+            // and expects display feedback — mark damage to trigger a redraw.
+            // This covers Slint widgets that render to the same buffer without
+            // re-attaching.
             if had_frame_callbacks {
-                self.needs_redraw = true;
                 if let Some(id) = instance_id.as_ref() {
                     self.mark_widget_output_damage(id);
                 } else {

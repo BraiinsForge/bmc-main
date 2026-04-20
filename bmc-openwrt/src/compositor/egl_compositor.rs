@@ -439,12 +439,13 @@ impl EglCompositor {
         //
         // State machine per iteration:
         //   1. Process protocol events (widget connect/disconnect/actions)
-        //   2. If `needs_redraw` — attempt render:
-        //      a. `is_flip_pending()` → skip, keep `needs_redraw` for next wake
-        //      b. render succeeds → clear `needs_redraw`, send frame callbacks
+        //   2. If `needs_redraw()` (damage non-empty) — attempt render:
+        //      a. `is_flip_pending()` → skip, damage stays for next wake
+        //      b. render succeeds → `clear_output_damage()` clears the derived
+        //         `needs_redraw()`, send frame callbacks
         //   3. Fulfill any pending capture frames from pixel cache
         //   4. `dispatch(timeout)` — sleep until the next event:
-        //      - `needs_redraw && !flip_pending` → ZERO (render ASAP)
+        //      - `needs_redraw() && !flip_pending` → ZERO (render ASAP)
         //      - otherwise → None (block; DRM/Wayland events will wake us)
         loop {
             ii_stopwatch::stopwatch_start!(loop_w);
@@ -618,9 +619,8 @@ impl AppState {
             .is_some_and(|r| r.output().is_flip_pending());
         self.redraw_state = self.redraw_state.on_vblank(flip_pending);
 
-        if self.compositor.needs_redraw {
+        if self.compositor.needs_redraw() {
             self.redraw_state = self.redraw_state.queue();
-            self.compositor.needs_redraw = false;
         }
     }
 }
@@ -667,7 +667,6 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             }
             state.compositor.widgets.set_active_scene(layout);
             state.compositor.mark_full_output_damage();
-            state.redraw_state = state.redraw_state.queue();
         }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
