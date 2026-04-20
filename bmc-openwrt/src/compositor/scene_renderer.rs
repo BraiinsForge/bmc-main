@@ -530,6 +530,24 @@ fn rectangle_union(
     Rectangle::from_loc_and_size((x1, y1), (x2 - x1, y2 - y1))
 }
 
+/// Collect visible widgets from a scene into the render list with an x offset.
+fn collect_scene_widgets(
+    scene: &bmc::compositor::SceneLayout,
+    buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
+    x_offset: i32,
+    out: &mut Vec<(ObjectId, bmc::compositor::WidgetPlacement, i32)>,
+) {
+    for (client_buffer, instance_id) in buffers {
+        if let Some(placement) = scene
+            .widgets
+            .iter()
+            .find(|w| &w.instance_id == instance_id && w.visible)
+        {
+            out.push((client_buffer.id(), placement.clone(), x_offset));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{merge_damage_rects, rectangle_union};
@@ -568,23 +586,5 @@ mod tests {
             rectangle_union(&lhs, &rhs),
             Rectangle::<i32, Physical>::from_loc_and_size((10, 18), (10, 10))
         );
-    }
-}
-
-/// Collect visible widgets from a scene into the render list with an x offset.
-fn collect_scene_widgets(
-    scene: &bmc::compositor::SceneLayout,
-    buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
-    x_offset: i32,
-    out: &mut Vec<(ObjectId, bmc::compositor::WidgetPlacement, i32)>,
-) {
-    for (client_buffer, instance_id) in buffers {
-        if let Some(placement) = scene
-            .widgets
-            .iter()
-            .find(|w| &w.instance_id == instance_id && w.visible)
-        {
-            out.push((client_buffer.id(), placement.clone(), x_offset));
-        }
     }
 }
