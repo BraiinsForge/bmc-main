@@ -9,6 +9,7 @@ mod protocol;
 mod render;
 mod scene_renderer;
 mod state;
+mod touch_gesture;
 pub mod touch_input;
 mod widget_tracker;
 

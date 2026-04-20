@@ -1,42 +1,25 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Touch input handling with drag gesture detection and velocity tracking.
+//! Evdev-backed adapter that feeds [`super::touch_gesture::GestureState`].
+//!
+//! This module is a transitional stage — it still owns the raw `evdev::Device`
+//! open, `SYN_REPORT` reconstruction, and the touch calibration, but the
+//! gesture classification and drag-activation logic has moved to the
+//! backend-agnostic [`super::touch_gesture`] module. Stage 3b replaces
+//! evdev here with Smithay's `LibinputInputBackend`, which retires the
+//! `SYN_REPORT` plumbing while keeping the gesture policy unchanged.
 
-use std::collections::VecDeque;
 use std::os::fd::{AsFd, BorrowedFd};
 use std::path::Path;
 use std::time::Instant;
 
 use evdev::{AbsInfo, AbsoluteAxisCode, Device, EventSummary, KeyCode, SynchronizationCode};
 
-/// Movement (in pixels) required before a drag activates.
-const DRAG_DEAD_ZONE: i32 = 15;
+use super::touch_gesture::GestureState;
 
-/// Maximum vertical deviation allowed during a horizontal drag.
-const DRAG_MAX_Y_DEVIATION: i32 = 150;
-
-/// Maximum number of recent position samples kept for velocity estimation.
-const VELOCITY_SAMPLE_COUNT: usize = 5;
-
-/// Maximum duration (ms) for a tap gesture.
-const TAP_MAX_DURATION_MS: u128 = 300;
-
-/// Maximum movement (px) for a tap gesture.
-const TAP_MAX_MOVEMENT: i32 = 30;
-
-/// Current drag offset while finger is down.
-#[derive(Debug, Clone, Copy)]
-pub struct DragInfo {
-    /// Horizontal offset from touch start in logical pixels.
-    pub dx: i32,
-}
-
-/// Touch gesture result emitted on finger up.
-#[derive(Debug, Clone, Copy)]
-pub enum TouchGesture {
-    Tap,
-    DragEnd { dx: i32, velocity_x: f32 },
-}
+// Re-exported so existing call sites continue to import DragInfo/TouchGesture
+// from this module while Stage 3b lands the libinput rewrite.
+pub use super::touch_gesture::{DragInfo, TouchGesture};
 
 /// Raw touch event for forwarding to widgets.
 #[derive(Debug, Clone, Copy)]
@@ -46,55 +29,26 @@ pub enum RawTouchEvent {
     Up { id: u32 },
 }
 
-/// Touch state tracking for gesture detection.
+/// Evdev-side staging for a single touch interaction.
 ///
-/// All coordinates (`start_x/y`, `current_x/y`) are in **logical** display
-/// pixels after calibration and 270° rotation.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "touch input state is easier to maintain as flat flags than as nested enums"
-)]
-#[derive(Debug)]
-struct TouchState {
-    start_x: i32,
-    start_y: i32,
-    current_x: i32,
-    current_y: i32,
-    /// Raw evdev coordinates accumulated before SYN_REPORT.
-    pending_raw_x: i32,
-    pending_raw_y: i32,
-    start_time: Instant,
+/// `is_touching` + `needs_down` + `pending_release` encode the position of
+/// the current finger in the evdev event sequence:
+/// `BTN_TOUCH press → (ABS_*)* → SYN_REPORT → (ABS_*)* → SYN_REPORT → … → BTN_TOUCH release → SYN_REPORT`.
+#[derive(Debug, Default)]
+struct EvdevState {
+    /// True between `BTN_TOUCH` press and release.
     is_touching: bool,
-    /// Set on BTN_TOUCH press, consumed on the first SYN_REPORT with
+    /// Set on `BTN_TOUCH` press, consumed on the first `SYN_REPORT` with
     /// position data. Replaces the timing-based `TOUCH_START_WINDOW_MS`
     /// heuristic with deterministic first-sample detection.
     needs_down: bool,
-    /// Set on BTN_TOUCH release and finalized on the next SYN_REPORT so
-    /// the final coordinate sample is applied before gesture classification.
+    /// Set on `BTN_TOUCH` release and finalized on the next `SYN_REPORT`
+    /// so the final coordinate sample is applied before gesture
+    /// classification.
     pending_release: bool,
-    /// Whether the drag dead zone has been exceeded.
-    drag_active: bool,
-    /// Recent (logical_x, timestamp) samples for velocity estimation.
-    velocity_samples: VecDeque<(i32, Instant)>,
-}
-
-impl Default for TouchState {
-    fn default() -> Self {
-        Self {
-            start_x: 0,
-            start_y: 0,
-            current_x: 0,
-            current_y: 0,
-            pending_raw_x: 0,
-            pending_raw_y: 0,
-            start_time: Instant::now(),
-            is_touching: false,
-            needs_down: false,
-            pending_release: false,
-            drag_active: false,
-            velocity_samples: VecDeque::with_capacity(VELOCITY_SAMPLE_COUNT),
-        }
-    }
+    /// Raw evdev coordinates accumulated before `SYN_REPORT`.
+    pending_raw_x: i32,
+    pending_raw_y: i32,
 }
 
 /// Maps raw evdev coordinates to logical display coordinates.
@@ -153,22 +107,25 @@ impl AxisCalibration {
     }
 }
 
-fn handle_touch_key_event(state: &mut TouchState, pressed: bool) {
+fn handle_touch_key_event(state: &mut EvdevState, pressed: bool) {
     if pressed && !state.is_touching {
         state.is_touching = true;
         state.needs_down = true;
         state.pending_release = false;
-        state.drag_active = false;
-        state.start_time = Instant::now();
-        state.velocity_samples.clear();
     } else if !pressed && state.is_touching {
         state.pending_release = true;
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "transitional adapter; Stage 3b collapses this when libinput replaces SYN handling"
+)]
 fn flush_syn_report(
     calibration: &AxisCalibration,
-    state: &mut TouchState,
+    evdev: &mut EvdevState,
+    gesture: &mut GestureState,
+    now_ms: u32,
     pending_x: &mut Option<i32>,
     pending_y: &mut Option<i32>,
     raw_events: &mut Vec<RawTouchEvent>,
@@ -176,101 +133,45 @@ fn flush_syn_report(
 ) -> Option<TouchGesture> {
     let mut pos_updated = false;
     if let Some(raw_x) = pending_x.take() {
-        state.pending_raw_x = raw_x;
+        evdev.pending_raw_x = raw_x;
         pos_updated = true;
     }
     if let Some(raw_y) = pending_y.take() {
-        state.pending_raw_y = raw_y;
+        evdev.pending_raw_y = raw_y;
         pos_updated = true;
     }
 
-    if (state.is_touching || state.pending_release) && pos_updated {
-        let (lx, ly) = calibration.to_logical(state.pending_raw_x, state.pending_raw_y);
+    if (evdev.is_touching || evdev.pending_release) && pos_updated {
+        let (lx, ly) = calibration.to_logical(evdev.pending_raw_x, evdev.pending_raw_y);
 
-        state.current_x = lx;
-        state.current_y = ly;
-
-        if state.needs_down {
-            // First position sample after BTN_TOUCH — treat as start.
-            state.needs_down = false;
-            state.start_x = lx;
-            state.start_y = ly;
+        if evdev.needs_down {
+            evdev.needs_down = false;
+            gesture.on_down(lx, ly, now_ms);
             raw_events.push(RawTouchEvent::Down {
                 id: 0,
                 x: lx,
                 y: ly,
             });
         } else {
+            let drag_activated = gesture.on_motion(lx, ly, now_ms);
+            if drag_activated || gesture.drag_active() {
+                *drag_seen_this_poll = true;
+            }
             raw_events.push(RawTouchEvent::Motion {
                 id: 0,
                 x: lx,
                 y: ly,
             });
         }
-        update_drag_tracking(state, drag_seen_this_poll);
     }
 
-    if state.pending_release {
-        state.pending_release = false;
-        state.is_touching = false;
+    if evdev.pending_release {
+        evdev.pending_release = false;
+        evdev.is_touching = false;
         raw_events.push(RawTouchEvent::Up { id: 0 });
-        let gesture = detect_gesture(state);
-        state.drag_active = false;
-        return gesture;
+        return gesture.on_up(now_ms);
     }
 
-    None
-}
-
-fn update_drag_tracking(state: &mut TouchState, drag_seen_this_poll: &mut bool) {
-    let now = Instant::now();
-    let samples = &mut state.velocity_samples;
-
-    samples.push_back((state.current_x, now));
-    if samples.len() > VELOCITY_SAMPLE_COUNT {
-        samples.pop_front();
-    }
-
-    if !state.drag_active {
-        let dx = (state.current_x - state.start_x).abs();
-        let dy = (state.current_y - state.start_y).abs();
-        if dx > DRAG_DEAD_ZONE && dy <= DRAG_MAX_Y_DEVIATION {
-            state.drag_active = true;
-            *drag_seen_this_poll = true;
-            tracing::debug!("Drag activated: dx={}", dx);
-        }
-    }
-
-    if state.drag_active {
-        *drag_seen_this_poll = true;
-    }
-}
-
-fn detect_gesture(state: &TouchState) -> Option<TouchGesture> {
-    let duration = state.start_time.elapsed().as_millis();
-    let dx = state.current_x - state.start_x;
-    let dy = (state.current_y - state.start_y).abs();
-
-    tracing::debug!(
-        "Touch ended: dx={}, dy={}, duration={}ms, drag_active={}",
-        dx,
-        dy,
-        duration,
-        state.drag_active
-    );
-
-    if state.drag_active {
-        let velocity_x = TouchInput::compute_velocity(&state.velocity_samples);
-        tracing::info!("DragEnd: dx={}, velocity={:.0} px/s", dx, velocity_x);
-        return Some(TouchGesture::DragEnd { dx, velocity_x });
-    }
-
-    if duration <= TAP_MAX_DURATION_MS && dx.abs() <= TAP_MAX_MOVEMENT && dy <= TAP_MAX_MOVEMENT {
-        tracing::info!("Tap detected at ({}, {})", state.current_x, state.current_y);
-        return Some(TouchGesture::Tap);
-    }
-
-    tracing::debug!("No gesture detected");
     None
 }
 
@@ -278,7 +179,9 @@ fn detect_gesture(state: &TouchState) -> Option<TouchGesture> {
 pub struct TouchInput {
     device: Device,
     calibration: AxisCalibration,
-    state: TouchState,
+    boot: Instant,
+    gesture: GestureState,
+    evdev: EvdevState,
     /// Pending raw X coordinate (applied on SYN_REPORT).
     pending_x: Option<i32>,
     /// Pending raw Y coordinate (applied on SYN_REPORT).
@@ -301,8 +204,8 @@ impl TouchInput {
     /// Open a touch input device.
     ///
     /// `logical_width` and `logical_height` are the display dimensions after
-    /// rotation (landscape).  Evdev coordinates are mapped to this logical
-    /// space with 270° rotation applied.
+    /// rotation (landscape). Evdev coordinates are mapped to this logical
+    /// space.
     ///
     /// # Errors
     /// Returns an error if the device cannot be opened.
@@ -342,7 +245,9 @@ impl TouchInput {
         Ok(Self {
             device,
             calibration,
-            state: TouchState::default(),
+            boot: Instant::now(),
+            gesture: GestureState::new(),
+            evdev: EvdevState::default(),
             pending_x: None,
             pending_y: None,
             raw_events: Vec::new(),
@@ -375,27 +280,16 @@ impl TouchInput {
     /// Returns drag info while a drag is active (finger down, past dead zone).
     #[must_use]
     pub fn drag_info(&self) -> Option<DragInfo> {
-        if !self.state.drag_active {
-            return None;
-        }
-        let dx = self.state.current_x - self.state.start_x;
-        Some(DragInfo { dx })
+        self.gesture.drag_info()
     }
 
-    /// Compute velocity from the full sample window (px/sec).
-    fn compute_velocity(samples: &VecDeque<(i32, Instant)>) -> f32 {
-        if samples.len() < 2 {
-            return 0.0;
-        }
-        let (x_first, t_first) = samples[0];
-        let (x_last, t_last) = samples[samples.len() - 1];
-        let dt = t_last.duration_since(t_first).as_secs_f32();
-        if dt < 0.002 {
-            return 0.0;
-        }
-        #[expect(clippy::cast_precision_loss)]
-        let vel = (x_last - x_first) as f32 / dt;
-        vel
+    fn now_ms(&self) -> u32 {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "wrap is acceptable; gesture logic uses saturating_sub and sub-49-day spans"
+        )]
+        let ms = self.boot.elapsed().as_millis() as u32;
+        ms
     }
 
     /// Poll for touch events and detect gestures.
@@ -427,12 +321,15 @@ impl TouchInput {
                 }
                 EventSummary::Key(_, KeyCode::BTN_TOUCH, value) => {
                     let pressed = value == 1;
-                    handle_touch_key_event(&mut self.state, pressed);
+                    handle_touch_key_event(&mut self.evdev, pressed);
                 }
                 EventSummary::Synchronization(_, SynchronizationCode::SYN_REPORT, _) => {
+                    let now_ms = self.now_ms();
                     if let Some(gesture) = flush_syn_report(
                         &self.calibration,
-                        &mut self.state,
+                        &mut self.evdev,
+                        &mut self.gesture,
+                        now_ms,
                         &mut self.pending_x,
                         &mut self.pending_y,
                         &mut self.raw_events,
@@ -451,9 +348,9 @@ impl TouchInput {
 
 #[cfg(test)]
 mod tests {
+    use super::super::touch_gesture::{GestureState, TouchGesture};
     use super::{
-        AxisCalibration, RawTouchEvent, TouchGesture, TouchState, flush_syn_report,
-        handle_touch_key_event,
+        AxisCalibration, EvdevState, RawTouchEvent, flush_syn_report, handle_touch_key_event,
     };
 
     fn calibration() -> AxisCalibration {
@@ -462,17 +359,20 @@ mod tests {
 
     #[test]
     fn release_waits_for_syn_report_before_emitting_up() {
-        let mut state = TouchState::default();
+        let mut evdev = EvdevState::default();
+        let mut gesture = GestureState::new();
         let calibration = calibration();
         let mut pending_x = Some(100);
         let mut pending_y = Some(200);
         let mut raw_events = Vec::new();
         let mut drag_seen_this_poll = false;
 
-        handle_touch_key_event(&mut state, true);
+        handle_touch_key_event(&mut evdev, true);
         let down = flush_syn_report(
             &calibration,
-            &mut state,
+            &mut evdev,
+            &mut gesture,
+            0,
             &mut pending_x,
             &mut pending_y,
             &mut raw_events,
@@ -480,8 +380,8 @@ mod tests {
         );
         assert!(down.is_none());
 
-        handle_touch_key_event(&mut state, false);
-        assert!(state.pending_release);
+        handle_touch_key_event(&mut evdev, false);
+        assert!(evdev.pending_release);
         assert!(matches!(
             raw_events.as_slice(),
             [RawTouchEvent::Down { x: 100, y: 200, .. }]
@@ -490,17 +390,20 @@ mod tests {
 
     #[test]
     fn final_syn_report_updates_motion_before_release_gesture() {
-        let mut state = TouchState::default();
+        let mut evdev = EvdevState::default();
+        let mut gesture = GestureState::new();
         let calibration = calibration();
         let mut raw_events = Vec::new();
         let mut drag_seen_this_poll = false;
 
-        handle_touch_key_event(&mut state, true);
+        handle_touch_key_event(&mut evdev, true);
         let mut pending_x = Some(100);
         let mut pending_y = Some(200);
         let first_gesture = flush_syn_report(
             &calibration,
-            &mut state,
+            &mut evdev,
+            &mut gesture,
+            0,
             &mut pending_x,
             &mut pending_y,
             &mut raw_events,
@@ -510,10 +413,12 @@ mod tests {
 
         let mut release_x = Some(140);
         let mut release_y = Some(200);
-        handle_touch_key_event(&mut state, false);
+        handle_touch_key_event(&mut evdev, false);
         let release_gesture = flush_syn_report(
             &calibration,
-            &mut state,
+            &mut evdev,
+            &mut gesture,
+            50,
             &mut release_x,
             &mut release_y,
             &mut raw_events,
