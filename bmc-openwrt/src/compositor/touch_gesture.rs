@@ -112,13 +112,6 @@ impl GestureState {
 
     /// Abandon the current touch without emitting a gesture (protocol
     /// cancel, lost focus, etc.).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "consumed in Stage 3b when libinput InputEvent::TouchCancel is routed here"
-        )
-    )]
     pub fn on_cancel(&mut self) {
         self.active = false;
         self.drag_active = false;
@@ -136,6 +129,13 @@ impl GestureState {
         }
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "exposed for downstream arbitration that may need read-only drag state"
+        )
+    )]
     #[must_use]
     pub fn drag_active(&self) -> bool {
         self.drag_active

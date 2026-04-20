@@ -3,7 +3,6 @@
 pub mod button_driver;
 pub mod cli;
 pub mod compositor;
-pub mod linux_drm_platform;
 pub mod log;
 pub mod manager;
 mod pwd;

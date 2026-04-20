@@ -4,16 +4,21 @@
 
 use super::{
     commands::CompositorCommand,
+    device_access::{DEFAULT_SEAT_NAME, RootLibinputInterface},
     render::{DrmOutput, EglContext},
     scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState},
-    touch_input::TouchInput,
+    touch_gesture::{GestureState, TouchGesture},
 };
 use bmc::compositor::{
     Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, Size,
     WidgetAction,
 };
 use bmc_widget_protocol::SettingUpdate;
+use smithay::backend::{
+    input::{AbsolutePositionEvent, InputEvent, TouchEvent as TouchEventTrait},
+    libinput::LibinputInputBackend,
+};
 use smithay::reexports::{
     calloop::{
         EventLoop, Interest, Mode, PostAction,
@@ -22,6 +27,7 @@ use smithay::reexports::{
         timer::{TimeoutAction, Timer},
     },
     drm::control::{Device as DrmControlDevice, Event as DrmEvent},
+    input as libinput,
     wayland_server::{Display, ListeningSocket},
 };
 use std::{
@@ -44,7 +50,6 @@ use tokio::sync::mpsc;
 
 const DEFAULT_GPU_PATH: &str = "/dev/dri/renderD128";
 const DEFAULT_DISPLAY_PATH: &str = "/dev/dri/card1";
-const DEFAULT_TOUCH_PATH: &str = "/dev/input/event0";
 
 /// Physical display dimensions (panel reports 600x1280 but only 480x1280 is visible).
 const PHYSICAL_WIDTH: u32 = 480;
@@ -299,19 +304,6 @@ impl EglCompositor {
             return;
         }
 
-        // Initialize touch input (optional - don't fail if device not available)
-        let touch_input =
-            match TouchInput::open(Path::new(DEFAULT_TOUCH_PATH), logical_width, logical_height) {
-                Ok(touch) => {
-                    tracing::info!("Touch input initialized from {}", DEFAULT_TOUCH_PATH);
-                    Some(touch)
-                }
-                Err(e) => {
-                    tracing::warn!("Touch input not available ({}): {}", DEFAULT_TOUCH_PATH, e);
-                    None
-                }
-            };
-
         let mut app_state = AppState {
             display,
             compositor: compositor_state,
@@ -319,7 +311,11 @@ impl EglCompositor {
             listening_socket,
             action_tx,
             event_tx,
-            touch_input,
+            gesture: GestureState::new(),
+            scene_drag_active: false,
+            touch_frame_dirty: false,
+            logical_width,
+            logical_height,
             should_exit: false,
             redraw_state: RedrawState::Idle,
         };
@@ -431,14 +427,28 @@ impl EglCompositor {
             tracing::error!("Failed to add frame-callback tick timer to event loop: {e}");
         }
 
-        // Add touch device fd so calloop wakes immediately on touch events
-        if let Some(ref touch) = app_state.touch_input
-            && let Ok(touch_fd) = touch.as_fd().try_clone_to_owned()
-        {
-            let _ = loop_handle.insert_source(
-                Generic::new(touch_fd, Interest::READ, Mode::Level),
-                |_, _, _state| Ok(PostAction::Continue),
-            );
+        // Wire Smithay's libinput backend. Device open/close goes through
+        // RootLibinputInterface (direct open(2) as root, no seatd), and udev
+        // enumerates devices tagged with DEFAULT_SEAT_NAME. A failed
+        // assign_seat is non-fatal — the compositor continues without touch,
+        // matching the old behaviour when /dev/input/event0 was absent.
+        let mut libinput_context = libinput::Libinput::new_with_udev(RootLibinputInterface);
+        match libinput_context.udev_assign_seat(DEFAULT_SEAT_NAME) {
+            Ok(()) => {
+                tracing::info!("libinput seat '{}' assigned", DEFAULT_SEAT_NAME);
+                let backend = LibinputInputBackend::new(libinput_context);
+                if let Err(e) = loop_handle.insert_source(backend, |event, (), state| {
+                    state.handle_input_event(event);
+                }) {
+                    tracing::error!("Failed to register libinput backend: {e}");
+                }
+            }
+            Err(()) => {
+                tracing::warn!(
+                    "Failed to assign udev seat '{}' for libinput; touch input disabled",
+                    DEFAULT_SEAT_NAME
+                );
+            }
         }
 
         tracing::info!("Compositor event loop starting");
@@ -482,7 +492,6 @@ impl EglCompositor {
             }
 
             process_protocol_events(&mut app_state);
-            process_touch(&mut app_state);
             app_state.refresh_redraw_state();
 
             if let Some(renderer) = &mut app_state.scene_renderer {
@@ -642,7 +651,22 @@ struct AppState {
     listening_socket: ListeningSocket,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
-    touch_input: Option<TouchInput>,
+    /// Backend-agnostic gesture state machine, driven by libinput events.
+    gesture: GestureState,
+    /// `true` once the current touch has been arbitrated to scene-drag
+    /// mode; cleared on [`GestureState::on_up`] / cancel. Separate from
+    /// `gesture.drag_active()` so the cancel-on-first-drag-sample and
+    /// end-drag-on-release transitions are unambiguous even when the
+    /// gesture state machine resets `drag_active` mid-handler.
+    scene_drag_active: bool,
+    /// `true` when at least one `wl_touch` event has been emitted since
+    /// the last `wl_touch.frame`. Ensures `wl_touch.frame` is sent exactly
+    /// once per libinput `TouchFrame` that produced forwarding.
+    touch_frame_dirty: bool,
+    /// Logical display width in pixels (for libinput coordinate transforms).
+    logical_width: u32,
+    /// Logical display height in pixels (for libinput coordinate transforms).
+    logical_height: u32,
     should_exit: bool,
     redraw_state: RedrawState,
 }
@@ -657,6 +681,222 @@ impl AppState {
 
         if self.compositor.needs_redraw() {
             self.redraw_state = self.redraw_state.queue();
+        }
+    }
+
+    fn handle_input_event(&mut self, event: InputEvent<LibinputInputBackend>) {
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "keyboard/pointer/gesture/tablet events are not used by this product"
+        )]
+        match event {
+            InputEvent::DeviceAdded { device } => {
+                tracing::info!("libinput device added: {}", device.name());
+            }
+            InputEvent::DeviceRemoved { device } => {
+                tracing::info!("libinput device removed: {}", device.name());
+            }
+            InputEvent::TouchDown { event } => self.on_touch_down(&event),
+            InputEvent::TouchMotion { event } => self.on_touch_motion(&event),
+            InputEvent::TouchUp { event } => self.on_touch_up(&event),
+            InputEvent::TouchCancel { .. } => self.on_touch_cancel(),
+            InputEvent::TouchFrame { .. } => self.on_touch_frame(),
+            _ => {}
+        }
+    }
+
+    /// Map a libinput absolute touch event into logical-screen space.
+    ///
+    /// `x_transformed` / `y_transformed` rely on libinput already seeing
+    /// the panel in logical landscape orientation. On the shipping
+    /// Goodix GT911 the kernel driver's native `ABS_X` / `ABS_Y` axes
+    /// already align with landscape, so the identity calibration is
+    /// correct and no `LIBINPUT_CALIBRATION_MATRIX` udev tag or
+    /// `config_calibration_set_matrix()` call is set on the device.
+    ///
+    /// This invariant is specific to the current panel + kernel driver
+    /// combination. A panel swap (hardware rev, controller firmware
+    /// change) can silently break it — touches will land rotated 90°,
+    /// 180° or 270° with no runtime diagnostic. The inverse rotation on
+    /// the render side (`scene_renderer.rs`, `Transform::_270`) must
+    /// stay consistent with this assumption.
+    fn touch_location(
+        &self,
+        event: &impl AbsolutePositionEvent<LibinputInputBackend>,
+    ) -> (f64, f64) {
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "logical dimensions are panel-sized and fit in i32"
+        )]
+        let w = self.logical_width as i32;
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "logical dimensions are panel-sized and fit in i32"
+        )]
+        let h = self.logical_height as i32;
+        (event.x_transformed(w), event.y_transformed(h))
+    }
+
+    fn on_touch_down(
+        &mut self,
+        event: &(
+             impl AbsolutePositionEvent<LibinputInputBackend> + TouchEventTrait<LibinputInputBackend>
+         ),
+    ) {
+        use smithay::input::touch::DownEvent;
+        use smithay::utils::{Logical, Point, SERIAL_COUNTER};
+
+        let (x, y) = self.touch_location(event);
+        let time = event.time_msec();
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "touch coordinates are panel-sized; fractional pixels round to i32"
+        )]
+        let ix = x as i32;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "touch coordinates are panel-sized; fractional pixels round to i32"
+        )]
+        let iy = y as i32;
+
+        self.gesture.on_down(ix, iy, time);
+        self.scene_drag_active = false;
+
+        let touch_handle = self.compositor.touch_handle.clone();
+        let focus = self.compositor.touch_focus_at(x, y);
+        touch_handle.down(
+            &mut self.compositor,
+            focus,
+            &DownEvent {
+                slot: event.slot(),
+                time,
+                location: Point::<f64, Logical>::from((x, y)),
+                serial: SERIAL_COUNTER.next_serial(),
+            },
+        );
+        self.touch_frame_dirty = true;
+    }
+
+    fn on_touch_motion(
+        &mut self,
+        event: &(
+             impl AbsolutePositionEvent<LibinputInputBackend> + TouchEventTrait<LibinputInputBackend>
+         ),
+    ) {
+        use smithay::input::touch::MotionEvent;
+        use smithay::utils::{Logical, Point};
+
+        let (x, y) = self.touch_location(event);
+        let time = event.time_msec();
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "touch coordinates are panel-sized; fractional pixels round to i32"
+        )]
+        let ix = x as i32;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "touch coordinates are panel-sized; fractional pixels round to i32"
+        )]
+        let iy = y as i32;
+
+        let drag_activated = self.gesture.on_motion(ix, iy, time);
+
+        if drag_activated && !self.scene_drag_active && self.compositor.widgets.can_drag() {
+            // Mid-touch transition: arbitrate to scene drag and cancel the
+            // wl_touch sequence the widget is currently seeing. Skipped when
+            // the layout has only one scene — there is nothing to swipe to,
+            // so the widget keeps owning the touch sequence.
+            self.scene_drag_active = true;
+            let touch_handle = self.compositor.touch_handle.clone();
+            touch_handle.cancel(&mut self.compositor);
+            self.touch_frame_dirty = true;
+            self.compositor.widgets.start_drag();
+        }
+
+        if self.scene_drag_active {
+            if let Some(info) = self.gesture.drag_info() {
+                self.compositor.widgets.update_drag(info.dx);
+                self.compositor.mark_full_output_damage();
+            }
+        } else {
+            let touch_handle = self.compositor.touch_handle.clone();
+            let focus = self.compositor.touch_focus_at(x, y);
+            touch_handle.motion(
+                &mut self.compositor,
+                focus,
+                &MotionEvent {
+                    slot: event.slot(),
+                    time,
+                    location: Point::<f64, Logical>::from((x, y)),
+                },
+            );
+            self.touch_frame_dirty = true;
+        }
+    }
+
+    fn on_touch_up(&mut self, event: &impl TouchEventTrait<LibinputInputBackend>) {
+        use smithay::input::touch::UpEvent;
+        use smithay::utils::SERIAL_COUNTER;
+
+        let time = event.time_msec();
+        let gesture_result = self.gesture.on_up(time);
+
+        if self.scene_drag_active {
+            self.scene_drag_active = false;
+            if let Some(TouchGesture::DragEnd { dx, velocity_x }) = gesture_result {
+                let committed = self.compositor.widgets.end_drag(dx, velocity_x);
+                self.compositor.mark_full_output_damage();
+                if committed {
+                    tracing::info!(
+                        "Scene transition committed (dx={}, vel={:.0})",
+                        dx,
+                        velocity_x
+                    );
+                } else {
+                    tracing::info!("Scene transition snapped back");
+                }
+            } else {
+                // Drag started but gesture classification didn't finalize —
+                // snap back to the origin rather than leaving the scene offset.
+                self.compositor.widgets.end_drag(0, 0.0);
+                self.compositor.mark_full_output_damage();
+            }
+        } else {
+            let touch_handle = self.compositor.touch_handle.clone();
+            touch_handle.up(
+                &mut self.compositor,
+                &UpEvent {
+                    slot: event.slot(),
+                    time,
+                    serial: SERIAL_COUNTER.next_serial(),
+                },
+            );
+            self.touch_frame_dirty = true;
+            if matches!(gesture_result, Some(TouchGesture::Tap)) {
+                tracing::debug!("Tap detected");
+            }
+        }
+    }
+
+    fn on_touch_cancel(&mut self) {
+        self.gesture.on_cancel();
+
+        if self.scene_drag_active {
+            self.scene_drag_active = false;
+            self.compositor.widgets.end_drag(0, 0.0);
+            self.compositor.mark_full_output_damage();
+        } else {
+            let touch_handle = self.compositor.touch_handle.clone();
+            touch_handle.cancel(&mut self.compositor);
+            self.touch_frame_dirty = true;
+        }
+    }
+
+    fn on_touch_frame(&mut self) {
+        if self.touch_frame_dirty {
+            let touch_handle = self.compositor.touch_handle.clone();
+            touch_handle.frame(&mut self.compositor);
+            self.touch_frame_dirty = false;
         }
     }
 }
@@ -752,119 +992,6 @@ fn process_protocol_events(state: &mut AppState) {
             instance_id,
             payload,
         });
-    }
-}
-
-fn process_touch(state: &mut AppState) {
-    use super::touch_input::{RawTouchEvent, TouchGesture};
-    use smithay::input::touch::{DownEvent, MotionEvent, UpEvent};
-    use smithay::utils::{Logical, Point, SERIAL_COUNTER};
-
-    let Some(ref mut touch) = state.touch_input else {
-        return;
-    };
-
-    let gesture = touch.poll();
-    let drag_info = touch.drag_info();
-    let was_scene_dragging = state.compositor.widgets.drag_offset().is_some();
-
-    // Forward raw touch events to widgets via wl_touch (only when NOT navigating scenes).
-    // Use drag_seen_this_poll() instead of drag_info.is_some() to handle the case where
-    // a complete swipe (down→move→up) arrives in one evdev batch — drag_active is cleared
-    // by the time poll() returns, but drag_seen_this_poll remains true.
-    let raw_events = touch.drain_raw_events();
-    let is_scene_dragging = drag_info.is_some() || touch.drag_seen_this_poll();
-
-    if !raw_events.is_empty() {
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "wrapping is acceptable for event time"
-        )]
-        let time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u32)
-            .unwrap_or(0);
-
-        let touch_handle = state.compositor.touch_handle.clone();
-
-        if is_scene_dragging && !was_scene_dragging {
-            // Scene drag just started — cancel any active widget touch
-            touch_handle.cancel(&mut state.compositor);
-        } else if !is_scene_dragging {
-            for event in &raw_events {
-                match *event {
-                    RawTouchEvent::Down { x, y, .. } => {
-                        let location = Point::<f64, Logical>::from((f64::from(x), f64::from(y)));
-                        let focus = state.compositor.touch_focus_at(f64::from(x), f64::from(y));
-                        touch_handle.down(
-                            &mut state.compositor,
-                            focus,
-                            &DownEvent {
-                                slot: Some(0_u32).into(),
-                                time,
-                                location,
-                                serial: SERIAL_COUNTER.next_serial(),
-                            },
-                        );
-                    }
-                    RawTouchEvent::Motion { x, y, .. } => {
-                        let location = Point::<f64, Logical>::from((f64::from(x), f64::from(y)));
-                        let focus = state.compositor.touch_focus_at(f64::from(x), f64::from(y));
-                        touch_handle.motion(
-                            &mut state.compositor,
-                            focus,
-                            &MotionEvent {
-                                slot: Some(0_u32).into(),
-                                time,
-                                location,
-                            },
-                        );
-                    }
-                    RawTouchEvent::Up { .. } => {
-                        touch_handle.up(
-                            &mut state.compositor,
-                            &UpEvent {
-                                slot: Some(0_u32).into(),
-                                time,
-                                serial: SERIAL_COUNTER.next_serial(),
-                            },
-                        );
-                    }
-                }
-            }
-            touch_handle.frame(&mut state.compositor);
-        }
-    }
-
-    // Update drag state for scene navigation
-    if let Some(info) = drag_info {
-        if !was_scene_dragging {
-            state.compositor.widgets.start_drag();
-        }
-        state.compositor.widgets.update_drag(info.dx);
-        state.compositor.mark_full_output_damage();
-    }
-
-    // Handle completed gestures
-    if let Some(gesture) = gesture {
-        match gesture {
-            TouchGesture::DragEnd { dx, velocity_x } => {
-                let committed = state.compositor.widgets.end_drag(dx, velocity_x);
-                state.compositor.mark_full_output_damage();
-                if committed {
-                    tracing::info!(
-                        "Scene transition committed (dx={}, vel={:.0})",
-                        dx,
-                        velocity_x
-                    );
-                } else {
-                    tracing::info!("Scene transition snapped back");
-                }
-            }
-            TouchGesture::Tap => {
-                tracing::debug!("Tap detected");
-            }
-        }
     }
 }
 
