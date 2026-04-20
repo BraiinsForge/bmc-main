@@ -52,6 +52,7 @@ use smithay::{
         shm::{ShmHandler, ShmState},
     },
 };
+use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
 /// Minimum interval between consecutive frame callbacks for a single widget.
@@ -132,24 +133,32 @@ pub struct PendingFrameCallback {
     pub callback: WlCallback,
     pub instance_id: Option<InstanceId>,
     pub client_pid: Option<u32>,
-    pub generation: u64,
+    /// `None` is a placeholder used when the callback was queued before
+    /// the widget's `instance_id` resolved. Such callbacks bypass the
+    /// generation comparison once resolved.
+    pub generation: Option<NonZeroU64>,
 }
 
 /// Per-widget bookkeeping for the frame-callback delivery path.
 ///
 /// - `latest_generation` advances on every widget commit (new content
-///   published).
+///   published). `None` means the widget has never committed.
 /// - `last_presented_generation` advances only at the fire site in
 ///   [`CompositorState::send_frame_callbacks_for_presented_widgets`],
 ///   so a callback deferred by the rate cap stays eligible on the
-///   next tick rather than being dropped from eligibility.
+///   next tick rather than being dropped from eligibility. `None` means
+///   no callback has ever fired for this widget.
 /// - `last_callback_fired_at` drives the 32 ms per-widget rate cap.
-///   A value of `None` means "never fired yet" — the first callback
-///   for a widget fires immediately.
+///   `None` means "never fired yet" — the first callback fires without
+///   waiting.
+///
+/// `NonZeroU64` rather than `u64` makes the "never happened" state a
+/// type-level property (`None`) rather than an opaque `0` sentinel, and
+/// niche optimisation keeps the fields the same size as bare `u64`.
 #[derive(Debug, Default, Clone, Copy)]
 struct WidgetFrameClockState {
-    latest_generation: u64,
-    last_presented_generation: u64,
+    latest_generation: Option<NonZeroU64>,
+    last_presented_generation: Option<NonZeroU64>,
     last_callback_fired_at: Option<Instant>,
 }
 
@@ -193,13 +202,13 @@ impl OutputDamageTracker {
 
 fn should_complete_frame_callback(
     instance_id: Option<&InstanceId>,
-    generation: u64,
-    eligible_generations: &std::collections::HashMap<InstanceId, u64>,
+    generation: Option<NonZeroU64>,
+    eligible_generations: &std::collections::HashMap<InstanceId, NonZeroU64>,
 ) -> bool {
     instance_id.is_some_and(|instance_id| {
         eligible_generations
             .get(instance_id)
-            .is_some_and(|eligible_generation| generation <= *eligible_generation)
+            .is_some_and(|eligible_generation| generation.is_none_or(|g| g <= *eligible_generation))
     })
 }
 
@@ -296,13 +305,19 @@ impl CompositorState {
         }
     }
 
-    fn advance_widget_frame_generation(&mut self, instance_id: &InstanceId) -> u64 {
+    fn advance_widget_frame_generation(&mut self, instance_id: &InstanceId) -> NonZeroU64 {
         let state = self
             .widget_frame_clocks
             .entry(instance_id.clone())
             .or_default();
-        state.latest_generation = state.latest_generation.wrapping_add(1).max(1);
-        state.latest_generation
+        // `saturating_add` never wraps to zero; u64 would take ~18.9B years
+        // to overflow at 31 Hz per widget, so the pin-at-MAX degenerate is
+        // purely academic.
+        let next = state
+            .latest_generation
+            .map_or(NonZeroU64::MIN, |g| g.saturating_add(1));
+        state.latest_generation = Some(next);
+        next
     }
 
     fn queue_frame_callbacks(
@@ -310,10 +325,9 @@ impl CompositorState {
         callbacks: &mut Vec<WlCallback>,
         instance_id: Option<&InstanceId>,
         client_pid: Option<u32>,
-        generation: Option<u64>,
+        generation: Option<NonZeroU64>,
     ) {
         let pending_instance_id = instance_id.cloned();
-        let pending_generation = generation.unwrap_or(0);
 
         // Protocol-compliant clients wait for `done` before requesting another
         // frame, so the queue stays at most one deep per widget. Misbehaving or
@@ -332,7 +346,7 @@ impl CompositorState {
                 callback,
                 instance_id: pending_instance_id.clone(),
                 client_pid,
-                generation: pending_generation,
+                generation,
             }));
     }
 
@@ -360,7 +374,7 @@ impl CompositorState {
             .any(|(_buffer, existing_id)| existing_id == instance_id)
     }
 
-    fn eligible_callback_generations(&self) -> std::collections::HashMap<InstanceId, u64> {
+    fn eligible_callback_generations(&self) -> std::collections::HashMap<InstanceId, NonZeroU64> {
         let visible_widgets: std::collections::HashSet<_> = self
             .widgets
             .active_scene()
@@ -380,8 +394,10 @@ impl CompositorState {
                 continue;
             };
 
-            if state.latest_generation > state.last_presented_generation {
-                eligible.insert(instance_id.clone(), state.latest_generation);
+            if let Some(latest) = state.latest_generation
+                && state.last_presented_generation < Some(latest)
+            {
+                eligible.insert(instance_id.clone(), latest);
             }
         }
 
@@ -392,8 +408,11 @@ impl CompositorState {
 
             // Bootstrap visible widgets that still wait for their first frame
             // callback and have not attached a buffer yet.
-            if state.last_presented_generation == 0 && !self.widget_has_buffer(&instance_id) {
-                eligible.insert(instance_id, state.latest_generation);
+            if state.last_presented_generation.is_none()
+                && !self.widget_has_buffer(&instance_id)
+                && let Some(latest) = state.latest_generation
+            {
+                eligible.insert(instance_id, latest);
             }
         }
 
@@ -433,8 +452,12 @@ impl CompositorState {
                 && let Some(state) = self.widget_frame_clocks.get_mut(id)
             {
                 state.last_callback_fired_at = Some(now);
-                if pending.generation > state.last_presented_generation {
-                    state.last_presented_generation = pending.generation;
+                if let Some(pending_gen) = pending.generation
+                    && state
+                        .last_presented_generation
+                        .is_none_or(|p| pending_gen > p)
+                {
+                    state.last_presented_generation = Some(pending_gen);
                 }
             }
 
@@ -818,25 +841,34 @@ wl::delegate_dispatch!(
 mod tests {
     use super::{OutputDamage, OutputDamageTracker, should_complete_frame_callback};
     use std::collections::HashMap;
+    use std::num::NonZeroU64;
+
+    fn gen_n(n: u64) -> NonZeroU64 {
+        NonZeroU64::new(n).expect("BUG: test generation must be non-zero")
+    }
 
     #[test]
     fn unknown_surface_callback_stays_deferred_until_it_resolves() {
-        assert!(!should_complete_frame_callback(None, 0, &HashMap::new()));
+        assert!(!should_complete_frame_callback(
+            None,
+            Some(gen_n(1)),
+            &HashMap::new(),
+        ));
     }
 
     #[test]
     fn presented_generation_completes_equal_or_older_callback() {
         let mut presented = HashMap::new();
-        presented.insert(String::from("clock-left"), 3);
+        presented.insert(String::from("clock-left"), gen_n(3));
 
         assert!(should_complete_frame_callback(
             Some(&String::from("clock-left")),
-            3,
+            Some(gen_n(3)),
             &presented,
         ));
         assert!(should_complete_frame_callback(
             Some(&String::from("clock-left")),
-            2,
+            Some(gen_n(2)),
             &presented,
         ));
     }
@@ -844,16 +876,16 @@ mod tests {
     #[test]
     fn newer_or_unpresented_widget_callback_is_deferred() {
         let mut eligible_generations = HashMap::new();
-        eligible_generations.insert(String::from("clock-left"), 2);
+        eligible_generations.insert(String::from("clock-left"), gen_n(2));
 
         assert!(!should_complete_frame_callback(
             Some(&String::from("clock-left")),
-            3,
+            Some(gen_n(3)),
             &eligible_generations,
         ));
         assert!(!should_complete_frame_callback(
             Some(&String::from("clock-right")),
-            1,
+            Some(gen_n(1)),
             &eligible_generations,
         ));
     }
@@ -861,11 +893,23 @@ mod tests {
     #[test]
     fn bootstrap_generation_allows_initial_widget_callback() {
         let mut eligible_generations = HashMap::new();
-        eligible_generations.insert(String::from("clock-left"), 1);
+        eligible_generations.insert(String::from("clock-left"), gen_n(1));
 
         assert!(should_complete_frame_callback(
             Some(&String::from("clock-left")),
-            1,
+            Some(gen_n(1)),
+            &eligible_generations,
+        ));
+    }
+
+    #[test]
+    fn unresolved_generation_placeholder_always_passes_for_known_widget() {
+        let mut eligible_generations = HashMap::new();
+        eligible_generations.insert(String::from("clock-left"), gen_n(5));
+
+        assert!(should_complete_frame_callback(
+            Some(&String::from("clock-left")),
+            None,
             &eligible_generations,
         ));
     }
