@@ -1202,6 +1202,8 @@ dependencies = [
  "ii-net",
  "ii-net-drv",
  "ii-stopwatch",
+ "input 0.10.0",
+ "libc",
  "log",
  "memmap2",
  "merge-streams",
@@ -4718,6 +4720,7 @@ dependencies = [
  "bitflags 2.11.0",
  "input-sys",
  "libc",
+ "log",
  "udev",
 ]
 

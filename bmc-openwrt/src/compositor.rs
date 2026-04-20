@@ -3,6 +3,7 @@
 //! EGL Compositor implementation for bmc-openwrt.
 
 mod commands;
+mod device_access;
 mod egl_compositor;
 mod protocol;
 mod render;
