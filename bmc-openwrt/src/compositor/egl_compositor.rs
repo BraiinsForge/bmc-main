@@ -513,6 +513,14 @@ impl EglCompositor {
                         app_state.compositor.clear_output_damage();
                         app_state.redraw_state = RedrawState::on_frame_submitted();
                     } else {
+                        // import_textures runs before any bubbled render error
+                        // today, so the cache is up to date even when we land
+                        // here. Restore the drained IDs anyway so the invariant
+                        // survives a future refactor that moves the import or
+                        // introduces an earlier `?` — a stale texture cache
+                        // manifests as silent rendering glitches that are a
+                        // pain to bisect.
+                        app_state.compositor.dirty_buffers.extend(dirty);
                         app_state.redraw_state = RedrawState::WaitingForVblank {
                             redraw_queued: true,
                         };
