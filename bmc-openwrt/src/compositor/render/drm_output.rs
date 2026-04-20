@@ -8,7 +8,7 @@ use smithay::{
     reexports::drm::control::{Device as ControlDevice, Mode, connector, crtc, framebuffer, plane},
     utils::{Buffer as BufferCoord, Physical, Rectangle, Size, Transform},
 };
-use std::{fs::OpenOptions, os::unix::io::OwnedFd, path::Path};
+use std::{fs::OpenOptions, os::unix::io::OwnedFd, path::Path, time::Duration};
 
 pub struct DrmOutput {
     drm: DrmDevice,
@@ -21,6 +21,13 @@ pub struct DrmOutput {
     refresh_mhz: i32,
     frame_count: u32,
     flip_pending: bool,
+    /// Monotonic timestamp of the last DRM vblank/page-flip event, in ms.
+    /// Wayland frame callbacks use this as their `time` argument — the spec
+    /// only requires monotonicity from an unspecified epoch, and using the
+    /// kernel-delivered vblank timestamp is both cheaper than sampling our
+    /// own clock at fire time and more accurate (it's the real presentation
+    /// time, not an approximation). `None` until the first vblank.
+    last_vblank_ms: Option<u32>,
 }
 
 impl DrmOutput {
@@ -83,6 +90,7 @@ impl DrmOutput {
             refresh_mhz,
             frame_count: 0,
             flip_pending: false,
+            last_vblank_ms: None,
         })
     }
 
@@ -154,8 +162,20 @@ impl DrmOutput {
         self.flip_pending
     }
 
-    pub fn on_vblank(&mut self) {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "wrapping at ~49.7 days is acceptable for frame-callback time"
+    )]
+    pub fn on_vblank(&mut self, timestamp: Duration) {
         self.flip_pending = false;
+        self.last_vblank_ms = Some(timestamp.as_millis() as u32);
+    }
+
+    /// Monotonic timestamp (ms) of the last DRM vblank/page-flip, for use
+    /// as the `wl_callback.done` `time` argument. `None` until the first
+    /// vblank has been observed.
+    pub fn last_vblank_ms(&self) -> Option<u32> {
+        self.last_vblank_ms
     }
 
     pub fn page_flip(

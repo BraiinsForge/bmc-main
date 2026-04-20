@@ -26,11 +26,19 @@ use smithay::reexports::{
 use std::{
     os::fd::AsFd,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     thread,
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+/// Monotonic reference used as a frame-callback time source when no DRM
+/// vblank timestamp is available (headless mode, and the pre-first-vblank
+/// window on hardware). Wayland only requires monotonic ms from an
+/// unspecified epoch — `Instant::elapsed` from a lazy-initialised reference
+/// satisfies that without the per-call overhead of sampling a realtime
+/// clock.
+static COMPOSITOR_BOOT: LazyLock<Instant> = LazyLock::new(Instant::now);
 use tokio::sync::mpsc;
 
 const DEFAULT_GPU_PATH: &str = "/dev/dri/renderD128";
@@ -346,8 +354,11 @@ impl EglCompositor {
                             {
                                 for event in events {
                                     match event {
-                                        DrmEvent::Vblank(_) | DrmEvent::PageFlip(_) => {
-                                            r.output_mut().on_vblank();
+                                        DrmEvent::Vblank(v) => {
+                                            r.output_mut().on_vblank(v.time);
+                                        }
+                                        DrmEvent::PageFlip(p) => {
+                                            r.output_mut().on_vblank(p.duration);
                                         }
                                         DrmEvent::Unknown(_) => {}
                                     }
@@ -379,14 +390,22 @@ impl EglCompositor {
                 }
             }
 
+            // Prefer the kernel-delivered vblank timestamp (CLOCK_MONOTONIC,
+            // the actual presentation time). Fall back to a process-local
+            // monotonic reference for headless mode and for the pre-first-
+            // vblank window on hardware — Wayland only requires monotonic
+            // ms from an unspecified epoch, and these two fallbacks combined
+            // satisfy that without sampling SystemTime (not monotonic; can
+            // jump backwards on NTP adjustments).
             #[expect(
                 clippy::cast_possible_truncation,
-                reason = "wrapping is acceptable for frame time"
+                reason = "wrapping at ~49.7 days is acceptable for frame-callback time"
             )]
-            let time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u32)
-                .unwrap_or(0);
+            let time = state
+                .scene_renderer
+                .as_ref()
+                .and_then(|r| r.output().last_vblank_ms())
+                .unwrap_or_else(|| COMPOSITOR_BOOT.elapsed().as_millis() as u32);
             state
                 .compositor
                 .send_frame_callbacks_for_presented_widgets(time);
