@@ -269,6 +269,10 @@ impl InteractionState {
             return;
         }
 
+        if self.drop_oldest_completed_gesture() {
+            return;
+        }
+
         if matches!(incoming, TouchEvent::Cancel) {
             self.event_queue.clear();
             return;
@@ -285,12 +289,43 @@ impl InteractionState {
 
         false
     }
+
+    fn drop_oldest_completed_gesture(&mut self) -> bool {
+        let Some(end_index) = self
+            .event_queue
+            .iter()
+            .position(|event| matches!(event, TouchEvent::Up | TouchEvent::Cancel))
+        else {
+            return false;
+        };
+
+        self.event_queue.drain(..=end_index);
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{InteractionState, MAX_PENDING_TOUCH_EVENTS};
     use crate::interaction::{Rect, TouchEvent};
+
+    fn assert_valid_touch_sequence(events: &std::collections::VecDeque<TouchEvent>) {
+        let mut touch_active = false;
+
+        for event in events {
+            match event {
+                TouchEvent::Down { .. } => {
+                    assert!(!touch_active, "unexpected nested touch down in queue");
+                    touch_active = true;
+                }
+                TouchEvent::Up | TouchEvent::Cancel => {
+                    assert!(touch_active, "unexpected terminal touch event in queue");
+                    touch_active = false;
+                }
+                TouchEvent::Move { .. } | TouchEvent::Scroll { .. } => {}
+            }
+        }
+    }
 
     #[test]
     fn coordinate_less_up_uses_last_touch_position_for_click() {
@@ -396,26 +431,38 @@ mod tests {
     }
 
     #[test]
-    fn cancel_replaces_saturated_control_only_queue() {
+    fn queue_overflow_preserves_complete_down_up_sequences() {
         let mut state = InteractionState::new();
 
-        while state.event_queue.len() < MAX_PENDING_TOUCH_EVENTS {
-            if state.event_queue.len() % 2 == 0 {
-                state.event_queue.push_back(TouchEvent::Down {
-                    x: state.event_queue.len() as f32,
-                    y: 0.0,
-                });
-            } else {
-                state.event_queue.push_back(TouchEvent::Up);
-            }
+        for idx in 0..(MAX_PENDING_TOUCH_EVENTS * 4) {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "test loop indices are tiny and exactly representable"
+            )]
+            let x = idx as f32;
+            state.push_event(TouchEvent::Down { x, y: 0.0 });
+            state.push_event(TouchEvent::Up);
         }
 
-        state.push_event(TouchEvent::Cancel);
+        assert!(state.event_queue.len() <= MAX_PENDING_TOUCH_EVENTS);
+        assert_valid_touch_sequence(&state.event_queue);
+    }
 
-        assert_eq!(state.event_queue.len(), 1);
-        assert!(matches!(
-            state.event_queue.front(),
-            Some(TouchEvent::Cancel)
-        ));
+    #[test]
+    fn queue_overflow_preserves_complete_down_cancel_sequences() {
+        let mut state = InteractionState::new();
+
+        for idx in 0..(MAX_PENDING_TOUCH_EVENTS * 4) {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "test loop indices are tiny and exactly representable"
+            )]
+            let x = idx as f32;
+            state.push_event(TouchEvent::Down { x, y: 0.0 });
+            state.push_event(TouchEvent::Cancel);
+        }
+
+        assert!(state.event_queue.len() <= MAX_PENDING_TOUCH_EVENTS);
+        assert_valid_touch_sequence(&state.event_queue);
     }
 }
