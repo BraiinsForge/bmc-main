@@ -292,7 +292,8 @@ Research the codebase before editing. Never change code you haven't read.
 
 ### 1. Planning & Staging
 
-Break complex work into 3-5 stages. Document in `IMPLEMENTATION_PLAN.md`:
+Break complex work into 3-5 stages. Document in `docs/devlogs/BDK_<ticket-no.>`, the ticket is always in the branch
+name.
 
 ```markdown
 ## Stage N: [Name]
@@ -362,6 +363,7 @@ Break complex work into 3-5 stages. Document in `IMPLEMENTATION_PLAN.md`:
 
   - Run `nix fmt` (formats Rust, Nix, Python, Shell, Protobuf, TOML, YAML)
   - Run `cargo clippy -- -D warnings` (zero warnings required)
+  - Run `cargo test --workspace`
   - Self-review changes
   - Ensure commit message explains "why"
 
@@ -432,4 +434,4 @@ When multiple valid approaches exist, choose based on:
 - Update plan documentation as you go
 - Learn from existing implementations
 - Stop after 3 failed attempts and reassess
-- do not use unwrap() but use expect("BUG: $reson") with description why it is bug
+- do not use unwrap() but use expect("BUG: $reason") with description why it is bug
