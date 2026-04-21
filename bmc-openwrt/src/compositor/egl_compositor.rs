@@ -558,10 +558,18 @@ impl EglCompositor {
                     renderer.fulfill_from_cache(frames);
                 }
             } else {
-                // Headless: discard buffers, frame callbacks fired by the timer
+                // Headless: no GPU pipeline, so handling damage means dropping
+                // the pending buffers/captures and parking at Idle. The damage
+                // clear is load-bearing: `needs_redraw()` is derived from
+                // `output_damage`, and without clearing it `refresh_redraw_state`
+                // re-queues every iteration and `dispatch_timeout(Queued)` keeps
+                // returning `Duration::ZERO`, spinning the loop until the 16 ms
+                // tick fires.
                 app_state.compositor.invalidated_buffers.clear();
                 app_state.compositor.dirty_buffers.clear();
                 app_state.compositor.pending_capture_frames.clear();
+                app_state.compositor.clear_output_damage();
+                app_state.redraw_state = RedrawState::Idle;
             }
 
             let _ = app_state.display.flush_clients();
