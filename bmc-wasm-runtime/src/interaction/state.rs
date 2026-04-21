@@ -6,6 +6,13 @@ use std::collections::{HashMap, VecDeque};
 
 use super::types::{Rect, TouchEvent};
 
+/// Upper bound for queued hosted touch events while a widget is not rendering.
+///
+/// The queue lives inside the WASM runtime, downstream of the compositor. When
+/// widgets stall, we preserve control edges (`Down`/`Up`/`Cancel`) and coalesce
+/// or evict older motion events before dropping edges as a last resort.
+const MAX_PENDING_TOUCH_EVENTS: usize = 64;
+
 /// Manages interaction state for immediate-mode UI pattern.
 #[derive(Debug)]
 pub struct InteractionState {
@@ -97,6 +104,14 @@ impl InteractionState {
 
     /// Push a touch event to be processed.
     pub fn push_event(&mut self, event: TouchEvent) {
+        if self.try_coalesce_tail(event) {
+            return;
+        }
+
+        if self.event_queue.len() >= MAX_PENDING_TOUCH_EVENTS {
+            self.make_room_for(event);
+        }
+
         self.event_queue.push_back(event);
     }
 
@@ -216,9 +231,65 @@ impl Default for InteractionState {
     }
 }
 
+impl InteractionState {
+    fn try_coalesce_tail(&mut self, event: TouchEvent) -> bool {
+        match event {
+            TouchEvent::Move { x, y } => {
+                if let Some(TouchEvent::Move {
+                    x: queued_x,
+                    y: queued_y,
+                }) = self.event_queue.back_mut()
+                {
+                    *queued_x = x;
+                    *queued_y = y;
+                    return true;
+                }
+            }
+            TouchEvent::Scroll { x, y, delta_y } => {
+                if let Some(TouchEvent::Scroll {
+                    x: queued_x,
+                    y: queued_y,
+                    delta_y: queued_delta_y,
+                }) = self.event_queue.back_mut()
+                {
+                    *queued_x = x;
+                    *queued_y = y;
+                    *queued_delta_y += delta_y;
+                    return true;
+                }
+            }
+            TouchEvent::Down { .. } | TouchEvent::Up | TouchEvent::Cancel => {}
+        }
+
+        false
+    }
+
+    fn make_room_for(&mut self, incoming: TouchEvent) {
+        if self.evict_oldest_motion_event() {
+            return;
+        }
+
+        if matches!(incoming, TouchEvent::Cancel) {
+            self.event_queue.clear();
+            return;
+        }
+
+        let _ = self.event_queue.pop_front();
+    }
+
+    fn evict_oldest_motion_event(&mut self) -> bool {
+        if let Some(index) = self.event_queue.iter().position(TouchEvent::is_motion_like) {
+            let _ = self.event_queue.remove(index);
+            return true;
+        }
+
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::InteractionState;
+    use super::{InteractionState, MAX_PENDING_TOUCH_EVENTS};
     use crate::interaction::{Rect, TouchEvent};
 
     #[test]
@@ -256,5 +327,95 @@ mod tests {
         let (clicked, pos) = state.button_with_pos("btn", bounds);
         assert!(!clicked);
         assert_eq!(pos, None);
+    }
+
+    #[test]
+    fn move_flood_stays_bounded_and_keeps_latest_position() {
+        let bounds = Rect::new(0.0, 0.0, 500.0, 500.0);
+        let mut state = InteractionState::new();
+
+        assert!(!state.button("btn", bounds));
+
+        state.push_event(TouchEvent::Down { x: 40.0, y: 50.0 });
+
+        let mut expected_pos = (40.0, 50.0);
+        for idx in 0..(MAX_PENDING_TOUCH_EVENTS * 4) {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "test range is <256 iterations; idx fits in f32 mantissa exactly"
+            )]
+            let step = idx as f32;
+            let x = 60.0 + step;
+            let y = 90.0 + step;
+            state.push_event(TouchEvent::Move { x, y });
+            expected_pos = (x, y);
+            assert!(state.event_queue.len() <= MAX_PENDING_TOUCH_EVENTS);
+        }
+
+        state.push_event(TouchEvent::Up);
+        assert!(state.event_queue.len() <= MAX_PENDING_TOUCH_EVENTS);
+
+        state.begin_frame();
+
+        let (clicked, pos) = state.button_with_pos("btn", bounds);
+        assert!(clicked);
+        assert_eq!(pos, Some(expected_pos));
+    }
+
+    #[test]
+    fn saturated_queue_evicts_motion_before_control_edge() {
+        let mut state = InteractionState::new();
+        state
+            .event_queue
+            .push_back(TouchEvent::Down { x: 10.0, y: 20.0 });
+        state
+            .event_queue
+            .push_back(TouchEvent::Move { x: 15.0, y: 25.0 });
+
+        while state.event_queue.len() < MAX_PENDING_TOUCH_EVENTS {
+            state.event_queue.push_back(TouchEvent::Up);
+        }
+
+        state.push_event(TouchEvent::Down { x: 30.0, y: 40.0 });
+
+        assert_eq!(state.event_queue.len(), MAX_PENDING_TOUCH_EVENTS);
+        assert!(
+            !state
+                .event_queue
+                .iter()
+                .any(|event| matches!(event, TouchEvent::Move { .. }))
+        );
+        assert!(matches!(
+            state.event_queue.front(),
+            Some(TouchEvent::Down { x: 10.0, y: 20.0 })
+        ));
+        assert!(matches!(
+            state.event_queue.back(),
+            Some(TouchEvent::Down { x: 30.0, y: 40.0 })
+        ));
+    }
+
+    #[test]
+    fn cancel_replaces_saturated_control_only_queue() {
+        let mut state = InteractionState::new();
+
+        while state.event_queue.len() < MAX_PENDING_TOUCH_EVENTS {
+            if state.event_queue.len() % 2 == 0 {
+                state.event_queue.push_back(TouchEvent::Down {
+                    x: state.event_queue.len() as f32,
+                    y: 0.0,
+                });
+            } else {
+                state.event_queue.push_back(TouchEvent::Up);
+            }
+        }
+
+        state.push_event(TouchEvent::Cancel);
+
+        assert_eq!(state.event_queue.len(), 1);
+        assert!(matches!(
+            state.event_queue.front(),
+            Some(TouchEvent::Cancel)
+        ));
     }
 }

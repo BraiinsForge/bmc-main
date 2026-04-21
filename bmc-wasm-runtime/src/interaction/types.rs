@@ -28,6 +28,13 @@ pub enum TouchEvent {
     },
 }
 
+impl TouchEvent {
+    #[must_use]
+    pub fn is_motion_like(&self) -> bool {
+        matches!(self, Self::Move { .. } | Self::Scroll { .. })
+    }
+}
+
 /// Rectangle for hit testing.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Rect {
