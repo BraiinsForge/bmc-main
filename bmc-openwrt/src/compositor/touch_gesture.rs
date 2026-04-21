@@ -18,20 +18,51 @@ use std::collections::VecDeque;
 
 use smithay::utils::{Logical, Point};
 
-/// Movement (in logical pixels) required before a drag activates.
+/// Default movement (in logical pixels) required before a drag activates.
 pub const DRAG_DEAD_ZONE: f64 = 15.0;
 
-/// Maximum vertical deviation allowed during a horizontal drag.
+/// Default maximum vertical deviation allowed during a horizontal drag.
 pub const DRAG_MAX_Y_DEVIATION: f64 = 150.0;
 
-/// Maximum number of recent position samples kept for velocity estimation.
+/// Default number of recent position samples kept for velocity estimation.
 pub const VELOCITY_SAMPLE_COUNT: usize = 5;
 
-/// Maximum duration (ms) for a tap gesture.
+/// Default maximum duration (ms) for a tap gesture.
 pub const TAP_MAX_DURATION_MS: u32 = 300;
 
-/// Maximum movement (logical pixels) for a tap gesture.
+/// Default maximum movement (logical pixels) for a tap gesture.
 pub const TAP_MAX_MOVEMENT: f64 = 30.0;
+
+/// Tuning knobs for the gesture state machine.
+///
+/// [`GestureConfig::default`] reproduces the tuned appliance values used
+/// today; tests supply alternative instances via
+/// [`GestureState::with_config`].
+#[derive(Debug, Clone, Copy)]
+pub struct GestureConfig {
+    /// Movement (logical pixels) required before a drag activates.
+    pub drag_dead_zone: f64,
+    /// Maximum vertical deviation allowed during a horizontal drag.
+    pub drag_max_y_deviation: f64,
+    /// Maximum number of recent position samples kept for velocity estimation.
+    pub velocity_sample_count: usize,
+    /// Maximum duration (ms) for a tap gesture.
+    pub tap_max_duration_ms: u32,
+    /// Maximum movement (logical pixels) for a tap gesture.
+    pub tap_max_movement: f64,
+}
+
+impl Default for GestureConfig {
+    fn default() -> Self {
+        Self {
+            drag_dead_zone: DRAG_DEAD_ZONE,
+            drag_max_y_deviation: DRAG_MAX_Y_DEVIATION,
+            velocity_sample_count: VELOCITY_SAMPLE_COUNT,
+            tap_max_duration_ms: TAP_MAX_DURATION_MS,
+            tap_max_movement: TAP_MAX_MOVEMENT,
+        }
+    }
+}
 
 /// Drag offset reported while a horizontal drag is in progress.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -55,6 +86,7 @@ pub enum TouchGesture {
 /// `y_transformed` results.
 #[derive(Debug, Default)]
 pub struct GestureState {
+    config: GestureConfig,
     active: bool,
     start: Point<f64, Logical>,
     current: Point<f64, Logical>,
@@ -68,6 +100,15 @@ impl GestureState {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub fn with_config(config: GestureConfig) -> Self {
+        Self {
+            config,
+            ..Self::default()
+        }
     }
 
     /// Begin a new touch at `location` with `time_ms` as the start time.
@@ -129,21 +170,9 @@ impl GestureState {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "exposed for downstream arbitration that may need read-only drag state"
-        )
-    )]
-    #[must_use]
-    pub fn drag_active(&self) -> bool {
-        self.drag_active
-    }
-
     fn push_velocity_sample(&mut self, x: f64, time_ms: u32) {
         self.velocity_samples.push_back((x, time_ms));
-        if self.velocity_samples.len() > VELOCITY_SAMPLE_COUNT {
+        if self.velocity_samples.len() > self.config.velocity_sample_count {
             self.velocity_samples.pop_front();
         }
     }
@@ -154,7 +183,7 @@ impl GestureState {
         }
         let dx = (self.current.x - self.start.x).abs();
         let dy = (self.current.y - self.start.y).abs();
-        if dx > DRAG_DEAD_ZONE && dy <= DRAG_MAX_Y_DEVIATION {
+        if dx > self.config.drag_dead_zone && dy <= self.config.drag_max_y_deviation {
             self.drag_active = true;
             tracing::debug!("Drag activated: dx={:.1}", dx);
         }
@@ -179,7 +208,9 @@ impl GestureState {
             return Some(TouchGesture::DragEnd { dx, velocity_x });
         }
 
-        if duration <= TAP_MAX_DURATION_MS && dx.abs() <= TAP_MAX_MOVEMENT && dy <= TAP_MAX_MOVEMENT
+        if duration <= self.config.tap_max_duration_ms
+            && dx.abs() <= self.config.tap_max_movement
+            && dy <= self.config.tap_max_movement
         {
             tracing::info!(
                 "Tap detected at ({:.1}, {:.1})",
@@ -217,7 +248,7 @@ fn compute_velocity(samples: &VecDeque<(f64, u32)>) -> f32 {
 mod tests {
     use smithay::utils::{Logical, Point};
 
-    use super::{DragInfo, GestureState, TouchGesture};
+    use super::{DragInfo, GestureConfig, GestureState, TouchGesture};
 
     fn p(x: f64, y: f64) -> Point<f64, Logical> {
         Point::<f64, Logical>::from((x, y))
@@ -258,7 +289,6 @@ mod tests {
             !g.on_motion(p(200.0, 400.0), 10),
             "dy > DRAG_MAX_Y_DEVIATION must not activate drag"
         );
-        assert!(!g.drag_active());
         assert_eq!(g.drag_info(), None);
     }
 
@@ -288,10 +318,9 @@ mod tests {
         let mut g = GestureState::new();
         g.on_down(p(100.0, 200.0), 0);
         g.on_motion(p(200.0, 200.0), 50);
-        assert!(g.drag_active());
+        assert!(g.drag_info().is_some());
 
         g.on_cancel();
-        assert!(!g.drag_active());
         assert_eq!(g.drag_info(), None);
         assert_eq!(g.on_up(100), None, "on_up after cancel must return None");
     }
@@ -319,5 +348,38 @@ mod tests {
         let mut g = GestureState::new();
         assert!(!g.on_motion(p(0.0, 0.0), 0));
         assert_eq!(g.on_up(0), None);
+    }
+
+    #[test]
+    fn custom_config_tightens_drag_dead_zone() {
+        let config = GestureConfig {
+            drag_dead_zone: 2.0,
+            ..GestureConfig::default()
+        };
+        let mut g = GestureState::with_config(config);
+        g.on_down(p(100.0, 200.0), 0);
+        assert!(
+            g.on_motion(p(103.0, 200.0), 10),
+            "3 px motion should activate drag when dead zone is 2"
+        );
+    }
+
+    #[test]
+    fn custom_config_relaxes_tap_movement_budget() {
+        // Raise both drag_dead_zone and tap_max_movement so that 50 px of
+        // motion is inside the tap budget instead of promoting to a drag.
+        let config = GestureConfig {
+            drag_dead_zone: 300.0,
+            tap_max_movement: 200.0,
+            ..GestureConfig::default()
+        };
+        let mut g = GestureState::with_config(config);
+        g.on_down(p(100.0, 200.0), 0);
+        g.on_motion(p(50.0, 210.0), 100);
+        assert_eq!(
+            g.on_up(150),
+            Some(TouchGesture::Tap),
+            "50 px motion should still count as tap at tap_max_movement=200"
+        );
     }
 }
