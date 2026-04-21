@@ -383,12 +383,17 @@ impl CompositorState {
                 && y >= wy
                 && y < wy + wh
                 && let Some(surface) = self.render_surfaces.get(&widget.instance_id)
+                && surface.is_alive()
             {
                 return Some((surface.clone(), Point::from((wx, wy))));
             }
         }
 
         None
+    }
+
+    pub fn drop_widget_render_surface(&mut self, instance_id: &InstanceId) {
+        self.render_surfaces.remove(instance_id);
     }
 
     fn surface_client_pid(&self, surface: &WlSurface) -> Option<u32> {

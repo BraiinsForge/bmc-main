@@ -995,7 +995,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 .unregister_widget(&instance_id);
             // Remove stale touch routing surface so a reconnecting widget
             // gets a fresh entry via the surface commit path.
-            state.compositor.render_surfaces.remove(&instance_id);
+            state.compositor.drop_widget_render_surface(&instance_id);
         }
         CompositorCommand::SetActiveScene { layout } => {
             tracing::info!("Setting active scene with {} widgets", layout.widgets.len());
@@ -1046,6 +1046,9 @@ fn process_protocol_events(state: &mut AppState) {
         state
             .compositor
             .drop_widget_callback_state(&disconnected.instance_id, disconnected.pid);
+        state
+            .compositor
+            .drop_widget_render_surface(&disconnected.instance_id);
         tracing::info!("Widget disconnected: {}", disconnected.instance_id);
         let _ = state.event_tx.send(CompositorEvent::WidgetDisconnected {
             instance_id: disconnected.instance_id,
