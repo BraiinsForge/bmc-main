@@ -2,24 +2,27 @@
 
 //! Backend-agnostic gesture state machine for touch input.
 //!
-//! The compositor receives touch events from two potential sources — the
-//! legacy `evdev` polling wrapper in [`super::touch_input`] and, after
-//! Stage 3b, Smithay's libinput backend. Both drive the same gesture
-//! policy: tap detection, horizontal drag activation past a dead zone,
-//! and velocity-weighted commit of a scene swipe.
+//! The compositor drives a single gesture policy — tap detection,
+//! horizontal drag activation past a dead zone, and velocity-weighted
+//! scene-swipe commit — from Smithay's libinput backend. This module
+//! encodes that policy as a pure state machine.
 //!
-//! This module encodes that policy as a pure state machine driven by
-//! explicit logical coordinates and monotonic millisecond timestamps.
-//! It knows nothing about `evdev`, `SYN_REPORT`, libinput, or the
-//! compositor event loop.
+//! Positions are passed as [`Point<f64, Logical>`][smithay::utils::Point]
+//! (Smithay's typed logical coordinate) so the rest of the compositor
+//! shares one frame of reference, matching what `wl_touch.down` and
+//! `wl_touch.motion` carry on the wire. Timestamps are `u32` milliseconds
+//! sourced from libinput event `time_msec()`, so this module knows
+//! nothing about libinput itself.
 
 use std::collections::VecDeque;
 
-/// Movement (in pixels) required before a drag activates.
-pub const DRAG_DEAD_ZONE: i32 = 15;
+use smithay::utils::{Logical, Point};
+
+/// Movement (in logical pixels) required before a drag activates.
+pub const DRAG_DEAD_ZONE: f64 = 15.0;
 
 /// Maximum vertical deviation allowed during a horizontal drag.
-pub const DRAG_MAX_Y_DEVIATION: i32 = 150;
+pub const DRAG_MAX_Y_DEVIATION: f64 = 150.0;
 
 /// Maximum number of recent position samples kept for velocity estimation.
 pub const VELOCITY_SAMPLE_COUNT: usize = 5;
@@ -27,38 +30,38 @@ pub const VELOCITY_SAMPLE_COUNT: usize = 5;
 /// Maximum duration (ms) for a tap gesture.
 pub const TAP_MAX_DURATION_MS: u32 = 300;
 
-/// Maximum movement (px) for a tap gesture.
-pub const TAP_MAX_MOVEMENT: i32 = 30;
+/// Maximum movement (logical pixels) for a tap gesture.
+pub const TAP_MAX_MOVEMENT: f64 = 30.0;
 
 /// Drag offset reported while a horizontal drag is in progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DragInfo {
     /// Horizontal offset from touch start in logical pixels.
-    pub dx: i32,
+    pub dx: f64,
 }
 
 /// Gesture classification emitted on touch release.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TouchGesture {
     Tap,
-    DragEnd { dx: i32, velocity_x: f32 },
+    DragEnd { dx: f64, velocity_x: f32 },
 }
 
 /// Pure gesture state machine.
 ///
-/// All coordinates are in logical display pixels — the caller is expected
-/// to apply any evdev-to-logical calibration or libinput-to-output
-/// transform before feeding events in.
+/// Positions are in the Smithay logical coordinate space. Callers pass
+/// `Point<f64, Logical>` values directly from `wl_touch.down` /
+/// `wl_touch.motion` or from libinput's `x_transformed` /
+/// `y_transformed` results.
 #[derive(Debug, Default)]
 pub struct GestureState {
     active: bool,
-    start_x: i32,
-    start_y: i32,
-    current_x: i32,
-    current_y: i32,
+    start: Point<f64, Logical>,
+    current: Point<f64, Logical>,
     start_time_ms: u32,
     drag_active: bool,
-    velocity_samples: VecDeque<(i32, u32)>,
+    /// Recent `(x_logical, time_ms)` samples for velocity estimation.
+    velocity_samples: VecDeque<(f64, u32)>,
 }
 
 impl GestureState {
@@ -67,33 +70,30 @@ impl GestureState {
         Self::default()
     }
 
-    /// Begin a new touch at `(x, y)` with `time_ms` as the start time.
+    /// Begin a new touch at `location` with `time_ms` as the start time.
     ///
     /// Any previously active touch is replaced without emitting a gesture —
     /// callers must call [`GestureState::on_up`] or
     /// [`GestureState::on_cancel`] before starting a new one if they want
     /// the prior result.
-    pub fn on_down(&mut self, x: i32, y: i32, time_ms: u32) {
+    pub fn on_down(&mut self, location: Point<f64, Logical>, time_ms: u32) {
         self.active = true;
-        self.start_x = x;
-        self.start_y = y;
-        self.current_x = x;
-        self.current_y = y;
+        self.start = location;
+        self.current = location;
         self.start_time_ms = time_ms;
         self.drag_active = false;
         self.velocity_samples.clear();
-        self.velocity_samples.push_back((x, time_ms));
+        self.velocity_samples.push_back((location.x, time_ms));
     }
 
     /// Update the current touch position. Returns `true` when this call
     /// transitions `drag_active` from `false` to `true`.
-    pub fn on_motion(&mut self, x: i32, y: i32, time_ms: u32) -> bool {
+    pub fn on_motion(&mut self, location: Point<f64, Logical>, time_ms: u32) -> bool {
         if !self.active {
             return false;
         }
-        self.current_x = x;
-        self.current_y = y;
-        self.push_velocity_sample(x, time_ms);
+        self.current = location;
+        self.push_velocity_sample(location.x, time_ms);
         let was_active = self.drag_active;
         self.update_drag_activation();
         self.drag_active && !was_active
@@ -122,7 +122,7 @@ impl GestureState {
     pub fn drag_info(&self) -> Option<DragInfo> {
         if self.drag_active {
             Some(DragInfo {
-                dx: self.current_x - self.start_x,
+                dx: self.current.x - self.start.x,
             })
         } else {
             None
@@ -141,7 +141,7 @@ impl GestureState {
         self.drag_active
     }
 
-    fn push_velocity_sample(&mut self, x: i32, time_ms: u32) {
+    fn push_velocity_sample(&mut self, x: f64, time_ms: u32) {
         self.velocity_samples.push_back((x, time_ms));
         if self.velocity_samples.len() > VELOCITY_SAMPLE_COUNT {
             self.velocity_samples.pop_front();
@@ -152,21 +152,21 @@ impl GestureState {
         if self.drag_active {
             return;
         }
-        let dx = (self.current_x - self.start_x).abs();
-        let dy = (self.current_y - self.start_y).abs();
+        let dx = (self.current.x - self.start.x).abs();
+        let dy = (self.current.y - self.start.y).abs();
         if dx > DRAG_DEAD_ZONE && dy <= DRAG_MAX_Y_DEVIATION {
             self.drag_active = true;
-            tracing::debug!("Drag activated: dx={}", dx);
+            tracing::debug!("Drag activated: dx={:.1}", dx);
         }
     }
 
     fn classify(&self, end_time_ms: u32) -> Option<TouchGesture> {
         let duration = end_time_ms.saturating_sub(self.start_time_ms);
-        let dx = self.current_x - self.start_x;
-        let dy = (self.current_y - self.start_y).abs();
+        let dx = self.current.x - self.start.x;
+        let dy = (self.current.y - self.start.y).abs();
 
         tracing::debug!(
-            "Touch ended: dx={}, dy={}, duration={}ms, drag_active={}",
+            "Touch ended: dx={:.1}, dy={:.1}, duration={}ms, drag_active={}",
             dx,
             dy,
             duration,
@@ -175,13 +175,17 @@ impl GestureState {
 
         if self.drag_active {
             let velocity_x = compute_velocity(&self.velocity_samples);
-            tracing::info!("DragEnd: dx={}, velocity={:.0} px/s", dx, velocity_x);
+            tracing::info!("DragEnd: dx={:.1}, velocity={:.0} px/s", dx, velocity_x);
             return Some(TouchGesture::DragEnd { dx, velocity_x });
         }
 
         if duration <= TAP_MAX_DURATION_MS && dx.abs() <= TAP_MAX_MOVEMENT && dy <= TAP_MAX_MOVEMENT
         {
-            tracing::info!("Tap detected at ({}, {})", self.current_x, self.current_y);
+            tracing::info!(
+                "Tap detected at ({:.1}, {:.1})",
+                self.current.x,
+                self.current.y
+            );
             return Some(TouchGesture::Tap);
         }
 
@@ -190,7 +194,7 @@ impl GestureState {
 }
 
 /// Velocity in px/sec across the recorded sample window.
-fn compute_velocity(samples: &VecDeque<(i32, u32)>) -> f32 {
+fn compute_velocity(samples: &VecDeque<(f64, u32)>) -> f32 {
     if samples.len() < 2 {
         return 0.0;
     }
@@ -200,56 +204,58 @@ fn compute_velocity(samples: &VecDeque<(i32, u32)>) -> f32 {
     if dt_ms < 2 {
         return 0.0;
     }
+    let dt_s = f64::from(dt_ms) / 1000.0;
     #[expect(
-        clippy::cast_precision_loss,
-        reason = "pixel distances and gesture durations remain within f32 exact-integer range"
+        clippy::cast_possible_truncation,
+        reason = "gesture velocity fits comfortably in f32; downstream consumers are f32"
     )]
-    let dx = (x_last - x_first) as f32;
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "pixel distances and gesture durations remain within f32 exact-integer range"
-    )]
-    let dt_s = dt_ms as f32 / 1000.0;
-    dx / dt_s
+    let vel = ((x_last - x_first) / dt_s) as f32;
+    vel
 }
 
 #[cfg(test)]
 mod tests {
+    use smithay::utils::{Logical, Point};
+
     use super::{DragInfo, GestureState, TouchGesture};
+
+    fn p(x: f64, y: f64) -> Point<f64, Logical> {
+        Point::<f64, Logical>::from((x, y))
+    }
 
     #[test]
     fn short_touch_under_dead_zone_is_a_tap() {
         let mut g = GestureState::new();
-        g.on_down(100, 200, 0);
-        assert!(!g.on_motion(110, 205, 50));
+        g.on_down(p(100.0, 200.0), 0);
+        assert!(!g.on_motion(p(110.0, 205.0), 50));
         assert_eq!(g.on_up(100), Some(TouchGesture::Tap));
     }
 
     #[test]
     fn slow_long_touch_is_not_a_tap() {
         let mut g = GestureState::new();
-        g.on_down(100, 200, 0);
+        g.on_down(p(100.0, 200.0), 0);
         assert_eq!(g.on_up(400), None);
     }
 
     #[test]
     fn horizontal_drag_beyond_dead_zone_activates_drag() {
         let mut g = GestureState::new();
-        g.on_down(100, 200, 0);
-        assert!(!g.on_motion(110, 200, 10));
+        g.on_down(p(100.0, 200.0), 0);
+        assert!(!g.on_motion(p(110.0, 200.0), 10));
         assert!(
-            g.on_motion(120, 200, 20),
+            g.on_motion(p(120.0, 200.0), 20),
             "drag should activate past dead zone"
         );
-        assert_eq!(g.drag_info(), Some(DragInfo { dx: 20 }));
+        assert_eq!(g.drag_info(), Some(DragInfo { dx: 20.0 }));
     }
 
     #[test]
     fn excessive_vertical_deviation_blocks_drag() {
         let mut g = GestureState::new();
-        g.on_down(100, 200, 0);
+        g.on_down(p(100.0, 200.0), 0);
         assert!(
-            !g.on_motion(200, 400, 10),
+            !g.on_motion(p(200.0, 400.0), 10),
             "dy > DRAG_MAX_Y_DEVIATION must not activate drag"
         );
         assert!(!g.drag_active());
@@ -259,10 +265,10 @@ mod tests {
     #[test]
     fn drag_release_emits_dragend_with_velocity() {
         let mut g = GestureState::new();
-        g.on_down(0, 200, 0);
-        g.on_motion(50, 200, 50);
-        g.on_motion(100, 200, 100);
-        g.on_motion(150, 200, 150);
+        g.on_down(p(0.0, 200.0), 0);
+        g.on_motion(p(50.0, 200.0), 50);
+        g.on_motion(p(100.0, 200.0), 100);
+        g.on_motion(p(150.0, 200.0), 150);
 
         let gesture = g
             .on_up(200)
@@ -270,7 +276,7 @@ mod tests {
         let TouchGesture::DragEnd { dx, velocity_x } = gesture else {
             panic!("BUG: expected DragEnd, got {gesture:?}");
         };
-        assert_eq!(dx, 150);
+        assert!((dx - 150.0).abs() < f64::EPSILON);
         assert!(
             velocity_x > 0.0,
             "velocity must be positive for rightward drag"
@@ -280,8 +286,8 @@ mod tests {
     #[test]
     fn cancel_aborts_without_emitting_gesture() {
         let mut g = GestureState::new();
-        g.on_down(100, 200, 0);
-        g.on_motion(200, 200, 50);
+        g.on_down(p(100.0, 200.0), 0);
+        g.on_motion(p(200.0, 200.0), 50);
         assert!(g.drag_active());
 
         g.on_cancel();
@@ -293,9 +299,9 @@ mod tests {
     #[test]
     fn duplicate_timestamps_produce_zero_velocity() {
         let mut g = GestureState::new();
-        g.on_down(0, 0, 42);
-        g.on_motion(80, 0, 42);
-        g.on_motion(200, 0, 42);
+        g.on_down(p(0.0, 0.0), 42);
+        g.on_motion(p(80.0, 0.0), 42);
+        g.on_motion(p(200.0, 0.0), 42);
         let gesture = g
             .on_up(42)
             .expect("BUG: drag release must produce a gesture");
@@ -311,7 +317,7 @@ mod tests {
     #[test]
     fn motion_before_down_is_a_no_op() {
         let mut g = GestureState::new();
-        assert!(!g.on_motion(0, 0, 0));
+        assert!(!g.on_motion(p(0.0, 0.0), 0));
         assert_eq!(g.on_up(0), None);
     }
 }

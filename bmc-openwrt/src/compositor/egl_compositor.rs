@@ -30,6 +30,7 @@ use smithay::reexports::{
     input as libinput,
     wayland_server::{Display, ListeningSocket},
 };
+use smithay::utils::{Logical, Point};
 use std::{
     collections::HashSet,
     os::fd::AsFd,
@@ -193,6 +194,11 @@ impl EglCompositor {
     }
 
     #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "compositor bootstrap wiring; argument count stays tied to how \
+                  EglCompositor decomposes its fields into the worker thread"
+    )]
     fn run_compositor_loop(
         render_node: &Path,
         scanout_node: &Path,
@@ -759,7 +765,7 @@ impl AppState {
     fn touch_location(
         &self,
         event: &impl AbsolutePositionEvent<LibinputInputBackend>,
-    ) -> (f64, f64) {
+    ) -> Point<f64, Logical> {
         #[expect(
             clippy::cast_possible_wrap,
             reason = "logical dimensions are panel-sized and fit in i32"
@@ -770,7 +776,7 @@ impl AppState {
             reason = "logical dimensions are panel-sized and fit in i32"
         )]
         let h = self.logical_height as i32;
-        (event.x_transformed(w), event.y_transformed(h))
+        Point::<f64, Logical>::from((event.x_transformed(w), event.y_transformed(h)))
     }
 
     fn on_touch_down(
@@ -780,49 +786,51 @@ impl AppState {
          ),
     ) {
         use smithay::input::touch::DownEvent;
-        use smithay::utils::{Logical, Point, SERIAL_COUNTER};
+        use smithay::utils::SERIAL_COUNTER;
 
-        let (x, y) = self.touch_location(event);
+        let location = self.touch_location(event);
         let time = event.time_msec();
         let slot = event.slot();
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "touch coordinates are panel-sized; fractional pixels round to i32"
-        )]
-        let ix = x as i32;
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "touch coordinates are panel-sized; fractional pixels round to i32"
-        )]
-        let iy = y as i32;
 
         let sequence_was_idle = self.active_touch_slots.is_empty();
         self.active_touch_slots.insert(slot);
-        if sequence_was_idle {
-            self.gesture_slot = Some(slot);
-            self.gesture.on_down(ix, iy, time);
-            self.scene_drag_active = false;
-        } else if self.gesture_slot != Some(slot) {
+
+        // Single-touch policy: only the first contact in an otherwise
+        // idle sequence is forwarded to wl_touch or drives the gesture
+        // state machine. The Goodix GT911 can report multiple slots,
+        // but the widget set (utility gauges, dashboards) has no pinch,
+        // rotate or pan gestures, and the scene-swipe arbitration only
+        // drives the primary slot. Forwarding secondary slots would
+        // produce wl_touch events with no matching down/cancel
+        // lifecycle once the primary promotes to a scene drag. We
+        // still track secondary slots in `active_touch_slots` so the
+        // next sequence cannot start until every finger is lifted.
+        //
+        // Rework point for future multi-touch support: introduce
+        // per-slot wl_touch lifecycle tracking here rather than
+        // papering over the state machine downstream.
+        if !sequence_was_idle {
             tracing::debug!(
                 ?slot,
                 primary_slot = ?self.gesture_slot,
-                "secondary touch does not participate in scene arbitration"
+                "ignoring non-primary touch slot: single-touch policy"
             );
-        }
-
-        if self.scene_drag_active {
             return;
         }
 
+        self.gesture_slot = Some(slot);
+        self.gesture.on_down(location, time);
+        self.scene_drag_active = false;
+
         let touch_handle = self.compositor.touch_handle.clone();
-        let focus = self.compositor.touch_focus_at(x, y);
+        let focus = self.compositor.touch_focus_at(location.x, location.y);
         touch_handle.down(
             &mut self.compositor,
             focus,
             &DownEvent {
                 slot,
                 time,
-                location: Point::<f64, Logical>::from((x, y)),
+                location,
                 serial: SERIAL_COUNTER.next_serial(),
             },
         );
@@ -836,24 +844,18 @@ impl AppState {
          ),
     ) {
         use smithay::input::touch::MotionEvent;
-        use smithay::utils::{Logical, Point};
 
-        let (x, y) = self.touch_location(event);
+        let location = self.touch_location(event);
         let time = event.time_msec();
         let slot = event.slot();
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "touch coordinates are panel-sized; fractional pixels round to i32"
-        )]
-        let ix = x as i32;
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "touch coordinates are panel-sized; fractional pixels round to i32"
-        )]
-        let iy = y as i32;
 
-        let drag_activated =
-            self.gesture_slot == Some(slot) && self.gesture.on_motion(ix, iy, time);
+        // Single-touch policy: drop motion from non-primary slots. See
+        // `on_touch_down` for the full rationale.
+        if self.gesture_slot != Some(slot) {
+            return;
+        }
+
+        let drag_activated = self.gesture.on_motion(location, time);
 
         if drag_activated && !self.scene_drag_active && self.compositor.widgets.can_drag() {
             // Mid-touch transition: arbitrate to scene drag and cancel the
@@ -869,19 +871,26 @@ impl AppState {
 
         if self.scene_drag_active {
             if let Some(info) = self.gesture.drag_info() {
-                self.compositor.widgets.update_drag(info.dx);
+                // Scene navigation and widget layout stay in integer logical
+                // pixels; round once at the gesture/scene boundary.
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "drag offsets are panel-sized; fractional pixels round to i32"
+                )]
+                let dx = info.dx as i32;
+                self.compositor.widgets.update_drag(dx);
                 self.compositor.mark_full_output_damage();
             }
         } else {
             let touch_handle = self.compositor.touch_handle.clone();
-            let focus = self.compositor.touch_focus_at(x, y);
+            let focus = self.compositor.touch_focus_at(location.x, location.y);
             touch_handle.motion(
                 &mut self.compositor,
                 focus,
                 &MotionEvent {
                     slot,
                     time,
-                    location: Point::<f64, Logical>::from((x, y)),
+                    location,
                 },
             );
             self.touch_frame_dirty = true;
@@ -894,36 +903,42 @@ impl AppState {
 
         let time = event.time_msec();
         let slot = event.slot();
-        let tracked_scene_slot = self.gesture_slot == Some(slot);
         self.active_touch_slots.remove(&slot);
-        let gesture_result = if tracked_scene_slot {
-            self.gesture_slot = None;
-            self.gesture.on_up(time)
-        } else {
-            None
-        };
+
+        // Single-touch policy: only the primary slot produced any
+        // wl_touch or gesture state on down/motion, so only the
+        // primary needs finalization here. See `on_touch_down`.
+        if self.gesture_slot != Some(slot) {
+            return;
+        }
+
+        self.gesture_slot = None;
+        let gesture_result = self.gesture.on_up(time);
 
         if self.scene_drag_active {
-            if tracked_scene_slot {
-                self.scene_drag_active = false;
-                if let Some(TouchGesture::DragEnd { dx, velocity_x }) = gesture_result {
-                    let committed = self.compositor.widgets.end_drag(dx, velocity_x);
-                    self.compositor.mark_full_output_damage();
-                    if committed {
-                        tracing::info!(
-                            "Scene transition committed (dx={}, vel={:.0})",
-                            dx,
-                            velocity_x
-                        );
-                    } else {
-                        tracing::info!("Scene transition snapped back");
-                    }
+            self.scene_drag_active = false;
+            if let Some(TouchGesture::DragEnd { dx, velocity_x }) = gesture_result {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "drag offsets are panel-sized; fractional pixels round to i32"
+                )]
+                let dx_px = dx as i32;
+                let committed = self.compositor.widgets.end_drag(dx_px, velocity_x);
+                self.compositor.mark_full_output_damage();
+                if committed {
+                    tracing::info!(
+                        "Scene transition committed (dx={:.1}, vel={:.0})",
+                        dx,
+                        velocity_x
+                    );
                 } else {
-                    // Drag started but gesture classification didn't finalize —
-                    // snap back to the origin rather than leaving the scene offset.
-                    self.compositor.widgets.end_drag(0, 0.0);
-                    self.compositor.mark_full_output_damage();
+                    tracing::info!("Scene transition snapped back");
                 }
+            } else {
+                // Drag started but gesture classification didn't finalize —
+                // snap back to the origin rather than leaving the scene offset.
+                self.compositor.widgets.end_drag(0, 0.0);
+                self.compositor.mark_full_output_damage();
             }
         } else {
             let touch_handle = self.compositor.touch_handle.clone();
