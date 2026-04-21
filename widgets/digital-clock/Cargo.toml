@@ -18,6 +18,7 @@ chrono.workspace = true
 chrono-tz.workspace = true
 clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 slint.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

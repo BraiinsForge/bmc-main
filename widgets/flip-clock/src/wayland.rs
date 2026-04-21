@@ -171,16 +171,52 @@ pub fn connect_standalone(
     run_render_loop(&mut surface, animation_mode, timezone)
 }
 
-/// Connect in production mode (deck_widget_v1, single Wayland connection).
-pub fn connect_production(
-    instance_id: &str,
+/// Connect in production mode and return the surface client together with
+/// the compositor-delivered initial state (size, params, settings). The
+/// caller decodes params into widget-specific config, then hands the
+/// surface to [`run_render_loop`].
+pub fn connect_production() -> Result<(DeckWidgetSurfaceClient, bmc_widget::surface::InitialState)>
+{
+    let (surface, initial) = DeckWidgetSurfaceClient::connect()?;
+    tracing::info!(
+        "Connected to Wayland display (production mode): {}x{} size={:?}",
+        initial.width,
+        initial.height,
+        initial.size
+    );
+    Ok((surface, initial))
+}
+
+/// Resolve the effective initial timezone from the setting events and an
+/// optional per-widget override. The override (from widget params) wins;
+/// otherwise the system timezone from the initial settings batch is used.
+fn resolve_initial_timezone(
+    settings: &[SettingUpdate],
+    timezone_override: Option<String>,
+) -> String {
+    if let Some(tz) = timezone_override {
+        tracing::info!("Using per-widget timezone override: {tz}");
+        return tz;
+    }
+    for setting in settings {
+        if let SettingUpdate::Timezone(tz) = setting {
+            tracing::info!("Using system timezone: {tz}");
+            return tz.clone();
+        }
+    }
+    tracing::warn!("No timezone in settings or params, defaulting to UTC");
+    "UTC".to_owned()
+}
+
+/// Drive the render loop for a production-mode surface whose initial
+/// state has already been collected.
+pub fn run_production(
+    mut surface: DeckWidgetSurfaceClient,
     animation_mode: AnimationMode,
-    width: u32,
-    height: u32,
-    timezone: String,
+    timezone_override: Option<String>,
+    initial_settings: &[SettingUpdate],
 ) -> Result<()> {
-    let mut surface = DeckWidgetSurfaceClient::connect(instance_id, width, height)?;
-    tracing::info!("Connected to Wayland display (production mode)");
+    let timezone = resolve_initial_timezone(initial_settings, timezone_override);
     run_render_loop(&mut surface, animation_mode, timezone)
 }
 

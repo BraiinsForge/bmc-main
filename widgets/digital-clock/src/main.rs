@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use bmc_widget_digital_clock::{Config, DigitalClockWidget, ipc};
+use bmc_widget_digital_clock::{Config, DigitalClockWidget, widget_protocol};
 use clap::Parser;
 
 #[derive(Parser)]
@@ -29,16 +29,19 @@ fn run_standalone() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 fn run_with_wayland() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (instance_id, config) = ipc::read_config()?;
+    // Connect to the compositor first; the configure batch drives the
+    // widget's initial config, so we can't instantiate the widget until
+    // that has arrived.
+    let (protocol_client, config) = widget_protocol::connect_and_read_config()?;
     let widget = DigitalClockWidget::new(config)?;
 
     // Timer must be kept alive for the duration of the widget
-    let (_wayland_timer, _shutdown_flag) = ipc::setup_wayland_events(
-        &instance_id,
+    let (_wayland_timer, _shutdown_flag) = widget_protocol::spawn_runtime_handler(
+        protocol_client,
         widget.date_format(),
         widget.timezone(),
         widget.is_24_format(),
-    )?;
+    );
 
     widget.run()?;
     Ok(())

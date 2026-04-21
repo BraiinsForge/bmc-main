@@ -1,6 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use wayland_client::{
@@ -9,13 +10,16 @@ use wayland_client::{
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1;
 
+use bmc_widget_protocol::SizeType;
 use bmc_widget_protocol::client::{
     deck_widget_manager_v1::DeckWidgetManagerV1,
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
+use wayland_client::WEnum;
 
 use crate::egl::DmaBufInfo;
-use crate::wayland::setting_from_protocol;
+use crate::wayland::from_protocol;
+use bmc_widget_protocol::SettingUpdate;
 
 use super::common::{
     PollOutcome, blocking_dispatch_impl, create_buffer_from_dmabuf, impl_common_dispatch,
@@ -23,16 +27,18 @@ use super::common::{
 };
 use super::{WidgetEvent, WidgetSurface};
 
+/// How long [`DeckWidgetSurfaceClient::connect`] waits for the compositor
+/// to finish emitting the initial configure batch before giving up. A
+/// working compositor produces `configure_done` synchronously on
+/// `get_widget_surface`; this timeout guards against a crashed or
+/// misconfigured compositor.
+const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Events from the compositor to a `deck_widget_v1` widget.
 #[derive(Debug, Clone)]
 pub enum DeckWidgetEvent {
     /// A system setting changed at runtime.
-    Setting {
-        /// Setting type enum value from the protocol.
-        setting_type: u32,
-        /// JSON-encoded setting value.
-        value: String,
-    },
+    Setting(SettingUpdate),
     /// Compositor requested graceful shutdown.
     Shutdown,
     /// Touch down from standard `wl_touch`.
@@ -43,6 +49,24 @@ pub enum DeckWidgetEvent {
     TouchUp { id: i32 },
     /// Touch cancelled from standard `wl_touch`.
     TouchCancel,
+}
+
+/// Initial configuration collected during the compositor's startup batch.
+///
+/// Populated between `get_widget_surface` and `configure_done`; returned
+/// from [`DeckWidgetSurfaceClient::connect`] so the widget can build its
+/// renderer against known geometry and params before entering the main
+/// event loop.
+///
+/// `params` is the raw JSON object the compositor sent — widgets
+/// deserialize it into their own `#[derive(Deserialize)]` struct.
+#[derive(Debug, Clone)]
+pub struct InitialState {
+    pub size: SizeType,
+    pub width: u32,
+    pub height: u32,
+    pub params: serde_json::Value,
+    pub settings: Vec<SettingUpdate>,
 }
 
 /// Surface state for a `deck_widget_v1` widget with DMA-BUF support.
@@ -70,6 +94,20 @@ pub struct DeckWidgetSurfaceState {
     touch: Option<wl_touch::WlTouch>,
     surface: Option<wl_surface::WlSurface>,
     widget_surface: Option<DeckWidgetSurfaceV1>,
+
+    // -- Initial configure accumulation --
+    /// Becomes `true` when the compositor emits `configure_done`. Used by
+    /// [`DeckWidgetSurfaceClient::connect`] to stop blocking.
+    configure_done: bool,
+    /// Accumulated `configure` data (size class + dimensions). `None` until
+    /// the compositor emits its `configure` event.
+    pending_size: Option<(SizeType, u32, u32)>,
+    /// Accumulated `params(json)` event, as a JSON object (empty
+    /// object if the compositor sent `{}` or null).
+    pending_params: serde_json::Value,
+    /// Accumulated setting events emitted before `configure_done`.
+    pending_initial_settings: Vec<SettingUpdate>,
+
     pending_events: Vec<DeckWidgetEvent>,
 }
 
@@ -124,6 +162,7 @@ impl fmt::Debug for DeckWidgetSurfaceState {
             .field("height", &self.height)
             .field("needs_render", &self.needs_render)
             .field("frame_count", &self.frame_count)
+            .field("configure_done", &self.configure_done)
             .field("pending_events", &self.pending_events.len())
             .finish_non_exhaustive()
     }
@@ -156,17 +195,17 @@ impl fmt::Debug for DeckWidgetSurfaceClient {
 }
 
 impl DeckWidgetSurfaceClient {
-    /// Connect to the Wayland display and create a `deck_widget_v1` surface.
+    /// Connect to the Wayland display, create a `deck_widget_v1` surface,
+    /// and block until the compositor has finished emitting its initial
+    /// configure batch.
     ///
     /// Binds `wl_compositor`, `deck_widget_manager_v1`, and
-    /// `zwp_linux_dmabuf_v1`, then creates a surface and registers it with
-    /// the given `instance_id`.
-    pub fn connect(instance_id: &str, width: u32, height: u32) -> Result<Self> {
-        anyhow::ensure!(
-            width > 0 && height > 0,
-            "surface dimensions must be non-zero"
-        );
-
+    /// `zwp_linux_dmabuf_v1`, creates a surface, then waits for a
+    /// `configure_done` event before returning. The returned
+    /// [`InitialState`] carries size class, pixel dimensions, widget
+    /// params, and any runtime settings the compositor already knew about
+    /// at spawn time.
+    pub fn connect() -> Result<(Self, InitialState)> {
         let conn = Connection::connect_to_env().context("Failed to connect to Wayland display")?;
         let mut queue = conn.new_event_queue();
         let qh = queue.handle();
@@ -176,8 +215,8 @@ impl DeckWidgetSurfaceClient {
 
         let mut state = DeckWidgetSurfaceState {
             running: true,
-            width,
-            height,
+            width: 0,
+            height: 0,
             needs_render: false,
             frame_count: 0,
             compositor: None,
@@ -187,6 +226,10 @@ impl DeckWidgetSurfaceClient {
             touch: None,
             surface: None,
             widget_surface: None,
+            configure_done: false,
+            pending_size: None,
+            pending_params: serde_json::Value::Object(serde_json::Map::new()),
+            pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
         };
 
@@ -208,31 +251,65 @@ impl DeckWidgetSurfaceClient {
         );
 
         let surface = compositor.create_surface(&qh, ());
-        let widget_surface =
-            widget_manager.get_widget_surface(&surface, instance_id.to_owned(), &qh, ());
+        let widget_surface = widget_manager.get_widget_surface(&surface, &qh, ());
 
         surface.commit();
 
         state.surface = Some(surface);
         state.widget_surface = Some(widget_surface);
 
-        queue
-            .roundtrip(&mut state)
-            .context("Failed to roundtrip after widget registration")?;
+        // Block until configure_done arrives. A correctly behaving
+        // compositor sends it synchronously after get_widget_surface; the
+        // poll-based wait pushes the deadline into `poll(2)` so a silent
+        // compositor surfaces as `PollOutcome::Timeout` instead of an
+        // indefinite hang in `blocking_dispatch`.
+        let deadline = Instant::now() + CONFIGURE_TIMEOUT;
+        while !state.configure_done {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining_ms = i32::try_from(remaining.as_millis()).unwrap_or(i32::MAX);
+            match poll_dispatch(&conn, &mut queue, &mut state, remaining_ms)
+                .context("Wayland dispatch while awaiting configure_done")?
+            {
+                PollOutcome::Events => {}
+                PollOutcome::Timeout => anyhow::bail!(
+                    "timed out after {:?} waiting for configure_done",
+                    CONFIGURE_TIMEOUT
+                ),
+            }
+        }
+
+        let (size, width, height) = state
+            .pending_size
+            .context("configure_done without prior configure event")?;
+        state.width = width;
+        state.height = height;
+
+        let initial = InitialState {
+            size,
+            width,
+            height,
+            params: std::mem::take(&mut state.pending_params),
+            settings: std::mem::take(&mut state.pending_initial_settings),
+        };
 
         tracing::info!(
-            "Deck widget surface ready: {}x{} instance_id={}",
-            state.width,
-            state.height,
-            instance_id,
+            "Deck widget surface ready: {}x{} size={:?} params={} settings={}",
+            width,
+            height,
+            size,
+            initial.params.as_object().map_or(0, serde_json::Map::len),
+            initial.settings.len(),
         );
 
-        Ok(Self {
-            conn,
-            queue,
-            state,
-            cached_buffers: Vec::new(),
-        })
+        Ok((
+            Self {
+                conn,
+                queue,
+                state,
+                cached_buffers: Vec::new(),
+            },
+            initial,
+        ))
     }
 
     /// Get a reference to the surface state.
@@ -400,20 +477,13 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
         self.state
             .pending_events
             .drain(..)
-            .filter_map(|event| match event {
-                DeckWidgetEvent::Setting {
-                    setting_type,
-                    value,
-                } => setting_from_protocol(setting_type, &value).map(WidgetEvent::Setting),
-                DeckWidgetEvent::Shutdown => Some(WidgetEvent::Shutdown),
-                DeckWidgetEvent::TouchDown { id, x, y } => {
-                    Some(WidgetEvent::TouchDown { id, x, y })
-                }
-                DeckWidgetEvent::TouchMotion { id, x, y } => {
-                    Some(WidgetEvent::TouchMotion { id, x, y })
-                }
-                DeckWidgetEvent::TouchUp { id } => Some(WidgetEvent::TouchUp { id }),
-                DeckWidgetEvent::TouchCancel => Some(WidgetEvent::TouchCancel),
+            .map(|event| match event {
+                DeckWidgetEvent::Setting(update) => WidgetEvent::Setting(update),
+                DeckWidgetEvent::Shutdown => WidgetEvent::Shutdown,
+                DeckWidgetEvent::TouchDown { id, x, y } => WidgetEvent::TouchDown { id, x, y },
+                DeckWidgetEvent::TouchMotion { id, x, y } => WidgetEvent::TouchMotion { id, x, y },
+                DeckWidgetEvent::TouchUp { id } => WidgetEvent::TouchUp { id },
+                DeckWidgetEvent::TouchCancel => WidgetEvent::TouchCancel,
             })
             .collect()
     }
@@ -486,6 +556,16 @@ impl Dispatch<DeckWidgetManagerV1, ()> for DeckWidgetSurfaceState {
     }
 }
 
+fn size_type_from_protocol(w: WEnum<deck_widget_surface_v1::SizeType>) -> Option<SizeType> {
+    match w.into_result().ok()? {
+        deck_widget_surface_v1::SizeType::Small => Some(SizeType::Small),
+        deck_widget_surface_v1::SizeType::Medium => Some(SizeType::Medium),
+        deck_widget_surface_v1::SizeType::Large => Some(SizeType::Large),
+        deck_widget_surface_v1::SizeType::Full => Some(SizeType::Full),
+        _ => None,
+    }
+}
+
 impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
     fn event(
         state: &mut Self,
@@ -496,15 +576,71 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            deck_widget_surface_v1::Event::Setting {
-                setting_type,
-                value,
+            deck_widget_surface_v1::Event::Configure {
+                size_type,
+                width,
+                height,
             } => {
-                tracing::debug!("Setting update: type={setting_type:?}, value={value}");
-                state.pending_events.push(DeckWidgetEvent::Setting {
-                    setting_type: setting_type.into(),
-                    value,
-                });
+                let size = size_type_from_protocol(size_type).unwrap_or(SizeType::Small);
+                tracing::debug!("Configure: size={:?} {}x{}", size, width, height);
+                state.pending_size = Some((size, width, height));
+            }
+            deck_widget_surface_v1::Event::Params { json } => {
+                match serde_json::from_str::<serde_json::Value>(&json) {
+                    Ok(v @ serde_json::Value::Object(_)) => state.pending_params = v,
+                    Ok(serde_json::Value::Null) => {
+                        state.pending_params = serde_json::Value::Object(serde_json::Map::new());
+                    }
+                    Ok(other) => {
+                        tracing::warn!("Params JSON is not an object, ignoring: {other}");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to decode params JSON ({}): {}", json, e);
+                    }
+                }
+            }
+            deck_widget_surface_v1::Event::ConfigureDone => {
+                tracing::debug!("ConfigureDone");
+                state.configure_done = true;
+            }
+            deck_widget_surface_v1::Event::Timezone { value } => {
+                tracing::debug!("Timezone update: {value}");
+                let update = SettingUpdate::Timezone(value);
+                if state.configure_done {
+                    state.pending_events.push(DeckWidgetEvent::Setting(update));
+                } else {
+                    state.pending_initial_settings.push(update);
+                }
+            }
+            deck_widget_surface_v1::Event::NightMode { value } => {
+                if let Some(b) = from_protocol::night_mode(value) {
+                    push_setting(state, SettingUpdate::NightMode(b));
+                }
+            }
+            deck_widget_surface_v1::Event::DateFormat { value } => {
+                if let Some(v) = from_protocol::date_format(value) {
+                    push_setting(state, SettingUpdate::DateFormat(v));
+                }
+            }
+            deck_widget_surface_v1::Event::TimeFormat { value } => {
+                if let Some(v) = from_protocol::time_format(value) {
+                    push_setting(state, SettingUpdate::TimeFormat(v));
+                }
+            }
+            deck_widget_surface_v1::Event::NumberFormat { value } => {
+                if let Some(v) = from_protocol::number_format(value) {
+                    push_setting(state, SettingUpdate::NumberFormat(v));
+                }
+            }
+            deck_widget_surface_v1::Event::TemperatureUnit { value } => {
+                if let Some(v) = from_protocol::temperature_unit(value) {
+                    push_setting(state, SettingUpdate::TemperatureUnit(v));
+                }
+            }
+            deck_widget_surface_v1::Event::FirstDayOfWeek { value } => {
+                if let Some(v) = from_protocol::weekday(value) {
+                    push_setting(state, SettingUpdate::FirstDayOfWeek(v));
+                }
             }
             deck_widget_surface_v1::Event::Shutdown => {
                 tracing::info!("Shutdown requested by compositor");
@@ -513,6 +649,16 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
             }
             _ => {}
         }
+    }
+}
+
+/// Route a setting event to the initial batch (before `configure_done`)
+/// or the runtime queue (after).
+fn push_setting(state: &mut DeckWidgetSurfaceState, update: SettingUpdate) {
+    if state.configure_done {
+        state.pending_events.push(DeckWidgetEvent::Setting(update));
+    } else {
+        state.pending_initial_settings.push(update);
     }
 }
 

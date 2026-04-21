@@ -12,10 +12,9 @@
 //! `wl_seat`/`wl_touch`, and DMA-BUF buffer management.
 
 use bmc_widget_protocol::{
-    ActionPayload, SettingUpdate,
+    ActionPayload, SettingUpdate, SizeType,
     client::{
-        deck_widget_manager_v1::DeckWidgetManagerV1,
-        deck_widget_surface_v1::{ActionType, DeckWidgetSurfaceV1},
+        deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_surface_v1::DeckWidgetSurfaceV1,
     },
     wayland_client::{
         Connection, Dispatch, EventQueue, QueueHandle,
@@ -24,6 +23,27 @@ use bmc_widget_protocol::{
     },
 };
 use std::os::fd::AsFd;
+use std::time::{Duration, Instant};
+
+/// How long [`WidgetProtocolClient::wait_for_configure`] blocks before
+/// giving up on the compositor's initial configure batch.
+const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Initial configuration accumulated during the compositor's configure
+/// batch. Returned from [`WidgetProtocolClient::wait_for_configure`].
+///
+/// `params` is the raw JSON object the compositor sent — each widget
+/// deserializes it into its own `#[derive(Deserialize)]` struct that
+/// mirrors its manifest. An empty `{}` means the compositor had no
+/// per-instance overrides, which each widget handles via `#[serde(default)]`.
+#[derive(Debug, Clone)]
+pub struct ProtocolInitialState {
+    pub size: SizeType,
+    pub width: u32,
+    pub height: u32,
+    pub params: serde_json::Value,
+    pub settings: Vec<SettingUpdate>,
+}
 
 /// Errors that can occur during Wayland protocol operations.
 #[derive(Debug, thiserror::Error)]
@@ -79,6 +99,12 @@ struct WidgetState {
     wl_surface: Option<WlSurface>,
     widget_surface: Option<DeckWidgetSurfaceV1>,
     pending_events: Vec<WidgetEvent>,
+
+    // Initial configure batch accumulation.
+    configure_done: bool,
+    pending_size: Option<(SizeType, u32, u32)>,
+    pending_params: serde_json::Value,
+    pending_initial_settings: Vec<SettingUpdate>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +125,10 @@ impl WidgetProtocolClient {
             wl_surface: None,
             widget_surface: None,
             pending_events: Vec::new(),
+            configure_done: false,
+            pending_size: None,
+            pending_params: serde_json::Value::Object(serde_json::Map::new()),
+            pending_initial_settings: Vec::new(),
         };
 
         // Bind to wl_compositor and deck_widget_manager_v1
@@ -192,8 +222,28 @@ impl WidgetProtocolClient {
             return Ok(());
         };
 
-        let (action_type, payload) = action_to_protocol(action);
-        surface.request_action(action_type, payload);
+        match action {
+            ActionPayload::PlaySound { sound } => surface.play_sound(sound.clone()),
+            ActionPayload::StopSound {} => surface.stop_sound(),
+            ActionPayload::LedTemporary {
+                effect,
+                color,
+                duration_ms,
+            } => surface.led_temporary(
+                to_protocol::led_effect(*effect),
+                u32::from(color.r),
+                u32::from(color.g),
+                u32::from(color.b),
+                *duration_ms,
+            ),
+            ActionPayload::LedEndless { effect, color } => surface.led_endless(
+                to_protocol::led_effect(*effect),
+                u32::from(color.r),
+                u32::from(color.g),
+                u32::from(color.b),
+            ),
+            ActionPayload::StopLed {} => surface.stop_led(),
+        }
         self.connection.flush()?;
         Ok(())
     }
@@ -204,15 +254,84 @@ impl WidgetProtocolClient {
         self.state.manager.as_ref()
     }
 
-    /// Create a widget surface with the given instance_id.
+    /// Block until the compositor has finished emitting its initial
+    /// configure batch, then return the collected initial state.
     ///
-    /// This creates a new `wl_surface` on this connection and assigns it the
-    /// `deck_widget_surface_v1` role. This surface is only used for protocol
-    /// events (settings, shutdown) - no rendering happens on it.
+    /// Call this right after [`create_widget_surface`](Self::create_widget_surface)
+    /// so the widget can build its renderer against the returned
+    /// dimensions and params before entering the main event loop.
+    pub fn wait_for_configure(&mut self) -> Result<ProtocolInitialState, WaylandError> {
+        use crate::poll::{PollOutcome, poll_dispatch};
+
+        // `blocking_dispatch` has no timeout — push the deadline into
+        // `poll(2)` via the shared `poll_dispatch` helper so a silent
+        // compositor surfaces as `PollOutcome::Timeout` instead of an
+        // indefinite hang.
+        let timeout_err = || {
+            WaylandError::Backend(
+                bmc_widget_protocol::wayland_client::backend::WaylandError::Io(
+                    std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "timed out waiting for configure_done",
+                    ),
+                ),
+            )
+        };
+        let dispatch_err = |e: anyhow::Error| {
+            WaylandError::Backend(
+                bmc_widget_protocol::wayland_client::backend::WaylandError::Io(
+                    std::io::Error::other(format!("{e:#}")),
+                ),
+            )
+        };
+
+        let deadline = Instant::now() + CONFIGURE_TIMEOUT;
+        while !self.state.configure_done {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(timeout_err());
+            }
+            let remaining_ms = i32::try_from(remaining.as_millis()).unwrap_or(i32::MAX);
+            let outcome = poll_dispatch(
+                &self.connection,
+                &mut self.event_queue,
+                &mut self.state,
+                remaining_ms,
+            )
+            .map_err(dispatch_err)?;
+            if outcome == PollOutcome::Timeout {
+                return Err(timeout_err());
+            }
+        }
+        let (size, width, height) = self.state.pending_size.ok_or_else(|| {
+            WaylandError::Backend(
+                bmc_widget_protocol::wayland_client::backend::WaylandError::Io(
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "compositor sent configure_done without a configure event",
+                    ),
+                ),
+            )
+        })?;
+        Ok(ProtocolInitialState {
+            size,
+            width,
+            height,
+            params: std::mem::take(&mut self.state.pending_params),
+            settings: std::mem::take(&mut self.state.pending_initial_settings),
+        })
+    }
+
+    /// Create a widget surface on this connection.
     ///
-    /// The `instance_id` must match the `DECK_INSTANCE_ID` environment variable.
-    /// The compositor matches this connection to the widget's rendering surface by PID.
-    pub fn create_widget_surface(&mut self, instance_id: &str) {
+    /// This creates a new `wl_surface` on this connection and assigns it
+    /// the `deck_widget_surface_v1` role. The surface is only used for
+    /// protocol events (configure, params, settings, shutdown); no
+    /// rendering happens on it.
+    ///
+    /// The compositor identifies this connection by its peer pid
+    /// (`SO_PEERCRED`) — no identity argument is needed on the wire.
+    pub fn create_widget_surface(&mut self) {
         let compositor = self
             .state
             .compositor
@@ -221,55 +340,85 @@ impl WidgetProtocolClient {
         let manager = self.state.manager.as_ref().expect("BUG: manager not bound");
         let qh = self.event_queue.handle();
 
-        // Create a wl_surface on this connection (not used for rendering)
         let wl_surface = compositor.create_surface(&qh, ());
         self.state.wl_surface = Some(wl_surface.clone());
 
-        // Assign the deck_widget_surface_v1 role
-        let widget_surface =
-            manager.get_widget_surface(&wl_surface, instance_id.to_owned(), &qh, ());
+        let widget_surface = manager.get_widget_surface(&wl_surface, &qh, ());
         self.state.widget_surface = Some(widget_surface);
     }
 }
 
-fn action_to_protocol(action: &ActionPayload) -> (ActionType, String) {
-    match action {
-        ActionPayload::PlaySound { sound } => (
-            ActionType::PlaySound,
-            serde_json::json!({ "sound": sound }).to_string(),
-        ),
-        ActionPayload::StopSound {} => (ActionType::StopSound, "{}".to_owned()),
-        ActionPayload::Led {
-            effect,
-            color,
-            duration,
-        } => (
-            ActionType::Led,
-            serde_json::json!({
-                "effect": effect,
-                "color": color,
-                "duration": duration
-            })
-            .to_string(),
-        ),
-        ActionPayload::StopLed {} => (ActionType::StopLed, "{}".to_owned()),
+pub(crate) mod to_protocol {
+    use bmc_widget_protocol::LedEffect;
+    use bmc_widget_protocol::client::deck_widget_surface_v1 as p;
+
+    pub fn led_effect(e: LedEffect) -> p::LedEffect {
+        match e {
+            LedEffect::Chase => p::LedEffect::Chase,
+            LedEffect::KnightRider => p::LedEffect::KnightRider,
+            LedEffect::Scan => p::LedEffect::Scan,
+            LedEffect::Snake => p::LedEffect::Snake,
+            LedEffect::Breathe => p::LedEffect::Breathe,
+            LedEffect::Solid => p::LedEffect::Solid,
+        }
     }
 }
 
-pub(crate) fn setting_from_protocol(setting_type: u32, value: &str) -> Option<SettingUpdate> {
-    use bmc_widget_protocol::client::deck_widget_surface_v1::SettingType;
+pub(crate) mod from_protocol {
+    use bmc_widget_protocol::client::deck_widget_surface_v1 as p;
+    use bmc_widget_protocol::wayland_client::WEnum;
+    use bmc_widget_protocol::{DateFormat, NumberFormat, TemperatureUnit, TimeSystem, WeekDay};
 
-    match SettingType::try_from(setting_type).ok()? {
-        SettingType::Timezone => Some(SettingUpdate::Timezone(value.to_owned())),
-        SettingType::Localization => {
-            let loc = serde_json::from_str(value).ok()?;
-            Some(SettingUpdate::Localization(loc))
+    pub fn night_mode(w: WEnum<p::NightModeState>) -> Option<bool> {
+        match w.into_result().ok()? {
+            p::NightModeState::Off => Some(false),
+            p::NightModeState::On => Some(true),
+            _ => None,
         }
-        SettingType::NightMode => {
-            let night_mode = value == "true" || value == "1";
-            Some(SettingUpdate::NightMode(night_mode))
+    }
+
+    pub fn date_format(w: WEnum<p::DateFormat>) -> Option<DateFormat> {
+        match w.into_result().ok()? {
+            p::DateFormat::DdMmYyyyDot => Some(DateFormat::DdMmYyyyDot),
+            p::DateFormat::DdMmYyyySlash => Some(DateFormat::DdMmYyyySlash),
+            p::DateFormat::DMYyyySlash => Some(DateFormat::DMYyyySlash),
+            p::DateFormat::MDYyyySlash => Some(DateFormat::MDYyyySlash),
+            p::DateFormat::DdMmYyyyDash => Some(DateFormat::DdMmYyyyDash),
+            p::DateFormat::YyyyMDSlash => Some(DateFormat::YyyyMDSlash),
+            p::DateFormat::YyyyMmDdDot => Some(DateFormat::YyyyMmDdDot),
+            p::DateFormat::YyyyMmDdDash => Some(DateFormat::YyyyMmDdDash),
+            _ => None,
         }
-        _ => None,
+    }
+
+    pub fn time_format(w: WEnum<p::TimeFormat>) -> Option<TimeSystem> {
+        match w.into_result().ok()? {
+            p::TimeFormat::Hour12 => Some(TimeSystem::Hour12),
+            p::TimeFormat::Hour24 => Some(TimeSystem::Hour24),
+            _ => None,
+        }
+    }
+
+    pub fn number_format(w: WEnum<p::NumberFormat>) -> Option<NumberFormat> {
+        match w.into_result().ok()? {
+            p::NumberFormat::SpaceGroupCommaDecimal => Some(NumberFormat::SpaceGroupCommaDecimal),
+            p::NumberFormat::CommaGroupDotDecimal => Some(NumberFormat::CommaGroupDotDecimal),
+            p::NumberFormat::DotGroupCommaDecimal => Some(NumberFormat::DotGroupCommaDecimal),
+            p::NumberFormat::SpaceGroupDotDecimal => Some(NumberFormat::SpaceGroupDotDecimal),
+            _ => None,
+        }
+    }
+
+    pub fn temperature_unit(w: WEnum<p::TemperatureUnit>) -> Option<TemperatureUnit> {
+        match w.into_result().ok()? {
+            p::TemperatureUnit::Celsius => Some(TemperatureUnit::Celsius),
+            p::TemperatureUnit::Fahrenheit => Some(TemperatureUnit::Fahrenheit),
+            _ => None,
+        }
+    }
+
+    pub fn weekday(w: WEnum<p::Weekday>) -> Option<WeekDay> {
+        w.into_result().ok().map(WeekDay::from)
     }
 }
 
@@ -337,14 +486,71 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
         _qh: &QueueHandle<Self>,
     ) {
         use bmc_widget_protocol::client::deck_widget_surface_v1::Event;
+        use bmc_widget_protocol::wayland_client::WEnum;
 
         match event {
-            Event::Setting {
-                setting_type,
-                value,
+            Event::Configure {
+                size_type,
+                width,
+                height,
             } => {
-                if let Some(update) = setting_from_protocol(setting_type.into(), &value) {
-                    state.pending_events.push(WidgetEvent::Setting(update));
+                use bmc_widget_protocol::client::deck_widget_surface_v1::SizeType as P;
+                let size = match size_type {
+                    WEnum::Value(P::Small) => Some(SizeType::Small),
+                    WEnum::Value(P::Medium) => Some(SizeType::Medium),
+                    WEnum::Value(P::Large) => Some(SizeType::Large),
+                    WEnum::Value(P::Full) => Some(SizeType::Full),
+                    WEnum::Value(_) | WEnum::Unknown(_) => None,
+                }
+                .unwrap_or(SizeType::Small);
+                state.pending_size = Some((size, width, height));
+            }
+            Event::Params { json } => match serde_json::from_str::<serde_json::Value>(&json) {
+                Ok(v @ serde_json::Value::Object(_)) => state.pending_params = v,
+                Ok(serde_json::Value::Null) => {
+                    state.pending_params = serde_json::Value::Object(serde_json::Map::new());
+                }
+                Ok(other) => {
+                    tracing::warn!("Params JSON is not an object, ignoring: {other}");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to decode params JSON ({}): {}", json, e);
+                }
+            },
+            Event::ConfigureDone => {
+                state.configure_done = true;
+            }
+            Event::Timezone { value } => {
+                push_setting(state, SettingUpdate::Timezone(value));
+            }
+            Event::NightMode { value } => {
+                if let Some(b) = from_protocol::night_mode(value) {
+                    push_setting(state, SettingUpdate::NightMode(b));
+                }
+            }
+            Event::DateFormat { value } => {
+                if let Some(v) = from_protocol::date_format(value) {
+                    push_setting(state, SettingUpdate::DateFormat(v));
+                }
+            }
+            Event::TimeFormat { value } => {
+                if let Some(v) = from_protocol::time_format(value) {
+                    push_setting(state, SettingUpdate::TimeFormat(v));
+                }
+            }
+            Event::NumberFormat { value } => {
+                if let Some(v) = from_protocol::number_format(value) {
+                    push_setting(state, SettingUpdate::NumberFormat(v));
+                }
+            }
+            Event::TemperatureUnit { value } => {
+                if let Some(v) = from_protocol::temperature_unit(value) {
+                    push_setting(state, SettingUpdate::TemperatureUnit(v));
+                }
+            }
+            Event::FirstDayOfWeek { value } => {
+                if let Some(v) = from_protocol::weekday(value) {
+                    push_setting(state, SettingUpdate::FirstDayOfWeek(v));
                 }
             }
             Event::Shutdown => {
@@ -352,5 +558,15 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
             }
             _ => {}
         }
+    }
+}
+
+/// Route a setting event into the initial configure batch if the batch
+/// is still open, or into the runtime event queue otherwise.
+fn push_setting(state: &mut WidgetState, update: SettingUpdate) {
+    if state.configure_done {
+        state.pending_events.push(WidgetEvent::Setting(update));
+    } else {
+        state.pending_initial_settings.push(update);
     }
 }

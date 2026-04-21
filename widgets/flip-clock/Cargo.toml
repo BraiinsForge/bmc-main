@@ -10,6 +10,7 @@ standalone = []
 # Widget SDK (gpu feature provides EGL/GBM/Wayland surface clients)
 bmc-widget = { workspace = true, features = ["gpu"] }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # OpenGL ES (for GL calls in render loop)

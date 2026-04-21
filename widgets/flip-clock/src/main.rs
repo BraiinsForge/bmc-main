@@ -8,10 +8,10 @@
 mod digits;
 mod digits3d;
 mod egl;
-pub mod ipc;
 mod layout;
 mod renderer;
 mod wayland;
+pub mod widget_protocol;
 
 use std::fs::OpenOptions;
 use std::sync::Mutex;
@@ -81,21 +81,20 @@ fn run_standalone(mode: AnimationMode) -> Result<()> {
 }
 
 fn run_with_protocol() -> Result<()> {
-    let (instance_id, config) = ipc::read_config()?;
+    // Connect first, then decode widget-specific state from the initial
+    // configure batch. Previously this was reversed (read env vars, then
+    // connect with known geometry).
+    let (surface, initial) = wayland::connect_production()?;
+    let mode = widget_protocol::animation_mode_from_params(&initial.params)?;
+    let timezone_override = widget_protocol::timezone_override_from_params(&initial.params)?;
 
     tracing::info!(
-        "Starting flip-clock widget (mode: {:?}, {}x{}, tz: {})",
-        config.mode,
-        config.width,
-        config.height,
-        config.timezone
+        "Starting flip-clock widget (mode: {:?}, {}x{}, tz_override: {:?})",
+        mode,
+        initial.width,
+        initial.height,
+        timezone_override,
     );
 
-    wayland::connect_production(
-        &instance_id,
-        config.mode,
-        config.width,
-        config.height,
-        config.timezone,
-    )
+    wayland::run_production(surface, mode, timezone_override, &initial.settings)
 }

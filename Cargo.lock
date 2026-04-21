@@ -1475,6 +1475,7 @@ dependencies = [
  "chrono-tz",
  "clap",
  "serde",
+ "serde_json",
  "slint",
  "slint-build",
  "thiserror 1.0.69",
@@ -1495,6 +1496,7 @@ dependencies = [
  "glow 0.16.0",
  "lyon",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
@@ -1525,6 +1527,7 @@ dependencies = [
  "bmc-widget",
  "glow 0.16.0",
  "serde",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

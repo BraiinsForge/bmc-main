@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use bmc_wasm_runtime::renderer::Renderer;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -22,34 +23,39 @@ struct RenderState {
     frame_count: u64,
 }
 
-/// WASM widget parameters from `DECK_PARAMS` JSON.
-#[derive(Debug, serde::Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct WasmParams {
-    /// Path to the `.wasm` file to execute.
+/// Manifest-declared parameters for the WASM widget.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct ManifestParams {
     wasm_path: Option<String>,
 }
 
 /// Wayland client for the WASM widget.
 pub struct WaylandClient {
     surface: DeckWidgetSurfaceClient,
+    wasm_path: PathBuf,
 }
 
 impl WaylandClient {
-    /// Connect to the Wayland display.
+    /// Connect to the Wayland display and read the initial configure batch.
     pub fn connect() -> Result<Self> {
-        let instance_id = bmc_widget::read_instance_id().context("DECK_INSTANCE_ID not set")?;
-        let size = bmc_widget::read_size().context("DECK_SIZE not set")?;
+        let (surface, initial) = DeckWidgetSurfaceClient::connect()?;
+
+        let params: ManifestParams =
+            serde_json::from_value(initial.params).context("failed to decode widget params")?;
+        let wasm_path: PathBuf = params
+            .wasm_path
+            .context("wasmPath not set in widget params")?
+            .into();
 
         tracing::info!(
-            "Widget config: instance_id={instance_id}, size={}x{}",
-            size.width,
-            size.height,
+            "Widget config: {}x{}, wasm_path={}",
+            initial.width,
+            initial.height,
+            wasm_path.display(),
         );
 
-        let surface = DeckWidgetSurfaceClient::connect(&instance_id, size.width, size.height)?;
-
-        Ok(Self { surface })
+        Ok(Self { surface, wasm_path })
     }
 
     /// Run the event loop with poll(2)-based frame scheduling.
@@ -58,12 +64,7 @@ impl WaylandClient {
         reason = "render loop is a single sequential flow"
     )]
     pub fn run(&mut self) -> Result<()> {
-        let params: WasmParams =
-            bmc_widget::read_params().context("Failed to parse DECK_PARAMS")?;
-        let wasm_path: PathBuf = params
-            .wasm_path
-            .context("wasmPath not set in DECK_PARAMS")?
-            .into();
+        let wasm_path = self.wasm_path.clone();
 
         tracing::info!("WASM path: {}", wasm_path.display());
 

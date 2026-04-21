@@ -6,11 +6,9 @@ edition = "2024"
 [features]
 default = []
 gpu = [
-    "dep:anyhow",
     "dep:drm-fourcc",
     "dep:gbm",
     "dep:glow",
-    "dep:libc",
     "dep:smithay",
     "dep:wayland-backend",
     "dep:wayland-client",
@@ -18,9 +16,11 @@ gpu = [
 ]
 
 [dependencies]
+anyhow = { workspace = true }
 bmc-ipc = { workspace = true }
 bmc-widget-protocol = { workspace = true }
 futures = { workspace = true }
+libc = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -31,11 +31,9 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 # GPU rendering (optional, behind "gpu" feature)
-anyhow = { workspace = true, optional = true }
 drm-fourcc = { workspace = true, optional = true }
 gbm = { workspace = true, optional = true }
 glow = { workspace = true, optional = true }
-libc = { workspace = true, optional = true }
 smithay = { workspace = true, default-features = false, features = ["backend_egl", "renderer_glow"], optional = true }
 wayland-backend = { workspace = true, features = ["client_system"], optional = true }
 wayland-client = { workspace = true, optional = true }
