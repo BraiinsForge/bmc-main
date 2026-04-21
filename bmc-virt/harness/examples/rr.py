@@ -11,6 +11,7 @@ from pathlib import Path
 from rich.tree import Tree
 
 from bmc_virt import VM, Event, sleep, ui
+from bmc_virt.paths import RR_BUNDLE
 
 ui.header("Connect")
 with VM.connect(timeout=60) as vm:
@@ -106,7 +107,7 @@ with VM.connect(timeout=60) as vm:
     if trace:
         ui.header("Trace event sample (rr dump)")
         dump = vm.exec(
-            f"/root/rr/bin/run-rr.sh dump --raw {trace} 2>&1 | head -30",
+            f"{RR_BUNDLE}/bin/run-rr.sh dump --raw {trace} 2>&1 | head -30",
             timeout=10,
         )
         if dump.ok and dump.data.get("stdout"):

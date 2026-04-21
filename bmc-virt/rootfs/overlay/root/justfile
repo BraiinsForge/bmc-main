@@ -4,7 +4,7 @@ help:
 
 [doc("Follow bmc.log with ANSI intact")]
 logs-bmc:
-    tail -n 200 -f /root/bmc.log
+    . /etc/bmc-virt/paths.env && tail -n 200 -f "$BMC_LOG"
 
 [doc("Follow syslog")]
 logs-syslog:

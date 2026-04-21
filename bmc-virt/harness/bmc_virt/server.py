@@ -22,6 +22,7 @@ from typing import Any
 
 from bmc_virt.commands import Cmd
 from bmc_virt.events import Event
+from bmc_virt.paths import BMC_BIN, BMC_LOG, BMC_PID_FILE, RR_BUNDLE, RR_TRACE_DIR
 from bmc_virt.protocol import Msg, MsgType
 from bmc_virt.protocol import ack as mk_ack
 from bmc_virt.protocol import event as mk_event
@@ -38,11 +39,10 @@ LISTEN_HOST = "0.0.0.0"
 UNIX_SOCKET_PATH = Path("/var/run/bmc-virt-eventd.sock")
 POLL_INTERVAL = 0.5  # seconds
 
-# rr recording paths — must match flake.nix rrGuestTraceDir + rrBundle layout
-RR_BUNDLE = Path("/root/rr")
-RR_TRACE_DIR = Path("/root/rr-traces")
-RR_PID_FILE = Path("/var/run/bmc-openwrt.pid")
-BMC_OPENWRT_BIN = "/root/bmc-openwrt"
+# rr-related aliases kept for local readability. Paths themselves live in
+# bmc_virt.paths so they stay synchronised with flake.nix `guestPaths`.
+RR_PID_FILE = BMC_PID_FILE
+BMC_OPENWRT_BIN = BMC_BIN
 
 
 # ── Daemon ─────────────────────────────────────────────────────────────────────
@@ -379,7 +379,7 @@ class EventDaemon:
                     f" --output-trace-dir={RR_TRACE_DIR}"
                     f" --resource-path={RR_BUNDLE}"
                     f" {BMC_OPENWRT_BIN} --headless-compositor"
-                    f" > /root/bmc.log 2>&1"
+                    f" > {BMC_LOG} 2>&1"
                 ),
             ],
             capture_output=True,

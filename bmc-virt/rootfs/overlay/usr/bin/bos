@@ -4,6 +4,8 @@
 # remove config, and reboot to simulate a fresh device.
 
 . /lib/functions/bos-defaults.sh
+# shellcheck disable=SC1091
+. /etc/bmc-virt/paths.env
 set -e
 
 factory_reset() {
@@ -12,7 +14,7 @@ factory_reset() {
     # VM equivalent: restore factory state
     touch /etc/factory-default
     touch /etc/setup-pending
-    rm -f /etc/bmc_config.json
+    rm -f "$BMC_CONFIG"
     # Remove uplink.conf so the boot-time WiFi init script doesn't
     # clear factory flags and re-provision on next boot.
     rm -f /etc/bmc-virt/uplink.conf

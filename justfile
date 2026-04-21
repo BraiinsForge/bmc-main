@@ -4,8 +4,9 @@ CI_TOOLS_REV := "c75e453c0e3fd5fe167a9437b86e48b54c2aa81c"
 
 # === Quick local validation (default; LLM-friendly) ===
 
-# Fast sanity check: format + clippy (not CI-reproducible — use `validate-full` for that).
+# Fast sanity check, not CI-reproducible (use `validate-full` for that).
 validate: format clippy
+    nix run .#shellcheck
 
 # Auto-format everything (nix fmt + SVG pass).
 format:

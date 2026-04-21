@@ -1,32 +1,37 @@
 #!/bin/sh /etc/rc.common
 # procd service for bmc-virt-relay (display capture + LED + IPC bridge).
 # Must start after bmc-openwrt so the Wayland compositor is running.
+#
+# Paths sourced from /etc/bmc-virt/paths.env (rendered by bmc-virt/flake.nix).
 START=95
 USE_PROCD=1
 
-LOGFILE="/tmp/relay.log"
+# shellcheck disable=SC1091
+. /etc/bmc-virt/paths.env
 
 start_service() {
     [ -x /usr/bin/bmc-virt-relay ] || return 0
 
     # Wait for bmc-openwrt's Wayland socket to appear
     for i in $(seq 1 30); do
-        ls /tmp/bmc-runtime/wayland-* >/dev/null 2>&1 && break
+        ls "$BMC_RUNTIME_DIR"/wayland-* >/dev/null 2>&1 && break
         sleep 1
     done
 
     # Find the socket name (e.g. wayland-0)
-    SOCKET_NAME=$(ls /tmp/bmc-runtime/ 2>/dev/null | grep '^wayland-' | head -1)
+    SOCKET_NAME=$(ls "$BMC_RUNTIME_DIR" 2>/dev/null | grep '^wayland-' | head -1)
     if [ -z "$SOCKET_NAME" ]; then
-        echo "ERROR: no Wayland socket found in /tmp/bmc-runtime/" >>$LOGFILE
+        echo "ERROR: no Wayland socket found in $BMC_RUNTIME_DIR/" >>"$RELAY_LOG"
         return 1
     fi
 
     procd_open_instance
-    procd_set_param command /bin/sh -c "exec /usr/bin/bmc-virt-relay 60 >>$LOGFILE 2>&1"
+    procd_set_param command /bin/sh -c "exec /usr/bin/bmc-virt-relay 60 >>$RELAY_LOG 2>&1"
     procd_set_param env \
         WAYLAND_DISPLAY="$SOCKET_NAME" \
-        XDG_RUNTIME_DIR=/tmp/bmc-runtime
+        XDG_RUNTIME_DIR="$BMC_RUNTIME_DIR" \
+        BMC_LOG="$BMC_LOG" \
+        RELAY_LOG="$RELAY_LOG"
     procd_set_param pidfile /var/run/bmc-virt-relay.pid
     procd_close_instance
 }

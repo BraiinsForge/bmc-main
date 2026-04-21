@@ -198,7 +198,17 @@
 
           # Make the entire overlay writable — files inherited Nix store read-only
           # permissions and the imagebuilder's finalizeRootfs runs sed -i on /etc/*.
+          # Must happen before the env-file installs below: their target dir
+          # (/etc/bmc-virt) came from the read-only nix store copy.
           chmod -R u+w "$MERGED_OVERLAY"
+
+          # Bake the env files into the image so first boot (before any deploy)
+          # can source them cleanly. Deploy overwrites them anyway, so the
+          # baked version only matters when guest-paths.toml / ports match.
+          ${x86Pkgs.coreutils}/bin/install -m644 ${pathsEnvFile} \
+            "$MERGED_OVERLAY/etc/bmc-virt/paths.env"
+          ${x86Pkgs.coreutils}/bin/install -m644 ${portsEnvFile} \
+            "$MERGED_OVERLAY/etc/bmc-virt/ports.env"
 
           # Template WiFi uplink credentials in all overlay files
           ${templateUplink x86Pkgs "$MERGED_OVERLAY"}
@@ -363,9 +373,35 @@
               echo "Kernel swapped: $ACTUAL bytes"
             '';
 
-        # Guest-side rr paths (must match harness constants in server.py / rr.py)
-        rrGuestBundle = "/root/rr";
-        rrGuestTraceDir = "/root/rr-traces";
+        # Guest-side paths shared across init scripts, the relay binary, and
+        # the host-side harness. The checked-in `guest-paths.toml` is the ONE
+        # source of truth: Nix reads it here, the harness reads it from
+        # bmc_virt/paths.py (which sits next to it in the package), and it
+        # gets rendered into /etc/bmc-virt/paths.env on the VM at deploy time
+        # for the shell consumers (init.d scripts, the relay, justfile,
+        # get-logs.sh). Add a new path by editing the TOML and referencing
+        # the new key in the consumer.
+        guestPaths = builtins.fromTOML (builtins.readFile ./harness/bmc_virt/guest-paths.toml);
+        rrGuestBundle = guestPaths.RR_BUNDLE;
+        rrGuestTraceDir = guestPaths.RR_TRACE_DIR;
+
+        # Env files rendered at eval time into nix-store paths, then `install`-ed
+        # into the overlay. Avoids the heredoc indent trap — the exact bytes are
+        # visible via `nix eval` on these attributes (via `.#internal`) and land
+        # on the VM unchanged. `toKeyValue` emits `KEY=VALUE\n` lines; values
+        # here are plain paths/ports so no shell escaping is needed.
+        pathsEnvFile = pkgs.writeText "paths.env" (
+          pkgs.lib.generators.toKeyValue { } guestPaths
+        );
+        portsEnvFile = pkgs.writeText "ports.env" (
+          pkgs.lib.generators.toKeyValue { } {
+            PORT_SSH = toString ports.ssh;
+            PORT_HTTP = toString ports.http;
+            PORT_GRPC = toString ports.grpc;
+            PORT_IPC = toString ports.ipc;
+            PORT_EVENT = toString ports.event;
+          }
+        );
 
         # ── Step 4: rr bundle (glibc + rr for musl VM, x86_64 only) ──────────
         rrBundle = if isAarch64 then null else
@@ -688,7 +724,7 @@
 
           if [[ -n "$CONFIG" ]]; then
             header "Deploying config"
-            scp_vm "$CONFIG" root@localhost:/etc/bmc_config.json
+            scp_vm "$CONFIG" "root@localhost:${guestPaths.BMC_CONFIG}"
 
             header "Applying provisioned device state"
             ssh_vm root@localhost '
@@ -757,7 +793,7 @@
           ${pkgs.coreutils}/bin/install -m755 "$RELAY_BINARY" \
             "$TMP_GUEST_OVERLAY/usr/bin/bmc-virt-relay"
           ${pkgs.coreutils}/bin/install -m755 "$BINARY" \
-            "$TMP_GUEST_OVERLAY/root/bmc-openwrt"
+            "$TMP_GUEST_OVERLAY${guestPaths.BMC_BIN}"
           if [[ -n "$LED_BINARY" ]]; then
             ${pkgs.coreutils}/bin/install -m755 "$LED_BINARY" \
               "$TMP_GUEST_OVERLAY/root/bmc-virt-leds"
@@ -769,15 +805,14 @@
           # Event daemon — deployed from nix-built harness venv (uv.lock deps)
           echo "${eventdEnv}/bin/python3" > "$TMP_GUEST_OVERLAY/etc/bmc-virt/eventd-python"
 
-          # Host-side forwarded ports — sourced by the login banner so
-          # it doesn't drift from flake.nix. Guest ports are constants.
-          cat > "$TMP_GUEST_OVERLAY/etc/bmc-virt/ports.env" <<EOF
-          PORT_SSH=${toString ports.ssh}
-          PORT_HTTP=${toString ports.http}
-          PORT_GRPC=${toString ports.grpc}
-          PORT_IPC=${toString ports.ipc}
-          PORT_EVENT=${toString ports.event}
-          EOF
+          # Env files rendered via `pkgs.writeText` in the let block above.
+          # Host-side forwarded ports are sourced by the login banner; guest
+          # paths are sourced by init scripts, the relay, the justfile, and
+          # get-logs.sh.
+          ${pkgs.coreutils}/bin/install -m644 ${portsEnvFile} \
+            "$TMP_GUEST_OVERLAY/etc/bmc-virt/ports.env"
+          ${pkgs.coreutils}/bin/install -m644 ${pathsEnvFile} \
+            "$TMP_GUEST_OVERLAY/etc/bmc-virt/paths.env"
 
           # Frontend assets
           ${pkgs.coreutils}/bin/mkdir -p "$TMP_GUEST_OVERLAY/www/bmc"
@@ -841,7 +876,7 @@
               sleep 2
               if ! pgrep -f "rr record" >/dev/null 2>&1; then
                 echo "ERROR: rr failed to start. Log:"
-                cat /root/bmc.log
+                cat ${guestPaths.BMC_LOG}
                 exit 1
               fi
               echo "bmc-openwrt started under rr"

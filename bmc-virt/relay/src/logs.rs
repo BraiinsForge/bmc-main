@@ -18,7 +18,7 @@ enum StreamKind {
         args: &'static [&'static str],
     },
     /// Tail a file from the last 16 KB, then poll for new lines.
-    File { path: &'static str },
+    File { path: String },
 }
 
 /// A log source definition — source ID + how to stream it.
@@ -27,35 +27,43 @@ struct LogSourceDef {
     stream: StreamKind,
 }
 
-/// All log sources with their streaming strategy.
-const SOURCES: &[LogSourceDef] = &[
-    LogSourceDef {
-        source: LogSource::BmcLog,
-        stream: StreamKind::File {
-            path: "/root/bmc.log",
+/// All log sources with their streaming strategy. File paths come from env
+/// vars set by the procd init script from `/etc/bmc-virt/paths.env`; the
+/// defining list lives in `bmc-virt/flake.nix` `guestPaths`.
+fn log_sources() -> Vec<LogSourceDef> {
+    let bmc_log = std::env::var("BMC_LOG").expect(
+        "BUG: BMC_LOG env var missing — d-bmc-virt-relay init script must source \
+         /etc/bmc-virt/paths.env and export BMC_LOG to the relay process",
+    );
+    let relay_log = std::env::var("RELAY_LOG").expect(
+        "BUG: RELAY_LOG env var missing — d-bmc-virt-relay init script must source \
+         /etc/bmc-virt/paths.env and export RELAY_LOG to the relay process",
+    );
+    vec![
+        LogSourceDef {
+            source: LogSource::BmcLog,
+            stream: StreamKind::File { path: bmc_log },
         },
-    },
-    LogSourceDef {
-        source: LogSource::Syslog,
-        stream: StreamKind::Cmd {
-            program: "sh",
-            args: &["-c", "logread; exec logread -f"],
+        LogSourceDef {
+            source: LogSource::Syslog,
+            stream: StreamKind::Cmd {
+                program: "sh",
+                args: &["-c", "logread; exec logread -f"],
+            },
         },
-    },
-    LogSourceDef {
-        source: LogSource::Dmesg,
-        stream: StreamKind::Cmd {
-            program: "sh",
-            args: &["-c", "dmesg; exec dmesg -w"],
+        LogSourceDef {
+            source: LogSource::Dmesg,
+            stream: StreamKind::Cmd {
+                program: "sh",
+                args: &["-c", "dmesg; exec dmesg -w"],
+            },
         },
-    },
-    LogSourceDef {
-        source: LogSource::RelayLog,
-        stream: StreamKind::File {
-            path: "/tmp/relay.log",
+        LogSourceDef {
+            source: LogSource::RelayLog,
+            stream: StreamKind::File { path: relay_log },
         },
-    },
-];
+    ]
+}
 
 /// Handle to stop all tailer threads for a connection.
 /// Spawned per-connection, stopped on disconnect.
@@ -85,22 +93,20 @@ pub fn start_tailers(sender: &GuestSender) -> TailerHandle {
     let cancel = Arc::new(AtomicBool::new(false));
     let children: Arc<Mutex<Vec<Child>>> = Arc::new(Mutex::new(Vec::new()));
 
-    for def in SOURCES {
+    for def in log_sources() {
         let source = def.source;
         let name = source.name();
         let tx = sender.clone();
         let cancel = Arc::clone(&cancel);
 
-        match &def.stream {
+        match def.stream {
             StreamKind::File { path } => {
-                let path = *path;
                 std::thread::Builder::new()
                     .name(format!("log-{name}"))
-                    .spawn(move || tail_file(&tx, source, path, &cancel))
+                    .spawn(move || tail_file(&tx, source, &path, &cancel))
                     .unwrap_or_else(|e| panic!("failed to spawn log-{name}: {e}"));
             }
             StreamKind::Cmd { program, args } => {
-                let program = *program;
                 let args: Vec<&str> = args.to_vec();
                 let children = Arc::clone(&children);
                 std::thread::Builder::new()

@@ -1,7 +1,8 @@
-"""Compare compositor callback pacing: fullscreen vs 1-medium combined scene.
+"""Collect compositor logs for fullscreen vs 1-medium combined scene.
 
-Deploys two configs in sequence, collects compositor logs for each,
-and prints a summary of frame-callback counts.
+Deploys two configs in sequence, waits for each to settle, and pulls the
+compositor log for offline analysis. No summary is computed here — run your
+own grep / plotting over the saved logs.
 
 Run against a running VM:
     cd bmc-virt/harness
@@ -12,6 +13,7 @@ import json
 from pathlib import Path
 
 from bmc_virt import VM, Event, sleep, ui
+from bmc_virt.paths import BMC_CONFIG, BMC_LOG
 
 RECORD_SECONDS = 15
 OUTPUT_DIR = Path("/tmp/bmc-virt-combined-scene")
@@ -69,11 +71,12 @@ def collect_logs(vm: VM, scenario: str, scene_config: dict) -> Path:
     config_path = OUTPUT_DIR / f"{scenario}-config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(scene_config, indent=2))
-    vm.push(src=config_path, dst="/etc/bmc_config.json")
+    vm.push(src=config_path, dst=BMC_CONFIG)
     ui.ok("Config deployed")
 
-    # Clear old log so we only capture this scenario
-    vm.exec("rm -f /tmp/bmc-openwrt.log")
+    # Truncate the compositor log before the restart so we only capture this
+    # scenario. The file is re-created with `>>` by the init script on start.
+    vm.exec(f': > "{BMC_LOG}"')
 
     # Enable trace-level logging for compositor module
     vm.exec(
@@ -98,38 +101,17 @@ def collect_logs(vm: VM, scenario: str, scene_config: dict) -> Path:
     ui.kv("recording", f"{RECORD_SECONDS}s")
     sleep(RECORD_SECONDS)
 
-    # Pull compositor log (see bmc-virt/rootfs/overlay/etc/init.d/b-bmc-openwrt)
+    # Pull compositor log — path sourced from bmc_virt.paths so it can't
+    # drift from what the init script writes.
     log_path = OUTPUT_DIR / f"{scenario}-compositor.log"
-    vm.pull(src="/tmp/bmc-openwrt.log", dst=log_path)
+    vm.pull(src=BMC_LOG, dst=log_path)
     ui.ok(f"Log saved to {log_path}")
 
     return log_path
 
 
-def summarize_log(log_path: Path) -> None:
-    """Print frame-callback stats from a compositor log."""
-    if not log_path.exists():
-        ui.warn(f"Log not found: {log_path}")
-        return
-
-    text = log_path.read_text()
-    lines = text.splitlines()
-    callback_lines = [line for line in lines if "frame callbacks" in line]
-    timer_lines = [line for line in lines if "headless timer tick" in line]
-    timer_queued = sum(1 for line in timer_lines if "queued=true" in line)
-    timer_idle = sum(1 for line in timer_lines if "queued=false" in line)
-
-    ui.kv("frame callback log lines", str(len(callback_lines)))
-    ui.kv("timer ticks (queued)", str(timer_queued))
-    ui.kv("timer ticks (idle)", str(timer_idle))
-
-    # Print last few callback lines as sample
-    for line in callback_lines[-5:]:
-        print(f"  {line.strip()}")
-
-
 def main() -> None:
-    ui.header("Combined-scene callback comparison")
+    ui.header("Combined-scene log capture")
     ui.kv("output", str(OUTPUT_DIR))
 
     with VM.connect(timeout=60) as vm:
@@ -138,14 +120,8 @@ def main() -> None:
         vm.wait_for(Event.APP_READY, timeout=60)
         ui.ok("Initial app ready")
 
-        log_paths = {}
         for scenario, scene_config in SCENARIOS:
-            log_paths[scenario] = collect_logs(vm, scenario, scene_config)
-
-        ui.header("Results")
-        for scenario, log_path in log_paths.items():
-            ui.header(scenario)
-            summarize_log(log_path)
+            collect_logs(vm, scenario, scene_config)
 
 
 main()

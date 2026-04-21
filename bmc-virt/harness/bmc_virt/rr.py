@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from bmc_virt import ui
 from bmc_virt.commands import Ack, Cmd
+from bmc_virt.paths import RR_TRACE_DIR
 
 if TYPE_CHECKING:
     from bmc_virt.vm import VM
@@ -19,7 +20,7 @@ class PlatformError(Exception):
     """Raised when rr cannot run on the current platform."""
 
 
-_GUEST_TRACE_DIR = "/root/rr-traces"
+_GUEST_TRACE_DIR = str(RR_TRACE_DIR)
 
 
 class RrHandle:

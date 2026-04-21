@@ -9,8 +9,9 @@
 source "$(dirname "$0")/_.sh"
 
 mkdir -p "$LOGDIR"
-ssh_vm "cat /root/bmc.log" >"$LOGDIR/bmc.log"
-ssh_vm "cat /tmp/relay.log" >"$LOGDIR/relay.log"
+# Source paths from the VM so this can't drift from what the init scripts write.
+ssh_vm '. /etc/bmc-virt/paths.env && cat "$BMC_LOG"' >"$LOGDIR/bmc.log"
+ssh_vm '. /etc/bmc-virt/paths.env && cat "$RELAY_LOG"' >"$LOGDIR/relay.log"
 ssh_vm "logread" >"$LOGDIR/syslog.log"
 ssh_vm "dmesg" >"$LOGDIR/dmesg.log"
 

@@ -1,0 +1,28 @@
+# Guest-side paths shared across init scripts, the relay binary, the
+# justfile on the VM, and the host-side harness.
+#
+# Consumed by:
+#   - bmc-virt/flake.nix                   via builtins.fromTOML
+#   - bmc-virt/harness/bmc_virt/paths.py   via tomllib
+#   - /etc/bmc-virt/paths.env on the VM    rendered at deploy time, sourced
+#                                          by init.d scripts, the justfile,
+#                                          and get-logs.sh; exported into
+#                                          the relay process as env vars
+#
+# Keys map 1:1 to env var names.
+
+# bmc-openwrt (the compositor / main Deck app) paths.
+BMC_LOG = "/root/bmc.log"
+BMC_BIN = "/root/bmc-openwrt"
+BMC_CONFIG = "/etc/bmc_config.json"
+BMC_PID_FILE = "/var/run/bmc-openwrt.pid"
+# XDG_RUNTIME_DIR used by the Wayland compositor and the relay.
+BMC_RUNTIME_DIR = "/tmp/bmc-runtime"
+
+# bmc-virt-relay paths.
+RELAY_LOG = "/tmp/relay.log"
+
+# rr time-travel recorder (x86_64 only). Bundle is deployed from a nix
+# derivation; trace dir is wiped before each record run.
+RR_BUNDLE = "/root/rr"
+RR_TRACE_DIR = "/root/rr-traces"
