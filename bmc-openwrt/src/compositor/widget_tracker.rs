@@ -145,10 +145,11 @@ impl WidgetTracker {
         let width = self.screen_width as f32;
         let distance = dx.abs() as f32;
 
-        // Commit if dragged far enough, or if a quick flick in the drag direction
-        let should_commit = distance > width * self.commit.distance_fraction
-            || (velocity_x.abs() > self.commit.velocity
-                && velocity_x.signum() == (dx as f32).signum());
+        let commit_by_distance = distance > width * self.commit.distance_fraction;
+        let commit_by_velocity = dx != 0
+            && velocity_x.abs() > self.commit.velocity
+            && velocity_x.signum() == (dx as f32).signum();
+        let should_commit = commit_by_distance || commit_by_velocity;
 
         if should_commit {
             // Drag left (dx < 0) → next scene; drag right (dx > 0) → prev scene
@@ -277,6 +278,28 @@ mod tests {
         assert!(
             !t.end_drag(-50, 900.0),
             "velocity sign must agree with drag direction"
+        );
+    }
+
+    #[test]
+    fn zero_dx_fast_positive_velocity_does_not_commit() {
+        let mut t = three_scene_tracker();
+        t.start_drag();
+        t.update_drag(0);
+        assert!(
+            !t.end_drag(0, 900.0),
+            "zero horizontal travel must not commit by velocity alone"
+        );
+    }
+
+    #[test]
+    fn zero_dx_fast_negative_velocity_does_not_commit() {
+        let mut t = three_scene_tracker();
+        t.start_drag();
+        t.update_drag(0);
+        assert!(
+            !t.end_drag(0, -900.0),
+            "zero horizontal travel must not commit by velocity alone"
         );
     }
 
