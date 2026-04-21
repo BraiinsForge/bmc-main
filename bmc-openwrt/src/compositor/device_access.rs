@@ -1,13 +1,5 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumed in Stage 3 when libinput is wired into the compositor event loop"
-    )
-)]
-
 //! Root-only device access for Smithay/libinput without `libseat`.
 //!
 //! The compositor process runs as `root` and owns `/dev/dri/*` and
@@ -29,6 +21,10 @@ use input::LibinputInterface;
 
 /// Default seat name used for udev/libinput classification.
 pub const DEFAULT_SEAT_NAME: &str = "seat0";
+/// Default DRM scanout/card node.
+pub const DEFAULT_SCANOUT_NODE: &str = "/dev/dri/card1";
+/// Default DRM render node.
+pub const DEFAULT_RENDER_NODE: &str = "/dev/dri/renderD128";
 
 /// Static configuration describing how the compositor should access devices.
 ///
@@ -88,6 +84,20 @@ impl DeviceAccessConfig {
     pub fn render_node(&self) -> Option<&Path> {
         self.render_node.as_deref()
     }
+
+    #[must_use]
+    pub fn resolved_scanout_node(&self) -> &Path {
+        self.scanout_node
+            .as_deref()
+            .unwrap_or_else(|| Path::new(DEFAULT_SCANOUT_NODE))
+    }
+
+    #[must_use]
+    pub fn resolved_render_node(&self) -> &Path {
+        self.render_node
+            .as_deref()
+            .unwrap_or_else(|| Path::new(DEFAULT_RENDER_NODE))
+    }
 }
 
 /// Root-privileged implementation of [`LibinputInterface`].
@@ -124,11 +134,14 @@ impl LibinputInterface for RootLibinputInterface {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use input::LibinputInterface;
 
-    use super::{DEFAULT_SEAT_NAME, DeviceAccessConfig, RootLibinputInterface};
+    use super::{
+        DEFAULT_RENDER_NODE, DEFAULT_SCANOUT_NODE, DEFAULT_SEAT_NAME, DeviceAccessConfig,
+        RootLibinputInterface,
+    };
 
     #[test]
     fn default_config_uses_seat0() {
@@ -136,6 +149,8 @@ mod tests {
         assert_eq!(cfg.seat_name(), DEFAULT_SEAT_NAME);
         assert!(cfg.scanout_node().is_none());
         assert!(cfg.render_node().is_none());
+        assert_eq!(cfg.resolved_scanout_node(), Path::new(DEFAULT_SCANOUT_NODE));
+        assert_eq!(cfg.resolved_render_node(), Path::new(DEFAULT_RENDER_NODE));
     }
 
     #[test]

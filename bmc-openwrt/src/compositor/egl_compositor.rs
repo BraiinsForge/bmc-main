@@ -4,7 +4,7 @@
 
 use super::{
     commands::CompositorCommand,
-    device_access::{DEFAULT_SEAT_NAME, RootLibinputInterface},
+    device_access::{DeviceAccessConfig, RootLibinputInterface},
     render::{DrmOutput, EglContext},
     scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState},
@@ -47,9 +47,6 @@ use std::{
 /// clock.
 static COMPOSITOR_BOOT: LazyLock<Instant> = LazyLock::new(Instant::now);
 use tokio::sync::mpsc;
-
-const DEFAULT_GPU_PATH: &str = "/dev/dri/renderD128";
-const DEFAULT_DISPLAY_PATH: &str = "/dev/dri/card1";
 
 /// Physical display dimensions (panel reports 600x1280 but only 480x1280 is visible).
 const PHYSICAL_WIDTH: u32 = 480;
@@ -130,16 +127,30 @@ pub struct EglCompositor {
     action_rx: Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
     event_rx: Mutex<Option<mpsc::UnboundedReceiver<CompositorEvent>>>,
     thread_handle: Mutex<Option<JoinHandle<()>>>,
-    gpu_path: String,
-    display_path: String,
+    device_access: DeviceAccessConfig,
     headless: bool,
 }
 
 impl std::fmt::Debug for EglCompositor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EglCompositor")
-            .field("gpu_path", &self.gpu_path)
-            .field("display_path", &self.display_path)
+            .field("seat_name", &self.device_access.seat_name())
+            .field(
+                "render_node",
+                &self
+                    .device_access
+                    .resolved_render_node()
+                    .display()
+                    .to_string(),
+            )
+            .field(
+                "scanout_node",
+                &self
+                    .device_access
+                    .resolved_scanout_node()
+                    .display()
+                    .to_string(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -147,11 +158,21 @@ impl std::fmt::Debug for EglCompositor {
 impl EglCompositor {
     #[must_use]
     pub fn new(headless: bool) -> Self {
-        Self::with_device_paths(DEFAULT_GPU_PATH, DEFAULT_DISPLAY_PATH, headless)
+        Self::with_device_access_config(DeviceAccessConfig::default(), headless)
     }
 
     #[must_use]
     pub fn with_device_paths(gpu_path: &str, display_path: &str, headless: bool) -> Self {
+        Self::with_device_access_config(
+            DeviceAccessConfig::default()
+                .with_render_node(gpu_path)
+                .with_scanout_node(display_path),
+            headless,
+        )
+    }
+
+    #[must_use]
+    pub fn with_device_access_config(device_access: DeviceAccessConfig, headless: bool) -> Self {
         let (command_tx, command_channel) = calloop_channel::channel();
         let (action_tx, action_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -165,16 +186,16 @@ impl EglCompositor {
             action_rx: Mutex::new(Some(action_rx)),
             event_rx: Mutex::new(Some(event_rx)),
             thread_handle: Mutex::new(None),
-            gpu_path: gpu_path.to_owned(),
-            display_path: display_path.to_owned(),
+            device_access,
             headless,
         }
     }
 
     #[expect(clippy::too_many_lines)]
     fn run_compositor_loop(
-        gpu_path: &str,
-        display_path: &str,
+        render_node: &Path,
+        scanout_node: &Path,
+        seat_name: &str,
         headless: bool,
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
@@ -219,11 +240,11 @@ impl EglCompositor {
             )
         } else {
             let egl = try_init!(
-                EglContext::new(Path::new(&gpu_path)),
+                EglContext::new(render_node),
                 "Failed to initialize EGL context"
             );
             let output = try_init!(
-                DrmOutput::new(Path::new(&display_path)),
+                DrmOutput::new(scanout_node),
                 "Failed to initialize DRM output"
             );
             let renderer = SceneRenderer::new(egl, output);
@@ -254,6 +275,7 @@ impl EglCompositor {
             physical_width,
             physical_height,
             refresh_mhz,
+            seat_name,
         );
         let listening_socket = try_init!(
             ListeningSocket::bind_auto("wayland", 0..33),
@@ -429,13 +451,13 @@ impl EglCompositor {
 
         // Wire Smithay's libinput backend. Device open/close goes through
         // RootLibinputInterface (direct open(2) as root, no seatd), and udev
-        // enumerates devices tagged with DEFAULT_SEAT_NAME. A failed
+        // enumerates devices tagged with the configured seat. A failed
         // assign_seat is non-fatal — the compositor continues without touch,
         // matching the old behaviour when /dev/input/event0 was absent.
         let mut libinput_context = libinput::Libinput::new_with_udev(RootLibinputInterface);
-        match libinput_context.udev_assign_seat(DEFAULT_SEAT_NAME) {
+        match libinput_context.udev_assign_seat(seat_name) {
             Ok(()) => {
-                tracing::info!("libinput seat '{}' assigned", DEFAULT_SEAT_NAME);
+                tracing::info!("libinput seat '{seat_name}' assigned");
                 let backend = LibinputInputBackend::new(libinput_context);
                 if let Err(e) = loop_handle.insert_source(backend, |event, (), state| {
                     state.handle_input_event(event);
@@ -445,8 +467,7 @@ impl EglCompositor {
             }
             Err(()) => {
                 tracing::warn!(
-                    "Failed to assign udev seat '{}' for libinput; touch input disabled",
-                    DEFAULT_SEAT_NAME
+                    "Failed to assign udev seat '{seat_name}' for libinput; touch input disabled"
                 );
             }
         }
@@ -1015,8 +1036,9 @@ impl Compositor for EglCompositor {
 
         let (ready_tx, ready_rx) = flume::bounded(1);
 
-        let gpu_path = self.gpu_path.clone();
-        let display_path = self.display_path.clone();
+        let render_node = self.device_access.resolved_render_node().to_path_buf();
+        let scanout_node = self.device_access.resolved_scanout_node().to_path_buf();
+        let seat_name = self.device_access.seat_name().to_owned();
         let headless = self.headless;
         let command_channel = self
             .command_channel
@@ -1031,8 +1053,9 @@ impl Compositor for EglCompositor {
             .name("egl-compositor".to_owned())
             .spawn(move || {
                 Self::run_compositor_loop(
-                    &gpu_path,
-                    &display_path,
+                    &render_node,
+                    &scanout_node,
+                    &seat_name,
                     headless,
                     command_channel,
                     action_tx,

@@ -230,6 +230,7 @@ impl CompositorState {
         physical_width: u32,
         physical_height: u32,
         refresh_mhz: i32,
+        seat_name: &str,
     ) -> Self {
         let display_handle = display.handle();
 
@@ -253,7 +254,7 @@ impl CompositorState {
         let mut seat_state = SeatState::new();
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
 
-        let mut seat = seat_state.new_wl_seat(&display_handle, "seat0");
+        let mut seat = seat_state.new_wl_seat(&display_handle, seat_name);
         let touch_handle = seat.add_touch();
 
         let deck_widget_state = DeckWidgetProtocolState::new();

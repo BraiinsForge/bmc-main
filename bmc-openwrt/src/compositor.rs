@@ -13,4 +13,5 @@ mod touch_gesture;
 mod widget_tracker;
 
 pub use commands::{CompositorCommand, CompositorResponse};
+pub use device_access::DeviceAccessConfig;
 pub use egl_compositor::EglCompositor;
