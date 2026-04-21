@@ -33,6 +33,9 @@ Action requests (sound, LED) flow through `deck_widget_v1`:
 
 ## Constraints
 
-- The touchscreen driver reports coordinates in logical landscape orientation. The compositor normalizes evdev axis
-  ranges to logical pixel dimensions (no rotation needed).
-- Single-touch only for the initial implementation.
+- The compositor uses libinput's transformed absolute coordinates in logical landscape orientation for hit-testing and
+  `wl_touch` forwarding.
+- The touchscreen hardware is multi-touch, but compositor-level scene navigation currently tracks only the first contact
+  in an otherwise idle sequence.
+- Widgets receive standard Wayland touch ids. Hosted WASM widgets still collapse those ids into a single interaction
+  stream, so end-to-end multi-touch widget behavior is not implemented yet.
