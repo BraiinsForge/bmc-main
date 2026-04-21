@@ -19,23 +19,33 @@ use std::path::{Path, PathBuf};
 
 use input::LibinputInterface;
 
-/// Default seat name used for udev/libinput classification.
+/// Default seat name used for libinput classification.
+///
+/// Only meaningful if the target image runs `udevd` and the compositor
+/// ever moves off path-based libinput back to `Libinput::new_with_udev`.
+/// The current default OpenWrt image uses `mdev` and does not tag devices
+/// with `ID_SEAT`, so the seat name is informational on this appliance.
 pub const DEFAULT_SEAT_NAME: &str = "seat0";
 /// Default DRM scanout/card node.
 pub const DEFAULT_SCANOUT_NODE: &str = "/dev/dri/card1";
 /// Default DRM render node.
 pub const DEFAULT_RENDER_NODE: &str = "/dev/dri/renderD128";
+/// Default evdev touch device node on the appliance panel.
+pub const DEFAULT_INPUT_NODE: &str = "/dev/input/event0";
 
 /// Static configuration describing how the compositor should access devices.
 ///
-/// All paths are optional — when `None`, the higher layer (udev discovery or
-/// cold scan) is expected to pick sane defaults. Explicit overrides exist so
-/// appliance images can pin known-good nodes without relying on discovery.
+/// All paths are optional — when `None`, each `resolved_*_node` accessor
+/// falls back to the appliance default. Explicit overrides exist so other
+/// images can pin known-good nodes without relying on auto-discovery, which
+/// in turn is not available on the default OpenWrt image because it runs
+/// `mdev` instead of `udevd`.
 #[derive(Debug, Clone)]
 pub struct DeviceAccessConfig {
     seat_name: String,
     scanout_node: Option<PathBuf>,
     render_node: Option<PathBuf>,
+    input_nodes: Vec<PathBuf>,
 }
 
 impl Default for DeviceAccessConfig {
@@ -44,6 +54,7 @@ impl Default for DeviceAccessConfig {
             seat_name: DEFAULT_SEAT_NAME.to_owned(),
             scanout_node: None,
             render_node: None,
+            input_nodes: Vec::new(),
         }
     }
 }
@@ -67,6 +78,17 @@ impl DeviceAccessConfig {
     #[must_use]
     pub fn with_render_node(mut self, path: impl Into<PathBuf>) -> Self {
         self.render_node = Some(path.into());
+        self
+    }
+
+    /// Append an evdev input device node that libinput should watch.
+    ///
+    /// Intended for path-based libinput contexts on images without udev;
+    /// callers can invoke this multiple times to register more than one
+    /// input device.
+    #[must_use]
+    pub fn with_input_node(mut self, path: impl Into<PathBuf>) -> Self {
+        self.input_nodes.push(path.into());
         self
     }
 
@@ -97,6 +119,16 @@ impl DeviceAccessConfig {
         self.render_node
             .as_deref()
             .unwrap_or_else(|| Path::new(DEFAULT_RENDER_NODE))
+    }
+
+    /// Evdev nodes libinput should watch, falling back to the appliance
+    /// default when none were configured explicitly.
+    pub fn resolved_input_nodes(&self) -> Vec<&Path> {
+        if self.input_nodes.is_empty() {
+            vec![Path::new(DEFAULT_INPUT_NODE)]
+        } else {
+            self.input_nodes.iter().map(PathBuf::as_path).collect()
+        }
     }
 }
 
@@ -139,8 +171,8 @@ mod tests {
     use input::LibinputInterface;
 
     use super::{
-        DEFAULT_RENDER_NODE, DEFAULT_SCANOUT_NODE, DEFAULT_SEAT_NAME, DeviceAccessConfig,
-        RootLibinputInterface,
+        DEFAULT_INPUT_NODE, DEFAULT_RENDER_NODE, DEFAULT_SCANOUT_NODE, DEFAULT_SEAT_NAME,
+        DeviceAccessConfig, RootLibinputInterface,
     };
 
     #[test]
@@ -151,6 +183,10 @@ mod tests {
         assert!(cfg.render_node().is_none());
         assert_eq!(cfg.resolved_scanout_node(), Path::new(DEFAULT_SCANOUT_NODE));
         assert_eq!(cfg.resolved_render_node(), Path::new(DEFAULT_RENDER_NODE));
+        assert_eq!(
+            cfg.resolved_input_nodes(),
+            vec![Path::new(DEFAULT_INPUT_NODE)]
+        );
     }
 
     #[test]
@@ -158,7 +194,9 @@ mod tests {
         let cfg = DeviceAccessConfig::default()
             .with_seat("seat1")
             .with_scanout_node(PathBuf::from("/dev/dri/card0"))
-            .with_render_node(PathBuf::from("/dev/dri/renderD128"));
+            .with_render_node(PathBuf::from("/dev/dri/renderD128"))
+            .with_input_node(PathBuf::from("/dev/input/event5"))
+            .with_input_node(PathBuf::from("/dev/input/event6"));
         assert_eq!(cfg.seat_name(), "seat1");
         assert_eq!(
             cfg.scanout_node().map(std::path::Path::to_path_buf),
@@ -167,6 +205,13 @@ mod tests {
         assert_eq!(
             cfg.render_node().map(std::path::Path::to_path_buf),
             Some(PathBuf::from("/dev/dri/renderD128"))
+        );
+        assert_eq!(
+            cfg.resolved_input_nodes(),
+            vec![
+                Path::new("/dev/input/event5"),
+                Path::new("/dev/input/event6"),
+            ]
         );
     }
 

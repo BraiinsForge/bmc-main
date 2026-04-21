@@ -34,7 +34,7 @@ use smithay::utils::{Logical, Point};
 use std::{
     collections::HashSet,
     os::fd::AsFd,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
     thread,
     thread::JoinHandle,
@@ -203,6 +203,7 @@ impl EglCompositor {
         render_node: &Path,
         scanout_node: &Path,
         seat_name: &str,
+        input_nodes: &[PathBuf],
         headless: bool,
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
@@ -458,26 +459,53 @@ impl EglCompositor {
             tracing::error!("Failed to add frame-callback tick timer to event loop: {e}");
         }
 
-        // Wire Smithay's libinput backend. Device open/close goes through
-        // RootLibinputInterface (direct open(2) as root, no seatd), and udev
-        // enumerates devices tagged with the configured seat. A failed
-        // assign_seat is non-fatal — the compositor continues without touch,
-        // matching the old behaviour when /dev/input/event0 was absent.
-        let mut libinput_context = libinput::Libinput::new_with_udev(RootLibinputInterface);
-        match libinput_context.udev_assign_seat(seat_name) {
-            Ok(()) => {
-                tracing::info!("libinput seat '{seat_name}' assigned");
-                let backend = LibinputInputBackend::new(libinput_context);
-                if let Err(e) = loop_handle.insert_source(backend, |event, (), state| {
-                    state.handle_input_event(event);
-                }) {
-                    tracing::error!("Failed to register libinput backend: {e}");
+        // Wire Smithay's libinput backend using a path-based context.
+        //
+        // Device open/close goes through RootLibinputInterface (direct open(2)
+        // as root, no seatd). The OpenWrt appliance image uses `mdev`, so
+        // there is no udev database for `new_with_udev` / `udev_assign_seat`
+        // to enumerate — path-based libinput bypasses that entirely and adds
+        // each configured evdev node explicitly. `seat_name` is retained for
+        // logging / future udev-capable images; it has no runtime effect on
+        // the path context itself.
+        tracing::info!(
+            "Initializing path-based libinput (seat='{seat_name}', {} device(s))",
+            input_nodes.len(),
+        );
+        let mut libinput_context = libinput::Libinput::new_from_path(RootLibinputInterface);
+        let mut added = 0_usize;
+        for node in input_nodes {
+            let path_str = node.to_string_lossy();
+            match libinput_context.path_add_device(&path_str) {
+                Some(device) => {
+                    tracing::info!(
+                        "libinput registered {} (name='{}', sysname='{}')",
+                        node.display(),
+                        device.name(),
+                        device.sysname(),
+                    );
+                    added += 1;
+                }
+                None => {
+                    tracing::error!(
+                        "libinput failed to register {}; touch input from this node is disabled",
+                        node.display()
+                    );
                 }
             }
-            Err(()) => {
-                tracing::warn!(
-                    "Failed to assign udev seat '{seat_name}' for libinput; touch input disabled"
-                );
+        }
+
+        if added == 0 {
+            tracing::warn!(
+                "libinput has no devices registered; touch input is fully disabled. \
+                 Check DeviceAccessConfig::with_input_node and the evdev node permissions."
+            );
+        } else {
+            let backend = LibinputInputBackend::new(libinput_context);
+            if let Err(e) = loop_handle.insert_source(backend, |event, (), state| {
+                state.handle_input_event(event);
+            }) {
+                tracing::error!("Failed to register libinput backend with event loop: {e}");
             }
         }
 
@@ -1102,6 +1130,12 @@ impl Compositor for EglCompositor {
         let render_node = self.device_access.resolved_render_node().to_path_buf();
         let scanout_node = self.device_access.resolved_scanout_node().to_path_buf();
         let seat_name = self.device_access.seat_name().to_owned();
+        let input_nodes: Vec<PathBuf> = self
+            .device_access
+            .resolved_input_nodes()
+            .into_iter()
+            .map(Path::to_path_buf)
+            .collect();
         let headless = self.headless;
         let command_channel = self
             .command_channel
@@ -1119,6 +1153,7 @@ impl Compositor for EglCompositor {
                     &render_node,
                     &scanout_node,
                     &seat_name,
+                    &input_nodes,
                     headless,
                     command_channel,
                     action_tx,
