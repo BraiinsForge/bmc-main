@@ -131,7 +131,6 @@
             "docs/nix-device-scripts.md"
             "docs/deployment.md"
             "docs/CrateVerificationGuide.md"
-            "docs/stories/*"
             "docs/nix/*"
             "docs/devlogs/BDK-141/*"
             "docs/devlogs/BDK-212/*"
