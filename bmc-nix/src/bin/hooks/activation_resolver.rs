@@ -52,7 +52,25 @@ export PROFILE_NEW_GENERATION"#
 fi"#
     )
     .expect("BUG: write to String should never fail");
+    writeln!(
+        entrypoint,
+        r#"if [ "${{ACTIVATION_HAS_PROFILE_LOCK-}}" != "1" ]; then
+  mkdir -p "$PROFILE_DIR"
+  lock_file="$PROFILE_DIR/.lock"
+  : > "$lock_file"
+  exec 9>"$lock_file"
+  if ! flock -n 9; then
+    echo "profile is locked: $lock_file" >&2
+    exit 1
+  fi
+fi"#
+    )
+    .expect("BUG: write to String should never fail");
     writeln!(entrypoint, r#"SCRIPTS_DIR="$ENTRYPOINT_DIR/scripts""#)
+        .expect("BUG: write to String should never fail");
+    writeln!(entrypoint, r#"ACTIVATION_ENTRYPOINT_PID="$$""#)
+        .expect("BUG: write to String should never fail");
+    writeln!(entrypoint, r"export ACTIVATION_ENTRYPOINT_PID")
         .expect("BUG: write to String should never fail");
 
     for script in scripts {
@@ -123,9 +141,11 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::os::fd::AsRawFd as _;
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
+    use std::process::{Child, Command, Output};
+    use std::time::{Duration, Instant};
 
     struct TestEnv {
         _tempdir: tempfile::TempDir,
@@ -181,7 +201,8 @@ mod tests {
         let mut command = Command::new(&test_env.entrypoint_path);
         command
             .env_remove("PROFILE_NEW_GENERATION")
-            .env_remove("PROFILE_OLD_GENERATION");
+            .env_remove("PROFILE_OLD_GENERATION")
+            .env_remove("ACTIVATION_HAS_PROFILE_LOCK");
 
         if let Some(path) = new_generation {
             command.env("PROFILE_NEW_GENERATION", path);
@@ -192,6 +213,56 @@ mod tests {
 
         let status = command.status().expect("BUG: should execute entrypoint");
         assert!(status.success(), "entrypoint should exit successfully");
+    }
+
+    fn run_entrypoint_with_extra_env(
+        test_env: &TestEnv,
+        new_generation: Option<&Path>,
+        old_generation: Option<&Path>,
+        extra_env: &[(&str, &str)],
+    ) -> Output {
+        let mut command = Command::new(&test_env.entrypoint_path);
+        command
+            .env_remove("PROFILE_NEW_GENERATION")
+            .env_remove("PROFILE_OLD_GENERATION")
+            .env_remove("ACTIVATION_HAS_PROFILE_LOCK");
+
+        if let Some(path) = new_generation {
+            command.env("PROFILE_NEW_GENERATION", path);
+        }
+        if let Some(path) = old_generation {
+            command.env("PROFILE_OLD_GENERATION", path);
+        }
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
+
+        command.output().expect("BUG: should execute entrypoint")
+    }
+
+    fn spawn_entrypoint(
+        test_env: &TestEnv,
+        new_generation: Option<&Path>,
+        old_generation: Option<&Path>,
+        extra_env: &[(&str, &str)],
+    ) -> Child {
+        let mut command = Command::new(&test_env.entrypoint_path);
+        command
+            .env_remove("PROFILE_NEW_GENERATION")
+            .env_remove("PROFILE_OLD_GENERATION")
+            .env_remove("ACTIVATION_HAS_PROFILE_LOCK");
+
+        if let Some(path) = new_generation {
+            command.env("PROFILE_NEW_GENERATION", path);
+        }
+        if let Some(path) = old_generation {
+            command.env("PROFILE_OLD_GENERATION", path);
+        }
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
+
+        command.spawn().expect("BUG: should spawn entrypoint")
     }
 
     fn read_captured_env(output_path: &Path) -> HashMap<String, String> {
@@ -240,6 +311,133 @@ mod tests {
         assert_eq!(
             captured.get("PROFILE_OLD_GENERATION"),
             Some(&explicit_old.display().to_string())
+        );
+    }
+
+    #[test]
+    fn entrypoint_exports_activation_entrypoint_pid() {
+        let entrypoint = super::write_entrypoint(&[String::from("10-capture-env")]);
+
+        assert!(
+            entrypoint.contains("ACTIVATION_ENTRYPOINT_PID=\"$$\""),
+            "entrypoint should export its own pid for child activation scripts"
+        );
+        assert!(
+            entrypoint.contains("export ACTIVATION_ENTRYPOINT_PID"),
+            "entrypoint should export the activation pid variable"
+        );
+    }
+
+    #[test]
+    fn entrypoint_skips_locking_when_activation_has_profile_lock_is_set() {
+        let entrypoint = super::write_entrypoint(&[String::from("10-capture-env")]);
+
+        assert!(
+            entrypoint.contains(r#"if [ "${ACTIVATION_HAS_PROFILE_LOCK-}" != "1" ]; then"#),
+            "entrypoint should branch on ACTIVATION_HAS_PROFILE_LOCK"
+        );
+    }
+
+    #[test]
+    fn entrypoint_acquires_profile_lock_nonblocking_when_not_prelocked() {
+        let entrypoint = super::write_entrypoint(&[String::from("10-capture-env")]);
+
+        assert!(
+            entrypoint.contains("flock -n 9"),
+            "entrypoint should attempt a non-blocking profile lock"
+        );
+        assert!(
+            entrypoint.contains(r#"echo "profile is locked: $lock_file" >&2"#),
+            "entrypoint should explain why activation aborted"
+        );
+    }
+
+    #[test]
+    fn entrypoint_holds_profile_lock_while_activation_scripts_run() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create tempdir");
+        let profile_dir = tempdir.path().join("profile");
+        let old_generation = profile_dir.join("1-link");
+        let new_generation = profile_dir.join("2-link");
+        let scripts_dir = new_generation.join("core/activation/scripts");
+        let entrypoint_path = new_generation.join("core/activation/entrypoint");
+        let started_path = tempdir.path().join("started");
+
+        std::fs::create_dir_all(&old_generation).expect("BUG: should create old generation");
+        std::fs::create_dir_all(&scripts_dir).expect("BUG: should create scripts dir");
+        std::os::unix::fs::symlink("1-link", profile_dir.join("current"))
+            .expect("BUG: should create current symlink");
+
+        let sleeper_script = format!(
+            "#!/bin/sh\nset -e\ntouch '{}'\nsleep 2\n",
+            started_path.display()
+        );
+        write_executable(&scripts_dir.join("10-sleeper"), &sleeper_script);
+
+        let entrypoint = super::write_entrypoint(&[String::from("10-sleeper")]);
+        write_executable(&entrypoint_path, &entrypoint);
+
+        let test_env = TestEnv {
+            _tempdir: tempdir,
+            old_generation,
+            new_generation,
+            entrypoint_path,
+            output_path: started_path.clone(),
+        };
+
+        let mut child = spawn_entrypoint(&test_env, None, None, &[]);
+
+        wait_for_path(&started_path);
+
+        assert!(
+            !try_lock_profile(&profile_dir),
+            "profile lock should be held while activation scripts are still running"
+        );
+
+        let status = child.wait().expect("BUG: should wait for entrypoint");
+        assert!(status.success(), "entrypoint should exit successfully");
+    }
+
+    #[test]
+    fn entrypoint_fails_when_profile_lock_is_held_and_not_prelocked() {
+        let test_env = prepare_test_env();
+        let profile_dir = test_env
+            .new_generation
+            .parent()
+            .expect("BUG: new generation should have a parent");
+        let _lock = lock_profile(profile_dir);
+
+        let output = run_entrypoint_with_extra_env(&test_env, None, None, &[]);
+
+        assert!(
+            !output.status.success(),
+            "entrypoint should fail fast when the profile lock is already held"
+        );
+        let stderr = String::from_utf8(output.stderr).expect("BUG: stderr should be valid UTF-8");
+        assert!(
+            stderr.contains("profile is locked"),
+            "entrypoint should explain the fail-fast lock conflict: {stderr}"
+        );
+    }
+
+    #[test]
+    fn entrypoint_succeeds_when_profile_lock_is_held_and_reported_prelocked() {
+        let test_env = prepare_test_env();
+        let profile_dir = test_env
+            .new_generation
+            .parent()
+            .expect("BUG: new generation should have a parent");
+        let _lock = lock_profile(profile_dir);
+
+        let output = run_entrypoint_with_extra_env(
+            &test_env,
+            None,
+            None,
+            &[("ACTIVATION_HAS_PROFILE_LOCK", "1")],
+        );
+
+        assert!(
+            output.status.success(),
+            "entrypoint should trust the pre-held lock marker and succeed"
         );
     }
 
@@ -294,5 +492,41 @@ mod tests {
             captured.get("PROFILE_OLD_GENERATION"),
             Some(&explicit_old.display().to_string())
         );
+    }
+
+    fn lock_profile(profile_dir: &Path) -> std::fs::File {
+        std::fs::create_dir_all(profile_dir).expect("BUG: should create profile dir");
+        let lock_path = profile_dir.join(".lock");
+        let file = std::fs::File::create(&lock_path).expect("BUG: should create lock file");
+
+        // SAFETY: file owns a valid open fd for the duration of the call.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        assert_eq!(
+            result, 0,
+            "BUG: test should acquire the profile lock before running entrypoint"
+        );
+
+        file
+    }
+
+    fn try_lock_profile(profile_dir: &Path) -> bool {
+        std::fs::create_dir_all(profile_dir).expect("BUG: should create profile dir");
+        let lock_path = profile_dir.join(".lock");
+        let file = std::fs::File::create(&lock_path).expect("BUG: should create lock file");
+
+        // SAFETY: file owns a valid open fd for the duration of the call.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        result == 0
+    }
+
+    fn wait_for_path(path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if path.exists() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("BUG: timed out waiting for path '{}'", path.display());
     }
 }

@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
             std::fs::create_dir_all(&profile_dir)?;
 
             // 4. Build profile (hold lock to prevent TOCTOU race on generation number)
-            let _lock = bmc_nix::profile::lock_profile(&profile_dir).await?;
+            let lock = bmc_nix::profile::lock_profile(&profile_dir).await?;
             let generation_number = bmc_nix::profile::next_generation_number(&profile_dir)?;
             let generation = bmc_nix::profile::build_profile(
                 &profile_dir,
@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
 
             // 5. Optionally activate
             if activate {
-                bmc_nix::profile::activate_profile(&profile_dir, &generation).await?;
+                bmc_nix::profile::activate_profile(&profile_dir, &generation, Some(&lock)).await?;
             }
 
             println!("{}", generation.path.display());

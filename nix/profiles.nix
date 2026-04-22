@@ -20,6 +20,12 @@ in
     targetDeps = x86NativeTargetDeps;
     minimalDeps = false;
     rustProfile = "fast";
+    nativeDeps = pkgs: with pkgs; [
+      # bmc-nix activation entrypoint shells out to `flock(1)`; BusyBox
+      # provides it on-device, but the sandboxed nextest build needs an
+      # explicit util-linux.
+      util-linux
+    ];
   };
   # musl profiles for bmc-openwrt (statically linked)
   armv7-musl-release = workspaces.minimal.mkBuildProfile {
