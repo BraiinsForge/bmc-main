@@ -16,8 +16,11 @@ use bmc_virt_ipc::{
     Bpp, FB_HEIGHT, FB_WIDTH, FeatureState, FrameHeader, GuestEndpoint, HostMessage, InputEvent,
     LED_COUNT, LedState, LedUpdate, NotifyLevel, Stride,
 };
+use std::env;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_FPS: u32 = 60;
@@ -178,60 +181,20 @@ fn main() {
 
         // Delay Wayland capture until a real host is connected. This keeps
         // the compositor's readback path dormant during boot and retries
-        // cleanly if the compositor is still starting up.
-        let mut capture_error_notified = false;
-        let mut wayland = loop {
-            if input_handle.is_finished() {
-                break None;
-            }
-
-            eprintln!("relay: connecting to compositor (WAYLAND_DISPLAY)...");
-            match capture::WaylandCapture::connect() {
-                Ok(wayland) => {
-                    eprintln!(
-                        "capture: {}x{} stride={}",
-                        wayland.width(),
-                        wayland.height(),
-                        wayland.stride()
-                    );
-                    break Some(wayland);
-                }
-                Err(err) => {
-                    eprintln!("capture connect error: {err}");
-                    if !capture_error_notified {
-                        sender.send_capture_status(
-                            FeatureState::Waiting,
-                            Some(format!("Waiting for compositor capture: {err}")),
-                        );
-                        capture_error_notified = true;
-                    }
-                    std::thread::sleep(Duration::from_secs(1));
-                }
-            }
-        };
-
-        let Some(mut wayland) = wayland.take() else {
+        // cleanly if the compositor is still starting up. The helper is
+        // shared with the mid-run reconnect path below, so a compositor
+        // restart (#BDK-420) is recovered through the same code.
+        let Some(mut wayland) = establish_capture(&input_handle, &sender) else {
             tailers.stop();
             volume_override_write(0);
             continue;
         };
-        let stride = Stride(wayland.stride());
-        sender.send_capture_status(FeatureState::Ready, None);
+        let mut stride = Stride(wayland.stride());
 
         // Frame capture loop — runs until host disconnects.
         // Keeps a copy of the last sent frame to filter virgl
         eprintln!("relay: entering frame loop ({fps} FPS, interval={frame_interval:?})");
-        let mut capture_blocked = false;
         loop {
-            if capture_blocked {
-                if input_handle.is_finished() {
-                    eprintln!("relay: host disconnected, waiting for next connection");
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(200));
-                continue;
-            }
-
             let frame_start = Instant::now();
 
             let pixels = match wayland.capture_frame() {
@@ -242,7 +205,24 @@ fn main() {
                         FeatureState::Unavailable,
                         Some(format!("Display capture unavailable: {e}")),
                     );
-                    capture_blocked = true;
+                    sender.send_notify(
+                        NotifyLevel::Warning,
+                        format!("Compositor capture lost ({e}); reconnecting"),
+                    );
+                    let Some(new_wayland) = establish_capture(&input_handle, &sender) else {
+                        eprintln!("relay: host disconnected during reconnect");
+                        break;
+                    };
+                    wayland = new_wayland;
+                    stride = Stride(wayland.stride());
+                    sender.send_notify(
+                        NotifyLevel::Info,
+                        format!(
+                            "Compositor reconnected ({}x{})",
+                            wayland.width(),
+                            wayland.height()
+                        ),
+                    );
                     continue;
                 }
             };
@@ -285,6 +265,74 @@ fn main() {
 
         // Mute audio when console disconnects
         volume_override_write(0);
+    }
+}
+
+/// Establish a Wayland capture session, retrying until it succeeds or the
+/// host disconnects. Shared between the initial connect on host accept and
+/// the mid-run reconnect when the compositor is restarted out from under
+/// the relay (#BDK-420).
+///
+/// The Wayland socket itself is used as the liveness signal — we stat
+/// `$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY` before each attempt so we don't
+/// hammer `Connection::connect_to_env()` during a compositor bounce.
+fn establish_capture(
+    input_handle: &thread::JoinHandle<()>,
+    sender: &bmc_virt_ipc::GuestSender,
+) -> Option<capture::WaylandCapture> {
+    let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
+    let display = env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".into());
+    let socket = PathBuf::from(&runtime_dir).join(&display);
+
+    let mut waiting_notified = false;
+    loop {
+        if input_handle.is_finished() {
+            return None;
+        }
+
+        if !socket.exists() {
+            if !waiting_notified {
+                eprintln!(
+                    "relay: waiting for compositor socket at {}",
+                    socket.display()
+                );
+                sender.send_capture_status(
+                    FeatureState::Waiting,
+                    Some(format!(
+                        "Waiting for compositor socket at {}",
+                        socket.display()
+                    )),
+                );
+                waiting_notified = true;
+            }
+            thread::sleep(Duration::from_millis(500));
+            continue;
+        }
+
+        eprintln!("relay: connecting to compositor ({display})");
+        match capture::WaylandCapture::connect() {
+            Ok(wayland) => {
+                eprintln!(
+                    "capture: {}x{} stride={}",
+                    wayland.width(),
+                    wayland.height(),
+                    wayland.stride()
+                );
+                sender.send_capture_status(FeatureState::Ready, None);
+                return Some(wayland);
+            }
+            Err(err) => {
+                eprintln!("capture connect error: {err}");
+                if !waiting_notified {
+                    sender.send_capture_status(
+                        FeatureState::Waiting,
+                        Some(format!("Waiting for compositor capture: {err}")),
+                    );
+                    waiting_notified = true;
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
     }
 }
 
