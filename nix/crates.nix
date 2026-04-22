@@ -29,6 +29,11 @@
     packageName = "bmc-nix";
     binName = "bmc-hook-activation-resolver";
   };
+  bmc-nix-service-orchestrator = defineCrate {
+    path = "./bmc-nix";
+    packageName = "bmc-nix";
+    binName = "bmc-nix-service-orchestrator";
+  };
   bmc-activation-copy-files = defineCrate {
     path = "./bmc-nix";
     packageName = "bmc-nix";
