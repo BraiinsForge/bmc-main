@@ -1,7 +1,21 @@
 validate: format check test
 
 run script:
-    nix develop --command uv run python "{{ absolute_path(script) }}"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    script="{{ script }}"
+    invocation="{{ invocation_directory() }}"
+    if [[ "$script" = /* ]]; then
+        script_path="$script"
+    elif [[ -e "$invocation/$script" ]]; then
+        script_path="$(realpath "$invocation/$script")"
+    elif [[ -e "$PWD/$script" ]]; then
+        script_path="$(realpath "$PWD/$script")"
+    else
+        echo "Script not found: $script (cwd=$invocation, harness=$PWD)" >&2
+        exit 1
+    fi
+    nix develop --command uv run python "$script_path"
 
 format:
     ruff check --fix .

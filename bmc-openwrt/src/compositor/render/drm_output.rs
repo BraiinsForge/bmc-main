@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use smithay::{
-    backend::drm::{DrmDevice, DrmDeviceFd, DrmSurface, PlaneConfig, PlaneDamageClips, PlaneState},
+    backend::drm::{DrmDevice, DrmDeviceFd, DrmSurface, PlaneConfig, PlaneState},
     reexports::drm::control::{Device as ControlDevice, Mode, connector, crtc, framebuffer, plane},
     utils::{Buffer as BufferCoord, Physical, Rectangle, Size, Transform},
 };
@@ -190,20 +190,24 @@ impl DrmOutput {
         #[expect(clippy::cast_possible_wrap)]
         let dst_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
         let dst_rect = Rectangle::from_size(dst_size);
-        let damage_clips = PlaneDamageClips::from_damage(
-            self.surface.device_fd(),
-            src_rect,
-            dst_rect,
-            damage.iter().copied(),
-        )
-        .context("Failed to build plane damage clips")?;
+
+        // Passing a `PlaneDamageClips` blob on every atomic commit — the
+        // originally-intended consumer of the `damage` argument — caused
+        // the Etnaviv KMS path to periodically stall for ~300 ms on the
+        // Deck's Vivante GC400, manifesting as sub-20 Hz choppiness
+        // (see docs/devlogs/BDK-389-combined-scene/glyph-damage-bisect).
+        // Until that's characterised upstream or behind a GPU probe,
+        // flag `damage_clips: None` and keep the argument in the signature
+        // so the damage-tracker plumbing in scene_renderer stays ready
+        // for a re-enable.
+        let _ = damage;
 
         let plane_config = PlaneConfig {
             src: src_rect,
             dst: dst_rect,
             transform: Transform::Normal,
             alpha: 1.0,
-            damage_clips: damage_clips.as_ref().map(PlaneDamageClips::blob),
+            damage_clips: None,
             fb,
             fence: None,
         };

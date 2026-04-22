@@ -208,11 +208,19 @@ impl SceneRenderer {
             OutputDamage::Widgets(_) => Vec::new(),
         };
 
-        if matches!(output_damage, OutputDamage::Full) {
-            frame
-                .clear(BACKGROUND_COLOR, &damage_rects)
-                .context("Failed to clear full output damage")?;
-        }
+        // The `OutputDamage::Full` branch used to call
+        // `frame.clear(BACKGROUND_COLOR, &damage_rects)` here. On Vivante
+        // GC400 (Etnaviv Mesa) that clear corrupts sampler coherency
+        // against the widget DMA-BUF textures sampled later in this
+        // frame, reproducibly dropping first-use atlas texels and
+        // producing the missing-glyph rendering captured in
+        // docs/devlogs/BDK-389-combined-scene/glyph-damage-bisect.
+        // Skipping it costs nothing when widgets cover the full output
+        // (current scene model); if a future scene layout leaves
+        // non-widget regions and needs hygiene clears, revisit with a
+        // scissored, post-composite approach that doesn't precede any
+        // texture sampling.
+        let _ = BACKGROUND_COLOR;
 
         ii_stopwatch::stopwatch_start!(self.compose_w);
         for (buffer_id, placement) in &to_render {
