@@ -1,12 +1,13 @@
 mod virt 'bmc-virt/justfile'
 
 CI_TOOLS_REV := "c75e453c0e3fd5fe167a9437b86e48b54c2aa81c"
+NIX_SYSTEM := "$(nix eval --impure --raw --expr builtins.currentSystem)"
 
 # === Quick local validation (default; LLM-friendly) ===
 
 # Fast sanity check, not CI-reproducible (use `validate-full` for that).
 validate: format clippy
-    nix run .#shellcheck
+    nix build -L ".#checks.{{ NIX_SYSTEM }}.content"
 
 # Auto-format everything (nix fmt + SVG pass).
 format:

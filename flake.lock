@@ -139,6 +139,21 @@
         "type": "github"
       }
     },
+    "nix-source-info": {
+      "locked": {
+        "lastModified": 1776861597,
+        "narHash": "sha256-w/+UkH0c5S7f7Jb4Sy4ZYodfhImP69BgWjDn069uZ/4=",
+        "ref": "refs/heads/master",
+        "rev": "559dc19b09bbbf3ee5cfcad9ecef3308c4863c32",
+        "revCount": 1,
+        "type": "git",
+        "url": "ssh://git@gitlab.ii.zone/nix/source-info"
+      },
+      "original": {
+        "type": "git",
+        "url": "ssh://git@gitlab.ii.zone/nix/source-info"
+      }
+    },
     "nixlib": {
       "inputs": {
         "crane": "crane",
@@ -146,14 +161,15 @@
         "fenix": "fenix_2",
         "flake-utils": "flake-utils_2",
         "nix-filter": "nix-filter",
+        "nix-source-info": "nix-source-info",
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
-        "lastModified": 1776258065,
-        "narHash": "sha256-z5GIp+yNKyf0r1lVq0p9o0sLt9Z4Y2QkU2vCSm6rcjA=",
+        "lastModified": 1776930655,
+        "narHash": "sha256-QfQrO9WVsYF7HC2faxwUdJ+yGiSA9V2gJIczfPHQeHg=",
         "ref": "refs/heads/master",
-        "rev": "620c0f41a82878a75bbc0be1eaec8e0694450eac",
-        "revCount": 142,
+        "rev": "a18eca1301577cbf3d7c772692b4ba17285477b6",
+        "revCount": 144,
         "type": "git",
         "url": "ssh://git@gitlab.ii.zone/nix/lib"
       },

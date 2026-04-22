@@ -10,7 +10,9 @@ source "$(dirname "$0")/_.sh"
 
 mkdir -p "$LOGDIR"
 # Source paths from the VM so this can't drift from what the init scripts write.
+# shellcheck disable=SC2016 # Variables expand on the VM after sourcing paths.env.
 ssh_vm '. /etc/bmc-virt/paths.env && cat "$BMC_LOG"' >"$LOGDIR/bmc.log"
+# shellcheck disable=SC2016 # Variables expand on the VM after sourcing paths.env.
 ssh_vm '. /etc/bmc-virt/paths.env && cat "$RELAY_LOG"' >"$LOGDIR/relay.log"
 ssh_vm "logread" >"$LOGDIR/syslog.log"
 ssh_vm "dmesg" >"$LOGDIR/dmesg.log"

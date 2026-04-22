@@ -21,7 +21,6 @@ include:
       - ".essentials.yml"
       - ".dependencies.yml"
       - ".check.yml"
-      - ".shellcheck.yml"
 
 verify-shared-crates:
   extends: .nix
@@ -57,6 +56,13 @@ cargo-deny:
   needs: []
   script:
     - nix build -L .#checks.x86_64-linux.cargo-deny
+
+content-checks:
+  extends: .nix
+  stage: check
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.content
 
 ###################################
 ########## Python Checks ##########

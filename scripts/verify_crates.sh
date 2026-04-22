@@ -28,7 +28,7 @@ NO_DIFF="${CRATE_VERIFY_NO_DIFF:-false}"
 
 # Cleanup on exit
 TMP_ROOT=""
-# shellcheck disable=SC2317 # Function is invoked indirectly via trap
+# shellcheck disable=SC2317,SC2329 # cleanup() is invoked indirectly via trap.
 cleanup() {
     if [[ -n ${TMP_ROOT:-} ]] && [[ -d ${TMP_ROOT:-} ]]; then
         rm -rf "$TMP_ROOT" || true

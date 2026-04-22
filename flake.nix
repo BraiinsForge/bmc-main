@@ -43,6 +43,14 @@
           inherit pkgs ty-bin;
           inherit (workspace.bmc) profiles;
         };
+        content-checks = nixlib.braiinschk.${localSystem} {
+          mermaid = true;
+          justfile = true;
+          shell = true;
+          config.exclude = [
+            "frontend/node_modules/**"
+          ];
+        };
 
         # Local dev shell with Rust + frontend + GUI deps (native only).
         localDevShell = bmc.profiles.fast.mkShell {
@@ -152,10 +160,7 @@
         };
 
         checks = self.packages.${localSystem} // frontend.checks // checks // {
-          mermaid = nixlib.braiinschk.${localSystem} {
-            mermaid = true;
-            justfile = true;
-          };
+          content = content-checks;
         };
 
         bmc = workspace.bmc;
@@ -164,9 +169,6 @@
           wasm-capture = capture.package;
           frontend = frontend.build;
           yarnFiles = frontend.yarnFiles;
-          shellcheck = pkgs.writeShellScriptBin "shellcheck" ''
-            exec nix run "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git?rev=6071d67e0c5ec498fc88017d36a54bb1b837ad83#shellcheck" "$@" 2>&1
-          '';
         };
 
         apps.fmt-svg = {
