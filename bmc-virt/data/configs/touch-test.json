@@ -20,43 +20,13 @@
     {
       "id": "c45cd927-18cf-4fca-b935-aa7f9a790991",
       "enabled": true,
-      "kind": "combined",
+      "kind": "fullscreen",
       "widgets": [
         {
           "id": "48e60c91-6be2-4440-bd0a-3c6a87b91071",
           "row": 0,
           "col": 0,
-          "size": "medium",
-          "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
-          "params": {
-            "mode": "flat"
-          }
-        },
-        {
-          "id": "85db6bc5-e02e-4206-af0a-beb67d17a635",
-          "row": 0,
-          "col": 2,
-          "size": "medium",
-          "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
-          "params": {
-            "mode": "flat"
-          }
-        },
-        {
-          "id": "30964757-c87f-4655-a770-e1e9511fe8cf",
-          "row": 1,
-          "col": 0,
-          "size": "medium",
-          "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
-          "params": {
-            "mode": "extruded"
-          }
-        },
-        {
-          "id": "b6767e2d-88e2-4fe6-8456-c592823b20df",
-          "row": 1,
-          "col": 2,
-          "size": "medium",
+          "size": "full",
           "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
           "params": {
             "mode": "extruded"
