@@ -45,9 +45,24 @@ let
         text = script;
         executable = true;
       };
+      # When the caller disables the service without supplying an explicit
+      # serviceConfig, write an all-empty action set so the orchestrator does
+      # not run `enable` (from the default `always`) or any other lifecycle
+      # action against a service the caller asked not to touch. An explicit
+      # serviceConfig always wins — the caller remains in charge.
+      disabledDefault = {
+        init = [ ];
+        upgrade = [ ];
+        removed = [ ];
+        always = [ ];
+      };
+      effectiveServiceConfig =
+        if serviceConfig != null then serviceConfig
+        else if !enabled then disabledDefault
+        else null;
       serviceConfigFile =
-        if serviceConfig != null
-        then pkgs.writeText "init.d.conf-${name}.json" (builtins.toJSON serviceConfig)
+        if effectiveServiceConfig != null
+        then pkgs.writeText "init.d.conf-${name}.json" (builtins.toJSON effectiveServiceConfig)
         else null;
     in
     { inherit name service start stop enabled serviceConfigFile; };
