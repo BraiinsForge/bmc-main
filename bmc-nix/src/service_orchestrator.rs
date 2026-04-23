@@ -151,6 +151,31 @@ pub fn build_action_plan(
         }
     }
 
+    // `always` actions (default `["enable"]`) run for every service present
+    // in the new generation on every activation, regardless of change kind.
+    // Emitted LAST in source order so the stable sort-by-priority puts them
+    // after any upgrade/init actions within the same priority bucket — e.g.
+    // `upgrade = ["disable", "reload"]` can wipe stale rc.d entries first
+    // and `always = ["enable"]` reinstalls the correct symlink afterwards.
+    for change in changes
+        .new
+        .iter()
+        .chain(&changes.upgraded)
+        .chain(&changes.unchanged)
+    {
+        let service = effective_service_config(change);
+        let command_path = active_root_command_path(&change.name);
+        let priority = 100 + order_priority(new_start_order, &change.name).unwrap_or_default();
+        for action in &service.always {
+            plan.push(PlannedAction {
+                priority,
+                service: change.name.clone(),
+                action: action.clone(),
+                command_path: command_path.clone(),
+            });
+        }
+    }
+
     plan.sort_by(|left, right| left.priority.cmp(&right.priority));
 
     plan
@@ -286,6 +311,12 @@ mod tests {
                     old_root.join("etc/init.d/removed"),
                 ),
                 (
+                    110,
+                    "gated".to_owned(),
+                    "enable".to_owned(),
+                    PathBuf::from("/etc/init.d/gated"),
+                ),
+                (
                     120,
                     "early-new".to_owned(),
                     "enable".to_owned(),
@@ -298,12 +329,92 @@ mod tests {
                     PathBuf::from("/etc/init.d/early-new"),
                 ),
                 (
+                    120,
+                    "early-new".to_owned(),
+                    "enable".to_owned(),
+                    PathBuf::from("/etc/init.d/early-new"),
+                ),
+                (
                     130,
                     "late-upgrade".to_owned(),
                     "restart".to_owned(),
                     PathBuf::from("/etc/init.d/late-upgrade"),
                 ),
+                (
+                    130,
+                    "late-upgrade".to_owned(),
+                    "enable".to_owned(),
+                    PathBuf::from("/etc/init.d/late-upgrade"),
+                ),
             ]
+        );
+    }
+
+    #[test]
+    fn always_actions_run_for_unchanged_services() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        // Same content in both generations — `kept` will be classified as
+        // Unchanged by the discovery layer.
+        write_file(&old_root.join("etc/init.d/kept"), "kept-service");
+        write_file(&new_root.join("etc/init.d/kept"), "kept-service");
+        write_file(&old_root.join("etc/rc.d/S15kept"), "");
+        write_file(&new_root.join("etc/rc.d/S15kept"), "");
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        assert_eq!(
+            changes.unchanged.len(),
+            1,
+            "kept service should be classified as unchanged"
+        );
+
+        let actions = build_action_plan(
+            &changes,
+            &BTreeMap::new(),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        assert_eq!(
+            action_summary(&actions),
+            vec![(
+                115,
+                "kept".to_owned(),
+                "enable".to_owned(),
+                PathBuf::from("/etc/init.d/kept"),
+            )],
+            "unchanged service should run default always=[\"enable\"] at 100+start_order"
+        );
+    }
+
+    #[test]
+    fn always_actions_skipped_for_removed_services() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/gone"), "gone-service");
+        write_file(&old_root.join("etc/rc.d/S15gone"), "");
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let actions = build_action_plan(
+            &changes,
+            &BTreeMap::new(),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        assert!(
+            !actions.iter().any(|a| a.action == "enable"),
+            "removed services must not run `always` actions like enable"
         );
     }
 
