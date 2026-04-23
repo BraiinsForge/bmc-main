@@ -62,44 +62,6 @@ let
       }"
     '';
   };
-
-  nix-mounter = mkOpenWrtService {
-    name = "nix-mounter";
-    start = 91;
-    serviceConfig = { init = [ ]; removed = [ ]; upgrade = [ ]; };
-    functions = [
-      {
-        name = "boot";
-        body = ''
-          [ -d /mnt/data/nix ] || return 0
-          mkdir -p /nix
-          mount --bind /mnt/data/nix /nix
-        '';
-      }
-    ];
-  };
-
-  nix-activator = mkOpenWrtService {
-    name = "nix-activator";
-    start = 92;
-    serviceConfig = { init = [ ]; removed = [ ]; upgrade = [ ]; };
-    functions = [
-      {
-        name = "boot";
-        body = ''
-          grep -q ' /nix ' /proc/mounts || return 0
-          profile_dir="/nix/var/nix/gcroots/profiles/bmc"
-          current="$profile_dir/current"
-          if [ -L "$current" ]; then
-              entrypoint="$(readlink -f "$current")/core/activation/entrypoint"
-              if [ -x "$entrypoint" ]; then
-                  "$entrypoint"
-              fi
-          fi
-        '';
-      }
-    ];
-  };
 in
 {
   pkg = mkPackage {
@@ -119,7 +81,6 @@ in
       { prefix = "055"; bin = profile.buildCrate crates.bmc-activation-copy-files { }; }
       { prefix = "090"; bin = start-service-orchestrator; }
     ];
-    services = [ nix-mounter nix-activator ];
     out = [
       { src = ./scripts; dest = "bin"; }
     ];
