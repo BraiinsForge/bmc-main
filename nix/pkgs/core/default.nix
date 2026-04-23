@@ -9,18 +9,21 @@ let
 
   orchestrator = profile.buildCrate crates.bmc-nix-service-orchestrator { };
 
-  # Workaround: Nix-built glibc ships libc.so as a GNU ld linker script
-  # (ASCII text), not a real ELF shared object. Glibc's ld.so internally
-  # loads "libc.so" (unversioned) during initialization when launched by
-  # procd, and fails on the linker script. This derivation provides a
-  # directory with libc.so as a symlink to the real ELF (libc.so.6),
-  # used via LD_LIBRARY_PATH in the procd service definition.
-  glibc-libc-so-fix = armv7Pkgs.runCommand "glibc-libc-so-fix" { } ''
-    mkdir -p $out/lib
-    for f in ${armv7Pkgs.glibc}/lib/libc.so.*; do
-      ln -s "$f" "$out/lib/libc.so"
-      break
-    done
+  # Ash wrapper around the orchestrator. procd will run the service in
+  # a context where LD_PRELOAD is set; Shebang is pinned to /bin/ash
+  # (BusyBox on OpenWrt) — we disable stdenv fixup so patchShebangs
+  # does not rewrite it to a nix-store bash path.
+  orchestratorWrapped = armv7Pkgs.runCommand "bmc-nix-service-orchestrator-wrapped"
+    {
+      dontFixup = true;
+    } ''
+    mkdir -p $out/bin
+    cat > $out/bin/bmc-nix-service-orchestrator <<'WRAPPER'
+    #!/bin/ash
+    unset LD_PRELOAD
+    exec ${orchestrator}/bin/bmc-nix-service-orchestrator "$@"
+    WRAPPER
+    chmod +x $out/bin/bmc-nix-service-orchestrator
   '';
 
   bmc-openwrt = autopatchelfBinaries {
@@ -50,7 +53,7 @@ let
 
       service_name="bmc-nix-service-orchestrator"
       instance_name="main"
-      binary="${orchestrator}/bin/bmc-nix-service-orchestrator"
+      executable="${orchestratorWrapped}/bin/bmc-nix-service-orchestrator"
       current_link="$(dirname "$PROFILE_NEW_GENERATION")/current"
 
       # Remove a stale instance from a previous activation, if any.
@@ -62,16 +65,13 @@ let
         \"instances\": {
           \"$instance_name\": {
             \"command\": [
-              \"$binary\",
+              \"$executable\",
               \"--old-generation=$PROFILE_OLD_GENERATION\",
               \"--new-generation=$PROFILE_NEW_GENERATION\",
               \"--current-link=$current_link\",
               \"--instance-name=$service_name\",
               \"--timeout-seconds=300\"
             ],
-            \"env\": {
-              \"LD_LIBRARY_PATH\": \"${glibc-libc-so-fix}/lib\"
-            },
             \"stdout\": true,
             \"stderr\": true
           }
