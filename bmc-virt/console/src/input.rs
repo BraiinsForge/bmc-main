@@ -27,6 +27,12 @@ impl InputHandler {
     ) -> bool {
         let response = ui.allocate_rect(screen_rect, egui::Sense::click_and_drag());
         let hovering = response.hovered();
+        // Track "button currently held on this widget" separately from
+        // `self.pressed`: the latter is only set inside the drag
+        // branches, so a pure click would otherwise never flash the
+        // cursor indicator. `is_pointer_button_down_on` flips true for
+        // every press (click and drag alike) and back to false on up.
+        let holding = response.is_pointer_button_down_on();
 
         // Quick tap: egui reports as click (no drag threshold crossed)
         if response.clicked()
@@ -62,7 +68,7 @@ impl InputHandler {
             ui.ctx().set_cursor_icon(egui::CursorIcon::None);
             if let Some(pos) = ui.ctx().pointer_hover_pos() {
                 let painter = ui.painter();
-                if self.pressed {
+                if holding {
                     // Pressed: larger, more visible
                     painter.circle_filled(pos, 14.0, egui::Color32::from_white_alpha(60));
                     painter.circle_stroke(
