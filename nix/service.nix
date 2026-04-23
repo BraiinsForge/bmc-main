@@ -83,7 +83,10 @@ let
       startBody = lib.concatStringsSep "\n" (
         [
           "procd_open_instance"
-          "procd_set_param command ${commandLine}"
+          # NOTE: unfortunately we need to resort to this hack.
+          # procd sets LD_PRELOAD to /lib/libsetlbf.so that depends on libc.so
+          # breaking loading of libc, since libc.so from Nix store is a linker script.
+          "procd_set_param command /bin/ash -c 'unset LD_PRELOAD; exec ${commandLine}'"
         ]
         ++ lib.optional (env != { }) envLines
         ++ [
