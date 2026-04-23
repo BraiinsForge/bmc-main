@@ -18,7 +18,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use bmc_platform::linux_input::discover_touch_node;
-use input::LibinputInterface;
+use input::{Libinput, LibinputInterface};
 
 /// Default seat name used for libinput classification.
 ///
@@ -149,17 +149,41 @@ pub struct RootLibinputInterface;
 
 impl LibinputInterface for RootLibinputInterface {
     fn open_restricted(&mut self, path: &Path, flags: i32) -> Result<OwnedFd, i32> {
+        // Defense in depth: libinput's caller-supplied path is opened as
+        // root, so resolve symlinks first and then refuse anything that
+        // isn't an evdev node under `/dev/input/`. Every current caller
+        // feeds `DeviceAccessConfig::with_input_node` a trusted value
+        // (discovery result or a static override), but this validation
+        // is the tripwire for future code paths that may expose the
+        // input-node setting to user input.
+        let canonical = path.canonicalize().map_err(|err| {
+            let errno = err.raw_os_error().unwrap_or(libc::EIO);
+            tracing::warn!(
+                "open_restricted: canonicalize({}) failed: {err}",
+                path.display(),
+            );
+            -errno
+        })?;
+        if !is_valid_input_node(&canonical) {
+            tracing::warn!(
+                "open_restricted: refusing {} (resolved to {}); only /dev/input/eventN is allowed",
+                path.display(),
+                canonical.display(),
+            );
+            return Err(-libc::EACCES);
+        }
+
         let read = (flags & libc::O_ACCMODE) != libc::O_WRONLY;
         let write = (flags & libc::O_ACCMODE) != libc::O_RDONLY;
         OpenOptions::new()
             .custom_flags(flags)
             .read(read)
             .write(write)
-            .open(path)
+            .open(&canonical)
             .map(OwnedFd::from)
             .map_err(|err| {
                 let errno = err.raw_os_error().unwrap_or(libc::EIO);
-                tracing::warn!("open_restricted({}) failed: {err}", path.display());
+                tracing::warn!("open_restricted({}) failed: {err}", canonical.display());
                 -errno
             })
     }
@@ -171,6 +195,35 @@ impl LibinputInterface for RootLibinputInterface {
     }
 }
 
+/// Returns `true` only for absolute `/dev/input/eventN` paths where `N`
+/// is a non-empty ASCII decimal integer. Callers are expected to resolve
+/// symlinks before checking.
+fn is_valid_input_node(path: &Path) -> bool {
+    path.to_str()
+        .and_then(|s| s.strip_prefix("/dev/input/event"))
+        .is_some_and(|tail| !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Raise libinput's internal log verbosity to DEBUG so hotplug and
+/// device-tag diagnostics appear alongside our own `tracing` output.
+///
+/// The `input` crate does not wrap `libinput_log_set_priority`, so the
+/// FFI declaration lives here rather than at the call site. Libinput's
+/// default log handler writes to stderr, which our `bmc.log` wrapper
+/// tees into the unified log, so no custom handler is needed.
+///
+/// `LIBINPUT_LOG_PRIORITY_DEBUG = 10` per libinput's public enum.
+pub(crate) fn set_libinput_debug_priority(ctx: &Libinput) {
+    use input::AsRaw;
+    unsafe extern "C" {
+        fn libinput_log_set_priority(libinput: *mut core::ffi::c_void, priority: core::ffi::c_uint);
+    }
+    const LIBINPUT_LOG_PRIORITY_DEBUG: core::ffi::c_uint = 10;
+    unsafe {
+        libinput_log_set_priority(ctx.as_raw().cast_mut().cast(), LIBINPUT_LOG_PRIORITY_DEBUG);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -179,7 +232,7 @@ mod tests {
 
     use super::{
         DEFAULT_RENDER_NODE, DEFAULT_SCANOUT_NODE, DEFAULT_SEAT_NAME, DeviceAccessConfig,
-        RootLibinputInterface,
+        RootLibinputInterface, is_valid_input_node,
     };
 
     #[test]
@@ -229,5 +282,31 @@ mod tests {
             .expect_err("BUG: opening a nonexistent path must fail");
         assert!(err < 0, "errno must be reported as negative, got {err}");
         assert_eq!(-err, libc::ENOENT);
+    }
+
+    #[test]
+    fn open_restricted_rejects_paths_outside_dev_input() {
+        // `/dev/null` exists, so canonicalize succeeds — the rejection
+        // must come from the `/dev/input/eventN` check.
+        let mut interface = RootLibinputInterface;
+        let err = interface
+            .open_restricted(Path::new("/dev/null"), libc::O_RDONLY)
+            .expect_err("BUG: /dev/null must be rejected as non-evdev");
+        assert_eq!(-err, libc::EACCES);
+    }
+
+    #[test]
+    fn is_valid_input_node_accepts_event_paths() {
+        assert!(is_valid_input_node(Path::new("/dev/input/event0")));
+        assert!(is_valid_input_node(Path::new("/dev/input/event123")));
+    }
+
+    #[test]
+    fn is_valid_input_node_rejects_non_event_paths() {
+        assert!(!is_valid_input_node(Path::new("/dev/input/mouse0")));
+        assert!(!is_valid_input_node(Path::new("/etc/shadow")));
+        assert!(!is_valid_input_node(Path::new("/dev/input/event")));
+        assert!(!is_valid_input_node(Path::new("/dev/input/event0a")));
+        assert!(!is_valid_input_node(Path::new("/dev/null")));
     }
 }

@@ -4,7 +4,7 @@
 
 use super::{
     commands::CompositorCommand,
-    device_access::{DeviceAccessConfig, RootLibinputInterface},
+    device_access::{DeviceAccessConfig, RootLibinputInterface, set_libinput_debug_priority},
     render::{DrmOutput, EglContext},
     scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState},
@@ -473,6 +473,13 @@ impl EglCompositor {
             input_nodes.len(),
         );
         let mut libinput_context = libinput::Libinput::new_from_path(RootLibinputInterface);
+
+        // Lower libinput's log priority to DEBUG so its internal
+        // rejections (device classification, quirk application, udev
+        // lookups) appear on our stderr — which bmc-openwrt's service
+        // wrapper tees into bmc.log.
+        set_libinput_debug_priority(&libinput_context);
+
         let mut added = 0_usize;
         for node in input_nodes {
             let path_str = node.to_string_lossy();
