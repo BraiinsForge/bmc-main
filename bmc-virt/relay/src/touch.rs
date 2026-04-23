@@ -3,11 +3,14 @@
 // Touch event injection via evdev write to the virtio-tablet device.
 // Extracted from bmc-virt-vnc/src/vnc.rs.
 
-use std::fs::OpenOptions;
+use std::fs;
 use std::io;
 use std::os::unix::io::AsRawFd;
+use std::path::Path;
 
 use bmc_virt_ipc::{FB_HEIGHT, FB_WIDTH};
+
+pub use bmc_platform::linux_input::discover_touch_node;
 
 const EV_SYN: u16 = 0x00;
 const EV_KEY: u16 = 0x01;
@@ -101,11 +104,11 @@ fn scale_to_raw(coord: u16, logical_extent: u32, range: AxisRange) -> i32 {
 }
 
 impl Touch {
-    pub fn open(path: &str) -> io::Result<Self> {
-        let file = OpenOptions::new().write(true).open(path)?;
+    pub fn open(path: &Path) -> io::Result<Self> {
+        let file = fs::OpenOptions::new().write(true).open(path)?;
         let fd = file.as_raw_fd();
         std::mem::forget(file); // keep fd alive
-        eprintln!("touch: opened {path} for event injection");
+        eprintln!("touch: opened {} for event injection", path.display());
 
         let fallback_range = AxisRange {
             min: 0,

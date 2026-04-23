@@ -4,6 +4,8 @@
 pub mod backlight;
 #[cfg(feature = "backlight")]
 pub mod generic_backlight_driver;
+#[cfg(feature = "linux-input")]
+pub mod linux_input;
 
 use index_bmc::BmcPlatform as IndexBmcPlatform;
 use std::fmt::Display;

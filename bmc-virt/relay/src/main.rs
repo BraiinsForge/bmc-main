@@ -24,7 +24,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_FPS: u32 = 60;
-const DEFAULT_TOUCH_DEVICE: &str = "/dev/input/event0";
 const DEFAULT_SPI_CAPTURE: &str = "/proc/bmc_virt_spi0";
 
 /// File read by the madplay shim to override the app's volume setting.
@@ -55,9 +54,11 @@ fn main() {
         .unwrap_or_else(|e| panic!("failed to bind IPC listener: {e}"));
     let sender = endpoint.sender();
 
-    // 2. Open touch device for input injection
-    if touch::Touch::open(DEFAULT_TOUCH_DEVICE).is_err() {
-        eprintln!("WARNING: could not open {DEFAULT_TOUCH_DEVICE}, touch injection disabled");
+    // 2. Verify a touchscreen evdev node is reachable at startup. The
+    //    actual fd is opened per host connection below; this is a probe.
+    match touch::discover_touch_node() {
+        Some(path) => eprintln!("touch: discovered {}", path.display()),
+        None => eprintln!("WARNING: no touchscreen evdev node found; touch injection disabled"),
     }
 
     // 3. Start LED capture thread (runs forever, drops when no host)
@@ -133,7 +134,8 @@ fn main() {
         let input_handle = std::thread::Builder::new()
             .name("input-reader".into())
             .spawn(move || {
-                let mut touch_dev = touch::Touch::open(DEFAULT_TOUCH_DEVICE).ok();
+                let mut touch_dev =
+                    touch::discover_touch_node().and_then(|path| touch::Touch::open(&path).ok());
                 let mut grpc = commands::GrpcClient::new();
 
                 // Send current volume state to host (app value, no override).

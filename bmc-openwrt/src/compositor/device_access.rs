@@ -17,6 +17,7 @@ use std::os::fd::OwnedFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+use bmc_platform::linux_input::discover_touch_node;
 use input::LibinputInterface;
 
 /// Default seat name used for libinput classification.
@@ -30,8 +31,6 @@ pub const DEFAULT_SEAT_NAME: &str = "seat0";
 pub const DEFAULT_SCANOUT_NODE: &str = "/dev/dri/card1";
 /// Default DRM render node.
 pub const DEFAULT_RENDER_NODE: &str = "/dev/dri/renderD128";
-/// Default evdev touch device node on the appliance panel.
-pub const DEFAULT_INPUT_NODE: &str = "/dev/input/event0";
 
 /// Static configuration describing how the compositor should access devices.
 ///
@@ -121,13 +120,21 @@ impl DeviceAccessConfig {
             .unwrap_or_else(|| Path::new(DEFAULT_RENDER_NODE))
     }
 
-    /// Evdev nodes libinput should watch, falling back to the appliance
-    /// default when none were configured explicitly.
-    pub fn resolved_input_nodes(&self) -> Vec<&Path> {
+    /// Evdev nodes libinput should watch.
+    ///
+    /// Explicit overrides from [`Self::with_input_node`] take precedence
+    /// and are returned verbatim; otherwise the compositor consults
+    /// [`bmc_platform::linux_input::discover_touch_node`] and registers
+    /// the single canonical touchscreen (or nothing, when none is
+    /// present). Returning `Vec<PathBuf>` instead of `Option<PathBuf>`
+    /// keeps the explicit-override surface unchanged — callers can still
+    /// pin multiple nodes for test rigs and unusual images.
+    #[must_use]
+    pub fn resolved_input_nodes(&self) -> Vec<PathBuf> {
         if self.input_nodes.is_empty() {
-            vec![Path::new(DEFAULT_INPUT_NODE)]
+            discover_touch_node().into_iter().collect()
         } else {
-            self.input_nodes.iter().map(PathBuf::as_path).collect()
+            self.input_nodes.clone()
         }
     }
 }
@@ -171,8 +178,8 @@ mod tests {
     use input::LibinputInterface;
 
     use super::{
-        DEFAULT_INPUT_NODE, DEFAULT_RENDER_NODE, DEFAULT_SCANOUT_NODE, DEFAULT_SEAT_NAME,
-        DeviceAccessConfig, RootLibinputInterface,
+        DEFAULT_RENDER_NODE, DEFAULT_SCANOUT_NODE, DEFAULT_SEAT_NAME, DeviceAccessConfig,
+        RootLibinputInterface,
     };
 
     #[test]
@@ -183,10 +190,6 @@ mod tests {
         assert!(cfg.render_node().is_none());
         assert_eq!(cfg.resolved_scanout_node(), Path::new(DEFAULT_SCANOUT_NODE));
         assert_eq!(cfg.resolved_render_node(), Path::new(DEFAULT_RENDER_NODE));
-        assert_eq!(
-            cfg.resolved_input_nodes(),
-            vec![Path::new(DEFAULT_INPUT_NODE)]
-        );
     }
 
     #[test]
@@ -209,8 +212,8 @@ mod tests {
         assert_eq!(
             cfg.resolved_input_nodes(),
             vec![
-                Path::new("/dev/input/event5"),
-                Path::new("/dev/input/event6"),
+                PathBuf::from("/dev/input/event5"),
+                PathBuf::from("/dev/input/event6"),
             ]
         );
     }

@@ -1,0 +1,85 @@
+{
+  "scenes": [
+    {
+      "id": "6ef5d0de-9d74-4ca5-844f-0a4d4b8034d1",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "4f42324d-ef25-4f0b-8c31-091f2fdf0a36",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
+          "params": {
+            "mode": "flat"
+          }
+        }
+      ]
+    },
+    {
+      "id": "c45cd927-18cf-4fca-b935-aa7f9a790991",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "48e60c91-6be2-4440-bd0a-3c6a87b91071",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
+          "params": {
+            "mode": "flat"
+          }
+        },
+        {
+          "id": "85db6bc5-e02e-4206-af0a-beb67d17a635",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
+          "params": {
+            "mode": "flat"
+          }
+        },
+        {
+          "id": "30964757-c87f-4655-a770-e1e9511fe8cf",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
+          "params": {
+            "mode": "extruded"
+          }
+        },
+        {
+          "id": "b6767e2d-88e2-4fe6-8456-c592823b20df",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440002",
+          "params": {
+            "mode": "extruded"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bb61a3cf-3592-42f9-ba0d-df77e7c68a9f",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "4c2bbfff-7794-4644-bf7d-eb3d3c541670",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440100",
+          "params": {
+            "wasmPath": "/mnt/data/wasm/hello_widget.wasm"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1130,12 +1130,7 @@ impl Compositor for EglCompositor {
         let render_node = self.device_access.resolved_render_node().to_path_buf();
         let scanout_node = self.device_access.resolved_scanout_node().to_path_buf();
         let seat_name = self.device_access.seat_name().to_owned();
-        let input_nodes: Vec<PathBuf> = self
-            .device_access
-            .resolved_input_nodes()
-            .into_iter()
-            .map(Path::to_path_buf)
-            .collect();
+        let input_nodes = self.device_access.resolved_input_nodes();
         let headless = self.headless;
         let command_channel = self
             .command_channel

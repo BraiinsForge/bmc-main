@@ -1231,6 +1231,7 @@ dependencies = [
  "anyhow",
  "index-bmc",
  "strum",
+ "tempfile",
  "thiserror 1.0.69",
  "tracing",
 ]
@@ -1370,6 +1371,7 @@ name = "bmc-virt-relay"
 version = "0.1.0"
 dependencies = [
  "bmc-grpc",
+ "bmc-platform",
  "bmc-virt-ipc",
  "bmc-virt-leds",
  "libc",

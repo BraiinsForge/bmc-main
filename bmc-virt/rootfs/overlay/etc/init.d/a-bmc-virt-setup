@@ -29,19 +29,6 @@ boot() {
         echo 0 > "$vtc" 2>/dev/null || true
     done
 
-    # The app expects touch at /dev/input/event0. On the VM the ACPI
-    # power button grabs event0 at boot, pushing virtio-tablet to event1.
-    for f in /sys/class/input/event*/device/name; do
-        if grep -q "Virtio Tablet" "$f" 2>/dev/null; then
-            TABLET_DEV="/dev/input/$(basename $(dirname $(dirname "$f")))"
-            if [ "$TABLET_DEV" != "/dev/input/event0" ] && [ -c "$TABLET_DEV" ]; then
-                mv /dev/input/event0 /dev/input/event_power 2>/dev/null || true
-                ln -sf "$TABLET_DEV" /dev/input/event0
-            fi
-            break
-        fi
-    done
-
     # DRM: ensure card1 device node exists (compositor expects /dev/dri/card1).
     # With the EGL compositor, card1 must be virtio-gpu (not VKMS) so that
     # the render GPU and display device are the same — avoiding cross-device

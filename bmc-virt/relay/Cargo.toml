@@ -9,6 +9,7 @@ workspace = true
 [dependencies]
 # Messages only, no tonic server traits — keeps the relay binary small
 bmc-grpc = { workspace = true, default-features = false }
+bmc-platform = { workspace = true, features = ["linux-input"] }
 bmc-virt-ipc.workspace = true
 bmc-virt-leds.workspace = true
 libc.workspace = true

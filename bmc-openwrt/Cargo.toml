@@ -16,7 +16,7 @@ bmc-display.workspace = true
 bmc-gpio.workspace = true
 bmc-kobject.workspace = true
 bmc-led = { workspace = true, features = ["apa102_spi"] }
-bmc-platform = { workspace = true, features = ["backlight"] }
+bmc-platform = { workspace = true, features = ["backlight", "linux-input"] }
 bmc-shared-ii-net.workspace = true
 bmc-shared-ii-net-drv.workspace = true
 bmc-shared-time.workspace = true
