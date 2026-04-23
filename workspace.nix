@@ -5,6 +5,46 @@ let lib = pkgs.lib; in
 let
   rustflags = import ./nix/rustflags.nix { inherit lib; };
   inherit (rustflags) makeRustflagsEnv;
+  # Overlay used by every package set that targets the OpenWRT appliance image — HW (armv7)
+  # and VM (x86, aarch64). The image runs mdev rather than a udev daemon, so libinput must
+  # be linked against libudev-zero rather than systemd's libudev.
+  #
+  # `compositorUdev` carries the matching libudev.so.1 into the runtime closure without
+  # rebinding `udev` globally, which would pull unrelated packages (lvm2, btrfs-progs)
+  # onto libudev-zero APIs they do not support.
+  applianceOverlay = final: prev:
+    let
+      # nixpkgs ships libudev-zero 1.0.3, whose ID_INPUT_* tag synthesis in set_properties_from_evdev
+      # checks EV_REL before EV_ABS — any device carrying both (e.g. QEMU's virtio-tablet-pci,
+      # with REL_WHEEL + ABS_X/ABS_Y + BTN_TOUCH) falls through the REL branch and never reaches
+      # the TOUCHSCREEN tag. libinput then refuses the device as "not tagged as supported input device".
+      #
+      # Upstream fix bbeb7ad5 ("Fixes incorrect detection of touchpads (#66)") swaps the branch
+      # order so EV_ABS is checked first. Never released, so we pin to the fix commit directly
+      # until a >=1.0.4 tag lands and nixpkgs picks it up.
+      libudevZero = (prev."libudev-zero").overrideAttrs (_: {
+        version = "unstable-2024-04-17";
+        src = prev.fetchFromGitHub {
+          owner = "illiliti";
+          repo = "libudev-zero";
+          rev = "bbeb7ad51c1edb7ab3cf63f30a21e9bb383b7994";
+          hash = "sha256-hQoLnKpT/cnGyUl56DnHjZ0nfenLPI9EvmOejqEPxfc=";
+        };
+      });
+    in
+    {
+      libinput = prev.libinput.override {
+        udev = libudevZero;
+        wacomSupport = false;
+      };
+      compositorUdev = libudevZero;
+    };
+
+  # Resolve the libudev provider for a compositor runtime closure:
+  # appliance package sets expose `compositorUdev` (→ libudev-zero); the
+  # native dev shell / bmc-mock closure falls back to `pkgs.udev`, since
+  # libinput on a plain dev host still expects systemd udev.
+  compositorUdev = pkgs: pkgs.compositorUdev or pkgs.udev;
 
   # Fix for linux-pam cross-compilation issue in nixpkgs-unstable
   # The man output fails to build for ARMv7 glibc targets
@@ -12,13 +52,12 @@ let
     # Guard: only apply to cross-compiled (ARM target) packages, not to
     # build-host packages that share this overlay via splicing.
     lib.optionalAttrs (prev.stdenv.hostPlatform != prev.stdenv.buildPlatform) (
-      (mesaOverlay { }) final prev // {
+      (mesaOverlay { }) final prev
+      // applianceOverlay final prev
+      // {
         linux-pam = prev.linux-pam.overrideAttrs (old: {
           outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
         });
-        libinput = prev.libinput.override {
-          wacomSupport = false;
-        };
       }
     ));
 
@@ -60,8 +99,16 @@ let
     };
   };
   vmGalliumDrivers = [ "etnaviv" "virgl" "softpipe" ];
-  x86Pkgs = pkgs.extend (mesaOverlay { galliumDrivers = vmGalliumDrivers; });
-  aarch64Pkgs = pkgs.pkgsCross.aarch64-multiplatform.extend (mesaOverlay { galliumDrivers = vmGalliumDrivers; });
+  x86Pkgs = pkgs.extend (lib.composeExtensions
+    (mesaOverlay { galliumDrivers = vmGalliumDrivers; })
+    applianceOverlay);
+  aarch64Pkgs = pkgs.pkgsCross.aarch64-multiplatform.extend (final: prev:
+    # Same cross-splicing guard as armv7Pkgs — libinput and the
+    # compositorUdev marker only belong on the cross-target side.
+    lib.optionalAttrs (prev.stdenv.hostPlatform != prev.stdenv.buildPlatform) (
+      (mesaOverlay { galliumDrivers = vmGalliumDrivers; }) final prev
+      // applianceOverlay final prev
+    ));
 
   # Shared deps used by both package builds and devShells.
   # Single source of truth to keep build derivations and dev environments in sync.
@@ -99,7 +146,7 @@ let
       libxkbcommon
       libinput
       seatd
-      udev
+      (compositorUdev pkgs)
       libdrm
       mesa
     ];
@@ -121,7 +168,7 @@ let
       wayland
       libxkbcommon
       seatd
-      udev
+      (compositorUdev pkgs)
       libdrm
     ];
     env = {
@@ -189,7 +236,7 @@ let
       (deps.widgetRuntimeDeps.native pkgs) ++ (with pkgs; [
         libinput
         seatd
-        udev
+        (compositorUdev pkgs)
       ]);
   };
 
