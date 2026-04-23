@@ -128,17 +128,18 @@ in
         ${lib.optionalString (services != [ ]) ''
           mkdir -p $out/etc/init.d $out/etc/rc.d $out/etc/init.d.conf
           ${servicesCmds}
-          # Mirror service files into special/copy so the copy-files
-          # activation copies them to the system's /etc.
-          mkdir -p $out/special/copy/etc/init.d $out/special/copy/etc/rc.d $out/special/copy/etc/init.d.conf
+          # Mirror init.d and into special/copy so the
+          # copy-files activation lands them at /etc on the device.
+          # Do not mirror /etc/rc.d/*: those symlinks are created (and
+          # removed) at activation time by rc.common's `enable` /
+          # `disable`, driven by the orchestrator's `always` / `removed`
+          # action lists. Shipping them via copy-files dereferences the
+          # symlinks into plain files and breaks procd's service-name
+          # derivation. Conffiles still list the rc.d paths so sysupgrade
+          # preserves the runtime-created symlinks across flashes.
+          mkdir -p $out/special/copy/etc/init.d $out/special/copy/etc/init.d.conf
           for f in $out/etc/init.d/*; do
             ln -s "$f" $out/special/copy/etc/init.d/
-          done
-          for f in $out/etc/rc.d/*; do
-            ln -s "$f" $out/special/copy/etc/rc.d/
-          done
-          for f in $out/etc/init.d.conf/*; do
-            [ -e "$f" ] && ln -s "$f" $out/special/copy/etc/init.d.conf/
           done
         ''}
 
