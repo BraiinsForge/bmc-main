@@ -6,7 +6,7 @@ DRM display, and SPI LED capture — no hardware required.
 ## Quick start
 
 ```bash
-./scripts/run.sh --customer     # build + boot + deploy + connect
+./scripts/run.sh --config combined-flip-clocks  # build + boot + deploy + connect
 ./scripts/display.sh            # open VNC viewer
 ./scripts/stop.sh               # kill the VM
 ```

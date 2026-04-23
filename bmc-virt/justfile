@@ -27,7 +27,7 @@ display:
     ./scripts/display.sh
 
 run:
-    ./scripts/run.sh --customer
+    ./scripts/run.sh --config combined-flip-clocks
 
 ssh:
     ./scripts/ssh.sh

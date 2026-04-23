@@ -20,6 +20,7 @@ BMC_BIN: str = _raw["BMC_BIN"]
 BMC_CONFIG: str = _raw["BMC_CONFIG"]
 BMC_PID_FILE: Path = Path(_raw["BMC_PID_FILE"])
 BMC_RUNTIME_DIR: str = _raw["BMC_RUNTIME_DIR"]
+WASM_DIR: Path = Path(_raw["WASM_DIR"])
 RELAY_LOG: str = _raw["RELAY_LOG"]
 RR_BUNDLE: Path = Path(_raw["RR_BUNDLE"])
 RR_TRACE_DIR: Path = Path(_raw["RR_TRACE_DIR"])
@@ -30,6 +31,7 @@ __all__ = [
     "BMC_LOG",
     "BMC_PID_FILE",
     "BMC_RUNTIME_DIR",
+    "WASM_DIR",
     "RELAY_LOG",
     "RR_BUNDLE",
     "RR_TRACE_DIR",

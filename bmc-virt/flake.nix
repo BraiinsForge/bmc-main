@@ -14,10 +14,11 @@
     darwin-qemu-virgl.url = "github:kubijo/darwin-qemu-virgl-flake";
   };
 
-  outputs = { self, nixpkgs, flake-utils, harness, darwin-qemu-virgl }:
+  outputs = { nixpkgs, flake-utils, harness, darwin-qemu-virgl, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [ "corefonts" ]; };
+        inherit (builtins) readFile pathExists match elem concatStringsSep;
+        pkgs = import nixpkgs { inherit system; config.allowUnfreePredicate = pkg: elem (nixpkgs.lib.getName pkg) [ "corefonts" ]; };
 
         owrtCfg = import ./dl-cache/openwrt-config.nix;
         openwrtVersion = owrtCfg.openwrtVersion;
@@ -28,8 +29,8 @@
         # ── Architecture detection ────────────────────────────────────────────
         # Guest arch matches host: aarch64 hosts get aarch64 guest (HVF/KVM),
         # x86_64 hosts keep x86_64 guest (KVM + rr support).
-        isAarch64 = builtins.match "aarch64-.*" system != null;
-        isDarwin = builtins.match ".*-darwin" system != null;
+        isAarch64 = match "aarch64-.*" system != null;
+        isDarwin = match ".*-darwin" system != null;
         guestArch = if isAarch64 then "aarch64" else "x86_64";
         guestLinuxSystem = if isAarch64 then "aarch64-linux" else "x86_64-linux";
 
@@ -92,12 +93,12 @@
         # OpenWrt upstream only produces the ImageBuilder as an x86_64-linux binary.
         # On non-x86_64 hosts, Nix builds this derivation via binfmt emulation
         # (requires qemu-user-static + extra-platforms = x86_64-linux).
-        x86Pkgs = import nixpkgs { system = "x86_64-linux"; config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [ "corefonts" ]; };
+        x86Pkgs = import nixpkgs { system = "x86_64-linux"; config.allowUnfreePredicate = pkg: elem (nixpkgs.lib.getName pkg) [ "corefonts" ]; };
 
         # On macOS, kernel and vmImage builds delegate to the aarch64-linux builder.
         linuxPkgs =
           if isDarwin
-          then import nixpkgs { system = if isAarch64 then "aarch64-linux" else "x86_64-linux"; config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [ "corefonts" ]; }
+          then import nixpkgs { system = if isAarch64 then "aarch64-linux" else "x86_64-linux"; config.allowUnfreePredicate = pkg: elem (nixpkgs.lib.getName pkg) [ "corefonts" ]; }
           else pkgs;
 
         # ── Step 1: Prebuilt OpenWrt image via ImageBuilder ─────────────────
@@ -106,7 +107,7 @@
           hash = owrtCfg.imageBuilderHash.${guestArch};
         };
 
-        packageList = builtins.concatStringsSep " " owrtCfg.packageList;
+        packageList = concatStringsSep " " owrtCfg.packageList;
 
         # ── Step 1a: Vendored download cache (Git LFS) ──────────────────────
         # Contains .ipk packages and feed indexes for the ImageBuilder.
@@ -124,13 +125,13 @@
             expectedManifest = owrtCfg.mkManifest owrtCfg.packageList;
             # Fail fast at eval time with a clear message.
             archive =
-              if !builtins.pathExists manifestPath || !builtins.pathExists archivePath then
-                builtins.throw ''
+              if !pathExists manifestPath || !pathExists archivePath then
+                throw ''
                   OpenWrt feed cache not found (${archiveRel}).
                   Run: `just update-cache` from `bmc-virt`
                 ''
-              else if builtins.readFile manifestPath != expectedManifest then
-                builtins.throw ''
+              else if readFile manifestPath != expectedManifest then
+                throw ''
                   OpenWrt feed cache is stale — packageList or openwrtVersion
                   in dl-cache/openwrt-config.nix changed but the cache was not rebuilt.
                   Run: `just update-cache` from `bmc-virt`
@@ -381,7 +382,7 @@
         # for the shell consumers (init.d scripts, the relay, justfile,
         # get-logs.sh). Add a new path by editing the TOML and referencing
         # the new key in the consumer.
-        guestPaths = builtins.fromTOML (builtins.readFile ./harness/bmc_virt/guest-paths.toml);
+        guestPaths = fromTOML (readFile ./harness/bmc_virt/guest-paths.toml);
         rrGuestBundle = guestPaths.RR_BUNDLE;
         rrGuestTraceDir = guestPaths.RR_TRACE_DIR;
 
@@ -438,7 +439,7 @@
         # Shell snippet: template @@UPLINK_*@@ placeholders in all files under a directory.
         # Usage: ${templateUplink p} "$DIR"  (where p is the package set)
         templateUplink = p: dir: ''
-          ${p.findutils}/bin/find ${dir} -type f \
+          ${p.findutils}/bin/find "${dir}" -type f \
             -exec ${p.gnugrep}/bin/grep -q '@@UPLINK_' {} \; \
             -exec ${p.gnused}/bin/sed -i \
               -e 's|@@UPLINK_SSID@@|${uplinkSsid}|g' \
@@ -481,457 +482,501 @@
         scpOpts = "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=vm-data/known_hosts -o WarnWeakCrypto=no -P ${toString ports.ssh} -O";
         sshProbeOpts = "${sshOpts} -o PreferredAuthentications=password -o PubkeyAuthentication=no -o ConnectTimeout=2 -o ConnectionAttempts=1";
 
-        run = pkgs.writeShellScriptBin "bmc-virt-run" ''
-          set -euo pipefail
-          trap 'echo "ERROR: bmc-virt-run failed at line $LINENO" >&2' ERR
-          _section_start=0
-          header() {
-            if (( _section_start > 0 )); then
-              local elapsed=$(( SECONDS - _section_start ))
-              echo -e "\033[2;33m    done in ''${elapsed}s\033[0m"
+        run = pkgs.writeShellApplication {
+          name = "bmc-virt-run";
+          runtimeInputs = with pkgs; [
+            coreutils
+            findutils
+            gnugrep
+            gnused
+            gnutar
+            gzip
+            procps
+          ];
+          text = ''
+            set -euo pipefail
+            trap 'echo "ERROR: bmc-virt-run failed at line $LINENO" >&2' ERR
+            _section_start=0
+            header() {
+              if (( _section_start > 0 )); then
+                local elapsed=$(( SECONDS - _section_start ))
+                echo -e "\033[2;33m    done in ''${elapsed}s\033[0m"
+              fi
+              _section_start=$SECONDS
+              echo -e "\n\033[1;36m=== $1 ===\033[0m"
+            }
+            WORKSPACE=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
+            DATADIR="''${BMC_VIRT_DATA:-$(pwd)/vm-data}"
+            LOGDIR="$DATADIR/logs"
+            PROFILE="''${BMC_PROFILE:-${guestArch}-debug}"
+            CONFIG="''${CONFIG:-}"
+            # VM overlay is always recreated from the base image on every run.
+            RR="''${RR:-}"
+            HOST_PATH_DIRS="''${BMC_VIRT_HOST_PATH:-}"
+            LED_BINARY="''${BMC_VIRT_LED_BINARY:-}"
+            # Guest artifacts always come from Linux flake outputs keyed by guest
+            # architecture. macOS only matters for the launcher/runtime (HVF,
+            # local QEMU selection), not for selecting VM package sets.
+            GUEST_PKG_PREFIX="$WORKSPACE#packages.${guestLinuxSystem}"
+            mkdir -p "$DATADIR"
+            rm -rf "$LOGDIR" && mkdir -p "$LOGDIR"
+
+            ssh_vm() {
+              ${pkgs.sshpass}/bin/sshpass -p root ${pkgs.openssh}/bin/ssh ${sshOpts} "$@"
+            }
+            scp_vm() {
+              ${pkgs.sshpass}/bin/sshpass -p root ${pkgs.openssh}/bin/scp ${scpOpts} "$@"
+            }
+            ssh_vm_probe() {
+              ${pkgs.sshpass}/bin/sshpass -p root ${pkgs.openssh}/bin/ssh ${sshProbeOpts} "$@"
+            }
+
+            header "Building bmc-openwrt ($PROFILE)"
+            BINARY=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.bmc-openwrt-$PROFILE" \
+              --no-link --print-out-paths)/bin/bmc-openwrt
+
+            header "Building frontend"
+            FRONTEND=$(${pkgs.nix}/bin/nix build -L "$WORKSPACE#frontend" \
+              --no-link --print-out-paths)
+
+            if [[ -z "$LED_BINARY" ]]; then
+              header "Building LED visualizer"
+              LED_BINARY=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.bmc-virt-leds-${guestArch}-debug" \
+                --no-link --print-out-paths)/bin/bmc-virt-leds
             fi
-            _section_start=$SECONDS
-            echo -e "\n\033[1;36m=== $1 ===\033[0m"
-          }
-          WORKSPACE=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
-          DATADIR="''${BMC_VIRT_DATA:-$(pwd)/vm-data}"
-          LOGDIR="$DATADIR/logs"
-          PROFILE="''${BMC_PROFILE:-${guestArch}-debug}"
-          CONFIG="''${CONFIG:-}"
-          # VM overlay is always recreated from the base image on every run.
-          RR="''${RR:-}"
-          HOST_PATH_DIRS="''${BMC_VIRT_HOST_PATH:-}"
-          LED_BINARY="''${BMC_VIRT_LED_BINARY:-}"
-          # Guest artifacts always come from Linux flake outputs keyed by guest
-          # architecture. macOS only matters for the launcher/runtime (HVF,
-          # local QEMU selection), not for selecting VM package sets.
-          GUEST_PKG_PREFIX="$WORKSPACE#packages.${guestLinuxSystem}"
-          mkdir -p "$DATADIR"
-          rm -rf "$LOGDIR" && mkdir -p "$LOGDIR"
 
-          ssh_vm() {
-            ${pkgs.sshpass}/bin/sshpass -p root ${pkgs.openssh}/bin/ssh ${sshOpts} "$@"
-          }
-          scp_vm() {
-            ${pkgs.sshpass}/bin/sshpass -p root ${pkgs.openssh}/bin/scp ${scpOpts} "$@"
-          }
-          ssh_vm_probe() {
-            ${pkgs.sshpass}/bin/sshpass -p root ${pkgs.openssh}/bin/ssh ${sshProbeOpts} "$@"
-          }
+            header "Building relay daemon"
+            RELAY_BINARY=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.bmc-virt-relay-${guestArch}-debug" \
+              --no-link --print-out-paths)/bin/bmc-virt-relay
 
-          header "Building bmc-openwrt ($PROFILE)"
-          BINARY=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.bmc-openwrt-$PROFILE" \
-            --no-link --print-out-paths)/bin/bmc-openwrt
+            header "Building widgets"
+            WIDGETS=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.widgets-${guestArch}" \
+              --no-link --print-out-paths)
 
-          header "Building frontend"
-          FRONTEND=$(${pkgs.nix}/bin/nix build -L "$WORKSPACE#frontend" \
-            --no-link --print-out-paths)
+            header "Building WASM widgets"
+            WASM_WIDGETS=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.wasm-examples" \
+              --no-link --print-out-paths)
 
-          if [[ -z "$LED_BINARY" ]]; then
-            header "Building LED visualizer"
-            LED_BINARY=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.bmc-virt-leds-${guestArch}-debug" \
-              --no-link --print-out-paths)/bin/bmc-virt-leds
-          fi
+            header "Building console app (host-native)"
+            ${consoleHostRustflagsExports}
+            cargo build -p bmc-virt-console --manifest-path "$WORKSPACE/Cargo.toml"
+            CONSOLE_BINARY="$WORKSPACE/target/debug/bmc-virt-console"
 
-          header "Building relay daemon"
-          RELAY_BINARY=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.bmc-virt-relay-${guestArch}-debug" \
-            --no-link --print-out-paths)/bin/bmc-virt-relay
-
-          header "Building widgets"
-          WIDGETS=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.widgets-${guestArch}" \
-            --no-link --print-out-paths)
-
-          header "Building console app (host-native)"
-          ${consoleHostRustflagsExports}
-          cargo build -p bmc-virt-console --manifest-path "$WORKSPACE/Cargo.toml"
-          CONSOLE_BINARY="$WORKSPACE/target/debug/bmc-virt-console"
-
-          header "Building OpenWrt image (rootfs + kernel)"
-          if ! IMAGE=$(${pkgs.nix}/bin/nix build -L \
-            "path:$WORKSPACE/bmc-virt#vmImage" \
-            --option sandbox false \
-            --no-link --print-out-paths); then
-            exit 1
-          fi
-
-          BASE_IMAGE=$(find "$IMAGE" -maxdepth 1 -name '*ext4-combined.img*' ! -name '*efi*' -print -quit)
-          if [[ -z "$BASE_IMAGE" ]]; then
-            BASE_IMAGE=$(find "$IMAGE" -maxdepth 1 -name '*ext4-combined*.img*' -print -quit)
-          fi
-          if [[ -z "$BASE_IMAGE" ]]; then
-            echo "ERROR: Could not find ext4 combined image in $IMAGE"
-            ls "$IMAGE/"
-            exit 1
-          fi
-
-          OVERLAY="$DATADIR/overlay.qcow2"
-          if [[ -f "$OVERLAY" ]]; then
-            rm -f "$OVERLAY" "$DATADIR/known_hosts" "$DATADIR/binary.sha256"
-          fi
-          if [[ ! -f "$OVERLAY" ]]; then
-            header "Creating qcow2 overlay"
-            if [[ "$BASE_IMAGE" == *.gz ]]; then
-              DECOMPRESSED="$DATADIR/base.img"
-              ${pkgs.gzip}/bin/gunzip -c "$BASE_IMAGE" > "$DECOMPRESSED" || true
-              BASE_IMAGE="$DECOMPRESSED"
+            header "Building OpenWrt image (rootfs + kernel)"
+            if ! IMAGE=$(${pkgs.nix}/bin/nix build -L \
+              "path:$WORKSPACE/bmc-virt#vmImage" \
+              --option sandbox false \
+              --no-link --print-out-paths); then
+              exit 1
             fi
-            ${qemu}/bin/qemu-img create -f qcow2 -b "$BASE_IMAGE" -F raw "$OVERLAY"
-          fi
 
-          PIDFILE="$DATADIR/qemu.pid"
-          VM_RUNNING=false
-          if [[ -f "$PIDFILE" ]]; then
-            PID=$(cat "$PIDFILE")
-            if kill -0 "$PID" 2>/dev/null; then
-              if ssh_vm_probe root@localhost true 2>/dev/null; then
-                echo "VM already running (PID $PID)"
-                VM_RUNNING=true
+            BASE_IMAGE=$(find "$IMAGE" -maxdepth 1 -name '*ext4-combined.img*' ! -name '*efi*' -print -quit)
+            if [[ -z "$BASE_IMAGE" ]]; then
+              BASE_IMAGE=$(find "$IMAGE" -maxdepth 1 -name '*ext4-combined*.img*' -print -quit)
+            fi
+            if [[ -z "$BASE_IMAGE" ]]; then
+              echo "ERROR: Could not find ext4 combined image in $IMAGE"
+              ls "$IMAGE/"
+              exit 1
+            fi
+
+            OVERLAY="$DATADIR/overlay.qcow2"
+            if [[ -f "$OVERLAY" ]]; then
+              rm -f "$OVERLAY" "$DATADIR/known_hosts" "$DATADIR/binary.sha256"
+            fi
+            if [[ ! -f "$OVERLAY" ]]; then
+              header "Creating qcow2 overlay"
+              if [[ "$BASE_IMAGE" == *.gz ]]; then
+                DECOMPRESSED="$DATADIR/base.img"
+                ${pkgs.gzip}/bin/gunzip -c "$BASE_IMAGE" > "$DECOMPRESSED" || true
+                BASE_IMAGE="$DECOMPRESSED"
+              fi
+              ${qemu}/bin/qemu-img create -f qcow2 -b "$BASE_IMAGE" -F raw "$OVERLAY"
+            fi
+
+            PIDFILE="$DATADIR/qemu.pid"
+            VM_RUNNING=false
+            if [[ -f "$PIDFILE" ]]; then
+              PID=$(cat "$PIDFILE")
+              if kill -0 "$PID" 2>/dev/null; then
+                if ssh_vm_probe root@localhost true 2>/dev/null; then
+                  echo "VM already running (PID $PID)"
+                  VM_RUNNING=true
+                else
+                  echo "QEMU running but SSH not responding, restarting..."
+                  kill "$PID" 2>/dev/null || true
+                  for _ in $(seq 1 10); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
+                  kill -9 "$PID" 2>/dev/null || true
+                  rm -f "$PIDFILE"
+                fi
               else
-                echo "QEMU running but SSH not responding, restarting..."
-                kill "$PID" 2>/dev/null || true
-                for _ in $(seq 1 10); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
-                kill -9 "$PID" 2>/dev/null || true
                 rm -f "$PIDFILE"
               fi
-            else
-              rm -f "$PIDFILE"
             fi
-          fi
 
-          if [[ "$VM_RUNNING" == false ]]; then
-            header "Starting VM"
-            ACCEL_ARGS=""
-            ${if isDarwin then ''
-            ACCEL_ARGS="-accel hvf -cpu host"
-            '' else ''
-            if [[ -e /dev/kvm ]]; then
-              ACCEL_ARGS="-enable-kvm -cpu host"
-            else
-              echo "WARNING: KVM not available, using TCG (slow)"
-              ACCEL_ARGS="-cpu max"
-            fi
-            ''}
+            if [[ "$VM_RUNNING" == false ]]; then
+              header "Starting VM"
+              ACCEL_ARGS=""
+              ${if isDarwin then ''
+              ACCEL_ARGS="-accel hvf -cpu host"
+              '' else ''
+              if [[ -e /dev/kvm ]]; then
+                ACCEL_ARGS="-enable-kvm -cpu host"
+              else
+                echo "WARNING: KVM not available, using TCG (slow)"
+                ACCEL_ARGS="-cpu max"
+              fi
+              ''}
 
-            # Host QEMU binary.
-            GPU_ARGS=""
-            QEMU_BIN="${qemu}/bin/${qemuBin}"
-            if [[ "$(uname)" == "Darwin" ]]; then
-              # The QEMU here comes from the darwin-qemu-virgl flake input —
-              # patched for ANGLE-backed virgl on macOS. The working display
-              # backend is `cocoa,gl=es`, which opens a small QEMU-owned
-              # native window where virgl gets its Metal-backed GL context.
-              # `egl-headless` is listed by `-display help` but fails at
-              # runtime ("egl: not available on this platform") — macOS has
-              # no native EGL.
-              GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display cocoa,gl=es"
-              echo "QEMU: using nix binary at $QEMU_BIN"
-              echo "GPU: virgl via ANGLE→Metal (hardware-accelerated)"
-            elif [ -c /dev/dri/renderD128 ]; then
-              # GPU: try virgl (hardware-accelerated) first, fall back to software.
-              # virgl needs a host render node + QEMU with egl-headless.
-              # Nix-built QEMU/libgbm hardcodes /run/opengl-driver (NixOS convention),
-              # so on non-NixOS we prefer the system QEMU which links against system mesa.
-              # Prefer system QEMU for virgl on non-NixOS (avoids mesa path mismatch)
-              SYS_QEMU="$(command -v ${qemuBin} 2>/dev/null || true)"
-              if [ -n "$SYS_QEMU" ] && "$SYS_QEMU" -display help 2>&1 | grep -q egl-headless; then
-                QEMU_BIN="$SYS_QEMU"
-                GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display egl-headless"
-                echo "GPU: virgl via system QEMU (hardware-accelerated)"
-              elif ${qemu}/bin/${qemuBin} -display help 2>&1 | grep -q egl-headless && \
-                   [ -d /run/opengl-driver ]; then
-                GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display egl-headless"
-                echo "GPU: virgl via nix QEMU (hardware-accelerated)"
+              # Host QEMU binary.
+              GPU_ARGS=""
+              QEMU_BIN="${qemu}/bin/${qemuBin}"
+              if [[ "$(uname)" == "Darwin" ]]; then
+                # The QEMU here comes from the darwin-qemu-virgl flake input —
+                # patched for ANGLE-backed virgl on macOS. The working display
+                # backend is `cocoa,gl=es`, which opens a small QEMU-owned
+                # native window where virgl gets its Metal-backed GL context.
+                # `egl-headless` is listed by `-display help` but fails at
+                # runtime ("egl: not available on this platform") — macOS has
+                # no native EGL.
+                GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display cocoa,gl=es"
+                echo "QEMU: using nix binary at $QEMU_BIN"
+                echo "GPU: virgl via ANGLE→Metal (hardware-accelerated)"
+              elif [ -c /dev/dri/renderD128 ]; then
+                # GPU: try virgl (hardware-accelerated) first, fall back to software.
+                # virgl needs a host render node + QEMU with egl-headless.
+                # Nix-built QEMU/libgbm hardcodes /run/opengl-driver (NixOS convention),
+                # so on non-NixOS we prefer the system QEMU which links against system mesa.
+                # Prefer system QEMU for virgl on non-NixOS (avoids mesa path mismatch)
+                SYS_QEMU="$(command -v ${qemuBin} 2>/dev/null || true)"
+                if [ -n "$SYS_QEMU" ] && "$SYS_QEMU" -display help 2>&1 | grep -q egl-headless; then
+                  QEMU_BIN="$SYS_QEMU"
+                  GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display egl-headless"
+                  echo "GPU: virgl via system QEMU (hardware-accelerated)"
+                elif ${qemu}/bin/${qemuBin} -display help 2>&1 | grep -q egl-headless && \
+                     [ -d /run/opengl-driver ]; then
+                  GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display egl-headless"
+                  echo "GPU: virgl via nix QEMU (hardware-accelerated)"
+                else
+                  GPU_ARGS="-device virtio-gpu-pci,xres=480,yres=1280 -display none"
+                  echo "GPU: software rendering (no virgl-capable QEMU found)"
+                fi
               else
                 GPU_ARGS="-device virtio-gpu-pci,xres=480,yres=1280 -display none"
-                echo "GPU: software rendering (no virgl-capable QEMU found)"
+                echo "GPU: software rendering (no render node)"
               fi
-            else
-              GPU_ARGS="-device virtio-gpu-pci,xres=480,yres=1280 -display none"
-              echo "GPU: software rendering (no render node)"
+
+              # Always boot the custom kernel so we control boot params.
+              # The video= parameter forces virtio-gpu to expose a 480x1280 mode
+              # matching the real hardware panel.
+              CUSTOM_KERNEL=$(${pkgs.nix}/bin/nix build -L \
+                "path:$WORKSPACE/bmc-virt#customKernel" \
+                --no-link --print-out-paths)/vmlinuz
+
+              # Audio passthrough — detect host audio backend and add virtual sound card.
+              # Note: a pipewire socket on the host is not enough — QEMU must also be
+              # built with the pipewire backend (distros like Guix ship without it).
+              AUDIO_ARGS=""
+              XDG="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+              SOUND_DEV="-device virtio-sound-pci,audiodev=snd0"
+              QEMU_AUDIODEVS="$("$QEMU_BIN" -audiodev help 2>&1 || true)"
+              if [[ "$(uname)" == "Darwin" ]]; then
+                AUDIO_ARGS="-audiodev coreaudio,id=snd0 $SOUND_DEV"
+                echo "Audio: coreaudio"
+              elif [[ -S "$XDG/pipewire-0" ]] && grep -qw pipewire <<<"$QEMU_AUDIODEVS"; then
+                AUDIO_ARGS="-audiodev pipewire,id=snd0 $SOUND_DEV"
+                echo "Audio: pipewire"
+              elif [[ -S "$XDG/pulse/native" ]] || [[ -n "''${PULSE_SERVER:-}" ]]; then
+                AUDIO_ARGS="-audiodev pa,id=snd0 $SOUND_DEV"
+                echo "Audio: pulseaudio"
+              else
+                echo "WARNING: No audio backend detected, sound disabled"
+              fi
+
+              # hwsim params:
+              #   radios=2  — radio0 for app, radio1 as fake upstream AP (BMC-VIRT-UPLINK)
+              #   channels=2 — enables hw_scan ops so AP-mode interfaces can scan
+              #                 (works with kernel-patches/002-mac80211-ap-scan.patch)
+              #
+              # ACCEL/GPU/AUDIO args are intentionally preassembled shell words.
+              # Quoting them would collapse each option bundle into a single argv
+              # entry and break the QEMU invocation.
+              # shellcheck disable=SC2086
+              $QEMU_BIN \
+                -machine ${qemuMachine} \
+                $ACCEL_ARGS \
+                -m 512M \
+                -drive file="$OVERLAY",format=qcow2,if=virtio \
+                -kernel "$CUSTOM_KERNEL" \
+                -append "root=/dev/vda2 rootfstype=ext4 rootwait console=${consoleDevice} drm_kms_helper.fbdev_emulation=0 mac80211_hwsim.radios=2 mac80211_hwsim.channels=2" \
+                -vga none \
+                $GPU_ARGS \
+                -device virtio-net-pci,netdev=net0 \
+                -netdev user,id=net0,net=192.168.1.0/24,hostfwd=tcp::${toString ports.ssh}-192.168.1.1:22,hostfwd=tcp::${toString ports.http}-192.168.1.1:80,hostfwd=tcp::${toString ports.grpc}-192.168.1.1:50051,hostfwd=tcp::${toString ports.ipc}-192.168.1.1:${toString ports.ipc},hostfwd=tcp::${toString ports.event}-192.168.1.1:${toString ports.event} \
+                -device virtio-tablet-pci \
+                -device virtio-rng-pci \
+                -virtfs local,path=/nix/store,mount_tag=nixstore,security_model=none,readonly=on \
+                $AUDIO_ARGS \
+                -serial file:"$LOGDIR/serial.log" \
+                > "$LOGDIR/qemu.log" 2>&1 &
+              echo $! > "$PIDFILE"
+
+              echo "Waiting for SSH..."
+              for i in $(seq 1 90); do
+                if ssh_vm_probe root@localhost true 2>/dev/null; then echo "SSH ready."; break; fi
+                if ! kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+                  echo "ERROR: QEMU exited unexpectedly"
+                  cat "$LOGDIR/qemu.log" 2>/dev/null || true
+                  exit 1
+                fi
+                if (( i % 5 == 0 )); then echo "Still waiting... ($i/90)"; fi
+                if [[ $i -eq 90 ]]; then
+                  echo "ERROR: VM did not become ready"
+                  tail -50 "$LOGDIR/serial.log" 2>/dev/null || true
+                  exit 1
+                fi
+                sleep 1
+              done
+              # Run the first-boot scripts through the guest shell. The single-
+              # quoted heredoc is intentional: host-side expansion must not touch
+              # the guest loop variables or redirections.
+              # shellcheck disable=SC2016
+              ssh_vm root@localhost 'for f in /etc/uci-defaults/*; do
+                [ -x "$f" ] || continue; "$f" && rm -f "$f" || echo "WARNING: $f failed" >&2
+              done' || true
             fi
 
-            # Always boot the custom kernel so we control boot params.
-            # The video= parameter forces virtio-gpu to expose a 480x1280 mode
-            # matching the real hardware panel.
-            CUSTOM_KERNEL=$(${pkgs.nix}/bin/nix build -L \
-              "path:$WORKSPACE/bmc-virt#customKernel" \
-              --no-link --print-out-paths)/vmlinuz
+            if [[ -n "$CONFIG" ]]; then
+              header "Deploying config"
+              scp_vm "$CONFIG" "root@localhost:${guestPaths.BMC_CONFIG}"
 
-            # Audio passthrough — detect host audio backend and add virtual sound card.
-            # Note: a pipewire socket on the host is not enough — QEMU must also be
-            # built with the pipewire backend (distros like Guix ship without it).
-            AUDIO_ARGS=""
-            XDG="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-            SOUND_DEV="-device virtio-sound-pci,audiodev=snd0"
-            QEMU_AUDIODEVS="$("$QEMU_BIN" -audiodev help 2>&1 || true)"
-            if [[ "$(uname)" == "Darwin" ]]; then
-              AUDIO_ARGS="-audiodev coreaudio,id=snd0 $SOUND_DEV"
-              echo "Audio: coreaudio"
-            elif [[ -S "$XDG/pipewire-0" ]] && grep -qw pipewire <<<"$QEMU_AUDIODEVS"; then
-              AUDIO_ARGS="-audiodev pipewire,id=snd0 $SOUND_DEV"
-              echo "Audio: pipewire"
-            elif [[ -S "$XDG/pulse/native" ]] || [[ -n "''${PULSE_SERVER:-}" ]]; then
-              AUDIO_ARGS="-audiodev pa,id=snd0 $SOUND_DEV"
-              echo "Audio: pulseaudio"
-            else
-              echo "WARNING: No audio backend detected, sound disabled"
+              header "Applying provisioned device state"
+              ssh_vm root@localhost '
+                # Preloaded configs should bypass first-boot onboarding.
+                . /lib/functions/bos-defaults.sh
+                unset_factory_default
+                unset_setup_pending
+                unset_wifi_reconfig
+
+                # Connect radio0 to the fake upstream AP so the app sees WiFi as connected.
+                # This mimics a device that has already completed WiFi setup.
+                uci set wireless.default_radio0.mode="sta"
+                uci set wireless.default_radio0.network="wifi_sta"
+                uci set wireless.default_radio0.ssid="${uplinkSsid}"
+                uci set wireless.default_radio0.encryption="psk2"
+                uci set wireless.default_radio0.key="${uplinkKey}"
+                uci set wireless.default_radio0.disabled="0"
+                uci commit wireless
+                wifi reload
+              '
             fi
 
-            # hwsim params:
-            #   radios=2  — radio0 for app, radio1 as fake upstream AP (BMC-VIRT-UPLINK)
-            #   channels=2 — enables hw_scan ops so AP-mode interfaces can scan
-            #                 (works with kernel-patches/002-mac80211-ap-scan.patch)
-            $QEMU_BIN \
-              -machine ${qemuMachine} \
-              $ACCEL_ARGS \
-              -m 512M \
-              -drive file="$OVERLAY",format=qcow2,if=virtio \
-              -kernel "$CUSTOM_KERNEL" \
-              -append "root=/dev/vda2 rootfstype=ext4 rootwait console=${consoleDevice} drm_kms_helper.fbdev_emulation=0 mac80211_hwsim.radios=2 mac80211_hwsim.channels=2" \
-              -vga none \
-              $GPU_ARGS \
-              -device virtio-net-pci,netdev=net0 \
-              -netdev user,id=net0,net=192.168.1.0/24,hostfwd=tcp::${toString ports.ssh}-192.168.1.1:22,hostfwd=tcp::${toString ports.http}-192.168.1.1:80,hostfwd=tcp::${toString ports.grpc}-192.168.1.1:50051,hostfwd=tcp::${toString ports.ipc}-192.168.1.1:${toString ports.ipc},hostfwd=tcp::${toString ports.event}-192.168.1.1:${toString ports.event} \
-              -device virtio-tablet-pci \
-              -device virtio-rng-pci \
-              -virtfs local,path=/nix/store,mount_tag=nixstore,security_model=none,readonly=on \
-              $AUDIO_ARGS \
-              -serial file:"$LOGDIR/serial.log" \
-              > "$LOGDIR/qemu.log" 2>&1 &
-            echo $! > "$PIDFILE"
-
-            echo "Waiting for SSH..."
-            for i in $(seq 1 90); do
-              if ssh_vm_probe root@localhost true 2>/dev/null; then echo "SSH ready."; break; fi
-              if ! kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-                echo "ERROR: QEMU exited unexpectedly"
-                cat "$LOGDIR/qemu.log" 2>/dev/null || true
-                exit 1
-              fi
-              if (( i % 5 == 0 )); then echo "Still waiting... ($i/90)"; fi
-              if [[ $i -eq 90 ]]; then
-                echo "ERROR: VM did not become ready"
-                tail -50 "$LOGDIR/serial.log" 2>/dev/null || true
-                exit 1
-              fi
-              sleep 1
-            done
-
-            ssh_vm root@localhost 'for f in /etc/uci-defaults/*; do
-              [ -x "$f" ] || continue; "$f" && rm -f "$f" || echo "WARNING: $f failed" >&2
-            done' || true
-          fi
-
-          if [[ -n "$CONFIG" ]]; then
-            header "Deploying config"
-            scp_vm "$CONFIG" "root@localhost:${guestPaths.BMC_CONFIG}"
-
-            header "Applying provisioned device state"
-            ssh_vm root@localhost '
-              # Preloaded configs should bypass first-boot onboarding.
-              . /lib/functions/bos-defaults.sh
-              unset_factory_default
-              unset_setup_pending
-              unset_wifi_reconfig
-
-              # Connect radio0 to the fake upstream AP so the app sees WiFi as connected.
-              # This mimics a device that has already completed WiFi setup.
-              uci set wireless.default_radio0.mode="sta"
-              uci set wireless.default_radio0.network="wifi_sta"
-              uci set wireless.default_radio0.ssid="${uplinkSsid}"
-              uci set wireless.default_radio0.encryption="psk2"
-              uci set wireless.default_radio0.key="${uplinkKey}"
-              uci set wireless.default_radio0.disabled="0"
-              uci commit wireless
-              wifi reload
-            '
-          fi
-
-          if [[ -n "$RR" ]]; then
-            ${if isAarch64 then ''
-            echo "ERROR: rr is x86_64-only, not available on aarch64 hosts" >&2
-            exit 1
-            '' else ''
-            header "Deploying rr bundle"
-            RR_BUNDLE=$(${pkgs.nix}/bin/nix build -L \
-              "path:$WORKSPACE/bmc-virt#rrBundle" \
-              --no-link --print-out-paths)
-            # Always deploy — overlay is recreated fresh on every run
-            ssh_vm root@localhost 'rm -rf ${rrGuestBundle}'
-            tar -C "$RR_BUNDLE" -cf - . | ssh_vm root@localhost 'mkdir -p ${rrGuestBundle} && tar -C ${rrGuestBundle} -xf -'
-            ssh_vm root@localhost 'chmod +x ${rrGuestBundle}/bin/*'
-            ''}
-          fi
-
-          if [[ -n "$HOST_PATH_DIRS" ]]; then
-            header "Installing host tools"
-            ssh_vm root@localhost 'mkdir -p /root/host-tools'
-            IFS=':' read -ra DIRS <<< "$HOST_PATH_DIRS"
-            for dir in "''${DIRS[@]}"; do
-              tar -C "$dir" -cf - . | ssh_vm root@localhost 'tar -C /root/host-tools -xf -'
-            done
-            ssh_vm root@localhost \
-              'grep -qF /root/host-tools /etc/profile || echo "export PATH=\"\$PATH:/root/host-tools\"" >> /etc/profile'
-          fi
-
-          header "Deploying guest overlay"
-          TMP_GUEST_OVERLAY=$(${pkgs.coreutils}/bin/mktemp -d)
-          cleanup_guest_overlay() {
-            ${pkgs.coreutils}/bin/rm -rf "$TMP_GUEST_OVERLAY"
-          }
-          trap cleanup_guest_overlay EXIT
-          ${pkgs.coreutils}/bin/cp -a ${overlayDir}/. "$TMP_GUEST_OVERLAY/"
-          ${pkgs.coreutils}/bin/chmod -R u+w "$TMP_GUEST_OVERLAY"
-
-          # Template WiFi uplink credentials in all overlay files
-          ${templateUplink pkgs "$TMP_GUEST_OVERLAY"}
-
-          # Binaries
-          ${pkgs.coreutils}/bin/mkdir -p "$TMP_GUEST_OVERLAY/usr/bin"
-          ${pkgs.coreutils}/bin/install -m755 "${guestPkgsStatic.just}/bin/just" \
-            "$TMP_GUEST_OVERLAY/usr/bin/just"
-          ${pkgs.coreutils}/bin/install -m755 "$RELAY_BINARY" \
-            "$TMP_GUEST_OVERLAY/usr/bin/bmc-virt-relay"
-          ${pkgs.coreutils}/bin/install -m755 "$BINARY" \
-            "$TMP_GUEST_OVERLAY${guestPaths.BMC_BIN}"
-          if [[ -n "$LED_BINARY" ]]; then
-            ${pkgs.coreutils}/bin/install -m755 "$LED_BINARY" \
-              "$TMP_GUEST_OVERLAY/root/bmc-virt-leds"
-          fi
-
-          # Widgets path (nix store path, accessible via 9p mount)
-          echo "$WIDGETS/lib/bmc-widgets" > "$TMP_GUEST_OVERLAY/etc/bmc-virt/widgets-path"
-
-          # Event daemon — deployed from nix-built harness venv (uv.lock deps)
-          echo "${eventdEnv}/bin/python3" > "$TMP_GUEST_OVERLAY/etc/bmc-virt/eventd-python"
-
-          # Env files rendered via `pkgs.writeText` in the let block above.
-          # Host-side forwarded ports are sourced by the login banner; guest
-          # paths are sourced by init scripts, the relay, the justfile, and
-          # get-logs.sh.
-          ${pkgs.coreutils}/bin/install -m644 ${portsEnvFile} \
-            "$TMP_GUEST_OVERLAY/etc/bmc-virt/ports.env"
-          ${pkgs.coreutils}/bin/install -m644 ${pathsEnvFile} \
-            "$TMP_GUEST_OVERLAY/etc/bmc-virt/paths.env"
-
-          # Frontend assets
-          ${pkgs.coreutils}/bin/mkdir -p "$TMP_GUEST_OVERLAY/www/bmc"
-          ${pkgs.coreutils}/bin/cp -a "$FRONTEND"/. "$TMP_GUEST_OVERLAY/www/bmc/"
-
-          # Sounds
-          ${pkgs.coreutils}/bin/mkdir -p "$TMP_GUEST_OVERLAY/usr/share/bmc/sounds"
-          ${pkgs.coreutils}/bin/cp -a ${./data/sounds}/. "$TMP_GUEST_OVERLAY/usr/share/bmc/sounds/"
-
-          # Fonts
-          ${pkgs.coreutils}/bin/mkdir -p "$TMP_GUEST_OVERLAY/usr/share/fonts/truetype"
-          ${pkgs.coreutils}/bin/cp "${pkgs.corefonts}/share/fonts/truetype/Arial.ttf" \
-            "$TMP_GUEST_OVERLAY/usr/share/fonts/truetype/Arial.ttf"
-
-          # Ensure all files are writable so cleanup_guest_overlay can rm them
-          # (Nix store sources are read-only).
-          ${pkgs.coreutils}/bin/chmod -R u+w "$TMP_GUEST_OVERLAY"
-
-          # Push to VM
-          ssh_vm root@localhost 'killall bmc-openwrt bmc-virt-relay 2>/dev/null; sleep 1
-            # Clean up all bmc-virt rc.d/init.d entries before deploying fresh overlay
-            rm -f /etc/rc.d/S*-bmc-virt-* /etc/rc.d/S*-bmc-openwrt
-            rm -f /etc/init.d/*-bmc-virt-* /etc/init.d/*-bmc-openwrt
-          ' || true
-          tar -C "$TMP_GUEST_OVERLAY" --exclude='./etc/config' --exclude='./etc/uci-defaults' -cf - . | ssh_vm root@localhost 'tar -C / -xf -'
-          cleanup_guest_overlay
-          trap - EXIT
-
-          # Device setup + services are handled by init.d scripts in the
-          # overlay (80-bmc-virt-setup, 85-bmc-openwrt, 90-bmc-virt-relay).
-          # On first deploy we run them explicitly; on reboot they run automatically.
-          header "Starting services"
-          # Select bmc-openwrt's launch mode via an env file that the init.d
-          # script sources. Writing or clearing the file keeps a single
-          # startup path (procd) for both modes.
-          if [[ -n "$RR" ]]; then
-            ssh_vm root@localhost '
-              mkdir -p /etc/bmc-virt
-              cat > /etc/bmc-virt/bmc-openwrt.env <<EOF
-          RR_ENABLED=1
-          RR_BUNDLE=${rrGuestBundle}
-          RR_TRACE_DIR=${rrGuestTraceDir}
-          XDG_RUNTIME_DIR_OVERRIDE=/run/user/0
-          EOF
-            '
-          else
-            ssh_vm root@localhost 'rm -f /etc/bmc-virt/bmc-openwrt.env'
-          fi
-          # Start all bmc-virt services in rc.d order.
-          # Uses "boot" action — works for both boot()-only scripts
-          # (a-bmc-virt-setup, c-bmc-virt-wifi) and procd start_service() scripts.
-          ssh_vm root@localhost '
-            for s in /etc/rc.d/S*-bmc-*; do
-              echo "Starting $(basename $s)..."
-              "$s" boot
-            done
-          '
-          if [[ -n "$RR" ]]; then
-            # Give rr a moment to start (or crash) and verify it is alive
-            ssh_vm root@localhost '
-              sleep 2
-              if ! pgrep -f "rr record" >/dev/null 2>&1; then
-                echo "ERROR: rr failed to start. Log:"
-                cat ${guestPaths.BMC_LOG}
-                exit 1
-              fi
-              echo "bmc-openwrt started under rr"
-            '
-          fi
-
-          if [[ -z "$RR" ]]; then
-            header "Opening display"
-            CONSOLE_BINARY="$CONSOLE_BINARY" ${display}/bin/bmc-virt-display
-          else
-            echo "Skipping display console (headless compositor under rr)"
-          fi
-
-          header "Connecting (Ctrl+D or 'exit' to disconnect, VM keeps running)"
-          echo "Ports: HTTP=${toString ports.http}  gRPC=${toString ports.grpc}  SSH=${toString ports.ssh}"
-          if [[ -n "$RR" ]]; then
-            echo "rr recording active — exit SSH to stop and pull the recording"
-          fi
-          ssh_vm -t root@localhost bash -l
-
-          # After SSH disconnect: pull rr recording if active
-          if [[ -n "$RR" ]]; then
-            header "Pulling rr recording from VM"
-            # SIGTERM rr (not bmc-openwrt directly) so rr finalizes the trace cleanly.
-            # rr forwards the signal to the child and writes a complete recording.
-            ssh_vm root@localhost 'RR_PID=$(pgrep -f "rr record"); kill $RR_PID 2>/dev/null; sleep 5' || true
-
-            RR_TRACE=$(ssh_vm root@localhost 'ls -td ${rrGuestTraceDir}/bmc-openwrt-* 2>/dev/null | head -1' 2>/dev/null)
-            if [[ -n "$RR_TRACE" ]]; then
-              LOCAL_TRACE="$DATADIR/rr-traces/$(basename "$RR_TRACE")"
-              mkdir -p "$LOCAL_TRACE"
-              ssh_vm root@localhost "tar -C '$RR_TRACE' -cf - ." | tar -C "$LOCAL_TRACE" -xf -
-
-              echo ""
-              echo -e "\033[1;32mRecording saved: $LOCAL_TRACE\033[0m"
-              echo ""
-              echo "Replay:"
-              echo "  nix shell nixpkgs#rr -c rr replay $LOCAL_TRACE"
-              echo ""
-              echo "Useful commands inside rr replay (GDB):"
-              echo "  reverse-continue    — run backwards to previous breakpoint"
-              echo "  reverse-step        — step one source line backwards"
-              echo "  reverse-next        — step backwards over function calls"
-              echo "  watch -l <expr>     — break when memory changes (works in reverse too)"
-              echo ""
-              echo "AMD Zen CPUs: disable SpecLockMap before replay or rr will diverge:"
-              echo "  sudo modprobe msr"
-              echo '  sudo wrmsr -a 0xc0011020 $(($(sudo rdmsr -c 0xc0011020) | (1 << 54)))'
-              echo "  sudo sysctl kernel.perf_event_paranoid=1"
-              echo ""
-            else
-              echo "WARNING: No rr recording found on VM"
+            if [[ -n "$RR" ]]; then
+              ${if isAarch64 then ''
+              echo "ERROR: rr is x86_64-only, not available on aarch64 hosts" >&2
+              exit 1
+              '' else ''
+              header "Deploying rr bundle"
+              RR_BUNDLE=$(${pkgs.nix}/bin/nix build -L \
+                "path:$WORKSPACE/bmc-virt#rrBundle" \
+                --no-link --print-out-paths)
+              # Always deploy — overlay is recreated fresh on every run
+              ssh_vm root@localhost 'rm -rf ${rrGuestBundle}'
+              tar -C "$RR_BUNDLE" -cf - . | ssh_vm root@localhost 'mkdir -p ${rrGuestBundle} && tar -C ${rrGuestBundle} -xf -'
+              ssh_vm root@localhost 'chmod +x ${rrGuestBundle}/bin/*'
+              ''}
             fi
-          fi
-        '';
+
+            if [[ -n "$HOST_PATH_DIRS" ]]; then
+              header "Installing host tools"
+              ssh_vm root@localhost 'mkdir -p /root/host-tools'
+              IFS=':' read -ra DIRS <<< "$HOST_PATH_DIRS"
+              for dir in "''${DIRS[@]}"; do
+                tar -C "$dir" -cf - . | ssh_vm root@localhost 'tar -C /root/host-tools -xf -'
+              done
+              # Append a guest-side PATH export literally. The escaped `$PATH`
+              # must survive the host shell unchanged so the guest shell expands
+              # it when `/etc/profile` is sourced later.
+              # shellcheck disable=SC2016
+              ssh_vm root@localhost \
+                'grep -qF /root/host-tools /etc/profile || echo "export PATH=\"\$PATH:/root/host-tools\"" >> /etc/profile'
+            fi
+
+            header "Deploying guest overlay"
+            TMP_GUEST_OVERLAY=$(mktemp -d)
+            cleanup_guest_overlay() {
+              rm -rf "$TMP_GUEST_OVERLAY"
+            }
+            trap cleanup_guest_overlay EXIT
+            cp -a ${overlayDir}/. "$TMP_GUEST_OVERLAY/"
+            chmod -R u+w "$TMP_GUEST_OVERLAY"
+
+            # Template WiFi uplink credentials in all overlay files
+            ${templateUplink pkgs "$TMP_GUEST_OVERLAY"}
+
+            # Binaries
+            mkdir -p "$TMP_GUEST_OVERLAY/usr/bin"
+            install -m755 "${guestPkgsStatic.just}/bin/just" \
+              "$TMP_GUEST_OVERLAY/usr/bin/just"
+            install -m755 "$RELAY_BINARY" \
+              "$TMP_GUEST_OVERLAY/usr/bin/bmc-virt-relay"
+            install -m755 "$BINARY" \
+              "$TMP_GUEST_OVERLAY${guestPaths.BMC_BIN}"
+            if [[ -n "$LED_BINARY" ]]; then
+              install -m755 "$LED_BINARY" \
+                "$TMP_GUEST_OVERLAY/root/bmc-virt-leds"
+            fi
+
+            # Widgets path (nix store path, accessible via 9p mount)
+            echo "$WIDGETS/lib/bmc-widgets" > "$TMP_GUEST_OVERLAY/etc/bmc-virt/widgets-path"
+
+            # Event daemon — deployed from nix-built harness venv (uv.lock deps)
+            echo "${eventdEnv}/bin/python3" > "$TMP_GUEST_OVERLAY/etc/bmc-virt/eventd-python"
+
+            # Env files rendered via `pkgs.writeText` in the let block above.
+            # Host-side forwarded ports are sourced by the login banner; guest
+            # paths are sourced by init scripts, the relay, the justfile, and
+            # get-logs.sh.
+            install -m644 ${portsEnvFile} \
+              "$TMP_GUEST_OVERLAY/etc/bmc-virt/ports.env"
+            install -m644 ${pathsEnvFile} \
+              "$TMP_GUEST_OVERLAY/etc/bmc-virt/paths.env"
+
+            # Frontend assets
+            mkdir -p "$TMP_GUEST_OVERLAY/www/bmc"
+            cp -a "$FRONTEND"/. "$TMP_GUEST_OVERLAY/www/bmc/"
+
+            # Sounds
+            mkdir -p "$TMP_GUEST_OVERLAY/usr/share/bmc/sounds"
+            cp -a ${./data/sounds}/. "$TMP_GUEST_OVERLAY/usr/share/bmc/sounds/"
+
+            # Prebuilt WASM examples used by VM configs and harnesses.
+            mkdir -p "$TMP_GUEST_OVERLAY${guestPaths.WASM_DIR}"
+            cp -a "$WASM_WIDGETS"/. "$TMP_GUEST_OVERLAY${guestPaths.WASM_DIR}/"
+
+            # Fonts
+            mkdir -p "$TMP_GUEST_OVERLAY/usr/share/fonts/truetype"
+            cp "${pkgs.corefonts}/share/fonts/truetype/Arial.ttf" \
+              "$TMP_GUEST_OVERLAY/usr/share/fonts/truetype/Arial.ttf"
+
+            # Ensure all files are writable so cleanup_guest_overlay can rm them
+            # (Nix store sources are read-only).
+            chmod -R u+w "$TMP_GUEST_OVERLAY"
+
+            # Push to VM
+            ssh_vm root@localhost 'killall bmc-openwrt bmc-virt-relay 2>/dev/null; sleep 1
+              # Clean up all bmc-virt rc.d/init.d entries before deploying fresh overlay
+              rm -f /etc/rc.d/S*-bmc-virt-* /etc/rc.d/S*-bmc-openwrt
+              rm -f /etc/init.d/*-bmc-virt-* /etc/init.d/*-bmc-openwrt
+            ' || true
+            tar -C "$TMP_GUEST_OVERLAY" --exclude='./etc/config' --exclude='./etc/uci-defaults' -cf - . | ssh_vm root@localhost 'tar -C / -xf -'
+            cleanup_guest_overlay
+            trap - EXIT
+
+            # Device setup + services are handled by init.d scripts in the
+            # overlay (80-bmc-virt-setup, 85-bmc-openwrt, 90-bmc-virt-relay).
+            # On first deploy we run them explicitly; on reboot they run automatically.
+            header "Starting services"
+            # Select bmc-openwrt's launch mode via an env file that the init.d
+            # script sources. Writing or clearing the file keeps a single
+            # startup path (procd) for both modes.
+            if [[ -n "$RR" ]]; then
+              ssh_vm root@localhost '
+                mkdir -p /etc/bmc-virt
+                cat > /etc/bmc-virt/bmc-openwrt.env <<EOF
+            RR_ENABLED=1
+            RR_BUNDLE=${rrGuestBundle}
+            RR_TRACE_DIR=${rrGuestTraceDir}
+            XDG_RUNTIME_DIR_OVERRIDE=/run/user/0
+            EOF
+              '
+            else
+              ssh_vm root@localhost 'rm -f /etc/bmc-virt/bmc-openwrt.env'
+            fi
+            # Start all bmc-virt services in rc.d order.
+            # Uses "boot" action — works for both boot()-only scripts
+            # (a-bmc-virt-setup, c-bmc-virt-wifi) and procd start_service() scripts.
+            #
+            # The service loop executes on the guest. Keep the block single-
+            # quoted so `$(basename ...)` and `$s` are evaluated by the guest
+            # shell rather than interpolated by the host shellcheck wrapper.
+            # shellcheck disable=SC2016
+            ssh_vm root@localhost '
+              for s in /etc/rc.d/S*-bmc-*; do
+                echo "Starting $(basename $s)..."
+                "$s" boot
+              done
+            '
+            if [[ -n "$RR" ]]; then
+              # Give rr a moment to start (or crash) and verify it is alive
+              # `${guestPaths.BMC_LOG}` is substituted by Nix here, but the rest
+              # of the block must stay literal until it reaches the guest shell.
+              # shellcheck disable=SC2016
+              ssh_vm root@localhost '
+                sleep 2
+                if ! pgrep -f "rr record" >/dev/null 2>&1; then
+                  echo "ERROR: rr failed to start. Log:"
+                  cat ${guestPaths.BMC_LOG}
+                  exit 1
+                fi
+                echo "bmc-openwrt started under rr"
+              '
+            fi
+
+            if [[ -z "$RR" ]]; then
+              header "Opening display"
+              CONSOLE_BINARY="$CONSOLE_BINARY" ${display}/bin/bmc-virt-display
+            else
+              echo "Skipping display console (headless compositor under rr)"
+            fi
+
+            header "Connecting (Ctrl+D or 'exit' to disconnect, VM keeps running)"
+            echo "Ports: HTTP=${toString ports.http}  gRPC=${toString ports.grpc}  SSH=${toString ports.ssh}"
+            if [[ -n "$RR" ]]; then
+              echo "rr recording active — exit SSH to stop and pull the recording"
+            fi
+            ssh_vm -t root@localhost bash -l
+
+            # After SSH disconnect: pull rr recording if active
+            if [[ -n "$RR" ]]; then
+              header "Pulling rr recording from VM"
+              # SIGTERM rr (not bmc-openwrt directly) so rr finalizes the trace cleanly.
+              # rr forwards the signal to the child and writes a complete recording.
+              #
+              # `RR_PID` is a guest-side shell variable, so this command must stay
+              # single-quoted until it runs on the VM.
+              # shellcheck disable=SC2016
+              ssh_vm root@localhost 'RR_PID=$(pgrep -f "rr record"); kill $RR_PID 2>/dev/null; sleep 5' || true
+
+              RR_TRACE=$(ssh_vm root@localhost 'ls -td ${rrGuestTraceDir}/bmc-openwrt-* 2>/dev/null | head -1' 2>/dev/null)
+              if [[ -n "$RR_TRACE" ]]; then
+                LOCAL_TRACE="$DATADIR/rr-traces/$(basename "$RR_TRACE")"
+                mkdir -p "$LOCAL_TRACE"
+                ssh_vm root@localhost "tar -C '$RR_TRACE' -cf - ." | tar -C "$LOCAL_TRACE" -xf -
+
+                echo ""
+                echo -e "\033[1;32mRecording saved: $LOCAL_TRACE\033[0m"
+                echo ""
+                echo "Replay:"
+                echo "  nix shell nixpkgs#rr -c rr replay $LOCAL_TRACE"
+                echo ""
+                echo "Useful commands inside rr replay (GDB):"
+                echo "  reverse-continue    — run backwards to previous breakpoint"
+                echo "  reverse-step        — step one source line backwards"
+                echo "  reverse-next        — step backwards over function calls"
+                echo "  watch -l <expr>     — break when memory changes (works in reverse too)"
+                echo ""
+                echo "AMD Zen CPUs: disable SpecLockMap before replay or rr will diverge:"
+                echo "  sudo modprobe msr"
+                echo "  sudo wrmsr -a 0xc0011020 \$(\$(sudo rdmsr -c 0xc0011020) | (1 << 54))"
+                echo "  sudo sysctl kernel.perf_event_paranoid=1"
+                echo ""
+              else
+                echo "WARNING: No rr recording found on VM"
+              fi
+            fi
+          '';
+        };
 
         # Launch the host console app (connects to relay via TCP IPC).
         display = pkgs.writeShellScriptBin "bmc-virt-display" ''

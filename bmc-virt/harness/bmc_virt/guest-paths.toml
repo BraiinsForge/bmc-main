@@ -18,6 +18,7 @@ BMC_CONFIG = "/etc/bmc_config.json"
 BMC_PID_FILE = "/var/run/bmc-openwrt.pid"
 # XDG_RUNTIME_DIR used by the Wayland compositor and the relay.
 BMC_RUNTIME_DIR = "/tmp/bmc-runtime"
+WASM_DIR = "/mnt/data/wasm"
 
 # bmc-virt-relay paths.
 RELAY_LOG = "/tmp/relay.log"

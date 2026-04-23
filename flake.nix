@@ -154,6 +154,7 @@
 
         packages = workspace.packages // {
           wasm-capture = capture.package;
+          wasm-examples = capture.wasmExamples;
           frontend = frontend.build;
           yarnFiles = frontend.yarnFiles;
         };

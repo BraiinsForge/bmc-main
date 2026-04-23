@@ -4,18 +4,32 @@
 #
 # Usage: ./scripts/run.sh [options]
 #   --rr              Start bmc-openwrt under rr (time-travel debugger)
-#   --config <path>   Deploy a specific config file
+#   --config <name>   Deploy data/configs/<name>.json
 #   --profile <name>  Build profile (default: auto-detected from host arch)
 #   --host-path <dirs> Colon-separated dirs to add to VM PATH
-#
-# Shorthand configs:
-#   --customer             Use data/bmc_config_customer.json
-#   --frantisek            Use data/bmc_config_frantisek.json
-#   --combined-flip-clocks      Use data/bmc_config_combined_flip_clocks.json
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
+
+CONFIG_DIR="$PWD/data/configs"
+
+resolve_config() {
+    local name="$1"
+    local config_path="$CONFIG_DIR/$name.json"
+
+    if [[ $name == */* || $name == *.json ]]; then
+        echo "ERROR: --config expects a bare config name from data/configs, without path or extension" >&2
+        exit 1
+    fi
+
+    if [[ ! -f $config_path ]]; then
+        echo "ERROR: config '$name' not found at $config_path" >&2
+        exit 1
+    fi
+
+    realpath "$config_path"
+}
 
 "$SCRIPT_DIR/stop.sh" || true
 
@@ -31,7 +45,7 @@ while [[ $# -gt 0 ]]; do
         shift
         ;;
     --config)
-        CONFIG="$(realpath "$2")"
+        CONFIG="$(resolve_config "$2")"
         export CONFIG
         shift 2
         ;;
@@ -42,21 +56,6 @@ while [[ $# -gt 0 ]]; do
     --host-path)
         export BMC_VIRT_HOST_PATH="$2"
         shift 2
-        ;;
-    --customer)
-        CONFIG="$(realpath data/bmc_config_customer.json)"
-        export CONFIG
-        shift
-        ;;
-    --frantisek)
-        CONFIG="$(realpath data/bmc_config_frantisek.json)"
-        export CONFIG
-        shift
-        ;;
-    --combined-flip-clocks)
-        CONFIG="$(realpath data/bmc_config_combined_flip_clocks.json)"
-        export CONFIG
-        shift
         ;;
     *)
         echo "Unknown option: $1" >&2
