@@ -46,7 +46,7 @@ The system uses a JSON configuration file (`crate-verification.config.json`) in 
 #### Configuration Fields
 
 | Field                                    | Description                                                 | Required |
-|------------------------------------------|-------------------------------------------------------------|----------|
+| ---------------------------------------- | ----------------------------------------------------------- | -------- |
 | `vendored_subtrees`                      | Map of local paths to upstream repository info              | Yes      |
 | `vendored_subtrees.<path>.repo`          | Upstream repository URL (SSH or HTTPS)                      | Yes      |
 | `vendored_subtrees.<path>.commit`        | Specific commit hash to verify against                      | Yes      |
@@ -56,7 +56,7 @@ The system uses a JSON configuration file (`crate-verification.config.json`) in 
 ### Environment Variables
 
 | Variable               | Description                    | Default                          |
-|------------------------|--------------------------------|----------------------------------|
+| ---------------------- | ------------------------------ | -------------------------------- |
 | `CRATE_VERIFY_CONFIG`  | Path to configuration file     | `crate-verification.config.json` |
 | `CRATE_VERIFY_VERBOSE` | Enable verbose output          | `false`                          |
 | `CRATE_VERIFY_SUMMARY` | Show summary table             | `false`                          |
@@ -73,7 +73,7 @@ The system uses a JSON configuration file (`crate-verification.config.json`) in 
 ### Options
 
 | Option          | Description                                                     |
-|-----------------|-----------------------------------------------------------------|
+| --------------- | --------------------------------------------------------------- |
 | `--config FILE` | Path to configuration file                                      |
 | `--verbose`     | Show detailed output including file diffs and debug information |
 | `--summary`     | Show summary table at the end                                   |
@@ -120,7 +120,7 @@ CRATE_VERIFY_CONFIG=ci-crates.json ./scripts/verify_crates.sh
 ## Exit Codes
 
 | Code | Description                              |
-|------|------------------------------------------|
+| ---- | ---------------------------------------- |
 | 0    | All verifications passed                 |
 | 1    | One or more crates differ from upstream  |
 | 2    | Configuration error or invalid arguments |

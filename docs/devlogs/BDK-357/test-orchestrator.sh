@@ -51,7 +51,7 @@ clean_markers() {
 }
 
 reset_orchestrator_log() {
-    : > "$ORCH_LOG" 2>/dev/null || true
+    : >"$ORCH_LOG" 2>/dev/null || true
 }
 
 # ── Phase 0: Ensure clean state ──────────────────────────────────────
@@ -70,9 +70,9 @@ clean_markers
 reset_orchestrator_log
 
 bmc-nix-cli add-packages \
-    --name test-init    --version 1.0.0 --store-path "$TEST_INIT_STORE_PATH" \
+    --name test-init --version 1.0.0 --store-path "$TEST_INIT_STORE_PATH" \
     --name test-upgrade --version 1.0.0 --store-path "$TEST_UPGRADE_V1_STORE_PATH" \
-    --name test-remove  --version 1.0.0 --store-path "$TEST_REMOVE_STORE_PATH"
+    --name test-remove --version 1.0.0 --store-path "$TEST_REMOVE_STORE_PATH"
 
 wait_for_orchestrator
 
@@ -89,11 +89,11 @@ bmc-nix-cli add-packages \
 
 wait_for_orchestrator
 
-assert_file_exists  /tmp/upgrade_reload
-assert_file_absent  /tmp/upgrade_failed
-assert_file_absent  /tmp/upgrade_init_failed
-assert_file_absent  /tmp/init_boot
-assert_file_absent  /tmp/init_start
+assert_file_exists /tmp/upgrade_reload
+assert_file_absent /tmp/upgrade_failed
+assert_file_absent /tmp/upgrade_init_failed
+assert_file_absent /tmp/init_boot
+assert_file_absent /tmp/init_start
 
 # ── Phase 3: Removal ───────────────────────────────────────────────
 echo "=== Phase 3: Removal ==="
@@ -105,9 +105,9 @@ bmc-nix-cli remove-packages \
 
 wait_for_orchestrator
 
-assert_file_exists  /tmp/remove_stop
-assert_file_absent  /tmp/init_boot
-assert_file_absent  /tmp/upgrade_reload
+assert_file_exists /tmp/remove_stop
+assert_file_absent /tmp/init_boot
+assert_file_absent /tmp/upgrade_reload
 
 # ── Phase 4: Cleanup ───────────────────────────────────────────────
 echo "=== Phase 4: Cleanup ==="

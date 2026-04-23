@@ -79,7 +79,7 @@
         . "$(dirname "$0")/../share/test-orchestrator/test-orchestrator.sh"
       '';
 
-      script = pkgs.runCommand "test-orchestrator-share" {} ''
+      script = pkgs.runCommand "test-orchestrator-share" { } ''
         mkdir -p $out/share/test-orchestrator
         cp ${./test-orchestrator.sh} $out/share/test-orchestrator/test-orchestrator.sh
       '';

@@ -2,7 +2,8 @@
 
 ## Placement
 
-New crate at `bmc-nix/`, added to workspace members. Follows the same patterns as `bmc-upgrade` and `bmc-scheduler` — a library crate exposing functions, no binary of its own (the daemon is a task in the main app for now).
+New crate at `bmc-nix/`, added to workspace members. Follows the same patterns as `bmc-upgrade` and `bmc-scheduler` — a
+library crate exposing functions, no binary of its own (the daemon is a task in the main app for now).
 
 ## Module Structure
 
@@ -26,7 +27,8 @@ bmc-nix/
 
 ### 1. Pure functions + minimal state
 
-Each module exposes async functions taking explicit parameters (paths, configs, HTTP client). No global state or singletons. This makes it trivial to later wrap in a gRPC service, CLI tool, or call from tests.
+Each module exposes async functions taking explicit parameters (paths, configs, HTTP client). No global state or
+singletons. This makes it trivial to later wrap in a gRPC service, CLI tool, or call from tests.
 
 ```rust
 // Example: index.rs
@@ -204,9 +206,8 @@ pub struct GcConfig {
 
 ### 3. Error handling — action-specific errors (no single error type)
 
-Each public action returns its own error enum. This keeps error
-surfaces precise and makes it possible to exhaustively handle all
-failures for a given action.
+Each public action returns its own error enum. This keeps error surfaces precise and makes it possible to exhaustively
+handle all failures for a given action.
 
 ```rust
 // index.rs
@@ -435,7 +436,6 @@ pub enum CleanupGenerationsError {
 
 ### 4. Nix store operations
 
-
 ```rust
 // store.rs
 pub async fn nix_copy(
@@ -450,11 +450,9 @@ pub async fn init_store(
 
 ```
 
-`init_store` is responsible for fetching the factory index from
-`factory_server.index_url`, selecting the matching tarball for the
-current BOS version, and initializing the Nix store from it. It also
-uses the tarball's `profile_path` to locate and activate the initial profile after
-extraction.
+`init_store` is responsible for fetching the factory index from `factory_server.index_url`, selecting the matching
+tarball for the current BOS version, and initializing the Nix store from it. It also uses the tarball's `profile_path`
+to locate and activate the initial profile after extraction.
 
 ### 5. Garbage collection — generations + nix GC
 
@@ -612,14 +610,10 @@ pub async fn sorted_dir_entries(
 
 ### 8. Apply orchestration
 
-`apply_profile_change` is the low-level building block — it takes already-resolved
-packages (`&[ResolvedPackage]`) and extends the current profile with
-them. The caller is responsible for index fetching, package resolution,
-and running checker packages for compatibility. Activation is optional
-via a flag.
-`apply_profile_change` returns
-an `InstallResult` that includes the strategies observed in the run
-(e.g. reboot-required), so the UI can act accordingly.
+`apply_profile_change` is the low-level building block — it takes already-resolved packages (`&[ResolvedPackage]`) and
+extends the current profile with them. The caller is responsible for index fetching, package resolution, and running
+checker packages for compatibility. Activation is optional via a flag. `apply_profile_change` returns an `InstallResult`
+that includes the strategies observed in the run (e.g. reboot-required), so the UI can act accordingly.
 
 ```rust
 // upgrade.rs
@@ -720,21 +714,24 @@ path = "src/bin/hook_activation_resolver.rs"
 
 ## Integration with the Main App
 
-For now, the daemon is just a task spawned in `bmc/src/startup.rs` or `bmc-openwrt/src/main.rs`. The `bmc-nix` library provides all the building blocks as functions. The calling code decides when to invoke them (on boot for init check, on user request for upgrade, on timer for GC).
+For now, the daemon is just a task spawned in `bmc/src/startup.rs` or `bmc-openwrt/src/main.rs`. The `bmc-nix` library
+provides all the building blocks as functions. The calling code decides when to invoke them (on boot for init check, on
+user request for upgrade, on timer for GC).
 
 ## Summary
 
-| Concern | Where |
-|---|---|
-| Data types & JSON schemas | `bmc-nix/src/types.rs` |
-| Remote index fetching/merging | `bmc-nix/src/index.rs` |
-| Nix store init/copy/gc | `bmc-nix/src/store.rs` |
-| Manifest read/write/diff | `bmc-nix/src/manifest.rs` |
-| Profile symlink tree building | `bmc-nix/src/profile.rs` |
-| Hook discovery & execution | `bmc-nix/src/hooks.rs` |
-| Activation script ordering | `bmc-nix/src/activation.rs` |
-| Upgrade + install orchestration | `bmc-nix/src/upgrade.rs` |
-| GC policy | `bmc-nix/src/gc.rs` |
-| Hook binaries | `bmc-nix/src/bin/hook_*.rs` |
+| Concern                         | Where                       |
+| ------------------------------- | --------------------------- |
+| Data types & JSON schemas       | `bmc-nix/src/types.rs`      |
+| Remote index fetching/merging   | `bmc-nix/src/index.rs`      |
+| Nix store init/copy/gc          | `bmc-nix/src/store.rs`      |
+| Manifest read/write/diff        | `bmc-nix/src/manifest.rs`   |
+| Profile symlink tree building   | `bmc-nix/src/profile.rs`    |
+| Hook discovery & execution      | `bmc-nix/src/hooks.rs`      |
+| Activation script ordering      | `bmc-nix/src/activation.rs` |
+| Upgrade + install orchestration | `bmc-nix/src/upgrade.rs`    |
+| GC policy                       | `bmc-nix/src/gc.rs`         |
+| Hook binaries                   | `bmc-nix/src/bin/hook_*.rs` |
 
-The key principle: **all operations are plain async functions with explicit parameters**. No framework, no trait hierarchy, no daemon loop built in. The caller (main app task, future CLI, future gRPC service) composes them as needed.
+The key principle: **all operations are plain async functions with explicit parameters**. No framework, no trait
+hierarchy, no daemon loop built in. The caller (main app task, future CLI, future gRPC service) composes them as needed.

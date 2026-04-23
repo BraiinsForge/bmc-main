@@ -134,19 +134,6 @@
           config.exclude = [
             # Frontend specifies it's own formatting rules
             "frontend/*"
-            # Exclude pre-existing docs from formatter; new docs will be formatted
-            "docs/release.md"
-            "docs/nix-device-scripts.md"
-            "docs/deployment.md"
-            "docs/CrateVerificationGuide.md"
-            "docs/nix/*"
-            "docs/devlogs/BDK-141/*"
-            "docs/devlogs/BDK-212/*"
-            "docs/devlogs/BDK-266-wasm-widgets/*"
-            "docs/devlogs/BDK-308/*"
-            "docs/devlogs/BDK-322/*"
-            "docs/devlogs/BDK-331/*"
-            "docs/devlogs/BDK-367/*"
             # Upstream crates shall be formatted upstream
             "bmc-shared/ii-net-drv/*"
             # Harness has its own formatter config (bmc-virt/harness/pyproject.toml)

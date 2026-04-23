@@ -1,23 +1,21 @@
 # Plan: Update wayland widget host for current bmc-wasm-runtime
 
-The `bmc-wasm-runtime` on `jku/wasm` has had ~11 commits of API changes and
-performance optimizations since the wayland widget host was written. This plan
-describes the minimal changes needed on `jca/BDK-266/wasm-runtime-wayland-deck`
-so that `.wasm` files built against the current SDK can run on the real device.
+The `bmc-wasm-runtime` on `jku/wasm` has had ~11 commits of API changes and performance optimizations since the wayland
+widget host was written. This plan describes the minimal changes needed on `jca/BDK-266/wasm-runtime-wayland-deck` so
+that `.wasm` files built against the current SDK can run on the real device.
 
-**Constraint:** The branches stay separate. `jku/wasm` tracks `master` and must
-not be rebased onto corinthia. The runtime is consumed via the existing
-`path = "../../bmc-wasm-runtime"` dependency, resolved at build time through a
+**Constraint:** The branches stay separate. `jku/wasm` tracks `master` and must not be rebased onto corinthia. The
+runtime is consumed via the existing `path = "../../bmc-wasm-runtime"` dependency, resolved at build time through a
 symlink.
 
-______________________________________________________________________
+---
 
 ## 1. Update workspace `Cargo.toml` dependencies
 
 File: `/Cargo.toml` (repo root)
 
-The runtime now uses `wasmi 1.0` (was `0.45`) and requires a few workspace deps
-that the wayland workspace doesn't have yet.
+The runtime now uses `wasmi 1.0` (was `0.45`) and requires a few workspace deps that the wayland workspace doesn't have
+yet.
 
 ### 1a. Bump existing deps
 
@@ -31,8 +29,7 @@ wasmi = "1.0"
 
 ### 1b. Add missing workspace deps
 
-These are used by `bmc-wasm-runtime/Cargo.toml` with `.workspace = true` but
-don't exist in the wayland workspace yet:
+These are used by `bmc-wasm-runtime/Cargo.toml` with `.workspace = true` but don't exist in the wayland workspace yet:
 
 ```toml
 imgref = "1.10"
@@ -41,19 +38,19 @@ ureq = "3"
 usvg = "0.45"          # used by bmc-icon-compiler (build dep)
 ```
 
-> `formato`, `image`, `notify`, `chrono`, `serde_json` are already present in
-> the wayland workspace — just verify versions match.
+> `formato`, `image`, `notify`, `chrono`, `serde_json` are already present in the wayland workspace — just verify
+> versions match.
 
 ### 1c. Regenerate `Cargo.lock`
 
-After the above changes, run `cargo check` to regenerate the lock file. This is
-more reliable than `cargo update -p` when new workspace deps have been added:
+After the above changes, run `cargo check` to regenerate the lock file. This is more reliable than `cargo update -p`
+when new workspace deps have been added:
 
 ```bash
 cargo check -p bmc-widget-wasm
 ```
 
-______________________________________________________________________
+---
 
 ## 2. Update `widgets/wasm/src/wayland.rs`
 
@@ -64,16 +61,14 @@ use bmc_wasm_runtime::RenderStatus;
 use bmc_wasm_protocol::FormatPreferences;
 ```
 
-The `bmc_wasm_protocol` crate is pulled in transitively via `bmc-wasm-runtime`,
-but for `FormatPreferences` you need to reference it directly. Add to
-`widgets/wasm/Cargo.toml`:
+The `bmc_wasm_protocol` crate is pulled in transitively via `bmc-wasm-runtime`, but for `FormatPreferences` you need to
+reference it directly. Add to `widgets/wasm/Cargo.toml`:
 
 ```toml
 bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
 ```
 
-Or alternatively, since `FormatPreferences` implements `Default`, you can avoid
-the extra dep:
+Or alternatively, since `FormatPreferences` implements `Default`, you can avoid the extra dep:
 
 Just pass `FormatPreferences::default()` inline — it gives Metric / Celsius / SpaceComma.
 
@@ -118,13 +113,12 @@ let mut runtime = unsafe {
 };
 ```
 
-> Later, `FormatPreferences` can be wired to device settings via `DECK_PARAMS`
-> JSON, but `default()` (Metric/Celsius/SpaceComma) is fine for now.
+> Later, `FormatPreferences` can be wired to device settings via `DECK_PARAMS` JSON, but `default()`
+> (Metric/Celsius/SpaceComma) is fine for now.
 
 ### 2c. Handle `render()` return type
 
-`render()` now returns `Result<RenderStatus>` instead of `Result<()>`.
-`RenderStatus` is:
+`render()` now returns `Result<RenderStatus>` instead of `Result<()>`. `RenderStatus` is:
 
 ```rust
 pub enum RenderStatus {
@@ -175,15 +169,14 @@ match runtime.render(delta_ms) {
 }
 ```
 
-> When a widget enters `Dead` state, the runtime has already rendered the error
-> overlay to the current frame. We set `running = false` so the process exits
-> cleanly after committing this last frame. The compositor can then respawn the
+> When a widget enters `Dead` state, the runtime has already rendered the error overlay to the current frame. We set
+> `running = false` so the process exits cleanly after committing this last frame. The compositor can then respawn the
 > widget if configured to do so.
 
 ### 2d. Add fetch response delivery
 
-Widgets using `fetch()` (e.g. ISS Position) need their HTTP responses delivered
-before each render call. Without this, fetch-based widgets hang forever.
+Widgets using `fetch()` (e.g. ISS Position) need their HTTP responses delivered before each render call. Without this,
+fetch-based widgets hang forever.
 
 **Before the `runtime.render()` call in the main loop** (~line 409), add:
 
@@ -191,19 +184,16 @@ before each render call. Without this, fetch-based widgets hang forever.
 runtime.deliver_fetch_responses();
 ```
 
-> The first-frame block does not need this — no fetches have been initiated yet
-> because `render()` hasn't been called (the first `render(0)` is what triggers
-> widget init, which is where `fetch()` calls are registered).
+> The first-frame block does not need this — no fetches have been initiated yet because `render()` hasn't been called
+> (the first `render(0)` is what triggers widget init, which is where `fetch()` calls are registered).
 
 ### 2e. Frame scheduling: delay + pending fetches
 
-The widget can request a delayed frame via `request_frame_after(ms)` instead of
-immediate vsync. On embedded hardware this prevents busy-looping at 60fps when
-a widget only needs updates every few seconds.
+The widget can request a delayed frame via `request_frame_after(ms)` instead of immediate vsync. On embedded hardware
+this prevents busy-looping at 60fps when a widget only needs updates every few seconds.
 
-Additionally, `has_pending_fetches()` must be checked — a widget that only uses
-`host_fetch_after()` without separately calling `request_frame()` would never
-get its delayed fetches fired, because `deliver_fetch_responses()` (which drains
+Additionally, `has_pending_fetches()` must be checked — a widget that only uses `host_fetch_after()` without separately
+calling `request_frame()` would never get its delayed fetches fired, because `deliver_fetch_responses()` (which drains
 the delayed fetch queue) only runs inside the render block.
 
 **After the `wants_next_frame()` check** (around line 449):
@@ -231,15 +221,14 @@ if runtime.wants_next_frame() || runtime.has_pending_fetches() {
 }
 ```
 
-> **Why cap the sleep?** An unbounded `thread::sleep(30_000)` (e.g. ISS Position
-> polling every 30s) would block the entire Wayland event loop — compositor
-> shutdown events, buffer releases, and resizes would all stall. The 100ms cap
+> **Why cap the sleep?** An unbounded `thread::sleep(30_000)` (e.g. ISS Position polling every 30s) would block the
+> entire Wayland event loop — compositor shutdown events, buffer releases, and resizes would all stall. The 100ms cap
 > keeps the loop responsive while still avoiding busy-looping.
 >
-> A more sophisticated approach would use `calloop` (already a workspace dep)
-> with a timerfd instead of sleeping the event loop thread at all.
+> A more sophisticated approach would use `calloop` (already a workspace dep) with a timerfd instead of sleeping the
+> event loop thread at all.
 
-______________________________________________________________________
+---
 
 ## 3. Update `deploy_corinthia.py`
 
@@ -256,34 +245,30 @@ BDK266_ROOT = PROJECT_ROOT / "bmc-wasm-runtime"
 ```
 
 The `WASM_ASSETS` list can stay as-is — it builds the path to
-`examples/hello-widget/target/wasm32-unknown-unknown/release/hello_widget.wasm`
-from `BDK266_ROOT`.
+`examples/hello-widget/target/wasm32-unknown-unknown/release/hello_widget.wasm` from `BDK266_ROOT`.
 
-> **Note:** The symlink currently points to
-> `../BDK-266-wasm-runtime-gpu-fb-fix/bmc-wasm-runtime/`. The `.wasm` example
-> must be built **inside the symlink target**, not in some other checkout. See
-> section 7 for the build command.
+> **Note:** The symlink currently points to `../BDK-266-wasm-runtime-gpu-fb-fix/bmc-wasm-runtime/`. The `.wasm` example
+> must be built **inside the symlink target**, not in some other checkout. See section 7 for the build command.
 
-______________________________________________________________________
+---
 
 ## 4. Summary of files changed
 
-| File                          | Change                                                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------ |
-| `Cargo.toml` (root)           | `wasmi` 0.45→1.0, add `imgref`, `rgb`, `ureq`, `usvg`                                |
-| `widgets/wasm/Cargo.toml`     | Add `perf-overlay` feature, (optional) `bmc-wasm-protocol` path dep                  |
+| File                          | Change                                                                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `Cargo.toml` (root)           | `wasmi` 0.45→1.0, add `imgref`, `rgb`, `ureq`, `usvg`                                                     |
+| `widgets/wasm/Cargo.toml`     | Add `perf-overlay` feature, (optional) `bmc-wasm-protocol` path dep                                       |
 | `widgets/wasm/src/wayland.rs` | Constructor args, `RenderStatus` + Dead exit, fetch delivery, frame delay + pending fetches, perf overlay |
-| `deploy_corinthia.py`         | Fix `BDK266_ROOT` path to use symlink                                                |
-| `Cargo.lock`                  | Regenerated                                                                          |
+| `deploy_corinthia.py`         | Fix `BDK266_ROOT` path to use symlink                                                                     |
+| `Cargo.lock`                  | Regenerated                                                                                               |
 
-______________________________________________________________________
+---
 
 ## 5. Enable the performance overlay
 
-The runtime includes a reusable `PerfOverlay` module (feature-gated behind
-`perf-overlay`) that draws a stacked timing chart directly on top of the widget.
-This is extremely useful for on-device profiling — it shows per-frame breakdowns
-of WASM execution, tree deserialization, layout, rendering, and GPU flush.
+The runtime includes a reusable `PerfOverlay` module (feature-gated behind `perf-overlay`) that draws a stacked timing
+chart directly on top of the widget. This is extremely useful for on-device profiling — it shows per-frame breakdowns of
+WASM execution, tree deserialization, layout, rendering, and GPU flush.
 
 ### 5a. Enable the cargo feature
 
@@ -310,8 +295,7 @@ use bmc_wasm_runtime::FrameTimings;
 use bmc_wasm_runtime::perf_overlay::PerfOverlay;
 ```
 
-Add `PerfOverlay` and env-var toggle to `run_wasm_mode()` local state (after
-runtime creation):
+Add `PerfOverlay` and env-var toggle to `run_wasm_mode()` local state (after runtime creation):
 
 ```
 let show_perf = std::env::var("DECK_PERF_OVERLAY").is_ok_and(|v| v == "1" || v == "true");
@@ -320,16 +304,14 @@ let mut perf_overlay = PerfOverlay::new();
 
 ### 5c. Instrument the render loop
 
-> **Important:** This section is a **complete replacement** for the main-loop
-> render block. It supersedes the changes from sections 2c and 2d for the main
-> loop. Do not apply 2c/2d main-loop changes separately if you are also applying
+> **Important:** This section is a **complete replacement** for the main-loop render block. It supersedes the changes
+> from sections 2c and 2d for the main loop. Do not apply 2c/2d main-loop changes separately if you are also applying
 > section 5. (The first-frame changes from 2c still apply independently.)
 
-The overlay needs to be ticked every loop iteration (not just rendered frames)
-and drawn after the WASM render but before flush.
+The overlay needs to be ticked every loop iteration (not just rendered frames) and drawn after the WASM render but
+before flush.
 
-**Replace the main-loop render block** (the `begin_frame` through `flush`
-sequence, around lines 407-413) with:
+**Replace the main-loop render block** (the `begin_frame` through `flush` sequence, around lines 407-413) with:
 
 ```
 let frame_start = std::time::Instant::now();
@@ -371,8 +353,7 @@ if show_perf {
 runtime.renderer().flush();
 ```
 
-> Note: `begin_frame` and `flush` are already present in the original code.
-> This block replaces them — do not duplicate.
+> Note: `begin_frame` and `flush` are already present in the original code. This block replaces them — do not duplicate.
 
 ### 5d. What the overlay shows
 
@@ -411,12 +392,12 @@ Access via `runtime.last_timings()` after each `render()` call.
 
 ### 5f. Toggle via environment variable
 
-The `show_perf` flag (declared in 5b) and the `if show_perf` gate (in 5c)
-make the overlay opt-in at runtime without recompilation.
+The `show_perf` flag (declared in 5b) and the `if show_perf` gate (in 5c) make the overlay opt-in at runtime without
+recompilation.
 
 Enable on device with: `DECK_PERF_OVERLAY=1`
 
-______________________________________________________________________
+---
 
 ## 6. What does NOT need changing (transparent to host)
 
@@ -431,13 +412,12 @@ All internal runtime optimizations are transparent to the host:
 - ButtonSize support (protocol change, handled in tree.rs)
 - `host_log` / `host_format_*` host functions (registered internally in `new()`)
 
-______________________________________________________________________
+---
 
 ## 7. Testing
 
-1. Build a `.wasm` via the symlink (resolves to the `BDK-266-wasm-runtime-gpu-fb-fix`
-   checkout). The build must happen inside this path so `deploy_corinthia.py` can
-   find the output artifact:
+1. Build a `.wasm` via the symlink (resolves to the `BDK-266-wasm-runtime-gpu-fb-fix` checkout). The build must happen
+   inside this path so `deploy_corinthia.py` can find the output artifact:
 
    ```bash
    cd bmc-wasm-runtime/examples/hello-widget
@@ -447,18 +427,18 @@ ______________________________________________________________________
    Verify the artifact exists at
    `bmc-wasm-runtime/examples/hello-widget/target/wasm32-unknown-unknown/release/hello_widget.wasm`.
 
-1. Deploy to device using the updated `deploy_corinthia.py`
+2. Deploy to device using the updated `deploy_corinthia.py`
 
-1. Verify widget renders correctly and logs show:
+3. Verify widget renders correctly and logs show:
 
    - `WASM runtime initialized, SDK version X.Y.Z`
    - No `FuelExhausted` warnings on normal widgets
    - HTTP-fetching widgets (ISS Position) receive data
 
-1. Test `Dead` state recovery: verify that a fuel-exhausted widget exits
-   cleanly (process exits after rendering the error overlay frame)
+4. Test `Dead` state recovery: verify that a fuel-exhausted widget exits cleanly (process exits after rendering the
+   error overlay frame)
 
-______________________________________________________________________
+---
 
 ## Reference: current `WasmWidgetRuntime` public API
 

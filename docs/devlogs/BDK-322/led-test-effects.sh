@@ -27,25 +27,27 @@ COOKIE=$(grpcurl -plaintext -v \
     braiins.bmc.web.AuthenticationService/Login 2>&1 \
     | sed -n 's/^set-cookie: \(session_id=[^;]*\).*/\1/p')
 
-if [[ -z "$COOKIE" ]]; then
+if [[ -z $COOKIE ]]; then
     echo "ERROR: authentication failed" >&2
     exit 1
 fi
 echo "OK"
 
 grpc() {
-    local method=$1; shift
+    local method=$1
+    shift
     grpcurl -plaintext \
         -H "cookie: $COOKIE" \
         ${1:+-d "$1"} \
         "$ADDR" \
         "braiins.bmc.web.LedTestService/$method" \
-        > /dev/null
+        >/dev/null
 }
 
 # Print label, execute grpc command, then pause for visual verification.
 run() {
-    local label=$1; shift
+    local label=$1
+    shift
     echo "--- $label"
     grpc "$@"
     sleep "$DELAY"

@@ -1,22 +1,20 @@
 # Design Document: WASM Widget for Corinthia Hotel Demo
 
-**Ticket:** BDK-266 / BDK-226 Integration
-**Author:** Claude (AI Assistant)
-**Date:** 2026-02-11
-**Revision:** 4 (Implementation complete)
+**Ticket:** BDK-266 / BDK-226 Integration **Author:** Claude (AI Assistant) **Date:** 2026-02-11 **Revision:** 4
+(Implementation complete)
 
 ---
 
 ## Key Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| **Crate location** | Cross-repo via symlink | Keep `bmc-wasm-runtime` in BDK-266, symlink into Corinthia workspace |
-| **Widget role** | Scene widget | Part of scene cycling, no touch events needed |
-| **WASM distribution** | Pre-built files | Deploy `.wasm` to `/mnt/data/wasm/`, reference by path |
-| **Testing approach** | Test mode + hardware | Test mode bypasses WASM; full testing on physical Deck |
-| **Touch events** | Ignored (Phase 1) | Scene widgets don't receive touch - compositor intercepts for gestures |
-| **Cross-compilation** | ✓ Verified compatible | femtovg/glow proven in Corinthia; wasmi/cosmic-text/taffy are pure Rust |
+| Decision              | Choice                 | Rationale                                                               |
+| --------------------- | ---------------------- | ----------------------------------------------------------------------- |
+| **Crate location**    | Cross-repo via symlink | Keep `bmc-wasm-runtime` in BDK-266, symlink into Corinthia workspace    |
+| **Widget role**       | Scene widget           | Part of scene cycling, no touch events needed                           |
+| **WASM distribution** | Pre-built files        | Deploy `.wasm` to `/mnt/data/wasm/`, reference by path                  |
+| **Testing approach**  | Test mode + hardware   | Test mode bypasses WASM; full testing on physical Deck                  |
+| **Touch events**      | Ignored (Phase 1)      | Scene widgets don't receive touch - compositor intercepts for gestures  |
+| **Cross-compilation** | ✓ Verified compatible  | femtovg/glow proven in Corinthia; wasmi/cosmic-text/taffy are pure Rust |
 
 ---
 
@@ -26,21 +24,24 @@
 
 The `bmc-wasm-runtime` crate must cross-compile for `armv7-unknown-linux-musleabihf`. Verification status:
 
-| Dependency | Version | Status | Evidence |
-|------------|---------|--------|----------|
-| **femtovg** | 0.9 | ✓ Verified | Used in `widgets/settings/` (Corinthia), deployed to target |
-| **glow** | 0.16 | ✓ Verified | Same as femtovg, works with smithay EGL backend |
-| **wasmi** | 0.45 | ✓ Pure Rust | WASM interpreter, no native C dependencies |
-| **cosmic-text** | 0.17 | ✓ Pure Rust | Text shaping with swash feature (pure Rust) |
-| **taffy** | 0.9 | ✓ Pure Rust | Flexbox layout engine, no native deps |
+| Dependency      | Version | Status      | Evidence                                                    |
+| --------------- | ------- | ----------- | ----------------------------------------------------------- |
+| **femtovg**     | 0.9     | ✓ Verified  | Used in `widgets/settings/` (Corinthia), deployed to target |
+| **glow**        | 0.16    | ✓ Verified  | Same as femtovg, works with smithay EGL backend             |
+| **wasmi**       | 0.45    | ✓ Pure Rust | WASM interpreter, no native C dependencies                  |
+| **cosmic-text** | 0.17    | ✓ Pure Rust | Text shaping with swash feature (pure Rust)                 |
+| **taffy**       | 0.9     | ✓ Pure Rust | Flexbox layout engine, no native deps                       |
 
-**Conclusion:** All dependencies are either already proven in the Corinthia workspace (femtovg, glow via smithay) or are pure Rust crates that cross-compile without issues.
+**Conclusion:** All dependencies are either already proven in the Corinthia workspace (femtovg, glow via smithay) or are
+pure Rust crates that cross-compile without issues.
 
 ---
 
 ## 1. Executive Summary
 
-This document describes the design for a new widget type in the Corinthia hotel demo (BDK-226) that runs WebAssembly applications using the `bmc-wasm-runtime` (BDK-266). The widget will allow custom WASM-based UI overlays to run on the physical Braiins Deck hardware alongside existing widgets.
+This document describes the design for a new widget type in the Corinthia hotel demo (BDK-226) that runs WebAssembly
+applications using the `bmc-wasm-runtime` (BDK-266). The widget will allow custom WASM-based UI overlays to run on the
+physical Braiins Deck hardware alongside existing widgets.
 
 ---
 
@@ -50,29 +51,32 @@ This document describes the design for a new widget type in the Corinthia hotel 
 
 The Corinthia demo is a GPU-accelerated Wayland compositor for hotel room control panels. Recent development focused on:
 
-| Date | Focus Area | Key Changes |
-|------|------------|-------------|
-| Feb 5 | **Performance** | Fixed settings widget render loop, reduced GPU overdraw, skip drawing when overlay covers screen |
-| Feb 5 | **Touch latency** | Register touch fd with calloop for immediate wake, per-widget damage regions |
-| Feb 5 | **Render optimization** | `glFlush()` vs `glFinish()` (3-8ms savings), frame skipping for static scenes |
-| Feb 5 | **Gestures** | Drag-to-follow continuous gesture model, velocity-based scene transitions |
-| Feb 3 | **Infrastructure** | Cross-compilation fixes for ARMv7 glibc, custom SSH port support |
-| Jan 28 | **Deployment** | `deploy_corinthia.py` script, splash screen, texture caching fix |
-| Jan 27-28 | **Settings UI** | FemtoVG-based settings overlay with 8-page navigation, brightness/volume sliders |
-| Jan 27 | **Hardware wiring** | `set_setting` protocol for brightness, volume, restart, wifi_reset |
+| Date      | Focus Area              | Key Changes                                                                                      |
+| --------- | ----------------------- | ------------------------------------------------------------------------------------------------ |
+| Feb 5     | **Performance**         | Fixed settings widget render loop, reduced GPU overdraw, skip drawing when overlay covers screen |
+| Feb 5     | **Touch latency**       | Register touch fd with calloop for immediate wake, per-widget damage regions                     |
+| Feb 5     | **Render optimization** | `glFlush()` vs `glFinish()` (3-8ms savings), frame skipping for static scenes                    |
+| Feb 5     | **Gestures**            | Drag-to-follow continuous gesture model, velocity-based scene transitions                        |
+| Feb 3     | **Infrastructure**      | Cross-compilation fixes for ARMv7 glibc, custom SSH port support                                 |
+| Jan 28    | **Deployment**          | `deploy_corinthia.py` script, splash screen, texture caching fix                                 |
+| Jan 27-28 | **Settings UI**         | FemtoVG-based settings overlay with 8-page navigation, brightness/volume sliders                 |
+| Jan 27    | **Hardware wiring**     | `set_setting` protocol for brightness, volume, restart, wifi_reset                               |
 
 **Current Widget Types:**
+
 1. **Picture Widget** - Static image display (simplest)
 2. **EGL Demo Widget** - Raw OpenGL triangle (GPU showcase)
 3. **Settings Overlay** - FemtoVG-based rich UI (most complex, reference implementation)
 
 ### 2.2 Settings Overlay Widget Architecture (Reference)
 
-The settings overlay (`widgets/settings/`) is the most sophisticated widget and serves as the reference implementation. Key architectural patterns:
+The settings overlay (`widgets/settings/`) is the most sophisticated widget and serves as the reference implementation.
+Key architectural patterns:
 
 #### Two-FBO Y-Flip Pipeline
 
-FemtoVG assumes a window system that flips Y on buffer swap. When rendering to FBO directly, the output is Y-inverted. The settings widget solves this with a two-FBO pipeline:
+FemtoVG assumes a window system that flips Y on buffer swap. When rendering to FBO directly, the output is Y-inverted.
+The settings widget solves this with a two-FBO pipeline:
 
 ```
 FemtoVG Canvas
@@ -97,6 +101,7 @@ DMA-BUF → Wayland → Compositor
 #### Touch Event Handling
 
 The settings widget implements:
+
 - **Velocity prediction** with 60ms lookahead for responsive sliders
 - **Swipe detection** with 80px threshold
 - **Hit-testing** per UI page (8-page state machine)
@@ -121,6 +126,7 @@ The `bmc-wasm-runtime` provides:
 - **SDK Versioning**: Runtime compatibility checking
 
 **Key API:**
+
 ```rust
 pub struct WasmWidgetRuntime {
     // Creates runtime from WASM bytes + GL context + target FBO
@@ -155,23 +161,23 @@ pub struct WasmWidgetRuntime {
 
 ### 3.1 Functional Requirements
 
-| ID | Requirement |
-|----|-------------|
+| ID   | Requirement                                                              |
+| ---- | ------------------------------------------------------------------------ |
 | FR-1 | Widget loads and executes `.wasm` files specified in scene configuration |
-| FR-2 | Widget renders WASM output to Wayland surface via DMA-BUF |
-| FR-3 | Widget forwards touch events from compositor to WASM runtime |
-| FR-4 | Widget respects settings changes (brightness, night mode, etc.) |
-| FR-5 | Widget participates in scene cycling and overlay system |
-| FR-6 | WASM binaries must be < 40KB (optimized) for reasonable load times |
+| FR-2 | Widget renders WASM output to Wayland surface via DMA-BUF                |
+| FR-3 | Widget forwards touch events from compositor to WASM runtime             |
+| FR-4 | Widget respects settings changes (brightness, night mode, etc.)          |
+| FR-5 | Widget participates in scene cycling and overlay system                  |
+| FR-6 | WASM binaries must be < 40KB (optimized) for reasonable load times       |
 
 ### 3.2 Non-Functional Requirements
 
-| ID | Requirement |
-|----|-------------|
+| ID    | Requirement                                        |
+| ----- | -------------------------------------------------- |
 | NFR-1 | 60 FPS rendering on STM32MP157 + Vivante GC400 GPU |
-| NFR-2 | Touch latency < 32ms (2 frames) |
-| NFR-3 | Memory usage < 8MB per WASM widget instance |
-| NFR-4 | Graceful degradation on WASM fuel exhaustion |
+| NFR-2 | Touch latency < 32ms (2 frames)                    |
+| NFR-3 | Memory usage < 8MB per WASM widget instance        |
+| NFR-4 | Graceful degradation on WASM fuel exhaustion       |
 
 ---
 
@@ -297,6 +303,7 @@ impl EglState {
 ```
 
 **Key difference from design v1:** The WASM runtime does NOT handle its own FBO creation. The widget host must:
+
 1. Create the staging FBO with stencil (FemtoVG requirement)
 2. Tell FemtoVG to render to that FBO via `set_screen_target()`
 3. Blit to export FBO with Y-flip
@@ -405,7 +412,8 @@ impl EglState {
 }
 ```
 
-**Test Mode:** Set `"testMode": true` to bypass WASM loading and render test content directly. Useful for diagnosing rendering pipeline issues without requiring a valid WASM file.
+**Test Mode:** Set `"testMode": true` to bypass WASM loading and render test content directly. Useful for diagnosing
+rendering pipeline issues without requiring a valid WASM file.
 
 ### 5.3 Touch Event Mapping
 
@@ -499,15 +507,15 @@ fn create_buffer_from_dmabuf(
 
 ## 6. Key Differences from Settings Widget
 
-| Aspect | Settings Widget | WASM Widget |
-|--------|-----------------|-------------|
-| **Rendering** | FemtoVG directly | FemtoVG via WasmWidgetRuntime |
-| **UI Logic** | Native Rust | WASM (sandboxed) |
-| **Touch Handling** | Inline hit-testing | Delegated to WASM runtime |
-| **Frame Requests** | Manual `needs_render` | `runtime.wants_next_frame()` |
-| **State Machine** | 8-page navigation | WASM-defined |
-| **EGL Setup** | Same two-FBO pipeline | Same two-FBO pipeline |
-| **Buffer Management** | Same double-buffering | Same double-buffering |
+| Aspect                | Settings Widget       | WASM Widget                   |
+| --------------------- | --------------------- | ----------------------------- |
+| **Rendering**         | FemtoVG directly      | FemtoVG via WasmWidgetRuntime |
+| **UI Logic**          | Native Rust           | WASM (sandboxed)              |
+| **Touch Handling**    | Inline hit-testing    | Delegated to WASM runtime     |
+| **Frame Requests**    | Manual `needs_render` | `runtime.wants_next_frame()`  |
+| **State Machine**     | 8-page navigation     | WASM-defined                  |
+| **EGL Setup**         | Same two-FBO pipeline | Same two-FBO pipeline         |
+| **Buffer Management** | Same double-buffering | Same double-buffering         |
 
 ---
 
@@ -557,7 +565,8 @@ if state.needs_render && state.pending_buffers < 3 {
 
 ### 7.4 EGLImage Leak Prevention
 
-**Critical fix:** EGLImages must be explicitly destroyed to prevent GPU virtual address space exhaustion. The `RenderBuffer` cleanup now calls `eglDestroyImageKHR`:
+**Critical fix:** EGLImages must be explicitly destroyed to prevent GPU virtual address space exhaustion. The
+`RenderBuffer` cleanup now calls `eglDestroyImageKHR`:
 
 ```rust
 fn destroy_render_buffer(
@@ -582,7 +591,8 @@ Without this, each resize or buffer allocation leaks GPU VA space, eventually ca
 
 ## 8. Test Mode
 
-The widget supports a test mode that bypasses WASM loading entirely, rendering test content directly using FemtoVG. This is useful for:
+The widget supports a test mode that bypasses WASM loading entirely, rendering test content directly using FemtoVG. This
+is useful for:
 
 - Diagnosing rendering pipeline issues (EGL, DMA-BUF, Wayland)
 - Verifying the two-FBO Y-flip pipeline works correctly
@@ -608,7 +618,8 @@ The test renderer (`test_renderer.rs`) showcases all rendering primitives:
 
 ### 8.3 Logging
 
-Widget logs are written to `/var/log/bmc/wasm-widget.log` (not stderr) for reliable debugging on the target device. Log level is controlled via `RUST_LOG` environment variable.
+Widget logs are written to `/var/log/bmc/wasm-widget.log` (not stderr) for reliable debugging on the target device. Log
+level is controlled via `RUST_LOG` environment variable.
 
 ---
 
@@ -616,13 +627,13 @@ Widget logs are written to `/var/log/bmc/wasm-widget.log` (not stderr) for relia
 
 ### 9.1 Memory Budget
 
-| Component | Estimated Memory |
-|-----------|------------------|
-| WASM linear memory | 1-4 MB (typical widget) |
-| FemtoVG atlas | 2 MB |
-| cosmic-text font cache | 1-2 MB |
-| GBM buffers (2x 1280x480x4) | 4.9 MB |
-| **Total** | **~12 MB max** |
+| Component                   | Estimated Memory        |
+| --------------------------- | ----------------------- |
+| WASM linear memory          | 1-4 MB (typical widget) |
+| FemtoVG atlas               | 2 MB                    |
+| cosmic-text font cache      | 1-2 MB                  |
+| GBM buffers (2x 1280x480x4) | 4.9 MB                  |
+| **Total**                   | **~12 MB max**          |
 
 ### 9.2 Optimizations (from settings widget)
 
@@ -639,16 +650,17 @@ Widget logs are written to `/var/log/bmc/wasm-widget.log` (not stderr) for relia
 
 ### Why Settings Widget as Base (Not Flip-Clock)
 
-| Aspect | Settings Widget | Flip-Clock Widget |
-|--------|-----------------|-------------------|
-| **Renderer** | FemtoVG (vector graphics) | Raw OpenGL ES |
-| **FBO Pipeline** | Two-FBO with Y-flip | Single FBO (no Y-flip) |
-| **Stencil Buffer** | Required (FemtoVG) | Not needed |
-| **Protocol** | `deck_widget_manager_v1` | `xdg_wm_base` (desktop only) |
-| **Touch Events** | Yes (via protocol) | None |
-| **Buffer Tracking** | `pending_buffers` (max 3) | Simple destroy-on-release |
+| Aspect              | Settings Widget           | Flip-Clock Widget            |
+| ------------------- | ------------------------- | ---------------------------- |
+| **Renderer**        | FemtoVG (vector graphics) | Raw OpenGL ES                |
+| **FBO Pipeline**    | Two-FBO with Y-flip       | Single FBO (no Y-flip)       |
+| **Stencil Buffer**  | Required (FemtoVG)        | Not needed                   |
+| **Protocol**        | `deck_widget_manager_v1`  | `xdg_wm_base` (desktop only) |
+| **Touch Events**    | Yes (via protocol)        | None                         |
+| **Buffer Tracking** | `pending_buffers` (max 3) | Simple destroy-on-release    |
 
 **Flip-clock is unsuitable** because:
+
 1. Uses `xdg_wm_base` (standard XDG shell) for desktop testing - won't work with BMC compositor
 2. No two-FBO Y-flip pipeline - FemtoVG (used by `bmc-wasm-runtime`) requires this
 3. No `deck_widget_v1` protocol support - no touch events, no settings, no shutdown
@@ -656,16 +668,19 @@ Widget logs are written to `/var/log/bmc/wasm-widget.log` (not stderr) for relia
 ### Touch Event Routing (Future Consideration)
 
 The compositor routes touch events as follows:
+
 - **Tap gesture** → Toggles overlay visibility (shows settings widget)
 - **Drag gesture** → Scene cycling (swipe between scenes)
 - **When overlay is visible** → Touch forwarded to overlay widget via `touch_down/motion/up`
 
 For the WASM widget as a **scene widget** (not overlay):
+
 - Taps will toggle the settings overlay (not forwarded to WASM)
 - Drags will trigger scene cycling (not forwarded to WASM)
 - Only overlay widgets receive touch events currently
 
-**Phase 1 ignores touch** because scene widgets don't receive touch events anyway - the compositor intercepts them for gestures.
+**Phase 1 ignores touch** because scene widgets don't receive touch events anyway - the compositor intercepts them for
+gestures.
 
 ### Phase 1: Scaffold ✓ Complete
 
@@ -694,6 +709,7 @@ For the WASM widget as a **scene widget** (not overlay):
 ### Phase 4: Touch Support (Future)
 
 If WASM widget becomes an **overlay widget** (like settings):
+
 1. Forward touch events to `runtime.push_touch_event()`
 2. Handle velocity prediction if needed for sliders
 3. Consider interaction with settings overlay (mutual exclusion)
@@ -702,17 +718,17 @@ If WASM widget becomes an **overlay widget** (like settings):
 
 ## 11. Key Files for Reference
 
-| File | Purpose |
-|------|---------|
-| `widgets/wasm/src/main.rs` | Entry point, logging setup, test mode detection |
-| `widgets/wasm/src/wayland.rs` | Wayland client, WASM/test mode dispatch |
-| `widgets/wasm/src/egl.rs` | Two-FBO pipeline with EGLImage cleanup |
-| `widgets/wasm/src/test_renderer.rs` | Test mode rendering (all primitives) |
-| `widgets/wasm/manifest.json` | Widget manifest (UID, params) |
-| `bmc-wasm-runtime/src/runtime.rs` | WasmWidgetRuntime API |
-| `bmc-wasm-runtime/src/gpu.rs` | FemtoVgRenderer implementation |
-| `bmc-widget-protocol/protocol/deck-widget-v1.xml` | Protocol definition |
-| `deploy_corinthia.py` | Deployment script (includes WASM widget) |
+| File                                              | Purpose                                         |
+| ------------------------------------------------- | ----------------------------------------------- |
+| `widgets/wasm/src/main.rs`                        | Entry point, logging setup, test mode detection |
+| `widgets/wasm/src/wayland.rs`                     | Wayland client, WASM/test mode dispatch         |
+| `widgets/wasm/src/egl.rs`                         | Two-FBO pipeline with EGLImage cleanup          |
+| `widgets/wasm/src/test_renderer.rs`               | Test mode rendering (all primitives)            |
+| `widgets/wasm/manifest.json`                      | Widget manifest (UID, params)                   |
+| `bmc-wasm-runtime/src/runtime.rs`                 | WasmWidgetRuntime API                           |
+| `bmc-wasm-runtime/src/gpu.rs`                     | FemtoVgRenderer implementation                  |
+| `bmc-widget-protocol/protocol/deck-widget-v1.xml` | Protocol definition                             |
+| `deploy_corinthia.py`                             | Deployment script (includes WASM widget)        |
 
 ---
 

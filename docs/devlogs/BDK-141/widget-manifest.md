@@ -1,6 +1,7 @@
 # Widget Manifest Specification
 
-This document defines the manifest schema for BMC widgets. The manifest describes a widget's metadata, capabilities, configuration schema, and assets.
+This document defines the manifest schema for BMC widgets. The manifest describes a widget's metadata, capabilities,
+configuration schema, and assets.
 
 ## Overview
 
@@ -10,7 +11,8 @@ Each widget is distributed as a Nix package containing:
 - Binary executable - Wayland application
 - Assets - Icons and preview images
 
-The main Deck application scans widget directories, reads manifests, and presents available widgets to users. When a user creates a widget instance, the application spawns the binary as a Wayland client.
+The main Deck application scans widget directories, reads manifests, and presents available widgets to users. When a
+user creates a widget instance, the application spawns the binary as a Wayland client.
 
 ## Manifest Location
 
@@ -20,7 +22,8 @@ Widgets are installed into the Nix store and symlinked to a known location:
 /nix/store/<hash>-<widget-name>/lib/bmc-widgets/<widget-name>/manifest.json
 ```
 
-The system configuration symlinks installed widgets to a standard scan directory with separate subdirectories for official and third-party widgets:
+The system configuration symlinks installed widgets to a standard scan directory with separate subdirectories for
+official and third-party widgets:
 
 ```
 /usr/lib/bmc-widgets/
@@ -32,7 +35,8 @@ The system configuration symlinks installed widgets to a standard scan directory
 
 This separation enables easy factory reset by removing the entire `third-party` directory.
 
-The main Deck application scans both `/usr/lib/bmc-widgets/official/` and `/usr/lib/bmc-widgets/third-party/` to discover available widgets.
+The main Deck application scans both `/usr/lib/bmc-widgets/official/` and `/usr/lib/bmc-widgets/third-party/` to
+discover available widgets.
 
 ## Schema
 
@@ -40,17 +44,17 @@ The manifest is a JSON file with the following structure:
 
 ### Root Object
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `uid` | string | Yes | Unique widget identifier (UUID v4) |
-| `version` | string | Yes | Widget version |
-| `name` | string | Yes | Human-readable display name |
-| `description` | string | Yes | Brief description of the widget |
-| `author` | Author | No | Widget author information |
-| `binary` | string | Yes | Path to executable relative to widget directory |
-| `settings` | string[] | No | System settings the widget subscribes to |
-| `sizes` | string[] | Yes | Supported widget size types |
-| `params` | object | No | Schema for widget instance configuration parameters |
+| Field         | Type     | Required | Description                                         |
+| ------------- | -------- | -------- | --------------------------------------------------- |
+| `uid`         | string   | Yes      | Unique widget identifier (UUID v4)                  |
+| `version`     | string   | Yes      | Widget version                                      |
+| `name`        | string   | Yes      | Human-readable display name                         |
+| `description` | string   | Yes      | Brief description of the widget                     |
+| `author`      | Author   | No       | Widget author information                           |
+| `binary`      | string   | Yes      | Path to executable relative to widget directory     |
+| `settings`    | string[] | No       | System settings the widget subscribes to            |
+| `sizes`       | string[] | Yes      | Supported widget size types                         |
+| `params`      | object   | No       | Schema for widget instance configuration parameters |
 
 ### Field Specifications
 
@@ -92,10 +96,10 @@ Information about the widget author or publisher.
 
 ##### Author Object
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | Yes | Author or organization name |
-| `url` | string | No | Website or repository URL |
+| Field  | Type   | Required | Description                 |
+| ------ | ------ | -------- | --------------------------- |
+| `name` | string | Yes      | Author or organization name |
+| `url`  | string | No       | Website or repository URL   |
 
 #### `binary`
 
@@ -108,18 +112,20 @@ Path to the widget executable, relative to the widget directory.
 
 #### `settings`
 
-Array of system setting keys that the widget subscribes to. The main Deck application sends the current values in the `init` message and sends `settings_update` messages via IPC when these settings change.
+Array of system setting keys that the widget subscribes to. The main Deck application sends the current values in the
+`init` message and sends `settings_update` messages via IPC when these settings change.
 
 - Type: `string[]`
 - Available setting keys:
 
-| Key | Value Type | Description |
-|-----|------------|-------------|
-| `localization` | object | All localization/format preferences (see below) |
-| `timezone` | string | IANA timezone identifier (e.g., `Europe/Prague`) |
-| `nightMode` | boolean | Night mode active state |
+| Key            | Value Type | Description                                      |
+| -------------- | ---------- | ------------------------------------------------ |
+| `localization` | object     | All localization/format preferences (see below)  |
+| `timezone`     | string     | IANA timezone identifier (e.g., `Europe/Prague`) |
+| `nightMode`    | boolean    | Night mode active state                          |
 
 Example:
+
 ```json
 "settings": ["localization", "timezone", "nightMode"]
 ```
@@ -128,24 +134,25 @@ Example:
 
 When a widget subscribes to `localization`, it receives an object containing all format preferences:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `dateFormat` | string | Date format pattern |
-| `timeFormat` | string | Time format (`12h` or `24h`) |
-| `numberFormat` | string | Number format locale |
+| Field             | Type   | Description                                  |
+| ----------------- | ------ | -------------------------------------------- |
+| `dateFormat`      | string | Date format pattern                          |
+| `timeFormat`      | string | Time format (`12h` or `24h`)                 |
+| `numberFormat`    | string | Number format locale                         |
 | `temperatureUnit` | string | Temperature unit (`celsius` or `fahrenheit`) |
-| `firstDayOfWeek` | string | First day of the week (`monday` or `sunday`) |
-
+| `firstDayOfWeek`  | string | First day of the week (`monday` or `sunday`) |
 
 #### `sizes`
 
-Array of supported widget size types. At least one size must be specified. Widgets must support all sizes they declare. The actual pixel dimensions are sent to the widget in the `init` message.
+Array of supported widget size types. At least one size must be specified. Widgets must support all sizes they declare.
+The actual pixel dimensions are sent to the widget in the `init` message.
 
 - Type: `string[]`
 - Min items: 1
 - Available size types: `small`, `medium`, `large`, `full`
 
 Example:
+
 ```json
 "sizes": ["small", "medium", "large", "full"]
 ```
@@ -157,15 +164,16 @@ The Deck application sends pixel dimensions in the `init` message based on the s
 Dimensions for the Braiins Deck (1280x480 display, 4x2 grid):
 
 | Size Type | Width | Height | Grid Cells |
-|-----------|-------|--------|------------|
-| `small` | 317 | 238 | 1x1 |
-| `medium` | 638 | 238 | 2x1 |
-| `large` | 638 | 480 | 2x2 |
-| `full` | 1280 | 480 | 4x2 |
+| --------- | ----- | ------ | ---------- |
+| `small`   | 317   | 238    | 1x1        |
+| `medium`  | 638   | 238    | 2x1        |
+| `large`   | 638   | 480    | 2x2        |
+| `full`    | 1280  | 480    | 4x2        |
 
 #### `params`
 
-Object defining the configuration parameters that users can set per widget instance. Keys are parameter identifiers, values are parameter definitions.
+Object defining the configuration parameters that users can set per widget instance. Keys are parameter identifiers,
+values are parameter definitions.
 
 - Type: `object`
 - Keys: Parameter identifier (camelCase, alphanumeric)
@@ -173,28 +181,29 @@ Object defining the configuration parameters that users can set per widget insta
 
 ##### ParamDefinition Object
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | Yes | Human-readable label |
-| `type` | string | Yes | Parameter type |
-| `description` | string | No | Help text for the parameter |
-| `default` | any | Yes | Default value (must match type) |
-| `enum` | object | No | Allowed values for string type |
-| `min` | number | No | Minimum value for number type |
-| `max` | number | No | Maximum value for number type |
+| Field         | Type   | Required | Description                     |
+| ------------- | ------ | -------- | ------------------------------- |
+| `name`        | string | Yes      | Human-readable label            |
+| `type`        | string | Yes      | Parameter type                  |
+| `description` | string | No       | Help text for the parameter     |
+| `default`     | any    | Yes      | Default value (must match type) |
+| `enum`        | object | No       | Allowed values for string type  |
+| `min`         | number | No       | Minimum value for number type   |
+| `max`         | number | No       | Maximum value for number type   |
 
 ##### Parameter Types
 
-| Type | JSON Type | Description |
-|------|-----------|-------------|
-| `string` | string | Text value, optionally constrained by `enum` |
-| `boolean` | boolean | True/false toggle |
-| `number` | number | Numeric value, optionally constrained by `min`/`max` |
-| `array` | array | Array of values |
+| Type      | JSON Type | Description                                          |
+| --------- | --------- | ---------------------------------------------------- |
+| `string`  | string    | Text value, optionally constrained by `enum`         |
+| `boolean` | boolean   | True/false toggle                                    |
+| `number`  | number    | Numeric value, optionally constrained by `min`/`max` |
+| `array`   | array     | Array of values                                      |
 
 ##### Enum Object
 
-For string parameters with a fixed set of allowed values. Keys are the actual values stored, values are human-readable labels.
+For string parameters with a fixed set of allowed values. Keys are the actual values stored, values are human-readable
+labels.
 
 - Type: `object`
 - Keys: Actual value (stored in config)

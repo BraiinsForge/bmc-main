@@ -1,13 +1,12 @@
 # Analysis: split `runtime_wasmi.rs`
 
-**Reviewed:** 2026-04-13  
-**Branch:** `jku/BDK-331/regression-testing`  
+**Reviewed:** 2026-04-13\
+**Branch:** `jku/BDK-331/regression-testing`\
 **HEAD:** `9b01f9b1b201a3eda1863644eea9ce6474c3d62e`
 
 ## Summary
 
-`bmc-wasm-runtime/src/runtime_wasmi.rs` is too large and mixes too many
-independent responsibilities.
+`bmc-wasm-runtime/src/runtime_wasmi.rs` is too large and mixes too many independent responsibilities.
 
 Current size:
 
@@ -17,8 +16,7 @@ Current size:
 - runtime lifecycle + host-to-guest event delivery block: **1275 lines**
 - background networking/discovery/http worker block: **972 lines**
 
-This is no longer a "runtime backend" file. It is currently all of these at
-once:
+This is no longer a "runtime backend" file. It is currently all of these at once:
 
 - public runtime API
 - wasmi module instantiation and SDK validation
@@ -38,8 +36,7 @@ The file has already started to split naturally:
 - runtime limits live in `bmc-wasm-runtime/src/runtime_limits.rs`
 - XML indexing now lives in `bmc-wasm-runtime/src/xml.rs`
 
-The next step should follow the same pattern instead of letting
-`runtime_wasmi.rs` keep absorbing unrelated code.
+The next step should follow the same pattern instead of letting `runtime_wasmi.rs` keep absorbing unrelated code.
 
 ## Current responsibility map
 
@@ -95,8 +92,8 @@ Owns:
 - all `deliver_*` methods
 - all `has_*` polling predicates
 
-This is conceptually coherent, but it is too large because the event delivery
-code for every protocol is duplicated inline here.
+This is conceptually coherent, but it is too large because the event delivery code for every protocol is duplicated
+inline here.
 
 ### 4. Guest memory + small helpers
 
@@ -114,8 +111,7 @@ Owns:
 - image decode limits
 - TLS config builder entrypoints
 
-These helpers are used by several unrelated domains and should not live at the
-bottom of the runtime file.
+These helpers are used by several unrelated domains and should not live at the bottom of the runtime file.
 
 ### 5. Background workers and protocol parsing
 
@@ -165,36 +161,32 @@ The problem is not just line count.
 
 ### Reviewability
 
-Small changes to one domain get buried in unrelated code. A review about XML,
-TLS, or event delivery still forces the reviewer through a 4.8k-line file.
+Small changes to one domain get buried in unrelated code. A review about XML, TLS, or event delivery still forces the
+reviewer through a 4.8k-line file.
 
 ### Ownership boundaries
 
-There is no clear answer to "where does fetch behavior live?" or "where do we
-add a new host import?" because several answers are simultaneously true.
+There is no clear answer to "where does fetch behavior live?" or "where do we add a new host import?" because several
+answers are simultaneously true.
 
 ### Testability
 
-Pure helpers, import registration, runtime lifecycle, and background workers
-need different test styles. Co-locating them in one file discourages focused
-tests and pushes everything toward ad hoc bottom-of-file unit tests.
+Pure helpers, import registration, runtime lifecycle, and background workers need different test styles. Co-locating
+them in one file discourages focused tests and pushes everything toward ad hoc bottom-of-file unit tests.
 
 ### Safe refactoring
 
-The import registration closures repeatedly duplicate memory reads, guest
-allocation, and event delivery patterns. With everything in one file, it is
-hard to extract common helpers without creating another large internal tangle.
+The import registration closures repeatedly duplicate memory reads, guest allocation, and event delivery patterns. With
+everything in one file, it is hard to extract common helpers without creating another large internal tangle.
 
 ### Compile and merge friction
 
-Even unrelated edits touch the same file, so conflicts are more likely and the
-module becomes a hotspot.
+Even unrelated edits touch the same file, so conflicts are more likely and the module becomes a hotspot.
 
 ## Recommended split
 
-Keep `bmc-wasm-runtime/src/runtime.rs` as the public facade module, consistent
-with the repository's Rust 2018 module style. Replace the single
-`runtime_wasmi.rs` backend blob with focused files under `bmc-wasm-runtime/src/runtime/`.
+Keep `bmc-wasm-runtime/src/runtime.rs` as the public facade module, consistent with the repository's Rust 2018 module
+style. Replace the single `runtime_wasmi.rs` backend blob with focused files under `bmc-wasm-runtime/src/runtime/`.
 
 ### Target structure
 
@@ -252,35 +244,32 @@ All `deliver_*` methods follow the same pattern:
 4. call the guest callback export
 5. clean up closed resources
 
-That shared pattern should live together. Today it is mixed into the runtime
-public API block, making both harder to read.
+That shared pattern should live together. Today it is mixed into the runtime public API block, making both harder to
+read.
 
 ### `memory.rs`
 
-Guest memory marshalling is cross-cutting infrastructure. It should not be
-copied inline in each host import or event delivery path.
+Guest memory marshalling is cross-cutting infrastructure. It should not be copied inline in each host import or event
+delivery path.
 
 This module is also the right place for a small helper like:
 
 - `alloc_and_copy_to_guest(...)`
 - `call_guest_with_bytes(...)`
 
-Those would reduce a large amount of repeated `__alloc` + bounds-check +
-copy-to-memory code.
+Those would reduce a large amount of repeated `__alloc` + bounds-check + copy-to-memory code.
 
 ### `background/*`
 
-The runtime file should not contain socket loops, HTTP servers, SSDP parsing,
-and TLS verifier details. These are host-side services, not runtime core logic.
+The runtime file should not contain socket loops, HTTP servers, SSDP parsing, and TLS verifier details. These are
+host-side services, not runtime core logic.
 
-Splitting by transport/discovery protocol is preferable to one giant
-`network.rs`, because the responsibilities are already distinct and likely to
-evolve separately.
+Splitting by transport/discovery protocol is preferable to one giant `network.rs`, because the responsibilities are
+already distinct and likely to evolve separately.
 
 ### `time.rs`
 
-The calendar/time helpers are pure and stable. They should be cheap to test and
-review in isolation.
+The calendar/time helpers are pure and stable. They should be cheap to test and review in isolation.
 
 ## Boundaries to preserve
 
@@ -289,13 +278,11 @@ The split should be structural, not architectural churn.
 Keep these rules:
 
 - do not change the guest ABI names (`host_*`, `__on_*`, `__alloc`)
-- do not redesign `HostState` during the split unless a moved module clearly
-  needs a small helper method
+- do not redesign `HostState` during the split unless a moved module clearly needs a small helper method
 - do not introduce deep generic abstractions just to deduplicate everything
 - do not merge unrelated protocols under one trait hierarchy
 - keep `runtime.rs` as the stable public entrypoint
-- keep already-extracted modules (`host_api.rs`, `runtime_limits.rs`, `xml.rs`)
-  where they are
+- keep already-extracted modules (`host_api.rs`, `runtime_limits.rs`, `xml.rs`) where they are
 
 ## Recommended first-pass refactors
 
@@ -313,19 +300,17 @@ This will shrink both import closures and `deliver_*` methods.
 
 ### 2. Extract delivery before background workers
 
-`deliver_*` methods are closer to the public runtime API than the worker
-threads. Moving them first makes the remaining backend file easier to reason
-about and clarifies what host-side services still need to be extracted.
+`deliver_*` methods are closer to the public runtime API than the worker threads. Moving them first makes the remaining
+backend file easier to reason about and clarifies what host-side services still need to be extracted.
 
 ### 3. Split imports by domain, not alphabetically
 
-The import registration function is too large because it mixes domains. Keep the
-registration grouped by runtime concern instead of one-file-per-host-function.
+The import registration function is too large because it mixes domains. Keep the registration grouped by runtime concern
+instead of one-file-per-host-function.
 
 ### 4. Move tests with the modules they exercise
 
-Pure helper tests should leave the runtime backend file as soon as those helpers
-move.
+Pure helper tests should leave the runtime backend file as soon as those helpers move.
 
 ## Non-goals
 
@@ -349,13 +334,12 @@ To keep review diffs readable, prefer this commit shape:
 4. extract background workers into `background/*`
 5. final cleanup, docs, and test moves
 
-If a stage grows too large, split by domain rather than mixing structural moves
-with behavior changes.
+If a stage grows too large, split by domain rather than mixing structural moves with behavior changes.
 
 ## Conclusion
 
-The correct split is not "break the file into arbitrary chunks". The right goal
-is to align modules with the runtime's existing subsystems:
+The correct split is not "break the file into arbitrary chunks". The right goal is to align modules with the runtime's
+existing subsystems:
 
 - backend lifecycle
 - guest imports
@@ -364,5 +348,5 @@ is to align modules with the runtime's existing subsystems:
 - background networking/discovery/http workers
 - pure time/formatting helpers
 
-That gives a structure that is easier to review, easier to test, and easier to
-extend without re-creating another 4k-line hotspot.
+That gives a structure that is easier to review, easier to test, and easier to extend without re-creating another
+4k-line hotspot.

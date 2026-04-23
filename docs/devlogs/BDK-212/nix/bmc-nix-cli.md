@@ -2,8 +2,8 @@
 
 ## Placement
 
-New `[[bin]]` target in `bmc-nix/Cargo.toml`, alongside the existing
-hook binaries. It reuses the library functions directly.
+New `[[bin]]` target in `bmc-nix/Cargo.toml`, alongside the existing hook binaries. It reuses the library functions
+directly.
 
 ```toml
 [[bin]]
@@ -13,13 +13,11 @@ path = "src/bin/cli.rs"
 
 ## Purpose
 
-Thin CLI wrapper around `bmc-nix` library functions. The primary
-consumer is the `mkTarball` Nix derivation, which needs to build a
-profile at build time without the full daemon running.
+Thin CLI wrapper around `bmc-nix` library functions. The primary consumer is the `mkTarball` Nix derivation, which needs
+to build a profile at build time without the full daemon running.
 
-Only subcommands needed for the initial tarball are defined here.
-More can be added later as needed (e.g., for debugging, manual
-upgrades, or CI tooling).
+Only subcommands needed for the initial tarball are defined here. More can be added later as needed (e.g., for
+debugging, manual upgrades, or CI tooling).
 
 ## Subcommands
 
@@ -38,11 +36,9 @@ bmc-nix-cli build-profile \
 **What it does:**
 
 1. Read and parse the index JSON from `--index`
-2. Convert all packages in the index to `ResolvedPackage` entries
-   (store paths are already in the index, no fetching needed since
-   the packages are already in the local store during nix build)
-3. Call `bmc_nix::profile::build_profile()` with the given
-   `profile_dir`, `generation`, and resolved packages
+2. Convert all packages in the index to `ResolvedPackage` entries (store paths are already in the index, no fetching
+   needed since the packages are already in the local store during nix build)
+3. Call `bmc_nix::profile::build_profile()` with the given `profile_dir`, `generation`, and resolved packages
 4. Exit 0 on success, non-zero with error message on failure
 
 **Example invocation (inside mkTarball derivation):**
@@ -54,9 +50,8 @@ ${bmc-nix-cli}/bin/bmc-nix-cli build-profile \
   --generation 1
 ```
 
-This produces the symlink tree at
-`$rootDir/nix/var/nix/gcroots/profiles/bmc/1-link/` with all packages
-merged, hooks executed, and manifest written.
+This produces the symlink tree at `$rootDir/nix/var/nix/gcroots/profiles/bmc/1-link/` with all packages merged, hooks
+executed, and manifest written.
 
 ## Implementation Sketch
 
@@ -121,4 +116,3 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 ```
-

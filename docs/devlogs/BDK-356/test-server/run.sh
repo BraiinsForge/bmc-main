@@ -31,8 +31,8 @@ echo "    Tarball: $SERVE_DIR/init-tarball.tar.gz ($(du -h "$SERVE_DIR/init-tarb
 
 # Step 2: Generate factory.json and servers.json with actual IP
 echo "==> Generating config files for $HOST_IP..."
-sed "s/\${HOST_IP}/$HOST_IP/g" "$SCRIPT_DIR/factory.json" > "$SERVE_DIR/factory.json"
-sed "s/\${HOST_IP}/$HOST_IP/g" "$SCRIPT_DIR/servers.json" > "/tmp/bmc-nix-init-servers.json"
+sed "s/\${HOST_IP}/$HOST_IP/g" "$SCRIPT_DIR/factory.json" >"$SERVE_DIR/factory.json"
+sed "s/\${HOST_IP}/$HOST_IP/g" "$SCRIPT_DIR/servers.json" >"/tmp/bmc-nix-init-servers.json"
 
 # Step 3: Deploy servers.json to device
 echo "==> Deploying servers.json to $DEVICE_IP..."

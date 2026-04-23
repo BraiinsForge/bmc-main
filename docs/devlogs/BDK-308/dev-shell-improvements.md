@@ -65,8 +65,8 @@ The dev shell uses a plain `mkShell` with a two-pronged approach for native libr
   vendored npm binaries (biome, sass-embedded) that are dynamically linked against glibc.
 - **RUSTFLAGS rpath for GUI libs** — instead of putting GUI libraries (X11, Wayland, fontconfig, GL, etc.) on
   `LD_LIBRARY_PATH`, the shell sets `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS` with `-Wl,-rpath,<paths>`. This
-  bakes the library search paths directly into compiled Rust binaries, so they can find their dlopen dependencies
-  (e.g. Slint loading `libfontconfig.so.1`) at runtime without any environment variable.
+  bakes the library search paths directly into compiled Rust binaries, so they can find their dlopen dependencies (e.g.
+  Slint loading `libfontconfig.so.1`) at runtime without any environment variable.
 
 This keeps the shell simple and the built binaries self-contained with respect to their runtime library dependencies.
 
@@ -92,31 +92,31 @@ The `local` shell is available for developers who don't need the ARM toolchain.
 These are the vendored npm binaries that motivated the `LD_LIBRARY_PATH` setup:
 
 | Binary                                  | Type            | Dependencies                                                      |
-|-----------------------------------------|-----------------|-------------------------------------------------------------------|
+| --------------------------------------- | --------------- | ----------------------------------------------------------------- |
 | `@biomejs/cli-linux-x64/biome`          | Dynamic (glibc) | libgcc_s, libpthread, libm, libdl, libc                           |
 | `sass-embedded-linux-x64/.../dart`      | Dynamic (glibc) | libdl, libpthread, libm, libc                                     |
 | `sass-embedded-linux-musl-x64/.../dart` | Dynamic (musl)  | libc.musl-x86_64.so.1 (ignored via autoPatchelfIgnoreMissingDeps) |
 | `@bufbuild/buf-linux-x64/bin/buf`       | Static          | None                                                              |
 | `@esbuild/linux-x64/bin/esbuild`        | Static          | None                                                              |
 
-The glibc-linked binaries only need basic libc/libgcc — the minimal `LD_LIBRARY_PATH` with `libgcc` is sufficient.
-The musl variant and static binaries need no special handling.
+The glibc-linked binaries only need basic libc/libgcc — the minimal `LD_LIBRARY_PATH` with `libgcc` is sufficient. The
+musl variant and static binaries need no special handling.
 
 ## What Changed
 
-| Area                          | Before                                     | After                                              |
-|-------------------------------|--------------------------------------------|----------------------------------------------------|
-| Default devShell              | `mkShell` with only `rustToolchain`        | `mkShell` with all deps + ARMv7 cross-compiler     |
-| GUI runtime libs              | Not available in any shell                 | Baked into binaries via RUSTFLAGS rpath             |
-| `LD_LIBRARY_PATH`             | Not set (or large in `frontend` shell)     | Minimal: only `libgcc`                             |
-| `fast` / `frontend` shells    | Existed as separate shells                 | Removed from flake devShells (fast still in workspace.nix) |
-| `bmc-mock-display/shell.nix`  | Standalone impure shell.nix                | Deleted                                            |
-| Dependency definitions        | Duplicated between flake.nix/workspace.nix | Shared via `commonDeps`                            |
-| `workspace.nix` signature     | `{ self, pkgs }`                           | `{ self, pkgs, commonDeps }`                       |
-| Frontend tooling              | Separate `frontend` shell                  | Part of the default shell                          |
-| ARM cross-compilation         | Only via workspace.nix build profiles      | Also available directly in the `full` dev shell    |
-| Devcontainer                  | None                                       | `.devcontainer/devcontainer.json` added            |
-| Fonts                         | Only `corefonts`                           | `corefonts` + `font-awesome_6`                     |
+| Area                         | Before                                     | After                                                      |
+| ---------------------------- | ------------------------------------------ | ---------------------------------------------------------- |
+| Default devShell             | `mkShell` with only `rustToolchain`        | `mkShell` with all deps + ARMv7 cross-compiler             |
+| GUI runtime libs             | Not available in any shell                 | Baked into binaries via RUSTFLAGS rpath                    |
+| `LD_LIBRARY_PATH`            | Not set (or large in `frontend` shell)     | Minimal: only `libgcc`                                     |
+| `fast` / `frontend` shells   | Existed as separate shells                 | Removed from flake devShells (fast still in workspace.nix) |
+| `bmc-mock-display/shell.nix` | Standalone impure shell.nix                | Deleted                                                    |
+| Dependency definitions       | Duplicated between flake.nix/workspace.nix | Shared via `commonDeps`                                    |
+| `workspace.nix` signature    | `{ self, pkgs }`                           | `{ self, pkgs, commonDeps }`                               |
+| Frontend tooling             | Separate `frontend` shell                  | Part of the default shell                                  |
+| ARM cross-compilation        | Only via workspace.nix build profiles      | Also available directly in the `full` dev shell            |
+| Devcontainer                 | None                                       | `.devcontainer/devcontainer.json` added                    |
+| Fonts                        | Only `corefonts`                           | `corefonts` + `font-awesome_6`                             |
 
 ## External Consumers
 

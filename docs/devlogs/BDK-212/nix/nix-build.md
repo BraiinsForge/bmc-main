@@ -2,30 +2,26 @@
 
 ## Overview
 
-This document describes the Nix derivations that bridge between
-building individual packages (Rust crates, widgets, etc.) and
-producing the artifacts needed by the device-side upgrade system
-described in [nix-concepts.md](nix-concepts.md).
+This document describes the Nix derivations that bridge between building individual packages (Rust crates, widgets,
+etc.) and producing the artifacts needed by the device-side upgrade system described in
+[nix-concepts.md](nix-concepts.md).
 
 The build infrastructure produces three kinds of artifacts:
 
 1. **Packages** — individual derivations (widgets, bmc-openwrt, etc.)
-2. **Index** (`miniminer-index.json`) — metadata listing all available
-   packages and their store paths
-3. **Tarball** (`.tar.gz`) — initial Nix store snapshot for device
-   initialization, containing packages and a pre-built profile
+2. **Index** (`miniminer-index.json`) — metadata listing all available packages and their store paths
+3. **Tarball** (`.tar.gz`) — initial Nix store snapshot for device initialization, containing packages and a pre-built
+   profile
 
-The factory index (`factory.json`) can be built either by
-Nix (`mkFactoryIndex.nix`, for local testing with placeholder URLs)
-or by CI tooling (`scripts/build-factory-index.sh`, assembling real
-download URLs from tarball `metadata.json` files).
+The factory index (`factory.json`) can be built either by Nix (`mkFactoryIndex.nix`, for local testing with placeholder
+URLs) or by CI tooling (`scripts/build-factory-index.sh`, assembling real download URLs from tarball `metadata.json`
+files).
 
 ---
 
 ## File Structure
 
-All Nix build files live under `nix/`. Each file exports a single
-function, named after the file:
+All Nix build files live under `nix/`. Each file exports a single function, named after the file:
 
 ```
 nix/
@@ -37,10 +33,8 @@ nix/
 └── init-artifacts.nix     # Package list, index, tarball, and factory index
 ```
 
-`flake.nix` imports these files and passes shared arguments (`pkgs`,
-`commonDeps`, etc.). `artifacts.nix` is the single source of truth
-for what packages are released and how they're assembled into the
-index and tarball.
+`flake.nix` imports these files and passes shared arguments (`pkgs`, `commonDeps`, etc.). `artifacts.nix` is the single
+source of truth for what packages are released and how they're assembled into the index and tarball.
 
 ---
 
@@ -74,16 +68,15 @@ index and tarball.
                                     versions → factory.json)
 ```
 
-The **package list** is defined once and feeds both `mkIndex` and
-`mkTarball`. Adding a package to the system means adding one entry
-to the list.
+The **package list** is defined once and feeds both `mkIndex` and `mkTarball`. Adding a package to the system means
+adding one entry to the list.
 
 ---
 
 ## Package List Format
 
-The central input to `mkIndex` and `mkTarball` is a list of package
-entries. Each entry pairs a Nix derivation with its metadata:
+The central input to `mkIndex` and `mkTarball` is a list of package entries. Each entry pairs a Nix derivation with its
+metadata:
 
 ```nix
 [
@@ -109,18 +102,15 @@ entries. Each entry pairs a Nix derivation with its metadata:
 ]
 ```
 
-The `pkg` field is an actual Nix derivation. The function extracts
-the store path from it. Everything else is explicit metadata — it is
-not derived from the package contents.
-Compatibility checks are handled by checker packages; see
+The `pkg` field is an actual Nix derivation. The function extracts the store path from it. Everything else is explicit
+metadata — it is not derived from the package contents. Compatibility checks are handled by checker packages; see
 "Checker Packages" in [nix-concepts.md](nix-concepts.md).
 
-How packages are built (via `mkWidgetPackage`, workspace profiles,
-`callPackage`, etc.) is irrelevant to the index/tarball pipeline.
+How packages are built (via `mkWidgetPackage`, workspace profiles, `callPackage`, etc.) is irrelevant to the
+index/tarball pipeline.
 
-The optional `cache` field selects which binary cache hosts this
-package. If omitted, `mkIndex` defaults it to the first entry in
-`caches` (or `"default"` when `caches` is empty).
+The optional `cache` field selects which binary cache hosts this package. If omitted, `mkIndex` defaults it to the first
+entry in `caches` (or `"default"` when `caches` is empty).
 
 ---
 
@@ -130,14 +120,13 @@ package. If omitted, `mkIndex` defaults it to the first entry in
 
 **Existing file, moved from repo root to `nix/`.**
 
-Defines Rust crate builds, cross-compilation profiles, and
-development shells. See [the current workspace.nix](../../../../workspace.nix)
-for the full implementation.
+Defines Rust crate builds, cross-compilation profiles, and development shells. See
+[the current workspace.nix](../../../../workspace.nix) for the full implementation.
 
 Responsibilities:
+
 - Crate definitions via `pkgs.ii.rust.defineCrate`
-- Build profiles: `fast`, `armv7-musl-release`, `armv7-musl-debug`,
-  `armv7-glibc-release`, `armv7-glibc-debug`
+- Build profiles: `fast`, `armv7-musl-release`, `armv7-musl-debug`, `armv7-glibc-release`, `armv7-glibc-debug`
 - Development shells for each profile
 - Direct package builds (bmc-mock, bmc-openwrt, etc.)
 
@@ -147,8 +136,8 @@ Responsibilities:
 # Returns: { packages, devShells }
 ```
 
-No changes to this file's API are needed for the index/tarball
-pipeline. It just produces derivations that go into the package list.
+No changes to this file's API are needed for the index/tarball pipeline. It just produces derivations that go into the
+package list.
 
 ---
 
@@ -156,11 +145,10 @@ pipeline. It just produces derivations that go into the package list.
 
 **Extracted from workspace.nix.**
 
-Builds a single widget Rust crate into a package derivation with the
-standard directory layout expected by the device.
+Builds a single widget Rust crate into a package derivation with the standard directory layout expected by the device.
 
-Note: The `mkWidgetPackage` defined here is the **internal** API, used
-within our monorepo (takes `crate` + `profile` from the workspace).
+Note: The `mkWidgetPackage` defined here is the **internal** API, used within our monorepo (takes `crate` + `profile`
+from the workspace).
 
 ```nix
 # nix/mkWidgetPackage.nix
@@ -177,8 +165,8 @@ within our monorepo (takes `crate` + `profile` from the workspace).
 #   $out/lib/bmc-widgets/<name>/assets/  (if present)
 ```
 
-This is one way to produce a package derivation. The resulting
-derivation can be used as a `pkg` entry in the package list.
+This is one way to produce a package derivation. The resulting derivation can be used as a `pkg` entry in the package
+list.
 
 ---
 
@@ -200,9 +188,8 @@ Builds a `miniminer-index.json` from a list of package entries.
 
 **Implementation approach:**
 
-Uses `pkgs.runCommand` (or `pkgs.writeText` with `builtins.toJSON`).
-For each entry in `packages`, extracts the store path from `pkg` and
-combines it with the metadata to form the JSON structure defined in
+Uses `pkgs.runCommand` (or `pkgs.writeText` with `builtins.toJSON`). For each entry in `packages`, extracts the store
+path from `pkg` and combines it with the metadata to form the JSON structure defined in
 [nix-concepts.md](nix-concepts.md#index-structure).
 
 The output follows this schema:
@@ -230,8 +217,7 @@ The output follows this schema:
 }
 ```
 
-This is a lightweight derivation — pure JSON generation, no
-compilation or special tooling.
+This is a lightweight derivation — pure JSON generation, no compilation or special tooling.
 
 ---
 
@@ -258,38 +244,28 @@ Builds an initial Nix store tarball for device initialization.
 
 This is the most involved derivation. Steps inside the build:
 
-1. **Generate temporary index** — call `mkIndex` with the same
-   `packages` to produce an `index.json`. This gives the `bmc-nix`
-   CLI the input it needs.
+1. **Generate temporary index** — call `mkIndex` with the same `packages` to produce an `index.json`. This gives the
+   `bmc-nix` CLI the input it needs.
 
-2. **Build profile** — invoke `bmc-nix-cli build-profile` with the
-   generated index. See [bmc-nix-cli.md](bmc-nix-cli.md) for the
-   full CLI specification. This produces the symlink-based profile
-   directory (symlink tree, hooks, manifest) as described in
-   [nix-concepts.md](nix-concepts.md#custom-profile-management).
-   Use `--generation 1`, and point `--profile-dir` into the tarball
-   root (e.g., `$rootDir${profile_path}`) so files land inside the
-   archive.
+2. **Build profile** — invoke `bmc-nix-cli build-profile` with the generated index. See [bmc-nix-cli.md](bmc-nix-cli.md)
+   for the full CLI specification. This produces the symlink-based profile directory (symlink tree, hooks, manifest) as
+   described in [nix-concepts.md](nix-concepts.md#custom-profile-management). Use `--generation 1`, and point
+   `--profile-dir` into the tarball root (e.g., `$rootDir${profile_path}`) so files land inside the archive.
 
-   **Note:** The profile is NOT activated during the tarball build.
-   Activation scripts reference absolute system paths (`/etc/init.d/`,
-   etc.) that don't exist under the build sandbox. The `current`
-   symlink is also not set. On first boot, the `bmc-nix-initializer`
-   detects there is no active profile and activates the latest
-   generation using the `bmc-nix` library directly. See
-   [nix-openwrt-services.md](nix-openwrt-services.md#bmc-nix-initializer).
+   **Note:** The profile is NOT activated during the tarball build. Activation scripts reference absolute system paths
+   (`/etc/init.d/`, etc.) that don't exist under the build sandbox. The `current` symlink is also not set. On first
+   boot, the `bmc-nix-initializer` detects there is no active profile and activates the latest generation using the
+   `bmc-nix` library directly. See [nix-openwrt-services.md](nix-openwrt-services.md#bmc-nix-initializer).
 
-3. **Capture closure** — use `pkgs.closureInfo` to compute the full
-   runtime closure of all packages. This is a standard nixpkgs
-   utility (`pkgs/build-support/closure-info.nix`) that uses
-   `exportReferencesGraph` under the hood. It produces:
+3. **Capture closure** — use `pkgs.closureInfo` to compute the full runtime closure of all packages. This is a standard
+   nixpkgs utility (`pkgs/build-support/closure-info.nix`) that uses `exportReferencesGraph` under the hood. It
+   produces:
+
    - `store-paths` — one store path per line, the complete closure
-   - `registration` — nix-store database registration entries
-     (suitable for `nix-store --load-db`)
+   - `registration` — nix-store database registration entries (suitable for `nix-store --load-db`)
    - `total-nar-size` — aggregate NAR size
 
-   The `closureInfo` derivation is built separately and its outputs
-   are referenced in the tarball build step:
+   The `closureInfo` derivation is built separately and its outputs are referenced in the tarball build step:
 
    ```nix
    closureInfo = pkgs.closureInfo {
@@ -297,34 +273,29 @@ This is the most involved derivation. Steps inside the build:
    };
    ```
 
-4. **Populate Nix DB** — use `nix-store --load-db` with a local
-   store root to build the SQLite database from the registration
-   data. This uses Nix's `local?root=` store backend to write into
-   an isolated directory without touching the build machine's store:
+4. **Populate Nix DB** — use `nix-store --load-db` with a local store root to build the SQLite database from the
+   registration data. This uses Nix's `local?root=` store backend to write into an isolated directory without touching
+   the build machine's store:
 
    ```bash
    export NIX_REMOTE=local?root=$rootDir
    nix-store --load-db < ${closureInfo}/registration
    ```
 
-   The `mkTarball` derivation needs `nix` and `gzip` in
-   `nativeBuildInputs` for the `nix-store` command and tarball
+   The `mkTarball` derivation needs `nix` and `gzip` in `nativeBuildInputs` for the `nix-store` command and tarball
    compression respectively.
 
-   This produces `$rootDir/nix/var/nix/db/db.sqlite` — a fully
-   populated store database. After extraction on the device, the
-   store is immediately functional with no further initialization
-   needed.
+   This produces `$rootDir/nix/var/nix/db/db.sqlite` — a fully populated store database. After extraction on the device,
+   the store is immediately functional with no further initialization needed.
 
 5. **Create tarball** — assemble a root directory and tar it up:
+
    - All store paths listed in `${closureInfo}/store-paths`
    - The populated Nix DB at `nix/var/nix/db/db.sqlite`
-   - The built profile directory at `profile_path` — this lives
-     outside `/nix/store` (it is a directory of symlinks pointing
-     into the store, assembled by `bmc-nix-cli` in step 2) and is
-     archived at its relative path within the tarball root
-   - Extra files from `extraFiles` (if provided), overlaid at the
-     root (e.g., `etc/nix/nix.conf`)
+   - The built profile directory at `profile_path` — this lives outside `/nix/store` (it is a directory of symlinks
+     pointing into the store, assembled by `bmc-nix-cli` in step 2) and is archived at its relative path within the
+     tarball root
+   - Extra files from `extraFiles` (if provided), overlaid at the root (e.g., `etc/nix/nix.conf`)
    - Compress with `gzip`
 
    Example usage of `extraFiles`:
@@ -336,8 +307,7 @@ This is the most involved derivation. Steps inside the build:
    '';
    ```
 
-6. **Write metadata** — produce `metadata.json` alongside the
-   tarball:
+6. **Write metadata** — produce `metadata.json` alongside the tarball:
 
 ```json
 {
@@ -347,19 +317,16 @@ This is the most involved derivation. Steps inside the build:
 }
 ```
 
-This metadata is consumed by external tooling to build the factory
-index (`factory.json`) across multiple versions. The
-external tooling must supply the `download_url` field (not present
-in `metadata.json`) when assembling `factory.json`, since
-it depends on where the tarball is ultimately published.
+This metadata is consumed by external tooling to build the factory index (`factory.json`) across multiple versions. The
+external tooling must supply the `download_url` field (not present in `metadata.json`) when assembling `factory.json`,
+since it depends on where the tarball is ultimately published.
 
 ---
 
 ## artifacts.nix
 
-The package list, index, and tarball definitions are extracted into
-`nix/artifacts.nix` to keep `flake.nix` lean. This file is the single
-source of truth for what gets released.
+The package list, index, and tarball definitions are extracted into `nix/artifacts.nix` to keep `flake.nix` lean. This
+file is the single source of truth for what gets released.
 
 ```nix
 # nix/artifacts.nix
@@ -438,8 +405,7 @@ in
 
 ### flake.nix integration
 
-`flake.nix` imports all the Nix files and passes them to
-`artifacts.nix`:
+`flake.nix` imports all the Nix files and passes them to `artifacts.nix`:
 
 ```nix
 # In flake.nix (target layout, once `nix/` directory exists)
@@ -467,6 +433,5 @@ in
 
 ## Open Questions
 
-- **`mkTarball` nativeBuildInputs** — confirm that `nix`, `gzip`, and
-  `bmc-nix-cli` are sufficient as build-time inputs, and that no
-  additional tools (e.g., `sqlite` for DB inspection) are needed.
+- **`mkTarball` nativeBuildInputs** — confirm that `nix`, `gzip`, and `bmc-nix-cli` are sufficient as build-time inputs,
+  and that no additional tools (e.g., `sqlite` for DB inspection) are needed.
