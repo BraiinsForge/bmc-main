@@ -2,7 +2,7 @@
 { bmc, armv7Pkgs, deps }:
 let
   inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries
-    mkOpenWrtService;
+    mkOpenWrtService mkOpenWrtDaemon;
   inherit (bmc) crates;
   inherit (deps) compositorRuntimeDeps frontend;
   profile = bmc.profiles.armv7-glibc-release;
@@ -22,6 +22,23 @@ let
       break
     done
   '';
+
+  bmc-openwrt = autopatchelfBinaries {
+    drv = profile.buildCrate crates.bmc-openwrt {
+      env.BMC_WEB_FRONTEND_DIR = "${frontend}";
+    };
+    runtimeDeps = compositorRuntimeDeps armv7Pkgs;
+  };
+
+  bmc-compositor = mkOpenWrtDaemon {
+    name = "bmc-compositor";
+    start = 95;
+    command = "${bmc-openwrt}/bin/bmc-openwrt";
+    env = {
+      XDG_RUNTIME_DIR = "/tmp/runtime";
+    };
+    preStart = "mkdir -p /tmp/runtime";
+  };
 
   start-service-orchestrator = armv7Pkgs.writeTextFile {
     name = "start-service-orchestrator";
@@ -66,12 +83,7 @@ in
 {
   pkg = mkPackage {
     name = "bmc-core";
-    package = autopatchelfBinaries {
-      drv = profile.buildCrate crates.bmc-openwrt {
-        env.BMC_WEB_FRONTEND_DIR = "${frontend}";
-      };
-      runtimeDeps = compositorRuntimeDeps armv7Pkgs;
-    };
+    package = bmc-openwrt;
     hooks = [
       { prefix = "001"; bin = profile.buildCrate crates.bmc-hook-merge-files { }; }
       { prefix = "002"; bin = profile.buildCrate crates.bmc-hook-file-symlinks { }; }
@@ -81,6 +93,7 @@ in
       { prefix = "055"; bin = profile.buildCrate crates.bmc-activation-copy-files { }; }
       { prefix = "090"; bin = start-service-orchestrator; }
     ];
+    services = [ bmc-compositor ];
     out = [
       { src = ./scripts; dest = "bin"; }
     ];

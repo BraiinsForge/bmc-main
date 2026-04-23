@@ -58,6 +58,7 @@ let
     , command
     , args ? [ ]
     , env ? { }
+    , preStart ? ""
     , respawn ? { threshold = 3600; timeout = 5; retry = 0; }
     , termTimeout ? 20
     , pidFile ? "/var/run/${name}.pid"
@@ -81,7 +82,8 @@ let
         envNames;
       boolToInt = b: if b then "1" else "0";
       startBody = lib.concatStringsSep "\n" (
-        [
+        lib.optional (preStart != "") preStart
+        ++ [
           "procd_open_instance"
           # NOTE: unfortunately we need to resort to this hack.
           # procd sets LD_PRELOAD to /lib/libsetlbf.so that depends on libc.so
