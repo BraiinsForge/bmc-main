@@ -34,7 +34,10 @@ const LOG_ROTATE_FILES_KEEP: usize = 4;
 #[derive(Debug, Parser)]
 #[command(name = "bmc-nix-service-orchestrator")]
 struct Args {
-    #[arg(long)]
+    // Empty path is a sentinel for "no previous generation" (first
+    // activation). Clap's default PathBuf parser rejects empty values, so
+    // use a passthrough parser here.
+    #[arg(long, value_parser = parse_possibly_empty_path)]
     old_generation: PathBuf,
 
     #[arg(long)]
@@ -48,6 +51,14 @@ struct Args {
 
     #[arg(long)]
     timeout_seconds: usize,
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "clap's value_parser signature requires Result"
+)]
+fn parse_possibly_empty_path(value: &str) -> Result<PathBuf, String> {
+    Ok(PathBuf::from(value))
 }
 
 fn init_logging() {
@@ -416,6 +427,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_empty_old_generation_as_first_activation_sentinel() {
+        let args = Args::try_parse_from([
+            "bmc-nix-service-orchestrator",
+            "--old-generation=",
+            "--new-generation=/nix/store/new",
+            "--current-link=/nix/var/nix/gcroots/profiles/bmc/current",
+            "--instance-name=bmc-nix-service-orchestrator",
+            "--timeout-seconds=30",
+        ])
+        .expect("BUG: empty --old-generation must parse as a first-activation sentinel");
+
+        assert!(args.old_generation.as_os_str().is_empty());
+    }
+
+    #[test]
     fn launcher_command_block_matches_orchestrator_cli_shape() {
         let launcher = fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -429,21 +455,18 @@ mod tests {
             command_args,
             [
                 "$binary",
-                "--old-generation",
-                "$PROFILE_OLD_GENERATION",
-                "--new-generation",
-                "$PROFILE_NEW_GENERATION",
-                "--current-link",
-                "$current_link",
-                "--instance-name",
-                "<any>",
-                "--timeout-seconds",
-                "300",
+                "--old-generation=$PROFILE_OLD_GENERATION",
+                "--new-generation=$PROFILE_NEW_GENERATION",
+                "--current-link=$current_link",
+                "--instance-name=<any>",
+                "--timeout-seconds=300",
             ],
             "launcher should keep the expected orchestrator CLI shape"
         );
         assert!(
-            !command_args.iter().any(|arg| *arg == "--activation-pid"),
+            !command_args
+                .iter()
+                .any(|arg| arg.starts_with("--activation-pid")),
             "launcher should stop passing the removed activation pid flag"
         );
     }
@@ -685,17 +708,11 @@ mod tests {
             }
         }
 
-        assert!(
-            args.iter().any(|arg| arg == "--instance-name"),
-            "BUG: launcher should keep the instance-name flag"
-        );
-        if let Some(index) = args.iter().position(|arg| arg == "--instance-name") {
-            assert!(
-                args.get(index + 1).is_some(),
-                "BUG: launcher should keep an instance-name value"
-            );
-            args[index + 1] = "<any>".to_string();
-        }
+        let instance_index = args
+            .iter()
+            .position(|arg| arg.starts_with("--instance-name="))
+            .expect("BUG: launcher should keep the instance-name flag");
+        args[instance_index] = "--instance-name=<any>".to_owned();
 
         args
     }

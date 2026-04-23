@@ -63,11 +63,11 @@ let
           \"$instance_name\": {
             \"command\": [
               \"$binary\",
-              \"--old-generation\", \"$PROFILE_OLD_GENERATION\",
-              \"--new-generation\", \"$PROFILE_NEW_GENERATION\",
-              \"--current-link\", \"$current_link\",
-              \"--instance-name\", \"$service_name\",
-              \"--timeout-seconds\", \"300\"
+              \"--old-generation=$PROFILE_OLD_GENERATION\",
+              \"--new-generation=$PROFILE_NEW_GENERATION\",
+              \"--current-link=$current_link\",
+              \"--instance-name=$service_name\",
+              \"--timeout-seconds=300\"
             ],
             \"env\": {
               \"LD_LIBRARY_PATH\": \"${glibc-libc-so-fix}/lib\"
