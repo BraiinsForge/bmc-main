@@ -454,7 +454,7 @@ mod tests {
         assert_eq!(
             command_args,
             [
-                "$binary",
+                "$executable",
                 "--old-generation=$PROFILE_OLD_GENERATION",
                 "--new-generation=$PROFILE_NEW_GENERATION",
                 "--current-link=$current_link",
@@ -475,8 +475,10 @@ mod tests {
     fn library_service_config_defaults_are_available() {
         let config = ServiceConfig::default();
 
-        assert_eq!(config.removed, vec!["stop"]);
+        assert_eq!(config.init, vec!["boot", "start"]);
+        assert_eq!(config.removed, vec!["stop", "disable"]);
         assert_eq!(config.upgrade, vec!["reload"]);
+        assert_eq!(config.always, vec!["enable"]);
     }
 
     #[test]
