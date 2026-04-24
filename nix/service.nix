@@ -121,9 +121,18 @@ let
         ]
       );
       reloadBody = "stop\nstart";
+      # Wait for the daemon PID to fully exit. procd bounds this via
+      # term_timeout (SIGTERM then SIGKILL), so this loop is not open-ended
+      # in practice.
+      stoppedBody = ''
+        pid=$(cat "${pidFile}" 2>/dev/null || true)
+        [ -n "$pid" ] || return 0
+        while [ -e /proc/$pid ]; do sleep 1; done
+      '';
       generatedFunctions = [
         { name = "start_service"; body = startBody; }
         { name = "reload_service"; body = reloadBody; }
+        { name = "service_stopped"; body = stoppedBody; }
       ];
     in
     mkOpenWrtService {
