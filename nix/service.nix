@@ -22,50 +22,55 @@ let
   mkOpenWrtService =
     { name
     , start
-    , stop ? null
+    , stop ? 80
     , enabled ? true
     , serviceConfig ? null
     , shebang ? "#!/bin/sh /etc/rc.common"
     , variables ? { }
     , functions ? [ ]
     }:
-    let
-      allVariables = { START = toString start; }
-        // lib.optionalAttrs (stop != null) { STOP = toString stop; }
-        // variables;
-      varLines = lib.concatMapStringsSep "\n"
-        (k: ''${k}="${allVariables.${k}}"'')
-        (builtins.attrNames allVariables);
-      funcBlock = lib.concatStringsSep "\n\n" (map renderFunction functions);
-      script = shebang + "\n\n"
-        + varLines + "\n"
-        + (lib.optionalString (functions != [ ]) ("\n" + funcBlock + "\n"));
-      service = pkgs.writeTextFile {
-        name = "init.d-${name}";
-        text = script;
-        executable = true;
-      };
-      # When the caller disables the service without supplying an explicit
-      # serviceConfig, write an all-empty action set so the orchestrator does
-      # not run `enable` (from the default `always`) or any other lifecycle
-      # action against a service the caller asked not to touch. An explicit
-      # serviceConfig always wins — the caller remains in charge.
-      disabledDefault = {
-        init = [ ];
-        upgrade = [ ];
-        removed = [ ];
-        always = [ ];
-      };
-      effectiveServiceConfig =
-        if serviceConfig != null then serviceConfig
-        else if !enabled then disabledDefault
-        else null;
-      serviceConfigFile =
-        if effectiveServiceConfig != null
-        then pkgs.writeText "init.d.conf-${name}.json" (builtins.toJSON effectiveServiceConfig)
-        else null;
-    in
-    { inherit name service start stop enabled serviceConfigFile; };
+    # NOTE: this is because at 90, unmount is called and since
+    # Nix lives at a /mnt/data partition, it needs to not be busy
+    # anymore.
+      assert lib.assertMsg (stop == null || stop < 90)
+        "mkOpenWrtService(${name}): stop must be lower than 90, got ${toString stop}";
+      let
+        allVariables = { START = toString start; }
+          // lib.optionalAttrs (stop != null) { STOP = toString stop; }
+          // variables;
+        varLines = lib.concatMapStringsSep "\n"
+          (k: ''${k}="${allVariables.${k}}"'')
+          (builtins.attrNames allVariables);
+        funcBlock = lib.concatStringsSep "\n\n" (map renderFunction functions);
+        script = shebang + "\n\n"
+          + varLines + "\n"
+          + (lib.optionalString (functions != [ ]) ("\n" + funcBlock + "\n"));
+        service = pkgs.writeTextFile {
+          name = "init.d-${name}";
+          text = script;
+          executable = true;
+        };
+        # When the caller disables the service without supplying an explicit
+        # serviceConfig, write an all-empty action set so the orchestrator does
+        # not run `enable` (from the default `always`) or any other lifecycle
+        # action against a service the caller asked not to touch. An explicit
+        # serviceConfig always wins — the caller remains in charge.
+        disabledDefault = {
+          init = [ ];
+          upgrade = [ ];
+          removed = [ ];
+          always = [ ];
+        };
+        effectiveServiceConfig =
+          if serviceConfig != null then serviceConfig
+          else if !enabled then disabledDefault
+          else null;
+        serviceConfigFile =
+          if effectiveServiceConfig != null
+          then pkgs.writeText "init.d.conf-${name}.json" (builtins.toJSON effectiveServiceConfig)
+          else null;
+      in
+      { inherit name service start stop enabled serviceConfigFile; };
 
   mkOpenWrtDaemon =
     { name
@@ -77,7 +82,7 @@ let
     , respawn ? { threshold = 3600; timeout = 5; retry = 0; }
     , termTimeout ? 20
     , pidFile ? "/var/run/${name}.pid"
-    , stop ? null
+    , stop ? 80
     , enabled ? true
     , serviceConfig ? null
     , extraVariables ? { }
