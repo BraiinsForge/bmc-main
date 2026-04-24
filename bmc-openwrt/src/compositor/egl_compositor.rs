@@ -14,6 +14,7 @@ use bmc::compositor::{
     Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, Size,
     WidgetAction,
 };
+use bmc_platform::linux_input::discover_touch_node;
 use bmc_widget_protocol::SettingUpdate;
 use smithay::backend::{
     input::{AbsolutePositionEvent, InputEvent, TouchEvent as TouchEventTrait, TouchSlot},
@@ -21,7 +22,7 @@ use smithay::backend::{
 };
 use smithay::reexports::{
     calloop::{
-        EventLoop, Interest, Mode, PostAction,
+        EventLoop, Interest, LoopHandle, Mode, PostAction,
         channel::{self as calloop_channel, Event as ChannelEvent},
         generic::Generic,
         timer::{TimeoutAction, Timer},
@@ -71,6 +72,21 @@ const HEADLESS_REFRESH_MHZ: i32 = 60_000;
 /// In headless mode the same timer also synthesises vblank-like state
 /// transitions, since there is no DRM device to emit real ones.
 const FRAME_CALLBACK_TICK: Duration = Duration::from_millis(16);
+
+/// Backoff ladder for post-startup touch-discovery retries.
+///
+/// Sized to cover the udev/sysfs visibility race on mdev-only OpenWrt
+/// images — the panel controller can take a few seconds to finish
+/// probing after the compositor starts, during which `discover_touch_node`
+/// returns nothing. Five attempts totalling ~7.75 s is enough for the
+/// observed worst case; past that we give up and wait for a restart.
+const TOUCH_DISCOVERY_BACKOFFS: &[Duration] = &[
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RedrawState {
@@ -204,6 +220,7 @@ impl EglCompositor {
         scanout_node: &Path,
         seat_name: &str,
         input_nodes: &[PathBuf],
+        has_explicit_input_nodes: bool,
         headless: bool,
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
@@ -272,7 +289,7 @@ impl EglCompositor {
             if headless { " [headless]" } else { "" },
         );
 
-        let mut event_loop: EventLoop<'_, AppState> =
+        let mut event_loop: EventLoop<'static, AppState> =
             try_init!(EventLoop::try_new(), "Failed to create event loop");
         let mut display: Display<CompositorState> =
             try_init!(Display::new(), "Failed to create Wayland display");
@@ -350,6 +367,9 @@ impl EglCompositor {
             logical_height,
             should_exit: false,
             redraw_state: RedrawState::Idle,
+            loop_handle: loop_handle.clone(),
+            retry_libinput: None,
+            touch_retry_pending: false,
         };
 
         // Add listening socket fd for new Wayland client connections
@@ -472,7 +492,7 @@ impl EglCompositor {
             "Initializing path-based libinput (seat='{seat_name}', {} device(s))",
             input_nodes.len(),
         );
-        let mut libinput_context = libinput::Libinput::new_from_path(RootLibinputInterface);
+        let libinput_context = libinput::Libinput::new_from_path(RootLibinputInterface);
 
         // Lower libinput's log priority to DEBUG so its internal
         // rejections (device classification, quirk application, udev
@@ -480,40 +500,34 @@ impl EglCompositor {
         // wrapper tees into bmc.log.
         set_libinput_debug_priority(&libinput_context);
 
-        let mut added = 0_usize;
-        for node in input_nodes {
-            let path_str = node.to_string_lossy();
-            match libinput_context.path_add_device(&path_str) {
-                Some(device) => {
-                    tracing::info!(
-                        "libinput registered {} (name='{}', sysname='{}')",
-                        node.display(),
-                        device.name(),
-                        device.sysname(),
-                    );
-                    added += 1;
-                }
-                None => {
-                    tracing::error!(
-                        "libinput failed to register {}; touch input from this node is disabled",
-                        node.display()
-                    );
-                }
-            }
+        // Keep a cloned handle so the retry timer can call
+        // `path_add_device` after the primary handle is moved into
+        // `LibinputInputBackend::new`. `Libinput` is a refcounted
+        // wrapper around the same C context; devices added through
+        // either handle are visible to the backend's poll loop.
+        let retry_context = libinput_context.clone();
+        let mut primary_context = libinput_context;
+        let initial_added = register_touch_devices(&mut primary_context, input_nodes);
+
+        let backend = LibinputInputBackend::new(primary_context);
+        if let Err(e) = loop_handle.insert_source(backend, |event, (), state| {
+            state.handle_input_event(event);
+        }) {
+            tracing::error!("Failed to register libinput backend with event loop: {e}");
         }
 
-        if added == 0 {
+        // Make the retry path reachable from `DeviceRemoved` as well —
+        // mid-run device loss (kernel module reload, VM hotplug) can leave
+        // touch dead just as a startup race can. `None` when explicit
+        // input nodes were configured, so retry is disabled.
+        app_state.retry_libinput = (!has_explicit_input_nodes).then_some(retry_context);
+
+        if initial_added == 0 {
             tracing::warn!(
-                "libinput has no devices registered; touch input is fully disabled. \
+                "libinput has no devices registered at startup; touch input is currently disabled. \
                  Check DeviceAccessConfig::with_input_node and the evdev node permissions."
             );
-        } else {
-            let backend = LibinputInputBackend::new(libinput_context);
-            if let Err(e) = loop_handle.insert_source(backend, |event, (), state| {
-                state.handle_input_event(event);
-            }) {
-                tracing::error!("Failed to register libinput backend with event loop: {e}");
-            }
+            app_state.schedule_touch_discovery_retry();
         }
 
         tracing::info!("Compositor event loop starting");
@@ -709,6 +723,10 @@ impl EglCompositor {
     }
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "discrete latches on independent subsystems (touch sequence, redraw, retry); a state-machine refactor would tangle unrelated lifecycles"
+)]
 struct AppState {
     display: Display<CompositorState>,
     compositor: CompositorState,
@@ -740,9 +758,77 @@ struct AppState {
     logical_height: u32,
     should_exit: bool,
     redraw_state: RedrawState,
+    /// Calloop handle, used to (re-)arm the touch-discovery retry timer
+    /// from `schedule_touch_discovery_retry`.
+    loop_handle: LoopHandle<'static, AppState>,
+    /// Cloned libinput handle for `path_add_device` calls from the retry
+    /// timer. `None` either before libinput is initialised or when
+    /// `DeviceAccessConfig` pinned the input nodes — in pinned mode the
+    /// caller chose specific paths and discovery (which the retry runs)
+    /// cannot help.
+    retry_libinput: Option<libinput::Libinput>,
+    /// `true` while a touch-discovery retry timer is scheduled. Prevents
+    /// stacking duplicate timers if multiple `DeviceRemoved` events fire
+    /// in quick succession.
+    touch_retry_pending: bool,
 }
 
 impl AppState {
+    /// Schedule (or skip) a touch-discovery retry ladder.
+    ///
+    /// Idempotent: returns early when discovery is disabled (`with_input_node`
+    /// override pinned the paths) or a retry is already scheduled. The timer
+    /// fires on calloop's main poll loop, walks sysfs, and adds any newly
+    /// discovered touch nodes via `path_add_device`. Self-terminates after
+    /// success or budget exhaustion (5 attempts, ~6.25 s total).
+    fn schedule_touch_discovery_retry(&mut self) {
+        if self.touch_retry_pending {
+            return;
+        }
+        // `None` here means retry is disabled — either libinput hasn't been
+        // initialised yet, or the caller pinned explicit input nodes (in
+        // which case `discover_touch_node` has nothing to add).
+        let Some(mut retry_context) = self.retry_libinput.clone() else {
+            return;
+        };
+        let mut attempt = 0_usize;
+        let timer = Timer::from_duration(TOUCH_DISCOVERY_BACKOFFS[0]);
+        let result = self.loop_handle.insert_source(timer, move |_, (), state| {
+            attempt += 1;
+            let nodes: Vec<PathBuf> = discover_touch_node().into_iter().collect();
+            let added = if nodes.is_empty() {
+                tracing::debug!("Touch discovery retry {attempt}: no candidate nodes in sysfs");
+                0
+            } else {
+                register_touch_devices(&mut retry_context, &nodes)
+            };
+            if added > 0 {
+                state.touch_retry_pending = false;
+                tracing::info!(
+                    "Touch input recovered on discovery retry {attempt} ({added} device(s))"
+                );
+                return TimeoutAction::Drop;
+            }
+            if attempt >= TOUCH_DISCOVERY_BACKOFFS.len() {
+                state.touch_retry_pending = false;
+                tracing::error!(
+                    "Touch discovery retry budget exhausted after {attempt} attempts; \
+                         touch input remains disabled until restart"
+                );
+                return TimeoutAction::Drop;
+            }
+            let next = TOUCH_DISCOVERY_BACKOFFS[attempt];
+            tracing::debug!(
+                "Touch discovery retry {attempt} produced no devices; retrying in {next:?}"
+            );
+            TimeoutAction::ToDuration(next)
+        });
+        match result {
+            Ok(_) => self.touch_retry_pending = true,
+            Err(e) => tracing::error!("Failed to schedule touch discovery retry timer: {e}"),
+        }
+    }
+
     fn refresh_redraw_state(&mut self) {
         let flip_pending = self
             .scene_renderer
@@ -772,6 +858,11 @@ impl AppState {
                 if !self.active_touch_slots.is_empty() {
                     self.on_touch_cancel();
                 }
+                // Re-arm discovery in case the touch device went away. The
+                // retry helper is a no-op when discovery is disabled (explicit
+                // nodes) or already pending; if a touch device is still alive,
+                // `path_add_device` is idempotent and the timer drops itself.
+                self.schedule_touch_discovery_retry();
             }
             InputEvent::TouchDown { event } => self.on_touch_down(&event),
             InputEvent::TouchMotion { event } => self.on_touch_motion(&event),
@@ -1017,6 +1108,36 @@ impl AppState {
     }
 }
 
+/// Attempt to register every `node` with `ctx` via `path_add_device`.
+///
+/// Returns the number of devices that libinput accepted. Callers drive
+/// retry scheduling off a zero return — the function itself has no
+/// notion of retries or timing.
+fn register_touch_devices(ctx: &mut libinput::Libinput, nodes: &[PathBuf]) -> usize {
+    let mut added = 0_usize;
+    for node in nodes {
+        let path_str = node.to_string_lossy();
+        match ctx.path_add_device(&path_str) {
+            Some(device) => {
+                tracing::info!(
+                    "libinput registered {} (name='{}', sysname='{}')",
+                    node.display(),
+                    device.name(),
+                    device.sysname(),
+                );
+                added += 1;
+            }
+            None => {
+                tracing::error!(
+                    "libinput failed to register {}; touch input from this node is disabled",
+                    node.display(),
+                );
+            }
+        }
+    }
+    added
+}
+
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
     match cmd {
         CompositorCommand::RegisterWidget {
@@ -1137,6 +1258,7 @@ impl Compositor for EglCompositor {
         let render_node = self.device_access.resolved_render_node().to_path_buf();
         let scanout_node = self.device_access.resolved_scanout_node().to_path_buf();
         let seat_name = self.device_access.seat_name().to_owned();
+        let has_explicit_input_nodes = self.device_access.has_explicit_input_nodes();
         let input_nodes = self.device_access.resolved_input_nodes();
         let headless = self.headless;
         let command_channel = self
@@ -1156,6 +1278,7 @@ impl Compositor for EglCompositor {
                     &scanout_node,
                     &seat_name,
                     &input_nodes,
+                    has_explicit_input_nodes,
                     headless,
                     command_channel,
                     action_tx,

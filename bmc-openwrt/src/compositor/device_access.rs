@@ -120,6 +120,18 @@ impl DeviceAccessConfig {
             .unwrap_or_else(|| Path::new(DEFAULT_RENDER_NODE))
     }
 
+    /// Returns `true` when the caller pinned input node(s) via
+    /// [`Self::with_input_node`].
+    ///
+    /// `false` means the compositor falls back to
+    /// [`bmc_platform::linux_input::discover_touch_node`], and is the
+    /// only mode where retrying on startup makes sense — pinned paths
+    /// that fail to register won't become valid on a retry.
+    #[must_use]
+    pub fn has_explicit_input_nodes(&self) -> bool {
+        !self.input_nodes.is_empty()
+    }
+
     /// Evdev nodes libinput should watch.
     ///
     /// Explicit overrides from [`Self::with_input_node`] take precedence
