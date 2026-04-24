@@ -44,10 +44,8 @@
           "row": 0,
           "col": 0,
           "size": "full",
-          "widget_type_id": "550e8400-e29b-41d4-a716-446655440100",
-          "params": {
-            "wasmPath": "/mnt/data/wasm/hello_widget.wasm"
-          }
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440200",
+          "params": {}
         }
       ]
     }
