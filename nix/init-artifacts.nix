@@ -39,15 +39,26 @@ let
     commit = self.rev or "dirty";
   };
 
+  nixConf = pkgs.writeText "nix.conf" ''
+    substituters = https://cache.braiins.com
+    # trusted-public-keys = cache.braiins.com:placeholder
+    extra-experimental-features = nix-command flakes
+  '';
+
+  # Initial keep.d entry so sysupgrade preserves /etc/nix/nix.conf before
+  # the core package (which also lists it) has been activated.
+  nixKeepD = pkgs.writeText "nix.conffiles" ''
+    /etc/nix/nix.conf
+  '';
+
   tarball = mkTarball {
     packages = initPackages;
     inherit bmc-nix-cli hooksOverridePath;
     bos_version = bosVersion;
     profile_path = profilePath;
-    extraFiles = pkgs.writeTextDir "etc/nix/nix.conf" ''
-      substituters = https://cache.braiins.com
-      # trusted-public-keys = cache.braiins.com:placeholder
-      extra-experimental-features = nix-command flakes
+    extraFiles = pkgs.runCommand "init-extra-files" { } ''
+      install -D -m 644 ${nixConf} $out/etc/nix/nix.conf
+      install -D -m 644 ${nixKeepD} $out/lib/upgrade/keep.d/nix.conffiles
     '';
   };
 

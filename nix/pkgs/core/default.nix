@@ -104,6 +104,7 @@ in
     conffiles = [
       "/root/.profile"
       "/var/log/bmc"
+      "/etc/nix/nix.conf"
     ];
   };
   version = "0.1.0";
