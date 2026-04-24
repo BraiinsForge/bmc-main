@@ -154,9 +154,9 @@ pub fn build_action_plan(
     // `always` actions (default `["enable"]`) run for every service present
     // in the new generation on every activation, regardless of change kind.
     // Emitted LAST in source order so the stable sort-by-priority puts them
-    // after any upgrade/init actions within the same priority bucket — e.g.
-    // `upgrade = ["disable", "reload"]` can wipe stale rc.d entries first
-    // and `always = ["enable"]` reinstalls the correct symlink afterwards.
+    // after any upgrade/init actions within the same priority bucket. That
+    // way `upgrade = ["disable", "reload"]` can wipe stale rc.d entries and
+    // `always = ["enable"]` reinstalls the correct symlink afterwards.
     for change in changes
         .new
         .iter()
@@ -389,6 +389,59 @@ mod tests {
                 PathBuf::from("/etc/init.d/kept"),
             )],
             "unchanged service should run default always=[\"enable\"] at 100+start_order"
+        );
+    }
+
+    #[test]
+    fn upgrade_with_priority_change_runs_disable_then_enable() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        // Same service name, content bytes differ (simulating a START
+        // change), and the rc.d link moves from S95 to S90.
+        write_file(&old_root.join("etc/init.d/moved"), "START=95");
+        write_file(&old_root.join("etc/rc.d/S95moved"), "");
+        write_file(&new_root.join("etc/init.d/moved"), "START=90");
+        write_file(&new_root.join("etc/rc.d/S90moved"), "");
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        assert_eq!(
+            changes.upgraded.len(),
+            1,
+            "moved service with changed content should classify as upgraded"
+        );
+
+        let statuses = BTreeMap::from([("moved".to_owned(), ServiceStatus::Running)]);
+        let actions = build_action_plan(&changes, &statuses, &old.stop_order, &new.start_order);
+
+        assert_eq!(
+            action_summary(&actions),
+            vec![
+                (
+                    190,
+                    "moved".to_owned(),
+                    "disable".to_owned(),
+                    PathBuf::from("/etc/init.d/moved"),
+                ),
+                (
+                    190,
+                    "moved".to_owned(),
+                    "reload".to_owned(),
+                    PathBuf::from("/etc/init.d/moved"),
+                ),
+                (
+                    190,
+                    "moved".to_owned(),
+                    "enable".to_owned(),
+                    PathBuf::from("/etc/init.d/moved"),
+                ),
+            ],
+            "upgrade must wipe every [SK]??<name> (including stale S95) and \
+             always=[enable] must recreate the symlink at the new priority"
         );
     }
 

@@ -32,7 +32,12 @@ impl Default for ServiceConfig {
         Self {
             init: vec!["boot".into(), "start".into()],
             removed: vec!["stop".into(), "disable".into()],
-            upgrade: vec!["reload".into()],
+            // `disable` wipes every /etc/rc.d/[SK]??<name> entry (including
+            // stale ones from a changed START/STOP priority); `always`'s
+            // `enable` runs afterwards and recreates the correct symlink
+            // at the new priority. Upgrades happen only during post-boot
+            // activation, so the brief symlink gap does not race with rcS.
+            upgrade: vec!["disable".into(), "reload".into()],
             always: vec!["enable".into()],
             reboot_required: false,
             upgrade_if_status: UpgradeIfStatus::Running,
@@ -50,7 +55,7 @@ mod tests {
 
         assert_eq!(config.init, vec!["boot", "start"]);
         assert_eq!(config.removed, vec!["stop", "disable"]);
-        assert_eq!(config.upgrade, vec!["reload"]);
+        assert_eq!(config.upgrade, vec!["disable", "reload"]);
         assert_eq!(config.always, vec!["enable"]);
         assert!(!config.reboot_required);
         assert_eq!(config.upgrade_if_status, UpgradeIfStatus::Running);

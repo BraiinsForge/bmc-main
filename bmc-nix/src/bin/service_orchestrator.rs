@@ -477,7 +477,7 @@ mod tests {
 
         assert_eq!(config.init, vec!["boot", "start"]);
         assert_eq!(config.removed, vec!["stop", "disable"]);
-        assert_eq!(config.upgrade, vec!["reload"]);
+        assert_eq!(config.upgrade, vec!["disable", "reload"]);
         assert_eq!(config.always, vec!["enable"]);
     }
 
