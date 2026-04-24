@@ -106,7 +106,8 @@ Skip this step if the widget will only be installed on-demand.
 ## Deploying to a device
 
 Once the widget is registered in `nix/packages.nix`, you can deploy it to a device using `nix-deploy.sh`. This script
-builds the full Nix package, copies it to the device and activates a new profile generation with it.
+builds the full Nix package, copies it to the device and activates a new profile generation with it. It works for both
+**native** and **wasm** widgets:
 
 ```bash
 ./scripts/nix-deploy.sh '.#deck-packages.flip-clock' 192.168.1.2
@@ -120,10 +121,14 @@ The script:
 2. Copies the Nix closure to the device via `nix copy`
 3. Builds and activates new generation of the bmc profile
 
-### Fast iteration with `nix-cargo-deploy.sh`
+Re-running for the same widget is safe — the symlink step uses `ln -sf` and overwrites existing entries. The script does
+not garbage-collect stale files left over from previous deploys, so if a new build drops a file the previous one
+shipped, the old symlink remains behind; clear the affected profile entries when the file layout changes.
 
-After the initial Nix deploy, you may use `nix-cargo-deploy.sh` for faster edit-compile-deploy cycles. It only uploads
-the binary without rebuilding the full Nix package:
+### Fast iteration with `nix-cargo-deploy.sh` (native widgets only)
+
+After the initial Nix deploy, use `nix-cargo-deploy.sh` for faster edit-compile-deploy cycles on **native widgets**. It
+only uploads the binary without rebuilding the full Nix package:
 
 ```bash
 nix develop .#armv7-glibc-release
@@ -134,3 +139,6 @@ This requires the widget to already be present on the device (deployed at least 
 init tarball).
 
 NOTE: any subsequent `nix-deploy.sh` will override the effect of `nix-cargo-deploy.sh`
+
+**Wasm widgets are never deployed through `nix-cargo-deploy.sh`** — that script handles native binaries only. For wasm
+widgets, re-run `nix-deploy.sh`.

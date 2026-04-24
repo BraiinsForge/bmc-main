@@ -81,7 +81,8 @@ scripts:
 
 - `scripts/nix-init.sh` — one-time Nix store setup
 - `scripts/nix-deploy.sh` — deploy Nix packages
-- `scripts/nix-cargo-deploy.sh` — fast iterative deploy of cargo-built binaries
+- `scripts/nix-cargo-deploy.sh` — fast iterative deploy of cargo-built native binaries (compositor and native widgets
+  only; wasm widgets are never deployed through this script)
 
 ### Cargo Commands
 

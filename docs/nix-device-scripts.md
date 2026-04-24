@@ -63,26 +63,28 @@ The first argument is a full flake URI. Index packages (exposed under `deck-pack
 The script prints the `/nix/store/...` path of the deployed package. You can then run binaries from that path on the
 device.
 
-### nixpkgs
-
 Nixpkgs is exposed as pkgs, the armv7 packages are exposed as "armv7-nixpkgs". So you can for example do
 `./scripts/nix-deploy.sh .#armv7-nixpkgs.strace` to deploy the strace package.
 
 The deployed packages are installed into the bmc profile and activated immediately. Executables are available under
-`/run/current-profile/bin/`.
+`/run/current-profile/bin/` for core and nixpkgs packages. Widget packages (native and wasm) are installed under
+`/run/current-profile/lib/bmc-widgets/<name>/`.
 
-## nix-cargo-deploy.sh — Fast impure deploy of cargo-built binaries
+## nix-cargo-deploy.sh — Fast impure deploy of cargo-built native binaries
 
 This is for fast iteration over a given component of the system. Use nix-deploy.sh unless you're just making simple
 fixes that you expect to work in the produced version. This will be faster, especially if you are doing a change in a
 leaf crate.
 
-Copies a locally cargo-built binary directly to the device, replacing the file in-place under `/run/current-profile/`.
-This skips the full Nix rebuild and is meant for fast development iteration. All the dependencies are copied over as
-well.
+Copies a locally cargo-built native binary directly to the device for fast development iteration. The binary is uploaded
+to `/mnt/data/tmp/cargo-deploy/`, and the existing profile entry under `/run/current-profile/` is repointed to that
+staged binary via symlink. Dynamic linker and rpath dependencies are copied over with `nix copy`.
 
-NOTE: that this is not suitable for deploying a new widget. It only replaces currently existing widgets. NOTE: only
-deploys native widgets, not WASM widgets.
+This script handles only native binaries (compositor and native widgets). **Wasm widgets are never deployed through this
+script** — use `nix-deploy.sh` for wasm widgets.
+
+This is not suitable for deploying a brand new widget package directly. It only redeploys targets that already exist in
+the profile. Deploy the widget package first via `nix-deploy.sh`, then iterate with `nix-cargo-deploy.sh`.
 
 The device must already have the packages deployed via `nix-deploy.sh` (so the target paths exist).
 
@@ -92,14 +94,15 @@ The device must already have the packages deployed via `nix-deploy.sh` (so the t
 # Deploy the compositor (bmc-openwrt, built for armv7-unknown-linux-gnueabihf)
 ./scripts/nix-cargo-deploy.sh compositor 192.168.1.2
 
-# Deploy a widget by name (built for armv7-unknown-linux-gnueabihf)
+# Deploy a native widget by name (built for armv7-unknown-linux-gnueabihf)
 ./scripts/nix-cargo-deploy.sh widget digital-clock 192.168.1.2
 DEVICE_IP=192.168.1.2 ./scripts/nix-cargo-deploy.sh widget flip-clock
 ```
 
 In case you need to add extra cargo flags, such as a --features flag, use `CARGO_EXTRA_FLAGS` environment variable.
 
-The script expects binaries at the standard cargo cross-compilation output paths:
+The script resolves Cargo `target_directory` dynamically (so `CARGO_TARGET_DIR` and Cargo config overrides are honored).
+With default settings, binaries are expected at these standard cross-compilation output paths:
 
 | Command         | Local binary path                                                |
 | --------------- | ---------------------------------------------------------------- |
