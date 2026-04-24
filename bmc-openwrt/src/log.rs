@@ -28,8 +28,13 @@ const BMC_LOG_ROTATE_FILES_KEEP: usize = 9;
 /// FileRotate is used instead of logrotate.
 pub fn init(log_to_file: bool) {
     if log_to_file {
+        let log_path = Path::new(LOGS_PATH).join(BMC_LOG_FILE);
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)
+                .expect("BUG: cannot create log directory — FileRotate would fail on first write");
+        }
         let bmc_writer = FileRotate::new(
-            Path::new(LOGS_PATH).join(BMC_LOG_FILE),
+            log_path,
             AppendCount::new(BMC_LOG_ROTATE_FILES_KEEP),
             ContentLimit::BytesSurpassed(BMC_LOG_ROTATE_THRESHOLD),
             Compression::OnRotate(0),

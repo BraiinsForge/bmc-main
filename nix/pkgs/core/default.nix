@@ -37,6 +37,7 @@ let
     name = "bmc-compositor";
     start = 95;
     command = "${bmc-openwrt}/bin/bmc-openwrt";
+    args = [ "--log-to-file" ];
     env = {
       XDG_RUNTIME_DIR = "/tmp/runtime";
     };
@@ -102,6 +103,7 @@ in
     ];
     conffiles = [
       "/root/.profile"
+      "/var/log/bmc"
     ];
   };
   version = "0.1.0";
