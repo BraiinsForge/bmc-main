@@ -162,12 +162,13 @@ IPC protocol (port 5910) and provides:
 
 Init scripts in the rootfs overlay ensure the VM recovers automatically on reboot:
 
-| Script             | START | Purpose                                              |
-| ------------------ | ----- | ---------------------------------------------------- |
-| `a-bmc-virt-setup` | 80    | Device nodes, DRM/VKMS, SPI, backlight, sound, touch |
-| `b-bmc-openwrt`    | 85    | procd service for the main app                       |
-| `c-bmc-virt-wifi`  | 90    | Re-applies WiFi config after app's wifi-detect wipe  |
-| `d-bmc-virt-relay` | 95    | procd service for the relay daemon                   |
+| Script               | START | Purpose                                                                           |
+| -------------------- | ----- | --------------------------------------------------------------------------------- |
+| `a-bmc-virt-setup`   | 80    | Device nodes, DRM/VKMS, SPI, backlight, sound, touch                              |
+| `a0-bmc-virt-eventd` | 81    | Kobject/uevent daemon                                                             |
+| `d-bmc-virt-relay`   | 82    | Relay daemon — starts before bmc-openwrt and self-discovers the compositor socket |
+| `b-bmc-openwrt`      | 85    | procd service for the main app                                                    |
+| `c-bmc-virt-wifi`    | 90    | Re-applies WiFi config after app's wifi-detect wipe                               |
 
 WiFi uplink credentials are templated into `/etc/bmc-virt/uplink.conf` at deploy time. The WiFi init script reads them
 on every boot to re-apply the radio1 AP and radio0 STA config that bmc-openwrt's `wifi-detect` overwrites on startup.

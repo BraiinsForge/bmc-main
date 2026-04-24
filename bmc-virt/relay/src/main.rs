@@ -17,14 +17,16 @@ use bmc_virt_ipc::{
     LED_COUNT, LedState, LedUpdate, NotifyLevel, Stride,
 };
 use std::env;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_FPS: u32 = 60;
 const DEFAULT_SPI_CAPTURE: &str = "/proc/bmc_virt_spi0";
+const LED_CAPTURE_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 /// File read by the madplay shim to override the app's volume setting.
 /// Empty or absent = use app's own volume. Contains 0–100 = override.
@@ -62,33 +64,13 @@ fn main() {
     }
 
     // 3. Start LED capture thread (runs forever, drops when no host)
+    let latest_led = Arc::new(Mutex::new(None::<LedUpdate>));
     {
         let led_sender = sender.clone();
+        let latest_led_capture = Arc::clone(&latest_led);
         std::thread::Builder::new()
             .name("led-capture".into())
-            .spawn(move || {
-                let mut decoder = bmc_virt_leds::apa102::Decoder::new();
-                let mut led_seq: u64 = 0;
-
-                if let Err(e) = bmc_virt_leds::proc_stream::run(DEFAULT_SPI_CAPTURE, |data| {
-                    if let Some(leds) = decoder.feed(data) {
-                        let mut led_state = [LedState::default(); LED_COUNT];
-                        for (i, led) in leds.iter().enumerate() {
-                            led_state[i].brightness = led.brightness;
-                            led_state[i].r = led.r;
-                            led_state[i].g = led.g;
-                            led_state[i].b = led.b;
-                        }
-                        led_seq += 1;
-                        led_sender.send_leds(LedUpdate {
-                            seq: led_seq,
-                            leds: led_state,
-                        });
-                    }
-                }) {
-                    eprintln!("LED capture error: {e}");
-                }
-            })
+            .spawn(move || run_led_capture_loop(&led_sender, &latest_led_capture))
             .unwrap_or_else(|e| panic!("failed to spawn LED capture thread: {e}"));
     }
 
@@ -121,6 +103,13 @@ fn main() {
         // Publish initial feature states for this connection.
         sender.send_capture_status(FeatureState::Waiting, None);
         sender.send_controls_status(FeatureState::Waiting, None);
+        if let Some(update) = latest_led
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
+            sender.send_leds(update);
+        }
 
         // Start fresh log tailers for this connection — each reads backlog + follows.
         // Stopped on disconnect so the next connection gets a clean slate.
@@ -275,16 +264,16 @@ fn main() {
 /// the mid-run reconnect when the compositor is restarted out from under
 /// the relay (#BDK-420).
 ///
-/// The Wayland socket itself is used as the liveness signal — we stat
-/// `$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY` before each attempt so we don't
-/// hammer `Connection::connect_to_env()` during a compositor bounce.
+/// The relay owns compositor discovery: it scans `$XDG_RUNTIME_DIR` for a
+/// `wayland-*` socket on each attempt and connects directly to that socket.
+/// This keeps the init script dumb and lets the same retry loop handle both
+/// boot-time startup ordering and compositor reconnects.
 fn establish_capture(
     input_handle: &thread::JoinHandle<()>,
     sender: &bmc_virt_ipc::GuestSender,
 ) -> Option<capture::WaylandCapture> {
     let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-    let display = env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".into());
-    let socket = PathBuf::from(&runtime_dir).join(&display);
+    let runtime_dir = PathBuf::from(runtime_dir);
 
     let mut waiting_notified = false;
     loop {
@@ -292,27 +281,37 @@ fn establish_capture(
             return None;
         }
 
-        if !socket.exists() {
-            if !waiting_notified {
-                eprintln!(
-                    "relay: waiting for compositor socket at {}",
-                    socket.display()
-                );
-                sender.send_capture_status(
-                    FeatureState::Waiting,
-                    Some(format!(
-                        "Waiting for compositor socket at {}",
-                        socket.display()
-                    )),
-                );
-                waiting_notified = true;
+        let display = match discover_wayland_display(&runtime_dir) {
+            Ok(Some(display)) => display,
+            Ok(None) => {
+                if !waiting_notified {
+                    let reason =
+                        format!("Waiting for compositor socket in {}", runtime_dir.display());
+                    eprintln!("relay: {reason}");
+                    sender.send_capture_status(FeatureState::Waiting, Some(reason));
+                    waiting_notified = true;
+                }
+                thread::sleep(Duration::from_millis(500));
+                continue;
             }
-            thread::sleep(Duration::from_millis(500));
-            continue;
-        }
+            Err(err) => {
+                if !waiting_notified {
+                    eprintln!("relay: {err}");
+                    sender.send_capture_status(FeatureState::Waiting, Some(err.clone()));
+                    waiting_notified = true;
+                }
+                thread::sleep(Duration::from_millis(500));
+                continue;
+            }
+        };
+        let socket = runtime_dir.join(&display);
 
-        eprintln!("relay: connecting to compositor ({display})");
-        match capture::WaylandCapture::connect() {
+        eprintln!(
+            "relay: connecting to compositor ({} at {})",
+            display,
+            socket.display()
+        );
+        match capture::WaylandCapture::connect(&socket) {
             Ok(wayland) => {
                 eprintln!(
                     "capture: {}x{} stride={}",
@@ -328,7 +327,10 @@ fn establish_capture(
                 if !waiting_notified {
                     sender.send_capture_status(
                         FeatureState::Waiting,
-                        Some(format!("Waiting for compositor capture: {err}")),
+                        Some(format!(
+                            "Waiting for compositor capture on {}: {err}",
+                            socket.display()
+                        )),
                     );
                     waiting_notified = true;
                 }
@@ -336,6 +338,79 @@ fn establish_capture(
             }
         }
     }
+}
+
+fn discover_wayland_display(runtime_dir: &Path) -> Result<Option<String>, String> {
+    let entries = fs::read_dir(runtime_dir)
+        .map_err(|e| format!("failed to list {}: {e}", runtime_dir.display()))?;
+    let mut displays = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let file_name = entry.file_name();
+            let file_name = file_name.to_str()?;
+            let suffix = file_name.strip_prefix("wayland-")?;
+            let n: u32 = suffix.parse().ok()?;
+            Some((n, file_name.to_owned()))
+        })
+        .collect::<Vec<_>>();
+    displays.sort_unstable_by_key(|(n, _)| *n);
+    Ok(displays.into_iter().next().map(|(_, name)| name))
+}
+
+fn run_led_capture_loop(
+    led_sender: &bmc_virt_ipc::GuestSender,
+    latest_led_capture: &Mutex<Option<LedUpdate>>,
+) {
+    let mut led_seq: u64 = 0;
+
+    loop {
+        let mut decoder = bmc_virt_leds::apa102::Decoder::new();
+        let result = bmc_virt_leds::proc_stream::run(DEFAULT_SPI_CAPTURE, |data| {
+            if let Some(leds) = decoder.feed(data) {
+                publish_led_update(&leds, &mut led_seq, led_sender, latest_led_capture);
+                while let Some(leds) = decoder.feed(&[]) {
+                    publish_led_update(&leds, &mut led_seq, led_sender, latest_led_capture);
+                }
+            }
+        });
+
+        if let Err(err) = result {
+            eprintln!(
+                "LED capture error from {DEFAULT_SPI_CAPTURE}: {err}; retrying in {LED_CAPTURE_RETRY_DELAY:?}"
+            );
+        } else {
+            eprintln!(
+                "LED capture stream ended unexpectedly; retrying in {LED_CAPTURE_RETRY_DELAY:?}"
+            );
+        }
+        thread::sleep(LED_CAPTURE_RETRY_DELAY);
+    }
+}
+
+fn publish_led_update(
+    leds: &[bmc_virt_leds::apa102::Led; LED_COUNT],
+    led_seq: &mut u64,
+    led_sender: &bmc_virt_ipc::GuestSender,
+    latest_led_capture: &Mutex<Option<LedUpdate>>,
+) {
+    let mut led_state = [LedState::default(); LED_COUNT];
+    for (i, led) in leds.iter().enumerate() {
+        led_state[i].brightness = led.brightness;
+        led_state[i].r = led.r;
+        led_state[i].g = led.g;
+        led_state[i].b = led.b;
+    }
+    *led_seq += 1;
+    let update = LedUpdate {
+        seq: *led_seq,
+        leds: led_state,
+    };
+    let mut guard = latest_led_capture
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *guard = Some(update.clone());
+    drop(guard);
+    led_sender.send_leds(update);
 }
 
 fn handle_host_message(
@@ -634,5 +709,36 @@ fn volume_override_write(pct: u8) {
 fn volume_override_clear() {
     if let Err(e) = std::fs::write(VOLUME_OVERRIDE_PATH, "") {
         eprintln!("failed to clear volume override: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::discover_wayland_display;
+
+    #[test]
+    fn picks_the_first_wayland_socket_name() {
+        let runtime_dir = tempfile::tempdir().expect("BUG: create tempdir for relay test");
+        std::fs::write(runtime_dir.path().join("wayland-1"), b"")
+            .expect("BUG: create second socket placeholder");
+        std::fs::write(runtime_dir.path().join("wayland-0"), b"")
+            .expect("BUG: create first socket placeholder");
+        std::fs::write(runtime_dir.path().join("not-wayland"), b"")
+            .expect("BUG: create unrelated placeholder");
+
+        let display = discover_wayland_display(runtime_dir.path()).expect("BUG: list tempdir");
+
+        assert_eq!(display.as_deref(), Some("wayland-0"));
+    }
+
+    #[test]
+    fn returns_none_when_no_wayland_socket_exists() {
+        let runtime_dir = tempfile::tempdir().expect("BUG: create tempdir for relay test");
+        std::fs::write(runtime_dir.path().join("other"), b"")
+            .expect("BUG: create unrelated placeholder");
+
+        let display = discover_wayland_display(runtime_dir.path()).expect("BUG: list tempdir");
+
+        assert_eq!(display, None);
     }
 }

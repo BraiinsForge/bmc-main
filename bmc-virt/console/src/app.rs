@@ -255,6 +255,20 @@ impl ConsoleApp {
     }
 
     fn handle_capture_status(&mut self, state: FeatureState, reason: Option<String>) {
+        tracing::info!(
+            "capture status: {state:?} reason={reason:?} fb={} relay={}",
+            if self.fb_texture.is_some() {
+                "some"
+            } else {
+                "none"
+            },
+            match self.relay {
+                RelayState::Disconnected { .. } => "Disconnected",
+                RelayState::Linking { .. } => "Linking",
+                RelayState::Live { .. } => "Live",
+                RelayState::Degraded { .. } => "Degraded",
+            },
+        );
         self.capture_status = state;
         match state {
             FeatureState::Waiting => {
@@ -267,28 +281,31 @@ impl ConsoleApp {
                 }
             }
             FeatureState::Unavailable => {
-                // Same fragile pattern as `mark_relay_alive_without_frame`:
-                // only do the mem::replace dance when we're actually transitioning
-                // out of Linking/Live. Without this guard, repeated Unavailable
-                // messages while already Degraded would drop the IPC.
-                if self.fb_texture.is_none()
-                    && matches!(
-                        self.relay,
-                        RelayState::Linking { .. } | RelayState::Live { .. }
-                    )
-                    && let RelayState::Linking { ipc, .. } | RelayState::Live { ipc } =
-                        std::mem::replace(
-                            &mut self.relay,
-                            RelayState::Disconnected {
-                                since: std::time::Instant::now(),
-                                last_attempt: std::time::Instant::now(),
-                            },
-                        )
-                {
-                    self.status_message = Some(reason.unwrap_or_else(|| {
-                        "Guest is connected, but display capture is unavailable.".to_owned()
-                    }));
-                    self.relay = RelayState::Degraded { ipc };
+                let msg = reason.unwrap_or_else(|| {
+                    "Guest is connected, but display capture is unavailable.".to_owned()
+                });
+                match &self.relay {
+                    // Already Degraded — just refresh the reason text. The
+                    // `mem::replace` dance below would drop the IPC in this
+                    // state, so we must not go through it.
+                    RelayState::Degraded { .. } => {
+                        self.status_message = Some(msg);
+                    }
+                    RelayState::Linking { .. } | RelayState::Live { .. } => {
+                        if let RelayState::Linking { ipc, .. } | RelayState::Live { ipc } =
+                            std::mem::replace(
+                                &mut self.relay,
+                                RelayState::Disconnected {
+                                    since: std::time::Instant::now(),
+                                    last_attempt: std::time::Instant::now(),
+                                },
+                            )
+                        {
+                            self.status_message = Some(msg);
+                            self.relay = RelayState::Degraded { ipc };
+                        }
+                    }
+                    RelayState::Disconnected { .. } => {}
                 }
             }
         }
@@ -347,26 +364,7 @@ impl ConsoleApp {
             };
             match msg {
                 GuestMessage::Frame { header, data } => {
-                    let bpp = header.bpp;
-                    let stride = header.stride;
-                    let seq = header.seq;
-                    let format = header.format;
-
-                    // Create texture lazily once we know the pixel format
-                    if self.fb_texture.is_none() {
-                        self.fb_texture = Some(FbTexture::new(&self.gl, frame, bpp, format));
-                        self.status_message = None;
-                        tracing::info!("created FB texture (bpp={bpp:?} format={format:?})");
-                    }
-
-                    if let Some(ref mut fb_tex) = self.fb_texture {
-                        fb_tex.update_if_changed(&self.gl, seq, &data, stride);
-                    }
-
-                    self.last_frame_seq = seq;
-                    self.backlight = header.brightness;
-                    self.capture_status = FeatureState::Ready;
-                    got_frame = true;
+                    self.apply_frame_update(frame, header, data, &mut got_frame);
                 }
                 GuestMessage::Leds(update) => {
                     self.mark_relay_alive_without_frame();
@@ -415,12 +413,73 @@ impl ConsoleApp {
             }
         }
 
+        if let Some((header, data)) = self.relay.ipc().and_then(HostEndpoint::take_latest_frame) {
+            self.apply_frame_update(frame, header, data, &mut got_frame);
+        }
+
+        if let Some(update) = self.relay.ipc().and_then(HostEndpoint::take_latest_led) {
+            self.mark_relay_alive_without_frame();
+            if update.seq != self.last_led_seq {
+                self.last_led_seq = update.seq;
+                self.led_cache = update.leds;
+                // Debug: log the first lit LED's color so we can verify
+                // animated effects are actually flowing through.
+                if let Some((idx, led)) = self
+                    .led_cache
+                    .iter()
+                    .enumerate()
+                    .find(|(_, l)| l.brightness > 0 && (l.r > 0 || l.g > 0 || l.b > 0))
+                {
+                    tracing::debug!(
+                        "led update seq={} first_on=LED{}({},{},{}) bright={}",
+                        update.seq,
+                        idx,
+                        led.r,
+                        led.g,
+                        led.b,
+                        led.brightness,
+                    );
+                } else {
+                    tracing::debug!("led update seq={} all_off", update.seq);
+                }
+            }
+        }
+
         // Rebuild persistent toasts outside the ipc borrow scope
         if toasts_dirty {
             self.rebuild_persistent_toasts();
         }
 
         self.update_relay_state(got_frame);
+    }
+
+    fn apply_frame_update(
+        &mut self,
+        frame: &mut eframe::Frame,
+        header: bmc_virt_ipc::FrameHeader,
+        data: impl AsRef<[u8]>,
+        got_frame: &mut bool,
+    ) {
+        let bpp = header.bpp;
+        let stride = header.stride;
+        let seq = header.seq;
+        let format = header.format;
+
+        // Create texture lazily once we know the pixel format.
+        if self.fb_texture.is_none() {
+            self.fb_texture = Some(FbTexture::new(&self.gl, frame, bpp, format));
+            self.status_message = None;
+            tracing::info!("created FB texture (bpp={bpp:?} format={format:?})");
+        }
+
+        if let Some(ref mut fb_tex) = self.fb_texture {
+            fb_tex.update_if_changed(&self.gl, seq, data.as_ref(), stride);
+        }
+
+        self.last_frame_seq = seq;
+        self.backlight = header.brightness;
+        self.capture_status = FeatureState::Ready;
+        *got_frame = true;
     }
 
     /// Update relay state machine after message processing.
@@ -445,6 +504,7 @@ impl ConsoleApp {
                 )
         {
             self.relay = RelayState::Live { ipc };
+            self.status_message = None;
         }
 
         // Send periodic pings so the reader thread's read timeout can
@@ -463,6 +523,7 @@ impl ConsoleApp {
             && ipc.is_disconnected()
         {
             tracing::warn!("relay disconnected, will attempt reconnect");
+            self.toasts.warning("Relay disconnected, reconnecting...");
             let since = match &self.relay {
                 RelayState::Linking {
                     disconnect_since, ..
@@ -477,6 +538,10 @@ impl ConsoleApp {
             };
             self.fb_texture = None;
             self.last_frame_seq = 0;
+            self.led_cache = [LedState::default(); LED_COUNT];
+            self.last_led_seq = 0;
+            self.capture_status = FeatureState::Waiting;
+            self.status_message = Some("Relay disconnected, reconnecting...".to_owned());
         }
     }
 
@@ -565,45 +630,34 @@ impl eframe::App for ConsoleApp {
                     );
                 }
 
+                // Stale-capture overlay: when the last texture is still up but
+                // the guest reports capture is unavailable, black it out almost
+                // entirely so the frozen image reads as "connection lost".
+                let capture_stale =
+                    self.fb_texture.is_some() && matches!(self.relay, RelayState::Degraded { .. });
+                if capture_stale {
+                    ui.painter().rect_filled(
+                        screen_rect,
+                        0.0,
+                        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 230),
+                    );
+                }
+
                 // Layer 4: Touch input (on the screen area)
                 if let Some(ipc) = self.relay.ipc_mut() {
                     self.input.process(ui, screen_rect, ipc);
                 }
 
-                // Status message when no framebuffer
-                if self.fb_texture.is_none()
+                // Status overlay: shown when there's no live framebuffer, or
+                // the capture has gone stale over an existing one.
+                if (self.fb_texture.is_none() || capture_stale)
                     && let Some(ref msg) = self.status_message
                 {
-                    let center = screen_rect.center();
-                    let text_color = egui::Color32::from_gray(160);
-
-                    // Spinner while connecting, warning badge when the
-                    // session is known but one of its features is degraded.
-                    if self.capture_status == FeatureState::Unavailable
-                        || matches!(self.relay, RelayState::Degraded { .. })
-                    {
-                        draw_warning_badge(
-                            ui.painter(),
-                            egui::pos2(center.x, center.y - 28.0),
-                            egui::Color32::from_rgb(255, 170, 80),
-                        );
-                    } else if !matches!(self.relay, RelayState::Live { .. }) {
-                        let t = ui.input(|i| i.time);
-                        draw_spinner(
-                            ui.painter(),
-                            egui::pos2(center.x, center.y - 28.0),
-                            t,
-                            text_color,
-                        );
-                    }
-
-                    ui.painter().text(
-                        egui::pos2(center.x, center.y + 4.0),
-                        egui::Align2::CENTER_CENTER,
-                        msg,
-                        egui::FontId::proportional(14.0),
-                        text_color,
-                    );
+                    let show_warning = self.capture_status == FeatureState::Unavailable
+                        || matches!(self.relay, RelayState::Degraded { .. });
+                    let show_spinner =
+                        !show_warning && !matches!(self.relay, RelayState::Live { .. });
+                    draw_status_overlay(ui, screen_rect, msg, show_warning, show_spinner);
                 }
             });
 
@@ -1358,6 +1412,48 @@ fn draw_warning_badge(painter: &egui::Painter, center: egui::Pos2, color: egui::
         egui::FontId::proportional(18.0),
         color,
     );
+}
+
+/// Lay out and paint the centred status overlay (icon + wrapped text) inside
+/// a rect. Text wraps to the rect width so long relay-side error reasons stay
+/// inside the device screen instead of bleeding over the desk background.
+fn draw_status_overlay(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    message: &str,
+    show_warning: bool,
+    show_spinner: bool,
+) {
+    let padding = 16.0;
+    let wrap_width = (rect.width() - padding * 2.0).max(32.0);
+    let font = egui::FontId::proportional(14.0);
+    let text_color = egui::Color32::from_gray(210);
+    let warning_color = egui::Color32::from_rgb(255, 170, 80);
+
+    let galley = ui
+        .painter()
+        .layout(message.to_owned(), font, text_color, wrap_width);
+    let text_size = galley.size();
+
+    // Stack: [icon] -> 12px gap -> [text]. Center the stack vertically.
+    let icon_size = 24.0;
+    let gap = 12.0;
+    let total_h = icon_size + gap + text_size.y;
+    let start_y = rect.center().y - total_h / 2.0;
+
+    let icon_center = egui::pos2(rect.center().x, start_y + icon_size / 2.0);
+    if show_warning {
+        draw_warning_badge(ui.painter(), icon_center, warning_color);
+    } else if show_spinner {
+        let t = ui.input(|i| i.time);
+        draw_spinner(ui.painter(), icon_center, t, text_color);
+    }
+
+    let text_pos = egui::pos2(
+        rect.center().x - text_size.x / 2.0,
+        start_y + icon_size + gap,
+    );
+    ui.painter().galley(text_pos, galley, text_color);
 }
 
 /// Resolve the relay address from env or default.

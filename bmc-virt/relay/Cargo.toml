@@ -16,3 +16,6 @@ libc.workspace = true
 prost.workspace = true
 wayland-client.workspace = true
 wayland-protocols.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

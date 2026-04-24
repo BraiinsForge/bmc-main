@@ -17,24 +17,36 @@ use std::sync::{Arc, Mutex, mpsc};
 
 /// A message queued for the writer thread.
 enum Queued {
+    Wake,
     Msg(GuestMessage),
 }
 
-/// Channel depth: enough to absorb a few frames of latency without
-/// blocking the relay's main loop. If the host can't keep up, sends
-/// will block (backpressure), which is better than unbounded growth.
-const CHANNEL_DEPTH: usize = 8;
+/// Channel depth for guest→host control messages (non-Frame/non-LED, those
+/// flow through the latest-wins `pending` state). Sized to absorb log-tailer
+/// replay bursts without dropping critical status messages.
+const CHANNEL_DEPTH: usize = 64;
+
+#[derive(Debug, Default)]
+struct PendingState {
+    frame: Option<(FrameHeader, Vec<u8>)>,
+    led: Option<LedUpdate>,
+}
 
 /// Shared sender state — swapped atomically when a new host connects.
 struct SenderState {
     tx: Mutex<Option<mpsc::SyncSender<Queued>>>,
+    pending: Mutex<PendingState>,
 }
 
 impl std::fmt::Debug for SenderState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let connected = self.tx.lock().is_ok_and(|guard| guard.is_some());
+        let has_pending_frame = self.pending.lock().is_ok_and(|guard| guard.frame.is_some());
+        let has_pending_led = self.pending.lock().is_ok_and(|guard| guard.led.is_some());
         f.debug_struct("SenderState")
             .field("connected", &connected)
+            .field("has_pending_frame", &has_pending_frame)
+            .field("has_pending_led", &has_pending_led)
             .finish()
     }
 }
@@ -51,21 +63,32 @@ impl GuestSender {
     /// Send a framebuffer frame. Pixel data is moved, not copied.
     /// Returns `Ok(())` even if no host is connected (frame is dropped).
     pub fn send_frame(&self, header: FrameHeader, pixels: Vec<u8>) {
-        let msg = GuestMessage::Frame {
-            header,
-            data: pixels,
-        };
-        self.try_send(Queued::Msg(msg));
+        let mut guard = self
+            .inner
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.frame = Some((header, pixels));
+        drop(guard);
+        self.notify_pending();
     }
 
     /// Send LED strip state.
     pub fn send_leds(&self, update: LedUpdate) {
-        self.try_send(Queued::Msg(GuestMessage::Leds(update)));
+        let mut guard = self
+            .inner
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.led = Some(update);
+        drop(guard);
+        self.notify_pending();
     }
 
-    /// Send a log line.
+    /// Send a log line. Drops on overflow — logs are best-effort and must
+    /// never stall the caller (log tailers are the highest-volume producer).
     pub fn send_log(&self, source: LogSource, line: String) {
-        self.try_send(Queued::Msg(GuestMessage::Log { source, line }));
+        self.try_send_best_effort(Queued::Msg(GuestMessage::Log { source, line }));
     }
 
     /// Send active effect index (0xFF = off).
@@ -88,9 +111,11 @@ impl GuestSender {
         self.try_send(Queued::Msg(GuestMessage::ControlsStatus { state, reason }));
     }
 
-    /// Reply to a host Ping.
+    /// Reply to a host Ping. Called from the relay's input-reader thread,
+    /// so it must not block — if the channel is full, the host will just
+    /// time out on the next Ping and retry.
     pub fn send_pong(&self) {
-        self.try_send(Queued::Msg(GuestMessage::Pong));
+        self.try_send_best_effort(Queued::Msg(GuestMessage::Pong));
     }
 
     /// Send a notification to the host console.
@@ -98,26 +123,98 @@ impl GuestSender {
         self.try_send(Queued::Msg(GuestMessage::Notify { level, message }));
     }
 
-    /// Try to send a message. If no host is connected or the channel is
-    /// broken, the message is silently dropped and the sender is cleared.
-    fn try_send(&self, queued: Queued) {
-        let mut guard = self
+    fn notify_pending(&self) {
+        let tx = self
             .inner
             .tx
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(ref tx) = *guard
-            && tx.try_send(queued).is_err()
-        {
-            // Channel full or disconnected — clear it so we don't
-            // keep trying a dead channel.
-            if tx.send(Queued::Msg(GuestMessage::Pong)).is_err() {
-                // Truly disconnected (not just full), clear it
-                *guard = None;
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(tx) = tx {
+            match tx.try_send(Queued::Wake) {
+                Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    if let Ok(mut guard) = self.inner.tx.lock() {
+                        *guard = None;
+                    }
+                }
             }
-            // If it was just full, we drop this message (backpressure)
         }
     }
+
+    /// Blocking send for control messages that must be delivered in order
+    /// (CaptureStatus, ControlsStatus, VolumeLevel, ActiveEffect, Notify).
+    /// These are rare enough that backpressure from a 64-slot channel is
+    /// not a concern in practice.
+    ///
+    /// If no host is connected or the channel is broken, the sender is
+    /// cleared and the message is dropped.
+    fn try_send(&self, queued: Queued) {
+        let tx = self
+            .inner
+            .tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(tx) = tx {
+            match tx.send(queued) {
+                Ok(()) => {}
+                Err(_) => {
+                    if let Ok(mut guard) = self.inner.tx.lock() {
+                        *guard = None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Non-blocking send for high-volume or latency-sensitive messages.
+    /// Drops the message if the channel is full — used for logs (burst-heavy)
+    /// and Pong (sent from the reader thread, where blocking would stall
+    /// host-message processing).
+    fn try_send_best_effort(&self, queued: Queued) {
+        let tx = self
+            .inner
+            .tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(tx) = tx {
+            match tx.try_send(queued) {
+                Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    if let Ok(mut guard) = self.inner.tx.lock() {
+                        *guard = None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn flush_pending(pending: &Mutex<PendingState>, w: &mut BufWriter<TcpStream>) -> io::Result<()> {
+    let (frame, led) = {
+        let mut guard = pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (guard.frame.take(), guard.led.take())
+    };
+
+    if let Some((header, data)) = frame {
+        let msg = GuestMessage::Frame { header, data };
+        if let GuestMessage::Frame { data, .. } = &msg {
+            wire::encode_guest(&msg, Some(data.as_slice()), w)?;
+        }
+        w.flush()?;
+    }
+
+    if let Some(update) = led {
+        let msg = GuestMessage::Leds(update);
+        wire::encode_guest(&msg, None, w)?;
+        w.flush()?;
+    }
+
+    Ok(())
 }
 
 /// Guest-side IPC endpoint. Owns the TCP listener and manages
@@ -139,6 +236,7 @@ impl GuestEndpoint {
         let sender = GuestSender {
             inner: Arc::new(SenderState {
                 tx: Mutex::new(None),
+                pending: Mutex::new(PendingState::default()),
             }),
         };
 
@@ -167,6 +265,21 @@ impl GuestEndpoint {
         write_stream.set_nodelay(true)?;
         read_stream.set_nodelay(true)?;
 
+        // Drop any pending Frame/LED left over from the previous host — the
+        // new host hasn't seen those and the image/state may be from a stale
+        // compositor session. The capture thread will re-populate pending.frame
+        // on its next capture; callers (e.g. main.rs) explicitly re-push the
+        // latest LED state for the new connection.
+        {
+            let mut guard = self
+                .sender
+                .inner
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *guard = PendingState::default();
+        }
+
         let (tx, rx) = mpsc::sync_channel::<Queued>(CHANNEL_DEPTH);
 
         // Install the new sender so all GuestSender clones start
@@ -183,12 +296,14 @@ impl GuestEndpoint {
 
         // Writer thread: drains the channel and serializes to TCP.
         let sender_inner = Arc::clone(&self.sender.inner);
+        let sender_pending = Arc::clone(&self.sender.inner);
         std::thread::Builder::new()
             .name("ipc-writer".into())
             .spawn(move || {
                 let mut w = BufWriter::new(write_stream);
                 for queued in rx {
                     match queued {
+                        Queued::Wake => {}
                         Queued::Msg(ref msg) => {
                             let data = if let GuestMessage::Frame { data, .. } = msg {
                                 Some(data.as_slice())
@@ -204,6 +319,10 @@ impl GuestEndpoint {
                                 break;
                             }
                         }
+                    }
+                    if let Err(e) = flush_pending(&sender_pending.pending, &mut w) {
+                        eprintln!("ipc flush pending error: {e}");
+                        break;
                     }
                 }
                 // Clear the sender so other threads stop queueing

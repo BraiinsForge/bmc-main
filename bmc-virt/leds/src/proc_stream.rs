@@ -9,8 +9,10 @@ pub fn run<F>(path: &str, mut on_write: F) -> io::Result<()>
 where
     F: FnMut(&[u8]),
 {
-    // Open non-blocking so we can drain stale data that accumulated in the
-    // kernel FIFO before anyone was reading.
+    // Open non-blocking so we can drain backlog that accumulated in the
+    // kernel FIFO before anyone was reading. The drained bytes are still
+    // passed to the decoder/caller so it can keep the newest complete LED
+    // state without replaying the full history later.
     let mut file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK)
@@ -21,7 +23,10 @@ where
     loop {
         match file.read(&mut buf) {
             Ok(0) => break,
-            Ok(n) => drained += n,
+            Ok(n) => {
+                drained += n;
+                on_write(&buf[..n]);
+            }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
             Err(e) => return Err(e),
         }

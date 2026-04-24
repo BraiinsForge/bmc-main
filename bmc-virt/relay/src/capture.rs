@@ -8,6 +8,8 @@
 
 use std::os::fd::AsFd;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::net::UnixStream;
+use std::path::Path;
 
 use wayland_client::protocol::{wl_output, wl_registry, wl_shm, wl_shm_pool};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noop};
@@ -69,8 +71,11 @@ impl WaylandCapture {
         clippy::cast_possible_wrap,
         reason = "buffer pool size fits in i32 for any reasonable display"
     )]
-    pub fn connect() -> Result<Self, String> {
-        let conn = Connection::connect_to_env().map_err(|e| format!("wayland connect: {e}"))?;
+    pub fn connect(socket_path: &Path) -> Result<Self, String> {
+        let stream = UnixStream::connect(socket_path)
+            .map_err(|e| format!("wayland connect {}: {e}", socket_path.display()))?;
+        let conn = Connection::from_socket(stream)
+            .map_err(|e| format!("wayland connect {}: {e}", socket_path.display()))?;
         let display = conn.display();
 
         let mut queue = conn.new_event_queue();

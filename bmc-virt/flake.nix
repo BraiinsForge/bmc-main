@@ -714,7 +714,8 @@
                 -device virtio-net-pci,netdev=net0 \
                 -netdev user,id=net0,net=192.168.1.0/24,hostfwd=tcp::${toString ports.ssh}-192.168.1.1:22,hostfwd=tcp::${toString ports.http}-192.168.1.1:80,hostfwd=tcp::${toString ports.grpc}-192.168.1.1:50051,hostfwd=tcp::${toString ports.ipc}-192.168.1.1:${toString ports.ipc},hostfwd=tcp::${toString ports.event}-192.168.1.1:${toString ports.event} \
                 -device virtio-tablet-pci \
-                -device virtio-rng-pci \
+                -object rng-random,filename=/dev/urandom,id=rng0 \
+                -device virtio-rng-pci,rng=rng0 \
                 -virtfs local,path=/nix/store,mount_tag=nixstore,security_model=none,readonly=on \
                 $AUDIO_ARGS \
                 -serial file:"$LOGDIR/serial.log" \
