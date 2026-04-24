@@ -125,14 +125,9 @@ deployment.
 
 ## Example: Running bmc-openwrt on the device
 
-After deploying, use the `start-compositor` wrapper to launch `bmc-openwrt`. This wrapper (deployed as part of the core
-profile at `/run/current-profile/bin/start-compositor`) sets up the `XDG_RUNTIME_DIR` needed by the Wayland compositor:
+The compositor is ran through `/etc/init.d/bmc-compositor`, as long as you have deployed the whole `core` package, it
+should be restarted automatically.
 
-```sh
-ssh root@192.168.1.2
-
-# start-compositor creates a temporary XDG_RUNTIME_DIR and execs its arguments
-start-compositor bmc-openwrt
-```
-
-It ensures the Wayland compositor embedded in `bmc-openwrt` can create its socket under a valid runtime directory.
+In case you're running nix-cargo-deploy.sh, stop the service via `/etc/init.d/bmc-compositor stop`, then use
+`start-compositor bmc-openwrt` to start the compositor in a dirty way, without the service. The service always refers to
+the core package in `/nix/store`, so it will not pick up compositor changes through `nix-cargo-deploy.sh`
