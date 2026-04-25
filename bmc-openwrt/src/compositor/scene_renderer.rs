@@ -176,9 +176,6 @@ impl SceneRenderer {
 
         self.import_textures(buffers, dirty);
 
-        let buffer = self.buffers.back_buffer(&self.output)?;
-        let fb = buffer.fb;
-
         // Collect render items: (buffer_id, placement, x_offset)
         let mut to_render = Vec::new();
         let drag_offset = widgets.drag_offset().unwrap_or(0);
@@ -190,15 +187,32 @@ impl SceneRenderer {
         if let Some(dx) = widgets.drag_offset() {
             #[expect(clippy::cast_possible_wrap)]
             let logical_width = self.output.logical_size().0 as i32;
-            let (direction, neighbor_offset) = if dx < 0 {
-                (1, dx + logical_width - SCENE_SEAM_OVERLAP)
+            let neighbor_offset = if dx <= 0 {
+                dx + logical_width - SCENE_SEAM_OVERLAP
             } else {
-                (-1, dx - logical_width + SCENE_SEAM_OVERLAP)
+                dx - logical_width + SCENE_SEAM_OVERLAP
             };
-            if let Some(neighbor) = widgets.neighbor_scene(direction) {
+            if let Some(neighbor) = widgets.drag_neighbor_scene() {
                 collect_scene_widgets(neighbor, buffers, neighbor_offset, &mut to_render);
             }
         }
+
+        // Skip the entire render pass when there is no widget content. The
+        // back-buffer DMA-BUF's GPU mapping is realised lazily by Etnaviv
+        // on the first GLES draw; if that first draw is a `frame.clear`
+        // covering the full output (which is what happens at startup
+        // before any widget has attached a buffer) the GPU MMU-faults on
+        // an unmapped page and recovers with corrupted sampler state,
+        // which then breaks subsequent widget glyph rendering. Gating on
+        // a non-empty `to_render` ensures the buffer's first touch is
+        // always a widget texture render, which warms the mapping
+        // without faulting.
+        if to_render.is_empty() {
+            return Ok((false, capture_frames, false));
+        }
+
+        let buffer = self.buffers.back_buffer(&self.output)?;
+        let fb = buffer.fb;
 
         let renderer = self.egl.renderer();
         ii_stopwatch::stopwatch_start!(self.bind_w);
@@ -220,19 +234,7 @@ impl SceneRenderer {
             OutputDamage::Widgets(_) => Vec::new(),
         };
 
-        // The `OutputDamage::Full` branch used to call
-        // `frame.clear(BACKGROUND_COLOR, &damage_rects)` here. On Vivante
-        // GC400 (Etnaviv Mesa) that clear corrupts sampler coherency
-        // against the widget DMA-BUF textures sampled later in this
-        // frame, reproducibly dropping first-use atlas texels and
-        // producing the missing-glyph rendering captured in
-        // docs/devlogs/BDK-389-combined-scene/glyph-damage-bisect.
-        // Skipping it costs nothing when widgets cover the full output
-        // (current scene model); if a future scene layout leaves
-        // non-widget regions and needs hygiene clears, revisit with a
-        // scissored, post-composite approach that doesn't precede any
-        // texture sampling.
-        let _ = BACKGROUND_COLOR;
+        let mut drawn_regions = Vec::new();
 
         ii_stopwatch::stopwatch_start!(self.compose_w);
         for (buffer_id, placement, x_offset) in &to_render {
@@ -269,6 +271,7 @@ impl SceneRenderer {
             let physical_y = output_height - logical_x - phys_h;
 
             let dst = Rectangle::from_loc_and_size((physical_x, physical_y), (phys_w, phys_h));
+            drawn_regions.push(dst);
 
             if let OutputDamage::Widgets(dirty_widgets) = output_damage
                 && dirty_widgets.contains(&placement.instance_id)
@@ -276,13 +279,7 @@ impl SceneRenderer {
                 damage_rects.push(dst);
             }
 
-            // Full-output damage during drag so the GPU doesn't skip the seam overlap region
-            let full_damage = Rectangle::from_size(output_size);
-            let damage = if widgets.drag_offset().is_some() {
-                full_damage
-            } else {
-                dst
-            };
+            let damage = texture_damage_rect(dst);
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
@@ -298,6 +295,19 @@ impl SceneRenderer {
             }
         }
         ii_stopwatch::stopwatch_stop!(self.compose_w);
+
+        // Clear regions not covered by any widget so gaps and edge strips
+        // get a deterministic background instead of stale pool content.
+        // Safe here because the `to_render.is_empty()` early-out above
+        // ensures the back-buffer's first GLES draw was a widget texture
+        // render (which warms Etnaviv's lazy DMA-BUF mapping); a clear
+        // before that would MMU-fault.
+        let clear_regions = uncovered_output_regions(output_rect, drawn_regions);
+        if !clear_regions.is_empty() {
+            frame
+                .clear(BACKGROUND_COLOR, &clear_regions)
+                .context("Failed to clear uncovered output regions")?;
+        }
 
         ii_stopwatch::stopwatch_start!(self.finish_w);
         let _sync = frame.finish().context("Failed to finish frame")?;
@@ -492,6 +502,17 @@ fn update_capture_cache(
     }
 }
 
+fn texture_damage_rect(dst: Rectangle<i32, Physical>) -> Rectangle<i32, Physical> {
+    Rectangle::from_size(dst.size)
+}
+
+fn uncovered_output_regions(
+    output_rect: Rectangle<i32, Physical>,
+    drawn_regions: Vec<Rectangle<i32, Physical>>,
+) -> Vec<Rectangle<i32, Physical>> {
+    Rectangle::subtract_rects_many_in_place(vec![output_rect], drawn_regions)
+}
+
 fn merge_damage_rects(
     damage_rects: Vec<Rectangle<i32, Physical>>,
 ) -> Vec<Rectangle<i32, Physical>> {
@@ -550,7 +571,9 @@ fn collect_scene_widgets(
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_damage_rects, rectangle_union};
+    use super::{
+        merge_damage_rects, rectangle_union, texture_damage_rect, uncovered_output_regions,
+    };
     use smithay::utils::{Physical, Rectangle};
 
     #[test]
@@ -586,5 +609,46 @@ mod tests {
             rectangle_union(&lhs, &rhs),
             Rectangle::<i32, Physical>::from_loc_and_size((10, 18), (10, 10))
         );
+    }
+
+    #[test]
+    fn texture_damage_is_local_to_destination_rect() {
+        let dst = Rectangle::<i32, Physical>::from_loc_and_size((240, 642), (480, 638));
+
+        assert_eq!(
+            texture_damage_rect(dst),
+            Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (480, 638))
+        );
+    }
+
+    #[test]
+    fn uncovered_output_regions_detects_gap_and_edge_strip() {
+        let output = Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (10, 2));
+        let drawn = vec![
+            Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (3, 2)),
+            Rectangle::<i32, Physical>::from_loc_and_size((5, 0), (3, 2)),
+        ];
+
+        let mut clear = uncovered_output_regions(output, drawn);
+        clear.sort_by_key(|r| (r.loc.x, r.loc.y, r.size.w, r.size.h));
+
+        assert_eq!(
+            clear,
+            vec![
+                Rectangle::<i32, Physical>::from_loc_and_size((3, 0), (2, 2)),
+                Rectangle::<i32, Physical>::from_loc_and_size((8, 0), (2, 2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn uncovered_output_regions_is_empty_when_fully_covered() {
+        let output = Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (10, 2));
+        let drawn = vec![Rectangle::<i32, Physical>::from_loc_and_size(
+            (0, 0),
+            (10, 2),
+        )];
+
+        assert!(uncovered_output_regions(output, drawn).is_empty());
     }
 }

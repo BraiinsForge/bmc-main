@@ -2,7 +2,9 @@
 
 //! Widget scene layout tracking with drag-based scene navigation.
 
-use bmc::compositor::SceneLayout;
+use std::collections::HashSet;
+
+use bmc::compositor::{InstanceId, SceneLayout};
 
 /// Default drag distance (fraction of screen width) required to commit a
 /// scene change.
@@ -119,6 +121,25 @@ impl WidgetTracker {
         self.scenes.len() > 1
     }
 
+    #[must_use]
+    pub fn drag_neighbor_scene(&self) -> Option<&SceneLayout> {
+        let dx = self.drag_offset?;
+        let direction = if dx <= 0 { 1 } else { -1 };
+        self.neighbor_scene(direction)
+    }
+
+    #[must_use]
+    pub fn presented_widget_ids(&self) -> HashSet<InstanceId> {
+        let mut ids = HashSet::new();
+        collect_visible_widget_ids(self.active_scene(), &mut ids);
+        if self.drag_offset.is_some()
+            && let Some(neighbor) = self.drag_neighbor_scene()
+        {
+            collect_visible_widget_ids(neighbor, &mut ids);
+        }
+        ids
+    }
+
     /// Begin a drag gesture. Only activates if there are multiple scenes.
     pub fn start_drag(&mut self) {
         if self.can_drag() {
@@ -193,9 +214,19 @@ impl WidgetTracker {
     }
 }
 
+fn collect_visible_widget_ids(scene: &SceneLayout, ids: &mut HashSet<InstanceId>) {
+    ids.extend(
+        scene
+            .widgets
+            .iter()
+            .filter(|widget| widget.visible)
+            .map(|widget| widget.instance_id.clone()),
+    );
+}
+
 #[cfg(test)]
 mod tests {
-    use bmc::compositor::SceneLayout;
+    use bmc::compositor::{Position, SceneLayout, Size, WidgetPlacement};
 
     use super::{SceneCommitConfig, WidgetTracker};
 
@@ -316,6 +347,49 @@ mod tests {
         assert!(
             t.end_drag(-20, -150.0),
             "velocity=150 exceeds custom threshold 100"
+        );
+    }
+
+    fn scene_with_widget(id: &str) -> SceneLayout {
+        SceneLayout {
+            widgets: vec![WidgetPlacement {
+                instance_id: id.to_owned(),
+                position: Position { x: 0, y: 0 },
+                size: Size {
+                    width: 1280,
+                    height: 480,
+                },
+                visible: true,
+            }],
+        }
+    }
+
+    #[test]
+    fn presented_widget_ids_include_active_scene_when_idle() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("active"), scene_with_widget("next")]);
+
+        assert_eq!(
+            t.presented_widget_ids(),
+            std::collections::HashSet::from([String::from("active")])
+        );
+    }
+
+    #[test]
+    fn presented_widget_ids_include_drag_neighbor_during_drag() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("active"),
+            scene_with_widget("next"),
+            scene_with_widget("previous"),
+        ]);
+
+        t.start_drag();
+        t.update_drag(-100);
+
+        assert_eq!(
+            t.presented_widget_ids(),
+            std::collections::HashSet::from([String::from("active"), String::from("next")])
         );
     }
 }

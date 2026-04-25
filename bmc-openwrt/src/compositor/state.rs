@@ -421,14 +421,7 @@ impl CompositorState {
     }
 
     fn eligible_callback_generations(&self) -> std::collections::HashMap<InstanceId, NonZeroU64> {
-        let visible_widgets: std::collections::HashSet<_> = self
-            .widgets
-            .active_scene()
-            .widgets
-            .iter()
-            .filter(|widget| widget.visible)
-            .map(|widget| widget.instance_id.clone())
-            .collect();
+        let visible_widgets = self.widgets.presented_widget_ids();
         let mut eligible = std::collections::HashMap::new();
 
         for (_buffer, instance_id) in &self.widget_buffers {

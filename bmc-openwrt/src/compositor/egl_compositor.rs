@@ -590,6 +590,7 @@ impl EglCompositor {
                 // empty cache), which the relay treats as fatal.
                 if !app_state.compositor.pending_capture_frames.is_empty()
                     && !renderer.capture_cache_ready()
+                    && !app_state.compositor.widget_buffers.is_empty()
                 {
                     app_state.redraw_state = app_state.redraw_state.queue();
                 }
@@ -664,7 +665,9 @@ impl EglCompositor {
 
                 // Fulfill pending capture frames from the pixel cache (no re-render).
                 // The cache is updated by the inline capture during each render pass.
-                if !app_state.compositor.pending_capture_frames.is_empty() {
+                if !app_state.compositor.pending_capture_frames.is_empty()
+                    && renderer.capture_cache_ready()
+                {
                     let frames: Vec<_> = app_state
                         .compositor
                         .pending_capture_frames
