@@ -175,7 +175,13 @@ fn statvfs_free_bytes(path: &Path) -> anyhow::Result<u64> {
 
     // Widen to u64 before multiplication to prevent overflow on 32-bit ARM
     // where c_ulong is u32. On x86_64 these are already u64.
-    #[expect(clippy::useless_conversion)]
+    #[cfg_attr(
+        target_pointer_width = "64",
+        expect(
+            clippy::useless_conversion,
+            reason = "needed on 32-bit ARM where c_ulong is u32"
+        )
+    )]
     Ok(u64::from(stat.f_frsize) * u64::from(stat.f_bavail))
 }
 
