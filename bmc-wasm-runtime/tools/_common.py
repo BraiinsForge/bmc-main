@@ -89,14 +89,34 @@ def build_example_wasm(example: str) -> Path:
         )
         sys.exit(1)
 
-    subprocess.run(
-        ['cargo', 'build', '--release', '--target', WASM_TARGET],
+    # --message-format=json emits one compiler-artifact message per built target;
+    # parse it so we get the exact .wasm path even with a custom CARGO_TARGET_DIR.
+    result = subprocess.run(
+        [
+            'cargo',
+            'build',
+            '--release',
+            '--target',
+            WASM_TARGET,
+            '--message-format=json-render-diagnostics',
+        ],
         cwd=example_dir,
         check=True,
         capture_output=True,
+        text=True,
     )
 
-    return example_dir / 'target' / WASM_TARGET / 'release' / f'{wasm_name}.wasm'
+    for line in result.stdout.splitlines():
+        msg = json.loads(line)
+        if msg.get('reason') != 'compiler-artifact':
+            continue
+        if msg['target']['name'] != wasm_name:
+            continue
+        for path in msg.get('filenames') or []:
+            if path.endswith('.wasm'):
+                return Path(path)
+
+    raise RuntimeError(f"no .wasm artifact found for example '{example}'")
 
 
 def extract_crate(sym: str) -> str:

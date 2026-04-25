@@ -29,10 +29,15 @@ cmd="${1:?Usage: nix-cargo-deploy.sh <compositor|widget> ...}"
 shift
 label="$cmd"
 
+# Honor CARGO_TARGET_DIR / config.toml overrides instead of assuming ./target.
+target_dir=$(cargo metadata --format-version=1 --no-deps \
+    | grep -o '"target_directory":"[^"]*"' | cut -d'"' -f4)
+bin_dir="${target_dir}/armv7-unknown-linux-gnueabihf/release"
+
 case "$cmd" in
 compositor)
     device="${1:-${DEVICE_IP:?Set DEVICE_IP or pass as argument}}"
-    local_bin="target/armv7-unknown-linux-gnueabihf/release/bmc-openwrt"
+    local_bin="${bin_dir}/bmc-openwrt"
     bin_name="bmc-openwrt"
     profile_path="${profile}/bin/bmc-openwrt"
     ;;
@@ -40,7 +45,7 @@ widget)
     name="${1:?Usage: nix-cargo-deploy.sh widget <name> [device-ip]}"
     shift
     device="${1:-${DEVICE_IP:?Set DEVICE_IP or pass as argument}}"
-    local_bin="target/armv7-unknown-linux-gnueabihf/release/bmc-widget-${name}"
+    local_bin="${bin_dir}/bmc-widget-${name}"
     bin_name="bmc-widget-${name}"
     profile_path="${profile}/lib/bmc-widgets/${name}/bin/bmc-widget-${name}"
     label="widget ${name}"

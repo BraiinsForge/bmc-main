@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -23,8 +24,6 @@ from pathlib import Path
 
 from _common import build_example_wasm, require_tools
 
-# Relative to bmc-wasm-runtime/
-PROFILING_BINARY = Path('../target/profiling/testbed')
 REPORTS_DIR = Path('reports')
 
 
@@ -53,11 +52,12 @@ def prepare_report_dir(report_dir: Path) -> None:
     report_dir.mkdir(parents=True)
 
 
-def build(example: str) -> Path:
+def build(example: str) -> tuple[Path, Path]:
+    """Build wasm widget + testbed and return (wasm_file, testbed_binary)."""
     wasm_file = build_example_wasm(example)
 
     print('Building testbed (profiling profile)...')
-    subprocess.run(
+    result = subprocess.run(
         [
             'cargo',
             'build',
@@ -67,15 +67,32 @@ def build(example: str) -> Path:
             'testbed',
             '--bin',
             'testbed',
+            '--message-format=json-render-diagnostics',
         ],
         check=True,
+        capture_output=True,
+        text=True,
     )
 
-    return wasm_file
+    for line in result.stdout.splitlines():
+        msg = json.loads(line)
+        if msg.get('reason') != 'compiler-artifact':
+            continue
+        if msg['target']['name'] != 'testbed':
+            continue
+        executable = msg.get('executable')
+        if executable:
+            return wasm_file, Path(executable)
+
+    raise RuntimeError('no testbed executable found in cargo build output')
 
 
 def record(
-    wasm_file: Path, report_dir: Path, perf_frames: int, extra_args: list[str]
+    wasm_file: Path,
+    testbed_binary: Path,
+    report_dir: Path,
+    perf_frames: int,
+    extra_args: list[str],
 ) -> None:
     profile_gz = report_dir / 'profile.json.gz'
     perf_json = report_dir / 'perf.json'
@@ -86,7 +103,7 @@ def record(
         '--save-only',
         '-o',
         str(profile_gz),
-        str(PROFILING_BINARY),
+        str(testbed_binary),
         str(wasm_file),
         f'--perf-report={perf_json}',
         f'--perf-frames={perf_frames}',
@@ -100,7 +117,7 @@ def record(
             sys.executable,
             'tools/perf_symbolicate.py',
             str(profile_gz),
-            str(PROFILING_BINARY),
+            str(testbed_binary),
         ],
         check=True,
     )
@@ -140,8 +157,8 @@ def main() -> None:
     check_prerequisites()
     report_dir = REPORTS_DIR / args.report
     prepare_report_dir(report_dir)
-    wasm_file = build(args.example)
-    record(wasm_file, report_dir, args.perf_frames, extra)
+    wasm_file, testbed_binary = build(args.example)
+    record(wasm_file, testbed_binary, report_dir, args.perf_frames, extra)
     print_summary(report_dir)
 
 

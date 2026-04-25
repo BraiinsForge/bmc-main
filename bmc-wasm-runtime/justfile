@@ -11,9 +11,12 @@ cargo_features := "--features testbed"
 
 # Built wasm artifact paths for a given example (rust converts hyphens to
 # underscores in generated binary names — use `replace(EXAMPLE, '-', '_')`).
+# Resolves the cargo target directory via metadata so CARGO_TARGET_DIR /
+# config.toml overrides are honored instead of assuming ./target.
 
-wasm_file := dir + "/examples/target/" + wasm_target + "/release"
-wasm_file_debug := dir + "/examples/target/" + wasm_target + "/debug"
+examples_target := shell('cargo metadata --manifest-path "$1" --format-version=1 --no-deps | grep -o "\"target_directory\":\"[^\"]*\"" | cut -d "\"" -f 4', dir + "/examples/Cargo.toml")
+wasm_file := examples_target + "/" + wasm_target + "/release"
+wasm_file_debug := examples_target + "/" + wasm_target + "/debug"
 
 # Visual regression paths.
 

@@ -560,7 +560,6 @@
             header "Building console app (host-native)"
             ${consoleHostRustflagsExports}
             cargo build -p bmc-virt-console --manifest-path "$WORKSPACE/Cargo.toml"
-            CONSOLE_BINARY="$WORKSPACE/target/debug/bmc-virt-console"
 
             header "Building OpenWrt image (rootfs + kernel)"
             if ! IMAGE=$(${pkgs.nix}/bin/nix build -L \
@@ -926,7 +925,7 @@
 
             if [[ -z "$RR" ]]; then
               header "Opening display"
-              CONSOLE_BINARY="$CONSOLE_BINARY" ${display}/bin/bmc-virt-display
+              WORKSPACE="$WORKSPACE" ${display}/bin/bmc-virt-display
             else
               echo "Skipping display console (headless compositor under rr)"
             fi
@@ -983,14 +982,12 @@
         display = pkgs.writeShellScriptBin "bmc-virt-display" ''
           set -euo pipefail
           DATADIR="''${BMC_VIRT_DATA:-$(pwd)/vm-data}"
-          CONSOLE="''${CONSOLE_BINARY:-}"
+          : "''${WORKSPACE:?WORKSPACE must be set by caller}"
 
-          if [[ -n "$CONSOLE" && -x "$CONSOLE" ]]; then
-            echo "Starting console app..."
-            BMC_VIRT_RELAY_ADDR="127.0.0.1:${toString ports.ipc}" "$CONSOLE" >> "$DATADIR/console.log" 2>&1 &
-          else
-            echo "ERROR: Console binary not found. Build with: cargo build -p bmc-virt-console"
-          fi
+          echo "Starting console app..."
+          BMC_VIRT_RELAY_ADDR="127.0.0.1:${toString ports.ipc}" \
+            cargo run --manifest-path "$WORKSPACE/Cargo.toml" -p bmc-virt-console \
+            >> "$DATADIR/console.log" 2>&1 &
         '';
 
         stop = pkgs.writeShellScriptBin "bmc-virt-stop" ''

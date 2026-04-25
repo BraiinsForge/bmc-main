@@ -18,10 +18,10 @@ nix develop <<'EOF'
 set -e
 echo '--- Rust build ---'
 cargo build -p bmc-shared-utils
-test -d target/debug && echo '  OK: target/debug exists'
+echo '  OK: cargo build succeeded'
 
 echo '--- Frontend (tests FHS compat for node binaries) ---'
-cd frontend && yarn install && make build
+cd frontend && yarn install && just build
 test -f dist/index.html && echo '  OK: dist/index.html exists'
 EOF
 
