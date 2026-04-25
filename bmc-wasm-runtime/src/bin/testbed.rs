@@ -289,11 +289,17 @@ impl App {
             .with_stencil_size(8);
         let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attrs));
 
+        // Pick a single-sample config: tile FBOs are single-sample, and
+        // glBlitFramebuffer to a multisampled default framebuffer fails with
+        // GL_INVALID_OPERATION when the src and dst rectangles differ in size
+        // (which they do whenever DPI scaling is in effect — see GL 4.6 §18.3.2).
+        // Some Mesa drivers expose MSAA configs in this iterator, so we must
+        // filter them out explicitly rather than relying on the template.
         let (window, gl_config) = display_builder
             .build(event_loop, template, |configs| {
                 configs
                     .reduce(|a, c| {
-                        if c.num_samples() > a.num_samples() {
+                        if c.num_samples() < a.num_samples() {
                             c
                         } else {
                             a
