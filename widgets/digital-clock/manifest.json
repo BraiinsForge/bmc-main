@@ -4,8 +4,8 @@
   "name": "Digital Clock",
   "description": "Digital clock display with customizable font style",
   "author": {
-    "name": "Braiins",
-    "url": "https://braiins.com"
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
   },
   "binary": "bin/bmc-widget-digital-clock",
   "settings": [

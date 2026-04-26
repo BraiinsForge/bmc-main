@@ -4,8 +4,8 @@
   "name": "Flip Clock",
   "description": "GPU-accelerated split-flap clock with 2D and 3D animation modes",
   "author": {
-    "name": "Braiins",
-    "url": "https://braiins.com"
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
   },
   "binary": "bin/bmc-widget-flip-clock",
   "settings": [

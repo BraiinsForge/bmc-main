@@ -32,11 +32,7 @@ impl WaylandClient {
     pub fn connect() -> Result<Self> {
         let (surface, initial) = DeckWidgetSurfaceClient::connect()?;
 
-        tracing::info!(
-            "Widget config: {}x{}",
-            initial.width,
-            initial.height
-        );
+        tracing::info!("Widget config: {}x{}", initial.width, initial.height);
 
         Ok(Self { surface })
     }
