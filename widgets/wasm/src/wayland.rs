@@ -19,7 +19,15 @@ struct RenderState {
     egl: EglState,
     runtime: WasmWidgetRuntime,
     last_frame: Instant,
+    /// Baseline for monotonic_ms passed to the wasm runtime.
+    monotonic_origin: Instant,
     frame_count: u64,
+}
+
+impl RenderState {
+    fn monotonic_ms(&self, now: Instant) -> u64 {
+        u64::try_from(now.duration_since(self.monotonic_origin).as_millis()).unwrap_or(u64::MAX)
+    }
 }
 
 /// Wayland client for the WASM widget.
@@ -142,6 +150,10 @@ impl WaylandClient {
                     patch
                 );
 
+                // Seed clock so animations and frame deadlines tick from t=0
+                let monotonic_origin = Instant::now();
+                runtime.set_time(chrono::Local::now().fixed_offset(), 0);
+
                 // Render + commit first frame immediately
                 runtime.renderer().begin_frame(w, h, 1.0);
                 runtime.deliver_fetch_responses();
@@ -162,6 +174,7 @@ impl WaylandClient {
                     egl,
                     runtime,
                     last_frame: Instant::now(),
+                    monotonic_origin,
                     frame_count: 1,
                 });
 
@@ -182,6 +195,9 @@ impl WaylandClient {
                 #[expect(clippy::cast_possible_truncation, reason = "delta_ms fits in u32")]
                 let delta_ms = now.duration_since(rs.last_frame).as_millis() as u32;
                 rs.last_frame = now;
+
+                rs.runtime
+                    .set_time(chrono::Local::now().fixed_offset(), rs.monotonic_ms(now));
 
                 let w = self.surface.width();
                 let h = self.surface.height();
