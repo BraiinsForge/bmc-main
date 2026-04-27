@@ -26,8 +26,8 @@ clean:
 display:
     ./scripts/display.sh
 
-run:
-    ./scripts/run.sh --config combined-flip-clocks
+run CONFIG="combined-flip-clocks":
+    ./scripts/run.sh --config {{ CONFIG }}
 
 ssh:
     ./scripts/ssh.sh

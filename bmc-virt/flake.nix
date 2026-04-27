@@ -700,6 +700,10 @@
               # ACCEL/GPU/AUDIO args are intentionally preassembled shell words.
               # Quoting them would collapse each option bundle into a single argv
               # entry and break the QEMU invocation.
+              #
+              # -daemonize forks qemu off the controlling terminal so a host-side
+              # SIGHUP (terminal close, ssh disconnect, IDE restart) doesn't kill
+              # the VM. -pidfile lets qemu write the post-fork pid itself.
               # shellcheck disable=SC2086
               $QEMU_BIN \
                 -machine ${qemuMachine} \
@@ -718,8 +722,9 @@
                 -virtfs local,path=/nix/store,mount_tag=nixstore,security_model=none,readonly=on \
                 $AUDIO_ARGS \
                 -serial file:"$LOGDIR/serial.log" \
-                > "$LOGDIR/qemu.log" 2>&1 &
-              echo $! > "$PIDFILE"
+                -daemonize \
+                -pidfile "$PIDFILE" \
+                > "$LOGDIR/qemu.log" 2>&1
 
               echo "Waiting for SSH..."
               for i in $(seq 1 90); do
@@ -985,9 +990,12 @@
           : "''${WORKSPACE:?WORKSPACE must be set by caller}"
 
           echo "Starting console app..."
+          # nohup so the console survives parent shell SIGHUP (terminal close,
+          # ssh disconnect, IDE restart). </dev/null detaches stdin.
           BMC_VIRT_RELAY_ADDR="127.0.0.1:${toString ports.ipc}" \
-            cargo run --manifest-path "$WORKSPACE/Cargo.toml" -p bmc-virt-console \
-            >> "$DATADIR/console.log" 2>&1 &
+            nohup cargo run --manifest-path "$WORKSPACE/Cargo.toml" -p bmc-virt-console \
+            </dev/null >> "$DATADIR/console.log" 2>&1 &
+          disown
         '';
 
         stop = pkgs.writeShellScriptBin "bmc-virt-stop" ''
