@@ -29,23 +29,11 @@ const FLIP_DURATION: f32 = 0.35;
 /// Tracks which digit value is currently displayed and, for each position,
 /// when it last changed. Animation progress is derived from monotonic
 /// [`Instant`] elapsed time, making it immune to wall-clock jitter.
-///
-/// Backward wall-clock jumps (common in QEMU VMs) are rejected entirely —
-/// digits only advance forward. The hysteresis window also prevents
-/// mid-animation resets from rapid clock oscillation.
 struct FlipState {
     digits: [u8; 6],
     prev_digits: [u8; 6],
     transition_start: [Option<Instant>; 6],
-    /// Total seconds since midnight of the last accepted update.
-    /// `None` until the first update (accepts any initial time).
-    last_total_seconds: Option<u32>,
 }
-
-/// Half a day in seconds — jumps larger than this across midnight
-/// (e.g. 23:59:59 → 00:00:00) are treated as forward wraps, not
-/// backward jumps.
-const HALF_DAY: u32 = 43_200;
 
 impl FlipState {
     fn new() -> Self {
@@ -53,27 +41,14 @@ impl FlipState {
             digits: [0; 6],
             prev_digits: [0; 6],
             transition_start: [None; 6],
-            last_total_seconds: None,
         }
     }
 
-    /// Update digits from the current wall-clock time.
-    /// Rejects backward clock jumps and ignores transitions while
-    /// a flip animation is still running.
+    /// Update digits from the current wall-clock time. Any digit
+    /// whose value differs from the displayed one starts a fresh
+    /// flip animation; backward and large jumps animate the same
+    /// way as a normal one-second tick.
     fn update(&mut self, hours: u8, minutes: u8, seconds: u8) {
-        let total = u32::from(hours) * 3600 + u32::from(minutes) * 60 + u32::from(seconds);
-
-        // Reject backward clock jumps. Allow midnight wrap (large negative
-        // delta means the clock crossed 00:00:00). Accept the first update
-        // unconditionally.
-        if let Some(prev) = self.last_total_seconds {
-            let delta = total.wrapping_sub(prev);
-            if delta >= HALF_DAY {
-                return;
-            }
-        }
-        self.last_total_seconds = Some(total);
-
         #[expect(clippy::integer_division, reason = "extracting digit values 0-9")]
         let new_digits: [u8; 6] = [
             hours / 10,
@@ -86,9 +61,7 @@ impl FlipState {
 
         let now = Instant::now();
         for (i, &new_digit) in new_digits.iter().enumerate() {
-            let animating =
-                self.transition_start[i].is_some_and(|t| t.elapsed().as_secs_f32() < FLIP_DURATION);
-            if new_digit != self.digits[i] && !animating {
+            if new_digit != self.digits[i] {
                 self.prev_digits[i] = self.digits[i];
                 self.digits[i] = new_digit;
                 self.transition_start[i] = Some(now);
