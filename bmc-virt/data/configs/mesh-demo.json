@@ -1,0 +1,21 @@
+{
+  "scenes": [
+    {
+      "id": "e430741f-f142-4f68-87b1-61280a0557c7",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "a6fabef7-39a0-434b-be7a-6aff41d9e711",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440100",
+          "params": {
+            "wasmPath": "/mnt/data/wasm/mesh_demo.wasm"
+          }
+        }
+      ]
+    }
+  ]
+}
