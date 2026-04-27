@@ -19,7 +19,7 @@ clippy:
     scripts/mem-box.sh cargo clippy \
       --profile fast \
       --workspace \
-      --features bmc-display/slint-embed-files \
+      --all-features \
       --keep-going \
       --all-targets -- \
         -D warnings

@@ -615,11 +615,11 @@ fn prepare_unified_kv_dir(
         let _ = std::fs::write(kv_dir.join(key), value.as_bytes());
     }
     // Variant KV overrides
-    if let Some(ref variant_name) = ctx.variant {
-        if let Some(variant) = config.variants.iter().find(|v| &v.name == variant_name) {
-            for (key, value) in &variant.kv {
-                let _ = std::fs::write(kv_dir.join(key), value.as_bytes());
-            }
+    if let Some(ref variant_name) = ctx.variant
+        && let Some(variant) = config.variants.iter().find(|v| &v.name == variant_name)
+    {
+        for (key, value) in &variant.kv {
+            let _ = std::fs::write(kv_dir.join(key), value.as_bytes());
         }
     }
     kv_dir

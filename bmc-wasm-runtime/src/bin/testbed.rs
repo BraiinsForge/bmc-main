@@ -1868,8 +1868,8 @@ fn classify_and_record_gesture(rec: &mut RecordingState, gesture: &GestureTracke
         );
         UnifiedEvent::Drag {
             element: id.clone(),
-            from: f64::from(gesture.start_pos.0),
-            to: f64::from(gesture.current_pos.0),
+            from: gesture.start_pos.0,
+            to: gesture.current_pos.0,
         }
     } else {
         return;

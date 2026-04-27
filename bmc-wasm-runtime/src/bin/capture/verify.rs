@@ -101,13 +101,11 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
         baseline_dirs.extend(baseline_tmp);
     }
 
-    if has_failures {
-        if let Err(e) = super::diff::generate_comparisons(&reports, &output_dir) {
-            eprintln!(
-                "\n  {} failed to generate comparison media: {e:#}",
-                "warning:".yellow().bold()
-            );
-        }
+    if has_failures && let Err(e) = super::diff::generate_comparisons(&reports, &output_dir) {
+        eprintln!(
+            "\n  {} failed to generate comparison media: {e:#}",
+            "warning:".yellow().bold()
+        );
     }
 
     // Generate HTML report

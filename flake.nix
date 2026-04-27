@@ -6,7 +6,7 @@
     self.lfs = true;
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib";
+    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib?ref=jku/cargo-features-config";
   };
 
   outputs = { self, nixpkgs, flake-utils, nixlib, ... }:

@@ -20,6 +20,23 @@ in
     targetDeps = x86NativeTargetDeps;
     minimalDeps = false;
     rustProfile = "fast";
+    # Activate features for bins gated by `required-features` so they actually
+    # get compiled/linted instead of being silently skipped by cargo.
+    #
+    # NOTE: ideally this would be `allFeatures = true;` (catches future bins
+    # automatically), but `bmc-mock-display`'s `winit-skia` feature pulls in
+    # `skia-bindings`, whose build script downloads the skia source from
+    # github at compile time. The nix sandbox has no network access, so any
+    # build that activates `winit-skia` fails. Until that feature is moved
+    # out of the workspace's cargo feature graph (separate crate excluded
+    # from `[workspace.members]`, or replaced with a `--cfg` rustflag), we
+    # have to enumerate the features we want and accept that new gated bins
+    # will need an addition here.
+    features = [
+      "bmc-display/slint-embed-files"
+      "bmc-wasm-runtime/testbed"
+      "bmc-wasm-runtime/capture"
+    ];
     nativeDeps = pkgs: with pkgs; [
       # bmc-nix activation entrypoint shells out to `flock(1)`; BusyBox
       # provides it on-device, but the sandboxed nextest build needs an
