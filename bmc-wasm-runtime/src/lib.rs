@@ -22,11 +22,14 @@
 //!
 //! After each render call, check the scheduling hints:
 //!
-//! - [`WasmWidgetRuntime::wants_next_frame`] — the widget requested another
-//!   frame (animation is active). Render again on the next vsync tick.
-//! - [`WasmWidgetRuntime::next_frame_delay`] — the widget requested a delayed
-//!   frame (`request_frame_after(ms)`). Schedule a wake-up after the delay
-//!   instead of rendering immediately. **Do not busy-wait** for the delay.
+//! - [`WasmWidgetRuntime::wants_next_frame`] — another frame is needed, either
+//!   because the widget asked for one or because cached-tree animations still
+//!   need host-side updates.
+//! - [`WasmWidgetRuntime::next_frame_delay`] — the next host wake delay.
+//!   This may be the widget's original `request_frame_after(ms)` delay, or a
+//!   shorter animation cadence while cached-tree animations are active.
+//!   Schedule one wake-up after the returned delay instead of rendering
+//!   immediately. **Do not busy-wait** for the delay.
 //! - **Neither** — the widget is idle. Sleep until user input or an external
 //!   event (e.g. data push) arrives. Do not poll.
 //!
@@ -69,8 +72,8 @@
 //!
 //! - **Rendering unconditionally** — rendering every vsync even when the widget
 //!   is idle wastes 100% of a core.
-//! - **Ignoring `next_frame_delay`** — treating delayed frames as immediate
-//!   requests defeats the widget's own power management.
+//! - **Ignoring `next_frame_delay`** — treating delayed wakes as immediate
+//!   requests defeats both the widget's own pacing and the host scheduler.
 //! - **Allocating per frame** — avoid creating fresh data structures (layout
 //!   trees, text buffers) every frame; the runtime provides caching APIs.
 //!

@@ -17,6 +17,18 @@ use crate::tree;
 use super::super::backend::write_touch_hit;
 use super::super::memory::{read_bytes, read_string};
 
+fn clamp_animation_frame_delay(frame_delay_ms: Option<u32>, cadence_ms: u32) -> u32 {
+    frame_delay_ms.map_or(cadence_ms, |delay_ms| delay_ms.min(cadence_ms))
+}
+
+fn requested_frame_delay(delay_ms: u32, has_active_animations: bool, cadence_ms: u32) -> u32 {
+    if has_active_animations {
+        delay_ms.min(cadence_ms)
+    } else {
+        delay_ms
+    }
+}
+
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_primitives(linker)?;
     register_frame_control(linker)?;
@@ -89,8 +101,8 @@ fn register_frame_control(linker: &mut Linker<HostState>) -> Result<()> {
         "host_request_frame",
         |mut caller: Caller<'_, HostState>| {
             let state = caller.data_mut();
-            state.frame_requested = true;
-            state.animation_only_frame = false;
+            state.frame_schedule.frame_requested = true;
+            state.frame_schedule.animation_only_frame = false;
         },
     )?;
 
@@ -99,10 +111,15 @@ fn register_frame_control(linker: &mut Linker<HostState>) -> Result<()> {
         "host_request_frame_after",
         |mut caller: Caller<'_, HostState>, delay_ms: u32| {
             let state = caller.data_mut();
-            state.frame_requested = true;
-            state.frame_delay_ms = Some(delay_ms);
-            state.animation_only_frame = false;
-            state.deferred_wasm_render_at_ms = Some(state.monotonic_ms + u64::from(delay_ms));
+            state.frame_schedule.frame_requested = true;
+            state.frame_schedule.frame_delay_ms = Some(requested_frame_delay(
+                delay_ms,
+                state.frame_schedule.has_active_animations,
+                state.frame_schedule.animation_frame_delay_ms,
+            ));
+            state.frame_schedule.animation_only_frame = false;
+            state.frame_schedule.deferred_wasm_render_at_ms =
+                Some(state.monotonic_ms + u64::from(delay_ms));
         },
     )?;
 
@@ -188,8 +205,15 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
                     state.tree_drags = result.drags;
                     state.last_timings = timings;
                     if has_active || had_interaction {
-                        state.frame_requested = true;
-                        state.animation_only_frame = !had_interaction;
+                        state.frame_schedule.frame_requested = true;
+                        state.frame_schedule.animation_only_frame = !had_interaction;
+                    }
+                    state.frame_schedule.has_active_animations = has_active;
+                    if has_active {
+                        state.frame_schedule.frame_delay_ms = Some(clamp_animation_frame_delay(
+                            state.frame_schedule.frame_delay_ms,
+                            state.frame_schedule.animation_frame_delay_ms,
+                        ));
                     }
                     state.cached_tree = Some((tree_node, w, h));
                 }
@@ -229,4 +253,29 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clamp_animation_frame_delay, requested_frame_delay};
+
+    #[test]
+    fn request_after_tree_submission_clamps_host_wake_to_animation_cadence() {
+        assert_eq!(requested_frame_delay(1_000, true, 33), 33);
+    }
+
+    #[test]
+    fn request_after_tree_submission_preserves_shorter_widget_delay() {
+        assert_eq!(requested_frame_delay(16, true, 33), 16);
+    }
+
+    #[test]
+    fn request_before_tree_submission_clamps_existing_host_wake_to_animation_cadence() {
+        assert_eq!(clamp_animation_frame_delay(Some(1_000), 33), 33);
+    }
+
+    #[test]
+    fn animation_only_wake_uses_cadence_when_no_widget_delay_exists() {
+        assert_eq!(clamp_animation_frame_delay(None, 33), 33);
+    }
 }

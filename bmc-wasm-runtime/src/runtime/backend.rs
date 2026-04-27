@@ -125,6 +125,19 @@ pub struct RuntimeConfig {
     pub mesh_msaa_samples: u32,
     /// Seed for the host RNG. `0` keeps time-derived auto-seeding.
     pub rng_seed: u64,
+    /// Frame poll cadence (ms) used to clamp `frame_delay_ms` while host-side
+    /// animations are active, so a widget's `request_frame_after(longer)`
+    /// (e.g. a 1Hz clock tick) does not starve cached-tree animation replays.
+    /// Defaults to [`Self::DEFAULT_ANIMATION_FRAME_DELAY_MS`] (~30 fps), which
+    /// matches the Deck's hardware ceiling for 3D content. Hosts on faster
+    /// targets can lower this toward 16 ms (60 fps) per the BDK-266 NFR.
+    pub animation_frame_delay_ms: u32,
+}
+
+impl RuntimeConfig {
+    /// Default animation cadence: ~30 fps (33 ms). Matches the BDK-355 mesh
+    /// budget and the observed compositor rate on the Vivante GC400.
+    pub const DEFAULT_ANIMATION_FRAME_DELAY_MS: u32 = 33;
 }
 
 impl Default for RuntimeConfig {
@@ -140,6 +153,7 @@ impl Default for RuntimeConfig {
             resource_limits: RuntimeResourceLimits::default(),
             mesh_msaa_samples: 0,
             rng_seed: 0,
+            animation_frame_delay_ms: Self::DEFAULT_ANIMATION_FRAME_DELAY_MS,
         }
     }
 }
@@ -198,6 +212,7 @@ impl WasmWidgetRuntime {
             resource_limits,
             mesh_msaa_samples,
             rng_seed,
+            animation_frame_delay_ms,
         } = config;
 
         let mut engine_config = wasmi::Config::default();
@@ -235,6 +250,7 @@ impl WasmWidgetRuntime {
         state.fetch_observer = fetch_observer;
         state.record_events = record_events;
         state.rng_state = rng_seed;
+        state.frame_schedule.animation_frame_delay_ms = animation_frame_delay_ms;
         if !event_fixtures.is_empty() {
             state.event_fixtures = Some(crate::host_api::FixtureEventState {
                 events: event_fixtures,
@@ -291,17 +307,17 @@ impl WasmWidgetRuntime {
         }
 
         // Decide frame type BEFORE begin_frame consumes events
-        let mut animation_only = state.animation_only_frame
+        let mut animation_only = state.frame_schedule.animation_only_frame
             && !state.interaction.has_pending_events()
             && state.cached_tree.is_some();
 
         // Check monotonic deadline for deferred WASM render (request_frame_after).
         // Uses monotonic_ms instead of delta_ms countdown because sub-millisecond
         // frames truncate delta_ms to 0 and stall countdown-based timers.
-        if let Some(deadline_ms) = state.deferred_wasm_render_at_ms
+        if let Some(deadline_ms) = state.frame_schedule.deferred_wasm_render_at_ms
             && state.monotonic_ms >= deadline_ms
         {
-            state.deferred_wasm_render_at_ms = None;
+            state.frame_schedule.deferred_wasm_render_at_ms = None;
             animation_only = false;
         }
 
@@ -316,8 +332,8 @@ impl WasmWidgetRuntime {
 
         // Full WASM frame: compute real elapsed time since last WASM render
         // (not just the animation frame's ~0-16ms delta).
-        let wasm_delta = (state.monotonic_ms - state.last_wasm_render_at_ms) as u32;
-        state.last_wasm_render_at_ms = state.monotonic_ms;
+        let wasm_delta = (state.monotonic_ms - state.frame_schedule.last_wasm_render_at_ms) as u32;
+        state.frame_schedule.last_wasm_render_at_ms = state.monotonic_ms;
 
         // Full frame: run WASM with per-frame fuel budget.
         self.store.set_fuel(self.fuel_per_frame)?;
@@ -348,7 +364,7 @@ impl WasmWidgetRuntime {
                 let state = self.store.data_mut();
                 Self::render_cached_tree(state, delta_ms);
                 Self::draw_fuel_warning(state, self.fuel_strikes, self.max_fuel_strikes);
-                state.frame_requested = true;
+                state.frame_schedule.frame_requested = true;
                 Ok(RenderStatus::FuelExhausted)
             }
             Err(e) => Err(e.into()),
@@ -388,8 +404,19 @@ impl WasmWidgetRuntime {
                 state.tree_clicks = result.clicks;
                 state.tree_drags = result.drags;
                 if has_active || had_interaction {
-                    state.frame_requested = true;
-                    state.animation_only_frame = !had_interaction;
+                    state.frame_schedule.frame_requested = true;
+                    state.frame_schedule.animation_only_frame = !had_interaction;
+                }
+                state.frame_schedule.has_active_animations = has_active;
+                if has_active {
+                    state.frame_schedule.frame_delay_ms = Some(
+                        state
+                            .frame_schedule
+                            .frame_delay_ms
+                            .map_or(state.frame_schedule.animation_frame_delay_ms, |delay_ms| {
+                                delay_ms.min(state.frame_schedule.animation_frame_delay_ms)
+                            }),
+                    );
                 }
             }
             Err(e) => {
@@ -458,7 +485,10 @@ impl WasmWidgetRuntime {
         state.monotonic_ms = monotonic_ms;
         // Clamp so that wasm_delta doesn't underflow when time rewinds
         // (e.g. after a capture span resets the timeline cursor).
-        state.last_wasm_render_at_ms = state.last_wasm_render_at_ms.min(monotonic_ms);
+        state.frame_schedule.last_wasm_render_at_ms = state
+            .frame_schedule
+            .last_wasm_render_at_ms
+            .min(monotonic_ms);
     }
 
     /// Access the GPU renderer (for begin_frame, flush, and testbed drawing).
@@ -475,25 +505,30 @@ impl WasmWidgetRuntime {
     /// Whether the widget needs another frame rendered.
     ///
     /// Returns `true` after the widget calls `request_frame()` or
-    /// `request_frame_after(ms)`. The host **must not** call [`Self::render`]
-    /// when this returns `false` — doing so wastes CPU and GPU for an
-    /// identical frame.
+    /// `request_frame_after(ms)`, and also while cached-tree animations still
+    /// require host-side replay frames. The host **must not** call
+    /// [`Self::render`] when this returns `false` — doing so wastes CPU and GPU
+    /// for an identical frame.
     ///
     /// When this returns `true`, check [`Self::next_frame_delay`] to see if
     /// the frame should be rendered immediately or after a delay.
     #[must_use]
     pub fn wants_next_frame(&self) -> bool {
-        self.store.data().frame_requested
+        self.store.data().frame_schedule.frame_requested
     }
 
-    /// Delay before the next frame, if the widget used `request_frame_after(ms)`.
+    /// Delay before the next host wake, if another frame was requested.
     ///
     /// Returns `None` for immediate frames (`request_frame()`), or `Some(ms)`
-    /// for delayed frames. The host should **sleep or schedule a timer** for the
-    /// delay — not busy-wait or render immediately.
+    /// for delayed wakes. This may be shorter than the widget's original
+    /// `request_frame_after(ms)` delay while cached-tree animations are active;
+    /// the widget's semantic full-WASM deadline remains tracked separately.
+    ///
+    /// The host should **sleep or schedule one timer** for the delay — not
+    /// busy-wait or render immediately.
     #[must_use]
     pub fn next_frame_delay(&self) -> Option<u32> {
-        self.store.data().frame_delay_ms
+        self.store.data().frame_schedule.frame_delay_ms
     }
 
     /// Push a touch event to be processed next frame.
@@ -543,6 +578,7 @@ impl WasmWidgetRuntime {
     pub fn has_deferred_render(&self) -> bool {
         let state = self.store.data();
         state
+            .frame_schedule
             .deferred_wasm_render_at_ms
             .is_some_and(|deadline| state.monotonic_ms < deadline)
     }
