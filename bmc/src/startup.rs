@@ -14,7 +14,8 @@ use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
 use crate::compositor::Compositor;
 use crate::config::ConfigHandle;
-use crate::display_tasks::DisplayTasks;
+// TODO: display refactor — re-enable once a replacement display layer ships
+// use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::manager::BmcManager;
@@ -23,7 +24,8 @@ use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
 use crate::widget::{Coordinator, WidgetManager};
-use crate::widget_tasks::WidgetTasks;
+// TODO: display refactor
+// use crate::widget_tasks::WidgetTasks;
 use anyhow::Result;
 use bmc_button::Buttons;
 use bmc_led::led_driver::LedDriver;

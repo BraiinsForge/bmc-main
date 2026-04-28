@@ -14,7 +14,6 @@ use std::{
 };
 
 use anyhow::anyhow;
-use bmc_display::display_controller::DisplayController;
 use bmc_scheduler::{
     Cron, JobScheduler,
     scheduler::{JobConfig, Schedule, Task},
@@ -334,7 +333,6 @@ struct AlarmScheduler {
     active_alarms: Arc<Mutex<HashMap<AlarmId, Uuid>>>,
     alarm_bus: AlarmBus,
     timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
-    display_controller: DisplayController,
     alarm_sender: mpsc::Sender<ActiveAlarm>,
     current_alarm: Arc<Mutex<Option<CurrentRunningAlarm>>>,
     sound_controller: SoundController,
@@ -348,7 +346,6 @@ impl AlarmScheduler {
         scheduler: JobScheduler,
         alarm_bus: AlarmBus,
         timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
-        display_controller: DisplayController,
         sound_controller: SoundController,
     ) -> Self {
         let (alarm_sender, alarm_receiver) = mpsc::channel(1);
@@ -358,7 +355,6 @@ impl AlarmScheduler {
             active_alarms: Arc::default(),
             alarm_bus,
             timezone_receiver,
-            display_controller,
             alarm_sender,
             current_alarm: Arc::default(),
             sound_controller,
@@ -609,7 +605,6 @@ impl AlarmScheduler {
     async fn recompute_next_alarm_time(&self) {
         let Ok(alarms) = self.scheduler.jobs_by_source(Self::SCHEDULER_SOURCE).await else {
             error!("Failed to get scheduled alarms from scheduler");
-            self.display_controller.set_next_alarm(None);
             return;
         };
 
@@ -623,8 +618,6 @@ impl AlarmScheduler {
             .map(|next_tick| next_tick.with_timezone(timezone.chrono()).fixed_offset());
 
         info!(next_alarm = ?maybe_next_alarm_dt, "Recomputed next alarm time");
-
-        self.display_controller.set_next_alarm(maybe_next_alarm_dt);
     }
 }
 
@@ -639,7 +632,6 @@ impl AlarmController {
         config_handle: Arc<RwLock<ConfigHandle>>,
         scheduler: JobScheduler,
         sound_controller: SoundController,
-        display_controller: DisplayController,
         alarm_bus: AlarmBus,
         timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
     ) -> Self {
@@ -647,7 +639,6 @@ impl AlarmController {
             scheduler,
             alarm_bus.clone(),
             timezone_receiver,
-            display_controller,
             sound_controller,
         );
 

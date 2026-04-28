@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use bmc_display::display_controller::DisplayController;
+// TODO: display refactor — re-enable once a replacement display layer ships
+// use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web::{
     EncryptionType as GrpcEncryptionType, NetworkConfig, NetworkConfigStatic, NetworkInfoResponse,
     ScanWifiResponse, SetWifiRequest, SignalStrength as GrpcSignalStrength,
@@ -28,17 +29,19 @@ where
     T: BmcManager,
 {
     manager: Arc<T>,
-    display_controller: DisplayController,
+    // TODO: display refactor
+    // display_controller: DisplayController,
 }
 
 impl<T> NetworkService<T>
 where
     T: BmcManager,
 {
-    pub(crate) fn new(manager: Arc<T>, display_controller: DisplayController) -> Self {
+    pub(crate) fn new(manager: Arc<T>) -> Self {
         Self {
             manager,
-            display_controller,
+            // TODO: display refactor
+            // display_controller,
         }
     }
 
@@ -162,7 +165,8 @@ where
 
         let config = try_into_wifi_network_config(request)?;
 
-        self.display_controller.set_wifi_ssid(config.ssid.clone());
+        // TODO: display refactor
+        // self.display_controller.set_wifi_ssid(config.ssid.clone());
 
         match self
             .manager

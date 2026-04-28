@@ -7,8 +7,6 @@ use crate::config::ConfigHandle;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
 use bmc_display::data::{Account, AccountId, AccountType, AuthenticationType};
-// TODO: display refactor - WidgetKind no longer used
-// use bmc_display::data::WidgetKind;
 use bmc_grpc::web;
 use prost_types::Timestamp;
 use reqwest::StatusCode;

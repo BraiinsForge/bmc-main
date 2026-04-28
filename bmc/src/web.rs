@@ -14,11 +14,13 @@ use crate::led::LedController;
 use crate::session::Manager as SessionManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
-use crate::widget_tasks::WidgetTasks;
+// TODO: display refactor — re-enable once a replacement display layer ships
+// use crate::widget_tasks::WidgetTasks;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
-use bmc_display::display_controller::DisplayController;
+// TODO: display refactor
+// use bmc_display::display_controller::DisplayController;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -41,8 +43,9 @@ pub(crate) struct WebService<
     config: ServerConfig,
     system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    display_controller: DisplayController,
-    widget_tasks: WidgetTasks,
+    // TODO: display refactor
+    // display_controller: DisplayController,
+    // widget_tasks: WidgetTasks,
     initial_setup: InitialSetup<T, U>,
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
@@ -60,8 +63,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         config: ServerConfig,
         system_upgrade_service: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
-        display_controller: DisplayController,
-        widget_tasks: WidgetTasks,
+        // TODO: display refactor
+        // display_controller: DisplayController,
+        // widget_tasks: WidgetTasks,
         initial_setup: InitialSetup<T, U>,
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
@@ -74,8 +78,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             config,
             system_upgrade_service,
             config_handle,
-            display_controller,
-            widget_tasks,
+            // TODO: display refactor
+            // display_controller,
+            // widget_tasks,
             initial_setup,
             system_manager,
             sound_controller,
@@ -91,8 +96,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.session_manager.clone(),
             self.system_upgrade_service,
             self.config_handle,
-            self.display_controller,
-            self.widget_tasks,
+            // TODO: display refactor
+            // self.display_controller,
+            // self.widget_tasks,
             self.initial_setup,
             self.system_manager,
             self.sound_controller,

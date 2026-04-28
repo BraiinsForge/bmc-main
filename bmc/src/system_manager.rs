@@ -16,7 +16,6 @@ use crate::{
     night_mode::NightModeController,
     sound::SoundController,
 };
-use bmc_display::display_controller::DisplayController;
 use bmc_scheduler::JobScheduler;
 use bmc_shared_time::time::Timezone;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
@@ -65,7 +64,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         timezone_receiver: watch::Receiver<Timezone>,
         backlight_driver: Arc<Mutex<T>>,
         scheduler: JobScheduler,
-        display_controller: DisplayController,
         sound_controller: SoundController,
         led_state_sender: watch::Sender<LedState>,
         manager: Arc<M>,
@@ -84,12 +82,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             backlight_controller.clone(),
             night_mode_controller.clone(),
             brightness_modified.clone(),
-            display_controller.clone(),
-        ));
-
-        tokio::spawn(Self::set_night_mode_flag_in_slint(
-            display_controller.clone(),
-            night_mode_controller.clone(),
         ));
 
         let sound_volume_modified = Arc::new(Notify::new());
@@ -98,7 +90,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             sound_controller.clone(),
             night_mode_controller.clone(),
             sound_volume_modified.clone(),
-            display_controller.clone(),
         ));
 
         let led_state_modified = Arc::new(Notify::new());
@@ -128,7 +119,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             brightness_modified.clone(),
             screen_activity.clone(),
             timeout_changed,
-            display_controller.clone(),
         ));
 
         Self {
@@ -147,7 +137,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         backlight_controller: DisplayBacklightController<T>,
         night_mode_controller: NightModeController,
         brightness_modified: Arc<Notify>,
-        display_controller: DisplayController,
     ) {
         let mut night_mode_receiver = night_mode_controller.subscribe();
         loop {
@@ -171,9 +160,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                 );
             }
 
-            // Update the BrightnessAdapter in Slint UI
-            display_controller.set_brightness(brightness);
-
             tokio::select! {
                 biased;
                 result = night_mode_receiver.changed() => {
@@ -191,7 +177,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         sound_controller: SoundController,
         night_mode_controller: NightModeController,
         sound_volume_modified: Arc<Notify>,
-        display_controller: DisplayController,
     ) {
         let mut night_mode_receiver = night_mode_controller.subscribe();
         loop {
@@ -211,9 +196,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                     "Failed to set audio sound volume"
                 );
             }
-
-            // Update the SoundAdapter in Slint
-            display_controller.set_sound_volume(sound_volume);
 
             tokio::select! {
                 biased;
@@ -266,26 +248,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         }
     }
 
-    async fn set_night_mode_flag_in_slint(
-        display_controller: DisplayController,
-        night_mode_controller: NightModeController,
-    ) {
-        let mut night_mode_receiver = night_mode_controller.subscribe();
-        loop {
-            let night_mode_is_active = *night_mode_receiver.borrow_and_update();
-
-            if night_mode_is_active {
-                display_controller.reset_cycler();
-            }
-            display_controller.set_night_mode(night_mode_is_active);
-
-            if let Err(err) = night_mode_receiver.changed().await {
-                info!(error = %err, "Night mode receiver closed, stopping display update loop");
-                break;
-            }
-        }
-    }
-
     /// Query whether the hardware backlight is currently off.
     /// Falls back to `false` (assume on) if the driver query fails.
     async fn is_backlight_off(backlight_controller: &DisplayBacklightController<T>) -> bool {
@@ -304,7 +266,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         brightness_modified: Arc<Notify>,
         screen_activity: Arc<Notify>,
         mut timeout_changed: broadcast::Receiver<Option<u32>>,
-        display_controller: DisplayController,
     ) {
         let mut night_mode_receiver = night_mode_controller.subscribe();
 
@@ -314,12 +275,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             // If night mode is not active, ensure screen is on and wait
             if !night_mode_active {
                 if Self::is_backlight_off(&backlight_controller).await {
-                    Self::wake_screen(
-                        &backlight_controller,
-                        &brightness_modified,
-                        &display_controller,
-                    )
-                    .await;
+                    Self::wake_screen(&backlight_controller, &brightness_modified).await;
                 }
 
                 if night_mode_receiver.changed().await.is_err() {
@@ -334,12 +290,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             // No timeout configured — ensure screen is on and wait for state changes
             if timeout_secs == 0 {
                 if Self::is_backlight_off(&backlight_controller).await {
-                    Self::wake_screen(
-                        &backlight_controller,
-                        &brightness_modified,
-                        &display_controller,
-                    )
-                    .await;
+                    Self::wake_screen(&backlight_controller, &brightness_modified).await;
                 }
 
                 tokio::select! {
@@ -365,11 +316,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                 () = screen_activity.notified() => {
                     // User activity detected — wake screen if off
                     if Self::is_backlight_off(&backlight_controller).await {
-                        Self::wake_screen(
-                            &backlight_controller,
-                            &brightness_modified,
-                            &display_controller,
-                        ).await;
+                        Self::wake_screen(&backlight_controller, &brightness_modified).await;
                         info!("Screen woken by user activity");
                     }
                     // Timer restarts on next loop iteration
@@ -379,13 +326,12 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                 },
                 () = tokio::time::sleep(timeout) => {
                     // Timeout expired — turn off screen.
-                    // Sequence: brightness→0, black overlay, then power off pin
+                    // Sequence: brightness→0, then power off pin
                     // to avoid a visible flash from the kernel backlight driver.
                     if !Self::is_backlight_off(&backlight_controller).await {
                         if let Err(err) = backlight_controller.set_display_brightness(0).await {
                             warn!(error = %err, "Failed to zero brightness for auto-off");
                         }
-                        display_controller.set_screen_backlight_off(true);
                         if let Err(err) = backlight_controller.turn_off().await {
                             warn!(error = %err, "Failed to turn off backlight for auto-off");
                         }
@@ -397,21 +343,17 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         }
     }
 
-    /// Wake the screen from auto-off: power on backlight, restore brightness,
-    /// clear black overlay, reset to first widget.
+    /// Wake the screen from auto-off: power on backlight and restore brightness.
     async fn wake_screen(
         backlight_controller: &DisplayBacklightController<T>,
         brightness_modified: &Arc<Notify>,
-        display_controller: &DisplayController,
     ) {
-        // Sequence: power on → restore brightness → remove overlay
+        // Sequence: power on → restore brightness
         // (reverse of turn-off to avoid flash)
         if let Err(err) = backlight_controller.turn_on().await {
             warn!(error = %err, "Failed to turn on backlight on wake");
         }
         brightness_modified.notify_waiters();
-        display_controller.set_screen_backlight_off(false);
-        display_controller.reset_cycler();
     }
 
     pub(crate) fn notify_screen_activity(&self) {

@@ -6,7 +6,6 @@ pub mod bootloader_config;
 mod button_manager;
 pub mod compositor;
 mod config;
-mod display_tasks;
 pub mod entry;
 pub mod firmware;
 mod initial_setup;
@@ -25,9 +24,6 @@ pub mod utils;
 #[expect(dead_code)]
 mod web;
 pub mod widget;
-// TODO: display refactor
-#[expect(dead_code)]
-mod widget_tasks;
 
 pub use manager::BmcManager;
 pub use startup::{App, Configuration};

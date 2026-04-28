@@ -16,8 +16,9 @@ use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
-use crate::widget_tasks::WidgetTasks;
-use bmc_display::display_controller::DisplayController;
+// TODO: display refactor — re-enable once a replacement display layer ships
+// use crate::widget_tasks::WidgetTasks;
+// use bmc_display::display_controller::DisplayController;
 use bmc_grpc::web;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::fmt::Display;
@@ -84,8 +85,9 @@ pub(crate) struct GrpcWeb<
     session_manager: Arc<S>,
     system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    display_controller: DisplayController,
-    widget_tasks: WidgetTasks,
+    // TODO: display refactor
+    // display_controller: DisplayController,
+    // widget_tasks: WidgetTasks,
     initial_setup: InitialSetup<T, U>,
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
@@ -102,8 +104,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         session_manager: Arc<S>,
         system_upgrade_service: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
-        display_controller: DisplayController,
-        widget_tasks: WidgetTasks,
+        // TODO: display refactor
+        // display_controller: DisplayController,
+        // widget_tasks: WidgetTasks,
         initial_setup: InitialSetup<T, U>,
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
@@ -115,8 +118,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             session_manager,
             system_upgrade_service,
             config_handle,
-            display_controller,
-            widget_tasks,
+            // TODO: display refactor
+            // display_controller,
+            // widget_tasks,
             initial_setup,
             system_manager,
             sound_controller,
@@ -159,7 +163,8 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             );
 
         let network_service = web::network_service_server::NetworkServiceServer::new(
-            network::NetworkService::new(self.manager.clone(), self.display_controller.clone()),
+            // TODO: display refactor — pass display_controller back in
+            network::NetworkService::new(self.manager.clone()),
         );
 
         let system_service = web::system_service_server::SystemServiceServer::new(
