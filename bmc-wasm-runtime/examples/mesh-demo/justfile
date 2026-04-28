@@ -1,0 +1,82 @@
+# mesh-demo asset regeneration recipes.
+#
+# Two paths per die:
+# - `glb-<DIE>` rebuilds the geometry via Blender (and the legacy ETC1
+#   atlas via `tools/<DIE>.py --reset-texture` for numbered dice). This
+#   is rarely needed — the glTF binaries are checked in.
+# - `msdf-<DIE>` regenerates the MSDF sidecar (`<DIE>.msdf.png` +
+#   `<DIE>.msdf.json`) used by the runtime's MSDF shader path. The
+#   per-die scripts have a nix shebang that pulls Pillow when needed.
+
+dir := justfile_directory()
+dice := "D4 D6 D8 D10 D12 D20"
+numbered_dice := "D4 D8 D10 D12 D20"
+
+# Regenerate every dice asset: geometry .glb (Blender) + MSDF sidecars.
+all: glb-all msdf-all
+
+# === Blender + ETC1 atlas regeneration (legacy path) ===
+
+# Locate Blender across PATH, flatpak, snap. Errors if none found.
+_blender:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v blender >/dev/null 2>&1; then
+        echo blender
+    elif command -v flatpak >/dev/null 2>&1; then
+        echo "flatpak run org.blender.Blender"
+    elif command -v snap >/dev/null 2>&1; then
+        echo "snap run blender"
+    else
+        echo "Error: Blender not found in PATH, flatpak, or snap." >&2
+        exit 1
+    fi
+
+# Regenerate Suzanne's .glb.
+glb-suzanne:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BLENDER="$(just --justfile {{ justfile() }} _blender)"
+    $BLENDER --background --python {{ dir }}/tools/suzanne.py -- {{ dir }}/assets/suzanne.glb
+
+# Regenerate D6's .glb (pip atlas, no font rendering).
+glb-D6:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BLENDER="$(just --justfile {{ justfile() }} _blender)"
+    $BLENDER --background --python {{ dir }}/tools/D6.py -- {{ dir }}/assets/D6.glb
+
+# Regenerate one numbered die's .glb + ETC1 albedo + ETC1 normal map.
+glb-numbered DIE:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BLENDER="$(just --justfile {{ justfile() }} _blender)"
+    rm -f {{ dir }}/assets/{{ DIE }}.*.png
+    nix-shell -p python3Packages.pillow --run \
+        'python3 {{ dir }}/tools/{{ DIE }}.py --reset-texture {{ dir }}/assets/{{ DIE }}'
+    $BLENDER --background --python {{ dir }}/tools/{{ DIE }}.py -- {{ dir }}/assets/{{ DIE }}.glb
+
+# Regenerate everything (geometry + ETC1 atlases) from scratch.
+glb-all: glb-suzanne glb-D6
+    for die in {{ numbered_dice }}; do \
+        just --justfile {{ justfile() }} glb-numbered $die; \
+    done
+
+# Reset only the ETC1 albedo + normal PNGs for one numbered die (no Blender).
+reset-textures DIE:
+    rm -f {{ dir }}/assets/{{ DIE }}.*.png
+    nix-shell -p python3Packages.pillow --run \
+        'python3 {{ dir }}/tools/{{ DIE }}.py --reset-texture {{ dir }}/assets/{{ DIE }}'
+
+# === MSDF asset regeneration (preferred path) ===
+
+# Regenerate one die's MSDF sidecar.
+msdf DIE:
+    nix-shell -p python3Packages.pillow --run \
+        'python3 {{ dir }}/tools/{{ DIE }}_msdf.py {{ dir }}/assets/{{ DIE }}'
+
+# Regenerate every die's MSDF sidecar.
+msdf-all:
+    for die in {{ dice }}; do \
+        just --justfile {{ justfile() }} msdf $die; \
+    done

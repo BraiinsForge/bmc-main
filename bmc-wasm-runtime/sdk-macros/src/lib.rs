@@ -83,34 +83,59 @@ pub fn include_bitmap(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn include_mesh(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
+    match include_mesh_impl(&path_lit) {
+        Ok(stream) => stream.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream> {
+    let span = path_lit.span();
     let rel_path = path_lit.value();
 
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .unwrap_or_else(|_| panic!("CARGO_MANIFEST_DIR not set"));
+        .map_err(|_| syn::Error::new(span, "CARGO_MANIFEST_DIR not set"))?;
     let full_path = std::path::Path::new(&manifest_dir).join(&rel_path);
 
     if !full_path.exists() {
-        panic!("mesh file not found: {}", full_path.display());
+        return Err(syn::Error::new(
+            span,
+            format!("mesh file not found: {}", full_path.display()),
+        ));
     }
 
-    let (packed, face_normals) = mesh::pack_mesh(&full_path);
+    let (packed, face_normals, extra_tracked_paths) = mesh::pack_mesh(&full_path, span)?;
 
     // Generate face_normals as &[[f32; 3]] literal
     let normal_arrays = face_normals.iter().map(|[x, y, z]| {
         quote! { [#x, #y, #z] }
     });
 
-    let expanded = quote! {
+    // Emit one `include_bytes!` per sidecar so cargo's dep-info tracks
+    // them — without this the proc macro is a black box and edits to
+    // `<stem>.msdf.{png,json}` don't trigger recompilation.
+    let extra_tracks = extra_tracked_paths
+        .iter()
+        .enumerate()
+        .map(|(i, path)| {
+            let path_str = path.to_str().ok_or_else(|| {
+                syn::Error::new(span, format!("non-utf8 sidecar path: {}", path.display()))
+            })?;
+            let ident = quote::format_ident!("_TRACK_{}", i);
+            Ok(quote! { const #ident: &[u8] = include_bytes!(#path_str); })
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    Ok(quote! {
         {
             const _TRACK: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #rel_path));
+            #(#extra_tracks)*
             bmc_wasm_sdk::Mesh {
                 data: &[#(#packed),*],
                 face_normals: &[#(#normal_arrays),*],
             }
         }
-    };
-
-    expanded.into()
+    })
 }
 
 /// Compile an SVG file into compact binary path data at build time.
