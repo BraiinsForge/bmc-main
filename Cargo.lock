@@ -882,7 +882,6 @@ dependencies = [
  "humantime-serde",
  "hyper 1.6.0",
  "ii-net",
- "image",
  "indexmap",
  "itertools 0.12.1",
  "libc",
@@ -910,7 +909,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "url",
  "uuid",
 ]
 
