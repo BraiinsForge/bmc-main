@@ -143,7 +143,7 @@ Replace hand-rolled quaternion/matrix math with `glam` crate. Fix D6/D20 face se
 `host::random_u32()` host-seeded PRNG for deterministic capture/replay.
 
 **Host**: `glam` unconditional. `quat_to_mat3` uses `glam::Mat3::from_quat`. `host_random_u32` xorshift64 PRNG with
-`RuntimeConfig::rng_seed` (0 = auto-seed, non-zero = deterministic). Capture/recording use `rng_seed: 42`.
+`RuntimeConfig::rng_seed` (`None` = auto-seed, `Some(s)` = deterministic). Capture/recording use `rng_seed: Some(42)`.
 
 **Dice face fixes**:
 

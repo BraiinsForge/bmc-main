@@ -47,11 +47,19 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
         "env",
         "host_register_mesh",
         |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
+            #[cfg(feature = "profiling")]
+            let probe = crate::profile::MemProbe::start();
+
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return 0;
             };
             let state = caller.data_mut();
-            u32::from(state.renderer.register_mesh(&data))
+            let id = u32::from(state.renderer.register_mesh(&data));
+
+            #[cfg(feature = "profiling")]
+            log_host_register_mesh(id, data_len, &probe);
+
+            id
         },
     )?;
 
@@ -80,6 +88,26 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
     )?;
 
     Ok(())
+}
+
+/// Log the FFI-side cost of `host_register_mesh`. The wasmi-side
+/// ``read_bytes`` copy and the renderer-internal upload are both included;
+/// `MeshRenderer::register_mesh` emits its own narrower log line for the
+/// upload portion. The difference between the two is the wasmi memory copy.
+#[cfg(feature = "profiling")]
+fn log_host_register_mesh(id: u32, data_len: u32, probe: &crate::profile::MemProbe) {
+    let s = probe.snapshot();
+    tracing::info!(
+        target: crate::profile::TARGET,
+        "host_register_mesh id={id} data_len={data_len} ffi_us={ffi_us} \
+         vmrss_delta_kb={vmrss:+} rss_shmem_delta_kb={shmem:+} \
+         cma_free_delta_kb={cma:+} mem_free_kb={mem_free}",
+        ffi_us = s.elapsed_us,
+        vmrss = s.vmrss_delta_kb,
+        shmem = s.rss_shmem_delta_kb,
+        cma = s.cma_free_delta_kb,
+        mem_free = s.mem_free_kb,
+    );
 }
 
 fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {

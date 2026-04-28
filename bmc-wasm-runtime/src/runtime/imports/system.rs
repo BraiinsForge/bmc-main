@@ -55,15 +55,14 @@ fn register_random_import(linker: &mut Linker<HostState>) -> Result<()> {
         "host_random_u32",
         |mut caller: Caller<'_, HostState>| -> u32 {
             let state = caller.data_mut();
-            if state.rng_state == 0 {
-                state.rng_state = state.monotonic_ms | 1;
-            }
-
-            let mut s = state.rng_state;
+            // Lazy time-derived auto-seed: only kicks in when no caller-provided
+            // seed has been honoured yet. `monotonic_ms | 1` keeps the seed
+            // non-zero so xorshift doesn't degenerate to all-zeros.
+            let mut s = state.rng_state.unwrap_or(state.monotonic_ms | 1);
             s ^= s << 13;
             s ^= s >> 7;
             s ^= s << 17;
-            state.rng_state = s;
+            state.rng_state = Some(s);
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "host_random_u32 intentionally returns the low 32 bits of the xorshift state"

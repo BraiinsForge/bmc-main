@@ -178,7 +178,7 @@ fn run_unified_capture(
     let mut rt_config = RuntimeConfig {
         kv_store_path: Some(kv_dir),
         mesh_msaa_samples: 4,
-        rng_seed: 42,
+        rng_seed: Some(42),
         ..RuntimeConfig::default()
     };
     if !fetch_interceptor.is_empty() {

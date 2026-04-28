@@ -9,6 +9,7 @@ bmc-wasm-protocol = { path = "protocol" }
 chrono.workspace = true
 chrono-tz.workspace = true
 formato.workspace = true
+ii-stopwatch.workspace = true
 tracing.workspace = true
 
 # WASM runtime
@@ -66,6 +67,7 @@ toml = { workspace = true, optional = true }
 [features]
 default = []
 perf-overlay = []
+profiling = ["ii-stopwatch/enabled"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "flate2", "owo-colors", "serde", "toml"]
 testbed = ["host", "perf-overlay", "notify", "fixtures"]

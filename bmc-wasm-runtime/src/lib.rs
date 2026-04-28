@@ -92,6 +92,10 @@
 
 mod animation;
 pub mod gpu;
+#[cfg(feature = "profiling")]
+mod proc_mem;
+#[cfg(feature = "profiling")]
+mod profile;
 pub mod renderer;
 mod runtime_limits;
 mod xml;

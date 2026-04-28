@@ -123,8 +123,15 @@ pub struct RuntimeConfig {
     pub resource_limits: RuntimeResourceLimits,
     /// MSAA samples used by the mesh atlas renderer. `0` disables mesh MSAA.
     pub mesh_msaa_samples: u32,
-    /// Seed for the host RNG. `0` keeps time-derived auto-seeding.
-    pub rng_seed: u64,
+    /// Seed for the host RNG.
+    ///
+    /// - `None` keeps the default time-derived auto-seeding (the host picks a
+    ///   non-zero seed from `monotonic_ms` on first use).
+    /// - `Some(s)` honours the seed verbatim, including `Some(0)`. Note that
+    ///   `Some(0)` makes the xorshift state stuck at zero (the RNG returns
+    ///   `0` indefinitely); pick any non-zero seed for varied deterministic
+    ///   output.
+    pub rng_seed: Option<u64>,
     /// Frame poll cadence (ms) used to clamp `frame_delay_ms` while host-side
     /// animations are active, so a widget's `request_frame_after(longer)`
     /// (e.g. a 1Hz clock tick) does not starve cached-tree animation replays.
@@ -152,7 +159,7 @@ impl Default for RuntimeConfig {
             event_fixtures: Vec::new(),
             resource_limits: RuntimeResourceLimits::default(),
             mesh_msaa_samples: 0,
-            rng_seed: 0,
+            rng_seed: None,
             animation_frame_delay_ms: Self::DEFAULT_ANIMATION_FRAME_DELAY_MS,
         }
     }
@@ -176,6 +183,10 @@ pub struct WasmWidgetRuntime {
     fuel_dead: bool,
     /// How many consecutive fuel-outs before the widget is killed.
     max_fuel_strikes: u32,
+    #[cfg(feature = "profiling")]
+    wasm_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    wasm_every: ii_stopwatch::Every,
 }
 
 impl WasmWidgetRuntime {
@@ -277,6 +288,10 @@ impl WasmWidgetRuntime {
             fuel_strikes: 0,
             fuel_dead: false,
             max_fuel_strikes: 5,
+            #[cfg(feature = "profiling")]
+            wasm_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            wasm_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
         })
     }
 
@@ -338,7 +353,24 @@ impl WasmWidgetRuntime {
         // Full frame: run WASM with per-frame fuel budget.
         self.store.set_fuel(self.fuel_per_frame)?;
         let wasm_t0 = Instant::now();
-        match self.render_func.call(&mut self.store, wasm_delta) {
+        ii_stopwatch::stopwatch_start!(self.wasm_w);
+        let call_result = self.render_func.call(&mut self.store, wasm_delta);
+        ii_stopwatch::stopwatch_stop!(self.wasm_w);
+
+        #[cfg(feature = "profiling")]
+        if ii_stopwatch::every_expired!(self.wasm_every) {
+            let rss = crate::proc_mem::read_self_rss();
+            let vm_rss_kb = rss.map_or(0, |s| s.vm_rss_kb);
+            let rss_shmem_kb = rss.map_or(0, |s| s.rss_shmem_kb);
+            tracing::info!(
+                target: crate::profile::TARGET,
+                "wasm_tick {wasm} vm_rss_kb={vm_rss_kb} rss_shmem_kb={rss_shmem_kb}",
+                wasm = self.wasm_w,
+            );
+            ii_stopwatch::stopwatch_reset!(self.wasm_w);
+        }
+
+        match call_result {
             Ok(()) => {
                 self.store.data_mut().last_timings.wasm_us = wasm_t0.elapsed().as_micros() as u32;
                 self.fuel_strikes = 0;

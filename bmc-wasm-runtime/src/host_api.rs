@@ -582,9 +582,11 @@ pub(crate) struct HostState {
 
     /// Per-runtime caps for host-side resources.
     pub resource_limits: RuntimeResourceLimits,
-    /// xorshift64 PRNG state.
-    /// Defaults to a time-derived seed and may be overridden by the runtime.
-    pub rng_state: u64,
+    /// xorshift64 PRNG state. `None` means "not yet seeded" — the next
+    /// `host_random_u32` call lazy-seeds from `monotonic_ms`. `Some(s)` is
+    /// the live xorshift state, including any deterministic seed forwarded
+    /// from `RuntimeConfig::rng_seed`.
+    pub rng_state: Option<u64>,
 }
 
 impl HostState {
@@ -646,7 +648,7 @@ impl HostState {
             last_timings: FrameTimings::default(),
             taffy: TaffyTree::with_capacity(64),
             resource_limits,
-            rng_state: 0, // 0 = auto-seed on first use (from monotonic_ms)
+            rng_state: None, // None = auto-seed on first use (from monotonic_ms)
         }
     }
 

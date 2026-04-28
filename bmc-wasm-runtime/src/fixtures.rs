@@ -32,7 +32,7 @@ pub fn build_unified_recording_config(
     let mut rt_config = RuntimeConfig {
         kv_store_path: Some(kv_dir),
         record_events: true,
-        rng_seed: 42,
+        rng_seed: Some(42),
         ..RuntimeConfig::default()
     };
 

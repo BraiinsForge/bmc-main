@@ -289,6 +289,14 @@ pub struct MeshRenderer {
     meshes: Vec<Option<UploadedMesh>>,
     // Per-slot dirty tracking
     slots: Vec<SlotState>,
+    #[cfg(feature = "profiling")]
+    setup_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    draw_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    blit_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    render_every: ii_stopwatch::Every,
 }
 
 impl MeshRenderer {
@@ -396,6 +404,14 @@ impl MeshRenderer {
                 u_highlight_color,
                 meshes: Vec::new(),
                 slots,
+                #[cfg(feature = "profiling")]
+                setup_w: ii_stopwatch::StopWatch::default(),
+                #[cfg(feature = "profiling")]
+                draw_w: ii_stopwatch::StopWatch::default(),
+                #[cfg(feature = "profiling")]
+                blit_w: ii_stopwatch::StopWatch::default(),
+                #[cfg(feature = "profiling")]
+                render_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
             })
         }
     }
@@ -403,6 +419,9 @@ impl MeshRenderer {
     /// Upload mesh binary data to GPU (VBO + IBO + optional texture).
     /// Returns an opaque non-zero mesh ID.
     pub fn register_mesh(&mut self, gl: &glow::Context, data: &[u8]) -> u16 {
+        #[cfg(feature = "profiling")]
+        let profile_before = profile::RegisterMeshProbe::start();
+
         let mesh = match parse_and_upload(gl, data) {
             Ok(m) => m,
             Err(e) => {
@@ -420,6 +439,10 @@ impl MeshRenderer {
         for slot in &mut self.slots {
             slot.prev_qx = f32::NAN;
         }
+
+        #[cfg(feature = "profiling")]
+        profile_before.finish(id, data.len());
+
         id
     }
 
@@ -520,6 +543,7 @@ impl MeshRenderer {
         let vy = vp_y as i32;
 
         unsafe {
+            ii_stopwatch::stopwatch_start!(self.setup_w);
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.draw_fbo));
             gl.viewport(vx, vy, sw, sh);
 
@@ -621,7 +645,11 @@ impl MeshRenderer {
             }
 
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(mesh.ibo));
+            ii_stopwatch::stopwatch_stop!(self.setup_w);
+
+            ii_stopwatch::stopwatch_start!(self.draw_w);
             gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_SHORT, 0);
+            ii_stopwatch::stopwatch_stop!(self.draw_w);
 
             let err = gl.get_error();
             if err != glow::NO_ERROR {
@@ -646,6 +674,7 @@ impl MeshRenderer {
 
             // MSAA resolve: blit only this slot's region
             if self.msaa_color_rb.is_some() {
+                ii_stopwatch::stopwatch_start!(self.blit_w);
                 let x0 = vx;
                 let y0 = vy;
                 let x1 = vx + sw;
@@ -664,8 +693,23 @@ impl MeshRenderer {
                     glow::COLOR_BUFFER_BIT,
                     glow::NEAREST,
                 );
+                ii_stopwatch::stopwatch_stop!(self.blit_w);
             }
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        }
+
+        #[cfg(feature = "profiling")]
+        if ii_stopwatch::every_expired!(self.render_every) {
+            tracing::info!(
+                target: crate::profile::TARGET,
+                "mesh_render setup={setup} draw={draw} blit={blit}",
+                setup = self.setup_w,
+                draw = self.draw_w,
+                blit = self.blit_w,
+            );
+            ii_stopwatch::stopwatch_reset!(self.setup_w);
+            ii_stopwatch::stopwatch_reset!(self.draw_w);
+            ii_stopwatch::stopwatch_reset!(self.blit_w);
         }
 
         subrect
@@ -1332,5 +1376,36 @@ mod tests {
     #[test]
     fn invalid_mesh_id_does_not_map_to_storage() {
         assert_eq!(mesh_id_to_storage_index(INVALID_MESH_ID), None);
+    }
+}
+
+#[cfg(feature = "profiling")]
+mod profile {
+    use crate::profile::{MemProbe, TARGET};
+
+    pub(super) struct RegisterMeshProbe(MemProbe);
+
+    impl RegisterMeshProbe {
+        pub(super) fn start() -> Self {
+            Self(MemProbe::start())
+        }
+
+        pub(super) fn finish(self, id: u16, data_bytes: usize) {
+            let s = self.0.snapshot();
+            tracing::info!(
+                target: TARGET,
+                "register_mesh id={id} data_bytes={data_bytes} upload_us={upload_us} \
+                 vmrss_delta_kb={vmrss:+} rss_anon_delta_kb={anon:+} \
+                 rss_shmem_delta_kb={shmem:+} \
+                 cma_free_delta_kb={cma:+} cma_free_kb={cma_free} mem_free_kb={mem_free}",
+                upload_us = s.elapsed_us,
+                vmrss = s.vmrss_delta_kb,
+                anon = s.rss_anon_delta_kb,
+                shmem = s.rss_shmem_delta_kb,
+                cma = s.cma_free_delta_kb,
+                cma_free = s.cma_free_kb,
+                mem_free = s.mem_free_kb,
+            );
+        }
     }
 }

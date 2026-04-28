@@ -1409,6 +1409,7 @@ dependencies = [
  "glow 0.16.0",
  "glutin",
  "glutin-winit",
+ "ii-stopwatch",
  "image",
  "imgref",
  "libc",

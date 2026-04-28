@@ -3,6 +3,10 @@ name = "bmc-widget-wasm"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+profiling = ["bmc-wasm-runtime/profiling"]
+
 [dependencies]
 # WASM runtime
 bmc-wasm-protocol = { workspace = true }
