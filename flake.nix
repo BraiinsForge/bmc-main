@@ -6,7 +6,7 @@
     self.lfs = true;
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib?ref=jku/cargo-features-config";
+    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib";
   };
 
   outputs = { self, nixpkgs, flake-utils, nixlib, ... }:
@@ -30,7 +30,6 @@
             })
           ];
         };
-        lib = pkgs.lib;
 
         workspace = import ./workspace.nix { inherit self pkgs; };
         inherit (workspace) commonDeps bmc;

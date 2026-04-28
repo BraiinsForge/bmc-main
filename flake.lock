@@ -165,16 +165,15 @@
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
-        "lastModified": 1777277159,
-        "narHash": "sha256-BcisWlrSK1xA7nQhnpfPJV4x8XOCNnnDbWmZ2GsR1u8=",
-        "ref": "jku/cargo-features-config",
-        "rev": "75cf7d1f87c3d2e32ebe3c3eee2b562e908eb4c1",
+        "lastModified": 1777381143,
+        "narHash": "sha256-7HKXgEX+zZwiI+0eua4TBAjK1TZN6ujVn+rLVURbxgw=",
+        "ref": "refs/heads/master",
+        "rev": "f657d77eb6aff9e84bfb9658905fcb97f354869f",
         "revCount": 145,
         "type": "git",
         "url": "ssh://git@gitlab.ii.zone/nix/lib"
       },
       "original": {
-        "ref": "jku/cargo-features-config",
         "type": "git",
         "url": "ssh://git@gitlab.ii.zone/nix/lib"
       }
