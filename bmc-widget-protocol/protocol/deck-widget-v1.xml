@@ -8,7 +8,9 @@
   <interface name="deck_widget_manager_v1" version="1">
     <description summary="Deck widget manager">
       Global interface for Deck widget management. Widgets bind to this
-      interface to register themselves with the compositor.
+      interface to obtain a deck_widget_surface_v1 for their wl_surface.
+      The compositor identifies the connecting widget via SO_PEERCRED on
+      the Wayland socket — there is no out-of-band identity handshake.
     </description>
 
     <request name="destroy" type="destructor">
@@ -20,27 +22,36 @@
     <request name="get_widget_surface">
       <description summary="create a widget surface">
         Create a deck_widget_surface_v1 for the given wl_surface.
-        The instance_id must match the DECK_INSTANCE_ID environment variable
-        and is used by the compositor to identify this widget for positioning.
-        The surface must not already have a role.
+        The compositor identifies the widget from the peer credentials
+        of the Wayland connection and emits initial configuration
+        (configure, params, setting events, configure_done) against
+        the new surface. The wl_surface must not already have a role.
       </description>
       <arg name="id" type="new_id" interface="deck_widget_surface_v1"/>
       <arg name="surface" type="object" interface="wl_surface"/>
-      <arg name="instance_id" type="string" summary="widget instance identifier"/>
     </request>
 
     <enum name="error">
       <entry name="role" value="0" summary="surface already has a role"/>
-      <entry name="invalid_instance" value="1" summary="unknown instance_id"/>
+      <entry name="unknown_client" value="1" summary="compositor has no initial config for this client"/>
     </enum>
   </interface>
 
   <interface name="deck_widget_surface_v1" version="1">
     <description summary="Deck widget surface">
-      Interface for a widget surface. Initial configuration (size, params,
-      settings) is received via environment variables. This protocol handles
-      runtime communication: settings updates, shutdown, and action requests.
-      Widget readiness is detected when the first buffer is committed.
+      Interface for a widget surface. On surface creation, the compositor
+      emits initial configuration as a sequence of events, terminated by
+      configure_done:
+
+        configure(size_type, width, height)
+        params(json)
+        timezone / night_mode / date_format / ... (setting events)
+        configure_done
+
+      The widget must wait for configure_done before starting to render.
+      After configure_done, the same setting events continue to flow
+      whenever system settings change. Widget readiness is detected when
+      the first buffer is committed.
     </description>
 
     <!-- Requests (Widget → Compositor) -->
@@ -51,23 +62,122 @@
       </description>
     </request>
 
-    <request name="request_action">
-      <description summary="request a system action">
-        Request the compositor to perform a system action (sound, LED).
-        The payload is JSON-encoded action data.
+    <request name="play_sound">
+      <description summary="play a sound by name">
+        Ask the compositor to play a system sound. The sound must be one
+        of the names registered with the compositor's sound manager.
       </description>
-      <arg name="action_type" type="uint" enum="action_type"/>
-      <arg name="payload" type="string" summary="JSON payload"/>
+      <arg name="sound" type="string" summary="sound identifier"/>
+    </request>
+
+    <request name="stop_sound">
+      <description summary="stop the currently playing sound"/>
+    </request>
+
+    <request name="led_temporary">
+      <description summary="run an LED effect for a finite duration">
+        The compositor will run the given effect for `duration_ms`
+        milliseconds, then return to whatever LED state was active before
+        the request.
+      </description>
+      <arg name="effect" type="uint" enum="led_effect"/>
+      <arg name="r" type="uint" summary="red component, 0-255"/>
+      <arg name="g" type="uint" summary="green component, 0-255"/>
+      <arg name="b" type="uint" summary="blue component, 0-255"/>
+      <arg name="duration_ms" type="uint" summary="duration in milliseconds"/>
+    </request>
+
+    <request name="led_endless">
+      <description summary="run an LED effect indefinitely">
+        The compositor will run the given effect until a `led_temporary`,
+        another `led_endless`, or `stop_led` request supersedes it.
+      </description>
+      <arg name="effect" type="uint" enum="led_effect"/>
+      <arg name="r" type="uint" summary="red component, 0-255"/>
+      <arg name="g" type="uint" summary="green component, 0-255"/>
+      <arg name="b" type="uint" summary="blue component, 0-255"/>
+    </request>
+
+    <request name="stop_led">
+      <description summary="stop any running LED effect"/>
     </request>
 
     <!-- Events (Compositor → Widget) -->
+    <!--
+      Initial configuration is delivered on surface creation as a batch
+      of events terminated by configure_done. Each setting is its own
+      event so that adding a new setting later is a backwards-compatible
+      change: existing widgets simply ignore unknown events.
+    -->
 
-    <event name="setting">
-      <description summary="system setting update">
-        Sent when a system setting changes at runtime.
+    <event name="configure">
+      <description summary="widget geometry and size class">
+        Delivered once on surface creation. Carries the widget's
+        size class and its pixel dimensions. Follow-up `param_*` and
+        setting events refine configuration; the batch is terminated
+        by `configure_done`.
       </description>
-      <arg name="setting_type" type="uint" enum="setting_type"/>
-      <arg name="value" type="string" summary="JSON-encoded value"/>
+      <arg name="size_type" type="uint" enum="size_type"/>
+      <arg name="width" type="uint" summary="pixel width"/>
+      <arg name="height" type="uint" summary="pixel height"/>
+    </event>
+
+    <event name="params">
+      <description summary="widget-specific configuration params">
+        The widget's per-instance params, exactly as stored in the scene
+        configuration. A JSON-encoded object whose keys and value types
+        match the widget's manifest. The compositor does not parse or
+        validate this — the widget owns its manifest and is authoritative
+        on what values are meaningful.
+
+        Emitted once on surface creation as part of the initial batch.
+        An empty JSON object ("{}") is sent when no params are configured.
+      </description>
+      <arg name="json" type="string" summary="JSON-encoded params object"/>
+    </event>
+
+    <event name="configure_done">
+      <description summary="initial configuration batch complete">
+        Terminates the initial configure batch. After this event the
+        widget has every piece of initial configuration the compositor
+        intends to deliver and may start rendering. Subsequent setting
+        events represent runtime changes.
+      </description>
+    </event>
+
+    <event name="timezone">
+      <description summary="timezone setting update">
+        Current timezone, IANA identifier (e.g. "Europe/Prague").
+        Sent on connect and whenever the timezone changes.
+      </description>
+      <arg name="value" type="string" summary="IANA timezone identifier"/>
+    </event>
+
+    <event name="night_mode">
+      <description summary="night mode setting update">
+        Whether night mode is active. Sent on connect and on toggle.
+      </description>
+      <arg name="value" type="uint" enum="night_mode_state"/>
+    </event>
+
+    <event name="date_format">
+      <arg name="value" type="uint" enum="date_format"/>
+    </event>
+
+    <event name="time_format">
+      <arg name="value" type="uint" enum="time_format"/>
+    </event>
+
+    <event name="number_format">
+      <arg name="value" type="uint" enum="number_format"/>
+    </event>
+
+    <event name="temperature_unit">
+      <arg name="value" type="uint" enum="temperature_unit"/>
+    </event>
+
+    <event name="first_day_of_week">
+      <arg name="value" type="uint" enum="weekday"/>
     </event>
 
     <event name="shutdown">
@@ -85,17 +195,63 @@
 
     <!-- Enums -->
 
-    <enum name="setting_type">
-      <entry name="timezone" value="0" summary="timezone setting"/>
-      <entry name="localization" value="1" summary="localization settings"/>
-      <entry name="night_mode" value="2" summary="night mode state"/>
+    <enum name="size_type">
+      <entry name="small" value="0"/>
+      <entry name="medium" value="1"/>
+      <entry name="large" value="2"/>
+      <entry name="full" value="3"/>
     </enum>
 
-    <enum name="action_type">
-      <entry name="play_sound" value="0" summary="play a sound"/>
-      <entry name="stop_sound" value="1" summary="stop sound"/>
-      <entry name="led" value="2" summary="set LED effect"/>
-      <entry name="stop_led" value="3" summary="stop LED effect"/>
+    <enum name="night_mode_state">
+      <entry name="off" value="0"/>
+      <entry name="on" value="1"/>
+    </enum>
+
+    <enum name="led_effect">
+      <entry name="chase" value="0"/>
+      <entry name="knight_rider" value="1"/>
+      <entry name="scan" value="2"/>
+      <entry name="snake" value="3"/>
+      <entry name="breathe" value="4"/>
+      <entry name="solid" value="5"/>
+    </enum>
+
+    <enum name="date_format">
+      <entry name="dd_mm_yyyy_dot" value="0" summary="DD.MM.YYYY"/>
+      <entry name="dd_mm_yyyy_slash" value="1" summary="DD/MM/YYYY"/>
+      <entry name="d_m_yyyy_slash" value="2" summary="D/M/YYYY"/>
+      <entry name="m_d_yyyy_slash" value="3" summary="M/D/YYYY"/>
+      <entry name="dd_mm_yyyy_dash" value="4" summary="DD-MM-YYYY"/>
+      <entry name="yyyy_m_d_slash" value="5" summary="YYYY/M/D"/>
+      <entry name="yyyy_mm_dd_dot" value="6" summary="YYYY.MM.DD"/>
+      <entry name="yyyy_mm_dd_dash" value="7" summary="YYYY-MM-DD"/>
+    </enum>
+
+    <enum name="time_format">
+      <entry name="hour12" value="0" summary="12-hour clock"/>
+      <entry name="hour24" value="1" summary="24-hour clock"/>
+    </enum>
+
+    <enum name="number_format">
+      <entry name="space_group_comma_decimal" value="0" summary="1 234 567,89"/>
+      <entry name="comma_group_dot_decimal" value="1" summary="1,234,567.89"/>
+      <entry name="dot_group_comma_decimal" value="2" summary="1.234.567,89"/>
+      <entry name="space_group_dot_decimal" value="3" summary="1 234 567.89"/>
+    </enum>
+
+    <enum name="temperature_unit">
+      <entry name="celsius" value="0"/>
+      <entry name="fahrenheit" value="1"/>
+    </enum>
+
+    <enum name="weekday">
+      <entry name="monday" value="1"/>
+      <entry name="tuesday" value="2"/>
+      <entry name="wednesday" value="3"/>
+      <entry name="thursday" value="4"/>
+      <entry name="friday" value="5"/>
+      <entry name="saturday" value="6"/>
+      <entry name="sunday" value="7"/>
     </enum>
   </interface>
 </protocol>

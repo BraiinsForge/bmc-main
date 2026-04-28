@@ -21,6 +21,23 @@ pub struct SizeInfo {
     pub height: u32,
 }
 
+/// Full initial configuration for a widget instance.
+///
+/// The coordinator pushes one of these into the compositor before spawning
+/// the widget process. On `get_widget_surface` the compositor looks up this
+/// record by peer-credential pid and emits it as a batch of typed events
+/// (`configure`, `params`, setting events, `configure_done`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WidgetInitialConfig {
+    pub size: SizeType,
+    pub width: u32,
+    pub height: u32,
+    /// Widget-specific params. Expected to be a JSON object whose keys
+    /// match entries in the widget's manifest; non-object values are
+    /// treated as "no params".
+    pub params: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Localization {
@@ -42,22 +59,66 @@ pub struct Settings {
     pub night_mode: Option<bool>,
 }
 
+/// One atomic setting change broadcast from the compositor to widgets.
+///
+/// Each variant maps 1:1 to a typed event in the `deck_widget_v1`
+/// protocol. Splitting the previously-bundled `Localization` variant into
+/// per-field ones lets us add new locale fields later without breaking
+/// existing widgets — old widgets simply ignore unknown events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "key", content = "value", rename_all = "camelCase")]
 pub enum SettingUpdate {
-    Localization(Localization),
     Timezone(String),
     NightMode(bool),
+    DateFormat(DateFormat),
+    TimeFormat(TimeSystem),
+    NumberFormat(NumberFormat),
+    TemperatureUnit(TemperatureUnit),
+    FirstDayOfWeek(WeekDay),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl SettingUpdate {
+    /// Expand a full `Localization` struct into the 5 per-field
+    /// `SettingUpdate` values that should be broadcast together.
+    #[must_use]
+    pub fn from_localization(loc: &Localization) -> [SettingUpdate; 5] {
+        [
+            SettingUpdate::DateFormat(loc.date_format),
+            SettingUpdate::TimeFormat(loc.time_format),
+            SettingUpdate::NumberFormat(loc.number_format),
+            SettingUpdate::TemperatureUnit(loc.temperature_unit),
+            SettingUpdate::FirstDayOfWeek(loc.first_day_of_week),
+        ]
+    }
+}
+
+/// Convert the wayland-generated client `Weekday` enum into the domain
+/// `WeekDay`. Widgets receive the latter via `SettingUpdate::FirstDayOfWeek`;
+/// this impl lives here so the per-widget protocol adapters don't have
+/// to hand-roll the identity mapping.
+impl From<crate::client::deck_widget_surface_v1::Weekday> for WeekDay {
+    fn from(w: crate::client::deck_widget_surface_v1::Weekday) -> Self {
+        use crate::client::deck_widget_surface_v1::Weekday as P;
+        match w {
+            P::Monday => Self::Monday,
+            P::Tuesday => Self::Tuesday,
+            P::Wednesday => Self::Wednesday,
+            P::Thursday => Self::Thursday,
+            P::Friday => Self::Friday,
+            P::Saturday => Self::Saturday,
+            P::Sunday => Self::Sunday,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RgbColor {
     pub r: u8,
     pub g: u8,
     pub b: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LedEffect {
     Chase,
@@ -68,6 +129,10 @@ pub enum LedEffect {
     Solid,
 }
 
+/// One typed action a widget can request from the compositor.
+///
+/// Each variant maps 1:1 to a typed request in the `deck_widget_v1`
+/// protocol (no JSON envelope).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "name", content = "payload", rename_all = "snake_case")]
 pub enum ActionPayload {
@@ -75,10 +140,14 @@ pub enum ActionPayload {
         sound: String,
     },
     StopSound {},
-    Led {
+    LedTemporary {
         effect: LedEffect,
         color: RgbColor,
-        duration: Option<u64>,
+        duration_ms: u32,
+    },
+    LedEndless {
+        effect: LedEffect,
+        color: RgbColor,
     },
     StopLed {},
 }
@@ -148,19 +217,31 @@ mod tests {
     }
 
     #[test]
-    fn action_led_serializes_correctly() {
-        let action = ActionPayload::Led {
+    fn action_led_temporary_serializes_correctly() {
+        let action = ActionPayload::LedTemporary {
             effect: LedEffect::Breathe,
             color: RgbColor { r: 255, g: 0, b: 0 },
-            duration: Some(5000),
+            duration_ms: 5000,
         };
         let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
-        assert_eq!(json["name"], "led");
+        assert_eq!(json["name"], "led_temporary");
         assert_eq!(json["payload"]["effect"], "breathe");
         assert_eq!(json["payload"]["color"]["r"], 255);
         assert_eq!(json["payload"]["color"]["g"], 0);
         assert_eq!(json["payload"]["color"]["b"], 0);
-        assert_eq!(json["payload"]["duration"], 5000);
+        assert_eq!(json["payload"]["duration_ms"], 5000);
+    }
+
+    #[test]
+    fn action_led_endless_serializes_correctly() {
+        let action = ActionPayload::LedEndless {
+            effect: LedEffect::Solid,
+            color: RgbColor { r: 0, g: 255, b: 0 },
+        };
+        let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
+        assert_eq!(json["name"], "led_endless");
+        assert_eq!(json["payload"]["effect"], "solid");
+        assert_eq!(json["payload"]["color"]["g"], 255);
     }
 
     #[test]

@@ -8,7 +8,7 @@
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-pub use bmc_widget_protocol::{ActionPayload, SettingUpdate};
+pub use bmc_widget_protocol::{ActionPayload, SettingUpdate, WidgetInitialConfig};
 
 pub type InstanceId = String;
 
@@ -85,21 +85,34 @@ pub trait Compositor: Send + Sync {
 
     /// Register a widget before spawning its process.
     ///
-    /// For widgets using `deck_widget_surface_v1` protocol, `pid` should be `None`
-    /// as they identify themselves via the protocol's `instance_id` parameter.
-    ///
-    /// For third-party clients using `xdg_toplevel`, `pid` must be provided so
-    /// the compositor can match the client by PID from Wayland credentials.
+    /// Stores the widget's initial configuration (size, params) in the
+    /// compositor so that when the widget connects and requests a
+    /// `deck_widget_surface_v1`, the compositor can emit the matching
+    /// `configure` + `param_*` events. Must return before the caller
+    /// spawns the widget; otherwise a fast-starting widget could
+    /// `get_widget_surface` before the compositor knows what to send.
     fn register_widget(
         &self,
         instance_id: InstanceId,
         position: Position,
         size: Size,
-        pid: Option<u32>,
+        initial_config: WidgetInitialConfig,
     ) -> Result<(), CompositorError>;
+
+    /// Associate the spawned widget's process id with its instance.
+    ///
+    /// Called after `register_widget` and process spawn. The compositor
+    /// uses `SO_PEERCRED` at `get_widget_surface` time to map the Wayland
+    /// connection back to the registered instance.
+    fn set_widget_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError>;
 
     /// Unregister a widget when its process stops.
     fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError>;
+
+    /// Clear any pid association for the given process. Called when a
+    /// widget process exits so that a recycled pid cannot be mistaken
+    /// for the dead widget.
+    fn clear_pid(&self, pid: u32) -> Result<(), CompositorError>;
 
     /// Set the active scene layout (visible widgets and positions).
     fn set_active_scene(&self, layout: SceneLayout) -> Result<(), CompositorError>;

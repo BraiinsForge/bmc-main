@@ -59,7 +59,18 @@ impl WidgetManager {
         }
     }
 
-    pub async fn spawn_widget(&self, widget_uid: Uuid, env: WidgetEnv) -> Result<(), SpawnError> {
+    /// Spawn a widget process and return its OS pid. The compositor needs
+    /// the pid to correlate the eventual Wayland connection back to the
+    /// widget's registered instance id.
+    ///
+    /// Also returns a oneshot receiver that fires with the pid when the
+    /// child process exits, so the caller can clear the pid from the
+    /// compositor and prevent stale pid recycling.
+    pub async fn spawn_widget(
+        &self,
+        widget_uid: Uuid,
+        env: WidgetEnv,
+    ) -> Result<(u32, tokio::sync::oneshot::Receiver<u32>), SpawnError> {
         let widget = self.registry.get(&widget_uid).ok_or_else(|| {
             SpawnError::SpawnProcess(Error::new(
                 ErrorKind::NotFound,
@@ -76,15 +87,49 @@ impl WidgetManager {
             std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| DEFAULT_XDG_RUNTIME_DIR.to_owned());
 
         let child = self.spawner.spawn(widget, &env, &xdg_runtime_dir)?;
+        let pid = child.id().ok_or_else(|| {
+            SpawnError::SpawnProcess(Error::other("spawned child has no pid (already exited?)"))
+        })?;
 
         self.children
             .write()
             .await
             .insert(env.instance_id.clone(), child);
 
-        info!("widget instance {} spawned", env.instance_id);
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
+        let children = Arc::clone(&self.children);
+        let instance_id = env.instance_id.clone();
+        tokio::spawn(async move {
+            let mut exited = false;
+            loop {
+                let mut guard = children.write().await;
+                if let Some(child) = guard.get_mut(&instance_id) {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            info!("widget {} (pid={}) exited: {}", instance_id, pid, status);
+                            exited = true;
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            warn!("failed to poll widget {} (pid={}): {}", instance_id, pid, e);
+                            exited = true;
+                        }
+                    }
+                } else {
+                    break;
+                }
+                drop(guard);
+                if exited {
+                    let _ = exit_tx.send(pid);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        });
 
-        Ok(())
+        info!("widget instance {} spawned (pid={})", env.instance_id, pid);
+
+        Ok((pid, exit_rx))
     }
 
     pub async fn stop_widget(&self, instance_id: &str) {

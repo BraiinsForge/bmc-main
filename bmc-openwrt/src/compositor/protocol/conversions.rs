@@ -2,30 +2,92 @@
 
 //! Protocol type conversions.
 
-use bmc_widget_protocol::server::deck_widget_surface_v1::{self, SettingType};
-use bmc_widget_protocol::{ActionPayload, SettingUpdate};
+use bmc_widget_protocol::server::deck_widget_surface_v1;
+use bmc_widget_protocol::{
+    DateFormat, NumberFormat, SizeType, TemperatureUnit, TimeSystem, WeekDay,
+};
 
-pub fn setting_to_protocol(setting: &SettingUpdate) -> (SettingType, String) {
-    match setting {
-        SettingUpdate::Timezone(tz) => (SettingType::Timezone, tz.clone()),
-        SettingUpdate::NightMode(enabled) => (SettingType::NightMode, enabled.to_string()),
-        SettingUpdate::Localization(localization) => {
-            let json = serde_json::to_string(localization).unwrap_or_default();
-            (SettingType::Localization, json)
-        }
+pub fn size_type_to_protocol(s: SizeType) -> deck_widget_surface_v1::SizeType {
+    use deck_widget_surface_v1::SizeType as P;
+    match s {
+        SizeType::Small => P::Small,
+        SizeType::Medium => P::Medium,
+        SizeType::Large => P::Large,
+        SizeType::Full => P::Full,
     }
 }
 
-pub fn action_from_protocol(action_type: u32, payload: &str) -> Option<ActionPayload> {
-    use deck_widget_surface_v1::ActionType;
+pub fn date_format_to_protocol(d: DateFormat) -> deck_widget_surface_v1::DateFormat {
+    use deck_widget_surface_v1::DateFormat as P;
+    match d {
+        DateFormat::DdMmYyyyDot => P::DdMmYyyyDot,
+        DateFormat::DdMmYyyySlash => P::DdMmYyyySlash,
+        DateFormat::DMYyyySlash => P::DMYyyySlash,
+        DateFormat::MDYyyySlash => P::MDYyyySlash,
+        DateFormat::DdMmYyyyDash => P::DdMmYyyyDash,
+        DateFormat::YyyyMDSlash => P::YyyyMDSlash,
+        DateFormat::YyyyMmDdDot => P::YyyyMmDdDot,
+        DateFormat::YyyyMmDdDash => P::YyyyMmDdDash,
+    }
+}
 
-    match action_type {
-        x if x == ActionType::PlaySound as u32 => Some(ActionPayload::PlaySound {
-            sound: payload.to_owned(),
-        }),
-        x if x == ActionType::StopSound as u32 => Some(ActionPayload::StopSound {}),
-        x if x == ActionType::Led as u32 => serde_json::from_str(payload).ok(),
-        x if x == ActionType::StopLed as u32 => Some(ActionPayload::StopLed {}),
-        _ => None,
+pub fn time_format_to_protocol(t: TimeSystem) -> deck_widget_surface_v1::TimeFormat {
+    use deck_widget_surface_v1::TimeFormat as P;
+    match t {
+        TimeSystem::Hour12 => P::Hour12,
+        TimeSystem::Hour24 => P::Hour24,
+    }
+}
+
+pub fn number_format_to_protocol(n: NumberFormat) -> deck_widget_surface_v1::NumberFormat {
+    use deck_widget_surface_v1::NumberFormat as P;
+    match n {
+        NumberFormat::SpaceGroupCommaDecimal => P::SpaceGroupCommaDecimal,
+        NumberFormat::CommaGroupDotDecimal => P::CommaGroupDotDecimal,
+        NumberFormat::DotGroupCommaDecimal => P::DotGroupCommaDecimal,
+        NumberFormat::SpaceGroupDotDecimal => P::SpaceGroupDotDecimal,
+    }
+}
+
+pub fn temperature_unit_to_protocol(u: TemperatureUnit) -> deck_widget_surface_v1::TemperatureUnit {
+    use deck_widget_surface_v1::TemperatureUnit as P;
+    match u {
+        TemperatureUnit::Celsius => P::Celsius,
+        TemperatureUnit::Fahrenheit => P::Fahrenheit,
+    }
+}
+
+pub fn weekday_to_protocol(w: WeekDay) -> deck_widget_surface_v1::Weekday {
+    use deck_widget_surface_v1::Weekday as P;
+    match w {
+        WeekDay::Monday => P::Monday,
+        WeekDay::Tuesday => P::Tuesday,
+        WeekDay::Wednesday => P::Wednesday,
+        WeekDay::Thursday => P::Thursday,
+        WeekDay::Friday => P::Friday,
+        WeekDay::Saturday => P::Saturday,
+        WeekDay::Sunday => P::Sunday,
+    }
+}
+
+pub fn night_mode_to_protocol(enabled: bool) -> deck_widget_surface_v1::NightModeState {
+    use deck_widget_surface_v1::NightModeState as P;
+    if enabled { P::On } else { P::Off }
+}
+
+pub fn led_effect_from_protocol(
+    e: deck_widget_surface_v1::LedEffect,
+) -> bmc_widget_protocol::LedEffect {
+    use bmc_widget_protocol::LedEffect as L;
+    use deck_widget_surface_v1::LedEffect as P;
+    match e {
+        P::Chase => L::Chase,
+        P::KnightRider => L::KnightRider,
+        P::Scan => L::Scan,
+        P::Snake => L::Snake,
+        P::Breathe => L::Breathe,
+        // Forward-compat: unknown values from a future protocol version
+        // fall back to a benign Solid effect rather than panicking.
+        P::Solid | _ => L::Solid,
     }
 }

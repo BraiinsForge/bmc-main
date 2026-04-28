@@ -6,7 +6,7 @@
 
 use bmc::compositor::{
     Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, SettingUpdate,
-    Size, WidgetAction,
+    Size, WidgetAction, WidgetInitialConfig,
 };
 use tokio::sync::mpsc;
 
@@ -61,16 +61,16 @@ impl Compositor for MockCompositor {
         instance_id: InstanceId,
         position: Position,
         size: Size,
-        pid: Option<u32>,
+        initial_config: WidgetInitialConfig,
     ) -> Result<(), CompositorError> {
         tracing::info!(
-            "MockCompositor: register widget '{}' at ({},{}) size {}x{} pid={:?}",
+            "MockCompositor: register widget '{}' at ({},{}) size {}x{} initial={:?}",
             instance_id,
             position.x,
             position.y,
             size.width,
             size.height,
-            pid,
+            initial_config,
         );
         // Immediately signal that the widget is ready
         let _ = self
@@ -79,8 +79,22 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
+    fn set_widget_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError> {
+        tracing::info!(
+            "MockCompositor: set_widget_pid '{}' pid={}",
+            instance_id,
+            pid
+        );
+        Ok(())
+    }
+
     fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
         tracing::info!("MockCompositor: unregister widget '{}'", instance_id);
+        Ok(())
+    }
+
+    fn clear_pid(&self, pid: u32) -> Result<(), CompositorError> {
+        tracing::info!("MockCompositor: clear_pid {pid}");
         Ok(())
     }
 

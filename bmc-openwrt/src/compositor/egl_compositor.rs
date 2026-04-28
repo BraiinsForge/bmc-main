@@ -15,7 +15,7 @@ use bmc::compositor::{
     WidgetAction,
 };
 use bmc_platform::linux_input::discover_touch_node;
-use bmc_widget_protocol::SettingUpdate;
+use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
 use smithay::backend::{
     input::{AbsolutePositionEvent, InputEvent, TouchEvent as TouchEventTrait, TouchSlot},
     libinput::LibinputInputBackend,
@@ -87,6 +87,18 @@ const TOUCH_DISCOVERY_BACKOFFS: &[Duration] = &[
     Duration::from_secs(2),
     Duration::from_secs(4),
 ];
+
+/// Maximum time to wait for the compositor thread to finish its EGL
+/// setup and announce its Wayland socket name back to the caller of
+/// `start()`. Bounded so a stuck GPU init does not hang the whole
+/// control process.
+const COMPOSITOR_READY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Maximum time to wait for the compositor thread to acknowledge a
+/// widget-lifecycle command. These acks are processed synchronously
+/// inside the compositor event loop, so the deadline only protects
+/// against the loop being wedged.
+const WIDGET_COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RedrawState {
@@ -1147,18 +1159,35 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             instance_id,
             position,
             size,
-            pid,
+            initial_config,
+            ack,
         } => {
             tracing::debug!(
-                "Registering widget {} at ({}, {}) size {}x{} pid={:?}",
+                "Registering widget {} at ({}, {}) size {}x{} initial={:?}",
                 instance_id,
                 position.x,
                 position.y,
                 size.width,
                 size.height,
-                pid
+                initial_config
             );
-            // Widget registration is informational - actual tracking happens via Wayland protocol
+            state
+                .compositor
+                .deck_widget_state
+                .register_initial_config(instance_id, initial_config);
+            let _ = ack.send(());
+        }
+        CompositorCommand::SetWidgetPid {
+            instance_id,
+            pid,
+            ack,
+        } => {
+            tracing::debug!("Associating pid {} with widget {}", pid, instance_id);
+            state
+                .compositor
+                .deck_widget_state
+                .set_widget_pid(&instance_id, pid);
+            let _ = ack.send(());
         }
         CompositorCommand::UnregisterWidget { instance_id } => {
             tracing::debug!("Unregistering widget {}", instance_id);
@@ -1170,6 +1199,10 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             // Remove stale touch routing surface so a reconnecting widget
             // gets a fresh entry via the surface commit path.
             state.compositor.drop_widget_render_surface(&instance_id);
+        }
+        CompositorCommand::ClearPid { pid } => {
+            tracing::debug!("Clearing pid {}", pid);
+            state.compositor.deck_widget_state.clear_pid(pid);
         }
         CompositorCommand::SetActiveScene { layout } => {
             tracing::info!("Setting active scene with {} widgets", layout.widgets.len());
@@ -1300,7 +1333,7 @@ impl Compositor for EglCompositor {
         }
 
         let socket_name = ready_rx
-            .recv_timeout(Duration::from_secs(10))
+            .recv_timeout(COMPOSITOR_READY_TIMEOUT)
             .map_err(|_| {
                 CompositorError::ThreadError("Timeout waiting for compositor to start".to_owned())
             })?
@@ -1330,16 +1363,35 @@ impl Compositor for EglCompositor {
         instance_id: InstanceId,
         position: Position,
         size: Size,
-        pid: Option<u32>,
+        initial_config: WidgetInitialConfig,
     ) -> Result<(), CompositorError> {
+        let (ack_tx, ack_rx) = flume::bounded(1);
         self.command_tx
             .send(CompositorCommand::RegisterWidget {
                 instance_id,
                 position,
                 size,
-                pid,
+                initial_config,
+                ack: ack_tx,
             })
-            .map_err(|e| CompositorError::SendError(e.to_string()))
+            .map_err(|e| CompositorError::SendError(e.to_string()))?;
+        ack_rx
+            .recv_timeout(WIDGET_COMMAND_ACK_TIMEOUT)
+            .map_err(|e| CompositorError::ThreadError(format!("register_widget ack: {e}")))
+    }
+
+    fn set_widget_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError> {
+        let (ack_tx, ack_rx) = flume::bounded(1);
+        self.command_tx
+            .send(CompositorCommand::SetWidgetPid {
+                instance_id: instance_id.clone(),
+                pid,
+                ack: ack_tx,
+            })
+            .map_err(|e| CompositorError::SendError(e.to_string()))?;
+        ack_rx
+            .recv_timeout(WIDGET_COMMAND_ACK_TIMEOUT)
+            .map_err(|e| CompositorError::ThreadError(format!("set_widget_pid ack: {e}")))
     }
 
     fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
@@ -1347,6 +1399,12 @@ impl Compositor for EglCompositor {
             .send(CompositorCommand::UnregisterWidget {
                 instance_id: instance_id.clone(),
             })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn clear_pid(&self, pid: u32) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::ClearPid { pid })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

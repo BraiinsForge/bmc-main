@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_shared_time::time::Timezone;
-use bmc_widget_protocol::{Localization, SizeType};
+use bmc_widget_protocol::{Localization, SizeType, WidgetInitialConfig};
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -11,18 +11,17 @@ use crate::scene::{Scene, Widget, WidgetSize};
 
 use super::WidgetManager;
 
-/// Widget configuration passed to spawner via environment variables.
+/// Minimum environment the spawner puts on a widget process.
+///
+/// Every piece of widget-specific configuration (instance id, size,
+/// params) now flows through the `deck_widget_v1` Wayland protocol, so
+/// this struct no longer carries any of that — the spawner only needs
+/// to know where the Wayland socket lives and which instance id to
+/// attribute the spawn to for logging.
 #[derive(Debug, Clone)]
 pub struct WidgetEnv {
     pub instance_id: String,
     pub wayland_display: String,
-    pub size_type: SizeType,
-    pub width: u32,
-    pub height: u32,
-    pub params: serde_json::Value,
-    pub timezone: Option<String>,
-    pub night_mode: bool,
-    pub localization: Option<Localization>,
 }
 
 pub struct Coordinator {
@@ -53,6 +52,21 @@ impl Coordinator {
         timezone: &Timezone,
         night_mode_active: bool,
     ) {
+        // Seed the compositor's setting cache so it can emit these as
+        // part of the initial configure batch for every widget that
+        // connects (and also propagate subsequent changes).
+        use bmc_widget_protocol::SettingUpdate;
+        let _ = self
+            .compositor
+            .broadcast_setting(SettingUpdate::Timezone(timezone.to_string()));
+        let _ = self
+            .compositor
+            .broadcast_setting(SettingUpdate::NightMode(night_mode_active));
+        let loc = Self::build_localization(localization);
+        for setting in SettingUpdate::from_localization(&loc) {
+            let _ = self.compositor.broadcast_setting(setting);
+        }
+
         let enabled_scenes: Vec<_> = scenes.values().filter(|s| s.enabled).collect();
         info!(
             count = enabled_scenes.len(),
@@ -60,11 +74,10 @@ impl Coordinator {
         );
 
         for scene in &enabled_scenes {
-            self.spawn_scene_widgets(scene, localization, timezone, night_mode_active)
-                .await;
+            self.spawn_scene_widgets(scene).await;
         }
 
-        // Send all scene layouts to compositor for drag-based cycling
+        // Send all scene layouts to compositor for drag-based cycling.
         let layouts: Vec<_> = enabled_scenes
             .iter()
             .map(|s| Self::scene_to_layout(s))
@@ -77,13 +90,7 @@ impl Coordinator {
         info!("all scene widgets spawned");
     }
 
-    pub async fn spawn_scene_widgets(
-        &self,
-        scene: &Scene,
-        localization: &LocalizationConfig,
-        timezone: &Timezone,
-        night_mode_active: bool,
-    ) {
+    pub async fn spawn_scene_widgets(&self, scene: &Scene) {
         info!(
             scene_id = %scene.id,
             widget_count = scene.widgets.len(),
@@ -91,27 +98,28 @@ impl Coordinator {
         );
 
         for widget in scene.widgets.values() {
-            self.spawn_widget(&scene.id, widget, localization, timezone, night_mode_active)
-                .await;
+            self.spawn_widget(&scene.id, widget).await;
         }
     }
 
-    pub async fn spawn_widget(
-        &self,
-        scene_id: &crate::scene::SceneId,
-        widget: &Widget,
-        localization: &LocalizationConfig,
-        timezone: &Timezone,
-        night_mode_active: bool,
-    ) {
+    pub async fn spawn_widget(&self, scene_id: &crate::scene::SceneId, widget: &Widget) {
         let instance_id = widget.id.as_uuid().to_string();
         let position = Self::widget_to_position(widget);
         let size = Self::widget_size_to_size(widget.size);
+        let initial_config = WidgetInitialConfig {
+            size: Self::widget_size_to_size_type(widget.size),
+            width: widget.size.width(),
+            height: widget.size.height(),
+            params: widget.params.clone(),
+        };
 
-        // Register widget with compositor before spawning
-        if let Err(e) = self
-            .compositor
-            .register_widget(instance_id.clone(), position, size, None)
+        // Register widget with compositor before spawning. This call blocks
+        // until the compositor has stored the initial config — otherwise a
+        // fast-starting widget could reach `get_widget_surface` before the
+        // compositor knows what to emit.
+        if let Err(e) =
+            self.compositor
+                .register_widget(instance_id.clone(), position, size, initial_config)
         {
             warn!(
                 scene_id = %scene_id,
@@ -128,19 +136,13 @@ impl Coordinator {
                 widget_id = %instance_id,
                 "compositor not started, cannot spawn widget"
             );
+            let _ = self.compositor.unregister_widget(&instance_id);
             return;
         };
 
         let widget_env = WidgetEnv {
             instance_id: instance_id.clone(),
             wayland_display,
-            size_type: Self::widget_size_to_size_type(widget.size),
-            width: widget.size.width(),
-            height: widget.size.height(),
-            params: widget.params.clone(),
-            timezone: Some(timezone.to_string()),
-            night_mode: night_mode_active,
-            localization: Some(Self::build_localization(localization)),
         };
 
         info!(
@@ -151,21 +153,43 @@ impl Coordinator {
             "spawning widget"
         );
 
-        if let Err(e) = self
+        let (pid, exit_rx) = match self
             .widget_manager
             .spawn_widget(widget.widget_type_id, widget_env)
             .await
         {
+            Ok(result) => result,
+            Err(e) => {
+                warn!(
+                    scene_id = %scene_id,
+                    widget_id = %instance_id,
+                    widget_type = %widget.widget_type_id,
+                    error = %e,
+                    "failed to spawn widget"
+                );
+                let _ = self.compositor.unregister_widget(&instance_id);
+                return;
+            }
+        };
+
+        if let Err(e) = self.compositor.set_widget_pid(&instance_id, pid) {
             warn!(
                 scene_id = %scene_id,
                 widget_id = %instance_id,
-                widget_type = %widget.widget_type_id,
+                pid,
                 error = %e,
-                "failed to spawn widget"
+                "failed to associate pid with widget; widget may not receive initial state"
             );
-            // Unregister from compositor on spawn failure
-            let _ = self.compositor.unregister_widget(&instance_id);
         }
+
+        // Clear the pid from the compositor when the child exits so a
+        // recycled pid cannot be mistaken for this widget.
+        let compositor = Arc::clone(&self.compositor);
+        tokio::spawn(async move {
+            if let Ok(exited_pid) = exit_rx.await {
+                let _ = compositor.clear_pid(exited_pid);
+            }
+        });
     }
 
     pub async fn stop_widget(&self, instance_id: &str) {

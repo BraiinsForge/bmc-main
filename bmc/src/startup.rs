@@ -193,10 +193,10 @@ where
         let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
         let widget_coordinator = Coordinator::new(widget_manager, compositor);
 
-        let timezone = manager.timezone();
         {
             let config_guard = config_handle.read().await;
             let localization = config_guard.localization_config();
+            let timezone = manager.timezone();
             let night_mode_active = config_guard.night_mode().enabled;
             widget_coordinator
                 .spawn_initial_widgets(
