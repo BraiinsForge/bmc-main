@@ -302,21 +302,20 @@ let
   }));
 
   # Individual widget packages per arch/profile
-  widgetTuples = lib.cartesianProduct {
-    archProfile = glibcArchProfiles;
-    widget = lib.mapAttrsToList (name: def: { inherit name; } // def) widgets;
-  };
-
-  widgetPackages = builtins.listToAttrs (lib.forEach widgetTuples ({ archProfile, widget }: {
-    name = "widget-${widget.name}-${archProfile.arch}-${archProfile.profile}";
-    value = bmc.lib.mkWidgetPackage {
-      inherit (widget) name crate;
-      runtimeDeps = deps.widgetRuntimeDeps.${widget.runtimeDepsKind};
-
-      features = widget.features or [ ];
-      profile = bmc.profiles."${archProfile.arch}-${archProfile.profile}";
-    };
-  }));
+  widgetPackages = builtins.listToAttrs (lib.concatLists (lib.forEach glibcArchProfiles ({ arch, profile }:
+    lib.mapAttrsToList
+      (name: def: {
+        name = "widget-${name}-${arch}-${profile}";
+        value = bmc.lib.mkWidgetPackage {
+          inherit name;
+          inherit (def) crate;
+          runtimeDeps = deps.widgetRuntimeDeps.${def.runtimeDepsKind};
+          features = def.features or [ ];
+          profile = bmc.profiles."${arch}-${profile}";
+        };
+      })
+      widgets
+  )));
 
   # Combined widget packages per arch/profile: native widgets joined
   # with wasm widgets so both land under lib/bmc-widgets/<name>/.
@@ -330,7 +329,11 @@ let
           runtimeDeps = deps.widgetRuntimeDeps.native;
           profile = bmc.profiles."${arch}-${profile}";
         })
-        (mkAllWasmWidgets bmc.profiles."${arch}-${profile}")
+        (mkAllWasmWidgets {
+          profile = bmc.profiles."${arch}-${profile}";
+          # Mirror mkOpenwrt: profiling on for non-release builds.
+          hostFeatures = lib.optionals (profile != "release") [ "profiling" ];
+        })
       ];
     };
   }));
@@ -385,7 +388,11 @@ let
                   runtimeDeps = deps.widgetRuntimeDeps.native;
                   profile = bmc.profiles."${arch}-debug";
                 })
-                (mkAllWasmWidgets bmc.profiles."${arch}-debug")
+                (mkAllWasmWidgets {
+                  profile = bmc.profiles."${arch}-debug";
+                  # VM is always debug → mirror mkOpenwrt and turn profiling on.
+                  hostFeatures = [ "profiling" ];
+                })
               ];
             };
           }
@@ -423,15 +430,15 @@ let
   # wasm-widgets.nix is parametric in the host profile: re-import it per
   # profile to cross-compile the bmc-widget-wasm host for every consumer
   # arch (armv7 deck + x86_64/aarch64 VM).
-  wasmWidgetsFor = profile: import ./nix/wasm-widgets.nix {
-    inherit pkgs profile;
+  wasmWidgetsFor = profile: hostFeatures: import ./nix/wasm-widgets.nix {
+    inherit pkgs profile hostFeatures;
     wasmReleaseProfile = bmc.profiles.wasm-release;
     crates = bmc.crates;
     autopatchelfBinaries = bmc.lib.autopatchelfBinaries;
     inherit (deps) widgetRuntimeDeps;
   };
 
-  wasmWidgetsModule = wasmWidgetsFor bmc.profiles.armv7-glibc-release;
+  wasmWidgetsModule = wasmWidgetsFor bmc.profiles.armv7-glibc-release [ ];
 
   # Shared wasm widget catalog: name → { wasmFile, manifest }. Mirrors
   # the per-widget entries in nix/packages.nix; both consumers (deck
@@ -461,12 +468,16 @@ let
       wasmFile = "media_control.wasm";
       manifest = ./bmc-wasm-runtime/examples/media-control/manifest.json;
     };
+    mesh-demo = {
+      wasmFile = "mesh_demo.wasm";
+      manifest = ./bmc-wasm-runtime/examples/mesh-demo/manifest.json;
+    };
   };
 
   # Build all wasm widgets against `profile`'s host binary, joined into
   # a single lib/bmc-widgets/<name>/ tree (same shape as mkAllWidgets).
-  mkAllWasmWidgets = profile:
-    let m = wasmWidgetsFor profile; in
+  mkAllWasmWidgets = { profile, hostFeatures ? [ ] }:
+    let m = wasmWidgetsFor profile hostFeatures; in
     pkgs.symlinkJoin {
       name = "bmc-wasm-widgets";
       paths = lib.mapAttrsToList

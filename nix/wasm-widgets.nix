@@ -16,6 +16,7 @@
 , crates                # bmc.crates
 , autopatchelfBinaries  # bmc.lib.autopatchelfBinaries
 , widgetRuntimeDeps     # deps.widgetRuntimeDeps (expects .native fn)
+, hostFeatures ? [ ]    # cargo features for the bmc-widget-wasm host build
 }:
 let
   # Collected *.wasm blobs from the wasm-release workspace build.
@@ -42,7 +43,9 @@ let
   # autopatchelfBinaries (not mkWidgetPackage) — the host has no manifest
   # of its own. The binary ends up at $out/bin/bmc-widget-wasm.
   host = autopatchelfBinaries {
-    drv = profile.buildCrate crates.widget-wasm { };
+    drv = profile.buildCrate crates.widget-wasm {
+      features = hostFeatures;
+    };
     # widgetRuntimeDeps.native is a function; call with the profile's
     # target pkgs (armv7Pkgs for glibc arm profiles) — same convention
     # mkWidgetPackage uses internally.
