@@ -46,5 +46,9 @@ select = [
 [tool.ruff.lint.isort]
 known-first-party = ["bmc_virt"]
 
+[tool.ruff.lint.per-file-ignores]
+# Tests routinely assert against literal expected values.
+"tests/**" = ["PLR2004"]
+
 [tool.ty.environment]
 python-version = "3.11"

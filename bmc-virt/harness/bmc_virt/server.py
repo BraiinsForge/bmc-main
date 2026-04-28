@@ -265,6 +265,8 @@ class EventDaemon:
             self._cmd_shell_exec(request_id, data)
         elif name == Cmd.SERVICE_RESTART:
             self._cmd_service_restart(request_id, data)
+        elif name == Cmd.METRICS_COLLECT:
+            self._cmd_metrics_collect(request_id, data)
         elif name == Cmd.RR_START:
             self._cmd_rr_start(request_id)
         elif name == Cmd.RR_STOP:
@@ -321,6 +323,29 @@ class EventDaemon:
             self._send_ack(request_id, ok=False, error=f"service restart failed: {exc.stderr}")
         except subprocess.TimeoutExpired:
             self._send_ack(request_id, ok=False, error="service restart timed out")
+
+    # ── Metrics ──────────────────────────────────────────────────────────────
+
+    def _cmd_metrics_collect(self, request_id: str, data: dict[str, Any]) -> None:
+        """Read /proc directly and return a structured snapshot.
+
+        Cheaper and more robust than shelling out to ``pidof``/``cat``/``awk``
+        — busybox flag availability differs across builds, and shelling out
+        per snapshot adds non-trivial overhead at 0.5 s polling cadence.
+        """
+        raw_processes = data.get("processes") or []
+        processes = [str(p) for p in raw_processes]
+        try:
+            payload = {
+                "meminfo": _read_meminfo(),
+                "loadavg": list(_read_loadavg()),
+                "uptime_s": _read_uptime(),
+                "processes": _read_processes(processes),
+            }
+        except OSError as exc:
+            self._send_ack(request_id, ok=False, error=f"metrics read failed: {exc}")
+            return
+        self._send_ack(request_id, ok=True, data=payload)
 
     # ── rr time-travel debugger ──────────────────────────────────────────────
 
@@ -591,6 +616,149 @@ def _interface_ip(iface: str) -> str | None:
     except (OSError, subprocess.TimeoutExpired):
         pass
     return None
+
+
+# ── /proc metrics readers ──────────────────────────────────────────────────────
+
+_LOADAVG_FIELDS = 3
+_MEMINFO_FIELDS = (
+    "MemTotal",
+    "MemFree",
+    "MemAvailable",
+    "Buffers",
+    "Cached",
+    "Shmem",
+    "CmaTotal",
+    "CmaFree",
+)
+_PROC_STATUS_FIELDS = {
+    "VmSize": "vm_size_kb",
+    "VmRSS": "vm_rss_kb",
+    "RssAnon": "rss_anon_kb",
+    "RssFile": "rss_file_kb",
+    "RssShmem": "rss_shmem_kb",
+}
+
+
+def _read_meminfo() -> dict[str, int]:
+    """Parse /proc/meminfo into a sparse dict keyed by field name."""
+    out: dict[str, int] = {}
+    try:
+        with Path("/proc/meminfo").open() as f:
+            text = f.read()
+    except OSError:
+        return out
+    for raw in text.splitlines():
+        key, _, val = raw.partition(":")
+        key = key.strip()
+        if key not in _MEMINFO_FIELDS:
+            continue
+        parts = val.strip().split()
+        if not parts:
+            continue
+        try:
+            out[key] = int(parts[0])
+        except ValueError:
+            continue
+    return out
+
+
+def _read_loadavg() -> tuple[float, float, float]:
+    """Parse /proc/loadavg's first three fields (1m/5m/15m)."""
+    try:
+        with Path("/proc/loadavg").open() as f:
+            parts = f.read().split()
+    except OSError:
+        return (0.0, 0.0, 0.0)
+    if len(parts) < _LOADAVG_FIELDS:
+        return (0.0, 0.0, 0.0)
+    try:
+        return (float(parts[0]), float(parts[1]), float(parts[2]))
+    except ValueError:
+        return (0.0, 0.0, 0.0)
+
+
+def _read_uptime() -> float:
+    """Parse the first column of /proc/uptime (seconds since boot)."""
+    try:
+        with Path("/proc/uptime").open() as f:
+            parts = f.read().split()
+    except OSError:
+        return 0.0
+    if not parts:
+        return 0.0
+    try:
+        return float(parts[0])
+    except ValueError:
+        return 0.0
+
+
+def _read_processes(names: list[str]) -> dict[str, dict[str, Any]]:
+    """For each name, find the first matching pid and return its memory fields.
+
+    Match is by /proc/<pid>/comm (kernel comm name, 15-char limit). For
+    ``bmc-widget-wasm`` (15 chars) and ``bmc-openwrt`` (11 chars) this is
+    exact; longer names are truncated by the kernel and the caller would
+    need to pass the truncated form. Missing processes record ``pid=None``.
+    """
+    out: dict[str, dict[str, Any]] = {name: {"pid": None} for name in names}
+    if not names:
+        return out
+    pending = set(names)
+
+    try:
+        proc_entries = list(os.scandir("/proc"))
+    except OSError:
+        return out
+
+    for entry in proc_entries:
+        if not pending:
+            break
+        if not entry.name.isdigit():
+            continue
+        try:
+            with Path(f"/proc/{entry.name}/comm").open() as f:
+                comm = f.read().strip()
+        except OSError:
+            continue
+        if comm not in pending:
+            continue
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            continue
+        out[comm] = _read_proc_status(pid)
+        pending.discard(comm)
+
+    return out
+
+
+def _read_proc_status(pid: int) -> dict[str, Any]:
+    """Read /proc/<pid>/status and extract VmSize/VmRSS/Rss* fields (KB)."""
+    record: dict[str, Any] = {"pid": pid}
+    for dst in _PROC_STATUS_FIELDS.values():
+        record[dst] = 0
+
+    try:
+        with Path(f"/proc/{pid}/status").open() as f:
+            text = f.read()
+    except OSError:
+        # Process exited between scandir and open; treat as missing.
+        return {"pid": None}
+
+    for raw in text.splitlines():
+        key, _, val = raw.partition(":")
+        dst = _PROC_STATUS_FIELDS.get(key.strip())
+        if dst is None or "kB" not in val:
+            continue
+        parts = val.strip().split()
+        if not parts:
+            continue
+        try:
+            record[dst] = int(parts[0])
+        except ValueError:
+            continue
+    return record
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

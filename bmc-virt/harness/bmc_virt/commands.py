@@ -8,6 +8,7 @@ from typing import Any
 class Cmd(StrEnum):
     """Commands sent from the host to the guest VM."""
 
+    METRICS_COLLECT = "metrics.collect"
     RR_START = "rr.start"
     RR_STOP = "rr.stop"
     SHELL_EXEC = "shell.exec"

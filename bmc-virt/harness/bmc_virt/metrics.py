@@ -1,4 +1,10 @@
-"""VM metrics collection — snapshots of memory, CPU, and load."""
+"""VM metrics collection — snapshots of memory, CPU, load, and per-process RSS.
+
+The actual /proc parsing lives in :mod:`bmc_virt.server` so the daemon can
+read the files directly in Python instead of shelling out to busybox tools
+(``pidof -s`` is not in every busybox build, and shelling per snapshot adds
+non-trivial overhead at sub-second cadence).
+"""
 
 from __future__ import annotations
 
@@ -16,6 +22,7 @@ from rich import box
 from rich.table import Table
 
 from bmc_virt import ui
+from bmc_virt.commands import Cmd
 
 matplotlib.use("Agg")
 
@@ -24,7 +31,26 @@ if TYPE_CHECKING:
 
 _MEM_WARN_PCT = 60
 _MEM_CRIT_PCT = 80
-_LOADAVG_FIELDS = 3
+
+# Per-process plot colors, cycled in order. Picked to contrast with the
+# existing memory-used (#ff6b6b) and memory-avail (#51cf66) lines.
+_PROC_COLORS = ("#ffd43b", "#845ef7", "#f06595", "#22b8cf", "#fd7e14")
+
+
+@dataclass
+class ProcSnapshot:
+    """Per-process memory snapshot from /proc/<pid>/status.
+
+    ``pid`` is ``None`` when the process was not running at sample time.
+    All sizes are in kilobytes; missing fields default to 0.
+    """
+
+    pid: int | None
+    vm_rss_kb: int = 0
+    rss_anon_kb: int = 0
+    rss_file_kb: int = 0
+    rss_shmem_kb: int = 0
+    vm_size_kb: int = 0
 
 
 @dataclass
@@ -41,6 +67,7 @@ class Snapshot:
     load_15m: float
     uptime_s: float
     raw: dict[str, Any] = field(default_factory=dict)
+    processes: dict[str, ProcSnapshot] = field(default_factory=dict)
 
 
 class MetricsCollector:
@@ -49,8 +76,11 @@ class MetricsCollector:
     Without interval (default): purely imperative, each capture() polls once.
     With interval: a background thread polls automatically, close() stops it.
 
+    Pass ``processes=["bmc-widget-wasm", "bmc-openwrt"]`` to also sample each
+    listed process's VmRSS / RssAnon / RssShmem from /proc/<pid>/status.
+
     Usage (imperative):
-        m = vm.metrics.start("My test")
+        m = vm.metrics.start("My test", processes=["bmc-widget-wasm"])
         m.capture("before")
         # ... do stuff ...
         m.capture("after")
@@ -64,9 +94,17 @@ class MetricsCollector:
         m.report()
     """
 
-    def __init__(self, vm: VM, label: str = "", interval: float | None = None) -> None:
+    def __init__(
+        self,
+        vm: VM,
+        label: str = "",
+        interval: float | None = None,
+        *,
+        processes: list[str] | None = None,
+    ) -> None:
         self._vm = vm
         self.label = label
+        self.processes = list(processes or [])
         self.snapshots: list[Snapshot] = []
         self._closed = False
         self._poll_thread: threading.Thread | None = None
@@ -100,14 +138,18 @@ class MetricsCollector:
         self.close()
 
     def _take_snapshot(self, label: str = "") -> Snapshot:
-        """Internal: poll the VM and record a snapshot."""
-        ack = self._vm.exec("cat /proc/meminfo /proc/loadavg /proc/uptime", timeout=5)
+        """Send ``metrics.collect`` to the daemon and record the response."""
+        ack = self._vm._send_cmd(
+            Cmd.METRICS_COLLECT,
+            timeout=5,
+            verbose=False,
+            processes=self.processes,
+        )
         if not ack.ok:
             msg = f"Failed to read metrics: {ack.error}"
             raise RuntimeError(msg)
 
-        raw_output = ack.data.get("stdout", "")
-        snapshot = _parse_snapshot(raw_output, label)
+        snapshot = _snapshot_from_ack(ack.data, label)
         self.snapshots.append(snapshot)
         return snapshot
 
@@ -162,6 +204,43 @@ class MetricsCollector:
         ui.out.print("")
         ui.out.print(table)
 
+        if self.processes:
+            self._report_processes()
+
+    def _report_processes(self) -> None:
+        """Print a per-process RSS table (only labeled snapshots)."""
+        labeled = [s for s in self.snapshots if s.label]
+        if not labeled:
+            return
+
+        table = Table(
+            title=f"{self.label or 'Metrics'} — per-process RSS",
+            title_style="bold",
+            title_justify="left",
+            show_header=True,
+            header_style="bold",
+            box=box.HEAVY_HEAD,
+            border_style="bright_black",
+            padding=(0, 1),
+        )
+        table.add_column("Time", style="dim")
+        table.add_column("Label")
+        for name in self.processes:
+            table.add_column(name, justify="right")
+
+        for s in labeled:
+            row = [ui.format_ts(s.ts), s.label]
+            for name in self.processes:
+                proc = s.processes.get(name)
+                if proc is None or proc.pid is None:
+                    row.append("[red]missing[/red]")
+                else:
+                    row.append(f"{proc.vm_rss_kb // 1024}M")
+            table.add_row(*row)
+
+        ui.out.print("")
+        ui.out.print(table)
+
     def chart(self, dest: str | pathlib.Path) -> pathlib.Path:
         """Generate a metrics chart as PNG. Dark theme, single plot with dual y-axis."""
         dest = pathlib.Path(dest)
@@ -185,6 +264,20 @@ class MetricsCollector:
         ax1.set_xlabel("Time")
         ax1.grid(True, alpha=0.15)
 
+        # Per-process VmRSS on the same axis. None values render as gaps.
+        for i, name in enumerate(self.processes):
+            color = _PROC_COLORS[i % len(_PROC_COLORS)]
+            rss_series: list[float | None] = []
+            for s in self.snapshots:
+                proc = s.processes.get(name)
+                if proc is None or proc.pid is None:
+                    rss_series.append(None)
+                else:
+                    rss_series.append(proc.vm_rss_kb / 1024)
+            if all(v is None for v in rss_series):
+                continue
+            ax1.plot(timestamps, rss_series, color, linewidth=1.5, label=f"{name} RSS")  # ty: ignore[invalid-argument-type]
+
         # Load on right y-axis
         ax2 = ax1.twinx()
         ax2.set_ylabel("Load Average", color="#74c0fc")
@@ -196,54 +289,53 @@ class MetricsCollector:
         lines2, labels2 = ax2.get_legend_handles_labels()
         ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", framealpha=0.3)
 
-        # Capture markers — placed below the chart as x-axis annotations
+        # Capture markers — placed below the chart as rotated x-axis
+        # annotations. Density-aware staggering: rotate 30° and cycle four
+        # vertical rows so dense prompt/ack pairs stay readable.
         labeled = [s for s in self.snapshots if s.label]
+        stagger_rows = 4
         for i, s in enumerate(labeled):
             ax1.axvline(x=s.ts, color="#868e96", linestyle=":", alpha=0.6)  # ty: ignore[invalid-argument-type]
-            # Stagger labels vertically to avoid overlap
-            y_pos = -0.12 - 0.06 * (i % 2)
+            y_pos = -0.10 - 0.06 * (i % stagger_rows)
             ax1.annotate(
                 s.label,
                 xy=(s.ts, 0),  # ty: ignore[invalid-argument-type]
                 xycoords=("data", "axes fraction"),
                 xytext=(0, y_pos * fig.get_figheight() * fig.dpi),
                 textcoords="offset points",
-                fontsize=9,
+                fontsize=8,
                 color="#adb5bd",
-                ha="center",
+                ha="right",
+                rotation=30,
+                rotation_mode="anchor",
             )
 
-        fig.subplots_adjust(bottom=0.2)
+        fig.subplots_adjust(bottom=0.3)
         plt.savefig(dest, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close()
         return dest
 
 
-def _parse_snapshot(raw: str, label: str) -> Snapshot:
-    """Parse combined output of /proc/meminfo + /proc/loadavg + /proc/uptime."""
-    meminfo: dict[str, int] = {}
-    load = (0.0, 0.0, 0.0)
-    uptime = 0.0
+def _snapshot_from_ack(payload: dict[str, Any], label: str) -> Snapshot:
+    """Build a :class:`Snapshot` from the daemon's ``metrics.collect`` ack.
 
-    for raw_line in raw.splitlines():
-        line = raw_line.strip()
+    Tolerates partial payloads — missing sections fall back to zeroed
+    values rather than raising, so a transient read error in the daemon
+    yields a useful (if degraded) sample instead of dropping the whole row.
+    """
+    meminfo_raw = payload.get("meminfo") or {}
+    meminfo: dict[str, int] = {str(k): int(v) for k, v in meminfo_raw.items()}
 
-        # /proc/meminfo lines: "MemTotal:       123456 kB"
-        if ":" in line and "kB" in line:
-            key, val = line.split(":", 1)
-            meminfo[key.strip()] = int(val.strip().split()[0])
+    load_raw = payload.get("loadavg") or [0.0, 0.0, 0.0]
+    load = tuple(float(load_raw[i]) if i < len(load_raw) else 0.0 for i in range(3))
+    load_1m, load_5m, load_15m = load
 
-        # /proc/loadavg: "0.12 0.34 0.56 1/123 4567"
-        elif line and line[0].isdigit() and "/" in line:
-            parts = line.split()
-            if len(parts) >= _LOADAVG_FIELDS:
-                load = (float(parts[0]), float(parts[1]), float(parts[2]))
+    uptime_s = float(payload.get("uptime_s", 0.0))
 
-        # /proc/uptime: "12345.67 23456.78"
-        elif line and line[0].isdigit() and "." in line and "/" not in line:
-            parts = line.split()
-            if parts:
-                uptime = float(parts[0])
+    processes_raw = payload.get("processes") or {}
+    processes: dict[str, ProcSnapshot] = {
+        str(name): _proc_snapshot_from_dict(rec) for name, rec in processes_raw.items()
+    }
 
     mem_total = meminfo.get("MemTotal", 0)
     mem_available = meminfo.get("MemAvailable", 0)
@@ -254,9 +346,22 @@ def _parse_snapshot(raw: str, label: str) -> Snapshot:
         mem_total_kb=mem_total,
         mem_available_kb=mem_available,
         mem_used_kb=mem_total - mem_available,
-        load_1m=load[0],
-        load_5m=load[1],
-        load_15m=load[2],
-        uptime_s=uptime,
+        load_1m=load_1m,
+        load_5m=load_5m,
+        load_15m=load_15m,
+        uptime_s=uptime_s,
         raw=meminfo,
+        processes=processes,
+    )
+
+
+def _proc_snapshot_from_dict(rec: dict[str, Any]) -> ProcSnapshot:
+    pid = rec.get("pid")
+    return ProcSnapshot(
+        pid=int(pid) if pid is not None else None,
+        vm_rss_kb=int(rec.get("vm_rss_kb", 0)),
+        rss_anon_kb=int(rec.get("rss_anon_kb", 0)),
+        rss_file_kb=int(rec.get("rss_file_kb", 0)),
+        rss_shmem_kb=int(rec.get("rss_shmem_kb", 0)),
+        vm_size_kb=int(rec.get("vm_size_kb", 0)),
     )

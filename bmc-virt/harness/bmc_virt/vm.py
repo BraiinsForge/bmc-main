@@ -59,13 +59,20 @@ class _MetricsFactory:
     def __init__(self, vm: VM) -> None:
         self._vm = vm
 
-    def start(self, label: str = "", interval: float | None = None) -> MetricsCollector:
+    def start(
+        self,
+        label: str = "",
+        interval: float | None = None,
+        *,
+        processes: list[str] | None = None,
+    ) -> MetricsCollector:
         """Start a new metrics collector.
 
         Without interval: purely imperative, each capture() polls once.
         With interval (seconds): background thread polls automatically.
+        Pass ``processes=[...]`` to also sample per-process VmRSS/RssShmem.
         """
-        return _MetricsCollector(self._vm, label, interval=interval)
+        return _MetricsCollector(self._vm, label, interval=interval, processes=processes)
 
 
 class VM:

@@ -1,7 +1,8 @@
 """Rich-based output formatting — errors, warnings, event streaming."""
 
+import sys
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from rich.console import Console
 from rich.panel import Panel
@@ -11,6 +12,20 @@ from rich.text import Text
 
 from bmc_virt.commands import Ack, Cmd
 from bmc_virt.events import ReceivedEvent
+
+INSTRUCT_HINT = "Press Enter when done"
+
+
+class SupportsCapture(Protocol):
+    """Anything with a ``.capture(label)`` method.
+
+    Lets ``instruct_user`` accept a metrics collector without importing
+    ``bmc_virt.metrics`` (which would create a circular dep — metrics
+    already imports ``bmc_virt.ui``).
+    """
+
+    def capture(self, label: str = ...) -> object: ...
+
 
 console = Console(stderr=True)
 out = Console()
@@ -198,3 +213,43 @@ def code(text: str, lexer: str = "text") -> None:
         ui.code(dump_output, lexer="text")
     """
     out.print(Syntax(text.rstrip(), lexer, theme="monokai"))
+
+
+def instruct_user(
+    message: str,
+    *,
+    metrics: SupportsCapture | None = None,
+) -> datetime:
+    """Print a bold instruction panel and block until the user presses Enter.
+
+    When ``metrics`` is provided, captures two labelled snapshots — one before
+    the prompt is shown (``prompt: <message>``) and one after the user acks
+    (``ack: <message>``). The pair brackets the user-action window in any
+    chart the collector renders.
+
+    Returns the ack timestamp.
+
+    Raises ``RuntimeError`` if stdin is not a TTY — silent continuation in a
+    measurement script that depends on a manual gate would produce garbage
+    data without warning, so the harness fails loudly instead.
+    """
+    if not sys.stdin.isatty():
+        msg = "instruct_user requires a TTY; refusing to silently skip the manual gate"
+        raise RuntimeError(msg)
+
+    if metrics is not None:
+        metrics.capture(f">{message}")
+
+    body = Text()
+    body.append(message, style="bold")
+    body.append("\n\n")
+    body.append(INSTRUCT_HINT, style="dim")
+    out.print(Panel(body, border_style="yellow", padding=(1, 2)))
+
+    input()
+    acked_at = datetime.now().astimezone()
+
+    if metrics is not None:
+        metrics.capture(f"<{message}")
+
+    return acked_at
