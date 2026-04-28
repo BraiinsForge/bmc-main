@@ -43,7 +43,6 @@ dev:
 # Run mock backend against this frontend's built dist (`build` first).
 serve EXTRA_ARGS="":
     cd {{dir}}/.. && cargo run \
-        --features="winit-skia live-preview" \
         --package bmc-mock -- \
         --address="0.0.0.0:6070" \
         --system-password="root" \

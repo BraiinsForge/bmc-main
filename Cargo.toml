@@ -11,7 +11,6 @@ members = [
     "bmc-kobject",
     "bmc-led",
     "bmc-mock",
-    "bmc-mock-display",
     "bmc-nix",
     "bmc-nix-init",
     "bmc-nix-init-mock",
@@ -131,7 +130,6 @@ bmc-grpc = { path = "bmc-grpc", default-features = false }
 bmc-ipc = { path = "bmc-ipc" }
 bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led" }
-bmc-mock-display = { path = "bmc-mock-display" }
 bmc-nix = { path = "bmc-nix" }
 bmc-nix-init = { path = "bmc-nix-init" }
 bmc-platform = { path = "bmc-platform" }

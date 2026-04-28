@@ -4,12 +4,6 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Braiins <braiins@braiins.com>"]
 
-[features]
-winit-software = ["bmc-mock-display/winit-software"]
-winit-skia = ["bmc-mock-display/winit-skia"]
-slint-embed-files = ["bmc-mock-display/slint-embed-files"]
-live-preview = ["bmc-mock-display/live-preview"]
-
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -17,7 +11,6 @@ axum-extra.workspace = true
 bmc.workspace = true
 bmc-button.workspace = true
 bmc-led.workspace = true
-bmc-mock-display.workspace = true
 bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true
