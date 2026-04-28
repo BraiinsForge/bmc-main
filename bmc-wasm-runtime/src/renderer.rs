@@ -5,6 +5,7 @@
 //! All coordinates are f32. Implementations may round to integer
 //! internally if the backend requires it.
 
+use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{SpanData, TextStyle};
 
 /// Rendering backend trait.
@@ -134,7 +135,9 @@ pub trait Renderer {
     /// Draw a 3D mesh with quaternion-based orientation and optional directional light.
     ///
     /// `slot_index` selects which atlas slot to render into (0..8 for 3×3 grid).
-    /// When `light_pitch` is `f32::NAN`, lighting is disabled.
+    /// `args` bundles transform, lighting and highlight parameters; see
+    /// `MeshDrawArgs` for sentinel conventions (`MeshLighting.pitch == NaN`
+    /// disables lighting, `MeshHighlight.u_min == NaN` disables highlight).
     #[expect(clippy::too_many_arguments)]
     fn draw_mesh(
         &mut self,
@@ -144,27 +147,7 @@ pub trait Renderer {
         h: f32,
         slot_index: u8,
         mesh_id: u16,
-        fov: f32,
-        distance: f32,
-        qx: f32,
-        qy: f32,
-        qz: f32,
-        qw: f32,
-        px: f32,
-        py: f32,
-        pz: f32,
-        scale: f32,
-        light_pitch: f32,
-        light_yaw: f32,
-        ambient: f32,
-        specular: f32,
-        hl_u_min: f32,
-        hl_v_min: f32,
-        hl_u_max: f32,
-        hl_v_max: f32,
-        hl_r: f32,
-        hl_g: f32,
-        hl_b: f32,
+        args: MeshDrawArgs,
     );
 
     // -- Sphere --

@@ -15,6 +15,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::*;
 
+use crate::gpu::mesh::{MeshDrawArgs, MeshHighlight, MeshLighting, MeshTransform};
+
 /// When `DEBUG_LAYOUT=1` env var is set, draw colored outlines around every layout node.
 static DEBUG_LAYOUT: AtomicBool = AtomicBool::new(false);
 
@@ -171,27 +173,7 @@ pub enum DrawCommand {
         w: f32,
         h: f32,
         mesh_id: u16,
-        fov: f32,
-        distance: f32,
-        qx: f32,
-        qy: f32,
-        qz: f32,
-        qw: f32,
-        px: f32,
-        py: f32,
-        pz: f32,
-        scale: f32,
-        light_pitch: f32,
-        light_yaw: f32,
-        ambient: f32,
-        specular: f32,
-        hl_u_min: f32,
-        hl_v_min: f32,
-        hl_u_max: f32,
-        hl_v_max: f32,
-        hl_r: f32,
-        hl_g: f32,
-        hl_b: f32,
+        args: MeshDrawArgs,
     },
     Text {
         x: f32,
@@ -212,30 +194,12 @@ pub enum DrawCommand {
     },
 }
 
-/// Interpolated mesh parameters for transition override.
+/// Interpolated mesh parameters for transition override. Wraps the same
+/// `MeshDrawArgs` shape rendered later, so override application is a struct
+/// copy instead of a 21-field shuffle.
 #[derive(Debug, Clone, Copy)]
 struct MeshOverride {
-    qx: f32,
-    qy: f32,
-    qz: f32,
-    qw: f32,
-    fov: f32,
-    distance: f32,
-    scale: f32,
-    px: f32,
-    py: f32,
-    pz: f32,
-    light_pitch: f32,
-    light_yaw: f32,
-    ambient: f32,
-    specular: f32,
-    hl_u_min: f32,
-    hl_v_min: f32,
-    hl_u_max: f32,
-    hl_v_max: f32,
-    hl_r: f32,
-    hl_g: f32,
-    hl_b: f32,
+    args: MeshDrawArgs,
 }
 
 /// 9-patch inset data (deserialized from wire format).
@@ -872,27 +836,30 @@ impl<'a> TreeReader<'a> {
                     w,
                     h,
                     mesh_id,
-                    fov,
-                    distance,
-                    qx,
-                    qy,
-                    qz,
-                    qw,
-                    px,
-                    py,
-                    pz,
-                    scale,
-                    light_pitch,
-                    light_yaw,
-                    ambient,
-                    specular,
-                    hl_u_min,
-                    hl_v_min,
-                    hl_u_max,
-                    hl_v_max,
-                    hl_r,
-                    hl_g,
-                    hl_b,
+                    args: MeshDrawArgs {
+                        transform: MeshTransform {
+                            fov,
+                            distance,
+                            quat: [qx, qy, qz, qw],
+                            position: [px, py, pz],
+                            scale,
+                        },
+                        lighting: MeshLighting {
+                            pitch: light_pitch,
+                            yaw: light_yaw,
+                            ambient,
+                            specular,
+                        },
+                        highlight: MeshHighlight {
+                            u_min: hl_u_min,
+                            v_min: hl_v_min,
+                            u_max: hl_u_max,
+                            v_max: hl_v_max,
+                            r: hl_r,
+                            g: hl_g,
+                            b: hl_b,
+                        },
+                    },
                 })
             }
             DRAW_TEXT => {
@@ -2521,39 +2488,35 @@ fn render_draw_inner(
                             interp.light_lon,
                         ));
                     }
-                    if let DrawCommand::Mesh {
-                        hl_u_min,
-                        hl_v_min,
-                        hl_u_max,
-                        hl_v_max,
-                        hl_r,
-                        hl_g,
-                        hl_b,
-                        ..
-                    } = inner.as_ref()
-                    {
+                    if let DrawCommand::Mesh { args, .. } = inner.as_ref() {
                         mesh_override = Some(MeshOverride {
-                            qx: interp.orientation.x,
-                            qy: interp.orientation.y,
-                            qz: interp.orientation.z,
-                            qw: interp.orientation.w,
-                            fov: interp.fov,
-                            distance: interp.distance,
-                            scale: interp.mesh_scale,
-                            px: interp.position.x,
-                            py: interp.position.y,
-                            pz: interp.position.z,
-                            light_pitch: interp.light_pitch,
-                            light_yaw: interp.light_yaw,
-                            ambient: interp.ambient,
-                            specular: interp.specular,
-                            hl_u_min: *hl_u_min,
-                            hl_v_min: *hl_v_min,
-                            hl_u_max: *hl_u_max,
-                            hl_v_max: *hl_v_max,
-                            hl_r: *hl_r,
-                            hl_g: *hl_g,
-                            hl_b: *hl_b,
+                            args: MeshDrawArgs {
+                                transform: MeshTransform {
+                                    fov: interp.fov,
+                                    distance: interp.distance,
+                                    quat: [
+                                        interp.orientation.x,
+                                        interp.orientation.y,
+                                        interp.orientation.z,
+                                        interp.orientation.w,
+                                    ],
+                                    position: [
+                                        interp.position.x,
+                                        interp.position.y,
+                                        interp.position.z,
+                                    ],
+                                    scale: interp.mesh_scale,
+                                },
+                                lighting: MeshLighting {
+                                    pitch: interp.light_pitch,
+                                    yaw: interp.light_yaw,
+                                    ambient: interp.ambient,
+                                    specular: interp.specular,
+                                },
+                                // Highlight is not interpolated; carry the
+                                // current draw's value through.
+                                highlight: args.highlight,
+                            },
                         });
                     }
                 }
@@ -2621,27 +2584,7 @@ fn render_draw_inner(
                     w: *w,
                     h: *h,
                     mesh_id: *mesh_id,
-                    fov: mo.fov,
-                    distance: mo.distance,
-                    qx: mo.qx,
-                    qy: mo.qy,
-                    qz: mo.qz,
-                    qw: mo.qw,
-                    px: mo.px,
-                    py: mo.py,
-                    pz: mo.pz,
-                    scale: mo.scale,
-                    light_pitch: mo.light_pitch,
-                    light_yaw: mo.light_yaw,
-                    ambient: mo.ambient,
-                    specular: mo.specular,
-                    hl_u_min: mo.hl_u_min,
-                    hl_v_min: mo.hl_v_min,
-                    hl_u_max: mo.hl_u_max,
-                    hl_v_max: mo.hl_v_max,
-                    hl_r: mo.hl_r,
-                    hl_g: mo.hl_g,
-                    hl_b: mo.hl_b,
+                    args: mo.args,
                 };
                 render_draw_inner(
                     renderer,
@@ -2819,27 +2762,7 @@ fn render_draw_inner(
             w,
             h,
             mesh_id,
-            fov,
-            distance,
-            qx,
-            qy,
-            qz,
-            qw,
-            px,
-            py,
-            pz,
-            scale: mesh_scale,
-            light_pitch,
-            light_yaw,
-            ambient,
-            specular,
-            hl_u_min,
-            hl_v_min,
-            hl_u_max,
-            hl_v_max,
-            hl_r,
-            hl_g,
-            hl_b,
+            args,
         } => {
             let ew = *w * scale;
             let eh = *h * scale;
@@ -2850,70 +2773,14 @@ fn render_draw_inner(
             let slot = anim_ctx.mesh_slot_counter;
             anim_ctx.mesh_slot_counter = slot.saturating_add(1);
             if rotation == 0.0 {
-                renderer.draw_mesh(
-                    rx,
-                    ry,
-                    ew,
-                    eh,
-                    slot,
-                    *mesh_id,
-                    *fov,
-                    *distance,
-                    *qx,
-                    *qy,
-                    *qz,
-                    *qw,
-                    *px,
-                    *py,
-                    *pz,
-                    *mesh_scale,
-                    *light_pitch,
-                    *light_yaw,
-                    *ambient,
-                    *specular,
-                    *hl_u_min,
-                    *hl_v_min,
-                    *hl_u_max,
-                    *hl_v_max,
-                    *hl_r,
-                    *hl_g,
-                    *hl_b,
-                );
+                renderer.draw_mesh(rx, ry, ew, eh, slot, *mesh_id, *args);
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
                 renderer.save();
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
-                renderer.draw_mesh(
-                    rx - pivot_x,
-                    ry - pivot_y,
-                    ew,
-                    eh,
-                    slot,
-                    *mesh_id,
-                    *fov,
-                    *distance,
-                    *qx,
-                    *qy,
-                    *qz,
-                    *qw,
-                    *px,
-                    *py,
-                    *pz,
-                    *mesh_scale,
-                    *light_pitch,
-                    *light_yaw,
-                    *ambient,
-                    *specular,
-                    *hl_u_min,
-                    *hl_v_min,
-                    *hl_u_max,
-                    *hl_v_max,
-                    *hl_r,
-                    *hl_g,
-                    *hl_b,
-                );
+                renderer.draw_mesh(rx - pivot_x, ry - pivot_y, ew, eh, slot, *mesh_id, *args);
                 renderer.restore();
             }
         }
@@ -2978,39 +2845,30 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             ..Default::default()
         },
         DrawCommand::Mesh {
-            x,
-            y,
-            w,
-            h,
-            fov,
-            distance,
-            qx,
-            qy,
-            qz,
-            qw,
-            px,
-            py,
-            pz,
-            scale,
-            light_pitch,
-            light_yaw,
-            ambient,
-            specular,
-            ..
+            x, y, w, h, args, ..
         } => PrevDrawValues {
             x: *x,
             y: *y,
             w: *w,
             h: *h,
-            orientation: Quat::from_xyzw(*qx, *qy, *qz, *qw),
-            fov: *fov,
-            distance: *distance,
-            mesh_scale: *scale,
-            position: Vec3::new(*px, *py, *pz),
-            light_pitch: *light_pitch,
-            light_yaw: *light_yaw,
-            ambient: *ambient,
-            specular: *specular,
+            orientation: Quat::from_xyzw(
+                args.transform.quat[0],
+                args.transform.quat[1],
+                args.transform.quat[2],
+                args.transform.quat[3],
+            ),
+            fov: args.transform.fov,
+            distance: args.transform.distance,
+            mesh_scale: args.transform.scale,
+            position: Vec3::new(
+                args.transform.position[0],
+                args.transform.position[1],
+                args.transform.position[2],
+            ),
+            light_pitch: args.lighting.pitch,
+            light_yaw: args.lighting.yaw,
+            ambient: args.lighting.ambient,
+            specular: args.lighting.specular,
             ..Default::default()
         },
         DrawCommand::Rect { x, y, w, h, color }
@@ -3113,8 +2971,8 @@ fn interpolate_draw_values(
         zoom: a.zoom + (b.zoom - a.zoom) * t,
         light_lat: a.light_lat + (b.light_lat - a.light_lat) * t,
         light_lon: a.light_lon + shortest_angle_delta_deg(a.light_lon, b.light_lon) * t,
-        // Mesh fields — nlerp for quaternion, linear for the rest
-        orientation: nlerp(a.orientation, b.orientation, t),
+        // Mesh fields — slerp for quaternion, linear for the rest
+        orientation: slerp_quat(a.orientation, b.orientation, t),
         fov: a.fov + (b.fov - a.fov) * t,
         distance: a.distance + (b.distance - a.distance) * t,
         mesh_scale: a.mesh_scale + (b.mesh_scale - a.mesh_scale) * t,
@@ -3126,11 +2984,13 @@ fn interpolate_draw_values(
     }
 }
 
-/// Normalized linear interpolation for quaternions.
+/// Spherical linear interpolation for quaternions.
 ///
-/// Delegates to `glam::Quat::slerp` which handles short-path selection
-/// and is SIMD-accelerated when available.
-fn nlerp(a: Quat, b: Quat, t: f32) -> Quat {
+/// Delegates to `glam::Quat::slerp`, which handles short-path selection
+/// and is SIMD-accelerated when available. Pricier than nlerp (one `acos`
+/// plus two `sin` per call) but the math is correct on the unit
+/// hypersphere regardless of the angle between `a` and `b`.
+fn slerp_quat(a: Quat, b: Quat, t: f32) -> Quat {
     a.slerp(b, t)
 }
 

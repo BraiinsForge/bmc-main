@@ -18,7 +18,7 @@ use glow::HasContext;
 
 use super::bitmap::BitmapRegistry;
 use super::icons::IconRegistry;
-use super::mesh::MeshRenderer;
+use super::mesh::{MeshDrawArgs, MeshRenderer};
 use super::sphere::SphereRenderer;
 use super::text::{ParagraphLayoutCache, to_femtovg_color};
 use crate::renderer::Renderer;
@@ -137,12 +137,29 @@ impl FemtoVgRenderer {
             frame_counter: 0,
         })
     }
+
+    /// Lazy-initialise the mesh renderer on first use. Logs and leaves
+    /// `self.mesh_renderer` as `None` if creation fails — callers must
+    /// observe the `None` and bail out gracefully rather than relying on
+    /// "init succeeded just now" invariants.
+    fn lazy_init_mesh_renderer(&mut self) {
+        if self.mesh_renderer.is_some() {
+            return;
+        }
+        match MeshRenderer::new(&self.gl, &mut self.canvas, self.mesh_msaa_samples) {
+            Ok(r) => self.mesh_renderer = Some(r),
+            Err(e) => tracing::error!("mesh renderer init failed: {e}"),
+        }
+    }
 }
 
 impl Drop for FemtoVgRenderer {
     fn drop(&mut self) {
         if let Some(sphere) = self.sphere.take() {
             sphere.destroy(&self.gl, &mut self.canvas);
+        }
+        if let Some(mesh) = self.mesh_renderer.take() {
+            mesh.destroy(&self.gl, &mut self.canvas);
         }
         self.bitmap_registry.clear(&mut self.canvas);
     }
@@ -475,23 +492,13 @@ impl Renderer for FemtoVgRenderer {
     }
 
     fn register_mesh(&mut self, data: &[u8]) -> u16 {
-        // Lazy-init mesh renderer on first registration
-        if self.mesh_renderer.is_none() {
-            match MeshRenderer::new(&self.gl, &mut self.canvas, self.mesh_msaa_samples) {
-                Ok(r) => self.mesh_renderer = Some(r),
-                Err(e) => {
-                    tracing::error!("mesh renderer init failed: {e}");
-                    return 0;
-                }
-            }
-        }
-        self.mesh_renderer
-            .as_mut()
-            .expect("BUG: mesh renderer was just initialized")
-            .register_mesh(&self.gl, data)
+        self.lazy_init_mesh_renderer();
+        let Some(renderer) = self.mesh_renderer.as_mut() else {
+            return 0;
+        };
+        renderer.register_mesh(&self.gl, data)
     }
 
-    #[expect(clippy::many_single_char_names)]
     fn draw_mesh(
         &mut self,
         x: f32,
@@ -500,70 +507,15 @@ impl Renderer for FemtoVgRenderer {
         h: f32,
         slot_index: u8,
         mesh_id: u16,
-        fov: f32,
-        distance: f32,
-        qx: f32,
-        qy: f32,
-        qz: f32,
-        qw: f32,
-        px: f32,
-        py: f32,
-        pz: f32,
-        scale: f32,
-        light_pitch: f32,
-        light_yaw: f32,
-        ambient: f32,
-        specular: f32,
-        hl_u_min: f32,
-        hl_v_min: f32,
-        hl_u_max: f32,
-        hl_v_max: f32,
-        hl_r: f32,
-        hl_g: f32,
-        hl_b: f32,
+        args: MeshDrawArgs,
     ) {
-        // Lazy-init mesh renderer if needed
-        if self.mesh_renderer.is_none() {
-            match MeshRenderer::new(&self.gl, &mut self.canvas, self.mesh_msaa_samples) {
-                Ok(r) => self.mesh_renderer = Some(r),
-                Err(e) => {
-                    tracing::error!("mesh renderer init failed: {e}");
-                    return;
-                }
-            }
-        }
-        let renderer = self
-            .mesh_renderer
-            .as_mut()
-            .expect("BUG: mesh renderer was just initialized");
+        self.lazy_init_mesh_renderer();
+        let Some(renderer) = self.mesh_renderer.as_mut() else {
+            return;
+        };
 
         // Render mesh to atlas slot (skips if params unchanged)
-        let (image_id, sx, sy, sw, sh) = renderer.render(
-            &self.gl,
-            slot_index,
-            mesh_id,
-            fov,
-            distance,
-            qx,
-            qy,
-            qz,
-            qw,
-            px,
-            py,
-            pz,
-            scale,
-            light_pitch,
-            light_yaw,
-            ambient,
-            specular,
-            hl_u_min,
-            hl_v_min,
-            hl_u_max,
-            hl_v_max,
-            hl_r,
-            hl_g,
-            hl_b,
-        );
+        let (image_id, sx, sy, sw, sh) = renderer.render(&self.gl, slot_index, mesh_id, &args);
 
         // Draw the atlas sub-rect via femtovg
         let (atlas_w, atlas_h) = renderer.atlas_size();

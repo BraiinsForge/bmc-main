@@ -5,8 +5,10 @@
 //! The format is produced by `include_mesh!` at compile time and consumed
 //! by the host-side `MeshRenderer` at runtime.
 
-/// Magic bytes: "MDL1" in little-endian.
-pub const MESH_MAGIC: u32 = u32::from_le_bytes(*b"MDL1");
+/// Magic bytes: "MDL2" in little-endian (V2 adds MSDF format + body/label
+/// colors). V1 ("MDL1") is no longer accepted; meshes are rebuilt with the
+/// runtime, so backward compatibility isn't required.
+pub const MESH_MAGIC: u32 = u32::from_le_bytes(*b"MDL2");
 
 /// Maximum triangle count per mesh (hardware budget for GC400 at 30fps).
 pub const MAX_TRIANGLES: u32 = 5_000;
@@ -33,7 +35,9 @@ pub const MAX_TEXTURE_SIZE: u32 = 1_024;
 ///   [34..36] normal_map_width: u16
 ///   [36..38] normal_map_height: u16
 ///   [38..40] _reserved: [u8; 2]
-pub const HEADER_SIZE: usize = 40;
+///   [40..44] body_color: [u8; 4]   (RGBA, used by MSDF format)
+///   [44..48] label_color: [u8; 4]  (RGBA, used by MSDF format)
+pub const HEADER_SIZE: usize = 48;
 
 /// Texture format tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +46,10 @@ pub enum TextureFormat {
     Rgba8 = 0,
     Etc1 = 1,
     Etc2Rgb = 2,
+    /// Multi-channel SDF (RGB888). Sampled as median-of-RGB, smoothstep
+    /// thresholded to coverage, lerped between body_color and label_color
+    /// from the header. No normal map; geometry is simple-lit.
+    Msdf = 3,
 }
 
 /// Mesh flags.

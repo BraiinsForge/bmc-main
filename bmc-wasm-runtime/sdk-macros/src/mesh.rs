@@ -147,7 +147,7 @@ pub fn pack_mesh(glb_path: &Path) -> (Vec<u8>, Vec<[f32; 3]>) {
     let texture_size = compressed_texture.as_ref().map_or(0, Vec::len);
     let normal_map_size = compressed_normal_map.as_ref().map_or(0, Vec::len);
 
-    // Layout: [header 40B][AABB 24B][vertices][indices][albedo texture][normal map]
+    // Layout: [header 48B][AABB 24B][vertices][indices][albedo texture][normal map]
     let aabb_offset = HEADER_SIZE;
     let vertex_offset = aabb_offset + 24;
     let index_offset = vertex_offset + vertex_data_size;
@@ -171,7 +171,7 @@ pub fn pack_mesh(glb_path: &Path) -> (Vec<u8>, Vec<[f32; 3]>) {
 
     let mut buf = vec![0u8; total_size];
 
-    // Write header (40 bytes)
+    // Write header (48 bytes)
     write_u32(&mut buf, 0, MESH_MAGIC);
     write_u32(&mut buf, 4, vertex_count as u32);
     write_u32(&mut buf, 8, indices.len() as u32);
@@ -190,6 +190,8 @@ pub fn pack_mesh(glb_path: &Path) -> (Vec<u8>, Vec<[f32; 3]>) {
         write_u16(&mut buf, 34, nmap.width as u16);
         write_u16(&mut buf, 36, nmap.height as u16);
     }
+    // Body color (offsets 40-43) and label color (offsets 44-47) are
+    // MSDF-only — left zeroed for ETC1 meshes. Buffer was zero-initialized.
 
     // Write AABB (6 floats)
     write_f32(&mut buf, aabb_offset, aabb_min[0]);
