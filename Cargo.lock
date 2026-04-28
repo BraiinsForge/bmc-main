@@ -938,25 +938,11 @@ dependencies = [
 name = "bmc-display"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
- "bmc-shared-time",
- "bmc-shared-utils",
  "chrono",
- "flume",
  "humantime-serde",
  "indexmap",
- "qrcode-generator",
- "resvg",
  "serde",
  "serde_json",
- "slint",
- "slint-build",
- "svg",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tracing",
  "uuid",
 ]
 
@@ -8212,12 +8198,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "svg"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94afda9cd163c04f6bee8b4bf2501c91548deae308373c436f36aeff3cf3c4a3"
-
-[[package]]
 name = "svgtypes"
 version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8647,7 +8627,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
