@@ -16,9 +16,11 @@ use bmc_wasm_sdk::socket::{Socket, SocketEvent, tls_connect_insecure};
 use bmc_wasm_sdk::*;
 use prost::Message;
 
-// Generated protobuf types from cast_channel.proto
+// Generated protobuf types from cast_channel.proto. `allow(dead_code)`
+// because prost generates every message in the .proto regardless of which
+// ones we actually reference (e.g. `DeviceAuthMessage`).
 mod proto {
-    #![allow(clippy::trivially_copy_pass_by_ref)]
+    #![allow(clippy::trivially_copy_pass_by_ref, dead_code)]
     include!(concat!(env!("OUT_DIR"), "/cast_channel.rs"));
 }
 
