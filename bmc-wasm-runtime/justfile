@@ -5,7 +5,7 @@
 # Keep it that way — if a target needs real logic, write a script under
 # tools/ and call it from here.
 
-dir := justfile_directory()
+dir := source_directory()
 wasm_target := "wasm32-unknown-unknown"
 cargo_features := "--features testbed"
 
@@ -22,6 +22,10 @@ wasm_file_debug := examples_target + "/" + wasm_target + "/debug"
 
 widgets_dir := dir + "/examples"
 output_dir := dir + "/captures"
+
+[private]
+default:
+    @just --justfile {{ justfile() }} --list
 
 # === Build / clean ===
 

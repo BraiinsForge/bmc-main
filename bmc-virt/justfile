@@ -1,5 +1,9 @@
 mod harness 'harness/justfile'
 
+[private]
+default:
+    @just --justfile {{ justfile() }} --list
+
 # Rebuild the OpenWrt feed cache after changing packageList or openwrtVersion in dl-cache/openwrt-config.nix.
 update-cache:
     #!/usr/bin/env bash
