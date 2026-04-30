@@ -390,33 +390,46 @@ pub struct FrameTimings {
     pub flush_us: u32,
 }
 
-/// Frame-scheduler state shared by WASM wakeups and cached-tree animation replays.
+/// Frame-scheduler state.
+///
+/// Tracks the three independent inputs that decide what the host does next:
+///
+/// * [`Self::widget_delay_ms`] — what the widget asked for via
+///   `request_frame()` (= `Some(0)`) or `request_frame_after(N)`.
+/// * [`Self::has_active_animations`] — whether the last submitted tree still
+///   has running animations or transitions.
+/// * [`Self::interaction_pending`] — whether clicks/drags were delivered this
+///   frame and the widget has not yet had a chance to render its reaction.
+///
+/// Whether to render at all ([`Self::wants_next_frame`]), how long to wait
+/// ([`Self::effective_delay_ms`]) and whether the next frame can skip WASM
+/// ([`Self::is_animation_only_frame`]) are all *derived* on query rather
+/// than stored. Storing them was the source of a last-writer-wins bug where
+/// the widget's `request_frame_after` could clobber a runtime-imposed
+/// clamp set earlier in the same frame.
 pub(crate) struct FrameScheduleState {
-    /// Whether `request_frame()` was called this frame
-    pub frame_requested: bool,
+    /// Widget's requested delay before the next render. `Some(0)` ≡
+    /// `request_frame()`; `Some(n)` ≡ `request_frame_after(n)`; `None` means
+    /// no widget request this frame.
+    pub widget_delay_ms: Option<u32>,
 
-    /// Delay before the next host wake, if another frame was requested.
-    ///
-    /// This may be shorter than the widget's requested
-    /// `request_frame_after(ms)` delay when host-side cached-tree animations
-    /// need intermediate frames between full WASM renders.
-    pub frame_delay_ms: Option<u32>,
-
-    /// Whether the next frame only needs animation updates (no WASM execution).
-    pub animation_only_frame: bool,
-
-    /// Whether the last successfully submitted/rendered tree still has active
-    /// host-side animations or transitions that require cached-tree updates.
+    /// Whether the last submitted tree still has active host-side animations
+    /// or transitions that require further frames.
     pub has_active_animations: bool,
 
-    /// Frame poll cadence (ms) used to clamp `frame_delay_ms` while host-side
-    /// animations are active. Set from `RuntimeConfig::animation_frame_delay_ms`.
+    /// Whether clicks/drags were delivered this frame. Forces the next frame
+    /// to be an immediate full-WASM render so the widget can react — even if
+    /// the widget then asked for a longer `request_frame_after` after
+    /// consuming the interaction.
+    pub interaction_pending: bool,
+
+    /// Frame poll cadence (ms) capping the effective wake while animations
+    /// are active. Set from `RuntimeConfig::animation_frame_delay_ms`.
     pub animation_frame_delay_ms: u32,
 
     /// Monotonic deadline (ms) for the next forced full WASM render requested
-    /// by `request_frame_after`. This keeps the widget's semantic wakeup time
-    /// separate from `frame_delay_ms`, which the host may clamp earlier while
-    /// cached-tree animations are active.
+    /// by `request_frame_after`. Kept separate from the effective host wake,
+    /// which may be clamped earlier while animations are active.
     ///
     /// Uses monotonic_ms instead of counting down by `delta_ms` because
     /// sub-millisecond frames truncate to 0 and stall countdown timers.
@@ -430,21 +443,49 @@ pub(crate) struct FrameScheduleState {
 impl FrameScheduleState {
     fn new() -> Self {
         Self {
-            frame_requested: false,
-            frame_delay_ms: None,
-            animation_only_frame: false,
+            widget_delay_ms: None,
             has_active_animations: false,
+            interaction_pending: false,
             animation_frame_delay_ms: crate::RuntimeConfig::DEFAULT_ANIMATION_FRAME_DELAY_MS,
             deferred_wasm_render_at_ms: None,
             last_wasm_render_at_ms: 0,
         }
     }
 
-    /// Reset per-frame wakeup state before a new host render pass begins.
+    /// Reset per-frame inputs before a new host render pass begins.
     pub fn begin_render_frame(&mut self) {
-        self.frame_requested = false;
-        self.frame_delay_ms = None;
+        self.widget_delay_ms = None;
         self.has_active_animations = false;
+        self.interaction_pending = false;
+    }
+
+    /// Whether anything wants the host to render a next frame.
+    pub fn wants_next_frame(&self) -> bool {
+        self.widget_delay_ms.is_some() || self.has_active_animations || self.interaction_pending
+    }
+
+    /// Whether the next frame can replay the cached tree without running
+    /// WASM. Only when animations are active and neither the widget nor a
+    /// pending interaction needs WASM to run.
+    pub fn is_animation_only_frame(&self) -> bool {
+        self.has_active_animations && !self.interaction_pending && self.widget_delay_ms.is_none()
+    }
+
+    /// Effective delay before the host should wake for the next render —
+    /// the min of all active constraints.
+    pub fn effective_delay_ms(&self) -> Option<u32> {
+        if self.interaction_pending {
+            return Some(0);
+        }
+        let cap = self
+            .has_active_animations
+            .then_some(self.animation_frame_delay_ms);
+        match (self.widget_delay_ms, cap) {
+            (Some(d), Some(c)) => Some(d.min(c)),
+            (Some(d), None) => Some(d),
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        }
     }
 }
 
@@ -722,5 +763,113 @@ impl HostState {
         self.delayed_fetches
             .len()
             .saturating_add(self.in_flight_fetches as usize)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FrameScheduleState;
+
+    fn schedule(animation_cadence_ms: u32) -> FrameScheduleState {
+        let mut s = FrameScheduleState::new();
+        s.animation_frame_delay_ms = animation_cadence_ms;
+        s
+    }
+
+    #[test]
+    fn pending_interaction_forces_immediate_wake() {
+        let mut s = schedule(33);
+        s.widget_delay_ms = Some(1_000);
+        s.has_active_animations = false;
+        s.interaction_pending = true;
+        assert_eq!(s.effective_delay_ms(), Some(0));
+    }
+
+    #[test]
+    fn pending_interaction_outranks_animation_cadence() {
+        let mut s = schedule(33);
+        s.has_active_animations = true;
+        s.interaction_pending = true;
+        assert_eq!(s.effective_delay_ms(), Some(0));
+    }
+
+    #[test]
+    fn animation_caps_widget_delay() {
+        let mut s = schedule(33);
+        s.widget_delay_ms = Some(1_000);
+        s.has_active_animations = true;
+        assert_eq!(s.effective_delay_ms(), Some(33));
+    }
+
+    #[test]
+    fn shorter_widget_delay_wins_over_animation_cap() {
+        let mut s = schedule(33);
+        s.widget_delay_ms = Some(16);
+        s.has_active_animations = true;
+        assert_eq!(s.effective_delay_ms(), Some(16));
+    }
+
+    #[test]
+    fn animation_alone_uses_cadence() {
+        let mut s = schedule(33);
+        s.has_active_animations = true;
+        assert_eq!(s.effective_delay_ms(), Some(33));
+    }
+
+    #[test]
+    fn idle_widget_request_passes_through() {
+        let mut s = schedule(33);
+        s.widget_delay_ms = Some(1_000);
+        assert_eq!(s.effective_delay_ms(), Some(1_000));
+    }
+
+    #[test]
+    fn no_constraints_returns_none() {
+        let s = schedule(33);
+        assert_eq!(s.effective_delay_ms(), None);
+    }
+
+    #[test]
+    fn wants_next_frame_reflects_any_input() {
+        let s = schedule(33);
+        assert!(!s.wants_next_frame(), "no inputs → no frame wanted");
+
+        let mut s = schedule(33);
+        s.widget_delay_ms = Some(100);
+        assert!(s.wants_next_frame());
+
+        let mut s = schedule(33);
+        s.has_active_animations = true;
+        assert!(s.wants_next_frame());
+
+        let mut s = schedule(33);
+        s.interaction_pending = true;
+        assert!(s.wants_next_frame());
+    }
+
+    #[test]
+    fn animation_only_requires_animations_and_no_widget_or_interaction() {
+        let mut s = schedule(33);
+        s.has_active_animations = true;
+        assert!(s.is_animation_only_frame());
+
+        let mut s = schedule(33);
+        s.has_active_animations = true;
+        s.interaction_pending = true;
+        assert!(!s.is_animation_only_frame(), "interaction needs full WASM");
+
+        let mut s = schedule(33);
+        s.has_active_animations = true;
+        s.widget_delay_ms = Some(100);
+        assert!(
+            !s.is_animation_only_frame(),
+            "widget request needs full WASM"
+        );
+
+        let s = schedule(33);
+        assert!(
+            !s.is_animation_only_frame(),
+            "no animations → not even animatable"
+        );
     }
 }

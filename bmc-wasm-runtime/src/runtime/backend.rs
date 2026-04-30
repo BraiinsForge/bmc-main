@@ -138,7 +138,7 @@ pub struct RuntimeConfig {
     /// Sender for LED commands. Widgets call `led::set_effect()` etc., the host
     /// forwards commands through this channel. `None` = LED control unavailable.
     pub led_command_sender: Option<std::sync::mpsc::Sender<bmc_shared_led_data::LedCommand>>,
-    /// Frame poll cadence (ms) used to clamp `frame_delay_ms` while host-side
+    /// Frame poll cadence (ms) capping the effective host wake while host-side
     /// animations are active, so a widget's `request_frame_after(longer)`
     /// (e.g. a 1Hz clock tick) does not starve cached-tree animation replays.
     /// Defaults to [`Self::DEFAULT_ANIMATION_FRAME_DELAY_MS`] (~30 fps), which
@@ -331,7 +331,7 @@ impl WasmWidgetRuntime {
         }
 
         // Decide frame type BEFORE begin_frame consumes events
-        let mut animation_only = state.frame_schedule.animation_only_frame
+        let mut animation_only = state.frame_schedule.is_animation_only_frame()
             && !state.interaction.has_pending_events()
             && state.cached_tree.is_some();
 
@@ -405,7 +405,9 @@ impl WasmWidgetRuntime {
                 let state = self.store.data_mut();
                 Self::render_cached_tree(state, delta_ms);
                 Self::draw_fuel_warning(state, self.fuel_strikes, self.max_fuel_strikes);
-                state.frame_schedule.frame_requested = true;
+                // Force a retry next frame so the widget can run again with
+                // any state changes that happened before the fuel trap.
+                state.frame_schedule.widget_delay_ms = Some(0);
                 Ok(RenderStatus::FuelExhausted)
             }
             Err(e) => Err(e.into()),
@@ -444,21 +446,8 @@ impl WasmWidgetRuntime {
                 // No WASM execution, no deserialization on cached frames
                 state.tree_clicks = result.clicks;
                 state.tree_drags = result.drags;
-                if has_active || had_interaction {
-                    state.frame_schedule.frame_requested = true;
-                    state.frame_schedule.animation_only_frame = !had_interaction;
-                }
                 state.frame_schedule.has_active_animations = has_active;
-                if has_active {
-                    state.frame_schedule.frame_delay_ms = Some(
-                        state
-                            .frame_schedule
-                            .frame_delay_ms
-                            .map_or(state.frame_schedule.animation_frame_delay_ms, |delay_ms| {
-                                delay_ms.min(state.frame_schedule.animation_frame_delay_ms)
-                            }),
-                    );
-                }
+                state.frame_schedule.interaction_pending = had_interaction;
             }
             Err(e) => {
                 tracing::error!("cached tree render failed: {e}");
@@ -555,7 +544,7 @@ impl WasmWidgetRuntime {
     /// the frame should be rendered immediately or after a delay.
     #[must_use]
     pub fn wants_next_frame(&self) -> bool {
-        self.store.data().frame_schedule.frame_requested
+        self.store.data().frame_schedule.wants_next_frame()
     }
 
     /// Delay before the next host wake, if another frame was requested.
@@ -569,7 +558,7 @@ impl WasmWidgetRuntime {
     /// busy-wait or render immediately.
     #[must_use]
     pub fn next_frame_delay(&self) -> Option<u32> {
-        self.store.data().frame_schedule.frame_delay_ms
+        self.store.data().frame_schedule.effective_delay_ms()
     }
 
     /// Push a touch event to be processed next frame.

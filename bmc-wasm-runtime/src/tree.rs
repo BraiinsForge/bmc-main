@@ -1237,10 +1237,18 @@ pub(crate) fn layout_and_render(
 
     timings.render_us = t2.elapsed().as_micros() as u32;
 
-    // Check modal animations too
-    let modal_animating = modal_states
-        .values()
-        .any(|s| s.animation_progress > 0.0 && s.animation_progress < 1.0);
+    // A modal is animating whenever its progress hasn't yet caught up to its
+    // target state (open=1.0, closed=0.0). Progress alone is ambiguous —
+    // e.g. progress==0.0 means "fully closed" only if `is_open` is also false;
+    // if `is_open` is true, it means the modal *just* started opening and
+    // needs more frames to animate up to 1.0.
+    let modal_animating = modal_states.values().any(|s| {
+        if s.is_open {
+            s.animation_progress < 1.0
+        } else {
+            s.animation_progress > 0.0
+        }
+    });
 
     Ok((result, anim_ctx.has_active || modal_animating))
 }
