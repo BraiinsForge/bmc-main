@@ -151,11 +151,52 @@ impl TransportState {
 
 pub use crate::protocol::TrackMeta;
 
+/// Playhead position with sub-second precision.
+///
+/// Server status updates carry only integer-second granularity, but the
+/// widget interpolates between polls using millisecond frame deltas. A
+/// naive `position_secs + delta_ms / 1_000` loses every sub-second
+/// remainder, so frame-by-frame the displayed elapsed time drifts. This
+/// type carries milliseconds and exposes second-granular getters/setters
+/// at the boundaries that need them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlaybackPosition {
+    ms: u64,
+}
+
+impl PlaybackPosition {
+    /// Build from a server-reported integer-second value.
+    #[must_use]
+    pub fn from_secs(secs: u32) -> Self {
+        Self {
+            ms: u64::from(secs) * 1_000,
+        }
+    }
+
+    /// Reset to a fresh server-reported integer-second value, clearing
+    /// any sub-second remainder accumulated since the last update.
+    pub fn set_secs(&mut self, secs: u32) {
+        self.ms = u64::from(secs) * 1_000;
+    }
+
+    /// Advance the playhead by `delta_ms`, clamped to `max_secs`.
+    pub fn advance(&mut self, delta_ms: u32, max_secs: u32) {
+        let max_ms = u64::from(max_secs) * 1_000;
+        self.ms = (self.ms + u64::from(delta_ms)).min(max_ms);
+    }
+
+    /// Current position in whole seconds (truncated).
+    #[must_use]
+    pub fn as_secs(&self) -> u32 {
+        u32::try_from(self.ms / 1_000).unwrap_or(u32::MAX)
+    }
+}
+
 /// Position info from `GetPositionInfo`.
 #[derive(Debug, Clone, Default)]
 pub struct PositionInfo {
     pub track_meta: TrackMeta,
-    pub position_secs: u32,
+    pub playhead: PlaybackPosition,
     pub duration_secs: u32,
 }
 
@@ -254,7 +295,7 @@ pub fn parse_position_info(response_body: &[u8]) -> Option<PositionInfo> {
 
     Some(PositionInfo {
         track_meta,
-        position_secs: parse_duration(&rel_time),
+        playhead: PlaybackPosition::from_secs(parse_duration(&rel_time)),
         duration_secs: parse_duration(&track_duration),
     })
 }

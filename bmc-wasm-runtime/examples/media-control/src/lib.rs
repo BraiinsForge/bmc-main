@@ -1057,8 +1057,10 @@ fn handle_media_controls(result: &TreeRenderResult) {
                 let mut state = s.borrow_mut();
                 if let WidgetState::Connected(media) = &mut *state {
                     if media.position.duration_secs > 0 {
-                        media.position.position_secs =
-                            (frac * media.position.duration_secs as f32) as u32;
+                        media
+                            .position
+                            .playhead
+                            .set_secs((frac * media.position.duration_secs as f32) as u32);
                     }
                 }
             });
@@ -1447,8 +1449,10 @@ fn interpolate_position(delta_ms: u32) {
         let mut state = s.borrow_mut();
         if let WidgetState::Connected(media) = &mut *state {
             if media.transport == TransportState::Playing && media.position.duration_secs > 0 {
-                media.position.position_secs = (media.position.position_secs + delta_ms / 1_000)
-                    .min(media.position.duration_secs);
+                media
+                    .position
+                    .playhead
+                    .advance(delta_ms, media.position.duration_secs);
             }
         }
     });
@@ -1847,7 +1851,7 @@ fn on_cast_status(status: &cast::CastMediaStatus) {
                 cast::ContentType::Movie | cast::ContentType::TvShow | cast::ContentType::Generic
             );
 
-            media.position.position_secs = status.current_time as u32;
+            media.position.playhead.set_secs(status.current_time as u32);
             media.position.duration_secs = status.duration_secs as u32;
 
             status
@@ -1901,7 +1905,7 @@ fn on_kodi_status(status: &kodi::KodiMediaStatus) {
                 _ => TransportState::NoMedia,
             };
 
-            media.position.position_secs = status.current_time as u32;
+            media.position.playhead.set_secs(status.current_time as u32);
             media.position.duration_secs = status.duration_secs as u32;
 
             status
@@ -1961,7 +1965,7 @@ fn on_mpd_status(status: &mpd::MpdMediaStatus) {
                 _ => TransportState::NoMedia,
             };
 
-            media.position.position_secs = status.elapsed_secs as u32;
+            media.position.playhead.set_secs(status.elapsed_secs as u32);
             media.position.duration_secs = status.duration_secs as u32;
 
             // Build track metadata
@@ -2050,7 +2054,7 @@ fn on_jellyfin_status(status: &media_server::JellyfinMediaStatus) {
                 _ => TransportState::NoMedia,
             };
 
-            media.position.position_secs = status.current_time as u32;
+            media.position.playhead.set_secs(status.current_time as u32);
             media.position.duration_secs = status.duration_secs as u32;
 
             status
@@ -2811,7 +2815,7 @@ const BAR_TRACK_H: f32 = 2.0;
 
 /// Build a seek progress bar node for the current media state.
 fn progress_bar_node(media: &MediaState) -> Node {
-    let pos = media.position.position_secs;
+    let pos = media.position.playhead.as_secs();
     let dur = media.position.duration_secs;
     let is_playing = media.transport == TransportState::Playing;
     let is_continuous = dur == 0;
@@ -2833,7 +2837,7 @@ fn progress_bar_node(media: &MediaState) -> Node {
 
 /// Formatted time string for the progress bar.
 fn progress_time_str(media: &MediaState) -> String {
-    let pos = media.position.position_secs;
+    let pos = media.position.playhead.as_secs();
     let dur = media.position.duration_secs;
     if dur == 0 {
         format_duration_hms(pos)
