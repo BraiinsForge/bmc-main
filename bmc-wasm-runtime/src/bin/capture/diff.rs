@@ -398,6 +398,16 @@ struct WidgetReportView {
     missing: u32,
     new_count: u32,
     no_baseline: bool,
+    /// Total comparable frames (passed + failed + missing + new). Used for the
+    /// "n/total" headline on failing widgets.
+    total: u32,
+    /// True when nothing went wrong — used to decide whether the widget's
+    /// `<details>` opens by default.
+    is_clean: bool,
+    /// Status class for the minimap pill: `"pass"`, `"fail"`, or `"no-baseline"`.
+    minimap_status: &'static str,
+    /// Compact count label shown next to the pill.
+    minimap_count: String,
 }
 
 struct DiffResultView {
@@ -452,6 +462,15 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
                 })
                 .collect();
 
+            let total = r.passed + r.failed + r.missing + r.new_count;
+            let is_clean = !r.no_baseline && r.failed == 0 && r.missing == 0 && r.new_count == 0;
+            let (minimap_status, minimap_count) = if r.no_baseline {
+                ("no-baseline", "—".to_owned())
+            } else if is_clean {
+                ("pass", r.passed.to_string())
+            } else {
+                ("fail", format!("{}/{total}", r.failed))
+            };
             WidgetReportView {
                 widget: r.widget.clone(),
                 results,
@@ -460,6 +479,10 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
                 missing: r.missing,
                 new_count: r.new_count,
                 no_baseline: r.no_baseline,
+                total,
+                is_clean,
+                minimap_status,
+                minimap_count,
             }
         })
         .collect();

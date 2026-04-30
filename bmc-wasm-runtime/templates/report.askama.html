@@ -5,30 +5,69 @@
 <title>Visual Regression Report</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 24px; }
+body { font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 24px;
+       display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 24px; align-items: start; }
+.content { min-width: 0; }
 h1 { margin-bottom: 8px; }
 .summary { font-size: 1.1em; margin-bottom: 24px; color: #aaa; }
 .summary .fail { color: #f66; font-weight: bold; }
 .summary .pass { color: #6f6; }
-.widget { margin-bottom: 32px; }
-.widget h2 { margin-bottom: 12px; border-bottom: 1px solid #333; padding-bottom: 6px; }
-.widget h2 .counts { font-size: 0.7em; font-weight: normal; color: #888; margin-left: 12px; }
-.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-bottom: 12px;
-       padding: 12px; background: #1a1a1a; border-radius: 8px; border-left: 4px solid #333; }
+.widget { margin-bottom: 16px; border: 1px solid #2a2a2a; border-radius: 8px; background: #161616;
+          scroll-margin-top: 16px; }
+.widget[open] { background: #1a1a1a; }
+.widget summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  user-select: none;
+}
+.widget summary::-webkit-details-marker { display: none; }
+.widget summary::before {
+  content: "▸";
+  display: inline-block;
+  color: #666;
+  width: 1em;
+  transition: transform 0.1s;
+}
+.widget[open] summary::before { content: "▾"; }
+.widget summary h2 { font-size: 1.1em; margin: 0; flex: 0 0 auto; }
+.widget-body { padding: 0 16px 12px; }
+.status { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 0.8em;
+          font-weight: bold; text-transform: uppercase; letter-spacing: 0.04em; }
+.status.pass { background: #1a3a1a; color: #8f8; }
+.status.fail { background: #4a1a1a; color: #faa; }
+.status.no-baseline { background: #4a3a1a; color: #fc8; }
+.status .ratio { font-weight: 700; margin-right: 4px; }
+.status-extras { font-size: 0.8em; color: #888; }
+.status-extras .chip { display: inline-block; padding: 1px 8px; border-radius: 3px; margin-right: 4px;
+                       background: #222; }
+.status-extras .chip.missing { background: #3a2a10; color: #fc8; }
+.status-extras .chip.new { background: #102a3a; color: #8cf; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-bottom: 8px;
+       padding: 12px; background: #1a1a1a; border-radius: 6px; border-left: 3px solid #333;
+       overflow-x: auto; }
 .row.diff { border-left-color: #f66; }
 .row.missing { border-left-color: #fa0; }
 .row.new { border-left-color: #08f; }
 .row.no-baseline { border-left-color: #fa0; }
 .row.pass { border-left-color: #6f6; }
 .row-header { width: 100%; display: flex; align-items: center; gap: 8px; }
-.images { display: flex; gap: 8px; width: 100%; margin-top: 8px; }
-.col { display: flex; flex-direction: column; align-items: center; }
+.images { display: flex; gap: 8px; margin-top: 8px; flex-wrap: nowrap; }
+.col { display: flex; flex-direction: column; align-items: center; flex: 0 0 auto; }
 .col img { max-width: 400px; max-height: 300px; border: 1px solid #333; border-radius: 4px; cursor: zoom-in; }
 .lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 100;
-            justify-content: center; align-items: center; cursor: zoom-out; }
+            justify-content: center; align-items: center; flex-direction: column; cursor: zoom-out; }
 .lightbox.open { display: flex; }
-.lightbox img { max-width: 95vw; max-height: 95vh; border: 1px solid #444; border-radius: 4px;
+.lightbox-label { color: #fff; font-size: 0.9em; padding: 6px 12px; background: #222; border-radius: 4px;
+                  margin-bottom: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+.lightbox-label .key { background: #444; color: #ccc; padding: 1px 6px; border-radius: 3px; margin-left: 8px;
+                       font-family: monospace; font-size: 0.85em; text-transform: none; letter-spacing: 0; }
+.lightbox img { max-width: 95vw; max-height: 85vh; border: 1px solid #444; border-radius: 4px;
                 image-rendering: pixelated; }
+.lightbox-help { color: #888; font-size: 0.8em; margin-top: 12px; font-family: monospace; }
 .col .label { font-size: 0.75em; color: #888; margin-top: 4px; }
 .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75em;
        font-weight: bold; text-transform: uppercase; }
@@ -44,10 +83,54 @@ h1 { margin-bottom: 8px; }
                  color: #ccc; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
 .filter button.active { background: #444; color: #fff; }
 .hidden { display: none; }
+
+/* Minimap sidebar — sticky right rail, IDE-style overview of widgets. */
+.minimap {
+  position: sticky;
+  top: 24px;
+  max-height: calc(100vh - 48px);
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 8px;
+  overflow-y: auto;
+  font-size: 0.8em;
+}
+.minimap-title { color: #888; font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.06em;
+                 padding: 4px 6px 8px; border-bottom: 1px solid #222; margin-bottom: 6px; }
+.minimap-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  text-decoration: none;
+  color: #ccc;
+  margin-bottom: 2px;
+}
+.minimap-item:hover { background: #222; }
+.minimap-pill { width: 6px; height: 18px; border-radius: 3px; flex: 0 0 auto; background: #444; }
+.minimap-item.pass .minimap-pill { background: #4a7; }
+.minimap-item.fail .minimap-pill { background: #d44; }
+.minimap-item.no-baseline .minimap-pill { background: #c83; }
+.minimap-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.minimap-count { color: #888; font-family: monospace; font-size: 0.85em; flex: 0 0 auto; }
+.minimap-item.fail .minimap-count { color: #faa; }
+.minimap-item.no-baseline .minimap-count { color: #fc8; }
+
+/* Narrow viewports: drop the sidebar entirely. */
+@media (max-width: 900px) {
+  body { grid-template-columns: 1fr; }
+  .minimap { display: none; }
+}
+
+/* Custom scrollbars — match the dark theme so they don't pop visually. */
+* { scrollbar-width: thin; scrollbar-color: #333 transparent; }
 </style>
 </head>
 <body>
 
+<main class="content">
 <h1>Visual Regression Report</h1>
 <div class="summary">
   <span class="pass">Pass: {{ total_pass }}</span> &nbsp;
@@ -67,13 +150,24 @@ h1 { margin-bottom: 8px; }
 </div>
 
 {% for report in reports %}
-<div class="widget">
-<h2>{{ report.widget }}<span class="counts">
-  {%- if report.no_baseline -%}NO BASELINE
-  {%- else -%}{{ report.passed }} pass, {{ report.failed }} fail, {{ report.missing }} missing, {{ report.new_count }} new
+<details class="widget" id="widget-{{ report.widget }}"{% if !report.is_clean %} open{% endif %}>
+<summary>
+  <h2>{{ report.widget }}</h2>
+  {%- if report.no_baseline -%}
+    <span class="status no-baseline">no baseline</span>
+  {%- else if report.is_clean -%}
+    <span class="status pass"><span class="ratio">{{ report.passed }}</span>frames</span>
+  {%- else -%}
+    <span class="status fail"><span class="ratio">{{ report.failed }}/{{ report.total }}</span>fail</span>
+    <span class="status-extras">
+      {%- if report.missing > 0 -%}<span class="chip missing">{{ report.missing }} missing</span>{%- endif -%}
+      {%- if report.new_count > 0 -%}<span class="chip new">{{ report.new_count }} new</span>{%- endif -%}
+      {%- if report.passed > 0 -%}<span class="chip">{{ report.passed }} pass</span>{%- endif -%}
+    </span>
   {%- endif -%}
-</span></h2>
+</summary>
 
+<div class="widget-body">
 {% if report.no_baseline %}
 <div class="row no-baseline" data-status="no-baseline">
   <div class="row-header">
@@ -91,19 +185,37 @@ h1 { margin-bottom: 8px; }
   </div>
   {% if result.status != "pass" %}
   <div class="images">
-    {% if let Some(uri) = result.baseline_uri %}<div class="col"><img src="{{ uri }}"><div class="label">baseline</div></div>{% endif %}
-    {% if let Some(uri) = result.current_uri %}<div class="col"><img src="{{ uri }}"><div class="label">current</div></div>{% endif %}
-    {% if let Some(uri) = result.diff_uri %}<div class="col"><img src="{{ uri }}"><div class="label">diff</div></div>{% endif %}
+    {% if let Some(uri) = result.baseline_uri %}<div class="col"><img src="{{ uri }}" data-label="baseline"><div class="label">baseline</div></div>{% endif %}
+    {% if let Some(uri) = result.current_uri %}<div class="col"><img src="{{ uri }}" data-label="current"><div class="label">current</div></div>{% endif %}
+    {% if let Some(uri) = result.diff_uri %}<div class="col"><img src="{{ uri }}" data-label="diff"><div class="label">diff</div></div>{% endif %}
   </div>
   {% endif %}
 </div>
 {% endfor %}
 {% endif %}
-
 </div>
+</details>
 {% endfor %}
+</main>
 
-<div class="lightbox" id="lightbox" onclick="this.classList.remove('open')"><img id="lightbox-img"></div>
+<aside class="minimap" aria-label="Widget overview">
+  <div class="minimap-title">Widgets</div>
+  {% for report in reports %}
+  <a class="minimap-item {{ report.minimap_status }}" href="#widget-{{ report.widget }}">
+    <span class="minimap-pill"></span>
+    <span class="minimap-name">{{ report.widget }}</span>
+    <span class="minimap-count">{{ report.minimap_count }}</span>
+  </a>
+  {% endfor %}
+</aside>
+
+<div class="lightbox" id="lightbox">
+  <div class="lightbox-label" id="lightbox-label">
+    <span id="lightbox-label-text">baseline</span>
+    <span class="key">←/→ cycle · 1/2/3 jump · esc close</span>
+  </div>
+  <img id="lightbox-img">
+</div>
 
 <script>
 function filterRows(status) {
@@ -113,14 +225,68 @@ function filterRows(status) {
     row.classList.toggle('hidden', status !== 'all' && row.dataset.status !== status);
   });
 }
+
+let lightboxState = null;
+
+function showInLightbox(imgs, labels, idx) {
+  const lb = document.getElementById('lightbox');
+  document.getElementById('lightbox-img').src = imgs[idx].src;
+  document.getElementById('lightbox-label-text').textContent = labels[idx];
+  lb.classList.add('open');
+  lightboxState = { imgs, labels, idx };
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+  lightboxState = null;
+}
+
 document.querySelectorAll('.col img').forEach(img => {
   img.addEventListener('click', () => {
-    document.getElementById('lightbox-img').src = img.src;
-    document.getElementById('lightbox').classList.add('open');
+    const row = img.closest('.row');
+    const imgs = Array.from(row.querySelectorAll('.col img'));
+    const labels = imgs.map(i => i.dataset.label || '');
+    showInLightbox(imgs, labels, imgs.indexOf(img));
   });
 });
+
+document.getElementById('lightbox').addEventListener('click', e => {
+  // Click on the backdrop (not on the image or label) closes.
+  if (e.target.id === 'lightbox') closeLightbox();
+});
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.getElementById('lightbox').classList.remove('open');
+  const lb = document.getElementById('lightbox');
+  if (!lb.classList.contains('open')) return;
+
+  if (e.key === 'Escape') { closeLightbox(); return; }
+  if (!lightboxState) return;
+
+  const { imgs, labels, idx } = lightboxState;
+  const n = imgs.length;
+  let next = null;
+
+  if (e.key === 'ArrowRight') next = (idx + 1) % n;
+  else if (e.key === 'ArrowLeft') next = (idx - 1 + n) % n;
+  else if (e.key >= '1' && e.key <= '9') {
+    const target = parseInt(e.key, 10) - 1;
+    if (target < n) next = target;
+  }
+
+  if (next !== null) {
+    e.preventDefault();
+    showInLightbox(imgs, labels, next);
+  }
+});
+
+// Minimap: clicking a pill expands the target widget so the anchor scrolls
+// to fully-visible content rather than landing on a closed summary.
+document.querySelectorAll('.minimap-item').forEach(link => {
+  link.addEventListener('click', () => {
+    const id = link.getAttribute('href').slice(1);
+    const target = document.getElementById(id);
+    if (target && target.tagName === 'DETAILS') target.open = true;
+  });
 });
 </script>
 </body>
