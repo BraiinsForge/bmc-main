@@ -23,13 +23,12 @@ which mirrors `open/utils-rs/` from bos-main.
 
 ### Core logic
 
-- **bmc** — state machine, display tasks (screen transitions), widget tasks (data fetching), startup orchestration, web
-  server, gRPC API.
+- **bmc** — state machine, startup orchestration, web server, gRPC API.
 
 ### Display
 
-- **bmc-display** — Slint UI components, `DisplayController` (the bridge between async tasks and the Slint event loop),
-  `Proxy` (flume channel implementing Slint's `EventLoopProxy`), scene management, widget rendering.
+- **bmc-display** — shared scene-cycling and account data structures consumed by `bmc` and the per-widget crates. The
+  former monolithic Slint runtime has been removed; rendering now lives in the per-widget crates under `widgets/`.
 
 ### Hardware drivers
 
@@ -46,9 +45,9 @@ which mirrors `open/utils-rs/` from bos-main.
 
 ### Dev/test
 
-- **bmc-mock** / **bmc-mock-display** — desktop mock for development (winit backend)
 - **bmc-virt** — QEMU x86/64 emulation environment (flake.nix)
-- **bmc-virt-relay** — guest daemon: captures DRM framebuffer + SPI LED data, serves via TCP IPC
+- **bmc-virt-relay** — guest daemon: captures the compositor's output as a Wayland client (via
+  `ext-image-copy-capture-v1`) plus SPI LED data, and serves both over TCP IPC
 - **bmc-virt-console** — host-side native viewer (egui): display, touch injection, LED glow, controls
 - **bmc-virt-ipc** — typed TCP protocol between relay and console
 - **bmc-virt-leds** — APA102 SPI stream decoder for LED visualization
@@ -60,11 +59,16 @@ The application runs two threads:
 1. **Tokio async runtime** (main thread) — runs all business logic as async tasks: screen state transitions, widget data
    fetching, web/gRPC servers, WiFi management, LED control.
 
-2. **Slint event loop** (spawned std::thread) — owns the `MinimalSoftwareWindow` and DRM framebuffer. Processes events
-   from a flume channel, renders via software renderer, writes pixels to the DRM dumb buffer.
+2. **Compositor thread** (spawned std::thread in `bmc-openwrt/src/compositor/egl_compositor.rs`) — owns the Smithay
+   Wayland server, the EGL/GLES2 renderer, and the DRM output. Driven by a `calloop` event loop that multiplexes Wayland
+   client traffic, libinput touch events, DRM vblank events, and frame-callback timers.
 
-Communication between threads is through `DisplayController.in_event_loop()` which calls Slint's `upgrade_in_event_loop`
-→ sends a closure through the flume `Proxy` → executed on the Slint thread.
+Communication between threads uses two channels:
+
+- **Tokio → compositor**: `CompositorCommand` values (set active scene, configure scene cycling, register/unregister
+  widgets) sent via a `calloop_channel::Channel` so they wake the compositor's `calloop` loop directly.
+- **Compositor → tokio**: `WidgetAction` and `CompositorEvent` values (gestures, widget exits, surface presentations)
+  sent via `tokio::mpsc::UnboundedChannel`.
 
 ### Virtual GPU caveat
 
@@ -75,15 +79,15 @@ investigation.
 
 ## Display Pipeline
 
-Physical display is 480x1280 (portrait). The application renders at 1280x480 (landscape) with
-`RenderingRotation::Rotate270` applied by the Slint software renderer.
+Physical display is 480x1280 (portrait). Widgets are separate processes acting as Wayland clients; the compositor
+composites their surfaces into the final frame and presents it on the panel.
 
-1. Slint renders into an in-memory `Rgb565Pixel` buffer (480 * 1280 pixels)
-2. The buffer is converted to the DRM framebuffer format:
-   - ARM hardware: RGB565 direct copy
-   - QEMU virtio-gpu: RGB565 → XRGB8888 pixel conversion (virtio-gpu doesn't support RGB565)
-3. Pixels are written row-by-row to the mmap'd DRM dumb buffer
-4. DRM atomic modeset presents the buffer
+1. Widget processes connect to the compositor's Wayland socket and submit dmabuf or shm surfaces, configured via the
+   custom `deck_widget_v1` protocol (see `bmc-widget-protocol/protocol/deck-widget-v1.xml`).
+2. The compositor imports each surface as a GLES texture and composites the active scene with Smithay's `GlesRenderer`
+   into a GBM-backed buffer (`XRGB8888`, double-buffered in `compositor/render/buffer_pool.rs`).
+3. The composited buffer is attached to the DRM CRTC; presentation is driven by DRM atomic page-flip on vblank
+   (synthetic 60 Hz tick when running headless).
 
 ## State Machine
 
@@ -96,8 +100,9 @@ Operational    → show connect info (10s) → enable scene cycler (main widget 
 WifiReconfig   → display_setup_start() → AP mode active
 ```
 
-Each transition sets Slint global adapter properties (`ScreenAdapter.init`, `ScreenAdapter.scene_cycler`, etc.) via
-`invoke_from_event_loop`.
+Each transition sends `CompositorCommand`s (`SetActiveScene`, `SetSceneCycling`, widget enable/disable) to the
+compositor thread, which updates which widget surfaces are visible and which scenes participate in swipe-driven cycling
+(see `bmc-openwrt/src/compositor/widget_tracker.rs`).
 
 ## Build System
 
@@ -106,7 +111,8 @@ Each transition sets Slint global adapter properties (`ScreenAdapter.init`, `Scr
 - **Frontend** — React SPA built via Nix, served at `:80/www/bmc/`.
 - **OpenWrt image** — built from source via Nix flake (`bmc-virt/flake.nix`). Custom kernel with
   `CONFIG_PROC_PAGE_MONITOR=y` for rr debugger support.
-- **Slint** — pinned at 1.13.1 with `renderer-software` feature. UI defined in `.slint` files, compiled at build time.
+- **Compositor** — Smithay-based Wayland server in `bmc-openwrt/src/compositor/`, rendering through EGL/GLES2 onto a
+  DRM/GBM output. Widgets are separate Wayland-client crates under `widgets/`, packaged into `lib/bmc-widgets`.
 
 ## Emulation (bmc-virt)
 
