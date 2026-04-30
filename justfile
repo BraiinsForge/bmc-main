@@ -13,6 +13,7 @@ default:
 # Fast sanity check, not CI-reproducible (use `validate-full` for that).
 validate: format clippy
     nix build -L ".#checks.{{ NIX_SYSTEM }}.content"
+    @echo "validate: OK"
 
 # Auto-format everything (nix fmt + SVG pass).
 format:
@@ -47,11 +48,15 @@ validate-full:
 # === WASM Runtime ===
 
 # Validate the bmc-wasm-runtime crate (format, lint, clippy, test, build examples).
-validate-wasm: format
+validate-wasm: format validate-protocol-no-std
     cargo clippy -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
     cargo clippy -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
     cargo nextest run -p bmc-wasm-runtime
     cd bmc-wasm-runtime/examples && cargo build --target wasm32-unknown-unknown --workspace
+
+# Verify `bmc-wasm-protocol` stays no_std-clean (riscv = bare-metal, no libstd).
+validate-protocol-no-std:
+    cargo build -p bmc-wasm-protocol --target riscv32imc-unknown-none-elf
 
 # === Tooling ===
 
