@@ -361,8 +361,12 @@ impl SphereRenderer {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+/// `NaN` is the sentinel for "parameter unset" (e.g. lighting disabled). The
+/// naive `(old - new).abs() > eps` returns `false` for any `NaN` operand, so
+/// a `valid → NaN` transition would silently keep the cached frame. Either
+/// operand being `NaN` therefore forces a re-render.
 fn is_dirty(old: f32, new: f32) -> bool {
-    old.is_nan() || (old - new).abs() > DIRTY_EPSILON
+    old.is_nan() || new.is_nan() || (old - new).abs() > DIRTY_EPSILON
 }
 
 /// Create a VBO with a fullscreen quad (4 verts, triangle strip).
