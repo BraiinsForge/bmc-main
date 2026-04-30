@@ -6,6 +6,7 @@ pub mod bootloader_config;
 mod button_manager;
 pub mod compositor;
 mod config;
+mod data;
 pub mod entry;
 pub mod firmware;
 mod initial_setup;

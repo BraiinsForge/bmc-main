@@ -23,12 +23,8 @@ which mirrors `open/utils-rs/` from bos-main.
 
 ### Core logic
 
-- **bmc** — state machine, startup orchestration, web server, gRPC API.
-
-### Display
-
-- **bmc-display** — shared scene-cycling and account data structures consumed by `bmc` and the per-widget crates. The
-  former monolithic Slint runtime has been removed; rendering now lives in the per-widget crates under `widgets/`.
+- **bmc** — state machine, startup orchestration, web server, gRPC API; also owns the persisted scene-cycling and
+  account data structures (rendering itself lives in the per-widget crates under `widgets/`).
 
 ### Hardware drivers
 

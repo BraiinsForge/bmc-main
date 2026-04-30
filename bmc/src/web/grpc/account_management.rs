@@ -4,9 +4,9 @@
 #![allow(clippy::map_identity, unused_mut)]
 
 use crate::config::ConfigHandle;
+use crate::data::{Account, AccountId, AccountType, AuthenticationType};
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
-use bmc_display::data::{Account, AccountId, AccountType, AuthenticationType};
 use bmc_grpc::web;
 use prost_types::Timestamp;
 use reqwest::StatusCode;

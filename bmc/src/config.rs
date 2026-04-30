@@ -3,15 +3,13 @@
 // TODO: display refactor
 #![allow(dead_code)]
 
+use crate::data::{Account, AccountId, SceneCycling, deserialize_accounts, serialize_accounts};
 use crate::{
     alarm::{AlarmData, AlarmId},
     scene::{Scene, SceneId, SceneKind, WidgetSize, deserialize_scenes, serialize_scenes},
     utils::replace_file,
 };
 use anyhow::{Context, Result, bail};
-use bmc_display::data::{
-    Account, AccountId, SceneCycling, deserialize_accounts, serialize_accounts,
-};
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;

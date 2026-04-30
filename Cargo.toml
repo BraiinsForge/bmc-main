@@ -4,7 +4,6 @@ members = [
     "bmc",
     "bmc-audio",
     "bmc-button",
-    "bmc-display",
     "bmc-gpio",
     "bmc-grpc",
     "bmc-ipc",
@@ -124,7 +123,6 @@ bincode = "2.0.0" # NOTE: check https://docs.rs/bincode/latest/bincode/serde/ind
 bmc = { path = "bmc" }
 bmc-audio = { path = "bmc-audio" }
 bmc-button = { path = "bmc-button" }
-bmc-display = { path = "bmc-display" }
 bmc-gpio = { path = "bmc-gpio" }
 bmc-grpc = { path = "bmc-grpc", default-features = false }
 bmc-ipc = { path = "bmc-ipc" }

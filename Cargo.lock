@@ -863,7 +863,6 @@ dependencies = [
  "axum-extra",
  "bmc-audio",
  "bmc-button",
- "bmc-display",
  "bmc-grpc",
  "bmc-ipc",
  "bmc-led",
@@ -930,18 +929,6 @@ dependencies = [
  "async-stream",
  "futures",
  "tokio",
-]
-
-[[package]]
-name = "bmc-display"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "humantime-serde",
- "indexmap",
- "serde",
- "serde_json",
- "uuid",
 ]
 
 [[package]]
