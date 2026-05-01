@@ -197,20 +197,6 @@ impl SceneRenderer {
             }
         }
 
-        // Skip the entire render pass when there is no widget content. The
-        // back-buffer DMA-BUF's GPU mapping is realised lazily by Etnaviv
-        // on the first GLES draw; if that first draw is a `frame.clear`
-        // covering the full output (which is what happens at startup
-        // before any widget has attached a buffer) the GPU MMU-faults on
-        // an unmapped page and recovers with corrupted sampler state,
-        // which then breaks subsequent widget glyph rendering. Gating on
-        // a non-empty `to_render` ensures the buffer's first touch is
-        // always a widget texture render, which warms the mapping
-        // without faulting.
-        if to_render.is_empty() {
-            return Ok((false, capture_frames, false));
-        }
-
         let buffer = self.buffers.back_buffer(&self.output)?;
         let fb = buffer.fb;
 
@@ -298,10 +284,6 @@ impl SceneRenderer {
 
         // Clear regions not covered by any widget so gaps and edge strips
         // get a deterministic background instead of stale pool content.
-        // Safe here because the `to_render.is_empty()` early-out above
-        // ensures the back-buffer's first GLES draw was a widget texture
-        // render (which warms Etnaviv's lazy DMA-BUF mapping); a clear
-        // before that would MMU-fault.
         let clear_regions = uncovered_output_regions(output_rect, drawn_regions);
         if !clear_regions.is_empty() {
             frame
