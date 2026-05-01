@@ -1,26 +1,25 @@
-# from https://github.com/NixOS/nixpkgs/blob/nixpkgs-unstable/pkgs/development/libraries/mesa/default.nix
+# Originally derived from
+# https://github.com/NixOS/nixpkgs/blob/nixpkgs-unstable/pkgs/development/libraries/mesa/default.nix,
+# trimmed for a wayland-only Vivante GC400 build (no X11, no Vulkan,
+# no LLVM/OpenCL, no software pipes, no video codecs).
 { lib
 , bison
 , buildPackages
-, directx-headers
-, elfutils
 , expat
 , fetchCrate
 , fetchFromGitLab
-, file
 , flex
-, glslang
-, spirv-tools
-, intltool
 , jdupes
+, libdisplay-info
 , libdrm
-, libpng
 , libunwind
 , lm_sensors
+, spirv-tools
 , meson
 , ninja
 , pkg-config
 , python3Packages
+, runCommand
 , rust-bindgen
 , rust-cbindgen
 , rustPlatform
@@ -30,15 +29,7 @@
 , wayland
 , wayland-protocols
 , wayland-scanner
-, xcbutilkeysyms
-, libx11
-, libxcb
-, libxext
-, libxfixes
-, libxrandr
-, libxshmfence
-, libxxf86vm
-, xorgproto
+, zlib
 , zstd
 , galliumDrivers ? [
     "etnaviv"
@@ -53,40 +44,30 @@
 }:
 
 let
-  rustDeps = [
-    {
-      pname = "paste";
-      version = "1.0.14";
-      hash = "sha256-+J1h7New5MEclUBvwDQtTYJCHKKqAEOeQkuKy+g0vEc=";
-    }
-    {
-      pname = "proc-macro2";
-      version = "1.0.86";
-      hash = "sha256-9fYAlWRGVIwPp8OKX7Id84Kjt8OoN2cANJ/D9ZOUUZE=";
-    }
-    {
-      pname = "quote";
-      version = "1.0.33";
-      hash = "sha256-VWRCZJO0/DJbNu0/V9TLaqlwMot65YjInWT9VWg57DY=";
-    }
-    {
-      pname = "syn";
-      version = "2.0.68";
-      hash = "sha256-nGLBbxR0DFBpsXMngXdegTm/o13FBS6QsM7TwxHXbgQ=";
-    }
-    {
-      pname = "unicode-ident";
-      version = "1.0.12";
-      hash = "sha256-KX8NqYYw6+rGsoR9mdZx8eT1HIPEUUyxErdk2H/Rlj8=";
-    }
+  # Mesa ≥26 fetches Rust dependencies via meson's wrap mechanism, looking
+  # for `<pname>-<version>.tar.gz` files in `MESON_PACKAGE_CACHE_DIR`.
+  # We mirror nixpkgs' approach: build the cache from `wraps.json`.
+  rustDeps = lib.importJSON ./wraps.json;
+
+  fetchDep =
+    dep:
+    fetchCrate {
+      inherit (dep) pname version hash;
+      unpack = false;
+    };
+
+  toCommand = dep: "ln -s ${dep} $out/${dep.pname}-${dep.version}.tar.gz";
+
+  packageCacheCommand = lib.pipe rustDeps [
+    (map fetchDep)
+    (map toCommand)
+    (lib.concatStringsSep "\n")
   ];
 
-  copyRustDep = dep: ''
-    cp -R --no-preserve=mode,ownership ${fetchCrate dep} subprojects/${dep.pname}-${dep.version}
-    cp -R subprojects/packagefiles/${dep.pname}/* subprojects/${dep.pname}-${dep.version}/
+  packageCache = runCommand "mesa-rust-package-cache" { } ''
+    mkdir -p $out
+    ${packageCacheCommand}
   '';
-
-  copyRustDeps = lib.concatStringsSep "\n" (builtins.map copyRustDep rustDeps);
 
   needNativeCLC = !stdenv.buildPlatform.canExecute stdenv.hostPlatform;
 
@@ -113,8 +94,6 @@ stdenv.mkDerivation {
         exit 42
       fi
     done
-
-    ${copyRustDeps}
   '';
 
   # Keep build-ids so drivers can use them for caching, etc.
@@ -122,6 +101,16 @@ stdenv.mkDerivation {
   separateDebugInfo = true;
   __structuredAttrs = true;
 
+  env.MESON_PACKAGE_CACHE_DIR = packageCache;
+
+  # Minimal mesa for Vivante GC400 on the Deck:
+  #   - one gallium driver (etnaviv)
+  #   - one EGL platform (wayland)
+  #   - everything else explicitly disabled to keep the closure small,
+  #     drop unrelated codegen, and avoid pulling in LLVM/Vulkan/OpenCL/etc.
+  # Options that no longer exist in mesa ≥26 are omitted (gallium-nine,
+  # gallium-xa, xlib-lease, glx, gallium-vdpau, gallium-va, gallium-opencl,
+  # llvm, install-mesa-clc, install-precomp-compiler, tools).
   mesonFlags = [
     "--sysconfdir=/etc"
 
@@ -135,75 +124,49 @@ stdenv.mkDerivation {
     (lib.mesonEnable "gbm" true)
     (lib.mesonBool "libgbm-external" false)
 
-    (lib.mesonBool "gallium-nine" false) # Direct3D9 in Wine, largely supplanted by DXVK
-
-    # Only used by xf86-video-vmware, which has more features than VMWare's KMS driver,
-    # so we're keeping it for now. Should be removed when that's no longer the case.
-    # See: https://github.com/NixOS/nixpkgs/pull/392492
-    (lib.mesonEnable "gallium-xa" false)
-
     (lib.mesonBool "teflon" false) # TensorFlow frontend
+    (lib.mesonBool "amdgpu-virtio" false) # AMD virtio native context
+    (lib.mesonBool "gallium-rusticl" false) # OpenCL frontend
+    (lib.mesonBool "gallium-extra-hud" false) # extra HUD sensors
 
+    # X11 paths — auto-enabled by meson but irrelevant for our wayland-only build.
     (lib.mesonEnable "xlib-lease" false)
     (lib.mesonEnable "glx" false)
-    (lib.mesonEnable "gallium-vdpau" false)
+
+    # Video acceleration API — none of the drivers it requires are built.
     (lib.mesonEnable "gallium-va" false)
 
+    # LLVM is only needed for software pipes / OpenCL / radeonsi — not for etnaviv.
     (lib.mesonEnable "llvm" false)
-    (lib.mesonEnable "gallium-opencl" false)
 
-    # Enable all freedreno kernel mode drivers. (For example, virtio can be
-    # used with a virtio-gpu device supporting drm native context.) This option
-    # is ignored when freedreno is not being built.
+    # Default to all freedreno kernel mode drivers. Ignored when freedreno
+    # is not being built (we only build etnaviv).
     (lib.mesonOption "freedreno-kmds" "msm,kgsl,virtio,wsl")
 
-    # Enable Intel RT stuff when available
     (lib.mesonEnable "intel-rt" stdenv.hostPlatform.isx86_64)
 
-    # Rusticl, new OpenCL frontend
-    (lib.mesonBool "gallium-rusticl" false)
-    #(lib.mesonOption "gallium-rusticl-enable-drivers" "auto")
-
-    # meson auto_features enables this, but we do not want it
+    # auto_features wants these on; we don't.
+    (lib.mesonEnable "gallium-mediafoundation" false) # Windows
     (lib.mesonEnable "android-libbacktrace" false)
-    (lib.mesonEnable "microsoft-clc" false) # Only relevant on Windows (OpenCL 1.2 API on top of D3D12)
-
-    # Enable more sensors in gallium-hud
-    (lib.mesonBool "gallium-extra-hud" false)
-
-    (lib.mesonOption "tools" "")
-    (lib.mesonBool "install-mesa-clc" false)
-    (lib.mesonBool "install-precomp-compiler" false)
+    (lib.mesonEnable "microsoft-clc" false) # Windows (OpenCL on D3D12)
     (lib.mesonEnable "valgrind" false)
   ];
 
   strictDeps = true;
 
-  buildInputs =
-    [
-      directx-headers
-      elfutils
-      expat
-      spirv-tools
-      libdrm
-      libpng
-      libunwind
-      libx11
-      libxcb
-      libxext
-      libxfixes
-      libxrandr
-      libxshmfence
-      libxxf86vm
-      lm_sensors
-      python3Packages.python # for shebang
-      udev
-      wayland
-      wayland-protocols
-      xcbutilkeysyms
-      xorgproto
-      zstd
-    ];
+  buildInputs = [
+    expat
+    libdisplay-info
+    libdrm
+    libunwind
+    lm_sensors
+    spirv-tools
+    udev
+    wayland
+    wayland-protocols
+    zlib
+    zstd
+  ];
 
   depsBuildBuild = [
     pkg-config
@@ -214,20 +177,14 @@ stdenv.mkDerivation {
     meson
     pkg-config
     ninja
-    intltool
     bison
     flex
-    file
     python3Packages.python
     python3Packages.packaging
     python3Packages.pycparser
     python3Packages.mako
-    python3Packages.ply
     python3Packages.pyyaml
     jdupes
-    # Use bin output from glslang to not propagate the dev output at
-    # the build time with the host glslang.
-    (lib.getBin glslang)
     rustc
     rust-bindgen
     rust-cbindgen
