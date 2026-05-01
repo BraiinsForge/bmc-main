@@ -215,8 +215,14 @@ impl WaylandClient {
                 let _fbo_id = rs.egl.begin_frame()?;
                 rs.runtime.renderer().begin_frame(w, h, 1.0);
 
-                // Deliver pending fetch responses
+                // Deliver pending async I/O to the WASM widget
                 rs.runtime.deliver_fetch_responses();
+                rs.runtime.deliver_ws_messages();
+                rs.runtime.deliver_socket_events();
+                rs.runtime.deliver_mdns_events();
+                rs.runtime.deliver_ssdp_events();
+                rs.runtime.deliver_udp_broadcast_events();
+                rs.runtime.deliver_http_requests();
 
                 // Render WASM frame
                 let status = rs.runtime.render(delta_ms)?;
@@ -259,7 +265,7 @@ impl WaylandClient {
                     Some(delay_ms) => i32::try_from(delay_ms).unwrap_or(i32::MAX),
                     None => 0,
                 }
-            } else if rs.runtime.has_pending_fetches() {
+            } else if has_async_io(&rs.runtime) {
                 100
             } else {
                 -1
@@ -268,4 +274,16 @@ impl WaylandClient {
             0 // not yet initialized — init immediately
         }
     }
+}
+
+/// Returns true if any background async I/O is in flight that may produce
+/// events the widget needs delivered.
+fn has_async_io(runtime: &WasmWidgetRuntime) -> bool {
+    runtime.has_pending_fetches()
+        || runtime.has_active_websockets()
+        || runtime.has_active_sockets()
+        || runtime.has_active_mdns_browses()
+        || runtime.has_active_ssdp_searches()
+        || runtime.has_active_udp_broadcasts()
+        || runtime.has_active_http_listeners()
 }
