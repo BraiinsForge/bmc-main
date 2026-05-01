@@ -64,6 +64,16 @@ content-checks:
   script:
     - nix build -L .#checks.x86_64-linux.content
 
+binary-lfs-check:
+  extends: .nix
+  stage: check
+  needs: []
+  variables:
+    # `git merge-base` needs to see master; default GitLab depth (50) is shallow.
+    GIT_DEPTH: 0
+  script:
+    - nix-shell -p git --run "scripts/check-binary-lfs.sh"
+
 ###################################
 ########## Python Checks ##########
 ###################################
