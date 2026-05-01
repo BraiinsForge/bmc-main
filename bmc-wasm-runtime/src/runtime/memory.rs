@@ -8,28 +8,29 @@ use wasmi::{Caller, Extern};
 
 use crate::host_api::HostState;
 
+/// Resolve `[ptr .. ptr + len]` against `data_len`, rejecting overflow and
+/// out-of-bounds in one place. `usize == u32` on armv7 makes the naive
+/// `start + len` wrap on guest-controlled values; `checked_add` catches that.
+fn bounded_range(ptr: u32, len: u32, data_len: usize) -> Option<core::ops::Range<usize>> {
+    let start = ptr as usize;
+    let end = start.checked_add(len as usize)?;
+    (end <= data_len).then_some(start..end)
+}
+
 /// Read a UTF-8 string from WASM memory.
 pub(super) fn read_string(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<String> {
     let memory = caller.get_export("memory").and_then(Extern::into_memory)?;
     let data = memory.data(caller);
-    let start = ptr as usize;
-    let end = start + len as usize;
-    if end > data.len() {
-        return None;
-    }
-    String::from_utf8(data[start..end].to_vec()).ok()
+    let range = bounded_range(ptr, len, data.len())?;
+    String::from_utf8(data[range].to_vec()).ok()
 }
 
 /// Read raw bytes from WASM memory.
 pub(super) fn read_bytes(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<Vec<u8>> {
     let memory = caller.get_export("memory").and_then(Extern::into_memory)?;
     let data = memory.data(caller);
-    let start = ptr as usize;
-    let end = start + len as usize;
-    if end > data.len() {
-        return None;
-    }
-    Some(data[start..end].to_vec())
+    let range = bounded_range(ptr, len, data.len())?;
+    Some(data[range].to_vec())
 }
 
 /// Read optional bytes from WASM memory (returns `None` if ptr is null / len is 0).
@@ -81,9 +82,11 @@ pub(super) fn write_to_wasm(
         let memory = caller.get_export("memory").and_then(Extern::into_memory);
         if let Some(memory) = memory {
             let data = memory.data_mut(caller);
-            let start = out_ptr as usize;
-            if start + copy_len <= data.len() {
-                data[start..start + copy_len].copy_from_slice(&bytes[..copy_len]);
+            // `copy_len` already fits `out_len: u32`, but `bounded_range`
+            // still enforces `start + copy_len` doesn't wrap on armv7.
+            #[expect(clippy::cast_possible_truncation, reason = "copy_len ≤ out_len: u32")]
+            if let Some(range) = bounded_range(out_ptr, copy_len as u32, data.len()) {
+                data[range].copy_from_slice(&bytes[..copy_len]);
             }
         }
     }
@@ -127,9 +130,7 @@ pub(super) fn alloc_and_copy_to_guest(
     };
 
     let mem_data = memory.data_mut(store);
-    let start = ptr as usize;
-    let end = start + len as usize;
-    if end > mem_data.len() {
+    let Some(range) = bounded_range(ptr, len, mem_data.len()) else {
         tracing::error!(
             ptr,
             len,
@@ -137,7 +138,7 @@ pub(super) fn alloc_and_copy_to_guest(
             "guest memory too small for {context}"
         );
         return None;
-    }
-    mem_data[start..end].copy_from_slice(bytes);
+    };
+    mem_data[range].copy_from_slice(bytes);
     Some((ptr, len))
 }

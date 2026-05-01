@@ -139,9 +139,12 @@ fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
                 let memory = caller.get_export("memory").and_then(Extern::into_memory);
                 if let Some(memory) = memory {
                     let data = memory.data_mut(&mut caller);
+                    // `start + needed` would wrap on armv7 for guest-supplied
+                    // ptr/len; `checked_add` catches that.
                     let start = rgba_out_ptr as usize;
-                    let end = start + needed as usize;
-                    if end <= data.len() {
+                    if let Some(end) = start.checked_add(needed as usize)
+                        && end <= data.len()
+                    {
                         data[start..end].copy_from_slice(pixels);
                     }
                 }
