@@ -33,7 +33,6 @@
 
         workspace = import ./workspace.nix { inherit self pkgs; };
         inherit (workspace) commonDeps bmc;
-        frontend = import ./frontend { inherit self pkgs; };
         capture = import ./bmc-wasm-runtime/capture.nix {
           inherit self pkgs commonDeps;
           inherit (workspace.bmc) profiles;
@@ -146,7 +145,7 @@
           inherit (workspace.bmc) armv7-pkgs;
         };
 
-        checks = self.packages.${localSystem} // frontend.checks // checks // {
+        checks = self.packages.${localSystem} // workspace.checks // checks // {
           content = content-checks;
         };
 
@@ -155,8 +154,6 @@
         packages = workspace.packages // {
           wasm-capture = capture.package;
           wasm-examples = capture.wasmExamples;
-          frontend = frontend.build;
-          yarnFiles = frontend.yarnFiles;
         };
 
         apps.fmt-svg = {

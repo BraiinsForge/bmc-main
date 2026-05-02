@@ -247,9 +247,12 @@ let
     };
   };
 
+  frontend = import ./frontend { inherit self pkgs; };
+
   # Runtime deps for dlopen'd libraries, split by widget type.
   # Functions accepting pkgs — resolved at the point of use.
   deps = {
+    frontend = frontend.build;
     widgetRuntimeDeps = {
       # Slint-based widgets: winit backend dlopen's wayland + xkbcommon.
       slint = pkgs: with pkgs; [
@@ -525,6 +528,7 @@ in
 {
   inherit commonDeps bmc deps makeRustflagsEnv;
   inherit (wasmWidgetsModule) wasmExamples;
+  checks = frontend.checks;
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
     deck-packages = armv7PackageDefs;
     armv7-nixpkgs = armv7Pkgs;
@@ -541,6 +545,9 @@ in
 
     # Native widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
     widgets = bmc.lib.mkAllWidgets { inherit widgets; profile = bmc.profiles.fast; };
+
+    frontend = frontend.build;
+    yarnFiles = frontend.yarnFiles;
   };
   devShells =
     let

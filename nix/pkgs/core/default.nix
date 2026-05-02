@@ -4,7 +4,7 @@ let
   inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries
     mkOpenWrtService;
   inherit (bmc) crates;
-  inherit (deps) compositorRuntimeDeps;
+  inherit (deps) compositorRuntimeDeps frontend;
   profile = bmc.profiles.armv7-glibc-release;
 
   orchestrator = profile.buildCrate crates.bmc-nix-service-orchestrator { };
@@ -105,7 +105,9 @@ in
   pkg = mkPackage {
     name = "bmc-core";
     package = autopatchelfBinaries {
-      drv = profile.buildCrate crates.bmc-openwrt { };
+      drv = profile.buildCrate crates.bmc-openwrt {
+        env.BMC_WEB_FRONTEND_DIR = "${frontend}";
+      };
       runtimeDeps = compositorRuntimeDeps armv7Pkgs;
     };
     hooks = [

@@ -7,7 +7,7 @@
 let
   inherit (bmc.lib) mkWidgetPackage;
   inherit (bmc) crates;
-  inherit (deps) widgetRuntimeDeps;
+  inherit (deps) widgetRuntimeDeps frontend;
   profile = bmc.profiles.armv7-glibc-release;
 in
 {
@@ -181,6 +181,15 @@ in
     version = "0.1.0";
     category = "widget";
     description = "Pomodoro timer with LED phase feedback and daily session tracking";
+  };
+  bmc-frontend = {
+    pkg = armv7Pkgs.runCommand "bmc-frontend-profile" { } ''
+      mkdir -p $out/www
+      ln -s ${frontend} $out/www/bmc
+    '';
+    version = "0.1.0";
+    category = "dev";
+    description = "Frontend web assets under www/bmc (dev use; not shipped)";
     upgrade_strategy = null;
     install_strategy = null;
   };
