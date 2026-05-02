@@ -437,7 +437,6 @@ impl ConfigHandle {
         }
     }
 
-    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
     pub fn subscribe_localization_change(&self) -> broadcast::Receiver<LocalizationConfig> {
         self.config_notify.subscribe_localization_change()
     }

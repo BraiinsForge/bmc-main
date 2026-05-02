@@ -197,9 +197,21 @@ where
 
         {
             let config_guard = config_handle.read().await;
+            let localization_rx = config_guard.subscribe_localization_change();
+            drop(config_guard);
+            Coordinator::start_settings_listener(
+                widget_coordinator.compositor(),
+                localization_rx,
+                system_manager.subscribe_night_mode(),
+                manager.watch_timezone_updates(),
+            );
+        }
+
+        {
+            let config_guard = config_handle.read().await;
             let localization = config_guard.localization_config();
             let timezone = manager.timezone();
-            let night_mode_active = config_guard.night_mode().enabled;
+            let night_mode_active = *system_manager.subscribe_night_mode().borrow();
             widget_coordinator
                 .spawn_initial_widgets(
                     &config_guard.scenes,

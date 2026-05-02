@@ -2,10 +2,11 @@
 
 use bmc_shared_time::time::Timezone;
 use bmc_widget::{ParamKey, ParamValue};
-use bmc_widget_protocol::{Localization, SizeType, WidgetInitialConfig};
+use bmc_widget_protocol::{Localization, SettingUpdate, SizeType, WidgetInitialConfig};
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use tokio::sync::{broadcast, watch};
 use tracing::{debug, info, warn};
 
 use crate::compositor::{
@@ -50,6 +51,78 @@ impl Coordinator {
         }
     }
 
+    /// Subscribe the coordinator to runtime setting changes and
+    /// forward each one to the compositor's `broadcast_setting`.
+    ///
+    /// Three upstream sources feed in, each with its own canonical
+    /// channel — the coordinator is the translation layer that maps
+    /// each one onto the wire-level [`SettingUpdate`] enum.
+    ///
+    /// All three subscriptions live for the lifetime of the program;
+    /// if any upstream channel closes the listener exits.
+    pub fn start_settings_listener(
+        compositor: Arc<dyn Compositor>,
+        mut localization_rx: broadcast::Receiver<LocalizationConfig>,
+        mut night_mode_active_rx: watch::Receiver<bool>,
+        mut timezone_rx: watch::Receiver<Timezone>,
+    ) {
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    res = localization_rx.recv() => match res {
+                        Ok(config) => {
+                            let proto_loc = Self::build_localization(&config);
+                            for update in SettingUpdate::from_localization(&proto_loc) {
+                                if let Err(e) = compositor.broadcast_setting(update.clone()) {
+                                    warn!(error = %e, "failed to broadcast {update:?} to widgets");
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(
+                                "localization receiver lagged, dropped {n} updates; widgets \
+                                 may be out of sync until the next save"
+                            );
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            info!("localization channel closed; coordinator listener exiting");
+                            return;
+                        }
+                    },
+                    res = night_mode_active_rx.changed() => {
+                        if res.is_err() {
+                            info!("night mode watch channel closed; coordinator listener exiting");
+                            return;
+                        }
+                        let active = *night_mode_active_rx.borrow();
+                        if let Err(e) =
+                            compositor.broadcast_setting(SettingUpdate::NightMode(active))
+                        {
+                            warn!(error = %e, "failed to broadcast NightMode({active}) to widgets");
+                        }
+                    },
+                    res = timezone_rx.changed() => {
+                        if res.is_err() {
+                            info!("timezone watch channel closed; coordinator listener exiting");
+                            return;
+                        }
+                        let tz = timezone_rx.borrow().clone();
+                        if let Err(e) = compositor
+                            .broadcast_setting(SettingUpdate::Timezone(tz.iana().to_owned()))
+                        {
+                            warn!(error = %e, "failed to broadcast timezone {tz} to widgets");
+                        }
+                    },
+                }
+            }
+        });
+    }
+
+    #[must_use]
+    pub fn compositor(&self) -> Arc<dyn Compositor> {
+        Arc::clone(&self.compositor)
+    }
+
     pub async fn spawn_initial_widgets(
         &self,
         scenes: &IndexMap<SceneId, Scene>,
@@ -60,7 +133,6 @@ impl Coordinator {
         // Seed the compositor's setting cache so it can emit these as
         // part of the initial configure batch for every widget that
         // connects (and also propagate subsequent changes).
-        use bmc_widget_protocol::SettingUpdate;
         let _ = self
             .compositor
             .broadcast_setting(SettingUpdate::Timezone(timezone.iana().to_owned()));
