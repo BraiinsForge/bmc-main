@@ -13,10 +13,7 @@ XDG_RUNTIME_DIR=<dir>
 ```
 
 plus the coordinator's own environment passed through unchanged (`PATH`, `HOME`, locale, `RUST_LOG`, and anything else
-the init system set up for BMC). An allowlist was considered and rejected: curating which variables a widget may see is
-prone to omitting a variable the system actually needs (`TZ`, locale, resolver settings, future additions), with no
-clear payoff — widgets already run as the same user as the coordinator and see its filesystem, so filtering env alone
-doesn't establish a meaningful privilege boundary.
+the init system set up for BMC).
 
 ### Identity
 
@@ -28,6 +25,18 @@ arrives.
 Connections that arrive before the coordinator registers the pid are buffered in the compositor and resolved as soon as
 the registration lands. When a widget process exits the coordinator clears the pid association so a recycled OS pid
 cannot be mistaken for the dead widget.
+
+### Parameters
+
+Each widget declares parameters it needs in its `manifest.json`. The coordinator itself ensures that the parameters will
+be sent to the widget according to the manifest at the time the widget has been added to a scene by the user. Even
+required values are always populated with the default, so the widget does not have to handle default values itself.
+
+There is one caveat, though. When the widget changes its `manifest.json`, the old variant will be sent to the widget,
+until the user has updated the config. This case has to be handled more robustly in the future, but it is not right now.
+So in case the widget decides to update the manifest, it has to handle it on its own. It has to handle both the old and
+new versions, migrating the parameters in memory. Or crash explicitly if it can't migrate (that cannot be encouraged,
+though, showing something is usually preferable to nothing at all, the user will adjust if they see something wrong)
 
 ### Initial configuration
 
@@ -45,13 +54,42 @@ configure_done
 - `params` carries the widget's per-instance params as a JSON-encoded object, exactly as stored in the scene config. The
   compositor passes it through as-is; the widget owns its manifest and is authoritative on what values are valid.
 - Setting events carry the current system-wide values. The compositor keeps these cached so every newly connected widget
-  starts with a fully populated state.
+  starts with a fully populated state. Each locale-related field (date / time / number format, temperature unit, first
+  day of week) is a separate event rather than a single bundled "localization" event, so new locale fields can be added
+  later as additional events without a breaking protocol change.
 - `configure_done` tells the widget the batch is finished and it can start rendering.
 
 ### Runtime updates
 
-After `configure_done` the same setting events continue to flow whenever a system setting changes. `params` is only
-emitted once per connection — a change to a widget's params requires respawning the widget.
+After `configure_done` the same setting events continue to flow whenever a system setting changes. The `params` event is
+also re-emittable: when widget params change without a size change, the compositor pushes a fresh JSON-encoded params
+blob on the existing surface instead of stopping and respawning the widget process. Even on position changes, the widget
+does not respawn as positioning is a compositor concern, not a widget concern. The widget client surfaces the
+post-`configure_done` `params` event as a separate runtime event (`ParamUpdate`) so per-widget code can re-bind its
+state in place — Slint property setters for the digital-clock, plain Rust state plus a needs-render flag for the
+flip-clock, etc.
+
+Changes that *do* affect size still respawn — the widget only receives `configure(size_type, width, height)` once,
+during the initial batch, so a new size needs a fresh process to size its renderer for.
+
+Runtime param pushes are full replacements of the widget params map (not partial patches). Widgets should treat every
+`params(json)` event as a complete snapshot and re-bind state from that snapshot.
+
+### Shutdown
+
+When the compositor itself is exiting it broadcasts a `shutdown` event to every connected widget so they can exit
+gracefully. The widget client surfaces this as a `Shutdown` event. When the widget is being removed from the scene, it
+is killed by SIGTERM; if it does not exit within 10 seconds, it is force-killed with SIGKILL. The `shutdown` event is
+sent only when the whole compositor shuts down.
+
+#### Live previews
+
+When the user is actively editing the configuration, each valid change sends config update to the widget even before
+saving. The changes are debounced by 300 ms. Preview updates and committed updates use the same protocol events, so the
+widget cannot distinguish them today.
+
+The user might be changing multiple parameters subsequently. It is therefore advisable to the widget to debounce web
+fetches or other expensive operations that are caused by parameter changes.
 
 ## Constraints
 
@@ -64,3 +102,9 @@ emitted once per connection — a change to a widget's params requires respawnin
 
 - On-disk config (`/etc/bmc_config.json`) is unchanged. The widget instances carry their params in the scene config; the
   compositor serves them over the protocol.
+
+- Params are typed end-to-end before they reach Wayland. The scene config, compositor, and Wayland-side serialization
+  run on `serde_json::Map<String, Value>`. The widget process receives params as a JSON-encoded string (Wayland's
+  `params(json)` event) and deserializes via its own `#[derive(Deserialize)]` schema — the manifest is the source of
+  truth on what the widget expects, and the pipeline carries the user's choices through without ad-hoc per-layer string
+  parsing.

@@ -162,6 +162,9 @@
       <arg name="value" type="uint" enum="night_mode_state"/>
     </event>
 
+    <!-- Localization added as separate events, to prevent
+         breaking changes when adding a new localization field. -->
+
     <event name="date_format">
       <arg name="value" type="uint" enum="date_format"/>
     </event>

@@ -37,13 +37,32 @@ firmware rebuild.
 - Config forms are generated from the widget's manifest parameter schema — string, enum, boolean, number, and timezone
   fields.
 - No per-widget form components exist in the frontend; a new parameter kind added once benefits every widget.
-- Changing a parameter restarts the widget with the new config automatically.
+- `UpdateWidget` is a full-map update (not a patch): clients send the complete params object, and the backend validates
+  required/missing keys, unknown keys, and per-type constraints (type/range/enum/timezone).
+- Changing a parameter applies live to the running widget — the widget process keeps running and re-binds its state in
+  place. Changes that affect the widget's size still respawn it (the only way to deliver a new geometry during the
+  widget's initial configure batch). Position-only changes do not respawn.
+
+### Preview configuration changes live
+
+> As a user, I want to see my parameter changes on the device as I make them, so I can tell whether a setting looks
+> right without committing it.
+
+- Editing a widget's params or size pushes valid changes to the device with a short debounce, so the display reacts as
+  the user types or toggles.
+- By clicking on Add a widget either as a fullscreen scene or in combined, the coordinator creates the widget on the
+  device immediately with its default params; the tile appears live and continues to reflect every form change.
+- Cancelling add/edit dialog removes the widget so the scene is unchanged from before the dialog opened.
+- Scene preview is exclusive: only one active preview stream is allowed at a time.
+- Previewing a disabled scene temporarily spawns its widgets; ending preview tears those widgets down again.
+- Live application explicitly shows an error to the user, but success presents no toast.
 
 ### Control widgets in real time
 
 > As a user, I want to start, stop, and switch widgets from the browser and see the device react immediately.
 
-- Stop or restart a single widget from the UI.
+- Stop or restart a widget by disabling and re-enabling its scene. There is no per-widget stop/restart RPC; widget
+  lifecycle is driven by scene enabled state and by `UpdateWidget` (which respawns on size changes).
 
 ### Switch between scenes
 
@@ -57,8 +76,12 @@ firmware rebuild.
 > As a user, I want to change timezone, night mode, and localization from the browser, and have every widget on the
 > device pick up the change without a restart.
 
-- Timezone, night mode, and localization broadcast to every running widget via the Wayland protocol.
-- Brightness control.
+- Timezone, night mode, and locale-related settings broadcast to every running widget via the `deck_widget_v1` Wayland
+  protocol. Locale is delivered as separate events per field (date format, time format, number format, temperature unit,
+  first day of week) rather than a single bundled "localization" event, so new locale fields can be added later without
+  a breaking protocol change.
+- Brightness is configured via the `ConfigurationService` gRPC API, not the Wayland broadcast — widgets don't see
+  brightness as a setting event.
 - Changes apply immediately — no widget restart required (settings delivery is handled by the `deck_widget_v1`
   protocol).
 

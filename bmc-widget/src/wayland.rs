@@ -34,8 +34,8 @@ const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// `params` is the raw JSON object the compositor sent — each widget
 /// deserializes it into its own `#[derive(Deserialize)]` struct that
-/// mirrors its manifest. An empty `{}` means the compositor had no
-/// per-instance overrides, which each widget handles via `#[serde(default)]`.
+/// mirrors its manifest. Even default values are sent over the wire,
+/// so the widget does not handle non-optional values by defaults.
 #[derive(Debug, Clone)]
 pub struct ProtocolInitialState {
     pub size: SizeType,
