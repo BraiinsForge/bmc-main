@@ -27,7 +27,8 @@ the whole screen to one widget, the device composes several widgets together and
 > As a user, I want widgets in a combined scene to follow a consistent sizing model so different widgets can coexist
 > predictably.
 
-- Combined-scene widgets use the shared size classes `small`, `medium`, `large`, and `full`.
+- Combined-scene widgets use the size classes `small`, `medium`, and `large`. Fullscreen widgets (`full`) are reserved
+  for fullscreen scenes.
 - Each widget declares which of those sizes it supports.
 - The system only offers sizes that the selected widget actually supports.
 

@@ -19,8 +19,8 @@ diagnostic files, so users can safely share archives with support without exposi
 ### [Combined Scene](combined-scene.md)
 
 A combined scene lets the user compose multiple compatible widgets on a single display. Widgets share a common sizing
-model (`small`, `medium`, `large`, `full`) and keep their own widget-specific configuration while rendering as one
-scene.
+model (`small`, `medium`, `large`) and keep their own widget-specific configuration while rendering as one scene.
+`full`-sized widgets are reserved for fullscreen scenes.
 
 ### [Nix Store Initializer](nix-store-initializer.md)
 
@@ -32,6 +32,12 @@ activates the Nix store, and falls back to firmware upgrade if no matching bundl
 
 Swipe left/right to navigate between scenes and tap/drag to interact with widgets via touch events forwarded through the
 Wayland protocol.
+
+### [Web UI for Deck Configuration](web-ui.md)
+
+Browser-based interface hosted by the device for managing scenes, widgets, and system-wide settings. Widget catalog and
+config forms are manifest-driven — any installed widget (including out-of-tree) is configurable without a firmware
+rebuild.
 
 ### Audio & Alarms
 
