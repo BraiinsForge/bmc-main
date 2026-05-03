@@ -128,30 +128,19 @@ fn persist_total() {
 
 // ── LED helpers ──────────────────────────────────────────────────────
 
-fn led_set(effect: LedEffect, color: Color, period_ms: u32, duration_ms: u32) {
-    led::set_effect(
-        effect,
-        color.red(),
-        color.green(),
-        color.blue(),
-        period_ms,
-        duration_ms,
-    );
-}
-
 fn apply_led_for_phase(phase: Phase) {
     match phase {
         Phase::Working => {
             led::enable();
-            led_set(LedEffect::Breathe, RED_50, 4_000, 0);
+            led::set_effect(LedEffect::Breathe, RED_50, 4_000, 0);
         }
         Phase::ShortBreak => {
             led::enable();
-            led_set(LedEffect::Solid, GREEN_50, 0, 0);
+            led::set_effect(LedEffect::Solid, GREEN_50, 0, 0);
         }
         Phase::LongBreak => {
             led::enable();
-            led_set(LedEffect::Solid, BLUE_50, 0, 0);
+            led::set_effect(LedEffect::Solid, BLUE_50, 0, 0);
         }
         Phase::Idle => {
             led::disable();
@@ -161,7 +150,7 @@ fn apply_led_for_phase(phase: Phase) {
 
 fn led_session_complete() {
     led::enable();
-    led_set(LedEffect::Chase, GREEN_50, 500, 2_000);
+    led::set_effect(LedEffect::Chase, GREEN_50, 500, 2_000);
 }
 
 // ── Phase duration ───────────────────────────────────────────────────

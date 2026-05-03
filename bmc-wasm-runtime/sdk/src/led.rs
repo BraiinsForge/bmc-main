@@ -6,6 +6,8 @@
 //! enable/disable.  The host maps these calls to real hardware (or testbed
 //! visualization).
 
+use bmc_wasm_protocol::Color;
+
 /// LED effect variants (matches host-side `LedEffect` discriminants).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -30,8 +32,17 @@ unsafe extern "C" {
 ///
 /// `period_ms` controls animation speed (ignored for `Solid`/`None`).
 /// `duration_ms` = 0 means persistent (stays until replaced).
-pub fn set_effect(effect: LedEffect, r: u8, g: u8, b: u8, period_ms: u32, duration_ms: u32) {
-    unsafe { host_led_set_effect(effect as u8, r, g, b, period_ms, duration_ms) }
+pub fn set_effect(effect: LedEffect, color: Color, period_ms: u32, duration_ms: u32) {
+    unsafe {
+        host_led_set_effect(
+            effect as u8,
+            color.red(),
+            color.green(),
+            color.blue(),
+            period_ms,
+            duration_ms,
+        );
+    }
 }
 
 /// Set LED brightness (0.0–1.0).
