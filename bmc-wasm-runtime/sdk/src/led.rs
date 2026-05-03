@@ -8,18 +8,7 @@
 
 use bmc_wasm_protocol::Color;
 
-/// LED effect variants (matches host-side `LedEffect` discriminants).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum LedEffect {
-    None = 0,
-    Chase = 1,
-    KnightRider = 2,
-    Scan = 3,
-    Snake = 4,
-    Breathe = 5,
-    Solid = 6,
-}
+pub use bmc_led::data::LedEffectKind as LedEffect;
 
 unsafe extern "C" {
     fn host_led_set_effect(effect: u8, r: u8, g: u8, b: u8, period_ms: u32, duration_ms: u32);

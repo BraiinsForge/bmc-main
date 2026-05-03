@@ -28,19 +28,24 @@ fn register_set_effect_import(linker: &mut Linker<HostState>) -> Result<()> {
          b: u32,
          period_ms: u32,
          duration_ms: u32| {
-            let color = bmc_shared_led_data::Rgb::new(r as u8, g as u8, b as u8);
-            let led_effect = match effect as u8 {
-                0 => bmc_shared_led_data::LedEffect::None,
-                1 => bmc_shared_led_data::LedEffect::Chase(color),
-                2 => bmc_shared_led_data::LedEffect::KnightRider(color),
-                3 => bmc_shared_led_data::LedEffect::Scan(color),
-                4 => bmc_shared_led_data::LedEffect::Snake(color),
-                5 => bmc_shared_led_data::LedEffect::Breathe(color),
-                6 => bmc_shared_led_data::LedEffect::Solid(color),
-                other => {
+            let color = bmc_led::data::Rgb::new(r as u8, g as u8, b as u8);
+            let kind = match bmc_led::data::LedEffectKind::try_from(effect as u8) {
+                Ok(kind) => kind,
+                Err(other) => {
                     tracing::warn!("ignoring unknown LED effect discriminant: {other}");
                     return;
                 }
+            };
+            let led_effect = match kind {
+                bmc_led::data::LedEffectKind::None => bmc_led::data::LedEffect::None,
+                bmc_led::data::LedEffectKind::Chase => bmc_led::data::LedEffect::Chase(color),
+                bmc_led::data::LedEffectKind::KnightRider => {
+                    bmc_led::data::LedEffect::KnightRider(color)
+                }
+                bmc_led::data::LedEffectKind::Scan => bmc_led::data::LedEffect::Scan(color),
+                bmc_led::data::LedEffectKind::Snake => bmc_led::data::LedEffect::Snake(color),
+                bmc_led::data::LedEffectKind::Breathe => bmc_led::data::LedEffect::Breathe(color),
+                bmc_led::data::LedEffectKind::Solid => bmc_led::data::LedEffect::Solid(color),
             };
 
             let state = caller.data_mut();
@@ -69,12 +74,12 @@ fn register_set_effect_import(linker: &mut Linker<HostState>) -> Result<()> {
             let duration =
                 (duration_ms > 0).then(|| std::time::Duration::from_millis(u64::from(duration_ms)));
 
-            let scene = bmc_shared_led_data::LedScene {
+            let scene = bmc_led::data::LedScene {
                 effect: led_effect,
                 period,
                 duration,
             };
-            let _ = tx.send(bmc_shared_led_data::LedCommand::SetEffect(scene));
+            let _ = tx.send(bmc_led::data::LedCommand::SetEffect(scene));
         },
     )?;
     Ok(())
@@ -103,7 +108,7 @@ fn register_set_brightness_import(linker: &mut Linker<HostState>) -> Result<()> 
             }
 
             if let Some(ref tx) = state.led_command_sender {
-                let _ = tx.send(bmc_shared_led_data::LedCommand::SetBrightness(brightness));
+                let _ = tx.send(bmc_led::data::LedCommand::SetBrightness(brightness));
             }
         },
     )?;
@@ -130,7 +135,7 @@ fn register_enable_import(linker: &mut Linker<HostState>) -> Result<()> {
             }
 
             if let Some(ref tx) = state.led_command_sender {
-                let _ = tx.send(bmc_shared_led_data::LedCommand::Enable);
+                let _ = tx.send(bmc_led::data::LedCommand::Enable);
             }
         },
     )?;
@@ -157,7 +162,7 @@ fn register_disable_import(linker: &mut Linker<HostState>) -> Result<()> {
             }
 
             if let Some(ref tx) = state.led_command_sender {
-                let _ = tx.send(bmc_shared_led_data::LedCommand::Disable);
+                let _ = tx.send(bmc_led::data::LedCommand::Disable);
             }
         },
     )?;

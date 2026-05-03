@@ -211,9 +211,9 @@ struct PreviewTile {
     ever_rendered: bool,
     kv_path: PathBuf,
     /// Receiver for LED commands from the widget (drained each frame).
-    led_rx: Receiver<bmc_shared_led_data::LedCommand>,
+    led_rx: Receiver<bmc_led::data::LedCommand>,
     /// Current LED scene (from last `SetEffect` command).
-    led_scene: Option<bmc_shared_led_data::LedScene>,
+    led_scene: Option<bmc_led::data::LedScene>,
     /// Whether LEDs are enabled.
     led_enabled: bool,
 }
@@ -1074,10 +1074,10 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         // Drain LED commands, update state for visualization
         while let Ok(cmd) = tile.led_rx.try_recv() {
             match cmd {
-                bmc_shared_led_data::LedCommand::Enable => tile.led_enabled = true,
-                bmc_shared_led_data::LedCommand::Disable => tile.led_enabled = false,
-                bmc_shared_led_data::LedCommand::SetEffect(scene) => tile.led_scene = Some(scene),
-                bmc_shared_led_data::LedCommand::SetBrightness(_) => {} // TODO
+                bmc_led::data::LedCommand::Enable => tile.led_enabled = true,
+                bmc_led::data::LedCommand::Disable => tile.led_enabled = false,
+                bmc_led::data::LedCommand::SetEffect(scene) => tile.led_scene = Some(scene),
+                bmc_led::data::LedCommand::SetBrightness(_) => {} // TODO
             }
         }
 
@@ -2225,8 +2225,8 @@ fn draw_highlight_border(gl: &glow::Context, x: u32, y: u32, w: u32, h: u32, scr
 /// (bottom of viewport). Each LED is a radial gradient ellipse — bright center,
 /// gaussian falloff to transparent. Overlapping blobs blend together naturally.
 /// Compute per-LED brightness for an effect.
-fn led_brightness(effect: bmc_shared_led_data::LedEffect, phase: f32, anim_t: f32) -> f32 {
-    use bmc_shared_led_data::LedEffect;
+fn led_brightness(effect: bmc_led::data::LedEffect, phase: f32, anim_t: f32) -> f32 {
+    use bmc_led::data::LedEffect;
     match &effect {
         LedEffect::Solid(_) => 1.0,
         LedEffect::Breathe(_) => {
@@ -2284,13 +2284,13 @@ fn render_led_strip(
         && let Some(scene) = &tile.led_scene
     {
         let (cr, cg, cb) = match &scene.effect {
-            bmc_shared_led_data::LedEffect::None => (0.0, 0.0, 0.0),
-            bmc_shared_led_data::LedEffect::Solid(c)
-            | bmc_shared_led_data::LedEffect::Breathe(c)
-            | bmc_shared_led_data::LedEffect::Chase(c)
-            | bmc_shared_led_data::LedEffect::KnightRider(c)
-            | bmc_shared_led_data::LedEffect::Scan(c)
-            | bmc_shared_led_data::LedEffect::Snake(c) => (
+            bmc_led::data::LedEffect::None => (0.0, 0.0, 0.0),
+            bmc_led::data::LedEffect::Solid(c)
+            | bmc_led::data::LedEffect::Breathe(c)
+            | bmc_led::data::LedEffect::Chase(c)
+            | bmc_led::data::LedEffect::KnightRider(c)
+            | bmc_led::data::LedEffect::Scan(c)
+            | bmc_led::data::LedEffect::Snake(c) => (
                 f32::from(c.r) / 255.0,
                 f32::from(c.g) / 255.0,
                 f32::from(c.b) / 255.0,

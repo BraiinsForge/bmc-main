@@ -137,7 +137,7 @@ pub struct RuntimeConfig {
     pub rng_seed: Option<u64>,
     /// Sender for LED commands. Widgets call `led::set_effect()` etc., the host
     /// forwards commands through this channel. `None` = LED control unavailable.
-    pub led_command_sender: Option<std::sync::mpsc::Sender<bmc_shared_led_data::LedCommand>>,
+    pub led_command_sender: Option<std::sync::mpsc::Sender<bmc_led::data::LedCommand>>,
     /// Frame poll cadence (ms) capping the effective host wake while host-side
     /// animations are active, so a widget's `request_frame_after(longer)`
     /// (e.g. a 1Hz clock tick) does not starve cached-tree animation replays.

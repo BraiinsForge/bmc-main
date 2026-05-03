@@ -12,6 +12,7 @@ crate-type = ["rlib"]
 math-3d = ["glam"]
 
 [dependencies]
+bmc-led = { path = "../../bmc-led", default-features = false }
 bmc-wasm-protocol = { path = "../protocol" }
 bmc-wasm-sdk-macros = { path = "../sdk-macros" }
 bmc-wasm-skin = { path = "../skin" }

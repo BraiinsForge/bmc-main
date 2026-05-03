@@ -1015,7 +1015,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apa102-spi",
- "bmc-shared-led-data",
  "embedded-hal",
  "smart-leds-trait",
  "spidev",
@@ -1232,10 +1231,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bmc-shared-led-data"
-version = "0.1.0"
-
-[[package]]
 name = "bmc-shared-slint"
 version = "0.1.0"
 dependencies = [
@@ -1376,7 +1371,7 @@ dependencies = [
  "askama",
  "base64 0.22.1",
  "bmc-icon-compiler",
- "bmc-shared-led-data",
+ "bmc-led",
  "bmc-wasm-protocol",
  "chrono",
  "chrono-tz",

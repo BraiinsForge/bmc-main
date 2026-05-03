@@ -76,6 +76,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-led"
+version = "0.1.0"
+
+[[package]]
 name = "bmc-wasm-examples"
 version = "0.0.0"
 
@@ -90,6 +94,7 @@ dependencies = [
 name = "bmc-wasm-sdk"
 version = "0.1.0"
 dependencies = [
+ "bmc-led",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk-macros",
  "bmc-wasm-skin",

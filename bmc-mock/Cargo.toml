@@ -10,7 +10,7 @@ async-trait.workspace = true
 axum-extra.workspace = true
 bmc.workspace = true
 bmc-button.workspace = true
-bmc-led.workspace = true
+bmc-led = { workspace = true, features = ["driver"] }
 bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true

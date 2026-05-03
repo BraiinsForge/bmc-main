@@ -4,4 +4,5 @@
 pub mod apa102_spi;
 pub mod config;
 pub mod data;
+#[cfg(feature = "driver")]
 pub mod led_driver;

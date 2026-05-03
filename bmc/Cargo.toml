@@ -18,7 +18,7 @@ bmc-audio.workspace = true
 bmc-button.workspace = true
 bmc-grpc = { workspace = true, features = ["server"] }
 bmc-ipc.workspace = true
-bmc-led.workspace = true
+bmc-led = { workspace = true, features = ["driver"] }
 bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-scheduler.workspace = true
 bmc-shared-ii-net.workspace = true

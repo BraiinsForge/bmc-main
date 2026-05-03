@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+default = ["driver"]
+driver = ["dep:anyhow", "dep:tokio", "dep:tracing"]
 apa102_spi = [
+    "driver",
     "dep:apa102-spi",
     "dep:embedded-hal",
     "dep:smart-leds-trait",
@@ -13,14 +16,13 @@ apa102_spi = [
 ]
 
 [dependencies]
-anyhow.workspace = true
+anyhow = { workspace = true, optional = true }
 apa102-spi = { workspace = true, optional = true }
-bmc-shared-led-data.workspace = true
 embedded-hal = { workspace = true, optional = true }
 smart-leds-trait = { workspace = true, optional = true }
 spidev = { workspace = true, optional = true }
-tokio.workspace = true
-tracing.workspace = true
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 ux = { workspace = true, optional = true }
 
 [lints]

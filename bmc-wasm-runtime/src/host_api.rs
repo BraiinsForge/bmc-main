@@ -653,7 +653,7 @@ pub(crate) struct HostState {
     pub rng_state: Option<u64>,
 
     /// Sender for LED commands. `None` when LED control is unavailable.
-    pub led_command_sender: Option<mpsc::Sender<bmc_shared_led_data::LedCommand>>,
+    pub led_command_sender: Option<mpsc::Sender<bmc_led::data::LedCommand>>,
 
     /// Registered audio samples (raw encoded bytes), keyed by audio ID.
     /// The host stores the original encoded data and decodes on each play.
