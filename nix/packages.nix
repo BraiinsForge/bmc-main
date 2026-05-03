@@ -142,4 +142,32 @@ in
     upgrade_strategy = null;
     install_strategy = null;
   };
+  mesh-demo = {
+    pkg = mkWasmWidget {
+      name = "mesh-demo";
+      wasmDir = wasmExamples;
+      wasmFile = "mesh_demo.wasm";
+      manifest = ../bmc-wasm-runtime/examples/mesh-demo/manifest.json;
+      inherit host;
+    };
+    version = "0.1.0";
+    category = "widget";
+    description = "3D mesh rendering demo with Suzanne and dice tray";
+    upgrade_strategy = null;
+    install_strategy = null;
+  };
+  metronome = {
+    pkg = mkWasmWidget {
+      name = "metronome";
+      wasmDir = wasmExamples;
+      wasmFile = "metronome.wasm";
+      manifest = ../bmc-wasm-runtime/examples/metronome/manifest.json;
+      inherit host;
+    };
+    version = "0.1.0";
+    category = "widget";
+    description = "Tap-to-tempo metronome with audible click track";
+    upgrade_strategy = null;
+    install_strategy = null;
+  };
 }
