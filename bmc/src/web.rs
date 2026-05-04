@@ -17,13 +17,9 @@ use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::session::Manager as SessionManager;
 use crate::widget::{Coordinator, WidgetRegistry};
-// TODO: display refactor — re-enable once a replacement display layer ships
-// use crate::widget_tasks::WidgetTasks;
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
-// TODO: display refactor
-// use bmc_display::display_controller::DisplayController;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{
     marker::PhantomData,
@@ -47,9 +43,6 @@ pub(crate) struct WebService<
     config: ServerConfig,
     system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    // TODO: display refactor
-    // display_controller: DisplayController,
-    // widget_tasks: WidgetTasks,
     initial_setup: InitialSetup<T, U>,
     led_controller: LedController<T>,
     widget_registry: Arc<WidgetRegistry>,
@@ -72,9 +65,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         config: ServerConfig,
         system_upgrade_service: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
-        // TODO: display refactor
-        // display_controller: DisplayController,
-        // widget_tasks: WidgetTasks,
         initial_setup: InitialSetup<T, U>,
         led_controller: LedController<T>,
         widget_registry: Arc<WidgetRegistry>,
@@ -90,9 +80,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             config,
             system_upgrade_service,
             config_handle,
-            // TODO: display refactor
-            // display_controller,
-            // widget_tasks,
             initial_setup,
             led_controller,
             widget_registry,
@@ -111,9 +98,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.session_manager.clone(),
             self.system_upgrade_service,
             self.config_handle,
-            // TODO: display refactor
-            // self.display_controller,
-            // self.widget_tasks,
             self.initial_setup,
             self.led_controller,
             self.widget_registry,

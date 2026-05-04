@@ -12,16 +12,12 @@ use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
 use crate::compositor::Compositor;
 use crate::config::ConfigHandle;
-// TODO: display refactor — re-enable once a replacement display layer ships
-// use crate::display_tasks::DisplayTasks;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::manager::BmcManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
 use crate::widget::{Coordinator, WidgetManager, WidgetRegistry};
-// TODO: display refactor
-// use crate::widget_tasks::WidgetTasks;
 use anyhow::Result;
 use bmc_button::Buttons;
 use bmc_led::led_driver::LedDriver;
@@ -87,11 +83,6 @@ where
         )
         .await;
 
-        // TODO: display refactor
-        // let display_controller = display_driver.display_controller.clone();
-        // display_controller.set_scenes(config_handle.scenes.clone());
-        // display_controller.set_scene_cycling(config_handle.scene_cycling());
-
         let autoupgrade_config = config_handle.autoupgrade();
         let led_enabled = config_handle.led_enabled();
 
@@ -115,23 +106,9 @@ where
             .autoupgrade_init(autoupgrade_config)
             .await;
 
-        // TODO: display refactor - connected_widgets needs new implementation
+        // TODO: display refactor
         // let sound_controller =
         //     SoundController::new(config_handle.clone(), config.sounds_dir.clone());
-
-        // let widget_tasks = WidgetTasks::new(
-        //     display_controller.clone(),
-        //     config_handle.clone(),
-        //     manager.watch_timezone_updates(),
-        // );
-
-        // for scene in config_handle.read().await.scenes.values() {
-        //     if scene.enabled {
-        //         widget_tasks
-        //             .spawn_all(&scene.id, scene.widgets.values())
-        //             .await;
-        //     }
-        // }
 
         let initial_setup = InitialSetup::new(
             manager.clone(),
@@ -163,18 +140,6 @@ where
         //     sound_controller.clone(),
         // )
         // .await;
-
-        // TODO: display refactor
-        // let display_tasks = DisplayTasks::new(
-        //     display_controller.clone(),
-        //     state_service.subscribe(),
-        //     manager.watch_timezone_updates(),
-        //     initial_setup.subscribe(),
-        //     manager.clone(),
-        //     config_handle.clone(),
-        //     alarm_bus.clone(),
-        //     system_manager.clone(),
-        // );
 
         let (_, last_price_change_24h_receiver) = watch::channel(0.0);
         let (mut led_controller, _led_state_sender) = LedController::new(
