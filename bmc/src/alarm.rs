@@ -1,8 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-// TODO: display refactor
-#![allow(dead_code)]
-
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Display, Formatter},
@@ -158,6 +155,7 @@ pub(crate) enum SnoozeLimit {
 }
 
 impl SnoozeLimit {
+    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
     pub(crate) fn limit(&self) -> Option<u32> {
         match self {
             SnoozeLimit::Forever => None,
@@ -196,9 +194,14 @@ pub enum AlarmCmd {
 
 #[derive(Clone, Debug)]
 pub enum AlarmEvent {
-    Stopped { id: AlarmId },
+    Stopped {
+        id: AlarmId,
+    },
     Snoozed,
-    Started { alarm: ActiveAlarm },
+    Started {
+        #[expect(dead_code, reason = "consumed by future display-overlay channel")]
+        alarm: ActiveAlarm,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -217,6 +220,7 @@ impl AlarmBus {
         }
     }
 
+    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
     pub fn stop_all(&self) {
         if let Err(err) = self.tx_commands.send(AlarmCmd::StopAll) {
             warn!(error = %err, "Failed to send StopAll command, no active receivers");
@@ -229,6 +233,7 @@ impl AlarmBus {
         }
     }
 
+    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
     pub fn snooze(&self) {
         if let Err(err) = self.tx_commands.send(AlarmCmd::Snooze) {
             warn!(error = %err, "Failed to send Snooze command, no active receivers");
@@ -427,6 +432,7 @@ impl AlarmScheduler {
                         let alarm_id = active_alarm.id.clone();
                         let alarm_bus = self_.alarm_bus.clone();
                         let token = token.clone();
+                        let current_alarm = self_.current_alarm.clone();
 
                         async move {
                             let deadline =
@@ -440,6 +446,14 @@ impl AlarmScheduler {
                                 () = &mut deadline => {
                                     info!(alarm_id = %alarm_id, timeout_minutes = 10, "Alarm timed out, auto-stopping");
                                     token.cancel();
+                                    // Clear the slot here so repeating alarms don't leak a
+                                    // stale entry and the non-repeating set_enabled(false)
+                                    // path can't emit a duplicate Stopped via the command
+                                    // handler.
+                                    let _ = current_alarm
+                                        .lock()
+                                        .await
+                                        .take_if(|c| c.alarm.id == alarm_id);
                                     alarm_bus.send_event(AlarmEvent::Stopped { id: alarm_id });
                                 }
                             }

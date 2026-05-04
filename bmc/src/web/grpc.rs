@@ -8,6 +8,7 @@
 )]
 
 use crate::BmcManager;
+use crate::alarm::AlarmController;
 use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
@@ -88,8 +89,7 @@ pub(crate) struct GrpcWeb<
     widget_coordinator: Arc<Coordinator>,
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
-    // TODO: display refactor — re-enable AlarmController in the next pass.
-    // alarm_controller: AlarmController,
+    alarm_controller: AlarmController,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -107,8 +107,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         widget_coordinator: Arc<Coordinator>,
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
-        // TODO: display refactor — re-enable AlarmController here in the next pass.
-        // alarm_controller: AlarmController,
+        alarm_controller: AlarmController,
     ) -> Self {
         Self {
             manager,
@@ -121,7 +120,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             widget_coordinator,
             system_manager,
             sound_controller,
-            // alarm_controller,
+            alarm_controller,
         }
     }
 
@@ -189,10 +188,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 account_management::AccountManagementService::new(self.config_handle),
             );
 
-        // TODO: display refactor — re-enable when alarm_controller is available.
-        // let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
-        //     alarm::AlarmService::new(self.alarm_controller),
-        // );
+        let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
+            alarm::AlarmService::new(self.alarm_controller),
+        );
 
         let led_test_service = web::led_test_service_server::LedTestServiceServer::new(
             led_test::LedTestService::new(self.led_controller),
@@ -266,15 +264,14 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                         auth_interceptor.clone(),
                     ))),
             )
-            // TODO: display refactor — re-enable alarm_service registration.
-            // .add_service(
-            //     tower::ServiceBuilder::new()
-            //         .layer(logging_layer.clone())
-            //         .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-            //             alarm_service,
-            //             auth_interceptor.clone(),
-            //         ))),
-            // )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(
+                        GrpcWebLayer::new()
+                            .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
+                    ),
+            )
             .add_service(tower::ServiceBuilder::new().layer(logging_layer).service(
                 GrpcWebLayer::new().layer(InterceptorFor::new(led_test_service, auth_interceptor)),
             ))

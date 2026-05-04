@@ -6,8 +6,7 @@ mod http_server;
 mod no_password;
 mod session;
 
-// TODO: display refactor — re-enable AlarmController import in the next pass.
-// use crate::alarm::AlarmController;
+use crate::alarm::AlarmController;
 use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
@@ -47,8 +46,7 @@ pub(crate) struct WebService<
     widget_coordinator: Arc<Coordinator>,
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
-    // TODO: display refactor — re-enable AlarmController in the next pass.
-    // alarm_controller: AlarmController,
+    alarm_controller: AlarmController,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -67,8 +65,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         widget_coordinator: Arc<Coordinator>,
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
-        // TODO: display refactor — re-enable AlarmController here in the next pass.
-        // alarm_controller: AlarmController,
+        alarm_controller: AlarmController,
     ) -> Self {
         Self {
             manager,
@@ -82,7 +79,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             widget_coordinator,
             system_manager,
             sound_controller,
-            // alarm_controller,
+            alarm_controller,
         }
     }
 
@@ -99,8 +96,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.widget_coordinator,
             self.system_manager,
             self.sound_controller,
-            // TODO: display refactor — re-enable AlarmController here in the next pass.
-            // self.alarm_controller,
+            self.alarm_controller,
         )
         .build()
         .into_axum_router()

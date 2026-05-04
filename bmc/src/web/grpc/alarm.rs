@@ -1,12 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-// TODO: display refactor — AlarmService construction is commented out in
-// `web::grpc::GrpcWeb::build`; remove this once the service is wired back up.
-#![expect(
-    dead_code,
-    reason = "AlarmService is unused until display services are restored"
-)]
-
 use std::collections::HashSet;
 
 use bmc_grpc::web::{
@@ -111,10 +104,8 @@ impl GrpcAlarmService for AlarmService {
         let (sound, violations) = parse_sound("sound_id", sound_id);
         all_field_violations.extend(violations);
 
-        let snooze_options = snooze_options
-            .and_then(|options| options.kind)
-            .ok_or_else(unchecked_field_violations_status)?;
-        let (snooze_options, violations) = parse_snooze_options(snooze_options);
+        let (snooze_options, violations) =
+            parse_snooze_options_field("snooze_options", snooze_options);
         all_field_violations.extend(violations);
 
         if !all_field_violations.is_empty() {
@@ -163,10 +154,8 @@ impl GrpcAlarmService for AlarmService {
         let (sound, violations) = parse_sound("sound_id", sound_id);
         all_field_violations.extend(violations);
 
-        let snooze_options = snooze_options
-            .and_then(|options| options.kind)
-            .ok_or_else(unchecked_field_violations_status)?;
-        let (snooze_options, violations) = parse_snooze_options(snooze_options);
+        let (snooze_options, violations) =
+            parse_snooze_options_field("snooze_options", snooze_options);
         all_field_violations.extend(violations);
 
         if !all_field_violations.is_empty() {
@@ -284,6 +273,22 @@ fn parse_sound(field: &str, value: Option<String>) -> ParseOutput<Sounds> {
     });
 
     (maybe_sound, field_violations)
+}
+
+fn parse_snooze_options_field(
+    field: &str,
+    input: Option<SnoozeOptionsWrapper>,
+) -> ParseOutput<SnoozeOptions> {
+    let mut field_violations = FieldViolations::new();
+
+    let Some(kind) = input.and_then(|wrapper| wrapper.kind) else {
+        field_violations.push(field, "Missing value!");
+        return (None, field_violations);
+    };
+
+    let (snooze_options, violations) = parse_snooze_options(kind);
+    field_violations.extend(violations);
+    (snooze_options, field_violations)
 }
 
 fn parse_snooze_options(value: snooze_options_wrapper::Kind) -> ParseOutput<SnoozeOptions> {
@@ -418,5 +423,73 @@ impl From<AlarmError> for Status {
             AlarmError::RemoveAlarm => Status::internal("Failed to remove alarm"),
             AlarmError::ScheduleAlarm => Status::internal("Failed to schedule alarm"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_grpc::web::{
+        Off, SnoozeDuration as SnoozeDurationProto, SnoozeLimit as SnoozeLimitProto,
+        SnoozeOptionsWrapper, snooze_options_wrapper::Kind as SnoozeKind,
+    };
+    use tonic_types::FieldViolation;
+
+    use super::{SnoozeDuration, SnoozeLimit, parse_snooze_options_field};
+
+    fn violations_vec(violations: super::FieldViolations) -> Vec<FieldViolation> {
+        violations.into()
+    }
+
+    #[test]
+    fn parse_snooze_options_field_missing_wrapper_yields_violation() {
+        let (parsed, violations) = parse_snooze_options_field("snooze_options", None);
+
+        assert!(parsed.is_none());
+        let violations = violations_vec(violations);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, "snooze_options");
+        assert_eq!(violations[0].description, "Missing value!");
+    }
+
+    #[test]
+    fn parse_snooze_options_field_missing_kind_yields_violation() {
+        let input = Some(SnoozeOptionsWrapper { kind: None });
+
+        let (parsed, violations) = parse_snooze_options_field("snooze_options", input);
+
+        assert!(parsed.is_none());
+        let violations = violations_vec(violations);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, "snooze_options");
+        assert_eq!(violations[0].description, "Missing value!");
+    }
+
+    #[test]
+    fn parse_snooze_options_field_off_yields_no_violations_and_none() {
+        let input = Some(SnoozeOptionsWrapper {
+            kind: Some(SnoozeKind::Off(Off {})),
+        });
+
+        let (parsed, violations) = parse_snooze_options_field("snooze_options", input);
+
+        assert!(parsed.is_none());
+        assert!(violations_vec(violations).is_empty());
+    }
+
+    #[test]
+    fn parse_snooze_options_field_valid_snooze_yields_options() {
+        let input = Some(SnoozeOptionsWrapper {
+            kind: Some(SnoozeKind::Snooze(bmc_grpc::web::SnoozeOptions {
+                duration: SnoozeDurationProto::SnoozeDuration10Minutes as i32,
+                limit: SnoozeLimitProto::SnoozeLimit5 as i32,
+            })),
+        });
+
+        let (parsed, violations) = parse_snooze_options_field("snooze_options", input);
+
+        let parsed = parsed.expect("BUG: valid snooze input must produce SnoozeOptions");
+        assert!(matches!(parsed.duration, SnoozeDuration::TenMinutes));
+        assert!(matches!(parsed.limit, SnoozeLimit::Five));
+        assert!(violations_vec(violations).is_empty());
     }
 }

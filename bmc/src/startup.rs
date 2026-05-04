@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::alarm::AlarmBus;
+use crate::alarm::{AlarmBus, AlarmController};
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
 use crate::compositor::Compositor;
@@ -49,6 +49,7 @@ where
     widget_registry: Arc<WidgetRegistry>,
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
+    alarm_controller: AlarmController,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -61,6 +62,11 @@ where
         clippy::too_many_arguments,
         reason = "initialization collects independent subsystem handles; grouping them \
                   into a wrapper struct just to satisfy the lint would hurt clarity"
+    )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "init wires all subsystems sequentially; splitting into helpers \
+                  would obscure the initialization order without reducing complexity"
     )]
     pub async fn init(
         config: Configuration,
@@ -120,16 +126,14 @@ where
 
         let alarm_bus = AlarmBus::new();
 
-        // TODO: display refactor - AlarmController needs display_controller
-        // let alarm_controller = AlarmController::init(
-        //     config_handle.clone(),
-        //     scheduler.clone(),
-        //     sound_controller.clone(),
-        //     display_controller.clone(),
-        //     alarm_bus.clone(),
-        //     manager.watch_timezone_updates(),
-        // )
-        // .await;
+        let alarm_controller = AlarmController::init(
+            config_handle.clone(),
+            scheduler.clone(),
+            sound_controller.clone(),
+            alarm_bus.clone(),
+            manager.watch_timezone_updates(),
+        )
+        .await;
 
         let (_, last_price_change_24h_receiver) = watch::channel(0.0);
         let (mut led_controller, led_state_sender) = LedController::new(
@@ -191,6 +195,7 @@ where
             widget_registry,
             system_manager,
             sound_controller,
+            alarm_controller,
         })
     }
 
@@ -212,8 +217,7 @@ where
             self.widget_coordinator.clone(),
             self.system_manager,
             self.sound_controller,
-            // TODO: display refactor — re-enable AlarmController here in the next pass.
-            // self.alarm_controller,
+            self.alarm_controller,
         )
         .run(self.listener)
         .await?;
