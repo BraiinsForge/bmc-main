@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicBool;
 use crate::alarm::{AlarmBus, AlarmController};
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
-use crate::compositor::Compositor;
+use crate::compositor::{Compositor, CompositorEvent};
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
@@ -25,7 +25,7 @@ use bmc_led::led_driver::LedDriver;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::FirmwareIndex;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 use tokio::sync::{RwLock, watch};
 use tracing::info;
 
@@ -149,6 +149,7 @@ where
 
         let screen_activity = Arc::new(tokio::sync::Notify::new());
         let button_manager = ButtonManager::new(buttons, manager.clone(), screen_activity.clone());
+        let compositor_for_events = compositor.clone();
 
         let system_manager = SystemManager::init(
             config_handle.clone(),
@@ -161,10 +162,38 @@ where
             screen_activity,
         )
         .await;
+        let mut screen_woken_rx = system_manager.subscribe_screen_woken();
+
+        let screen_activity_for_touch = button_manager.screen_activity.clone();
+        tokio::spawn(async move {
+            let mut event_rx = compositor_for_events.event_receiver();
+            while let Some(event) = event_rx.recv().await {
+                if matches!(event, CompositorEvent::ScreenActivity) {
+                    screen_activity_for_touch.notify_waiters();
+                }
+            }
+        });
 
         let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
         let widget_registry = widget_manager.registry();
-        let widget_coordinator = Arc::new(Coordinator::new(widget_manager, compositor));
+        let widget_coordinator = Arc::new(Coordinator::new(widget_manager, compositor.clone()));
+
+        let compositor_for_wake = compositor.clone();
+        tokio::spawn(async move {
+            loop {
+                match screen_woken_rx.recv().await {
+                    Ok(()) => {
+                        if let Err(err) = compositor_for_wake.set_active_scene_index(0) {
+                            tracing::warn!(error = %err, "Failed to set first scene on wake");
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "screen_woken receiver lagged");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
 
         {
             let config_guard = config_handle.read().await;

@@ -51,6 +51,7 @@ pub struct WidgetAction {
 pub enum CompositorEvent {
     WidgetReady { instance_id: InstanceId },
     WidgetDisconnected { instance_id: InstanceId },
+    ScreenActivity,
 }
 
 #[derive(Debug, Error)]
@@ -123,6 +124,9 @@ pub trait Compositor: Send + Sync {
 
     /// Set all scene layouts for drag-based cycling between scenes.
     fn set_scene_cycling(&self, scenes: Vec<SceneLayout>) -> Result<(), CompositorError>;
+
+    /// Switch active scene by index in the current cycling list.
+    fn set_active_scene_index(&self, index: usize) -> Result<(), CompositorError>;
 
     /// Broadcast a setting update to all connected widgets.
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError>;

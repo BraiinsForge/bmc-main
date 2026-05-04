@@ -32,6 +32,9 @@ pub enum CompositorCommand {
     SetSceneCycling {
         scenes: Vec<SceneLayout>,
     },
+    SetActiveSceneIndex {
+        index: usize,
+    },
     BroadcastSetting {
         setting: SettingUpdate,
     },

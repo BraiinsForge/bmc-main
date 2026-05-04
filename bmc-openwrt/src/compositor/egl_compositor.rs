@@ -959,6 +959,8 @@ impl AppState {
             return;
         }
 
+        let _ = self.event_tx.send(CompositorEvent::ScreenActivity);
+
         self.gesture_slot = Some(slot);
         self.gesture.on_down(location, time);
         self.scene_drag_active = false;
@@ -1225,6 +1227,11 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.widgets.set_scene_cycling(scenes);
             state.compositor.mark_full_output_damage();
         }
+        CompositorCommand::SetActiveSceneIndex { index } => {
+            tracing::info!("Setting active scene index to {}", index);
+            state.compositor.widgets.set_active_scene_index(index);
+            state.compositor.mark_full_output_damage();
+        }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
             state
@@ -1417,6 +1424,12 @@ impl Compositor for EglCompositor {
     fn set_scene_cycling(&self, scenes: Vec<SceneLayout>) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::SetSceneCycling { scenes })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn set_active_scene_index(&self, index: usize) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetActiveSceneIndex { index })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

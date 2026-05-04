@@ -52,6 +52,7 @@ pub(crate) struct SystemManager<T: DisplayBacklightDriver> {
     config_handle: Arc<RwLock<ConfigHandle>>,
     led_state_modified: Arc<Notify>,
     screen_activity: Arc<Notify>,
+    screen_woken_tx: broadcast::Sender<()>,
 }
 
 impl<T: DisplayBacklightDriver> SystemManager<T> {
@@ -109,6 +110,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             .read()
             .await
             .subscribe_screen_off_timeout_change();
+        let (screen_woken_tx, _screen_woken_rx) = broadcast::channel(8);
 
         tokio::spawn(Self::run_screen_auto_off(
             backlight_controller.clone(),
@@ -116,6 +118,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             brightness_modified.clone(),
             screen_activity.clone(),
             timeout_changed,
+            screen_woken_tx.clone(),
         ));
 
         Self {
@@ -127,6 +130,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             config_handle,
             led_state_modified,
             screen_activity,
+            screen_woken_tx,
         }
     }
 
@@ -263,6 +267,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         brightness_modified: Arc<Notify>,
         screen_activity: Arc<Notify>,
         mut timeout_changed: broadcast::Receiver<Option<u32>>,
+        screen_woken_tx: broadcast::Sender<()>,
     ) {
         let mut night_mode_receiver = night_mode_controller.subscribe();
 
@@ -272,7 +277,12 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             // If night mode is not active, ensure screen is on and wait
             if !night_mode_active {
                 if Self::is_backlight_off(&backlight_controller).await {
-                    Self::wake_screen(&backlight_controller, &brightness_modified).await;
+                    Self::wake_screen(
+                        &backlight_controller,
+                        &brightness_modified,
+                        &screen_woken_tx,
+                    )
+                    .await;
                 }
 
                 if night_mode_receiver.changed().await.is_err() {
@@ -287,7 +297,12 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             // No timeout configured — ensure screen is on and wait for state changes
             if timeout_secs == 0 {
                 if Self::is_backlight_off(&backlight_controller).await {
-                    Self::wake_screen(&backlight_controller, &brightness_modified).await;
+                    Self::wake_screen(
+                        &backlight_controller,
+                        &brightness_modified,
+                        &screen_woken_tx,
+                    )
+                    .await;
                 }
 
                 tokio::select! {
@@ -313,7 +328,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                 () = screen_activity.notified() => {
                     // User activity detected — wake screen if off
                     if Self::is_backlight_off(&backlight_controller).await {
-                        Self::wake_screen(&backlight_controller, &brightness_modified).await;
+                        Self::wake_screen(&backlight_controller, &brightness_modified, &screen_woken_tx).await;
                         info!("Screen woken by user activity");
                     }
                     // Timer restarts on next loop iteration
@@ -344,6 +359,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
     async fn wake_screen(
         backlight_controller: &DisplayBacklightController<T>,
         brightness_modified: &Arc<Notify>,
+        screen_woken_tx: &broadcast::Sender<()>,
     ) {
         // Sequence: power on → restore brightness
         // (reverse of turn-off to avoid flash)
@@ -351,11 +367,16 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             warn!(error = %err, "Failed to turn on backlight on wake");
         }
         brightness_modified.notify_waiters();
+        let _ = screen_woken_tx.send(());
     }
 
     #[expect(dead_code, reason = "reserved for the display-overlay channel")]
     pub(crate) fn notify_screen_activity(&self) {
         self.screen_activity.notify_waiters();
+    }
+
+    pub(crate) fn subscribe_screen_woken(&self) -> broadcast::Receiver<()> {
+        self.screen_woken_tx.subscribe()
     }
 
     pub(crate) async fn set_night_mode_screen_off_timeout(

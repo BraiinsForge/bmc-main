@@ -125,6 +125,11 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
+    fn set_active_scene_index(&self, index: usize) -> Result<(), CompositorError> {
+        tracing::info!("MockCompositor: set active scene index {}", index);
+        Ok(())
+    }
+
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError> {
         tracing::info!("MockCompositor: broadcast setting {:?}", setting);
         Ok(())

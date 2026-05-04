@@ -126,6 +126,14 @@ impl WidgetTracker {
         self.drag_offset = None;
     }
 
+    /// Show scene at `index` if it exists.
+    pub fn set_active_scene_index(&mut self, index: usize) {
+        if index < self.scenes.len() {
+            self.current_index = index;
+            self.drag_offset = None;
+        }
+    }
+
     #[must_use]
     pub fn active_scene(&self) -> &SceneLayout {
         &self.scenes[self.current_index]
