@@ -1,8 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-// TODO: display refactor
-#![allow(dead_code)]
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -356,6 +353,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         brightness_modified.notify_waiters();
     }
 
+    #[expect(dead_code, reason = "reserved for the display-overlay channel")]
     pub(crate) fn notify_screen_activity(&self) {
         self.screen_activity.notify_waiters();
     }
@@ -369,14 +367,17 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             .await
     }
 
+    #[expect(dead_code, reason = "reserved for the display-overlay channel")]
     pub(crate) fn subscribe_night_mode(&self) -> watch::Receiver<bool> {
         self.night_mode_controller.subscribe()
     }
 
+    #[expect(dead_code, reason = "reserved for the display-overlay channel")]
     pub(crate) async fn night_mode_config(&self) -> crate::config::NightModeConfig {
         self.night_mode_controller.config().await
     }
 
+    #[expect(dead_code, reason = "reserved for the display-overlay channel")]
     pub(crate) async fn toggle_night_mode(&self) -> anyhow::Result<()> {
         self.night_mode_controller.toggle().await
     }
@@ -409,6 +410,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         Ok(())
     }
 
+    #[expect(dead_code, reason = "reserved for the display-overlay channel")]
     pub(crate) fn is_night_mode_active(&self) -> bool {
         *self.night_mode_controller.subscribe().borrow()
     }

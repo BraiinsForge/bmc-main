@@ -6,23 +6,21 @@ mod http_server;
 mod no_password;
 mod session;
 
-// TODO: display refactor — re-enable AlarmController/SoundController/SystemManager
-// imports when display-dependent services are restored.
+// TODO: display refactor — re-enable AlarmController import in the next pass.
 // use crate::alarm::AlarmController;
-// use crate::sound::SoundController;
-// use crate::system_manager::SystemManager;
 use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::session::Manager as SessionManager;
+use crate::sound::SoundController;
+use crate::system_manager::SystemManager;
 use crate::widget::{Coordinator, WidgetRegistry};
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{
-    marker::PhantomData,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
@@ -47,12 +45,10 @@ pub(crate) struct WebService<
     led_controller: LedController<T>,
     widget_registry: Arc<WidgetRegistry>,
     widget_coordinator: Arc<Coordinator>,
-    // TODO: display refactor — re-enable once display services are available
-    // and remove _phantom_v.
-    // system_manager: SystemManager<V>,
-    // sound_controller: SoundController,
+    system_manager: SystemManager<V>,
+    sound_controller: SoundController,
+    // TODO: display refactor — re-enable AlarmController in the next pass.
     // alarm_controller: AlarmController,
-    _phantom_v: PhantomData<V>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -69,9 +65,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         led_controller: LedController<T>,
         widget_registry: Arc<WidgetRegistry>,
         widget_coordinator: Arc<Coordinator>,
-        // TODO: display refactor — re-enable when display services are available
-        // system_manager: SystemManager<V>,
-        // sound_controller: SoundController,
+        system_manager: SystemManager<V>,
+        sound_controller: SoundController,
+        // TODO: display refactor — re-enable AlarmController here in the next pass.
         // alarm_controller: AlarmController,
     ) -> Self {
         Self {
@@ -84,16 +80,15 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             led_controller,
             widget_registry,
             widget_coordinator,
-            // system_manager,
-            // sound_controller,
+            system_manager,
+            sound_controller,
             // alarm_controller,
-            _phantom_v: PhantomData,
         }
     }
 
     pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
         let http_router = http_server::HttpServer::new(self.config, self.manager.clone()).build();
-        let grpc_router = grpc::GrpcWeb::<_, _, _, V>::new(
+        let grpc_router = grpc::GrpcWeb::new(
             self.manager.clone(),
             self.session_manager.clone(),
             self.system_upgrade_service,
@@ -102,9 +97,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.led_controller,
             self.widget_registry,
             self.widget_coordinator,
-            // TODO: display refactor — re-enable when display services are available
-            // self.system_manager,
-            // self.sound_controller,
+            self.system_manager,
+            self.sound_controller,
+            // TODO: display refactor — re-enable AlarmController here in the next pass.
             // self.alarm_controller,
         )
         .build()

@@ -1,8 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-// TODO: display refactor
-#![allow(dead_code)]
-
 use crate::system_upgrade::SystemUpgradeService;
 use crate::{
     BmcManager,
@@ -192,6 +189,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         _ = manager.reboot().await;
     }
 
+    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
     pub(crate) fn subscribe(&self) -> Receiver<Option<InitSetupState>> {
         self.state_service.subscribe()
     }

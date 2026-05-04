@@ -1,8 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-// TODO: display refactor
-#![allow(dead_code)]
-
 use crate::data::{Account, AccountId, SceneCycling, deserialize_accounts, serialize_accounts};
 use crate::{
     alarm::{AlarmData, AlarmId},
@@ -440,6 +437,7 @@ impl ConfigHandle {
         }
     }
 
+    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
     pub fn subscribe_localization_change(&self) -> broadcast::Receiver<LocalizationConfig> {
         self.config_notify.subscribe_localization_change()
     }

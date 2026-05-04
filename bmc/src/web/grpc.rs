@@ -12,17 +12,14 @@ use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
-// TODO: display refactor — re-enable SoundController/SystemManager imports when
-// display-dependent services are restored.
-// use crate::sound::SoundController;
-// use crate::system_manager::SystemManager;
+use crate::sound::SoundController;
+use crate::system_manager::SystemManager;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
 use crate::widget::{Coordinator, WidgetRegistry};
 use bmc_grpc::web;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::fmt::Display;
-use std::marker::PhantomData;
 use std::sync::Arc;
 use strum::EnumMessage;
 use tokio::sync::RwLock;
@@ -40,9 +37,6 @@ pub mod authentication;
 mod logging;
 mod metadata;
 mod system;
-// TODO: display refactor — re-enable AlarmController re-export when display
-// services are restored.
-// use super::AlarmController;
 use super::SystemUpgradeService;
 mod alarm;
 mod configuration_service;
@@ -92,12 +86,10 @@ pub(crate) struct GrpcWeb<
     led_controller: LedController<T>,
     widget_registry: Arc<WidgetRegistry>,
     widget_coordinator: Arc<Coordinator>,
-    // TODO: display refactor — re-enable once display services are available
-    // and remove _phantom_v.
-    // system_manager: SystemManager<V>,
-    // sound_controller: SoundController,
+    system_manager: SystemManager<V>,
+    sound_controller: SoundController,
+    // TODO: display refactor — re-enable AlarmController in the next pass.
     // alarm_controller: AlarmController,
-    _phantom_v: PhantomData<V>,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -113,9 +105,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         led_controller: LedController<T>,
         widget_registry: Arc<WidgetRegistry>,
         widget_coordinator: Arc<Coordinator>,
-        // TODO: display refactor — re-enable when display services are available
-        // system_manager: SystemManager<V>,
-        // sound_controller: SoundController,
+        system_manager: SystemManager<V>,
+        sound_controller: SoundController,
+        // TODO: display refactor — re-enable AlarmController here in the next pass.
         // alarm_controller: AlarmController,
     ) -> Self {
         Self {
@@ -127,10 +119,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             led_controller,
             widget_registry,
             widget_coordinator,
-            // system_manager,
-            // sound_controller,
+            system_manager,
+            sound_controller,
             // alarm_controller,
-            _phantom_v: PhantomData,
         }
     }
 
@@ -175,16 +166,14 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             system::SystemService::new(self.manager, self.session_manager),
         );
 
-        // TODO: display refactor — re-enable when system_manager and sound_controller
-        // are available.
-        // let configuration_service =
-        //     web::configuration_service_server::ConfigurationServiceServer::new(
-        //         configuration_service::ConfigurationService::new(
-        //             self.system_manager,
-        //             self.sound_controller,
-        //             self.config_handle.clone(),
-        //         ),
-        //     );
+        let configuration_service =
+            web::configuration_service_server::ConfigurationServiceServer::new(
+                configuration_service::ConfigurationService::new(
+                    self.system_manager,
+                    self.sound_controller,
+                    self.config_handle.clone(),
+                ),
+            );
 
         let scene_management_service =
             web::scene_management_service_server::SceneManagementServiceServer::new(
@@ -232,15 +221,14 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                         auth_interceptor.clone(),
                     ))),
             )
-            // TODO: display refactor — re-enable configuration_service registration.
-            // .add_service(
-            //     tower::ServiceBuilder::new()
-            //         .layer(logging_layer.clone())
-            //         .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-            //             configuration_service,
-            //             auth_interceptor.clone(),
-            //         ))),
-            // )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                        configuration_service,
+                        auth_interceptor.clone(),
+                    ))),
+            )
             .add_service(
                 tower::ServiceBuilder::new()
                     .layer(logging_layer.clone())

@@ -1,12 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-// TODO: display refactor — ConfigurationService construction is commented out in
-// `web::grpc::GrpcWeb::build`; remove this once the service is wired back up.
-#![expect(
-    dead_code,
-    reason = "ConfigurationService is unused until display services are restored"
-)]
-
 use crate::config::{ConfigHandle, UnitSystem};
 use crate::sound::Sounds;
 use crate::system_manager::SystemManager;

@@ -50,6 +50,7 @@ where
     pub buttons: Arc<Box<dyn Buttons + Send + Sync>>,
     pub state: HashMap<ButtonId, ButtonState>,
     pub bmc_manager: Arc<T>,
+    pub screen_activity: Arc<tokio::sync::Notify>,
 }
 
 impl<T> std::fmt::Debug for ButtonManager<T>
@@ -61,7 +62,7 @@ where
             .field("buttons", &self.buttons)
             .field("state", &self.state)
             .field("bmc_manager", &self.bmc_manager)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -70,11 +71,16 @@ where
     T: BmcManager,
 {
     /// Creates a new `ButtonManager` with the given buttons trait
-    pub fn new(buttons: Arc<Box<dyn Buttons + Send + Sync>>, bmc_manager: Arc<T>) -> Self {
+    pub fn new(
+        buttons: Arc<Box<dyn Buttons + Send + Sync>>,
+        bmc_manager: Arc<T>,
+        screen_activity: Arc<tokio::sync::Notify>,
+    ) -> Self {
         Self {
             buttons,
             state: HashMap::new(),
             bmc_manager,
+            screen_activity,
         }
     }
 
@@ -99,8 +105,16 @@ where
 
         while let Some(event) = stream.next().await {
             info!("New button event: {:?}", event);
-            match event {
-                Ok(ButtonEvent::Pressed(button)) => {
+            let inner = match event {
+                Ok(inner) => inner,
+                Err(error) => {
+                    warn!("Error while reading button event: {error}");
+                    continue;
+                }
+            };
+            self.screen_activity.notify_waiters();
+            match inner {
+                ButtonEvent::Pressed(button) => {
                     if let ButtonState::Up { released } = self.state[&button] {
                         released
                     } else {
@@ -114,7 +128,7 @@ where
                         },
                     );
                 }
-                Ok(ButtonEvent::Released(button)) => {
+                ButtonEvent::Released(button) => {
                     if let ButtonState::Down { pressed } = self.state[&button] {
                         match &button {
                             ButtonId::Reset => {
@@ -131,7 +145,6 @@ where
                         },
                     );
                 }
-                Err(error) => warn!("Error while reading button event: {error}"),
             }
         }
     }

@@ -1,8 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-// TODO: display refactor
-#![allow(dead_code)]
-
 pub(crate) const MIN_BRIGHTNESS_PCT: u8 = 10;
 
 pub use bmc_platform::backlight::DisplayBacklightDriver;

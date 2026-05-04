@@ -1,7 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,6 +14,8 @@ use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::manager::BmcManager;
+use crate::sound::SoundController;
+use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
 use crate::widget::{Coordinator, WidgetManager, WidgetRegistry};
@@ -46,7 +47,8 @@ where
     led_controller: LedController<T>,
     widget_coordinator: Arc<Coordinator>,
     widget_registry: Arc<WidgetRegistry>,
-    _backlight_driver: PhantomData<U>,
+    system_manager: SystemManager<U>,
+    sound_controller: SoundController,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -64,7 +66,7 @@ where
         config: Configuration,
         manager: Arc<T>,
         session_manager: T::SessionManager,
-        _backlight_driver: Arc<Mutex<U>>,
+        backlight_driver: Arc<Mutex<U>>,
         led_driver: LedDriver,
         firmware_index: V,
         buttons: Arc<Box<dyn Buttons + Send + Sync>>,
@@ -106,9 +108,8 @@ where
             .autoupgrade_init(autoupgrade_config)
             .await;
 
-        // TODO: display refactor
-        // let sound_controller =
-        //     SoundController::new(config_handle.clone(), config.sounds_dir.clone());
+        let sound_controller =
+            SoundController::new(config_handle.clone(), config.sounds_dir.clone());
 
         let initial_setup = InitialSetup::new(
             manager.clone(),
@@ -130,19 +131,8 @@ where
         // )
         // .await;
 
-        // TODO: display refactor - SystemManager needs display_controller
-        // let system_manager = SystemManager::init(
-        //     config_handle.clone(),
-        //     manager.watch_timezone_updates(),
-        //     backlight_driver,
-        //     scheduler,
-        //     display_controller.clone(),
-        //     sound_controller.clone(),
-        // )
-        // .await;
-
         let (_, last_price_change_24h_receiver) = watch::channel(0.0);
-        let (mut led_controller, _led_state_sender) = LedController::new(
+        let (mut led_controller, led_state_sender) = LedController::new(
             &state_service,
             manager.clone(),
             last_price_change_24h_receiver,
@@ -153,7 +143,20 @@ where
         led_controller.init(led_driver.command_sender.clone());
         led_controller.push_event(bmc_led::data::LedEvent::DeviceReady);
 
-        let button_manager = ButtonManager::new(buttons, manager.clone());
+        let screen_activity = Arc::new(tokio::sync::Notify::new());
+        let button_manager = ButtonManager::new(buttons, manager.clone(), screen_activity.clone());
+
+        let system_manager = SystemManager::init(
+            config_handle.clone(),
+            manager.watch_timezone_updates(),
+            backlight_driver,
+            scheduler.clone(),
+            sound_controller.clone(),
+            led_state_sender,
+            manager.clone(),
+            screen_activity,
+        )
+        .await;
 
         let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
         let widget_registry = widget_manager.registry();
@@ -186,7 +189,8 @@ where
             led_controller,
             widget_coordinator,
             widget_registry,
-            _backlight_driver: PhantomData,
+            system_manager,
+            sound_controller,
         })
     }
 
@@ -196,7 +200,7 @@ where
 
         tokio::spawn(self.button_manager.run());
 
-        WebService::<T, _, V, U>::new(
+        WebService::new(
             self.manager,
             self.session_manager,
             self.config.server_config,
@@ -206,9 +210,9 @@ where
             self.led_controller,
             self.widget_registry,
             self.widget_coordinator.clone(),
-            // TODO: display refactor — re-enable display-dependent services here.
-            // self.system_manager,
-            // self.sound_controller,
+            self.system_manager,
+            self.sound_controller,
+            // TODO: display refactor — re-enable AlarmController here in the next pass.
             // self.alarm_controller,
         )
         .run(self.listener)
