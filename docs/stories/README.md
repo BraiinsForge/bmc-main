@@ -33,6 +33,11 @@ activates the Nix store, and falls back to firmware upgrade if no matching bundl
 Swipe left/right to navigate between scenes and tap/drag to interact with widgets via touch events forwarded through the
 Wayland protocol.
 
+### [Night Mode](night-mode.md)
+
+Scheduled quiet-hours behavior that uses separate brightness and sound volume, optional screen auto-off with touch and
+button wakeup, and separate LED notification enablement for night hours.
+
 ### [Web UI for Deck Configuration](web-ui.md)
 
 Browser-based interface hosted by the device for managing scenes, widgets, and system-wide settings. Widget catalog and
@@ -46,8 +51,8 @@ speaker.
 
 ### Display & Scenes
 
-*Not yet documented.* Screen brightness, night mode scheduling, fullscreen scene behavior, and scene management with
-configurable cycle durations.
+*Partially documented.* See [Night Mode](night-mode.md) for scheduled quiet-hours behavior. Remaining display stories
+include fullscreen scene behavior and scene management with configurable cycle durations.
 
 ### Network Management
 
