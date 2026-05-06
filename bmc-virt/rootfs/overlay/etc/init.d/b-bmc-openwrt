@@ -47,9 +47,11 @@ start_service() {
         EXTRA_ARGS="--headless-compositor"
     fi
 
+    WWW_ARGS="--www-path /www/bmc"
+
     procd_open_instance
     procd_set_param command /bin/sh -c \
-        "exec $LAUNCHER $BMC_BIN $WIDGETS_ARGS $EXTRA_ARGS >>$BMC_LOG 2>&1"
+        "exec $LAUNCHER $BMC_BIN $WIDGETS_ARGS $EXTRA_ARGS $WWW_ARGS >>$BMC_LOG 2>&1"
     procd_set_param env \
         RUST_BACKTRACE=full \
         RUST_LOG=debug \
