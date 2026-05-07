@@ -84,39 +84,6 @@ const getInitialState = (): State => ({
 
 const $ = getID('combined').get;
 
-function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined): Record<string, string> {
-    if (!params) return {};
-    const result: Record<string, string> = {};
-    for (const [k, v] of Object.entries(params.fields)) {
-        switch (v.kind.case) {
-            case 'stringValue':
-                result[k] = JSON.stringify(v.kind.value);
-                break;
-            case 'integerValue':
-            case 'doubleValue':
-                result[k] = JSON.stringify(v.kind.value);
-                break;
-            case 'booleanValue':
-                result[k] = JSON.stringify(v.kind.value);
-                break;
-            default:
-                result[k] = '';
-        }
-    }
-    return result;
-}
-
-function formStateToWidgetDataStruct(manifest: pb.WidgetManifest, params: Record<string, string>): pb.WidgetDataStruct {
-    const fields: Record<string, pb.WidgetDataValue> = {};
-    for (const def of manifest.params) {
-        const raw = params[def.key];
-        if (raw !== undefined) {
-            fields[def.key] = Comp.widgetDataValueFromRaw(raw, def);
-        }
-    }
-    return pb.create(pb.WidgetDataStructSchema, { fields });
-}
-
 class View extends Component<Props, State> {
     readonly state = getInitialState();
 
@@ -300,7 +267,7 @@ class View extends Component<Props, State> {
             return;
         }
 
-        const params = widgetParamsToFormState(widget.config?.params);
+        const params = fn.widgetParamsToFormState(widget.config?.params);
         const position = widget.position ?? pb.create(pb.WidgetPositionSchema);
         const sizeOptions = this.#computeSizeOptions(manifest, { id, position });
 
@@ -378,7 +345,7 @@ class View extends Component<Props, State> {
             const widget =
                 scene?.kind.case === 'combined' ? scene.kind.value.widgets.find(w => w.id === newWidgetId) : undefined;
 
-            const resolvedParams = widgetParamsToFormState(widget?.config?.params);
+            const resolvedParams = fn.widgetParamsToFormState(widget?.config?.params);
             const resolvedPosition = widget?.position ?? canonicalPosition;
             const resolvedSize = widget?.size ?? size;
 
@@ -415,7 +382,7 @@ class View extends Component<Props, State> {
                 sceneId,
                 position,
                 size,
-                params: formStateToWidgetDataStruct(manifest, params),
+                params: fn.formStateToWidgetDataStruct(manifest, params),
             });
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -469,7 +436,7 @@ class View extends Component<Props, State> {
                 sceneId,
                 position,
                 size,
-                params: formStateToWidgetDataStruct(manifest, params),
+                params: fn.formStateToWidgetDataStruct(manifest, params),
             });
 
             this.setState({ openDialogKind: null, addPosition: null });
@@ -514,7 +481,7 @@ class View extends Component<Props, State> {
                 sceneId: this.props.sceneId,
                 position,
                 size: originalSize,
-                params: formStateToWidgetDataStruct(manifest, originalParams),
+                params: fn.formStateToWidgetDataStruct(manifest, originalParams),
             });
         } catch ($) {
             if (pb.abort.is($)) return;

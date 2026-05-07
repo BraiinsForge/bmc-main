@@ -6,6 +6,9 @@ import { assertUnreachable } from '@/lib/ts';
 
 import * as C from './const';
 import type { WidgetOrPlaceholder, WidgetsOccupandyMap, WidgetsWithPlaceholders } from './const';
+// Direct import: going through ../components would re-enter fn via
+// CombinedSceneView and create a cycle.
+import { widgetDataValueFromRaw } from '../components/FormWidgetManifest';
 
 /**
  * To allow the user to:
@@ -272,6 +275,50 @@ export function getValidDropSlots(pool: C.Located[], widget: C.Located): C.Valid
     });
 
     return res;
+}
+
+/**
+ * Project a WidgetDataStruct from the wire into the modal's
+ * Record<string, string> form state. Each field is JSON.stringify'd so a
+ * single string-typed slot can carry every scalar wire arm; null_value
+ * (and unset kind) become "" so the convention stays "no raw == no value".
+ */
+export function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined): Record<string, string> {
+    if (!params) return {};
+    const result: Record<string, string> = {};
+    for (const [k, v] of Object.entries(params.fields)) {
+        switch (v.kind.case) {
+            case 'stringValue':
+            case 'integerValue':
+            case 'doubleValue':
+            case 'booleanValue':
+                result[k] = JSON.stringify(v.kind.value);
+                break;
+            default:
+                result[k] = '';
+        }
+    }
+    return result;
+}
+
+/**
+ * Inverse of widgetParamsToFormState. Iterates the manifest (not the form
+ * state) so unknown form keys cannot leak onto the wire; missing keys are
+ * dropped — the server then rejects the Update with `params["<key>"]:
+ * missing` when ValidateMode::Update is in effect.
+ */
+export function formStateToWidgetDataStruct(
+    manifest: pb.WidgetManifest,
+    params: Record<string, string>,
+): pb.WidgetDataStruct {
+    const fields: Record<string, pb.WidgetDataValue> = {};
+    for (const def of manifest.params) {
+        const raw = params[def.key];
+        if (raw !== undefined) {
+            fields[def.key] = widgetDataValueFromRaw(raw, def);
+        }
+    }
+    return pb.create(pb.WidgetDataStructSchema, { fields });
 }
 
 /** Get available widget sizes for a given widget position */
