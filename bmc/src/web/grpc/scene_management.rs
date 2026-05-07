@@ -385,6 +385,147 @@ fn reject_update_widget_in_fullscreen(
     Ok(())
 }
 
+pub(crate) enum ValidateMode {
+    Add,
+    Update,
+}
+
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "enum is cheap; by-value keeps call-site ergonomic"
+)]
+pub(crate) fn validate_widget_params(
+    manifest: &bmc_widget::Manifest,
+    params: &web::WidgetDataStruct,
+    mode: ValidateMode,
+) -> Result<(), Status> {
+    use web::widget_data_value::Kind as VK;
+
+    if matches!(mode, ValidateMode::Update) {
+        for key in manifest.params.keys() {
+            if !params.fields.contains_key(key.as_str()) {
+                return Err(Status::invalid_argument(format!(
+                    "param {:?}: missing in UpdateWidget request",
+                    key.as_str()
+                )));
+            }
+        }
+    }
+
+    for (key, value) in &params.fields {
+        let def = manifest
+            .params
+            .get(key.as_str())
+            .ok_or_else(|| Status::invalid_argument(format!("param {key:?}: unknown")))?;
+
+        let kind = value.kind.as_ref().ok_or_else(|| {
+            Status::invalid_argument(format!("param {key:?}: WidgetDataValue.kind unset"))
+        })?;
+
+        if matches!(kind, VK::NullValue(_)) {
+            if !def.is_optional {
+                return Err(Status::invalid_argument(format!(
+                    "param {key:?}: null_value on required param"
+                )));
+            }
+            continue;
+        }
+
+        validate_widget_param_value(key, &def.kind, kind)?;
+    }
+    Ok(())
+}
+
+fn validate_widget_param_value(
+    key: &str,
+    param_kind: &ParamKind,
+    kind: &web::widget_data_value::Kind,
+) -> Result<(), Status> {
+    use web::widget_data_value::Kind as VK;
+    match (param_kind, kind) {
+        (ParamKind::String { enum_values, .. }, VK::StringValue(s)) => {
+            if !enum_values.is_empty() && !enum_values.iter().any(|o| &o.value == s) {
+                return Err(Status::invalid_argument(format!(
+                    "param {key:?}: value not in enum_values"
+                )));
+            }
+        }
+        (ParamKind::Timezone { .. }, VK::StringValue(_))
+        | (ParamKind::Boolean { .. }, VK::BooleanValue(_)) => {}
+        (
+            ParamKind::Integer {
+                min,
+                max,
+                enum_values,
+                ..
+            },
+            VK::IntegerValue(i),
+        ) => {
+            if let Some(lo) = min
+                && i < lo
+            {
+                return Err(Status::invalid_argument(format!(
+                    "param {key:?}: {i} < min {lo}"
+                )));
+            }
+            if let Some(hi) = max
+                && i > hi
+            {
+                return Err(Status::invalid_argument(format!(
+                    "param {key:?}: {i} > max {hi}"
+                )));
+            }
+            if !enum_values.is_empty() && !enum_values.iter().any(|o| o.value == *i) {
+                return Err(Status::invalid_argument(format!(
+                    "param {key:?}: value not in enum_values"
+                )));
+            }
+        }
+        (
+            ParamKind::Double {
+                min,
+                max,
+                enum_values,
+                ..
+            },
+            VK::DoubleValue(d),
+        ) => {
+            if !d.is_finite() {
+                return Err(Status::invalid_argument(format!(
+                    "param {key:?}: double_value must be finite (got {d})"
+                )));
+            }
+            if let Some(lo) = min
+                && d < lo
+            {
+                return Err(Status::invalid_argument(format!(
+                    "param {key:?}: {d} < min {lo}"
+                )));
+            }
+            if let Some(hi) = max
+                && d > hi
+            {
+                return Err(Status::invalid_argument(format!(
+                    "param {key:?}: {d} > max {hi}"
+                )));
+            }
+            if !enum_values.is_empty()
+                && !enum_values.iter().any(|o| o.value.to_bits() == d.to_bits())
+            {
+                return Err(Status::invalid_argument(format!(
+                    "param {key:?}: value not in enum_values"
+                )));
+            }
+        }
+        _ => {
+            return Err(Status::invalid_argument(format!(
+                "param {key:?}: WidgetDataValue arm does not match declared variant"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn scene_widget_size_to_proto(size: scene::WidgetSize) -> i32 {
     match size {
         scene::WidgetSize::Small => web::WidgetSize::Small.into(),
@@ -1052,6 +1193,352 @@ mod tests {
                 web::widget_data_value::Null {},
             )),
         }
+    }
+    fn wdv_unset_kind() -> web::WidgetDataValue {
+        web::WidgetDataValue { kind: None }
+    }
+
+    fn single_param_manifest(
+        key: &str,
+        kind: bmc_widget::ParamKind,
+        is_optional: bool,
+    ) -> bmc_widget::Manifest {
+        let param = bmc_widget::ParamDefinition {
+            name: "Test".into(),
+            description: None,
+            is_optional,
+            kind,
+        };
+        let pk: bmc_widget::ParamKey =
+            serde_json::from_str(&format!("\"{key}\"")).expect("BUG: valid key");
+        let mut params = std::collections::HashMap::new();
+        params.insert(pk, param);
+        bmc_widget::Manifest {
+            uid: uuid::Uuid::new_v4(),
+            version: semver::Version::new(1, 0, 0),
+            name: "T".into(),
+            description: "T".into(),
+            author: None,
+            binary: std::path::PathBuf::from("bin/test"),
+            settings: vec![],
+            sizes: vec![bmc_ipc::SizeType::Small],
+            params,
+        }
+    }
+
+    fn fields_one(key: &str, value: web::WidgetDataValue) -> web::WidgetDataStruct {
+        web::WidgetDataStruct {
+            fields: [(key.to_owned(), value)].into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn validate_widget_params_string_string_value_accepts() {
+        let manifest = single_param_manifest(
+            "color",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("red".into()),
+            },
+            false,
+        );
+        let params = fields_one("color", wdv_string("blue"));
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+    }
+
+    #[test]
+    fn validate_widget_params_string_double_value_rejects() {
+        let manifest = single_param_manifest(
+            "color",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("red".into()),
+            },
+            false,
+        );
+        let params = fields_one("color", wdv_double(1.0));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_double_for_integer_rejects() {
+        let manifest = single_param_manifest(
+            "count",
+            bmc_widget::ParamKind::Integer {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0),
+            },
+            false,
+        );
+        let params = fields_one("count", wdv_double(5.0));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_integer_for_double_rejects() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_integer(1));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_unset_kind_rejects() {
+        let manifest = single_param_manifest(
+            "flag",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(false),
+            },
+            false,
+        );
+        let params = fields_one("flag", wdv_unset_kind());
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_null_value_on_required_rejects() {
+        let manifest = single_param_manifest(
+            "name",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("x".into()),
+            },
+            false,
+        );
+        let params = fields_one("name", wdv_null());
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_null_value_on_optional_accepts() {
+        let manifest = single_param_manifest(
+            "label",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: None,
+            },
+            true,
+        );
+        let params = fields_one("label", wdv_null());
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+    }
+
+    #[test]
+    fn validate_widget_params_double_nan_rejects() {
+        let manifest = single_param_manifest(
+            "val",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(1.0),
+            },
+            false,
+        );
+        let params = fields_one("val", wdv_double(f64::NAN));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject NaN");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_double_inf_rejects() {
+        let manifest = single_param_manifest(
+            "val",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(1.0),
+            },
+            false,
+        );
+        let params = fields_one("val", wdv_double(f64::INFINITY));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject Inf");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_integer_below_min_rejects() {
+        let manifest = single_param_manifest(
+            "n",
+            bmc_widget::ParamKind::Integer {
+                min: Some(5),
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+            false,
+        );
+        let params = fields_one("n", wdv_integer(4));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_integer_above_max_rejects() {
+        let manifest = single_param_manifest(
+            "n",
+            bmc_widget::ParamKind::Integer {
+                min: None,
+                max: Some(10),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+            false,
+        );
+        let params = fields_one("n", wdv_integer(11));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_double_below_min_rejects() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: Some(0.0),
+                max: Some(1.0),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_double(-0.1));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_enum_value_not_in_options_rejects() {
+        let manifest = single_param_manifest(
+            "style",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![
+                    bmc_widget::StringOption {
+                        value: "dark".into(),
+                        label: "Dark".into(),
+                    },
+                    bmc_widget::StringOption {
+                        value: "light".into(),
+                        label: "Light".into(),
+                    },
+                ],
+                default_value: Some("dark".into()),
+            },
+            false,
+        );
+        let params = fields_one("style", wdv_string("solarized"));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_enum_value_in_options_accepts() {
+        let manifest = single_param_manifest(
+            "style",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![
+                    bmc_widget::StringOption {
+                        value: "dark".into(),
+                        label: "Dark".into(),
+                    },
+                    bmc_widget::StringOption {
+                        value: "light".into(),
+                        label: "Light".into(),
+                    },
+                ],
+                default_value: Some("dark".into()),
+            },
+            false,
+        );
+        let params = fields_one("style", wdv_string("light"));
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+    }
+
+    #[test]
+    fn validate_widget_params_unknown_key_rejects() {
+        let manifest = single_param_manifest(
+            "known",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(true),
+            },
+            false,
+        );
+        let params = fields_one("unknown", wdv_boolean(true));
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject unknown key");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_update_missing_key_rejects() {
+        let manifest = single_param_manifest(
+            "flag",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(false),
+            },
+            false,
+        );
+        let params = web::WidgetDataStruct {
+            fields: std::collections::HashMap::new(),
+        };
+        let err = validate_widget_params(&manifest, &params, ValidateMode::Update)
+            .expect_err("BUG: Update must require all keys");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn validate_widget_params_add_missing_key_accepts() {
+        let manifest = single_param_manifest(
+            "flag",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(false),
+            },
+            false,
+        );
+        let params = web::WidgetDataStruct {
+            fields: std::collections::HashMap::new(),
+        };
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
     }
 
     #[test]
