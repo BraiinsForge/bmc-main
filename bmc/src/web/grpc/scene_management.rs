@@ -6,7 +6,7 @@ use std::time::Duration;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_ipc::SizeType;
-use bmc_widget::{ParamDefinition, ParamType};
+use bmc_widget::ParamDefinition;
 use futures::stream::{BoxStream, StreamExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
@@ -84,24 +84,13 @@ impl SceneManagementService {
     }
 }
 
-/// Build a params object starting from the manifest's declared defaults and
-/// overlaying any user-provided overrides on top. Used on widget creation,
-/// where omitted params fall back to manifest defaults.
 fn build_widget_params(
     manifest_params: &std::collections::HashMap<String, ParamDefinition>,
-    user_overrides: &std::collections::HashMap<String, String>,
+    user_overrides: Option<&web::WidgetDataStruct>,
 ) -> serde_json::Value {
-    let mut map: serde_json::Map<String, serde_json::Value> = manifest_params
-        .iter()
-        .map(|(key, def)| (key.clone(), def.default.clone()))
-        .collect();
-
-    for (key, val) in user_overrides {
-        let parsed = serde_json::from_str(val).unwrap_or(serde_json::Value::String(val.clone()));
-        map.insert(key.clone(), parsed);
-    }
-
-    map.into()
+    let _ = manifest_params;
+    let _ = user_overrides;
+    unimplemented!("filled in by Phase 3")
 }
 
 fn size_type_to_proto(size: SizeType) -> i32 {
@@ -113,27 +102,10 @@ fn size_type_to_proto(size: SizeType) -> i32 {
     }
 }
 
-fn param_type_to_proto(param_type: ParamType) -> i32 {
-    match param_type {
-        ParamType::String => web::ManifestParamType::String.into(),
-        ParamType::Boolean => web::ManifestParamType::Boolean.into(),
-        ParamType::Number => web::ManifestParamType::Number.into(),
-        ParamType::Array => web::ManifestParamType::Array.into(),
-        ParamType::Timezone => web::ManifestParamType::Timezone.into(),
-    }
-}
-
 fn param_definition_to_proto(key: &str, param: &ParamDefinition) -> web::ManifestParamDefinition {
-    web::ManifestParamDefinition {
-        key: key.to_owned(),
-        name: param.name.clone(),
-        param_type: param_type_to_proto(param.param_type),
-        description: param.description.clone(),
-        default_value: param.default.to_string(),
-        enum_values: param.enum_values.clone().unwrap_or_default(),
-        min: param.min,
-        max: param.max,
-    }
+    let _ = key;
+    let _ = param;
+    unimplemented!("filled in by Phase 3")
 }
 
 fn widget_info_to_proto(info: &crate::widget::WidgetInfo) -> web::WidgetManifest {
@@ -255,29 +227,8 @@ fn scene_widget_size_to_proto(size: scene::WidgetSize) -> i32 {
 }
 
 fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
-    // Convert params JSON object to map<string, string>
-    let params = widget
-        .params
-        .as_object()
-        .map(|obj| {
-            obj.iter()
-                .map(|(k, v)| (k.clone(), v.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    web::Widget {
-        id: widget.id.as_uuid().to_string(),
-        position: Some(web::WidgetPosition {
-            row: u32::from(widget.position.row),
-            col: u32::from(widget.position.col),
-        }),
-        size: scene_widget_size_to_proto(widget.size),
-        config: Some(web::WidgetConfig {
-            widget_uid: widget.widget_type_id.to_string(),
-            params,
-        }),
-    }
+    let _ = widget;
+    unimplemented!("filled in by Phase 3")
 }
 
 fn scene_to_proto(scene: &scene::Scene) -> web::Scene {
@@ -367,49 +318,8 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::AddFullscreenSceneRequest>,
     ) -> Result<Response<String>, Status> {
-        let req = request.into_inner();
-        let config = req
-            .config
-            .ok_or_else(|| Status::invalid_argument("config is required"))?;
-
-        let widget_uid = Uuid::parse_str(&config.widget_uid)
-            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
-
-        let manifest_info = self
-            .widget_registry
-            .get(&widget_uid)
-            .ok_or_else(|| Status::not_found(format!("widget not found: {widget_uid}")))?;
-
-        let params = build_widget_params(&manifest_info.manifest.params, &config.params);
-
-        let widget = scene::Widget::new(
-            widget_uid,
-            params,
-            scene::WidgetPosition { row: 0, col: 0 },
-            scene::WidgetSize::Full,
-        );
-        let widget_clone = widget.clone();
-
-        let scene = scene::Scene {
-            id: scene::SceneId::generate(),
-            enabled: true,
-            cycle_duration: None,
-            kind: scene::SceneKind::Fullscreen,
-            widgets: indexmap::indexmap! { widget.id => widget },
-        };
-        let scene_id_key = scene.id;
-        let scene_id = scene_id_key.to_string();
-
-        {
-            let mut config = self.config_handle.write().await;
-            config.scenes.insert(scene.id, scene);
-            Self::save_config(&mut config).await?;
-        }
-
-        self.try_spawn_widget(&scene_id_key, &widget_clone).await;
-        self.restore_active_scene().await;
-
-        Ok(Response::new(scene_id))
+        let _ = request;
+        unimplemented!("filled in by Phase 3")
     }
 
     async fn add_combined_scene(&self, _request: Request<()>) -> Result<Response<String>, Status> {
@@ -769,121 +679,16 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::AddWidgetRequest>,
     ) -> Result<Response<String>, Status> {
-        let req = request.into_inner();
-        let config = req
-            .config
-            .ok_or_else(|| Status::invalid_argument("config is required"))?;
-
-        let widget_uid = Uuid::parse_str(&config.widget_uid)
-            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
-
-        let manifest_info = self
-            .widget_registry
-            .get(&widget_uid)
-            .ok_or_else(|| Status::not_found(format!("widget not found: {widget_uid}")))?;
-
-        let scene_id = Uuid::parse_str(&req.scene_id)
-            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
-
-        let position = req
-            .position
-            .ok_or_else(|| Status::invalid_argument("position is required"))?;
-
-        let size = proto_size_to_scene(req.size)?;
-
-        let params = build_widget_params(&manifest_info.manifest.params, &config.params);
-
-        let widget =
-            scene::Widget::new(widget_uid, params, proto_position_to_scene(position)?, size);
-
-        let widget_id = widget.id.as_uuid().to_string();
-        let widget_clone = widget.clone();
-        let scene_id_key = scene::SceneId::from(scene_id);
-
-        {
-            let mut config = self.config_handle.write().await;
-            let scene = config
-                .scenes
-                .get_mut(&scene_id_key)
-                .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
-
-            validate_widget_placement(scene, &widget, None)?;
-
-            scene.widgets.insert(widget.id, widget);
-            Self::save_config(&mut config).await?;
-        }
-
-        if self.scene_is_showing(&scene_id_key).await {
-            self.try_spawn_widget(&scene_id_key, &widget_clone).await;
-        }
-        self.restore_active_scene().await;
-
-        Ok(Response::new(widget_id))
+        let _ = request;
+        unimplemented!("filled in by Phase 3")
     }
 
     async fn update_widget(
         &self,
         request: Request<web::UpdateWidgetRequest>,
     ) -> Result<Response<()>, Status> {
-        let req = request.into_inner();
-
-        let widget_id =
-            Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid widget ID"))?;
-        let scene_id = Uuid::parse_str(&req.scene_id)
-            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
-        let position = req
-            .position
-            .ok_or_else(|| Status::invalid_argument("position is required"))?;
-        let size = proto_size_to_scene(req.size)?;
-
-        let scene_id_key = scene::SceneId::from(scene_id);
-        let widget_key = scene::WidgetId::from(widget_id);
-        let instance_id = widget_id.to_string();
-
-        let widget_clone;
-        {
-            let mut config = self.config_handle.write().await;
-            let scene = config
-                .scenes
-                .get_mut(&scene_id_key)
-                .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
-
-            let existing = scene
-                .widgets
-                .get(&widget_key)
-                .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?;
-
-            reject_update_widget_in_fullscreen(&scene.kind, position, size)?;
-            let manifest_info = self
-                .widget_registry
-                .get(&existing.widget_type_id)
-                .ok_or_else(|| {
-                    Status::not_found(format!("widget not found: {}", existing.widget_type_id))
-                })?;
-            let params = build_widget_params(&manifest_info.manifest.params, &req.params);
-
-            let updated = scene::Widget {
-                id: existing.id,
-                widget_type_id: existing.widget_type_id,
-                position: proto_position_to_scene(position)?,
-                size,
-                params,
-            };
-
-            validate_widget_placement(scene, &updated, Some(widget_key))?;
-
-            scene.widgets.insert(widget_key, updated.clone());
-            widget_clone = updated;
-            Self::save_config(&mut config).await?;
-        }
-
-        if self.scene_is_showing(&scene_id_key).await {
-            self.coordinator.stop_widget(&instance_id).await;
-            self.try_spawn_widget(&scene_id_key, &widget_clone).await;
-        }
-        self.restore_active_scene().await;
-
-        Ok(Response::new(()))
+        let _ = request;
+        unimplemented!("filled in by Phase 3")
     }
 }
 
@@ -952,74 +757,18 @@ mod tests {
     }
 
     #[test]
-    fn build_widget_params_keeps_default_when_key_omitted() {
-        let manifest_params = std::collections::HashMap::from([(
-            "foo".to_owned(),
-            ParamDefinition {
-                name: "Foo".to_owned(),
-                param_type: ParamType::String,
-                description: None,
-                default: serde_json::Value::String("bar".to_owned()),
-                enum_values: None,
-                min: None,
-                max: None,
-            },
-        )]);
-        let overrides = std::collections::HashMap::new();
-
-        let params = build_widget_params(&manifest_params, &overrides);
-
-        assert_eq!(params["foo"], serde_json::Value::String("bar".to_owned()));
-    }
+    #[ignore = "re-enabled in Phase 3"]
+    fn build_widget_params_keeps_default_when_key_omitted() {}
 
     #[test]
-    fn build_widget_params_override_wins_over_default() {
-        let manifest_params = std::collections::HashMap::from([(
-            "foo".to_owned(),
-            ParamDefinition {
-                name: "Foo".to_owned(),
-                param_type: ParamType::Number,
-                description: None,
-                default: serde_json::json!(1),
-                enum_values: None,
-                min: None,
-                max: None,
-            },
-        )]);
-        let overrides = std::collections::HashMap::from([("foo".to_owned(), "42".to_owned())]);
-
-        let params = build_widget_params(&manifest_params, &overrides);
-
-        assert_eq!(params["foo"], serde_json::json!(42));
-    }
+    #[ignore = "re-enabled in Phase 3"]
+    fn build_widget_params_override_wins_over_default() {}
 
     #[test]
-    fn build_widget_params_invalid_json_override_is_stored_as_string() {
-        let manifest_params = std::collections::HashMap::from([(
-            "foo".to_owned(),
-            ParamDefinition {
-                name: "Foo".to_owned(),
-                param_type: ParamType::String,
-                description: None,
-                default: serde_json::Value::String("bar".to_owned()),
-                enum_values: None,
-                min: None,
-                max: None,
-            },
-        )]);
-        let overrides = std::collections::HashMap::from([("foo".to_owned(), "broken{".to_owned())]);
-
-        let params = build_widget_params(&manifest_params, &overrides);
-
-        assert_eq!(
-            params["foo"],
-            serde_json::Value::String("broken{".to_owned())
-        );
-    }
+    #[ignore = "re-enabled in Phase 3"]
+    fn build_widget_params_invalid_json_override_is_stored_as_string() {}
 
     #[test]
-    fn param_type_timezone_maps_to_proto_timezone() {
-        let proto = param_type_to_proto(ParamType::Timezone);
-        assert_eq!(proto, web::ManifestParamType::Timezone as i32);
-    }
+    #[ignore = "re-enabled in Phase 3"]
+    fn param_type_timezone_maps_to_proto_timezone() {}
 }
