@@ -6,13 +6,37 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use bmc_ipc::SizeType;
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use crate::ManifestError;
 
 const MAX_NAME_LENGTH: usize = 50;
 const MAX_DESCRIPTION_LENGTH: usize = 200;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct ParamKey(String);
+
+impl ParamKey {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ParamKey {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        let mut bytes = s.bytes();
+        let first_ok = matches!(bytes.next(), Some(b) if b.is_ascii_alphabetic());
+        let rest_ok = bytes.all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if !(first_ok && rest_ok) {
+            return Err(D::Error::custom(format!("invalid param key {s:?}")));
+        }
+        Ok(Self(s))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RawManifest {
@@ -417,5 +441,24 @@ mod tests {
         assert_eq!(param.param_type, ParamType::Number);
         assert_eq!(param.min, Some(0.0));
         assert_eq!(param.max, Some(100.0));
+    }
+
+    #[test]
+    fn param_key_accepts_valid_keys() {
+        for key in ["foo", "Foo", "foo-bar", "foo_bar", "a1", "a1-b2_c3"] {
+            let json = format!("\"{key}\"");
+            let parsed: ParamKey = serde_json::from_str(&json)
+                .expect("BUG: valid key must parse");
+            assert_eq!(parsed.as_str(), key);
+        }
+    }
+
+    #[test]
+    fn param_key_rejects_invalid_keys() {
+        for bad in ["", "1abc", "_foo", "-foo", "123", "foo bar", "foo!", "föö"] {
+            let json = format!("\"{bad}\"");
+            let res: Result<ParamKey, _> = serde_json::from_str(&json);
+            assert!(res.is_err(), "expected reject for {bad:?}");
+        }
     }
 }
