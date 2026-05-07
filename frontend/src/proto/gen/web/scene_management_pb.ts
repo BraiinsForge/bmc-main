@@ -6,6 +6,8 @@ import type { GenEnum, GenFile, GenMessage, GenService } from '@bufbuild/protobu
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
 import type { EmptySchema, StringValueSchema } from '@bufbuild/protobuf/wkt';
 import { file_google_protobuf_empty, file_google_protobuf_wrappers } from '@bufbuild/protobuf/wkt';
+import type { WidgetDataStruct } from './widget_data_pb';
+import { file_web_widget_data } from './widget_data_pb';
 import type { Message } from '@bufbuild/protobuf';
 
 /**
@@ -14,8 +16,8 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_scene_management: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chp3ZWIvc2NlbmVfbWFuYWdlbWVudC5wcm90bxIPYnJhaWlucy5ibWMud2ViIr8CCgVTY2VuZRIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgBiAEBEjcKCmZ1bGxzY3JlZW4YBCABKAsyIS5icmFpaW5zLmJtYy53ZWIuU2NlbmUuRnVsbHNjcmVlbkgAEjMKCGNvbWJpbmVkGAUgASgLMh8uYnJhaWlucy5ibWMud2ViLlNjZW5lLkNvbWJpbmVkSAAaNQoKRnVsbHNjcmVlbhInCgZ3aWRnZXQYASABKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0GjQKCENvbWJpbmVkEigKB3dpZGdldHMYASADKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0QgYKBGtpbmRCFQoTX2N5Y2xlX2R1cmF0aW9uX3NlYyI7ChFHZXRTY2VuZXNSZXNwb25zZRImCgZzY2VuZXMYASADKAsyFi5icmFpaW5zLmJtYy53ZWIuU2NlbmUiSgoZQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBItCgZjb25maWcYASABKAsyHS5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0Q29uZmlnImkKElVwZGF0ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgAiAEBQhUKE19jeWNsZV9kdXJhdGlvbl9zZWMiLQoQTW92ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRINCgVpbmRleBgCIAEoDSI2Cg1TY2VuZVJlc3BvbnNlEiUKBXNjZW5lGAEgASgLMhYuYnJhaWlucy5ibWMud2ViLlNjZW5lIioKDldpZGdldFBvc2l0aW9uEgsKA3JvdxgBIAEoDRILCgNjb2wYAiABKA0ijAEKDFdpZGdldENvbmZpZxISCgp3aWRnZXRfdWlkGAEgASgJEjkKBnBhcmFtcxgCIAMoCzIpLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRDb25maWcuUGFyYW1zRW50cnkaLQoLUGFyYW1zRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKhAQoGV2lkZ2V0EgoKAmlkGAEgASgJEjEKCHBvc2l0aW9uGAIgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYAyABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRItCgZjb25maWcYBCABKAsyHS5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0Q29uZmlnIrEBChBBZGRXaWRnZXRSZXF1ZXN0EhAKCHNjZW5lX2lkGAEgASgJEjEKCHBvc2l0aW9uGAIgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYAyABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRItCgZjb25maWcYBCABKAsyHS5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0Q29uZmlnIoICChNVcGRhdGVXaWRnZXRSZXF1ZXN0EgoKAmlkGAEgASgJEhAKCHNjZW5lX2lkGAIgASgJEjEKCHBvc2l0aW9uGAMgASgLMh8uYnJhaWlucy5ibWMud2ViLldpZGdldFBvc2l0aW9uEikKBHNpemUYBCABKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRJACgZwYXJhbXMYBSADKAsyMC5icmFpaW5zLmJtYy53ZWIuVXBkYXRlV2lkZ2V0UmVxdWVzdC5QYXJhbXNFbnRyeRotCgtQYXJhbXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIjMKE1JlbW92ZVdpZGdldFJlcXVlc3QSCgoCaWQYASABKAkSEAoIc2NlbmVfaWQYAiABKAkiOQoOV2lkZ2V0UmVzcG9uc2USJwoGd2lkZ2V0GAEgASgLMhcuYnJhaWlucy5ibWMud2ViLldpZGdldCKeAQoMU2NlbmVDeWNsaW5nEiEKGWF1dG9tYXRpY19jeWNsaW5nX2VuYWJsZWQYASABKAgSLgomYXV0b21hdGljX2N5Y2xpbmdfZGVmYXVsdF9kdXJhdGlvbl9zZWMYAiABKA0SOwoKdHJhbnNpdGlvbhgDIAEoDjInLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmdUcmFuc2l0aW9uIk8KF0dldFNjZW5lQ3ljbGluZ1Jlc3BvbnNlEjQKDXNjZW5lX2N5Y2xpbmcYASABKAsyHS5icmFpaW5zLmJtYy53ZWIuU2NlbmVDeWNsaW5nIk4KFlNldFNjZW5lQ3ljbGluZ1JlcXVlc3QSNAoNc2NlbmVfY3ljbGluZxgBIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmcikwIKDldpZGdldE1hbmlmZXN0EgsKA3VpZBgBIAEoCRIMCgRuYW1lGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEg8KB3ZlcnNpb24YBCABKAkSGAoLYXV0aG9yX25hbWUYBSABKAlIAIgBARIXCgphdXRob3JfdXJsGAYgASgJSAGIAQESNAoPc3VwcG9ydGVkX3NpemVzGAcgAygOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSOAoGcGFyYW1zGAggAygLMiguYnJhaWlucy5ibWMud2ViLk1hbmlmZXN0UGFyYW1EZWZpbml0aW9uQg4KDF9hdXRob3JfbmFtZUINCgtfYXV0aG9yX3VybCLjAgoXTWFuaWZlc3RQYXJhbURlZmluaXRpb24SCwoDa2V5GAEgASgJEgwKBG5hbWUYAiABKAkSNgoKcGFyYW1fdHlwZRgDIAEoDjIiLmJyYWlpbnMuYm1jLndlYi5NYW5pZmVzdFBhcmFtVHlwZRIYCgtkZXNjcmlwdGlvbhgEIAEoCUgAiAEBEhUKDWRlZmF1bHRfdmFsdWUYBSABKAkSTQoLZW51bV92YWx1ZXMYBiADKAsyOC5icmFpaW5zLmJtYy53ZWIuTWFuaWZlc3RQYXJhbURlZmluaXRpb24uRW51bVZhbHVlc0VudHJ5EhAKA21pbhgHIAEoAUgBiAEBEhAKA21heBgIIAEoAUgCiAEBGjEKD0VudW1WYWx1ZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQg4KDF9kZXNjcmlwdGlvbkIGCgRfbWluQgYKBF9tYXgiTwobR2V0QXZhaWxhYmxlV2lkZ2V0c1Jlc3BvbnNlEjAKB3dpZGdldHMYASADKAsyHy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0TWFuaWZlc3QqhQEKCldpZGdldFNpemUSGwoXV0lER0VUX1NJWkVfVU5TUEVDSUZJRUQQABIVChFXSURHRVRfU0laRV9TTUFMTBABEhYKEldJREdFVF9TSVpFX01FRElVTRACEhUKEVdJREdFVF9TSVpFX0xBUkdFEAMSFAoQV0lER0VUX1NJWkVfRlVMTBAEKokBChZTY2VuZUN5Y2xpbmdUcmFuc2l0aW9uEigKJFNDRU5FX0NZQ0xJTkdfVFJBTlNJVElPTl9VTlNQRUNJRklFRBAAEiIKHlNDRU5FX0NZQ0xJTkdfVFJBTlNJVElPTl9TTElERRABEiEKHVNDRU5FX0NZQ0xJTkdfVFJBTlNJVElPTl9GQURFEAIq2gEKEU1hbmlmZXN0UGFyYW1UeXBlEiMKH01BTklGRVNUX1BBUkFNX1RZUEVfVU5TUEVDSUZJRUQQABIeChpNQU5JRkVTVF9QQVJBTV9UWVBFX1NUUklORxABEh8KG01BTklGRVNUX1BBUkFNX1RZUEVfQk9PTEVBThACEh4KGk1BTklGRVNUX1BBUkFNX1RZUEVfTlVNQkVSEAMSHQoZTUFOSUZFU1RfUEFSQU1fVFlQRV9BUlJBWRAEEiAKHE1BTklGRVNUX1BBUkFNX1RZUEVfVElNRVpPTkUQBTKECgoWU2NlbmVNYW5hZ2VtZW50U2VydmljZRJHCglHZXRTY2VuZXMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaIi5icmFpaW5zLmJtYy53ZWIuR2V0U2NlbmVzUmVzcG9uc2USSAoIR2V0U2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaHi5icmFpaW5zLmJtYy53ZWIuU2NlbmVSZXNwb25zZRJeChJBZGRGdWxsc2NyZWVuU2NlbmUSKi5icmFpaW5zLmJtYy53ZWIuQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJIChBBZGRDb21iaW5lZFNjZW5lEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkoKC1VwZGF0ZVNjZW5lEiMuYnJhaWlucy5ibWMud2ViLlVwZGF0ZVNjZW5lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJGCglNb3ZlU2NlbmUSIS5icmFpaW5zLmJtYy53ZWIuTW92ZVNjZW5lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJICgpDbG9uZVNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkMKC1JlbW92ZVNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkYKDFByZXZpZXdTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eTABEkwKCUFkZFdpZGdldBIhLmJyYWlpbnMuYm1jLndlYi5BZGRXaWRnZXRSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkwKDFVwZGF0ZVdpZGdldBIkLmJyYWlpbnMuYm1jLndlYi5VcGRhdGVXaWRnZXRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkwKDFJlbW92ZVdpZGdldBIkLmJyYWlpbnMuYm1jLndlYi5SZW1vdmVXaWRnZXRSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElMKD0dldFNjZW5lQ3ljbGluZxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRooLmJyYWlpbnMuYm1jLndlYi5HZXRTY2VuZUN5Y2xpbmdSZXNwb25zZRJSCg9TZXRTY2VuZUN5Y2xpbmcSJy5icmFpaW5zLmJtYy53ZWIuU2V0U2NlbmVDeWNsaW5nUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJbChNHZXRBdmFpbGFibGVXaWRnZXRzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiwuYnJhaWlucy5ibWMud2ViLkdldEF2YWlsYWJsZVdpZGdldHNSZXNwb25zZRJSChFHZXRXaWRnZXRNYW5pZmVzdBIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRofLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRNYW5pZmVzdGIGcHJvdG8z',
-        [file_google_protobuf_empty, file_google_protobuf_wrappers],
+        'Chp3ZWIvc2NlbmVfbWFuYWdlbWVudC5wcm90bxIPYnJhaWlucy5ibWMud2ViIr8CCgVTY2VuZRIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgBiAEBEjcKCmZ1bGxzY3JlZW4YBCABKAsyIS5icmFpaW5zLmJtYy53ZWIuU2NlbmUuRnVsbHNjcmVlbkgAEjMKCGNvbWJpbmVkGAUgASgLMh8uYnJhaWlucy5ibWMud2ViLlNjZW5lLkNvbWJpbmVkSAAaNQoKRnVsbHNjcmVlbhInCgZ3aWRnZXQYASABKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0GjQKCENvbWJpbmVkEigKB3dpZGdldHMYASADKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0QgYKBGtpbmRCFQoTX2N5Y2xlX2R1cmF0aW9uX3NlYyI7ChFHZXRTY2VuZXNSZXNwb25zZRImCgZzY2VuZXMYASADKAsyFi5icmFpaW5zLmJtYy53ZWIuU2NlbmUiSgoZQWRkRnVsbHNjcmVlblNjZW5lUmVxdWVzdBItCgZjb25maWcYASABKAsyHS5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0Q29uZmlnImkKElVwZGF0ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRIPCgdlbmFibGVkGAIgASgIEh8KEmN5Y2xlX2R1cmF0aW9uX3NlYxgDIAEoDUgAiAEBQhUKE19jeWNsZV9kdXJhdGlvbl9zZWMiLQoQTW92ZVNjZW5lUmVxdWVzdBIKCgJpZBgBIAEoCRINCgVpbmRleBgCIAEoDSI2Cg1TY2VuZVJlc3BvbnNlEiUKBXNjZW5lGAEgASgLMhYuYnJhaWlucy5ibWMud2ViLlNjZW5lIioKDldpZGdldFBvc2l0aW9uEgsKA3JvdxgBIAEoDRILCgNjb2wYAiABKA0iVQoMV2lkZ2V0Q29uZmlnEhIKCndpZGdldF91aWQYASABKAkSMQoGcGFyYW1zGAIgASgLMiEuYnJhaWlucy5ibWMud2ViLldpZGdldERhdGFTdHJ1Y3QioQEKBldpZGdldBIKCgJpZBgBIAEoCRIxCghwb3NpdGlvbhgCIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRQb3NpdGlvbhIpCgRzaXplGAMgASgOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSLQoGY29uZmlnGAQgASgLMh0uYnJhaWlucy5ibWMud2ViLldpZGdldENvbmZpZyKxAQoQQWRkV2lkZ2V0UmVxdWVzdBIQCghzY2VuZV9pZBgBIAEoCRIxCghwb3NpdGlvbhgCIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRQb3NpdGlvbhIpCgRzaXplGAMgASgOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSLQoGY29uZmlnGAQgASgLMh0uYnJhaWlucy5ibWMud2ViLldpZGdldENvbmZpZyLEAQoTVXBkYXRlV2lkZ2V0UmVxdWVzdBIKCgJpZBgBIAEoCRIQCghzY2VuZV9pZBgCIAEoCRIxCghwb3NpdGlvbhgDIAEoCzIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRQb3NpdGlvbhIpCgRzaXplGAQgASgOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemUSMQoGcGFyYW1zGAUgASgLMiEuYnJhaWlucy5ibWMud2ViLldpZGdldERhdGFTdHJ1Y3QiMwoTUmVtb3ZlV2lkZ2V0UmVxdWVzdBIKCgJpZBgBIAEoCRIQCghzY2VuZV9pZBgCIAEoCSI5Cg5XaWRnZXRSZXNwb25zZRInCgZ3aWRnZXQYASABKAsyFy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0Ip4BCgxTY2VuZUN5Y2xpbmcSIQoZYXV0b21hdGljX2N5Y2xpbmdfZW5hYmxlZBgBIAEoCBIuCiZhdXRvbWF0aWNfY3ljbGluZ19kZWZhdWx0X2R1cmF0aW9uX3NlYxgCIAEoDRI7Cgp0cmFuc2l0aW9uGAMgASgOMicuYnJhaWlucy5ibWMud2ViLlNjZW5lQ3ljbGluZ1RyYW5zaXRpb24iTwoXR2V0U2NlbmVDeWNsaW5nUmVzcG9uc2USNAoNc2NlbmVfY3ljbGluZxgBIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5TY2VuZUN5Y2xpbmciTgoWU2V0U2NlbmVDeWNsaW5nUmVxdWVzdBI0Cg1zY2VuZV9jeWNsaW5nGAEgASgLMh0uYnJhaWlucy5ibWMud2ViLlNjZW5lQ3ljbGluZyKTAgoOV2lkZ2V0TWFuaWZlc3QSCwoDdWlkGAEgASgJEgwKBG5hbWUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSDwoHdmVyc2lvbhgEIAEoCRIYCgthdXRob3JfbmFtZRgFIAEoCUgAiAEBEhcKCmF1dGhvcl91cmwYBiABKAlIAYgBARI0Cg9zdXBwb3J0ZWRfc2l6ZXMYByADKA4yGy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0U2l6ZRI4CgZwYXJhbXMYCCADKAsyKC5icmFpaW5zLmJtYy53ZWIuTWFuaWZlc3RQYXJhbURlZmluaXRpb25CDgoMX2F1dGhvcl9uYW1lQg0KC19hdXRob3JfdXJsIpEDChdNYW5pZmVzdFBhcmFtRGVmaW5pdGlvbhILCgNrZXkYASABKAkSDAoEbmFtZRgCIAEoCRIYCgtkZXNjcmlwdGlvbhgDIAEoCUgBiAEBEhMKC2lzX29wdGlvbmFsGAQgASgIEjQKDHBhcmFtX3N0cmluZxgFIAEoCzIcLmJyYWlpbnMuYm1jLndlYi5QYXJhbVN0cmluZ0gAEjQKDHBhcmFtX2RvdWJsZRgGIAEoCzIcLmJyYWlpbnMuYm1jLndlYi5QYXJhbURvdWJsZUgAEjYKDXBhcmFtX2ludGVnZXIYByABKAsyHS5icmFpaW5zLmJtYy53ZWIuUGFyYW1JbnRlZ2VySAASNgoNcGFyYW1fYm9vbGVhbhgIIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5QYXJhbUJvb2xlYW5IABI4Cg5wYXJhbV90aW1lem9uZRgJIAEoCzIeLmJyYWlpbnMuYm1jLndlYi5QYXJhbVRpbWV6b25lSABCBgoEa2luZEIOCgxfZGVzY3JpcHRpb24irgEKC1BhcmFtU3RyaW5nEjIKBmZvcm1hdBgBIAEoDjIdLmJyYWlpbnMuYm1jLndlYi5TdHJpbmdGb3JtYXRIAIgBARIyCgtlbnVtX3ZhbHVlcxgCIAMoCzIdLmJyYWlpbnMuYm1jLndlYi5TdHJpbmdPcHRpb24SGgoNZGVmYXVsdF92YWx1ZRgDIAEoCUgBiAEBQgkKB19mb3JtYXRCEAoOX2RlZmF1bHRfdmFsdWUiLAoMU3RyaW5nT3B0aW9uEg0KBXZhbHVlGAEgASgJEg0KBWxhYmVsGAIgASgJIr8BCgtQYXJhbURvdWJsZRIQCgNtaW4YASABKAFIAIgBARIQCgNtYXgYAiABKAFIAYgBARIRCgRzdGVwGAMgASgBSAKIAQESMgoLZW51bV92YWx1ZXMYBCADKAsyHS5icmFpaW5zLmJtYy53ZWIuRG91YmxlT3B0aW9uEhoKDWRlZmF1bHRfdmFsdWUYBSABKAFIA4gBAUIGCgRfbWluQgYKBF9tYXhCBwoFX3N0ZXBCEAoOX2RlZmF1bHRfdmFsdWUiLAoMRG91YmxlT3B0aW9uEg0KBXZhbHVlGAEgASgBEg0KBWxhYmVsGAIgASgJIsEBCgxQYXJhbUludGVnZXISEAoDbWluGAEgASgFSACIAQESEAoDbWF4GAIgASgFSAGIAQESEQoEc3RlcBgDIAEoBUgCiAEBEjMKC2VudW1fdmFsdWVzGAQgAygLMh4uYnJhaWlucy5ibWMud2ViLkludGVnZXJPcHRpb24SGgoNZGVmYXVsdF92YWx1ZRgFIAEoBUgDiAEBQgYKBF9taW5CBgoEX21heEIHCgVfc3RlcEIQCg5fZGVmYXVsdF92YWx1ZSItCg1JbnRlZ2VyT3B0aW9uEg0KBXZhbHVlGAEgASgFEg0KBWxhYmVsGAIgASgJIjwKDFBhcmFtQm9vbGVhbhIaCg1kZWZhdWx0X3ZhbHVlGAEgASgISACIAQFCEAoOX2RlZmF1bHRfdmFsdWUiPQoNUGFyYW1UaW1lem9uZRIaCg1kZWZhdWx0X3ZhbHVlGAEgASgJSACIAQFCEAoOX2RlZmF1bHRfdmFsdWUiTwobR2V0QXZhaWxhYmxlV2lkZ2V0c1Jlc3BvbnNlEjAKB3dpZGdldHMYASADKAsyHy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0TWFuaWZlc3QqhQEKCldpZGdldFNpemUSGwoXV0lER0VUX1NJWkVfVU5TUEVDSUZJRUQQABIVChFXSURHRVRfU0laRV9TTUFMTBABEhYKEldJREdFVF9TSVpFX01FRElVTRACEhUKEVdJREdFVF9TSVpFX0xBUkdFEAMSFAoQV0lER0VUX1NJWkVfRlVMTBAEKokBChZTY2VuZUN5Y2xpbmdUcmFuc2l0aW9uEigKJFNDRU5FX0NZQ0xJTkdfVFJBTlNJVElPTl9VTlNQRUNJRklFRBAAEiIKHlNDRU5FX0NZQ0xJTkdfVFJBTlNJVElPTl9TTElERRABEiEKHVNDRU5FX0NZQ0xJTkdfVFJBTlNJVElPTl9GQURFEAIqjQEKDFN0cmluZ0Zvcm1hdBIdChlTVFJJTkdfRk9STUFUX1VOU1BFQ0lGSUVEEAASFgoSU1RSSU5HX0ZPUk1BVF9EQVRFEAESFgoSU1RSSU5HX0ZPUk1BVF9USU1FEAISFwoTU1RSSU5HX0ZPUk1BVF9FTUFJTBADEhUKEVNUUklOR19GT1JNQVRfVVJJEAQyhAoKFlNjZW5lTWFuYWdlbWVudFNlcnZpY2USRwoJR2V0U2NlbmVzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiIuYnJhaWlucy5ibWMud2ViLkdldFNjZW5lc1Jlc3BvbnNlEkgKCEdldFNjZW5lEhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGh4uYnJhaWlucy5ibWMud2ViLlNjZW5lUmVzcG9uc2USXgoSQWRkRnVsbHNjcmVlblNjZW5lEiouYnJhaWlucy5ibWMud2ViLkFkZEZ1bGxzY3JlZW5TY2VuZVJlcXVlc3QaHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUSSAoQQWRkQ29tYmluZWRTY2VuZRIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJKCgtVcGRhdGVTY2VuZRIjLmJyYWlpbnMuYm1jLndlYi5VcGRhdGVTY2VuZVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSRgoJTW92ZVNjZW5lEiEuYnJhaWlucy5ibWMud2ViLk1vdmVTY2VuZVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSSAoKQ2xvbmVTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJDCgtSZW1vdmVTY2VuZRIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJGCgxQcmV2aWV3U2NlbmUSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaFi5nb29nbGUucHJvdG9idWYuRW1wdHkwARJMCglBZGRXaWRnZXQSIS5icmFpaW5zLmJtYy53ZWIuQWRkV2lkZ2V0UmVxdWVzdBocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJMCgxVcGRhdGVXaWRnZXQSJC5icmFpaW5zLmJtYy53ZWIuVXBkYXRlV2lkZ2V0UmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJMCgxSZW1vdmVXaWRnZXQSJC5icmFpaW5zLmJtYy53ZWIuUmVtb3ZlV2lkZ2V0UmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJTCg9HZXRTY2VuZUN5Y2xpbmcSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaKC5icmFpaW5zLmJtYy53ZWIuR2V0U2NlbmVDeWNsaW5nUmVzcG9uc2USUgoPU2V0U2NlbmVDeWNsaW5nEicuYnJhaWlucy5ibWMud2ViLlNldFNjZW5lQ3ljbGluZ1JlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSWwoTR2V0QXZhaWxhYmxlV2lkZ2V0cxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRosLmJyYWlpbnMuYm1jLndlYi5HZXRBdmFpbGFibGVXaWRnZXRzUmVzcG9uc2USUgoRR2V0V2lkZ2V0TWFuaWZlc3QSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaHy5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0TWFuaWZlc3RiBnByb3RvMw',
+        [file_google_protobuf_empty, file_google_protobuf_wrappers, file_web_widget_data],
     );
 
 /**
@@ -240,18 +242,14 @@ export const WidgetPositionSchema: GenMessage<WidgetPosition> = /*@__PURE__*/ me
  */
 export type WidgetConfig = Message<'braiins.bmc.web.WidgetConfig'> & {
     /**
-     * UID of the manifest
-     *
      * @generated from field: string widget_uid = 1;
      */
     widgetUid: string;
 
     /**
-     * Parameter values (key → JSON-encoded value).
-     *
-     * @generated from field: map<string, string> params = 2;
+     * @generated from field: braiins.bmc.web.WidgetDataStruct params = 2;
      */
-    params: { [key: string]: string };
+    params?: WidgetDataStruct;
 };
 
 /**
@@ -352,11 +350,9 @@ export type UpdateWidgetRequest = Message<'braiins.bmc.web.UpdateWidgetRequest'>
     size: WidgetSize;
 
     /**
-     * Parameter values set by user (key → JSON-encoded value)
-     *
-     * @generated from field: map<string, string> params = 5;
+     * @generated from field: braiins.bmc.web.WidgetDataStruct params = 5;
      */
-    params: { [key: string]: string };
+    params?: WidgetDataStruct;
 };
 
 /**
@@ -477,7 +473,7 @@ export const SetSceneCyclingRequestSchema: GenMessage<SetSceneCyclingRequest> =
  */
 export type WidgetManifest = Message<'braiins.bmc.web.WidgetManifest'> & {
     /**
-     * Widget UID (UUID v4 from manifest.json)
+     * UUID v4 from manifest.json
      *
      * @generated from field: string uid = 1;
      */
@@ -499,8 +495,6 @@ export type WidgetManifest = Message<'braiins.bmc.web.WidgetManifest'> & {
     version: string;
 
     /**
-     * Author info
-     *
      * @generated from field: optional string author_name = 5;
      */
     authorName?: string;
@@ -511,14 +505,13 @@ export type WidgetManifest = Message<'braiins.bmc.web.WidgetManifest'> & {
     authorUrl?: string;
 
     /**
-     * Sizes this widget supports (subset of WidgetSize)
-     *
      * @generated from field: repeated braiins.bmc.web.WidgetSize supported_sizes = 7;
      */
     supportedSizes: WidgetSize[];
 
     /**
-     * Parameter definitions — frontend generates form inputs from these
+     * Ordered: the FE renders fields in this order.
+     * Uniqueness of `key` is enforced server-side at manifest load.
      *
      * @generated from field: repeated braiins.bmc.web.ManifestParamDefinition params = 8;
      */
@@ -534,62 +527,79 @@ export const WidgetManifestSchema: GenMessage<WidgetManifest> =
     messageDesc(file_web_scene_management, 16);
 
 /**
+ * is_optional and per-variant default_value combine to express the four
+ * possible param states:
+ *
+ *   is_optional=false + default_value present: required field with default
+ *   is_optional=false + default_value absent:  manifest rejected at load
+ *   is_optional=true  + default_value present: optional, default-on-add
+ *   is_optional=true  + default_value absent:  optional, null-on-add
+ *
+ * On the wire WidgetDataValue.null_value is only legal for is_optional=true.
+ *
  * @generated from message braiins.bmc.web.ManifestParamDefinition
  */
 export type ManifestParamDefinition = Message<'braiins.bmc.web.ManifestParamDefinition'> & {
     /**
-     * Parameter key (used in the params map when configuring a widget)
-     *
      * @generated from field: string key = 1;
      */
     key: string;
 
     /**
-     * Human-readable label
-     *
      * @generated from field: string name = 2;
      */
     name: string;
 
     /**
-     * Parameter type
-     *
-     * @generated from field: braiins.bmc.web.ManifestParamType param_type = 3;
-     */
-    paramType: ManifestParamType;
-
-    /**
-     * Optional description / help text
-     *
-     * @generated from field: optional string description = 4;
+     * @generated from field: optional string description = 3;
      */
     description?: string;
 
     /**
-     * Default value as JSON string
-     *
-     * @generated from field: string default_value = 5;
+     * @generated from field: bool is_optional = 4;
      */
-    defaultValue: string;
+    isOptional: boolean;
 
     /**
-     * For enum types: map of value → display label
-     *
-     * @generated from field: map<string, string> enum_values = 6;
+     * @generated from oneof braiins.bmc.web.ManifestParamDefinition.kind
      */
-    enumValues: { [key: string]: string };
-
-    /**
-     * For number types: optional range constraints
-     *
-     * @generated from field: optional double min = 7;
-     */
-    min?: number;
-
-    /**
-     * @generated from field: optional double max = 8;
-     */
-    max?: number;
+    kind:
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.ParamString param_string = 5;
+               */
+              value: ParamString;
+              case: 'paramString';
+          }
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.ParamDouble param_double = 6;
+               */
+              value: ParamDouble;
+              case: 'paramDouble';
+          }
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.ParamInteger param_integer = 7;
+               */
+              value: ParamInteger;
+              case: 'paramInteger';
+          }
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.ParamBoolean param_boolean = 8;
+               */
+              value: ParamBoolean;
+              case: 'paramBoolean';
+          }
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.ParamTimezone param_timezone = 9;
+               */
+              value: ParamTimezone;
+              case: 'paramTimezone';
+          }
+        | { case: undefined; value?: undefined };
 };
 
 /**
@@ -599,6 +609,199 @@ export type ManifestParamDefinition = Message<'braiins.bmc.web.ManifestParamDefi
 export const ManifestParamDefinitionSchema: GenMessage<ManifestParamDefinition> =
     /*@__PURE__*/
     messageDesc(file_web_scene_management, 17);
+
+/**
+ * @generated from message braiins.bmc.web.ParamString
+ */
+export type ParamString = Message<'braiins.bmc.web.ParamString'> & {
+    /**
+     * @generated from field: optional braiins.bmc.web.StringFormat format = 1;
+     */
+    format?: StringFormat;
+
+    /**
+     * @generated from field: repeated braiins.bmc.web.StringOption enum_values = 2;
+     */
+    enumValues: StringOption[];
+
+    /**
+     * @generated from field: optional string default_value = 3;
+     */
+    defaultValue?: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.ParamString.
+ * Use `create(ParamStringSchema)` to create a new message.
+ */
+export const ParamStringSchema: GenMessage<ParamString> = /*@__PURE__*/ messageDesc(file_web_scene_management, 18);
+
+/**
+ * @generated from message braiins.bmc.web.StringOption
+ */
+export type StringOption = Message<'braiins.bmc.web.StringOption'> & {
+    /**
+     * @generated from field: string value = 1;
+     */
+    value: string;
+
+    /**
+     * @generated from field: string label = 2;
+     */
+    label: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.StringOption.
+ * Use `create(StringOptionSchema)` to create a new message.
+ */
+export const StringOptionSchema: GenMessage<StringOption> = /*@__PURE__*/ messageDesc(file_web_scene_management, 19);
+
+/**
+ * @generated from message braiins.bmc.web.ParamDouble
+ */
+export type ParamDouble = Message<'braiins.bmc.web.ParamDouble'> & {
+    /**
+     * @generated from field: optional double min = 1;
+     */
+    min?: number;
+
+    /**
+     * @generated from field: optional double max = 2;
+     */
+    max?: number;
+
+    /**
+     * @generated from field: optional double step = 3;
+     */
+    step?: number;
+
+    /**
+     * @generated from field: repeated braiins.bmc.web.DoubleOption enum_values = 4;
+     */
+    enumValues: DoubleOption[];
+
+    /**
+     * @generated from field: optional double default_value = 5;
+     */
+    defaultValue?: number;
+};
+
+/**
+ * Describes the message braiins.bmc.web.ParamDouble.
+ * Use `create(ParamDoubleSchema)` to create a new message.
+ */
+export const ParamDoubleSchema: GenMessage<ParamDouble> = /*@__PURE__*/ messageDesc(file_web_scene_management, 20);
+
+/**
+ * @generated from message braiins.bmc.web.DoubleOption
+ */
+export type DoubleOption = Message<'braiins.bmc.web.DoubleOption'> & {
+    /**
+     * @generated from field: double value = 1;
+     */
+    value: number;
+
+    /**
+     * @generated from field: string label = 2;
+     */
+    label: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.DoubleOption.
+ * Use `create(DoubleOptionSchema)` to create a new message.
+ */
+export const DoubleOptionSchema: GenMessage<DoubleOption> = /*@__PURE__*/ messageDesc(file_web_scene_management, 21);
+
+/**
+ * @generated from message braiins.bmc.web.ParamInteger
+ */
+export type ParamInteger = Message<'braiins.bmc.web.ParamInteger'> & {
+    /**
+     * @generated from field: optional int32 min = 1;
+     */
+    min?: number;
+
+    /**
+     * @generated from field: optional int32 max = 2;
+     */
+    max?: number;
+
+    /**
+     * @generated from field: optional int32 step = 3;
+     */
+    step?: number;
+
+    /**
+     * @generated from field: repeated braiins.bmc.web.IntegerOption enum_values = 4;
+     */
+    enumValues: IntegerOption[];
+
+    /**
+     * @generated from field: optional int32 default_value = 5;
+     */
+    defaultValue?: number;
+};
+
+/**
+ * Describes the message braiins.bmc.web.ParamInteger.
+ * Use `create(ParamIntegerSchema)` to create a new message.
+ */
+export const ParamIntegerSchema: GenMessage<ParamInteger> = /*@__PURE__*/ messageDesc(file_web_scene_management, 22);
+
+/**
+ * @generated from message braiins.bmc.web.IntegerOption
+ */
+export type IntegerOption = Message<'braiins.bmc.web.IntegerOption'> & {
+    /**
+     * @generated from field: int32 value = 1;
+     */
+    value: number;
+
+    /**
+     * @generated from field: string label = 2;
+     */
+    label: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.IntegerOption.
+ * Use `create(IntegerOptionSchema)` to create a new message.
+ */
+export const IntegerOptionSchema: GenMessage<IntegerOption> = /*@__PURE__*/ messageDesc(file_web_scene_management, 23);
+
+/**
+ * @generated from message braiins.bmc.web.ParamBoolean
+ */
+export type ParamBoolean = Message<'braiins.bmc.web.ParamBoolean'> & {
+    /**
+     * @generated from field: optional bool default_value = 1;
+     */
+    defaultValue?: boolean;
+};
+
+/**
+ * Describes the message braiins.bmc.web.ParamBoolean.
+ * Use `create(ParamBooleanSchema)` to create a new message.
+ */
+export const ParamBooleanSchema: GenMessage<ParamBoolean> = /*@__PURE__*/ messageDesc(file_web_scene_management, 24);
+
+/**
+ * @generated from message braiins.bmc.web.ParamTimezone
+ */
+export type ParamTimezone = Message<'braiins.bmc.web.ParamTimezone'> & {
+    /**
+     * @generated from field: optional string default_value = 1;
+     */
+    defaultValue?: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.ParamTimezone.
+ * Use `create(ParamTimezoneSchema)` to create a new message.
+ */
+export const ParamTimezoneSchema: GenMessage<ParamTimezone> = /*@__PURE__*/ messageDesc(file_web_scene_management, 25);
 
 /**
  * @generated from message braiins.bmc.web.GetAvailableWidgetsResponse
@@ -616,7 +819,7 @@ export type GetAvailableWidgetsResponse = Message<'braiins.bmc.web.GetAvailableW
  */
 export const GetAvailableWidgetsResponseSchema: GenMessage<GetAvailableWidgetsResponse> =
     /*@__PURE__*/
-    messageDesc(file_web_scene_management, 18);
+    messageDesc(file_web_scene_management, 26);
 
 /**
  * @generated from enum braiins.bmc.web.WidgetSize
@@ -681,44 +884,39 @@ export const SceneCyclingTransitionSchema: GenEnum<SceneCyclingTransition> =
     enumDesc(file_web_scene_management, 1);
 
 /**
- * @generated from enum braiins.bmc.web.ManifestParamType
+ * @generated from enum braiins.bmc.web.StringFormat
  */
-export enum ManifestParamType {
+export enum StringFormat {
     /**
-     * @generated from enum value: MANIFEST_PARAM_TYPE_UNSPECIFIED = 0;
+     * @generated from enum value: STRING_FORMAT_UNSPECIFIED = 0;
      */
     UNSPECIFIED = 0,
 
     /**
-     * @generated from enum value: MANIFEST_PARAM_TYPE_STRING = 1;
+     * @generated from enum value: STRING_FORMAT_DATE = 1;
      */
-    STRING = 1,
+    DATE = 1,
 
     /**
-     * @generated from enum value: MANIFEST_PARAM_TYPE_BOOLEAN = 2;
+     * @generated from enum value: STRING_FORMAT_TIME = 2;
      */
-    BOOLEAN = 2,
+    TIME = 2,
 
     /**
-     * @generated from enum value: MANIFEST_PARAM_TYPE_NUMBER = 3;
+     * @generated from enum value: STRING_FORMAT_EMAIL = 3;
      */
-    NUMBER = 3,
+    EMAIL = 3,
 
     /**
-     * @generated from enum value: MANIFEST_PARAM_TYPE_ARRAY = 4;
+     * @generated from enum value: STRING_FORMAT_URI = 4;
      */
-    ARRAY = 4,
-
-    /**
-     * @generated from enum value: MANIFEST_PARAM_TYPE_TIMEZONE = 5;
-     */
-    TIMEZONE = 5,
+    URI = 4,
 }
 
 /**
- * Describes the enum braiins.bmc.web.ManifestParamType.
+ * Describes the enum braiins.bmc.web.StringFormat.
  */
-export const ManifestParamTypeSchema: GenEnum<ManifestParamType> = /*@__PURE__*/ enumDesc(file_web_scene_management, 2);
+export const StringFormatSchema: GenEnum<StringFormat> = /*@__PURE__*/ enumDesc(file_web_scene_management, 2);
 
 /**
  * Configures scenes & widgets for individual scenes.
