@@ -6,7 +6,7 @@ use std::time::Duration;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_ipc::SizeType;
-use bmc_widget::{ParamDefinition, ParamKey, ParamKind};
+use bmc_widget::{ParamDefinition, ParamKind};
 use futures::stream::{BoxStream, StreamExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
@@ -84,13 +84,50 @@ impl SceneManagementService {
     }
 }
 
-fn build_widget_params(
-    manifest_params: &std::collections::HashMap<ParamKey, ParamDefinition>,
-    user_overrides: Option<&web::WidgetDataStruct>,
-) -> serde_json::Value {
-    let _ = manifest_params;
-    let _ = user_overrides;
-    unimplemented!("filled in by Phase 3")
+pub(crate) fn build_widget_params(
+    manifest: &bmc_widget::Manifest,
+    overrides: &web::WidgetDataStruct,
+) -> web::WidgetDataStruct {
+    let mut fields = std::collections::HashMap::new();
+    for (key, def) in &manifest.params {
+        let value = overrides
+            .fields
+            .get(key.as_str())
+            .cloned()
+            .unwrap_or_else(|| param_default_to_widget_data_value(&def.kind));
+        fields.insert(key.as_str().to_owned(), value);
+    }
+    web::WidgetDataStruct { fields }
+}
+
+fn param_default_to_widget_data_value(kind: &ParamKind) -> web::WidgetDataValue {
+    use web::widget_data_value::Kind as VK;
+    let arm = match kind {
+        ParamKind::String {
+            default_value: Some(d),
+            ..
+        } => VK::StringValue(d.clone()),
+        ParamKind::Double {
+            default_value: Some(d),
+            ..
+        } => VK::DoubleValue(*d),
+        ParamKind::Integer {
+            default_value: Some(d),
+            ..
+        } => VK::IntegerValue(*d),
+        ParamKind::Boolean {
+            default_value: Some(b),
+        } => VK::BooleanValue(*b),
+        ParamKind::Timezone {
+            default_value: Some(s),
+        } => VK::StringValue(s.clone()),
+        ParamKind::String { .. }
+        | ParamKind::Double { .. }
+        | ParamKind::Integer { .. }
+        | ParamKind::Boolean { .. }
+        | ParamKind::Timezone { .. } => VK::NullValue(web::widget_data_value::Null {}),
+    };
+    web::WidgetDataValue { kind: Some(arm) }
 }
 
 fn widget_data_struct_to_json(s: &web::WidgetDataStruct) -> serde_json::Value {
@@ -1066,20 +1103,140 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "re-enabled in Phase 3"]
-    fn build_widget_params_keeps_default_when_key_omitted() {}
+    fn build_widget_params_seeds_required_with_default() {
+        use web::widget_data_value::Kind as VK;
+        let manifest = single_param_manifest(
+            "name",
+            ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("hello".into()),
+            },
+            false,
+        );
+        let resolved = build_widget_params(&manifest, &web::WidgetDataStruct::default());
+        assert_eq!(resolved.fields.len(), 1);
+        let v = &resolved.fields["name"];
+        let Some(VK::StringValue(s)) = &v.kind else {
+            panic!("BUG: expected StringValue")
+        };
+        assert_eq!(s, "hello");
+    }
 
     #[test]
-    #[ignore = "re-enabled in Phase 3"]
-    fn build_widget_params_override_wins_over_default() {}
+    fn build_widget_params_seeds_optional_no_default_with_null() {
+        use web::widget_data_value::Kind as VK;
+        let manifest = single_param_manifest(
+            "name",
+            ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: None,
+            },
+            true,
+        );
+        let resolved = build_widget_params(&manifest, &web::WidgetDataStruct::default());
+        let v = &resolved.fields["name"];
+        assert!(matches!(v.kind, Some(VK::NullValue(_))));
+    }
 
     #[test]
-    #[ignore = "re-enabled in Phase 3"]
-    fn build_widget_params_invalid_json_override_is_stored_as_string() {}
+    fn build_widget_params_override_wins() {
+        use web::widget_data_value::Kind as VK;
+        let manifest = single_param_manifest(
+            "name",
+            ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("hello".into()),
+            },
+            false,
+        );
+        let mut overrides = web::WidgetDataStruct::default();
+        overrides
+            .fields
+            .insert("name".to_owned(), wdv_string("world"));
+        let resolved = build_widget_params(&manifest, &overrides);
+        let v = &resolved.fields["name"];
+        let Some(VK::StringValue(s)) = &v.kind else {
+            panic!("BUG: expected StringValue")
+        };
+        assert_eq!(s, "world");
+    }
 
     #[test]
-    #[ignore = "re-enabled in Phase 3"]
-    fn param_type_timezone_maps_to_proto_timezone() {}
+    fn build_widget_params_seeds_each_kind_with_default() {
+        use web::widget_data_value::Kind as VK;
+        let manifest = manifest_with_params(&[
+            (
+                "s",
+                ParamKind::String {
+                    format: None,
+                    enum_values: vec![],
+                    default_value: Some("x".into()),
+                },
+                false,
+            ),
+            (
+                "i",
+                ParamKind::Integer {
+                    min: None,
+                    max: None,
+                    step: None,
+                    enum_values: vec![],
+                    default_value: Some(7),
+                },
+                false,
+            ),
+            (
+                "d",
+                ParamKind::Double {
+                    min: None,
+                    max: None,
+                    step: None,
+                    enum_values: vec![],
+                    default_value: Some(2.5),
+                },
+                false,
+            ),
+            (
+                "b",
+                ParamKind::Boolean {
+                    default_value: Some(true),
+                },
+                false,
+            ),
+            (
+                "t",
+                ParamKind::Timezone {
+                    default_value: Some("UTC".into()),
+                },
+                false,
+            ),
+        ]);
+        let resolved = build_widget_params(&manifest, &web::WidgetDataStruct::default());
+        assert_eq!(resolved.fields.len(), 5);
+        assert!(matches!(
+            resolved.fields["s"].kind,
+            Some(VK::StringValue(_))
+        ));
+        assert!(matches!(
+            resolved.fields["i"].kind,
+            Some(VK::IntegerValue(7))
+        ));
+        assert!(matches!(
+            resolved.fields["d"].kind,
+            Some(VK::DoubleValue(_))
+        ));
+        assert!(matches!(
+            resolved.fields["b"].kind,
+            Some(VK::BooleanValue(true))
+        ));
+        assert!(matches!(
+            resolved.fields["t"].kind,
+            Some(VK::StringValue(_))
+        ));
+    }
 
     #[test]
     fn widget_data_struct_to_json_round_trips_each_arm() {
@@ -1213,6 +1370,34 @@ mod tests {
             serde_json::from_str(&format!("\"{key}\"")).expect("BUG: valid key");
         let mut params = std::collections::HashMap::new();
         params.insert(pk, param);
+        bmc_widget::Manifest {
+            uid: uuid::Uuid::new_v4(),
+            version: semver::Version::new(1, 0, 0),
+            name: "T".into(),
+            description: "T".into(),
+            author: None,
+            binary: std::path::PathBuf::from("bin/test"),
+            settings: vec![],
+            sizes: vec![bmc_ipc::SizeType::Small],
+            params,
+        }
+    }
+
+    fn manifest_with_params(
+        entries: &[(&str, bmc_widget::ParamKind, bool)],
+    ) -> bmc_widget::Manifest {
+        let mut params = std::collections::HashMap::new();
+        for (key, kind, is_optional) in entries {
+            let pk: bmc_widget::ParamKey =
+                serde_json::from_str(&format!("\"{key}\"")).expect("BUG: valid key");
+            let param = bmc_widget::ParamDefinition {
+                name: "Test".into(),
+                description: None,
+                is_optional: *is_optional,
+                kind: kind.clone(),
+            };
+            params.insert(pk, param);
+        }
         bmc_widget::Manifest {
             uid: uuid::Uuid::new_v4(),
             version: semver::Version::new(1, 0, 0),
