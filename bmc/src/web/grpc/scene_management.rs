@@ -664,8 +664,46 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::AddFullscreenSceneRequest>,
     ) -> Result<Response<String>, Status> {
-        let _ = request;
-        unimplemented!("filled in by Phase 3")
+        let req = request.into_inner();
+        let config = req
+            .config
+            .ok_or_else(|| Status::invalid_argument("config is required"))?;
+
+        let widget_uid = Uuid::parse_str(&config.widget_uid)
+            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
+
+        let info = self
+            .widget_registry
+            .get(&widget_uid)
+            .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
+        let manifest = &info.manifest;
+
+        let params = config.params.unwrap_or_default();
+        validate_widget_params(manifest, &params, ValidateMode::Add)?;
+        let resolved = build_widget_params(manifest, &params);
+        let params_json = widget_data_struct_to_json(&resolved);
+
+        let scene = scene::Scene::fullscreen(widget_uid, params_json);
+        let scene_id = scene.id.to_string();
+
+        let scene_enabled = scene.enabled;
+        let scene_key = scene.id;
+
+        {
+            let mut config = self.config_handle.write().await;
+            config.scenes.insert(scene.id, scene);
+            Self::save_config(&mut config).await?;
+        }
+
+        if scene_enabled {
+            let config = self.config_handle.read().await;
+            if let Some(scene) = config.scenes.get(&scene_key) {
+                self.coordinator.spawn_scene_widgets(scene).await;
+            }
+        }
+        self.restore_active_scene().await;
+
+        Ok(Response::new(scene_id))
     }
 
     async fn add_combined_scene(&self, _request: Request<()>) -> Result<Response<String>, Status> {
@@ -1025,16 +1063,117 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::AddWidgetRequest>,
     ) -> Result<Response<String>, Status> {
-        let _ = request;
-        unimplemented!("filled in by Phase 3")
+        let req = request.into_inner();
+        let scene_id = Uuid::parse_str(&req.scene_id)
+            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
+
+        let position = proto_position_to_scene(req.position.unwrap_or_default())?;
+        let size = proto_size_to_scene(req.size)?;
+
+        let config_req = req
+            .config
+            .ok_or_else(|| Status::invalid_argument("config is required"))?;
+
+        let widget_uid = Uuid::parse_str(&config_req.widget_uid)
+            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
+
+        let info = self
+            .widget_registry
+            .get(&widget_uid)
+            .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
+        let manifest = &info.manifest;
+
+        let params = config_req.params.unwrap_or_default();
+        validate_widget_params(manifest, &params, ValidateMode::Add)?;
+        let resolved = build_widget_params(manifest, &params);
+        let params_json = widget_data_struct_to_json(&resolved);
+
+        let widget = scene::Widget::new(widget_uid, params_json, position, size);
+        let widget_id = widget.id.to_string();
+
+        let scene_id_key = scene::SceneId::from(scene_id);
+        let showing = self.scene_is_showing(&scene_id_key).await;
+
+        {
+            let mut config = self.config_handle.write().await;
+            let scene = config
+                .scenes
+                .get_mut(&scene_id_key)
+                .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
+
+            validate_widget_placement(scene, &widget, None)?;
+
+            scene.widgets.insert(widget.id, widget.clone());
+            Self::save_config(&mut config).await?;
+        }
+
+        if showing {
+            self.try_spawn_widget(&scene_id_key, &widget).await;
+        }
+        self.restore_active_scene().await;
+
+        Ok(Response::new(widget_id))
     }
 
     async fn update_widget(
         &self,
         request: Request<web::UpdateWidgetRequest>,
     ) -> Result<Response<()>, Status> {
-        let _ = request;
-        unimplemented!("filled in by Phase 3")
+        let req = request.into_inner();
+        let scene_id = Uuid::parse_str(&req.scene_id)
+            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
+        let widget_id =
+            Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid widget ID"))?;
+
+        let proto_position = req.position.unwrap_or_default();
+        let position = proto_position_to_scene(proto_position)?;
+        let size = proto_size_to_scene(req.size)?;
+
+        let scene_id_key = scene::SceneId::from(scene_id);
+        let widget_id_key = scene::WidgetId::from(widget_id);
+
+        {
+            let mut config = self.config_handle.write().await;
+            let scene = config
+                .scenes
+                .get_mut(&scene_id_key)
+                .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
+
+            reject_update_widget_in_fullscreen(&scene.kind, proto_position, size)?;
+
+            let widget_uid = scene
+                .widgets
+                .get(&widget_id_key)
+                .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?
+                .widget_type_id;
+
+            let info = self
+                .widget_registry
+                .get(&widget_uid)
+                .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
+            let manifest = &info.manifest;
+
+            let params = req.params.unwrap_or_default();
+            validate_widget_params(manifest, &params, ValidateMode::Update)?;
+            let params_json = widget_data_struct_to_json(&params);
+
+            let widget = scene
+                .widgets
+                .get_mut(&widget_id_key)
+                .expect("BUG: widget was just found above");
+            widget.position = position;
+            widget.size = size;
+            widget.params = params_json;
+
+            let widget_snapshot = widget.clone();
+            validate_widget_placement(scene, &widget_snapshot, Some(widget_id_key))?;
+
+            Self::save_config(&mut config).await?;
+        }
+
+        self.restore_active_scene().await;
+
+        Ok(Response::new(()))
     }
 }
 
