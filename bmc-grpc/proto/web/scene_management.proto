@@ -140,10 +140,21 @@ message WidgetManifest {
   optional string author_url = 6;
   // Sizes this widget supports (subset of WidgetSize)
   repeated WidgetSize supported_sizes = 7;
-  // Parameter definitions — frontend generates form inputs from these
+  // Parameter definitions — frontend generates form inputs from these.
+  // Ordered: the FE renders fields in this order. Uniqueness of `key`
+  // is enforced server-side at manifest load.
   repeated ManifestParamDefinition params = 8;
 }
 
+// is_optional and per-variant default_value combine to express the four
+// possible param states:
+//
+//   is_optional=false + default_value present: required field with default
+//   is_optional=false + default_value absent:  manifest rejected at load
+//   is_optional=true  + default_value present: optional, default-on-add
+//   is_optional=true  + default_value absent:  optional, null-on-add
+//
+// On the wire WidgetDataValue.null_value is only legal for is_optional=true.
 message ManifestParamDefinition {
   string key = 1;
   string name = 2;
@@ -206,6 +217,7 @@ message IntegerOption {
 message ParamBoolean {
   optional bool default_value = 1;
 }
+
 message ParamTimezone {
   optional string default_value = 1;
 }
