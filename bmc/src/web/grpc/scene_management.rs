@@ -572,13 +572,44 @@ fn scene_widget_size_to_proto(size: scene::WidgetSize) -> i32 {
     }
 }
 
-fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
-    let _ = widget;
-    unimplemented!("filled in by Phase 3")
+fn scene_widget_to_proto(widget: &scene::Widget, registry: &WidgetRegistry) -> web::Widget {
+    let manifest_kinds: std::collections::HashMap<String, ParamKind> =
+        if let Some(info) = registry.get(&widget.widget_type_id) {
+            info.manifest
+                .params
+                .iter()
+                .map(|(k, def)| (k.as_str().to_owned(), def.kind.clone()))
+                .collect()
+        } else {
+            tracing::warn!(
+                widget_type_id = %widget.widget_type_id,
+                "widget manifest not installed; falling back to shape inference for params"
+            );
+            std::collections::HashMap::new()
+        };
+
+    let params = json_to_widget_data_struct(&widget.params, &manifest_kinds);
+
+    web::Widget {
+        id: widget.id.to_string(),
+        position: Some(web::WidgetPosition {
+            row: u32::from(widget.position.row),
+            col: u32::from(widget.position.col),
+        }),
+        size: scene_widget_size_to_proto(widget.size),
+        config: Some(web::WidgetConfig {
+            widget_uid: widget.widget_type_id.to_string(),
+            params: Some(params),
+        }),
+    }
 }
 
-fn scene_to_proto(scene: &scene::Scene) -> web::Scene {
-    let widgets: Vec<web::Widget> = scene.widgets.values().map(scene_widget_to_proto).collect();
+fn scene_to_proto(scene: &scene::Scene, registry: &WidgetRegistry) -> web::Scene {
+    let widgets: Vec<web::Widget> = scene
+        .widgets
+        .values()
+        .map(|w| scene_widget_to_proto(w, registry))
+        .collect();
 
     let kind = match scene.kind {
         scene::SceneKind::Fullscreen => web::scene::Kind::Fullscreen(web::scene::Fullscreen {
@@ -637,7 +668,11 @@ impl GrpcSceneManagementService for SceneManagementService {
         _request: Request<()>,
     ) -> Result<Response<web::GetScenesResponse>, Status> {
         let config = self.config_handle.read().await;
-        let scenes = config.scenes.values().map(scene_to_proto).collect();
+        let scenes = config
+            .scenes
+            .values()
+            .map(|s| scene_to_proto(s, &self.widget_registry))
+            .collect();
         Ok(Response::new(web::GetScenesResponse { scenes }))
     }
 
@@ -656,7 +691,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
         Ok(Response::new(web::SceneResponse {
-            scene: Some(scene_to_proto(scene)),
+            scene: Some(scene_to_proto(scene, &self.widget_registry)),
         }))
     }
 
@@ -1991,5 +2026,99 @@ mod tests {
             panic!("BUG: expected param_timezone arm");
         };
         assert_eq!(pt.default_value.as_deref(), Some("Europe/Prague"));
+    }
+
+    fn single_param_manifest_with_uid(
+        uid: uuid::Uuid,
+        key: &str,
+        kind: bmc_widget::ParamKind,
+        is_optional: bool,
+    ) -> bmc_widget::Manifest {
+        let param = bmc_widget::ParamDefinition {
+            name: "Test".into(),
+            description: None,
+            is_optional,
+            kind,
+        };
+        let pk: bmc_widget::ParamKey =
+            serde_json::from_str(&format!("\"{key}\"")).expect("BUG: valid key");
+        let mut params = std::collections::HashMap::new();
+        params.insert(pk, param);
+        bmc_widget::Manifest {
+            uid,
+            version: semver::Version::new(1, 0, 0),
+            name: "T".into(),
+            description: "T".into(),
+            author: None,
+            binary: std::path::PathBuf::from("bin/test"),
+            settings: vec![],
+            sizes: vec![bmc_ipc::SizeType::Small],
+            params,
+        }
+    }
+
+    fn make_test_registry(manifest: bmc_widget::Manifest) -> crate::widget::WidgetRegistry {
+        let info = crate::widget::WidgetInfo {
+            manifest,
+            widget_dir: std::path::PathBuf::from("/tmp/test-widget"),
+            binary_path: std::path::PathBuf::from("/tmp/test-widget/bin/test"),
+        };
+        crate::widget::WidgetRegistry::new(vec![info])
+    }
+
+    fn make_empty_registry() -> crate::widget::WidgetRegistry {
+        crate::widget::WidgetRegistry::new(vec![])
+    }
+
+    fn scene_with_widget(widget_uid: uuid::Uuid, params: serde_json::Value) -> crate::scene::Scene {
+        crate::scene::Scene::fullscreen(widget_uid, params)
+    }
+
+    fn proto_scene_first_widget(proto: &web::Scene) -> &web::Widget {
+        match proto.kind.as_ref().expect("BUG: kind") {
+            web::scene::Kind::Fullscreen(f) => f.widget.as_ref().expect("BUG: widget"),
+            web::scene::Kind::Combined(c) => c.widgets.first().expect("BUG: widget"),
+        }
+    }
+
+    #[test]
+    fn scene_to_proto_uses_manifest_param_kind_to_pick_arms() {
+        let widget_uid = uuid::Uuid::new_v4();
+        let manifest = single_param_manifest_with_uid(
+            widget_uid,
+            "x",
+            ParamKind::Integer {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0),
+            },
+            false,
+        );
+        let registry = make_test_registry(manifest);
+        let scene = scene_with_widget(widget_uid, serde_json::json!({"x": 5}));
+        let proto = scene_to_proto(&scene, &registry);
+        let widget = proto_scene_first_widget(&proto);
+        let config = widget.config.as_ref().expect("BUG: config");
+        let params = config.params.as_ref().expect("BUG: params");
+        use web::widget_data_value::Kind as VK;
+        assert!(
+            matches!(params.fields["x"].kind, Some(VK::IntegerValue(5))),
+            "expected IntegerValue(5) using manifest hint"
+        );
+    }
+
+    #[test]
+    fn scene_to_proto_falls_back_to_shape_inference_when_manifest_missing() {
+        let widget_uid = uuid::Uuid::new_v4();
+        let registry = make_empty_registry();
+        let scene = scene_with_widget(widget_uid, serde_json::json!({"x": 5}));
+        let proto = scene_to_proto(&scene, &registry);
+        let widget = proto_scene_first_widget(&proto);
+        let config = widget.config.as_ref().expect("BUG: config");
+        let params = config.params.as_ref().expect("BUG: params");
+        use web::widget_data_value::Kind as VK;
+        assert!(matches!(params.fields["x"].kind, Some(VK::IntegerValue(5))));
     }
 }
