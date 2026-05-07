@@ -150,10 +150,10 @@ message ManifestParamDefinition {
   optional string description = 3;
   bool is_optional = 4;
   oneof kind {
-    ParamString   param_string   = 5;
-    ParamDouble   param_double   = 6;
-    ParamInteger  param_integer  = 7;
-    ParamBoolean  param_boolean  = 8;
+    ParamString param_string = 5;
+    ParamDouble param_double = 6;
+    ParamInteger param_integer = 7;
+    ParamBoolean param_boolean = 8;
     ParamTimezone param_timezone = 9;
   }
 }
@@ -171,15 +171,15 @@ message StringOption {
 
 enum StringFormat {
   STRING_FORMAT_UNSPECIFIED = 0;
-  STRING_FORMAT_DATE        = 1;
-  STRING_FORMAT_TIME        = 2;
-  STRING_FORMAT_EMAIL       = 3;
-  STRING_FORMAT_URI         = 4;
+  STRING_FORMAT_DATE = 1;
+  STRING_FORMAT_TIME = 2;
+  STRING_FORMAT_EMAIL = 3;
+  STRING_FORMAT_URI = 4;
 }
 
 message ParamDouble {
-  optional double min  = 1;
-  optional double max  = 2;
+  optional double min = 1;
+  optional double max = 2;
   optional double step = 3;
   repeated DoubleOption enum_values = 4;
   optional double default_value = 5;
@@ -191,8 +191,8 @@ message DoubleOption {
 }
 
 message ParamInteger {
-  optional int32 min  = 1;
-  optional int32 max  = 2;
+  optional int32 min = 1;
+  optional int32 max = 2;
   optional int32 step = 3;
   repeated IntegerOption enum_values = 4;
   optional int32 default_value = 5;
@@ -203,8 +203,12 @@ message IntegerOption {
   string label = 2;
 }
 
-message ParamBoolean  { optional bool default_value = 1; }
-message ParamTimezone { optional string default_value = 1; }
+message ParamBoolean {
+  optional bool default_value = 1;
+}
+message ParamTimezone {
+  optional string default_value = 1;
+}
 
 message GetAvailableWidgetsResponse {
   repeated WidgetManifest widgets = 1;

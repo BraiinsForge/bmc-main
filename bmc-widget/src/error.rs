@@ -34,15 +34,6 @@ pub enum ManifestError {
     #[error("invalid setting key: {0}")]
     InvalidSettingKey(String),
 
-    #[error("parameter '{name}' has invalid type: {type_name}")]
-    InvalidParamType { name: String, type_name: String },
-
-    #[error("parameter '{name}' default value does not match declared type")]
-    ParamDefaultTypeMismatch { name: String },
-
-    #[error("parameter '{name}' uses enum constraint but no enum values provided")]
-    ParamEnumMissing { name: String },
-
     #[error("parameter {name:?}: {reason}")]
     InvalidParam { name: String, reason: String },
 }

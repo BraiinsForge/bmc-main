@@ -189,7 +189,11 @@ pub struct ParamDefinition {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default, rename = "optional", skip_serializing_if = "core::ops::Not::not")]
+    #[serde(
+        default,
+        rename = "optional",
+        skip_serializing_if = "core::ops::Not::not"
+    )]
     pub is_optional: bool,
     #[serde(flatten)]
     pub kind: ParamKind,
@@ -257,8 +261,9 @@ impl ParamDefinition {
 impl ParamKind {
     fn has_default_value(&self) -> bool {
         match self {
-            ParamKind::String { default_value, .. }
-            | ParamKind::Timezone { default_value } => default_value.is_some(),
+            ParamKind::String { default_value, .. } | ParamKind::Timezone { default_value } => {
+                default_value.is_some()
+            }
             ParamKind::Double { default_value, .. } => default_value.is_some(),
             ParamKind::Integer { default_value, .. } => default_value.is_some(),
             ParamKind::Boolean { default_value } => default_value.is_some(),
@@ -277,7 +282,7 @@ impl ParamKind {
                 default_value,
                 ..
             } => {
-                validate_string_options(enum_values).map_err(&invalid)?;
+                check_string_options(enum_values).map_err(&invalid)?;
                 if !enum_values.is_empty()
                     && let Some(d) = default_value
                     && !enum_values.iter().any(|o| &o.value == d)
@@ -383,7 +388,7 @@ fn check_int_range(
     Ok(())
 }
 
-fn validate_string_options(options: &[StringOption]) -> Result<(), String> {
+fn check_string_options(options: &[StringOption]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for o in options {
         if o.label.trim().is_empty() {
@@ -396,7 +401,10 @@ fn validate_string_options(options: &[StringOption]) -> Result<(), String> {
     Ok(())
 }
 
-fn check_double_options(options: &[DoubleOption], default_value: Option<f64>) -> Result<(), String> {
+fn check_double_options(
+    options: &[DoubleOption],
+    default_value: Option<f64>,
+) -> Result<(), String> {
     for o in options {
         if o.label.trim().is_empty() {
             return Err("enum_values entry label must be non-empty after trim".into());
@@ -674,8 +682,7 @@ mod tests {
     fn param_key_accepts_valid_keys() {
         for key in ["foo", "Foo", "foo-bar", "foo_bar", "a1", "a1-b2_c3"] {
             let json = format!("\"{key}\"");
-            let parsed: ParamKey = serde_json::from_str(&json)
-                .expect("BUG: valid key must parse");
+            let parsed: ParamKey = serde_json::from_str(&json).expect("BUG: valid key must parse");
             assert_eq!(parsed.as_str(), key);
         }
     }
@@ -699,8 +706,8 @@ mod tests {
             r#"{"name":"T","type":"timezone","default_value":"Europe/Prague"}"#,
         ];
         for case in cases {
-            let p: ParamDefinition = serde_json::from_str(case)
-                .unwrap_or_else(|e| panic!("BUG: parse {case:?}: {e}"));
+            let p: ParamDefinition =
+                serde_json::from_str(case).unwrap_or_else(|e| panic!("BUG: parse {case:?}: {e}"));
             let back = serde_json::to_string(&p).expect("BUG: serialize");
             let p2: ParamDefinition = serde_json::from_str(&back).expect("BUG: re-parse");
             assert_eq!(p, p2);
@@ -727,9 +734,12 @@ mod tests {
 
     #[test]
     fn validate_required_without_default_fails() {
-        let p: ParamDefinition = serde_json::from_str(r#"{"name":"X","type":"string"}"#)
-            .expect("BUG: parse");
-        assert!(matches!(p.validate("x"), Err(ManifestError::InvalidParam { .. })));
+        let p: ParamDefinition =
+            serde_json::from_str(r#"{"name":"X","type":"string"}"#).expect("BUG: parse");
+        assert!(matches!(
+            p.validate("x"),
+            Err(ManifestError::InvalidParam { .. })
+        ));
     }
 
     #[test]
@@ -737,7 +747,8 @@ mod tests {
         let p: ParamDefinition =
             serde_json::from_str(r#"{"name":"X","type":"string","optional":true}"#)
                 .expect("BUG: parse");
-        p.validate("x").expect("BUG: optional without default must validate");
+        p.validate("x")
+            .expect("BUG: optional without default must validate");
     }
 
     #[test]
@@ -760,10 +771,9 @@ mod tests {
 
     #[test]
     fn validate_double_step_zero_fails() {
-        let p: ParamDefinition = serde_json::from_str(
-            r#"{"name":"X","type":"double","default_value":1.0,"step":0.0}"#,
-        )
-        .expect("BUG: parse");
+        let p: ParamDefinition =
+            serde_json::from_str(r#"{"name":"X","type":"double","default_value":1.0,"step":0.0}"#)
+                .expect("BUG: parse");
         assert!(p.validate("x").is_err());
     }
 
@@ -847,7 +857,7 @@ mod tests {
         .expect("BUG: parse");
         assert!(
             p.validate("x").is_err(),
-            "duplicate empty-string values must reject; empty participates in uniqueness"
+            "expected error for duplicate empty-string enum values"
         );
     }
 }
