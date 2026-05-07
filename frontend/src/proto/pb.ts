@@ -13,3 +13,4 @@ export * from './gen/web/scene_management_pb';
 export * from './gen/web/shared_pb';
 export * from './gen/web/system_pb';
 export * from './gen/web/upgrade_pb';
+export * from './gen/web/widget_data_pb';
