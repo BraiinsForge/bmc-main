@@ -6,7 +6,9 @@
 //! use crate::prelude::*;
 //! ```
 
-pub use crate::knobs::{ColorKnob, Nudge, SelectKnob, SliderKnob, StoryCtx, TextKnob, ToggleKnob};
+pub use crate::knobs::{
+    ColorKnob, Nudge, Pad2DKnob, Pad2DSpec, SelectKnob, SliderKnob, StoryCtx, TextKnob, ToggleKnob,
+};
 /// `story_meta!{}` — file-level group declaration (`story_meta! { title: "Button" }`)
 pub use crate::story_meta;
 /// `#[story]` — attribute for marking individual story functions

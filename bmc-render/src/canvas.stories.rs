@@ -120,8 +120,19 @@ fn sphere(c: &mut StoryCtx) {
         "Equirectangular bitmap projected onto a sphere with optional atmosphere and directional light",
     );
 
-    let lat = c.slider("Latitude (°)", 20.0, -90.0, 90.0);
-    let lon = c.slider("Longitude (°)", -45.0, -180.0, 180.0);
+    // 2-axis pad bundles longitude+latitude so the user drags one control
+    // for the sphere centre instead of two orthogonal sliders. X = lon,
+    // Y = lat (lat positive up, matching the map convention).
+    let centre = c.pad2d(
+        "Sphere centre",
+        Pad2DSpec {
+            x: -45.0,
+            y: 20.0,
+            range_x: -180.0..=180.0,
+            range_y: -90.0..=90.0,
+            invert_y: false,
+        },
+    );
     // `zoom` is camera-distance-with-auto-fit-FOV (Google-Earth altitude
     // semantics): the sphere's apparent size on screen stays roughly
     // constant; what changes is texture detail and the visible region.
@@ -130,8 +141,16 @@ fn sphere(c: &mut StoryCtx) {
     // bound to keep the demo recognisable as a sphere.
     let zoom = c.slider("Zoom", 3.0, 1.5, 6.0);
     let atmosphere = c.toggle("Atmosphere", true);
-    let light_lat = c.slider("Light latitude (°)", 30.0, -90.0, 90.0);
-    let light_lon = c.slider("Light longitude (°)", -60.0, -180.0, 180.0);
+    let light = c.pad2d(
+        "Light direction",
+        Pad2DSpec {
+            x: -60.0,
+            y: 30.0,
+            range_x: -180.0..=180.0,
+            range_y: -90.0..=90.0,
+            invert_y: true,
+        },
+    );
 
     // Render at 480×480 so the silhouette aliasing in the sphere shader
     // (a hard `disc < 0` boundary) is below perceptual threshold — same
@@ -148,10 +167,10 @@ fn sphere(c: &mut StoryCtx) {
                 400.0,
                 400.0,
                 &STORYBOOK_BITMAP,
-                lat.get(),
-                lon.get(),
+                centre.y(),
+                centre.x(),
                 zoom.get(),
-                Some((light_lat.get(), light_lon.get())),
+                Some((light.y(), light.x())),
                 atmosphere.get(),
             )],
         ),

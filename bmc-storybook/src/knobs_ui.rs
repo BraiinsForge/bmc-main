@@ -113,7 +113,127 @@ fn render_knob(ui: &mut egui::Ui, knob: &mut Knob, first: bool) -> bool {
                 changed = true;
             }
         }
+        Knob::Pad2D {
+            label,
+            x,
+            y,
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+            invert_y,
+        } => {
+            ui.label(label.as_str());
+            changed |= render_pad2d(ui, x, y, *min_x, *max_x, *min_y, *max_y, *invert_y);
+        }
     }
     ui.end_row();
+    changed
+}
+
+/// Pad size in egui logical pixels — fixed (not stretched to column width)
+/// so pads don't dominate the controls panel when the column is wide.
+const PAD2D_SIZE: f32 = 80.0;
+
+/// Render a 2-axis touchpad knob and update `*x`, `*y` on drag/click.
+/// Returns `true` if the value changed.
+///
+/// `invert_y = true` flips screen-Y → value-Y so dragging up gives `max_y`
+/// (Blender-style camera/orientation pads). `false` keeps the direct
+/// mapping (top of pad = `min_y`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "two values + two ranges + axis-orientation flag — not a meaningful target for a struct"
+)]
+fn render_pad2d(
+    ui: &mut egui::Ui,
+    x: &mut f32,
+    y: &mut f32,
+    min_x: f32,
+    max_x: f32,
+    min_y: f32,
+    max_y: f32,
+    invert_y: bool,
+) -> bool {
+    let mut changed = false;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(PAD2D_SIZE, PAD2D_SIZE),
+        egui::Sense::click_and_drag(),
+    );
+
+    let range_x = max_x - min_x;
+    let range_y = max_y - min_y;
+    // `screen_y` ∈ [0, 1] = pointer's vertical position within the pad
+    // (0 = top edge of pad, 1 = bottom). `to_value_y` and `from_value_y`
+    // are the only two places `invert_y` is consulted, so the orientation
+    // choice lives in one place per direction.
+    let to_value_y = |screen_y: f32| -> f32 {
+        let t = if invert_y { 1.0 - screen_y } else { screen_y };
+        min_y + t * range_y
+    };
+    let from_value_y = |value_y: f32| -> f32 {
+        if range_y <= 0.0 {
+            return 0.5;
+        }
+        let t = (value_y - min_y) / range_y;
+        if invert_y { 1.0 - t } else { t }
+    };
+
+    if (response.dragged() || response.clicked())
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let nx = ((pos.x - rect.min.x) / PAD2D_SIZE).clamp(0.0, 1.0);
+        let ny = ((pos.y - rect.min.y) / PAD2D_SIZE).clamp(0.0, 1.0);
+        let new_x = min_x + nx * range_x;
+        let new_y = to_value_y(ny);
+        if (new_x - *x).abs() > f32::EPSILON || (new_y - *y).abs() > f32::EPSILON {
+            *x = new_x;
+            *y = new_y;
+            changed = true;
+        }
+    }
+
+    let painter = ui.painter_at(rect);
+    let bg = crate::to_egui(bmc_render::colors::GRAY_90);
+    let border = crate::to_egui(bmc_render::colors::GRAY_70);
+    let cross = crate::to_egui(bmc_render::colors::GRAY_80);
+    let dot_color = crate::to_egui(bmc_render::colors::BLUE_50);
+
+    painter.rect_filled(rect, 4.0, bg);
+    painter.rect_stroke(
+        rect,
+        4.0,
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+
+    let mid = rect.center();
+    painter.line_segment(
+        [
+            egui::pos2(mid.x, rect.min.y + 4.0),
+            egui::pos2(mid.x, rect.max.y - 4.0),
+        ],
+        egui::Stroke::new(1.0, cross),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(rect.min.x + 4.0, mid.y),
+            egui::pos2(rect.max.x - 4.0, mid.y),
+        ],
+        egui::Stroke::new(1.0, cross),
+    );
+
+    let norm_x = if range_x > 0.0 {
+        (*x - min_x) / range_x
+    } else {
+        0.5
+    };
+    let norm_y = from_value_y(*y);
+    let dot = egui::pos2(
+        rect.min.x + norm_x.clamp(0.0, 1.0) * PAD2D_SIZE,
+        rect.min.y + norm_y.clamp(0.0, 1.0) * PAD2D_SIZE,
+    );
+    painter.circle_filled(dot, 5.0, dot_color);
+
     changed
 }

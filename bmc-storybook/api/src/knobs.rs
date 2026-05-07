@@ -47,6 +47,24 @@ pub enum Knob {
         options: Vec<String>,
         radio: bool,
     },
+    /// 2-axis touchpad — bundles two scalar values (e.g. lat/lon, pitch/yaw)
+    /// into a single drag-target so the controls panel doesn't need two
+    /// sliders for orthogonal angles.
+    ///
+    /// `invert_y` flips the screen-Y → value-Y mapping: when `true`, the
+    /// pointer at the top of the pad maps to `max_y` (Blender-style camera
+    /// pads). When `false`, screen-Y matches axis-Y directly (top = `min_y`),
+    /// which is the unsurprising read for an absolute-position control.
+    Pad2D {
+        label: String,
+        x: f32,
+        y: f32,
+        min_x: f32,
+        max_x: f32,
+        min_y: f32,
+        max_y: f32,
+        invert_y: bool,
+    },
     /// Labeled group separator — visually groups subsequent knobs.
     Group {
         label: String,
@@ -63,6 +81,7 @@ impl Knob {
             | Knob::Toggle { label, .. }
             | Knob::Color { label, .. }
             | Knob::Select { label, .. }
+            | Knob::Pad2D { label, .. }
             | Knob::Group { label } => label,
         }
     }
@@ -75,6 +94,10 @@ impl Knob {
             (Knob::Text { value, .. }, Knob::Text { value: v, .. }) => value.clone_from(v),
             (Knob::Color { value, .. }, Knob::Color { value: v, .. }) => *value = *v,
             (Knob::Select { value, .. }, Knob::Select { value: v, .. }) => *value = *v,
+            (Knob::Pad2D { x, y, .. }, Knob::Pad2D { x: ox, y: oy, .. }) => {
+                *x = *ox;
+                *y = *oy;
+            }
             _ => {}
         }
     }
@@ -290,6 +313,88 @@ impl ColorKnob {
 impl From<ColorKnob> for Color {
     fn from(knob: ColorKnob) -> Self {
         knob.value
+    }
+}
+
+/// Configuration for a [`Pad2DKnob`] registration.
+///
+/// Defaults: pad covers `[-1, 1]²` with both axes centred at zero, no Y
+/// inversion. Override only the fields you care about and use
+/// `..Default::default()` for the rest, matching the `ModalProps` pattern
+/// used elsewhere in the SDK.
+#[derive(Debug, Clone)]
+pub struct Pad2DSpec {
+    pub x: f32,
+    pub y: f32,
+    pub range_x: std::ops::RangeInclusive<f32>,
+    pub range_y: std::ops::RangeInclusive<f32>,
+    /// When `true`, screen-Y → value-Y is flipped: pointer at the top of
+    /// the pad maps to `*range_y.end()` (Blender-style orientation pads).
+    /// When `false` (default), top of pad maps to `*range_y.start()`,
+    /// which reads as an absolute-position control like a 2-D map.
+    pub invert_y: bool,
+}
+
+impl Default for Pad2DSpec {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            range_x: -1.0..=1.0,
+            range_y: -1.0..=1.0,
+            invert_y: false,
+        }
+    }
+}
+
+/// Handle to a 2-axis touchpad knob. Carries the current `(x, y)` and the
+/// declared ranges for value-from-position mapping in the renderer.
+#[derive(Debug, Clone, Copy)]
+pub struct Pad2DKnob {
+    index: usize,
+    x: f32,
+    y: f32,
+    min_x: f32,
+    max_x: f32,
+    min_y: f32,
+    max_y: f32,
+    invert_y: bool,
+}
+
+impl Pad2DKnob {
+    /// Current `(x, y)` value as a tuple — convenient when both are needed.
+    #[must_use]
+    pub fn get(self) -> (f32, f32) {
+        (self.x, self.y)
+    }
+
+    #[must_use]
+    pub fn x(self) -> f32 {
+        self.x
+    }
+
+    #[must_use]
+    pub fn y(self) -> f32 {
+        self.y
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn index(self) -> usize {
+        self.index
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn ranges(self) -> (f32, f32, f32, f32) {
+        (self.min_x, self.max_x, self.min_y, self.max_y)
+    }
+
+    /// Whether the renderer should flip screen-Y → value-Y mapping.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn invert_y(self) -> bool {
+        self.invert_y
     }
 }
 
@@ -784,6 +889,71 @@ impl StoryCtx {
         ColorKnob {
             index: idx,
             value: default,
+        }
+    }
+
+    /// 2-axis touchpad knob — returns a handle whose `(x, y)` reflect the
+    /// current pointer position within the pad. See [`Pad2DSpec`] for the
+    /// available configuration; defaults give a `[-1, 1]²` pad with no
+    /// inversion.
+    pub fn pad2d(&mut self, label: &str, spec: Pad2DSpec) -> Pad2DKnob {
+        let idx = self.cursor;
+        self.cursor += 1;
+        let Pad2DSpec {
+            x: default_x,
+            y: default_y,
+            range_x,
+            range_y,
+            invert_y,
+        } = spec;
+        let (min_x, max_x) = (*range_x.start(), *range_x.end());
+        let (min_y, max_y) = (*range_y.start(), *range_y.end());
+
+        if let Some(Knob::Pad2D {
+            label: existing,
+            x,
+            y,
+            invert_y: existing_invert,
+            ..
+        }) = self.knobs.get(idx)
+            && existing == label
+            && *existing_invert == invert_y
+        {
+            return Pad2DKnob {
+                index: idx,
+                x: *x,
+                y: *y,
+                min_x,
+                max_x,
+                min_y,
+                max_y,
+                invert_y,
+            };
+        }
+        let new_knob = Knob::Pad2D {
+            label: label.to_owned(),
+            x: default_x,
+            y: default_y,
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+            invert_y,
+        };
+        if idx < self.knobs.len() {
+            self.knobs[idx] = new_knob;
+        } else {
+            self.knobs.push(new_knob);
+        }
+        Pad2DKnob {
+            index: idx,
+            x: default_x,
+            y: default_y,
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+            invert_y,
         }
     }
 

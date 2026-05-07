@@ -10,8 +10,20 @@ story_meta! { title: "Canvas/Mesh" }
 #[story(default)]
 fn meshes(c: &mut StoryCtx) {
     c.group("Orientation");
-    let pitch = c.slider("Pitch", 0.0, -180.0, 180.0);
-    let yaw = c.slider("Yaw", 30.0, -180.0, 180.0);
+    // Pitch+yaw collapsed into one pad. Direct mapping (no Y inversion):
+    // because the pad is an absolute-position control, screen-Y matching
+    // axis-Y reads more naturally than a camera-style invert. Roll stays
+    // as a single 1-D slider — orthogonal to the pad.
+    let pitch_yaw = c.pad2d(
+        "Pitch / Yaw",
+        Pad2DSpec {
+            x: 30.0,
+            y: 0.0,
+            range_x: -180.0..=180.0,
+            range_y: -180.0..=180.0,
+            invert_y: false,
+        },
+    );
     let roll = c.slider("Roll", 0.0, -180.0, 180.0);
     c.group("Camera");
     let fov = c.slider("FOV", 35.0, 10.0, 120.0);
@@ -20,15 +32,23 @@ fn meshes(c: &mut StoryCtx) {
     // Suzanne ships in a unit cube and renders well at scale 1.0.
     let bottle_scale = c.slider("Scale (water bottle)", 3.5, 0.5, 20.0);
     c.group("Lighting");
-    let light_pitch = c.slider("Light pitch", 45.0, -90.0, 90.0);
-    let light_yaw = c.slider("Light yaw", -30.0, -180.0, 180.0);
+    let light_dir = c.pad2d(
+        "Light direction",
+        Pad2DSpec {
+            x: -30.0,
+            y: 45.0,
+            range_x: -180.0..=180.0,
+            range_y: -90.0..=90.0,
+            invert_y: true,
+        },
+    );
     let ambient = c.slider("Ambient", 0.3, 0.0, 1.0);
     let specular = c.slider("Specular", 0.45, 0.0, 1.0);
 
-    let orientation = Orientation::from_euler(pitch.get(), yaw.get(), roll.get());
+    let orientation = Orientation::from_euler(pitch_yaw.y(), pitch_yaw.x(), roll.get());
     let light = Some(LightAngles {
-        pitch: light_pitch.get(),
-        yaw: light_yaw.get(),
+        pitch: light_dir.y(),
+        yaw: light_dir.x(),
     });
     let shared = MeshView {
         fov: fov.get(),
