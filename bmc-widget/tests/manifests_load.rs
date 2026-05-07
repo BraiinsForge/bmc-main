@@ -1,3 +1,5 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
 use bmc_widget::Manifest;
 use std::str::FromStr;
 

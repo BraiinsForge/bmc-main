@@ -26,8 +26,14 @@
       "description": "Animation style for the flip-clock digits",
       "default_value": "extruded",
       "enum_values": [
-        { "value": "flat", "label": "Flat" },
-        { "value": "extruded", "label": "Extruded" }
+        {
+          "value": "flat",
+          "label": "Flat"
+        },
+        {
+          "value": "extruded",
+          "label": "Extruded"
+        }
       ]
     },
     "timezone": {

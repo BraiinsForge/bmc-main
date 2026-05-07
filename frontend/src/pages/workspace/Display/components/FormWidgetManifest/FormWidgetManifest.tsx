@@ -53,7 +53,9 @@ function stringFormatToInputType(format: pb.StringFormat | undefined): string {
 function readString(raw: string): string {
     try {
         const parsed: unknown = JSON.parse(raw);
-        return typeof parsed === 'string' ? parsed : raw;
+        if (typeof parsed === 'string') return parsed;
+        if (parsed === null) return '';
+        return raw;
     } catch {
         return raw;
     }
@@ -110,11 +112,15 @@ function makeNullValue(): pb.WidgetDataValue {
     });
 }
 
-export function widgetDataValueFromRaw(raw: string, kind: pb.ManifestParamDefinition['kind']): pb.WidgetDataValue {
+export function widgetDataValueFromRaw(raw: string, def: pb.ManifestParamDefinition): pb.WidgetDataValue {
+    const { kind, isOptional } = def;
     switch (kind.case) {
         case 'paramString':
-        case 'paramTimezone':
-            return makeStringValue(readString(raw));
+        case 'paramTimezone': {
+            const s = readString(raw);
+            if (s === '' && isOptional) return makeNullValue();
+            return makeStringValue(s);
+        }
         case 'paramInteger': {
             const n = readNumber(raw);
             return n === '' ? makeNullValue() : makeIntegerValue(n);

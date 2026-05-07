@@ -38,9 +38,18 @@
       "description": "Font weight for the time display",
       "default_value": "medium",
       "enum_values": [
-        { "value": "light", "label": "Light" },
-        { "value": "medium", "label": "Medium" },
-        { "value": "bold", "label": "Bold" }
+        {
+          "value": "light",
+          "label": "Light"
+        },
+        {
+          "value": "medium",
+          "label": "Medium"
+        },
+        {
+          "value": "bold",
+          "label": "Bold"
+        }
       ]
     },
     "timezone": {

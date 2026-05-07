@@ -47,7 +47,7 @@ function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined): Recor
                 result[k] = JSON.stringify(v.kind.value);
                 break;
             default:
-                result[k] = 'null';
+                result[k] = '';
         }
     }
     return result;
@@ -58,7 +58,7 @@ function formStateToWidgetDataStruct(manifest: pb.WidgetManifest, params: Record
     for (const def of manifest.params) {
         const raw = params[def.key];
         if (raw !== undefined) {
-            fields[def.key] = Comp.widgetDataValueFromRaw(raw, def.kind);
+            fields[def.key] = Comp.widgetDataValueFromRaw(raw, def);
         }
     }
     return pb.create(pb.WidgetDataStructSchema, { fields });
